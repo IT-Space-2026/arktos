@@ -57,6 +57,7 @@ exists(../.git/HEAD) {
 #     toolbarsearch.h \             # TODO(MIG08)
 #     (webactionmapper/webpage/webview moved to live list — MIG02 done)
 #     (autosaver/clearbutton/searchbutton/searchlineedit live — MIG03)
+#     (webpageproxy + networkaccessmanagerproxy deleted — MIG04)
 #     webviewsearch.h               # TODO(MIG12)
 #
 # SOURCES += \
@@ -84,7 +85,7 @@ exists(../.git/HEAD) {
 # include(bookmarks/bookmarks.pri)    # TODO(MIG07)
 # include(history/history.pri)        # TODO(MIG06)
 # include(locationbar/locationbar.pri)  # TODO(MIG08)
-# include(network/network.pri)        # TODO(MIG04); cookiejar.pri split out (MIG03)
+include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 # include(opensearch/opensearch.pri)  # TODO(MIG08)
 # include(qwebplugins/qwebplugins.pri)  # TODO(MIG13): remove, Flash is dead
 # include(utils/utils.pri)            # TODO(MIG02..MIG13 per file)
@@ -104,10 +105,7 @@ HEADERS += \
     webview.h \
     utils/edittableview.h \
     utils/lineedit.h \
-    utils/lineedit_p.h \
-    utils/webpageproxy.h \
-    utils/networkaccessmanagerproxy.h \
-    utils/networkaccessmanagerproxy_p.h
+    utils/lineedit_p.h
 SOURCES += \
     autosaver.cpp \
     clearbutton.cpp \
@@ -117,9 +115,7 @@ SOURCES += \
     webpage.cpp \
     webview.cpp \
     utils/edittableview.cpp \
-    utils/lineedit.cpp \
-    utils/webpageproxy.cpp \
-    utils/networkaccessmanagerproxy.cpp
+    utils/lineedit.cpp
 
 RESOURCES += \
     $$PWD/data/data.qrc \

@@ -20,16 +20,19 @@
 
 #include "webpage.h"
 
+#include "fileaccesshandler.h"
 #include "webview.h"
 
 #include <qapplication.h>
 #include <qbuffer.h>
 #include <qdesktopservices.h>
 #include <qfile.h>
+#include <qfileinfo.h>
 #include <qmessagebox.h>
 #include <qpixmap.h>
 #include <qsettings.h>
 #include <qstyle.h>
+#include <qtimer.h>
 #include <qvariant.h>
 #include <qwebchannel.h>
 #include <qwebenginedownloadrequest.h>
@@ -91,7 +94,7 @@ QString JavaScriptAroraObject::searchUrl(const QString &string) const
 }
 
 WebPage::WebPage(QObject *parent)
-    : WebPageProxy(parent)
+    : QWebEnginePage(parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
@@ -101,7 +104,7 @@ WebPage::WebPage(QObject *parent)
 }
 
 WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
-    : WebPageProxy(profile, parent)
+    : QWebEnginePage(profile, parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
@@ -114,7 +117,6 @@ void WebPage::init()
 {
     // Qt WebEngine pages cannot be given a QNetworkAccessManager; web loads
     // go through Chromium's network stack and the profile's cookie store.
-    // TODO(MIG04): retire the NetworkAccessManagerProxy indirection.
     //
     // The old per-frame addToJavaScriptWindowObject() binding is replaced by
     // a QWebChannel.  Objects are only visible to pages that explicitly load
@@ -215,6 +217,16 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         || scheme == QLatin1String("ftp")) {
         // TODO(MIG15): BrowserApplication::instance()->askDesktopToOpenUrl(url)
         QDesktopServices::openUrl(url);
+        return false;
+    }
+
+    // file:// is built into Chromium and cannot take a custom scheme
+    // handler; directories are rerouted to arora-file:// so the
+    // FileAccessHandler can render Arora's own directory listing.
+    if (scheme == QLatin1String("file") && isMainFrame
+        && QFileInfo(url.toLocalFile()).isDir()) {
+        const QUrl dirUrl = FileAccessHandler::urlForLocalPath(url.toLocalFile());
+        QTimer::singleShot(0, this, [this, dirUrl]() { load(dirUrl); });
         return false;
     }
 

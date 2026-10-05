@@ -28,20 +28,16 @@
 
 #include "networkdiskcache.h"
 
-#include "browserapplication.h"
-
-#include <qdesktopservices.h>
 #include <qsettings.h>
+#include <qstandardpaths.h>
 
 NetworkDiskCache::NetworkDiskCache(QObject *parent)
     : QNetworkDiskCache(parent)
     , m_private(false)
 {
-    QString diskCacheDirectory = QDesktopServices::storageLocation(QDesktopServices::CacheLocation)
+    QString diskCacheDirectory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
                                 + QLatin1String("/browser");
     setCacheDirectory(diskCacheDirectory);
-    connect(BrowserApplication::instance(), SIGNAL(privacyChanged(bool)),
-            this, SLOT(privacyChanged(bool)));
 }
 
 void NetworkDiskCache::loadSettings()
@@ -53,7 +49,7 @@ void NetworkDiskCache::loadSettings()
     setMaximumCacheSize(maximumCacheSize);
 }
 
-void NetworkDiskCache::privacyChanged(bool isPrivate)
+void NetworkDiskCache::setPrivate(bool isPrivate)
 {
     m_private = isPrivate;
 }
@@ -64,4 +60,3 @@ QIODevice *NetworkDiskCache::prepare(const QNetworkCacheMetaData &metaData)
         return 0;
     return QNetworkDiskCache::prepare(metaData);
 }
-

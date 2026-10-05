@@ -52,7 +52,7 @@
 **
 ** This file is provided "AS IS" with NO WARRANTY OF ANY KIND,
 ** INCLUDING THE WARRANTIES OF DESIGN, MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE. Trolltech reserves all rights not expressly
+** A PARTICULAR PURPOSE.  Trolltech reserves all rights not expressly
 ** granted herein.
 **
 ** This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
@@ -62,37 +62,28 @@
 
 #include "networkaccessmanager.h"
 
-#include "adblockmanager.h"
-#include "adblocknetwork.h"
-#include "adblockschemeaccesshandler.h"
-#include "acceptlanguagedialog.h"
-#include "autofillmanager.h"
-#include "browserapplication.h"
-#include "browsermainwindow.h"
-#include "cookiejar.h"
-#include "schemeaccesshandler.h"
-#include "fileaccesshandler.h"
-#include "networkproxyfactory.h"
+#include "networkcookiejar.h"
 #include "networkdiskcache.h"
+#include "networkproxyfactory.h"
 #include "ui_passworddialog.h"
 #include "ui_proxy.h"
 
+#include <qapplication.h>
 #include <qdialog.h>
+#include <qlocale.h>
 #include <qmessagebox.h>
 #include <qsettings.h>
 #include <qstyle.h>
-#include <qtextdocument.h>
 
 #include <qauthenticator.h>
-#include <qsslconfiguration.h>
+#include <qnetworkreply.h>
+#include <qnetworkrequest.h>
 #include <qsslerror.h>
-#include <qdatetime.h>
 
 // #define NETWORKACCESSMANAGER_DEBUG
 
 NetworkAccessManager::NetworkAccessManager(QObject *parent)
-    : NetworkAccessManagerProxy(parent)
-    , m_adblockNetwork(0)
+    : QNetworkAccessManager(parent)
 {
     connect(this, SIGNAL(authenticationRequired(QNetworkReply*, QAuthenticator*)),
             SLOT(authenticationRequired(QNetworkReply*, QAuthenticator*)));
@@ -102,33 +93,24 @@ NetworkAccessManager::NetworkAccessManager(QObject *parent)
     connect(this, SIGNAL(sslErrors(QNetworkReply*, const QList<QSslError>&)),
             SLOT(sslErrors(QNetworkReply*, const QList<QSslError>&)));
 #endif
-    connect(BrowserApplication::instance(), SIGNAL(privacyChanged(bool)),
-            this, SLOT(privacyChanged(bool)));
+    // TODO(MIG15): connect BrowserApplication::privacyChanged to
+    // privacyChanged() once BrowserApplication is compiled again.
     loadSettings();
 
-    // Register custom scheme handlers
-    setSchemeHandler(QLatin1String("file"), new FileAccessHandler(this));
-    setSchemeHandler(QLatin1String("abp"), new AdBlockSchemeAccessHandler(this));
-    setCookieJar(new CookieJar);
+    // Web cookies live in the profile's QWebEngineCookieStore (MIG03);
+    // this volatile jar only serves application-side requests and is
+    // swapped out for a fresh one when private browsing starts.
+    setCookieJar(new NetworkCookieJar);
 }
 
 void NetworkAccessManager::privacyChanged(bool isPrivate)
 {
-    // Create a new CookieJar that has the privacy flag set so the old cookies
-    // are not loaded and the cookies are not saved on exit
-    if (isPrivate) {
-        CookieJar *cookieJar = new CookieJar;
-        cookieJar->setPrivate(isPrivate);
-        setCookieJar(cookieJar);
-    } else {
-        // it will delete the old one
-        setCookieJar(new CookieJar);
-    }
-}
-
-void NetworkAccessManager::setSchemeHandler(const QString &scheme, SchemeAccessHandler *handler)
-{
-    m_schemeHandlers.insert(scheme, handler);
+    Q_UNUSED(isPrivate);
+    // A new empty cookie jar keeps private-mode fetches from seeing or
+    // persisting any cookies gathered during normal browsing.
+    setCookieJar(new NetworkCookieJar);
+    if (NetworkDiskCache *diskCache = qobject_cast<NetworkDiskCache*>(cache()))
+        diskCache->setPrivate(isPrivate);
 }
 
 void NetworkAccessManager::loadSettings()
@@ -168,19 +150,13 @@ void NetworkAccessManager::loadSettings()
     QList<QSslCertificate> ca_new = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());
     ca_list += ca_new;
     sslCfg.setCaCertificates(ca_list);
-    sslCfg.setProtocol(QSsl::AnyProtocol);
     QSslConfiguration::setDefaultConfiguration(sslCfg);
 #endif
 
+    m_acceptLanguage = acceptLanguage();
+
     settings.beginGroup(QLatin1String("network"));
-    QStringList acceptList = settings.value(QLatin1String("acceptLanguages"),
-            AcceptLanguageDialog::defaultAcceptList()).toStringList();
-    m_acceptLanguage = AcceptLanguageDialog::httpString(acceptList);
-
     bool cacheEnabled = settings.value(QLatin1String("cacheEnabled"), true).toBool();
-    if (QLatin1String(qVersion()) == QLatin1String("4.5.1"))
-        cacheEnabled = false;
-
     if (cacheEnabled) {
         NetworkDiskCache *diskCache;
         if (cache())
@@ -190,8 +166,7 @@ void NetworkAccessManager::loadSettings()
         setCache(diskCache);
         diskCache->loadSettings();
     } else {
-        if (QLatin1String(qVersion()) > QLatin1String("4.5.1"))
-            setCache(0);
+        setCache(0);
     }
     settings.endGroup();
 }
@@ -201,7 +176,8 @@ void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthent
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__ << reply;
 #endif
-    BrowserMainWindow *mainWindow = BrowserApplication::instance()->mainWindow();
+    // TODO(MIG15): parent these dialogs on BrowserApplication::mainWindow().
+    QWidget *mainWindow = QApplication::activeWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -210,10 +186,10 @@ void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthent
     passwordDialog.setupUi(&dialog);
 
     passwordDialog.iconLabel->setText(QString());
-    passwordDialog.iconLabel->setPixmap(mainWindow->style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
+    passwordDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
 
     QString introMessage = tr("<qt>Enter username and password for \"%1\" at %2</qt>");
-    introMessage = introMessage.arg(Qt::escape(auth->realm())).arg(Qt::escape(reply->url().toString()));
+    introMessage = introMessage.arg(auth->realm().toHtmlEscaped()).arg(reply->url().toString().toHtmlEscaped());
     passwordDialog.introLabel->setText(introMessage);
     passwordDialog.introLabel->setWordWrap(true);
 
@@ -228,7 +204,7 @@ void NetworkAccessManager::proxyAuthenticationRequired(const QNetworkProxy &prox
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__;
 #endif
-    BrowserMainWindow *mainWindow = BrowserApplication::instance()->mainWindow();
+    QWidget *mainWindow = QApplication::activeWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -237,10 +213,10 @@ void NetworkAccessManager::proxyAuthenticationRequired(const QNetworkProxy &prox
     proxyDialog.setupUi(&dialog);
 
     proxyDialog.iconLabel->setText(QString());
-    proxyDialog.iconLabel->setPixmap(mainWindow->style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
+    proxyDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
 
     QString introMessage = tr("<qt>Connect to proxy \"%1\" using:</qt>");
-    introMessage = introMessage.arg(Qt::escape(proxy.hostName()));
+    introMessage = introMessage.arg(proxy.hostName().toHtmlEscaped());
     proxyDialog.introLabel->setText(introMessage);
     proxyDialog.introLabel->setWordWrap(true);
 
@@ -255,11 +231,11 @@ QString NetworkAccessManager::certToFormattedString(QSslCertificate cert)
 {
     QStringList message;
     message << cert.subjectInfo(QSslCertificate::CommonName);
-    message << tr("Issuer: %1").arg(cert.issuerInfo(QSslCertificate::CommonName));
+    message << tr("Issuer: %1").arg(cert.issuerInfo(QSslCertificate::CommonName).join(QLatin1String(" ")));
     message << tr("Not valid before: %1").arg(cert.effectiveDate().toString());
     message << tr("Valid until: %1").arg(cert.expiryDate().toString());
 
-    QMultiMap<QSsl::AlternateNameEntryType, QString> names = cert.alternateSubjectNames();
+    QMultiMap<QSsl::AlternativeNameEntryType, QString> names = cert.subjectAlternativeNames();
     if (names.count() > 0) {
         QString list;
         list += QLatin1String("<br />");
@@ -280,7 +256,7 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__;
 #endif
-    BrowserMainWindow *mainWindow = BrowserApplication::instance()->mainWindow();
+    QWidget *mainWindow = QApplication::activeWindow();
 
     QSettings settings;
     QList<QSslCertificate> ca_merge = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());
@@ -306,7 +282,7 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
                            tr("<qt>SSL Errors:"
                               "<br/><br/>for: <tt>%1</tt>"
                               "<ul><li>%2</li></ul>\n\n"
-                              "Do you want to ignore these errors?</qt>").arg(reply->url().toString()).arg(errors),
+                              "Do you want to ignore these errors?</qt>").arg(reply->url().toString().toHtmlEscaped()).arg(errors),
                            QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No);
 
@@ -328,7 +304,6 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
                 QList<QSslCertificate> ca_list = sslCfg.caCertificates();
                 ca_list += ca_new;
                 sslCfg.setCaCertificates(ca_list);
-                sslCfg.setProtocol(QSsl::AnyProtocol);
                 QSslConfiguration::setDefaultConfiguration(sslCfg);
                 reply->setSslConfiguration(sslCfg);
 
@@ -343,38 +318,55 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
 }
 #endif
 
+/*
+    Builds the Accept-Language header (RFC 2616 section 14.4) from the
+    list stored by the accept-language settings page.  Entries saved by
+    AcceptLanguageDialog look like "English (United States) [en-us]" —
+    the bracketed tag is extracted.  TODO(MIG11): share
+    AcceptLanguageDialog::defaultAcceptList()/httpString() once the
+    dialog is ported instead of duplicating the tag parsing.
+ */
+QByteArray NetworkAccessManager::acceptLanguage()
+{
+    QSettings settings;
+    QStringList acceptList = settings.value(QLatin1String("network/acceptLanguages")).toStringList();
+    if (acceptList.isEmpty())
+        acceptList = QLocale().uiLanguages();
+
+    QStringList processed;
+    qreal qvalue = 1.0;
+    foreach (const QString &string, acceptList) {
+        int leftBracket = string.indexOf(QLatin1Char('['));
+        int rightBracket = string.indexOf(QLatin1Char(']'));
+        QString tag = (leftBracket != -1 && rightBracket > leftBracket)
+                ? string.mid(leftBracket + 1, rightBracket - leftBracket - 1)
+                : string;
+        if (processed.isEmpty()) {
+            processed << tag;
+        } else {
+            processed << QString(QLatin1String("%1; %2")).arg(tag).arg(QString::number(qvalue, 'f', 1));
+        }
+        if (qvalue > .1)
+            qvalue -= .1;
+    }
+    return processed.join(QLatin1String(", ")).toLatin1();
+}
+
 QNetworkReply *NetworkAccessManager::createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
 {
-    if (op == PostOperation && outgoingData) {
-        QByteArray outgoingDataByteArray = outgoingData->peek(1024 * 1024);
-        BrowserApplication::autoFillManager()->post(request, outgoingDataByteArray);
-    }
-
-    QNetworkReply *reply = 0;
-    // Check if there is a valid handler registered for the requested URL scheme
-    if (m_schemeHandlers.contains(request.url().scheme()))
-        reply = m_schemeHandlers[request.url().scheme()]->createRequest(op, request, outgoingData);
-    if (reply)
-        return reply;
-
+    // The WebKit-era interception hooks are gone:
+    //  - adblock blocking moved to the profile's
+    //    QWebEngineUrlRequestInterceptor (MIG09); application-side
+    //    fetches are never ad-matching candidate URLs anyway.
+    //  - the AutoFillManager POST capture died with WebEngine (form
+    //    posts happen inside Chromium, MIG10 decides the replacement).
+    //  - custom scheme replies are now QWebEngineUrlSchemeHandlers on
+    //    the profile (SchemeAccessHandler::installAll()).
     QNetworkRequest req = request;
-#if QT_VERSION >= 0x040600
-    req.setAttribute(QNetworkRequest::HttpPipeliningAllowedAttribute, true);
-#endif
     if (!m_acceptLanguage.isEmpty())
         req.setRawHeader("Accept-Language", m_acceptLanguage);
 
-    // Adblock
-    if (op == QNetworkAccessManager::GetOperation) {
-        if (!m_adblockNetwork)
-            m_adblockNetwork = AdBlockManager::instance()->network();
-        reply = m_adblockNetwork->block(req);
-        if (reply)
-            return reply;
-    }
-
-    reply = QNetworkAccessManager::createRequest(op, req, outgoingData);
+    QNetworkReply *reply = QNetworkAccessManager::createRequest(op, req, outgoingData);
     emit requestCreated(op, req, reply);
     return reply;
 }
-

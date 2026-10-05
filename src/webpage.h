@@ -20,10 +20,10 @@
 #ifndef WEBPAGE_H
 #define WEBPAGE_H
 
-#include "webpageproxy.h"
 #include "tabwidget.h"
 
 #include <qlist.h>
+#include <qwebenginepage.h>
 
 #include <functional>
 
@@ -67,7 +67,7 @@ public slots:
     QString searchUrl(const QString &string) const;
 };
 
-class WebPage : public WebPageProxy
+class WebPage : public QWebEnginePage
 {
     Q_OBJECT
 

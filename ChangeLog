@@ -12,6 +12,11 @@ Cookie layer (MIG03):
     Port the cookie jar and its dialogs to QWebEngineCookieStore on the application QWebEngineProfile. Cookies are now persisted by the WebEngine profile itself; the accept/keep policy and the domain exception lists (block / allow / allow-for-session) are enforced through the store's cookie filter and stored in the application settings (cookies.ini is gone). "Accept only from sites navigated to" now blocks third-party cookies.
     Private browsing selects an off-the-record WebEngine profile instead of a global flag — pages already open keep their profile, newly created windows/tabs are private.
 
+Network layer (MIG04):
+    The application keeps a slimmed-down QNetworkAccessManager (proxy settings, disk cache, HTTP auth/proxy-auth/SSL-error dialogs, Accept-Language) for its own fetches — OpenSearch downloads, adblock subscriptions and the download manager. Web page traffic no longer passes through it: Chromium owns web networking, the adblock hook moves to a profile request interceptor, and the form-post autofill hook is gone with WebKit.
+    file:// directory listings are served by a custom "arora-file" URL scheme (QWebEngineUrlSchemeHandler on the profile) — navigating to a local directory redirects to it and renders the classic Arora listing with icons.
+    The QWebPage-tagging proxy classes (WebPageProxy, NetworkAccessManagerProxy) are deleted; WebPage now derives straight from QWebEnginePage.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

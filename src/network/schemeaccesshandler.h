@@ -20,17 +20,23 @@
 #ifndef SCHEMEACCESSHANDLER_H
 #define SCHEMEACCESSHANDLER_H
 
-#include <qobject.h>
+#include <qwebengineurlschemehandler.h>
 
-#include <qnetworkaccessmanager.h>
-
-class QNetworkReply;
-class SchemeAccessHandler : public QObject
+class QWebEngineProfile;
+class SchemeAccessHandler : public QWebEngineUrlSchemeHandler
 {
 public:
     SchemeAccessHandler(QObject *parent = 0);
 
-    virtual QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0) = 0;
+    // The scheme this handler serves, e.g. "arora-file".
+    virtual QByteArray scheme() const = 0;
+
+    // Declares every application scheme with QWebEngineUrlScheme.
+    // Must run before the QApplication constructor; afterwards
+    // installAll() can attach the handlers to a profile.
+    // TODO(MIG09): the "abp" AdBlockSchemeAccessHandler belongs here too.
+    static void registerUrlSchemes();
+    static void installAll(QWebEngineProfile *profile, QObject *parent = 0);
 };
 
 #endif // SCHEMEACCESSHANDLER_H

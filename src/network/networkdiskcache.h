@@ -31,6 +31,9 @@
 
 #include <qnetworkdiskcache.h>
 
+// Caches the application-side fetches made through NetworkAccessManager
+// (opensearch, adblock lists).  Web page caching is internal to
+// Chromium's profile — see QWebEngineProfile::setHttpCache*.
 class NetworkDiskCache : public QNetworkDiskCache
 {
     Q_OBJECT
@@ -40,14 +43,13 @@ public:
 
     void loadSettings();
 
-    QIODevice *prepare(const QNetworkCacheMetaData &metaData);
+    virtual QIODevice *prepare(const QNetworkCacheMetaData &metaData);
 
-private slots:
-    void privacyChanged(bool isPrivate);
+public slots:
+    void setPrivate(bool isPrivate);
 
 private:
     bool m_private;
 };
 
 #endif // NETWORKDISKCACHE_H
-

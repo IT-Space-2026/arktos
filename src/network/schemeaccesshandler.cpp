@@ -19,8 +19,33 @@
 
 #include "schemeaccesshandler.h"
 
+#include "fileaccesshandler.h"
+
+#include <qwebengineprofile.h>
+#include <qwebengineurlscheme.h>
+
 SchemeAccessHandler::SchemeAccessHandler(QObject *parent)
-    : QObject(parent)
+    : QWebEngineUrlSchemeHandler(parent)
 {
 }
 
+void SchemeAccessHandler::registerUrlSchemes()
+{
+    // file:// is a built-in scheme and cannot take a custom handler, so
+    // directory listings are served on arora-file:// instead (WebPage
+    // redirects file:// directory navigations there).
+    QWebEngineUrlScheme scheme(FileAccessHandler::schemeName());
+    scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+    scheme.setFlags(QWebEngineUrlScheme::SecureScheme
+                    | QWebEngineUrlScheme::LocalScheme
+                    | QWebEngineUrlScheme::LocalAccessAllowed
+                    | QWebEngineUrlScheme::ViewSourceAllowed
+                    | QWebEngineUrlScheme::CorsEnabled);
+    QWebEngineUrlScheme::registerScheme(scheme);
+}
+
+void SchemeAccessHandler::installAll(QWebEngineProfile *profile, QObject *parent)
+{
+    FileAccessHandler *fileHandler = new FileAccessHandler(parent);
+    profile->installUrlSchemeHandler(fileHandler->scheme(), fileHandler);
+}

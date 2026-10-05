@@ -2,21 +2,23 @@ INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
 FORMS += \
-    passworddialog.ui \
-    proxy.ui
+    $$PWD/passworddialog.ui \
+    $$PWD/proxy.ui
 
 HEADERS += \
-    fileaccesshandler.h \
-    networkaccessmanager.h \
-    networkdiskcache.h \
-    networkproxyfactory.h \
-    schemeaccesshandler.h
+    $$PWD/fileaccesshandler.h \
+    $$PWD/networkaccessmanager.h \
+    $$PWD/networkdiskcache.h \
+    $$PWD/networkproxyfactory.h \
+    $$PWD/schemeaccesshandler.h
 
 SOURCES += \
-    fileaccesshandler.cpp \
-    networkaccessmanager.cpp \
-    networkdiskcache.cpp \
-    networkproxyfactory.cpp \
-    schemeaccesshandler.cpp
+    $$PWD/fileaccesshandler.cpp \
+    $$PWD/networkaccessmanager.cpp \
+    $$PWD/networkdiskcache.cpp \
+    $$PWD/networkproxyfactory.cpp \
+    $$PWD/schemeaccesshandler.cpp
 
-include(cookiejar/cookiejar.pri)
+# cookiejar/cookiejar.pri is included directly by src.pri (MIG03); the
+# networkcookiejar is the volatile jar for the app-side QNAM (MIG04).
+include($$PWD/cookiejar/networkcookiejar/networkcookiejar.pri)

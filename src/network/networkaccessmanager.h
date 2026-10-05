@@ -52,7 +52,7 @@
 **
 ** This file is provided "AS IS" with NO WARRANTY OF ANY KIND,
 ** INCLUDING THE WARRANTIES OF DESIGN, MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE. Trolltech reserves all rights not expressly
+** A PARTICULAR PURPOSE.  Trolltech reserves all rights not expressly
 ** granted herein.
 **
 ** This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
@@ -65,13 +65,18 @@
 
 #include <qnetworkaccessmanager.h>
 #include <qsslconfiguration.h>
-#include <qhash.h>
-#include "networkaccessmanagerproxy.h"
 
-class SchemeAccessHandler;
-
-class AdBlockNetwork;
-class NetworkAccessManager : public NetworkAccessManagerProxy
+/*
+    Application-side QNetworkAccessManager.  Under Qt WebEngine the web
+    pages' own traffic never passes through a QNAM (Chromium's network
+    stack and the profile's cookie store handle it), so this manager
+    only serves the application's own fetches: OpenSearch engine/icon
+    downloads, adblock subscription downloads, download manager resume,
+    etc.  The old webkit-facing interception (adblock blocking, autofill
+    form-post capture, custom scheme replies) moved to the profile's
+    interceptor/scheme handlers or was dropped.
+*/
+class NetworkAccessManager : public QNetworkAccessManager
 {
     Q_OBJECT
 
@@ -80,18 +85,13 @@ signals:
 
 public:
     NetworkAccessManager(QObject *parent = 0);
-    void setSchemeHandler(const QString &scheme, SchemeAccessHandler *handler);
-
-    inline QNetworkReply *createRequestProxy(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
-    {
-        return createRequest(op, request, outgoingData);
-    }
 
 protected:
-    QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0);
+    virtual QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0);
 
 public slots:
     void loadSettings();
+    void privacyChanged(bool isPrivate);
 
 private slots:
     void authenticationRequired(QNetworkReply *reply, QAuthenticator *auth);
@@ -99,18 +99,14 @@ private slots:
 #ifndef QT_NO_OPENSSL
     void sslErrors(QNetworkReply *reply, const QList<QSslError> &error);
 #endif
-    void privacyChanged(bool isPrivate);
 
 private:
 #ifndef QT_NO_OPENSSL
     static QString certToFormattedString(QSslCertificate cert);
 #endif
+    static QByteArray acceptLanguage();
 
     QByteArray m_acceptLanguage;
-    QHash<QString, SchemeAccessHandler*> m_schemeHandlers;
-
-    QNetworkCookieJar *m_privateCookieJar;
-    AdBlockNetwork *m_adblockNetwork;
 };
 
 #endif // NETWORKACCESSMANAGER_H

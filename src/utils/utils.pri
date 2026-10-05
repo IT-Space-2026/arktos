@@ -1,8 +1,8 @@
 INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
-# MIG02: webpageproxy.* and networkaccessmanagerproxy.* were moved to the
-# live lists in src.pri (ported to Qt WebEngine).
+# MIG04: webpageproxy.* and networkaccessmanagerproxy.* were deleted —
+# the QWebPage-tagging indirection has no WebEngine equivalent.
 # MIG03: edittableview.* and lineedit.*/lineedit_p.h moved to the live
 # lists in src.pri (needed by the cookiejar dialogs).
 HEADERS += \

@@ -39,6 +39,9 @@
 
 #include "trie_p.h"
 
+#include <qiodevice.h>
+#include <qnetworkcookie.h>
+
 QT_BEGIN_NAMESPACE
 QDataStream &operator<<(QDataStream &stream, const QNetworkCookie &cookie)
 {

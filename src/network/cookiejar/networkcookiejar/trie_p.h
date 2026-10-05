@@ -39,7 +39,10 @@
 
 //#define TRIE_DEBUG
 
+#include <qdatastream.h>
 #include <qstringlist.h>
+
+#include <algorithm>
 
 #if defined(TRIE_DEBUG)
 #include <qdebug.h>
@@ -141,10 +144,11 @@ bool Trie<T>::remove(const QStringList &key, const T &value) {
             Trie<T> *parent = walkTo(parentKey, false);
             Q_ASSERT(parent);
             QStringList::iterator iterator;
-            iterator = qBinaryFind(parent->childrenKeys.begin(),
-                                   parent->childrenKeys.end(),
-                                   currentLevelKey);
-            Q_ASSERT(iterator != parent->childrenKeys.end());
+            iterator = std::lower_bound(parent->childrenKeys.begin(),
+                                        parent->childrenKeys.end(),
+                                        currentLevelKey);
+            Q_ASSERT(iterator != parent->childrenKeys.end()
+                     && *iterator == currentLevelKey);
             int index = iterator - parent->childrenKeys.begin();
             parent->children.removeAt(index);
             parent->childrenKeys.removeAt(index);
@@ -210,8 +214,8 @@ const Trie<T>* Trie<T>::walkTo(const QStringList &key) const {
         const QString currentLevelKey = key.at(depth--);
         begin = node->childrenKeys.constBegin();
         end = node->childrenKeys.constEnd();
-        childIterator = qBinaryFind(begin, end, currentLevelKey);
-        if (childIterator == end)
+        childIterator = std::lower_bound(begin, end, currentLevelKey);
+        if (childIterator == end || *childIterator != currentLevelKey)
             return 0;
         node = &node->children.at(childIterator - begin);
     }
@@ -228,17 +232,14 @@ Trie<T>* Trie<T>::walkTo(const QStringList &key, bool create) {
         const QString currentLevelKey = key.at(depth--);
         begin = node->childrenKeys.begin();
         end = node->childrenKeys.end();
-        iterator = qBinaryFind(begin, end, currentLevelKey);
+        iterator = std::lower_bound(begin, end, currentLevelKey);
 #if defined(TRIE_DEBUG)
         qDebug() << "\t" << node << key << currentLevelKey << node->childrenKeys;
 #endif
         int index = -1;
-        if (iterator == end) {
+        if (iterator == end || *iterator != currentLevelKey) {
             if (!create)
                 return 0;
-            iterator = qLowerBound(begin,
-                                   end,
-                                   currentLevelKey);
             index = iterator - begin;
             node->childrenKeys.insert(iterator, currentLevelKey);
             node->children.insert(index, Trie<T>());

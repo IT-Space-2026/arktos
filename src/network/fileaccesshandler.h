@@ -22,37 +22,24 @@
 
 #include "schemeaccesshandler.h"
 
-#include <qbuffer.h>
-#include <qnetworkreply.h>
+#include <qpointer.h>
 
+class QWebEngineUrlRequestJob;
 class FileAccessHandler : public SchemeAccessHandler
-{
-public:
-    FileAccessHandler(QObject *parent = 0);
-
-    virtual QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0);
-};
-
-class FileAccessReply : public QNetworkReply
 {
     Q_OBJECT
 
 public:
-    FileAccessReply(const QNetworkRequest &request, QObject *parent = 0);
-    ~FileAccessReply();
+    FileAccessHandler(QObject *parent = 0);
 
-    virtual qint64 bytesAvailable() const;
-    virtual void abort() { };
-    virtual void close();
+    QByteArray scheme() const;
+    static QByteArray schemeName();
+    static QUrl urlForLocalPath(const QString &path);
 
-protected:
-    virtual qint64 readData(char *data, qint64 maxSize);
-
-private slots:
-    void listDirectory();
+    virtual void requestStarted(QWebEngineUrlRequestJob *job);
 
 private:
-    QBuffer buffer;
+    void replyToJob(QPointer<QWebEngineUrlRequestJob> job);
 };
 
 #endif // FILEACCESSHANDLER_H

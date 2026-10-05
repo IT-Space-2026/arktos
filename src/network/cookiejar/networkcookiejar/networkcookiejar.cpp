@@ -50,6 +50,8 @@
 #include <qurl.h>
 #include <qdatetime.h>
 
+#include <algorithm>
+
 #if defined(NETWORKCOOKIEJAR_DEBUG)
 #include <qdebug.h>
 #endif
@@ -67,7 +69,7 @@ NetworkCookieJar::~NetworkCookieJar()
 }
 
 static QStringList splitHost(const QString &host) {
-    QStringList parts = host.split(QLatin1Char('.'), QString::KeepEmptyParts);
+    QStringList parts = host.split(QLatin1Char('.'), Qt::KeepEmptyParts);
     // Remove empty components that are on the start and end
     while (!parts.isEmpty() && parts.last().isEmpty())
         parts.removeLast();
@@ -111,7 +113,7 @@ QList<QNetworkCookie> NetworkCookieJar::cookiesForUrl(const QUrl &url) const
     if (cookies.isEmpty())
         return cookies;
 
-    QDateTime now = QDateTime::currentDateTime().toTimeSpec(Qt::UTC);
+    QDateTime now = QDateTime::currentDateTimeUtc();
     const QString urlPath = d->urlPath(url);
     const bool isSecure = url.scheme().toLower() == QLatin1String("https");
     QList<QNetworkCookie>::iterator i = cookies.begin();
@@ -146,7 +148,7 @@ QList<QNetworkCookie> NetworkCookieJar::cookiesForUrl(const QUrl &url) const
     }
 
     // shorter paths should go first
-    qSort(cookies.begin(), cookies.end(), shorterPaths);
+    std::sort(cookies.begin(), cookies.end(), shorterPaths);
 #if defined(NETWORKCOOKIEJAR_DEBUG)
     qDebug() << "NetworkCookieJar::" << __FUNCTION__ << "returning" << cookies.count();
     qDebug() << cookies;
@@ -191,7 +193,7 @@ bool NetworkCookieJar::restoreState(const QByteArray &state)
 void NetworkCookieJar::endSession()
 {
     const QList<QNetworkCookie> cookies = d->tree.all();
-    QDateTime now = QDateTime::currentDateTime().toTimeSpec(Qt::UTC);
+    QDateTime now = QDateTime::currentDateTimeUtc();
     QList<QNetworkCookie>::const_iterator i = cookies.constBegin();
     for (; i != cookies.constEnd();) {
         if (i->isSessionCookie()
@@ -210,7 +212,7 @@ bool NetworkCookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList
     qDebug() << "NetworkCookieJar::" << __FUNCTION__ << url;
     qDebug() << cookieList;
 #endif
-    QDateTime now = QDateTime::currentDateTime().toTimeSpec(Qt::UTC);
+    QDateTime now = QDateTime::currentDateTimeUtc();
     bool changed = false;
     QString fullUrlPath = url.path();
     QString defaultPath = fullUrlPath.mid(0, fullUrlPath.lastIndexOf(QLatin1Char('/')) + 1);
@@ -325,9 +327,7 @@ bool NetworkCookieJarPrivate::matchesBlacklist(const QString &string) const
             secondLevelDomains += QLatin1String(twoLevelDomains[j]);
         setSecondLevelDomain = true;
     }
-    QStringList::const_iterator i =
-         qBinaryFind(secondLevelDomains.constBegin(), secondLevelDomains.constEnd(), string);
-        return (i != secondLevelDomains.constEnd());
+    return std::binary_search(secondLevelDomains.constBegin(), secondLevelDomains.constEnd(), string);
 }
 
 bool NetworkCookieJarPrivate::matchingDomain(const QNetworkCookie &cookie, const QUrl &url) const
@@ -351,7 +351,7 @@ bool NetworkCookieJarPrivate::matchingDomain(const QNetworkCookie &cookie, const
     if (parts.count() == 2 && matchesBlacklist(parts.last()))
         return false;
 
-    QStringList urlParts = url.host().toLower().split(QLatin1Char('.'), QString::SkipEmptyParts);
+    QStringList urlParts = url.host().toLower().split(QLatin1Char('.'), Qt::SkipEmptyParts);
     if (urlParts.isEmpty())
         return false;
     while (urlParts.count() > parts.count())
@@ -370,6 +370,6 @@ void NetworkCookieJar::setSecondLevelDomains(const QStringList &secondLevelDomai
 {
     d->setSecondLevelDomain = true;
     d->secondLevelDomains = secondLevelDomains;
-    qSort(d->secondLevelDomains);
+    std::sort(d->secondLevelDomains.begin(), d->secondLevelDomains.end());
 }
 
