@@ -35,12 +35,20 @@
 #include <qreadwritelock.h>
 #include <qurl.h>
 
+class AdBlockRustEngine;
+class QJsonObject;
+
 // What the matcher decided for one request.
 struct AdBlockDecision {
     enum Action { Allow, Block, Redirect } action;
     // Set on Redirect: canonical name of a bundled stub resource
     // (served on the arora-resource:// scheme).
     QString redirectResource;
+    // Set on Redirect (adblock-rust engine only): a literal URL to
+    // load instead — a data: URL carrying the stub payload or the
+    // $removeparam-rewritten request URL.  Takes precedence over
+    // redirectResource.
+    QString redirectUrl;
     // Query-parameter specs to strip (uBO $removeparam): entries are
     // "*", a parameter name, or a /regular expression/.
     QStringList removeParams;
@@ -69,6 +77,9 @@ class AdBlockNetwork : public QObject
 
 public:
     AdBlockNetwork(QObject *parent = 0);
+#if defined(ARORA_ADBLOCK_RUST)
+    ~AdBlockNetwork();
+#endif
 
     // Thread-safe; called by the request interceptor on the IO thread.
     // firstPartyUrl may be empty (treated as the request's own party);
@@ -78,11 +89,30 @@ public:
                           int resourceType = -1) const;
     bool shouldBlock(const QUrl &url) const;
 
+#if defined(ARORA_ADBLOCK_RUST)
+    // The native C++ matcher, kept compiled in under the Rust flag so
+    // the --adblock-rust-smoke comparison harness can diff the two
+    // engines on identical input.  Do not call from the interceptor.
+    AdBlockDecision matchNative(const QUrl &requestUrl,
+                                const QUrl &firstPartyUrl = QUrl(),
+                                int resourceType = -1) const;
+    // Cosmetic payload for a document URL from the Rust engine
+    // ({"hide":[],"generichide":bool,"script":""}); empty when the
+    // engine is not loaded.
+    QJsonObject rustCosmetic(const QUrl &documentUrl) const;
+#endif
+
 public slots:
     // Snapshots the current subscriptions' network rules.  GUI thread only.
     void rebuildRules();
 
 private:
+    // Requires m_lock held (read) and m_enabled already checked.
+    AdBlockDecision matchNativeUnlocked(
+            const QUrl &requestUrl,
+            const QUrl &firstPartyUrl = QUrl(),
+            int resourceType = -1) const;
+
     struct SubscriptionRules {
         QList<AdBlockRule> exceptionRules;
         QList<AdBlockRule> blockRules;
@@ -93,6 +123,10 @@ private:
     QList<SubscriptionRules> m_subscriptions;
     bool m_enabled;
     mutable QReadWriteLock m_lock;
+
+#if defined(ARORA_ADBLOCK_RUST)
+    AdBlockRustEngine *m_rustEngine; // swapped under m_lock
+#endif
 };
 
 #endif // ADBLOCKNETWORK_H

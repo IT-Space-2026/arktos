@@ -6,3 +6,10 @@ Arora is a cross platform web browser built using Qt and WebEngine
 Building:
 Arora uses the qmake build system.  If you already have Qt 6 on your system building is as easy as running the command 'qmake' and then 'make' or 'nmake' on Windows.
 For more detailed information see https://github.com/Arora/arora/wiki/BeginnerStepByStepInstructions
+
+Optional adblock engine: the built-in C++ matcher is the default.  A
+Brave adblock-rust backed engine can be enabled instead — build the
+FFI static library with `cargo build --release` in src/adblock/rust
+(needs a user-local Rust toolchain), then run `qmake CONFIG+=adblock_rust`
+and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
+fixed probe set.

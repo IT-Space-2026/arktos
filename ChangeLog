@@ -44,6 +44,10 @@ AdBlock (ADB01):
     Cosmetic filtering understands the extended syntax: :-abp-has/-abp-contains style selectors, :has-text, :matches-css, :style, :remove*, :upward and a small +js scriptlet subset (set-constant, abort-on-property-read/write, hide-if-contains, remove-class), including #@#/#?#/#$# exception and snippet markers.
     Default subscriptions now point at live lists — EasyList and EasyPrivacy from easylist.to plus the uBlock "filters" list — and stored subscriptions on the dead adblockplus.mozdev.org/easylist.adblockplus.org hosts are migrated automatically, keeping their list file names.
 
+AdBlock (ADB02):
+    Optional alternate filter engine: configuring with `qmake CONFIG+=adblock_rust` (after `cargo build --release` in src/adblock/rust, needing a user-local Rust toolchain) delegates request matching to Brave's adblock-rust engine over a small C FFI wrapper — subscriptions, the dialog and the UI are unchanged. The engine applies native uBO semantics for $badfilter, $denyallow, $important, $removeparam, $redirect= to bundled stubs and cosmetic selectors; the built-in C++ matcher stays the default.
+    `./arora --adblock-rust-smoke` diffs both engines on a fixed rule+URL probe set.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -59,6 +59,30 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
 
+#if defined(ARORA_ADBLOCK_RUST)
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonObject>
+
+// Normalizes a matcher decision for --adblock-rust-smoke:
+// 0 allow, 1 block, 2 stub redirect (bundled resource name or data:
+// URL), 3 rewritten request URL ($removeparam — the native matcher
+// emits Allow + removeParams, the Rust engine emits Redirect to the
+// stripped URL).
+static int adblockDecisionKind(const AdBlockDecision &decision)
+{
+    if (decision.action == AdBlockDecision::Redirect) {
+        if (!decision.redirectUrl.isEmpty()
+            && !decision.redirectUrl.startsWith(QLatin1String("data:")))
+            return 3;
+        return 2;
+    }
+    if (decision.action == AdBlockDecision::Allow
+        && !decision.removeParams.isEmpty())
+        return 3;
+    return int(decision.action);
+}
+#endif
+
 // TODO(MIG15): replace this skeleton with BrowserApplication —
 // single-instance via QLocalServer/QLocalSocket, session restore,
 // QCommandLineParser, translator loading, WebEngine init order.
@@ -85,7 +109,8 @@ int main(int argc, char **argv)
     // download lists, which are persisted to the app data dir; isolate
     // the writes so the test leaves no residue.
     if (args.contains(QLatin1String("--adblock-smoke"))
-        || args.contains(QLatin1String("--adblock-list-smoke")))
+        || args.contains(QLatin1String("--adblock-list-smoke"))
+        || args.contains(QLatin1String("--adblock-rust-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
@@ -568,6 +593,98 @@ int main(int argc, char **argv)
             qInfo() << "adblock-list-smoke: FAIL (timeout)";
             application.exit(1);
         });
+    }
+
+    // ADB02 coverage comparison (CONFIG+=adblock_rust builds only):
+    // feed a fixed corpus through the subscriptions and diff the
+    // adblock-rust engine's decisions against both the native matcher
+    // and the expected outcome.  Decisions normalize to
+    // 0=allow 1=block 2=stub-redirect 3=url-rewrite ($removeparam).
+    if (args.contains(QLatin1String("--adblock-rust-smoke"))) {
+#if defined(ARORA_ADBLOCK_RUST)
+        AdBlockManager *manager = AdBlockManager::instance();
+        AdBlockSubscription *custom = manager->customRules();
+        // Test-mode app data persists between runs — an earlier
+        // --adblock-list-smoke leaves a full EasyList subscription
+        // behind.  Disable everything but the custom corpus so the
+        // probes are deterministic.
+        for (AdBlockSubscription *s : manager->subscriptions()) {
+            if (s != custom)
+                s->setEnabled(false);
+        }
+        const char *corpus[] = {
+            "||ads.example.com^",
+            "||banner.example^$script",
+            "@@||banner.example^$script,domain=trusted.example",
+            "||tracker.example^$third-party",
+            "||cdn.example/lib.js$~third-party",
+            "||redir.example/vast.xml$redirect=noop-vast-4.0",
+            "||param.example^$removeparam=utm_source",
+            "smoke.example##.ad-banner",
+        };
+        for (const char *rule : corpus)
+            custom->addRule(AdBlockRule(QLatin1String(rule)));
+
+        AdBlockNetwork *network = manager->network();
+        struct Probe {
+            const char *url;
+            const char *firstParty;
+            int resourceType;
+            int expected;
+        };
+        const Probe probes[] = {
+            { "http://ads.example.com/a.js", "http://site.example/", 3, 1 },
+            { "http://sub.ads.example.com/a", "http://site.example/", 3, 1 },
+            { "http://other.example/ads.example.com.js",
+              "http://site.example/", 3, 0 },
+            { "http://banner.example/b.js", "http://site.example/", 3, 1 },
+            { "http://banner.example/b.js", "http://trusted.example/", 3, 0 },
+            { "http://banner.example/b.png", "http://site.example/", 4, 0 },
+            { "http://tracker.example/t.js", "http://site.example/", 3, 1 },
+            { "http://tracker.example/t.js",
+              "http://tracker.example/", 3, 0 },
+            { "http://cdn.example/lib.js", "http://cdn.example/", 3, 1 },
+            { "http://cdn.example/lib.js", "http://site.example/", 3, 0 },
+            { "http://redir.example/vast.xml", "http://site.example/", 13, 2 },
+            { "http://param.example/x?utm_source=a&keep=1",
+              "http://site.example/", 0, 3 },
+            { "http://innocent.example/x.js", "http://site.example/", 3, 0 },
+        };
+
+        int rustExpected = 0;
+        int agree = 0;
+        const int total = int(sizeof(probes) / sizeof(probes[0]));
+        for (const Probe &probe : probes) {
+            const QUrl url(QLatin1String(probe.url));
+            const QUrl firstParty(QLatin1String(probe.firstParty));
+            const int native = adblockDecisionKind(
+                network->matchNative(url, firstParty, probe.resourceType));
+            const int rust = adblockDecisionKind(
+                network->match(url, firstParty, probe.resourceType));
+            agree += (native == rust);
+            rustExpected += (rust == probe.expected);
+            if (native != rust || rust != probe.expected)
+                qInfo() << "adblock-rust-smoke: diff" << probe.url
+                        << "native" << native << "rust" << rust
+                        << "expected" << probe.expected;
+        }
+
+        const QJsonObject cosmetic = network->rustCosmetic(
+            QUrl(QLatin1String("http://smoke.example/")));
+        const bool cosmeticOk = cosmetic.value(QLatin1String("hide"))
+            .toArray().contains(QLatin1String(".ad-banner"));
+
+        const bool pass = rustExpected == total && cosmeticOk;
+        qInfo() << "adblock-rust-smoke:" << (pass ? "PASS" : "FAIL")
+                << "rust-matches-expected" << rustExpected << "/" << total
+                << "native-agrees" << agree << "/" << total
+                << "cosmetic" << cosmeticOk;
+        return pass ? 0 : 1;
+#else
+        qInfo() << "adblock-rust-smoke: SKIP"
+                << "(built without CONFIG+=adblock_rust)";
+        return 0;
+#endif
     }
 
     return application.exec();

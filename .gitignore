@@ -20,3 +20,5 @@ ms_print.*
 doc/
 
 .qmake.stash
+
+src/adblock/rust/target/

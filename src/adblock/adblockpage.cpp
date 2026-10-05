@@ -33,6 +33,10 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
+#if defined(ARORA_ADBLOCK_RUST)
+#include "adblocknetwork.h"
+#endif
+
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -326,6 +330,45 @@ static QString cosmeticEngineScript(const QJsonArray &procedures,
     return script;
 }
 
+#if defined(ARORA_ADBLOCK_RUST)
+// Applies an adblock-rust cosmetic payload (the JSON produced by
+// url_cosmetic_resources): hide selectors go through the same
+// forgiving :is() stylesheet injection as the native path —
+// :-abp-* pseudos get the usual translation — and the engine's
+// assembled scriptlet body is run verbatim.  generichide is already
+// accounted for inside hide (the engine drops generic selectors).
+static void applyRustCosmetic(QWebEnginePage *page, const QJsonObject &cosmetic)
+{
+    const QJsonArray hide = cosmetic.value(QLatin1String("hide")).toArray();
+    QStringList selectors;
+    for (const QJsonValue &value : hide) {
+        const QString css = translateAbpPseudos(value.toString());
+        if (css.contains(QLatin1String(":-abp-"))
+            || css.contains(QLatin1String("+js(")))
+            continue; // pseudo we cannot translate
+        selectors.append(css);
+    }
+    if (!selectors.isEmpty()) {
+        const QString css = QLatin1String(":is(")
+            + selectors.join(QLatin1Char(','))
+            + QLatin1String(") { display: none !important; }");
+        const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
+            .toJson(QJsonDocument::Compact);
+        const QString script = QLatin1String(
+            "(function(){var s=document.getElementById('arora-adblock');"
+            "if(!s){s=document.createElement('style');s.id='arora-adblock';"
+            "document.documentElement.appendChild(s);}"
+            "s.textContent=%1[0];})()")
+            .arg(QString::fromUtf8(jsonCss));
+        page->runJavaScript(script);
+    }
+
+    const QString script = cosmetic.value(QLatin1String("script")).toString();
+    if (!script.isEmpty())
+        page->runJavaScript(script);
+}
+#endif
+
 void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
 {
     if (!page)
@@ -333,6 +376,22 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
     AdBlockManager *manager = AdBlockManager::instance();
     if (!manager->isEnabled())
         return;
+
+#if defined(ARORA_ADBLOCK_RUST)
+    // The Rust engine is authoritative when loaded; an empty object
+    // means no engine (fall back to the native cosmetic path).
+    // Hostless documents (about:blank and friends) cannot be
+    // evaluated by adblock-rust at all — uBO likewise injects nothing
+    // there — so they also stay on the native path.
+    if (!page->url().host().isEmpty()) {
+        const QJsonObject rustCosmetic =
+            manager->network()->rustCosmetic(page->url());
+        if (!rustCosmetic.isEmpty()) {
+            applyRustCosmetic(page, rustCosmetic);
+            return;
+        }
+    }
+#endif
 
     const QString host = page->url().host();
     const QString documentUrl = QString::fromUtf8(page->url().toEncoded());

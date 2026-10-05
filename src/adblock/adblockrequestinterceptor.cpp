@@ -98,6 +98,17 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     case AdBlockDecision::Allow:
         break;
     case AdBlockDecision::Redirect: {
+        // adblock-rust decisions carry a literal URL (data: stub
+        // payload or $removeparam-rewritten request URL); the native
+        // matcher names a bundled resource instead.
+        if (!decision.redirectUrl.isEmpty()) {
+#if defined(ADBLOCKINTERCEPTOR_DEBUG)
+            qDebug() << "AdBlockRequestInterceptor: redirect-url"
+                     << info.requestUrl() << "->" << decision.redirectUrl;
+#endif
+            info.redirect(QUrl(decision.redirectUrl));
+            return;
+        }
         const QByteArray resource = AdBlockResourceHandler::canonicalResourceName(
             decision.redirectResource);
         if (resource.isEmpty()) {

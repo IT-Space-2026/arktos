@@ -62,6 +62,12 @@ public:
     static bool resourceFor(const QByteArray &canonicalName,
                             QByteArray *mimeType, QByteArray *body);
 
+    // Every spelling an external filter engine should know:
+    // canonical stub names plus the alias spellings lists actually
+    // use in $redirect= options (each resolves through
+    // canonicalResourceName + resourceFor).
+    static QList<QByteArray> registrationNames();
+
     void requestStarted(QWebEngineUrlRequestJob *job) Q_DECL_OVERRIDE;
 };
 

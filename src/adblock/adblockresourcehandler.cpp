@@ -151,51 +151,8 @@ const QHash<QByteArray, StubResource> &resourceTable()
     return table;
 }
 
-} // namespace
-
-AdBlockResourceHandler::AdBlockResourceHandler(QObject *parent)
-    : QWebEngineUrlSchemeHandler(parent)
+const QHash<QString, QByteArray> &aliasTable()
 {
-}
-
-QByteArray AdBlockResourceHandler::schemeName()
-{
-    return QByteArrayLiteral("arora-resource");
-}
-
-void AdBlockResourceHandler::registerUrlScheme()
-{
-    QWebEngineUrlScheme scheme(schemeName());
-    scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
-    // Redirect targets must load from any page origin: secure so https
-    // pages accept them, CSP-ignored so strict sites cannot defeat the
-    // redirect, fetch-allowed so XHR/fetch stubs work.
-    scheme.setFlags(QWebEngineUrlScheme::SecureScheme
-                    | QWebEngineUrlScheme::CorsEnabled
-                    | QWebEngineUrlScheme::ContentSecurityPolicyIgnored
-                    | QWebEngineUrlScheme::FetchApiAllowed
-                    | QWebEngineUrlScheme::LocalAccessAllowed);
-    QWebEngineUrlScheme::registerScheme(scheme);
-}
-
-QByteArray AdBlockResourceHandler::canonicalResourceName(const QString &name)
-{
-    QString cleaned = name.trimmed();
-    if (cleaned.isEmpty())
-        return QByteArray();
-
-    // uBO priorities ("redirect=noop.js:99") and ABP priorities
-    // ("redirect=noop.js:47") — everything after the last ':' that is
-    // purely numeric is a priority hint, strip it.
-    const int colon = cleaned.lastIndexOf(QLatin1Char(':'));
-    if (colon != -1) {
-        bool numeric = !cleaned.mid(colon + 1).isEmpty();
-        for (const QChar c : cleaned.mid(colon + 1))
-            numeric = numeric && c.isDigit();
-        if (numeric)
-            cleaned = cleaned.left(colon);
-    }
-
     static const QHash<QString, QByteArray> aliases = {
         { QStringLiteral("1x1-transparent-gif"), "1x1.gif" },
         { QStringLiteral("1x1.gif"), "1x1.gif" },
@@ -247,8 +204,55 @@ QByteArray AdBlockResourceHandler::canonicalResourceName(const QString &name)
         { QStringLiteral("noeval.js"), "noop.js" },
         { QStringLiteral("silent-noeval.js"), "noop.js" },
     };
+    return aliases;
+}
 
-    const QByteArray alias = aliases.value(cleaned);
+} // namespace
+
+AdBlockResourceHandler::AdBlockResourceHandler(QObject *parent)
+    : QWebEngineUrlSchemeHandler(parent)
+{
+}
+
+QByteArray AdBlockResourceHandler::schemeName()
+{
+    return QByteArrayLiteral("arora-resource");
+}
+
+void AdBlockResourceHandler::registerUrlScheme()
+{
+    QWebEngineUrlScheme scheme(schemeName());
+    scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+    // Redirect targets must load from any page origin: secure so https
+    // pages accept them, CSP-ignored so strict sites cannot defeat the
+    // redirect, fetch-allowed so XHR/fetch stubs work.
+    scheme.setFlags(QWebEngineUrlScheme::SecureScheme
+                    | QWebEngineUrlScheme::CorsEnabled
+                    | QWebEngineUrlScheme::ContentSecurityPolicyIgnored
+                    | QWebEngineUrlScheme::FetchApiAllowed
+                    | QWebEngineUrlScheme::LocalAccessAllowed);
+    QWebEngineUrlScheme::registerScheme(scheme);
+}
+
+QByteArray AdBlockResourceHandler::canonicalResourceName(const QString &name)
+{
+    QString cleaned = name.trimmed();
+    if (cleaned.isEmpty())
+        return QByteArray();
+
+    // uBO priorities ("redirect=noop.js:99") and ABP priorities
+    // ("redirect=noop.js:47") — everything after the last ':' that is
+    // purely numeric is a priority hint, strip it.
+    const int colon = cleaned.lastIndexOf(QLatin1Char(':'));
+    if (colon != -1) {
+        bool numeric = !cleaned.mid(colon + 1).isEmpty();
+        for (const QChar c : cleaned.mid(colon + 1))
+            numeric = numeric && c.isDigit();
+        if (numeric)
+            cleaned = cleaned.left(colon);
+    }
+
+    const QByteArray alias = aliasTable().value(cleaned);
     if (!alias.isEmpty())
         return alias;
 
@@ -288,6 +292,14 @@ bool AdBlockResourceHandler::resourceFor(const QByteArray &canonicalName,
     *mimeType = resource.mimeType;
     *body = resource.body;
     return true;
+}
+
+QList<QByteArray> AdBlockResourceHandler::registrationNames()
+{
+    QList<QByteArray> names = resourceTable().keys();
+    for (const QString &alias : aliasTable().keys())
+        names.append(alias.toUtf8());
+    return names;
 }
 
 void AdBlockResourceHandler::requestStarted(QWebEngineUrlRequestJob *job)
