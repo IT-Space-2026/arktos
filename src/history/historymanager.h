@@ -140,6 +140,9 @@ public:
     // has no app-visible on-disk icon store.
     QIcon icon(const QUrl &url) const;
     void setIcon(const QUrl &url, const QIcon &icon);
+    // QWebSettings::clearIconDatabase() replacement: drops the
+    // in-memory icon cache (MIG11, used by ClearPrivateData).
+    void clearIcons();
 
     // History manager keeps around these models for use by the completer and other classes
     HistoryModel *historyModel() const;

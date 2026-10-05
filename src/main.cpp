@@ -23,10 +23,13 @@
 #include "adblockrule.h"
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
+#include "acceptlanguagedialog.h"
 #include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
+#include "browserprofile.h"
+#include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "historymanager.h"
@@ -37,6 +40,7 @@
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
 #include "schemeaccesshandler.h"
+#include "settings.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
@@ -52,11 +56,16 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
+#include <QtGui/QIcon>
+#include <QtGui/QPixmap>
+#include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
+#include <QtWebEngineCore/QWebEngineScriptCollection>
+#include <QtWebEngineCore/QWebEngineSettings>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
 
@@ -112,19 +121,24 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--adblock-smoke"))
         || args.contains(QLatin1String("--adblock-list-smoke"))
         || args.contains(QLatin1String("--adblock-rust-smoke"))
-        || args.contains(QLatin1String("--autofill-smoke")))
+        || args.contains(QLatin1String("--autofill-smoke"))
+        || args.contains(QLatin1String("--settings-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
     // MIG15.  The normal browsing profile must be a NAMED profile:
     // QWebEngineProfile::defaultProfile() is off-the-record (nothing —
-    // cookies, cache, storage — persists to disk).  A named profile
-    // gives Arora's normal browsing its persistent state; private
-    // browsing gets the lazily-created off-the-record profile.
-    QWebEngineProfile *profile =
-        new QWebEngineProfile(QStringLiteral("arora"), &application);
-    CookieJar *cookieJar = new CookieJar(profile, &application);
+    // cookies, cache, storage — persists to disk).  The named "arora"
+    // profile gives normal browsing its persistent state; private
+    // browsing gets BrowserProfile::privateProfile().  MIG11: the lazy
+    // singletons live in BrowserProfile/CookieJar so the settings dialog
+    // and clear-private-data reach the same objects.
+    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+    CookieJar *cookieJar = CookieJar::instance(profile);
     SchemeAccessHandler::installAll(profile, &application);
+    // MIG11: apply the persisted websettings/network groups (was
+    // BrowserApplication::loadSettings()).
+    BrowserProfile::applySettings(profile);
 
     // MIG04: application-side fetch manager (opensearch, adblock
     // subscriptions).  TODO(MIG15): BrowserApplication delegates to
@@ -134,7 +148,7 @@ int main(int argc, char **argv)
     // MIG05: intercepts every profile it is installed on and turns
     // downloadRequested into DownloadItem rows.  TODO(MIG15): also call
     // installOnProfile() on the off-the-record private profile.
-    DownloadManager *downloadManager = new DownloadManager();
+    DownloadManager *downloadManager = DownloadManager::instance();
     downloadManager->installOnProfile(profile);
 
     // MIG09: profile-level url request interceptor replaces the
@@ -852,6 +866,93 @@ int main(int argc, char **argv)
                 << "(built without CONFIG+=adblock_rust)";
         return 0;
 #endif
+    }
+
+    // Headless verification for MIG11: the settings dialog's
+    // websettings map must land on the profile's QWebEngineSettings
+    // (fonts, WebAttribute toggles, user style sheet injected as a
+    // QWebEngineScript — setUserStyleSheetUrl is gone), the cookie and
+    // network groups must reach the profile cookie jar and http cache
+    // settings, the shared Accept-Language helpers must emit a valid
+    // header, and ClearPrivateData must wipe history, cookies and the
+    // icon cache.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--settings-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](bool condition, const char *what) {
+            if (!condition)
+                qInfo() << "settings-smoke: FAIL at" << what;
+            ok = ok && condition;
+        };
+
+        const QString cssPath = QDir::temp().filePath(
+            QLatin1String("arora-settings-smoke.css"));
+        {
+            QFile css(cssPath);
+            if (css.open(QIODevice::WriteOnly))
+                css.write("body { background: red; }");
+        }
+
+        SettingsDialog dialog;
+        dialog.enableJavascript->setChecked(false);
+        dialog.enableImages->setChecked(false);
+        dialog.acceptCombo->setCurrentIndex(1);   // CookieJar::AcceptNever
+        dialog.networkCache->setChecked(false);
+        dialog.userStyleSheet->setText(cssPath);
+        dialog.accept();
+
+        QWebEngineSettings *engineSettings = profile->settings();
+        check(!engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled),
+              "enableJavascript");
+        check(!engineSettings->testAttribute(QWebEngineSettings::AutoLoadImages),
+              "enableImages");
+        check(profile->httpCacheType() == QWebEngineProfile::NoCache,
+              "httpCacheType");
+        check(cookieJar->acceptPolicy() == CookieJar::AcceptNever,
+              "acceptPolicy");
+        check(!profile->httpAcceptLanguage().isEmpty(),
+              "httpAcceptLanguage");
+        bool foundStyleScript = false;
+        const QList<QWebEngineScript> scripts = profile->scripts()->toList();
+        for (const QWebEngineScript &script : scripts)
+            foundStyleScript |= script.name() == QLatin1String("aroraUserStyleSheet");
+        check(foundStyleScript, "userStyleSheet script");
+
+        check(AcceptLanguageDialog::httpString(
+                  QStringList() << QLatin1String("English (United States) [en-us]")
+                                << QLatin1String("French [fr]"))
+              == "en-us, fr;q=0.9", "httpString");
+        check(!AcceptLanguageDialog::acceptLanguages().isEmpty(),
+              "acceptLanguages");
+
+        // ClearPrivateData: seed history, an icon and a cookie, then
+        // clear and verify everything is gone.
+        HistoryManager *history = HistoryManager::instance();
+        const QUrl seededUrl(QLatin1String("http://settings-smoke.example/"));
+        history->addHistoryEntry(seededUrl.toString());
+        const QIcon seededIcon(QPixmap(4, 4));
+        history->setIcon(seededUrl, seededIcon);
+        cookieJar->setAcceptPolicy(CookieJar::AcceptAlways);
+        cookieJar->setCookiesFromUrl(
+            QList<QNetworkCookie>() << QNetworkCookie("smoke", "1"),
+            seededUrl);
+
+        ClearPrivateData clearDialog;
+        clearDialog.accept();
+
+        check(!history->historyContains(seededUrl.toString()),
+              "browsing history cleared");
+        check(cookieJar->cookies().isEmpty(), "cookies cleared");
+        check(history->icon(seededUrl).cacheKey() != seededIcon.cacheKey(),
+              "icons cleared");
+
+        // Leave no residue: drop the keys the dialog wrote and
+        // re-apply defaults (also exercises the reset path).
+        QSettings().clear();
+        BrowserProfile::applySettings(profile);
+        QFile::remove(cssPath);
+
+        qInfo() << "settings-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
     }
 
     return application.exec();

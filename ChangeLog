@@ -52,6 +52,9 @@ Autofill (MIG10):
     Password form saving and filling is back, reimplemented for WebEngine: an injected script (src/data/autofill.js, replacing parseForms.js) fills stored credentials after each page load and reports form submits through a per-page QWebChannel object instead of the old QNetworkAccessManager POST hook, which no longer exists. The stored-forms list, the save-password prompt ("Never for this site" / "Not now"), the preferences pane and the Form Passwords dialog are unchanged, and the autofill.dat store keeps its format.
     Private windows (off-the-record profile) still get forms filled but are never recorded. Feature deltas vs the WebKit version: submits inside iframes and submits fired before the page's channel handshake completes can be missed, and a submit that navigates immediately may race the report delivery — WebEngine gives no way to observe the POST itself.
 
+Settings and private data (MIG11):
+    Port the preferences dialog, accept-language dialog and Clear Private Data to WebEngine. Settings now live on a shared QWebEngineProfile (fonts, JavaScript/images/popups/plugins toggles, disk cache size, Accept-Language header) applied through a new BrowserProfile helper; the custom user style sheet is injected as a page script since WebEngine has no setUserStyleSheetUrl. Clear Private Data wipes history, favicons, downloads, search-box history, cookies, Chromium visited links and both the WebEngine and application disk caches. Feature deltas vs the WebKit version: the "maximum pages in memory cache" option and the Ctrl access-key hint toggle are gone (no WebEngine equivalent), and Clear Private Data no longer needs to restart the browser to empty the cache.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

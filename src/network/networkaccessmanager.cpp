@@ -62,6 +62,7 @@
 
 #include "networkaccessmanager.h"
 
+#include "acceptlanguagedialog.h"
 #include "networkcookiejar.h"
 #include "networkdiskcache.h"
 #include "networkproxyfactory.h"
@@ -329,36 +330,13 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
 
 /*
     Builds the Accept-Language header (RFC 2616 section 14.4) from the
-    list stored by the accept-language settings page.  Entries saved by
-    AcceptLanguageDialog look like "English (United States) [en-us]" —
-    the bracketed tag is extracted.  TODO(MIG11): share
-    AcceptLanguageDialog::defaultAcceptList()/httpString() once the
-    dialog is ported instead of duplicating the tag parsing.
+    effective language list — shared with
+    BrowserProfile::applySettings(), which pushes the same value to the
+    web profile via QWebEngineProfile::setHttpAcceptLanguage (MIG11).
  */
 QByteArray NetworkAccessManager::acceptLanguage()
 {
-    QSettings settings;
-    QStringList acceptList = settings.value(QLatin1String("network/acceptLanguages")).toStringList();
-    if (acceptList.isEmpty())
-        acceptList = QLocale().uiLanguages();
-
-    QStringList processed;
-    qreal qvalue = 1.0;
-    foreach (const QString &string, acceptList) {
-        int leftBracket = string.indexOf(QLatin1Char('['));
-        int rightBracket = string.indexOf(QLatin1Char(']'));
-        QString tag = (leftBracket != -1 && rightBracket > leftBracket)
-                ? string.mid(leftBracket + 1, rightBracket - leftBracket - 1)
-                : string;
-        if (processed.isEmpty()) {
-            processed << tag;
-        } else {
-            processed << QString(QLatin1String("%1; %2")).arg(tag).arg(QString::number(qvalue, 'f', 1));
-        }
-        if (qvalue > .1)
-            qvalue -= .1;
-    }
-    return processed.join(QLatin1String(", ")).toLatin1();
+    return AcceptLanguageDialog::httpString(AcceptLanguageDialog::acceptLanguages());
 }
 
 QNetworkReply *NetworkAccessManager::createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData)

@@ -30,10 +30,15 @@ class AcceptLanguageDialog : public QDialog, public Ui_AcceptLanguage
     Q_OBJECT
 
 public:
-    AcceptLanguageDialog(QWidget *parent = 0, Qt::WindowFlags flags = 0);
+    AcceptLanguageDialog(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
     void accept();
     static QByteArray httpString(const QStringList &list);
     static QStringList defaultAcceptList();
+    // The effective Accept-Language list: the stored preference, else
+    // the UI-language default, else the system locale's languages.
+    // Shared with NetworkAccessManager::acceptLanguage() and
+    // BrowserProfile::applySettings (MIG11).
+    static QStringList acceptLanguages();
 
 private slots:
     void load();

@@ -46,6 +46,12 @@ signals:
 public:
     LanguageManager(QObject *parent = 0);
 
+    // Lazy qApp-owned singleton with the application locale directories
+    // already registered — replaces
+    // BrowserApplication::languageManager() while browserapplication.cpp
+    // is uncompiled (MIG15 delegates to it).
+    static LanguageManager *instance();
+
     void addLocaleDirectory(const QString &directory);
     QStringList localeDirectories() const;
 

@@ -152,6 +152,11 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     m_icons.insert(url.toString(), icon);
 }
 
+void HistoryManager::clearIcons()
+{
+    m_icons.clear();
+}
+
 bool HistoryManager::historyContains(const QString &url) const
 {
     return m_historyFilterModel->historyContains(url);

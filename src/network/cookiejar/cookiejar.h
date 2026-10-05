@@ -124,6 +124,13 @@ public:
     explicit CookieJar(QObject *parent = 0);
     ~CookieJar();
 
+    // One application-wide jar per profile (normal and off-the-record),
+    // lazily created and qApp-owned — replaces
+    // BrowserApplication::cookieJar() while browserapplication.cpp is
+    // uncompiled (MIG15 delegates to this).  A null profile argument
+    // resolves to BrowserProfile::normalProfile().
+    static CookieJar *instance(QWebEngineProfile *profile = 0);
+
     QWebEngineProfile *profile() const;
     bool isPrivate() const;
 

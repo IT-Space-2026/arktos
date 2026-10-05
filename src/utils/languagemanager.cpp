@@ -29,6 +29,8 @@
 
 #include "languagemanager.h"
 
+#include "browserpaths.h"
+
 #include <qapplication.h>
 #include <qdir.h>
 #include <qdiriterator.h>
@@ -53,6 +55,24 @@ LanguageManager::LanguageManager(QObject *parent)
 #ifdef LANGUAGEMANAGER_DEBUG
     qDebug() << "LanguageManager::" << __FUNCTION__;
 #endif
+}
+
+LanguageManager *LanguageManager::instance()
+{
+    static LanguageManager *manager = 0;
+    if (!manager) {
+        manager = new LanguageManager(qApp);
+        // Same locale search path BrowserApplication used to wire up.
+        manager->addLocaleDirectory(BrowserPaths::dataFilePath(QLatin1String("locale")));
+        manager->addLocaleDirectory(qApp->applicationDirPath() + QLatin1String("/src/.qm/locale"));
+#ifdef PKGDATADIR
+        manager->addLocaleDirectory(QLatin1String(PKGDATADIR) + QLatin1String("/locale"));
+#endif
+        manager->loadLanguageFromSettings();
+        // TODO(MIG15): connect languageChanged to
+        // BrowserApplication::retranslate once it is compiled again.
+    }
+    return manager;
 }
 
 void LanguageManager::addLocaleDirectory(const QString &directory)
@@ -89,7 +109,7 @@ bool LanguageManager::isLanguageAvailable(const QString &language) const
 
     // optimization so we don't have to load all the languages
     if (!m_loaded) {
-        foreach (const QString &dir, m_localeDirectories) {
+        for (const QString &dir : m_localeDirectories) {
             QString file = dir + QLatin1Char('/') + language + QLatin1String(".qm");
             if (QFile::exists(file))
                 return true;
@@ -122,7 +142,7 @@ QString LanguageManager::convertStringToLanguageFile(const QString &string) cons
         return fallback;
 
     // See if any language file matches the country
-    foreach (const QString &language, m_languages) {
+    for (const QString &language : m_languages) {
         QString country = QLocale(language).name().split(QLatin1Char('_')).value(0);
         if (country == fallback)
             return country;
@@ -156,10 +176,10 @@ bool LanguageManager::setCurrentLanguage(const QString &language)
     }
 
     QTranslator *newAppTranslator = new QTranslator(this);
-    QString resourceDir = QLibraryInfo::location(QLibraryInfo::TranslationsPath);
+    QString resourceDir = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
     QString languageFile = convertStringToLanguageFile(m_currentLanguage);
     bool loaded = false;
-    foreach (const QString &dir, m_localeDirectories) {
+    for (const QString &dir : m_localeDirectories) {
         loaded = newAppTranslator->load(languageFile, dir);
         if (loaded)
             break;
@@ -247,11 +267,11 @@ void LanguageManager::chooseNewLanguage()
     QStringList items;
     int defaultItem = -1;
     QString current = currentLanguage();
-    foreach (const QString &name, m_languages) {
+    for (const QString &name : m_languages) {
         QLocale locale(name);
         QString string = QString(QLatin1String("%1, %2 (%3) %4"))
             .arg(QLocale::languageToString(locale.language()))
-            .arg(QLocale::countryToString(locale.country()))
+            .arg(QLocale::territoryToString(locale.territory()))
             .arg(name)
             // this is for pretty RTL support
             .arg(QChar(0x200E)); // LRM = 0x200E
@@ -289,7 +309,7 @@ void LanguageManager::loadAvailableLanguages() const
     qDebug() << "LanguageManager::" << __FUNCTION__;
 #endif
 
-    foreach (const QString &dir, m_localeDirectories) {
+    for (const QString &dir : m_localeDirectories) {
         QDirIterator it(dir);
         while (it.hasNext()) {
             QString fileName = it.next();

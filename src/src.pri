@@ -30,24 +30,24 @@ exists(../.git/HEAD) {
 # FORMS += \
 #     aboutdialog.ui \              # TODO(MIG14)
 #     (autofilldialog.ui live — MIG10)
-#     acceptlanguagedialog.ui \     # TODO(MIG11)
+#     (acceptlanguagedialog.ui live — MIG11)
 #     (downloaditem.ui/downloads.ui live — MIG05)
 #     (searchbanner.ui live — MIG08)
-#     settings.ui                   # TODO(MIG11)
+#     (settings.ui live — MIG11)
 #
 # HEADERS += \
 #     aboutdialog.h \               # TODO(MIG14)
-#     acceptlanguagedialog.h \      # TODO(MIG11)
+#     (acceptlanguagedialog.h live — MIG11)
 #     (autofilldialog.h/autofillmanager.h live — MIG10)
 #     browserapplication.h \        # TODO(MIG15)
 #     browsermainwindow.h \         # TODO(MIG14)
-#     clearprivatedata.h \          # TODO(MIG11)
+#     (clearprivatedata.h live — MIG11)
 #     (downloadmanager.h live — MIG05)
 #     (modelmenu.h live — MIG06 dep)
 #     (modeltoolbar.h live — MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
 #     (searchbar.h live — MIG08)
-#     settings.h \                  # TODO(MIG11)
+#     (settings.h/browserprofile.h live — MIG11)
 #     sourcehighlighter.h \         # TODO(MIG12)
 #     sourceviewer.h \              # TODO(MIG12)
 #     tabbar.h \                    # TODO(MIG14)
@@ -55,27 +55,29 @@ exists(../.git/HEAD) {
 #     (toolbarsearch.h live — MIG08)
 #     (webactionmapper/webpage/webview moved to live list — MIG02 done)
 #     (autosaver/clearbutton/searchbutton/searchlineedit live — MIG03)
+#     (languagemanager live — MIG11 dep)
 #     (webpageproxy + networkaccessmanagerproxy deleted — MIG04)
 #     webviewsearch.h               # TODO(MIG12)
 #
 # SOURCES += \
 #     aboutdialog.cpp \             # TODO(MIG14)
-#     acceptlanguagedialog.cpp \    # TODO(MIG11)
+#     (acceptlanguagedialog.cpp live — MIG11)
 #     (autofilldialog.cpp/autofillmanager.cpp live — MIG10)
 #     browserapplication.cpp \      # TODO(MIG15)
 #     browsermainwindow.cpp \       # TODO(MIG14)
-#     clearprivatedata.cpp \        # TODO(MIG11)
+#     (clearprivatedata.cpp live — MIG11)
 #     (downloadmanager.cpp live — MIG05)
 #     (modelmenu.cpp live — MIG06 dep)
 #     (modeltoolbar.cpp live — MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
 #     (searchbar.cpp live — MIG08)
-#     settings.cpp \                # TODO(MIG11)
+#     (settings.cpp/browserprofile.cpp live — MIG11)
 #     sourcehighlighter.cpp \       # TODO(MIG12)
 #     sourceviewer.cpp \            # TODO(MIG12)
 #     tabbar.cpp \                  # TODO(MIG14)
 #     tabwidget.cpp \               # TODO(MIG14)
 #     (toolbarsearch.cpp live — MIG08)
+#     (languagemanager live — MIG11 dep)
 #     webviewsearch.cpp             # TODO(MIG12)
 #
 include(adblock/adblock.pri)          # MIG09 done
@@ -92,49 +94,61 @@ include(opensearch/opensearch.pri)    # MIG08 done
 include(network/cookiejar/cookiejar.pri)
 
 FORMS += \
+    acceptlanguagedialog.ui \
     autofilldialog.ui \
     downloaditem.ui \
     downloads.ui \
-    searchbanner.ui
+    searchbanner.ui \
+    settings.ui
 HEADERS += \
+    acceptlanguagedialog.h \
     autofilldialog.h \
     autofillmanager.h \
     autosaver.h \
     browserpaths.h \
+    browserprofile.h \
     clearbutton.h \
+    clearprivatedata.h \
     downloadmanager.h \
     modelmenu.h \
     modeltoolbar.h \
     searchbar.h \
     searchbutton.h \
     searchlineedit.h \
+    settings.h \
     toolbarsearch.h \
     webactionmapper.h \
     webpage.h \
     webview.h \
     utils/edittableview.h \
     utils/edittreeview.h \
+    utils/languagemanager.h \
     utils/lineedit.h \
     utils/lineedit_p.h \
     utils/squeezelabel.h \
     utils/treesortfilterproxymodel.h
 SOURCES += \
+    acceptlanguagedialog.cpp \
     autofilldialog.cpp \
     autofillmanager.cpp \
     autosaver.cpp \
+    browserprofile.cpp \
     clearbutton.cpp \
+    clearprivatedata.cpp \
     downloadmanager.cpp \
     modelmenu.cpp \
     modeltoolbar.cpp \
     searchbar.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
+    settings.cpp \
     toolbarsearch.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \
     utils/edittableview.cpp \
     utils/edittreeview.cpp \
+    utils/languagemanager.cpp \
     utils/lineedit.cpp \
     utils/squeezelabel.cpp \
     utils/treesortfilterproxymodel.cpp

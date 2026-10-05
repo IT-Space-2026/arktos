@@ -66,6 +66,7 @@
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "browsermainwindow.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
@@ -360,44 +361,14 @@ void BrowserApplication::postLaunch()
 
 void BrowserApplication::loadSettings()
 {
-    QSettings settings;
-    settings.beginGroup(QLatin1String("websettings"));
-
-    QWebSettings *defaultSettings = QWebSettings::globalSettings();
-    QString standardFontFamily = defaultSettings->fontFamily(QWebSettings::StandardFont);
-    int standardFontSize = defaultSettings->fontSize(QWebSettings::DefaultFontSize);
-    QFont standardFont = QFont(standardFontFamily, standardFontSize);
-    standardFont = qVariantValue<QFont>(settings.value(QLatin1String("standardFont"), standardFont));
-    defaultSettings->setFontFamily(QWebSettings::StandardFont, standardFont.family());
-    defaultSettings->setFontSize(QWebSettings::DefaultFontSize, standardFont.pointSize());
-    int minimumFontSize = settings.value(QLatin1String("minimumFontSize"),
-                defaultSettings->fontSize(QWebSettings::MinimumFontSize)).toInt();
-    defaultSettings->setFontSize(QWebSettings::MinimumFontSize, minimumFontSize);
-
-    QString fixedFontFamily = defaultSettings->fontFamily(QWebSettings::FixedFont);
-    int fixedFontSize = defaultSettings->fontSize(QWebSettings::DefaultFixedFontSize);
-    QFont fixedFont = QFont(fixedFontFamily, fixedFontSize);
-    fixedFont = qVariantValue<QFont>(settings.value(QLatin1String("fixedFont"), fixedFont));
-    defaultSettings->setFontFamily(QWebSettings::FixedFont, fixedFont.family());
-    defaultSettings->setFontSize(QWebSettings::DefaultFixedFontSize, fixedFont.pointSize());
-
-    defaultSettings->setAttribute(QWebSettings::JavascriptCanOpenWindows, !(settings.value(QLatin1String("blockPopupWindows"), true).toBool()));
-    defaultSettings->setAttribute(QWebSettings::JavascriptEnabled, settings.value(QLatin1String("enableJavascript"), true).toBool());
-    defaultSettings->setAttribute(QWebSettings::PluginsEnabled, settings.value(QLatin1String("enablePlugins"), true).toBool());
-    defaultSettings->setAttribute(QWebSettings::AutoLoadImages, settings.value(QLatin1String("enableImages"), true).toBool());
-    defaultSettings->setAttribute(QWebSettings::LocalStorageEnabled, settings.value(QLatin1String("enableLocalStorage"), true).toBool());
-    defaultSettings->setAttribute(QWebSettings::DeveloperExtrasEnabled, settings.value(QLatin1String("enableInspector"), false).toBool());
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    defaultSettings->setAttribute(QWebSettings::DnsPrefetchEnabled, true);
-#endif
-
-    QUrl url = settings.value(QLatin1String("userStyleSheet")).toUrl();
-    defaultSettings->setUserStyleSheetUrl(url);
-
-    int maximumPagesInCache = settings.value(QLatin1String("maximumPagesInCache"), 3).toInt();
-    QWebSettings::globalSettings()->setMaximumPagesInCache(maximumPagesInCache);
-
-    settings.endGroup();
+    // MIG11: the QSettings->QWebEngineSettings mapping moved to
+    // BrowserProfile so the settings dialog can share it while this
+    // file is uncompiled.  Dropped keys with no WebEngine equivalent:
+    // enableInspector (devtools always available), userStyleSheet is
+    // now injected as a QWebEngineScript, maximumPagesInCache (Chromium
+    // manages its own cache).  TODO(MIG15): also apply to the
+    // off-the-record profile once it exists.
+    BrowserProfile::applySettings(webEngineProfile());
 }
 
 QList<BrowserMainWindow*> BrowserApplication::mainWindows()
@@ -588,44 +559,35 @@ BrowserMainWindow *BrowserApplication::mainWindow()
 
 CookieJar *BrowserApplication::cookieJar()
 {
-    // One CookieJar per profile: the store filter/mirror is bound to the
-    // profile's QWebEngineCookieStore, so the private profile gets its
-    // own (non-persistent) jar.
-    static QHash<QWebEngineProfile*, CookieJar*> jars;
-    QWebEngineProfile *profile = webEngineProfile();
-    CookieJar *&jar = jars[profile];
-    if (!jar)
-        jar = new CookieJar(profile, instance());
-    return jar;
+    // MIG11: the jar-per-profile registry lives on CookieJar now.
+    return CookieJar::instance(webEngineProfile());
 }
 
 QWebEngineProfile *BrowserApplication::webEngineProfile()
 {
-    if (isPrivate()) {
-        // An unnamed profile is off-the-record: nothing hits disk.
-        if (!s_privateProfile)
-            s_privateProfile = new QWebEngineProfile(instance());
-        return s_privateProfile;
-    }
-    // MIG06: QWebEngineProfile::defaultProfile() is itself
-    // off-the-record — the persistent "normal" profile must be named.
-    if (!s_defaultProfile)
-        s_defaultProfile = new QWebEngineProfile(QLatin1String("arora"), instance());
-    return s_defaultProfile;
+    // MIG11: the lazy profile singletons live in BrowserProfile so
+    // compiled modules share the same named "arora"/OTR profiles.
+    // TODO(MIG15): remove the now-dead s_privateProfile/s_defaultProfile
+    // statics.
+    if (isPrivate())
+        return BrowserProfile::privateProfile();
+    return BrowserProfile::normalProfile();
 }
 
 DownloadManager *BrowserApplication::downloadManager()
 {
-    if (!s_downloadManager)
-        s_downloadManager = new DownloadManager();
-    return s_downloadManager;
+    // MIG11: the dialog owns its application-wide singleton now.
+    // TODO(MIG15): remove the now-dead s_downloadManager static and the
+    // matching `delete` in the destructor.
+    return DownloadManager::instance();
 }
 
 NetworkAccessManager *BrowserApplication::networkAccessManager()
 {
-    if (!s_networkAccessManager)
-        s_networkAccessManager = new NetworkAccessManager();
-    return s_networkAccessManager;
+    // MIG04: the manager owns its application-wide singleton now.
+    // TODO(MIG15): remove the now-dead s_networkAccessManager static and
+    // the matching `delete` in the destructor.
+    return NetworkAccessManager::instance();
 }
 
 HistoryManager *BrowserApplication::historyManager()
@@ -644,16 +606,11 @@ BookmarksManager *BrowserApplication::bookmarksManager()
 
 LanguageManager *BrowserApplication::languageManager()
 {
-    if (!s_languageManager) {
-        s_languageManager = new LanguageManager();
-        s_languageManager->addLocaleDirectory(dataFilePath(QLatin1String("locale")));
-        s_languageManager->addLocaleDirectory(qApp->applicationDirPath() + QLatin1String("/src/.qm/locale"));
-        s_languageManager->addLocaleDirectory(installedDataDirectory() + QLatin1String("/locale"));
-        s_languageManager->loadLanguageFromSettings();
-        connect(s_languageManager, SIGNAL(languageChanged(const QString &)),
-                qApp, SLOT(retranslate()));
-    }
-    return s_languageManager;
+    // MIG11: the manager owns its application-wide singleton now.
+    // TODO(MIG15): remove the now-dead s_languageManager static and the
+    // matching `delete` in the destructor, and restore the
+    // languageChanged -> retranslate() connection here.
+    return LanguageManager::instance();
 }
 
 AutoFillManager *BrowserApplication::autoFillManager()

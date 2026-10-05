@@ -147,6 +147,11 @@ public:
 
     DownloadManager(QWidget *parent = 0);
     ~DownloadManager();
+
+    // Lazy app singleton — replaces BrowserApplication::downloadManager()
+    // while browserapplication.cpp is uncompiled (MIG15 delegates).
+    static DownloadManager *instance();
+
     int activeDownloads() const;
     bool allowQuit();
 

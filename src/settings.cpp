@@ -65,46 +65,40 @@
 #include "acceptlanguagedialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
-#include "browserapplication.h"
-#include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "tabwidget.h"
-#include "webpluginfactory.h"
-#include "webpage.h"
 #include "webview.h"
 
-#include <qdesktopservices.h>
+#include <qapplication.h>
 #include <qfile.h>
 #include <qfontdialog.h>
 #include <qmetaobject.h>
-#include <qmessagebox.h>
 #include <qsettings.h>
+#include <qstandardpaths.h>
 #include <qfiledialog.h>
+#include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QDialog(parent)
-    , m_cacheEnabled(false)
 {
     setupUi(this);
-    connect(exceptionsButton, SIGNAL(clicked()), this, SLOT(showExceptions()));
-    connect(setHomeToCurrentPageButton, SIGNAL(clicked()), this, SLOT(setHomeToCurrentPage()));
-    connect(cookiesButton, SIGNAL(clicked()), this, SLOT(showCookies()));
-    connect(standardFontButton, SIGNAL(clicked()), this, SLOT(chooseFont()));
-    connect(fixedFontButton, SIGNAL(clicked()), this, SLOT(chooseFixedFont()));
-    connect(languageButton, SIGNAL(clicked()), this, SLOT(chooseAcceptLanguage()));
-    connect(downloadDirectoryButton, SIGNAL(clicked()), this, SLOT(chooseDownloadDirectory()));
-    connect(externalDownloadBrowse, SIGNAL(clicked()), this, SLOT(chooseDownloadProgram()));
-    connect(styleSheetBrowseButton, SIGNAL(clicked()), this, SLOT(chooseStyleSheet()));
+    connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
+    connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
+    connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
+    connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
+    connect(fixedFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFixedFont);
+    connect(languageButton, &QPushButton::clicked, this, &SettingsDialog::chooseAcceptLanguage);
+    connect(downloadDirectoryButton, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadDirectory);
+    connect(externalDownloadBrowse, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadProgram);
+    connect(styleSheetBrowseButton, &QPushButton::clicked, this, &SettingsDialog::chooseStyleSheet);
 
-    connect(editAutoFillUserButton, SIGNAL(clicked()), this, SLOT(editAutoFillUser()));
-
-    // As network cache has too many bugs in 4.5.1, do not allow to enable it.
-    if (QLatin1String(qVersion()) == QLatin1String("4.5.1"))
-        networkCache->setVisible(false);
+    connect(editAutoFillUserButton, &QPushButton::clicked, this, &SettingsDialog::editAutoFillUser);
 
     loadDefaults();
     loadFromSettings();
@@ -112,24 +106,29 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
 void SettingsDialog::loadDefaults()
 {
-    QWebSettings *defaultSettings = QWebSettings::globalSettings();
-    QString standardFontFamily = defaultSettings->fontFamily(QWebSettings::StandardFont);
-    int standardFontSize = defaultSettings->fontSize(QWebSettings::DefaultFontSize);
+    // The profile's QWebEngineSettings replaces QWebSettings::
+    // globalSettings() — pages inherit their settings from the profile.
+    QWebEngineSettings *defaultSettings = BrowserProfile::normalProfile()->settings();
+    QString standardFontFamily = defaultSettings->fontFamily(QWebEngineSettings::StandardFont);
+    int standardFontSize = defaultSettings->fontSize(QWebEngineSettings::DefaultFontSize);
     m_standardFont = QFont(standardFontFamily, standardFontSize);
     standardLabel->setText(QString(QLatin1String("%1 %2")).arg(m_standardFont.family()).arg(m_standardFont.pointSize()));
 
-    QString fixedFontFamily = defaultSettings->fontFamily(QWebSettings::FixedFont);
-    int fixedFontSize = defaultSettings->fontSize(QWebSettings::DefaultFixedFontSize);
+    QString fixedFontFamily = defaultSettings->fontFamily(QWebEngineSettings::FixedFont);
+    int fixedFontSize = defaultSettings->fontSize(QWebEngineSettings::DefaultFixedFontSize);
     m_fixedFont = QFont(fixedFontFamily, fixedFontSize);
     fixedLabel->setText(QString(QLatin1String("%1 %2")).arg(m_fixedFont.family()).arg(m_fixedFont.pointSize()));
 
-    downloadsLocation->setText(QDesktopServices::storageLocation(QDesktopServices::DesktopLocation));
+    QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (downloadDir.isEmpty())
+        downloadDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    downloadsLocation->setText(downloadDir);
 
-    blockPopupWindows->setChecked(!defaultSettings->testAttribute(QWebSettings::JavascriptCanOpenWindows));
-    enableJavascript->setChecked(defaultSettings->testAttribute(QWebSettings::JavascriptEnabled));
-    enablePlugins->setChecked(defaultSettings->testAttribute(QWebSettings::PluginsEnabled));
-    enableImages->setChecked(defaultSettings->testAttribute(QWebSettings::AutoLoadImages));
-    enableLocalStorage->setChecked(defaultSettings->testAttribute(QWebSettings::LocalStorageEnabled));
+    blockPopupWindows->setChecked(!defaultSettings->testAttribute(QWebEngineSettings::JavascriptCanOpenWindows));
+    enableJavascript->setChecked(defaultSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
+    enablePlugins->setChecked(defaultSettings->testAttribute(QWebEngineSettings::PluginsEnabled));
+    enableImages->setChecked(defaultSettings->testAttribute(QWebEngineSettings::AutoLoadImages));
+    enableLocalStorage->setChecked(defaultSettings->testAttribute(QWebEngineSettings::LocalStorageEnabled));
     clickToFlash->setChecked(false);
     cookieSessionCombo->setCurrentIndex(0);
     filterTrackingCookiesCheckbox->setChecked(false);
@@ -185,8 +184,8 @@ void SettingsDialog::loadFromSettings()
 
     // Appearance
     settings.beginGroup(QLatin1String("websettings"));
-    m_fixedFont = qVariantValue<QFont>(settings.value(QLatin1String("fixedFont"), m_fixedFont));
-    m_standardFont = qVariantValue<QFont>(settings.value(QLatin1String("standardFont"), m_standardFont));
+    m_fixedFont = settings.value(QLatin1String("fixedFont"), m_fixedFont).value<QFont>();
+    m_standardFont = settings.value(QLatin1String("standardFont"), m_standardFont).value<QFont>();
 
     standardLabel->setText(QString(QLatin1String("%1 %2")).arg(m_standardFont.family()).arg(m_standardFont.pointSize()));
     fixedLabel->setText(QString(QLatin1String("%1 %2")).arg(m_fixedFont.family()).arg(m_fixedFont.pointSize()));
@@ -253,10 +252,10 @@ void SettingsDialog::loadFromSettings()
     filterTrackingCookiesCheckbox->setChecked(settings.value(QLatin1String("filterTrackingCookies"), false).toBool());
     settings.endGroup();
 
-    // Network
+    // Network — also drives the profile's http cache through
+    // BrowserProfile::applySettings().
     settings.beginGroup(QLatin1String("network"));
-    m_cacheEnabled = settings.value(QLatin1String("cacheEnabled"), true).toBool();
-    networkCache->setChecked(m_cacheEnabled);
+    networkCache->setChecked(settings.value(QLatin1String("cacheEnabled"), true).toBool());
     networkCacheMaximumSizeSpinBox->setValue(settings.value(QLatin1String("maximumCacheSize"), 50).toInt());
     settings.endGroup();
 
@@ -279,15 +278,6 @@ void SettingsDialog::loadFromSettings()
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
     openLinksFromAppsIn->setCurrentIndex(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
     settings.endGroup();
-
-    // Accessibility
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    settings.beginGroup(QLatin1String("WebView"));
-    enableAccessKeys->setChecked(settings.value(QLatin1String("enableAccessKeys"), true).toBool());
-    settings.endGroup();
-#else
-    enableAccessKeys->setEnabled(false);
-#endif
 
     settings.beginGroup(QLatin1String("autofill"));
     autoFillPasswordFormsCheckBox->setChecked(settings.value(QLatin1String("passwordForms"), true).toBool());
@@ -434,48 +424,42 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("passwordForms"), autoFillPasswordFormsCheckBox->isChecked());
     settings.endGroup();
 
-    // Accessibility
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    settings.beginGroup(QLatin1String("WebView"));
-    settings.setValue(QLatin1String("enableAccessKeys"), enableAccessKeys->isChecked());
-    settings.endGroup();
-#endif
+    // Re-apply: the profile-level settings (was
+    // BrowserApplication::loadSettings()), then each live manager.
+    // TODO(MIG15): also apply to the off-the-record profile once
+    // private browsing creates pages on it.
+    BrowserProfile::applySettings(BrowserProfile::normalProfile());
+    NetworkAccessManager::instance()->loadSettings();
+    CookieJar::instance()->loadSettings();
+    HistoryManager::instance()->loadSettings();
+    AutoFillManager::instance()->loadSettings();
 
-    BrowserApplication::instance()->loadSettings();
-    BrowserApplication::networkAccessManager()->loadSettings();
-    BrowserApplication::cookieJar()->loadSettings();
-    BrowserApplication::historyManager()->loadSettings();
-    BrowserApplication::autoFillManager()->loadSettings();
-
-    WebPage::webPluginFactory()->refreshPlugins();
-
-    QList<BrowserMainWindow*> list = BrowserApplication::instance()->mainWindows();
-    foreach (BrowserMainWindow *mainWindow, list) {
-        mainWindow->tabWidget()->loadSettings();
+    // Per-page settings (user agent, open-links-in preference) — was a
+    // BrowserApplication::mainWindows() loop over each window's
+    // TabWidget.  Every live WebView re-reads its page settings
+    // instead; the widgets are reachable without BrowserMainWindow.
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        if (WebView *view = qobject_cast<WebView*>(widget))
+            view->loadSettings();
     }
 }
 
 void SettingsDialog::accept()
 {
     saveToSettings();
-    // Due to a bug in Qt <= 4.5.1, enabling/disabling cache requires the browser to be restarted.
-    if (QLatin1String(qVersion()) <= QLatin1String("4.5.1") && networkCache->isChecked() != m_cacheEnabled) {
-        QMessageBox::information(this, tr("Restart required"),
-                                 tr("The network cache configuration has changed. "
-                                    "So that it can be taken into account, the browser has to be restarted."));
-    }
     QDialog::accept();
 }
 
 void SettingsDialog::showCookies()
 {
-    CookieDialog dialog(BrowserApplication::cookieJar(), this);
+    CookieDialog dialog(CookieJar::instance(), this);
     dialog.exec();
 }
 
 void SettingsDialog::showExceptions()
 {
-    CookieExceptionsDialog dialog(BrowserApplication::cookieJar(), this);
+    CookieExceptionsDialog dialog(CookieJar::instance(), this);
     dialog.exec();
 }
 
@@ -515,15 +499,25 @@ void SettingsDialog::chooseFixedFont()
 
 void SettingsDialog::setHomeToCurrentPage()
 {
-    BrowserMainWindow *mw = static_cast<BrowserMainWindow*>(parent());
-    WebView *webView = mw->currentTab();
-    if (webView)
-        homeLineEdit->setText(QString::fromUtf8(webView->url().toEncoded()));
+    // TODO(MIG14): this used to go through BrowserMainWindow::
+    // currentTab(); until windows exist again, use the visible WebView
+    // under the parent window — a QTabWidget hides all non-current
+    // pages, so the unhidden view is the current tab.
+    QWidget *window = parentWidget();
+    if (!window)
+        return;
+    const QList<WebView*> views = window->findChildren<WebView*>();
+    for (WebView *view : views) {
+        if (!view->isHidden()) {
+            homeLineEdit->setText(QString::fromUtf8(view->url().toEncoded()));
+            return;
+        }
+    }
 }
 
 void SettingsDialog::chooseAcceptLanguage()
 {
-    AcceptLanguageDialog dialog;
+    AcceptLanguageDialog dialog(this);
     dialog.exec();
 }
 
@@ -536,7 +530,6 @@ void SettingsDialog::chooseStyleSheet()
 
 void SettingsDialog::editAutoFillUser()
 {
-    AutoFillDialog dialog;
+    AutoFillDialog dialog(this);
     dialog.exec();
 }
-

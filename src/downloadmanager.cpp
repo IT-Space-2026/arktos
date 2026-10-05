@@ -59,6 +59,7 @@
 #include "downloadmanager.h"
 
 #include "autosaver.h"
+#include "browserprofile.h"
 
 #include <math.h>
 
@@ -453,6 +454,17 @@ void DownloadItem::finished()
     It is a basic download manager.  It only downloads the file, doesn't do BitTorrent,
     extract zipped files or anything fancy.
   */
+DownloadManager *DownloadManager::instance()
+{
+    // Lazily created top-level dialog.  Not parented on qApp: a QWidget
+    // cannot take a non-widget parent, and a static QPointer keeps the
+    // lookup cheap without a leak-on-purpose flag.
+    static QPointer<DownloadManager> manager;
+    if (!manager)
+        manager = new DownloadManager();
+    return manager;
+}
+
 DownloadManager::DownloadManager(QWidget *parent)
     : QDialog(parent)
     , m_autoSaver(new AutoSaver(this))
@@ -504,11 +516,14 @@ QWebEnginePage *DownloadManager::retryPage(bool offTheRecord)
 {
     QWebEnginePage *&page = offTheRecord ? m_retryPageOtr : m_retryPage;
     if (!page) {
-        // A default-constructed page lives on its own off-the-record
-        // profile; non-private retries go through the default profile.
         page = offTheRecord
+            // A default-constructed page lives on its own off-the-record
+            // profile.
             ? new QWebEnginePage(this)
-            : new QWebEnginePage(QWebEngineProfile::defaultProfile(), this);
+            // QWebEngineProfile::defaultProfile() is itself off-the-record
+            // in Qt6 — normal retries go through Arora's persistent
+            // profile (MIG11).
+            : new QWebEnginePage(BrowserProfile::normalProfile(), this);
         installOnProfile(page->profile());
     }
     return page;

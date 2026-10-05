@@ -19,9 +19,9 @@
 
 #include "acceptlanguagedialog.h"
 
-#include "browserapplication.h"
 #include "languagemanager.h"
 
+#include <qitemselectionmodel.h>
 #include <qlistview.h>
 #include <qsettings.h>
 
@@ -29,13 +29,13 @@ AcceptLanguageDialog::AcceptLanguageDialog(QWidget *parent, Qt::WindowFlags flag
     : QDialog(parent, flags)
 {
     setupUi(this);
-    connect(addButton, SIGNAL(clicked()), this, SLOT(addLanguage()));
-    connect(removeButton, SIGNAL(clicked()), this, SLOT(removeLanguage()));
-    connect(moveUpButton, SIGNAL(clicked()), this, SLOT(moveLanguageUp()));
-    connect(moveDownButton, SIGNAL(clicked()), this, SLOT(moveLanguageDown()));
+    connect(addButton, &QPushButton::clicked, this, &AcceptLanguageDialog::addLanguage);
+    connect(removeButton, &QPushButton::clicked, this, &AcceptLanguageDialog::removeLanguage);
+    connect(moveUpButton, &QPushButton::clicked, this, &AcceptLanguageDialog::moveLanguageUp);
+    connect(moveDownButton, &QPushButton::clicked, this, &AcceptLanguageDialog::moveLanguageDown);
     listView->setModel(&m_model);
-    connect(listView->selectionModel(), SIGNAL(currentChanged(const QModelIndex &, const QModelIndex &)),
-            this, SLOT(currentChanged(const QModelIndex &, const QModelIndex &)));
+    connect(listView->selectionModel(), &QItemSelectionModel::currentChanged,
+            this, &AcceptLanguageDialog::currentChanged);
     load();
 
     QStringList allLanguages;
@@ -48,18 +48,26 @@ AcceptLanguageDialog::AcceptLanguageDialog(QWidget *parent, Qt::WindowFlags flag
 QStringList AcceptLanguageDialog::expand(const QLocale::Language language)
 {
     QStringList allLanguages;
-    QList<QLocale::Country> countries = QLocale::countriesForLanguage(language);
-    for (int j = 0; j < countries.size(); ++j) {
+    // countriesForLanguage() is deprecated in Qt6; matchingLocales()
+    // can return several scripts per territory, so dedupe.
+    QList<QLocale::Territory> territories;
+    const QList<QLocale> locales =
+        QLocale::matchingLocales(language, QLocale::AnyScript, QLocale::AnyTerritory);
+    for (const QLocale &locale : locales) {
+        if (!territories.contains(locale.territory()))
+            territories.append(locale.territory());
+    }
+    for (int j = 0; j < territories.size(); ++j) {
         QString languageString;
-        if (countries.count() == 1) {
+        if (territories.count() == 1) {
             languageString = QString(QLatin1String("%1 [%2]"))
                 .arg(QLocale::languageToString(language))
                 .arg(QLocale(language).name().split(QLatin1Char('_')).at(0));
         } else {
             languageString = QString(QLatin1String("%1/%2 [%3]"))
                 .arg(QLocale::languageToString(language))
-                .arg(QLocale::countryToString(countries.at(j)))
-                .arg(QLocale(language, countries.at(j)).name().split(QLatin1Char('_')).join(QLatin1String("-")).toLower());
+                .arg(QLocale::territoryToString(territories.at(j)))
+                .arg(QLocale(language, territories.at(j)).name().split(QLatin1Char('_')).join(QLatin1String("-")).toLower());
 
         }
         if (!allLanguages.contains(languageString))
@@ -79,10 +87,23 @@ void AcceptLanguageDialog::currentChanged(const QModelIndex &current, const QMod
 
 QStringList AcceptLanguageDialog::defaultAcceptList()
 {
-    QString currentLanguage = BrowserApplication::instance()->languageManager()->currentLanguage();
+    // The UI language (system locale unless the user picked a different
+    // application language in LanguageManager).
+    QString currentLanguage = LanguageManager::instance()->currentLanguage();
     if (currentLanguage.isEmpty())
         return QStringList();
     return expand(QLocale(currentLanguage).language());
+}
+
+QStringList AcceptLanguageDialog::acceptLanguages()
+{
+    QSettings settings;
+    QStringList list = settings.value(QLatin1String("network/acceptLanguages")).toStringList();
+    if (list.isEmpty())
+        list = defaultAcceptList();
+    if (list.isEmpty())
+        list = QLocale().uiLanguages();
+    return list;
 }
 
 void AcceptLanguageDialog::accept()
@@ -118,14 +139,21 @@ QByteArray AcceptLanguageDialog::httpString(const QStringList &list)
 {
     QStringList processed;
     qreal qvalue = 1.0;
-    foreach (const QString &string, list) {
+    for (const QString &string : list) {
+        // Entries saved by this dialog look like "English (United
+        // States) [en-us]" — extract the bracketed tag; a bare BCP47
+        // tag (the QLocale::uiLanguages() fallback) is used as-is.
         int leftBracket = string.indexOf(QLatin1Char('['));
         int rightBracket = string.indexOf(QLatin1Char(']'));
-        QString tag = string.mid(leftBracket + 1, rightBracket - leftBracket - 1);
+        QString tag = (leftBracket != -1 && rightBracket > leftBracket)
+                ? string.mid(leftBracket + 1, rightBracket - leftBracket - 1)
+                : string.trimmed();
+        if (tag.isEmpty())
+            continue;
         if (processed.isEmpty()) {
             processed << tag;
         } else {
-            processed << QString(QLatin1String("%1; %2")).arg(tag).arg(QString::number(qvalue, 'f', 1));
+            processed << QString(QLatin1String("%1;q=%2")).arg(tag).arg(QString::number(qvalue, 'f', 1));
         }
         if (qvalue > .1)
             qvalue -= .1;
@@ -140,7 +168,7 @@ void AcceptLanguageDialog::moveLanguageUp()
     m_model.removeRow(currentRow);
     m_model.insertRows(currentRow - 1, 1);
     m_model.setData(m_model.index(currentRow - 1), item);
-    listView->setCurrentIndex(m_model.index(currentRow + 1));
+    listView->setCurrentIndex(m_model.index(currentRow - 1));
 }
 
 void AcceptLanguageDialog::moveLanguageDown()

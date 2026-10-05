@@ -19,8 +19,7 @@
 
 #include "clearprivatedata.h"
 
-#include "browserapplication.h"
-#include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "historymanager.h"
@@ -28,6 +27,7 @@
 #include "toolbarsearch.h"
 
 #include <qabstractnetworkcache.h>
+#include <qapplication.h>
 #include <qcheckbox.h>
 #include <qdialogbuttonbox.h>
 #include <qlabel.h>
@@ -35,7 +35,7 @@
 #include <qlist.h>
 #include <qpushbutton.h>
 #include <qsettings.h>
-#include <qwebsettings.h>
+#include <qwebengineprofile.h>
 
 ClearPrivateData::ClearPrivateData(QWidget *parent)
     : QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint)
@@ -64,12 +64,11 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     m_cookies->setChecked(settings.value(QLatin1String("cookies"), true).toBool());
     layout->addWidget(m_cookies);
 
+    // The web cache lives inside the profile now (Chromium's http
+    // cache), so this stays enabled even when the app-side NAM disk
+    // cache is off.
     m_cache = new QCheckBox(tr("C&ached Web Pages"));
-    if (BrowserApplication::networkAccessManager()->cache()) {
-        m_cache->setChecked(settings.value(QLatin1String("cache"), true).toBool());
-    } else {
-        m_cache->setEnabled(false);
-    }
+    m_cache->setChecked(settings.value(QLatin1String("cache"), true).toBool());
     layout->addWidget(m_cache);
 
     m_favIcons = new QCheckBox(tr("Website &Icons"));
@@ -84,8 +83,8 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     QDialogButtonBox *buttonBox = new QDialogButtonBox;
     buttonBox->addButton(acceptButton, QDialogButtonBox::AcceptRole);
     buttonBox->addButton(rejectButton, QDialogButtonBox::RejectRole);
-    connect(buttonBox, SIGNAL(accepted()), this, SLOT(accept()));
-    connect(buttonBox, SIGNAL(rejected()), this, SLOT(reject()));
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &ClearPrivateData::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, this, &ClearPrivateData::reject);
     layout->addWidget(buttonBox);
 
     setLayout(layout);
@@ -106,32 +105,47 @@ void ClearPrivateData::accept()
 
     settings.endGroup();
 
+    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+
     if (m_browsingHistory->isChecked()) {
-        BrowserApplication::historyManager()->clear();
+        HistoryManager::instance()->clear();
+        // Chromium keeps its own visited-link database (the :visited
+        // styling and Omnibox history) — clear it too or links would
+        // keep rendering as visited.
+        profile->clearAllVisitedLinks();
     }
 
     if (m_downloadHistory->isChecked()) {
-        BrowserApplication::downloadManager()->cleanup();
-        BrowserApplication::downloadManager()->hide();
+        DownloadManager::instance()->cleanup();
+        DownloadManager::instance()->hide();
     }
 
     if (m_searchHistory->isChecked()) {
-        QList<BrowserMainWindow*> mainWindows = BrowserApplication::instance()->mainWindows();
-        for (int i = 0; i < mainWindows.count(); ++i) {
-            mainWindows.at(i)->toolbarSearch()->setText(QString());
+        // Was a BrowserApplication::mainWindows() loop reaching each
+        // window's ToolbarSearch; every live ToolbarSearch clears its
+        // own recent-search list.
+        const QWidgetList widgets = qApp->allWidgets();
+        for (QWidget *widget : widgets) {
+            if (ToolbarSearch *search = qobject_cast<ToolbarSearch*>(widget))
+                search->clear();
         }
     }
 
     if (m_cookies->isChecked()) {
-        BrowserApplication::cookieJar()->clear();
+        CookieJar::instance()->clear();
     }
 
-    if (m_cache->isChecked() && BrowserApplication::networkAccessManager()->cache()) {
-        BrowserApplication::networkAccessManager()->cache()->clear();
+    if (m_cache->isChecked()) {
+        profile->clearHttpCache();
+        // The app-side fetch cache (opensearch, adblock lists) too.
+        if (QAbstractNetworkCache *cache = NetworkAccessManager::instance()->cache())
+            cache->clear();
     }
 
     if (m_favIcons->isChecked()) {
-        QWebSettings::clearIconDatabase();
+        // QWebSettings::clearIconDatabase() is gone; the app-side icon
+        // store lives on the HistoryManager now.
+        HistoryManager::instance()->clearIcons();
     }
     QDialog::accept();
 }

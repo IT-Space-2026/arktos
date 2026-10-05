@@ -159,13 +159,6 @@
          </property>
         </widget>
        </item>
-       <item row="5" column="0" colspan="3">
-        <widget class="QCheckBox" name="enableAccessKeys">
-         <property name="text">
-          <string>Enable access keys</string>
-         </property>
-        </widget>
-       </item>
        <item row="6" column="0" colspan="3">
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">

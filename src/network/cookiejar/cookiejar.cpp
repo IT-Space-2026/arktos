@@ -65,8 +65,11 @@
 #include "cookiejar.h"
 
 #include "autosaver.h"
+#include "browserprofile.h"
 
+#include <qcoreapplication.h>
 #include <qdatetime.h>
+#include <qhash.h>
 #include <qmetaobject.h>
 #include <qnetworkcookiejar.h>
 #include <qsettings.h>
@@ -122,6 +125,17 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
 CookieJar::CookieJar(QObject *parent)
     : CookieJar(0, parent)
 {
+}
+
+CookieJar *CookieJar::instance(QWebEngineProfile *profile)
+{
+    if (!profile)
+        profile = BrowserProfile::normalProfile();
+    static QHash<QWebEngineProfile*, CookieJar*> jars;
+    CookieJar *&jar = jars[profile];
+    if (!jar)
+        jar = new CookieJar(profile, qApp);
+    return jar;
 }
 
 CookieJar::~CookieJar()
