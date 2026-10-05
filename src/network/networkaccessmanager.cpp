@@ -72,6 +72,7 @@
 #include <qdialog.h>
 #include <qlocale.h>
 #include <qmessagebox.h>
+#include <qpointer.h>
 #include <qsettings.h>
 #include <qstyle.h>
 
@@ -81,6 +82,14 @@
 #include <qsslerror.h>
 
 // #define NETWORKACCESSMANAGER_DEBUG
+
+NetworkAccessManager *NetworkAccessManager::instance()
+{
+    static QPointer<NetworkAccessManager> manager;
+    if (!manager)
+        manager = new NetworkAccessManager(qApp);
+    return manager;
+}
 
 NetworkAccessManager::NetworkAccessManager(QObject *parent)
     : QNetworkAccessManager(parent)

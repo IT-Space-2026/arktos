@@ -22,20 +22,18 @@
 #include "opensearchmanager.h"
 
 #include "autosaver.h"
-#include "browserapplication.h"
+#include "browserpaths.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
 
-#include <qdesktopservices.h>
 #include <qdir.h>
 #include <qdiriterator.h>
 #include <qfile.h>
 #include <qmessagebox.h>
 #include <qnetworkreply.h>
 #include <qnetworkrequest.h>
-#include <qregexp.h>
 #include <qsettings.h>
 #include <qstringlist.h>
 
@@ -43,8 +41,8 @@ OpenSearchManager::OpenSearchManager(QObject *parent)
     : QObject(parent)
     , m_autoSaver(new AutoSaver(this))
 {
-    connect(this, SIGNAL(changed()),
-            m_autoSaver, SLOT(changeOccurred()));
+    connect(this, &OpenSearchManager::changed,
+            m_autoSaver, &AutoSaver::changeOccurred);
 
     load();
 }
@@ -115,8 +113,8 @@ void OpenSearchManager::addEngine(const QUrl &url)
     if (!url.isValid())
         return;
 
-    QNetworkReply *reply = BrowserApplication::networkAccessManager()->get(QNetworkRequest(url));
-    connect(reply, SIGNAL(finished()), this, SLOT(engineFromUrlAvailable()));
+    QNetworkReply *reply = NetworkAccessManager::instance()->get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, this, &OpenSearchManager::engineFromUrlAvailable);
     reply->setParent(this);
 }
 
@@ -164,7 +162,7 @@ void OpenSearchManager::removeEngine(const QString &name)
         return;
 
     OpenSearchEngine *engine = m_engines[name];
-    foreach (const QString &keyword, m_keywords.keys(engine))
+    for (const QString &keyword : m_keywords.keys(engine))
         m_keywords.remove(keyword);
     engine->deleteLater();
 
@@ -185,7 +183,7 @@ QString OpenSearchManager::generateEngineFileName(const QString &engineName) con
     QString fileName;
 
     // Strip special characters from the name.
-    for (int i = 0; i < engineName.count(); ++i) {
+    for (int i = 0; i < engineName.size(); ++i) {
         if (engineName.at(i).isSpace()) {
             fileName.append(QLatin1Char('_'));
             continue;
@@ -209,7 +207,7 @@ void OpenSearchManager::saveDirectory(const QString &dirName)
 
     OpenSearchWriter writer;
 
-    foreach (OpenSearchEngine *engine, m_engines.values()) {
+    for (OpenSearchEngine *engine : m_engines.values()) {
         QString name = generateEngineFileName(engine->name());
         QString fileName = dir.filePath(name);
 
@@ -297,8 +295,7 @@ void OpenSearchManager::restoreDefaults()
 
 QString OpenSearchManager::enginesDirectory() const
 {
-    QDir directory(QDesktopServices::storageLocation(QDesktopServices::DataLocation));
-    return directory.filePath(QLatin1String("searchengines"));
+    return BrowserPaths::dataFilePath(QLatin1String("searchengines"));
 }
 
 bool OpenSearchManager::confirmAddition(OpenSearchEngine *engine)
@@ -404,10 +401,10 @@ void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QSt
     if (!engine)
         return;
 
-    foreach (const QString &keyword, keywordsForEngine(engine))
+    for (const QString &keyword : keywordsForEngine(engine))
         m_keywords.remove(keyword);
 
-    foreach (const QString &keyword, keywords) {
+    for (const QString &keyword : keywords) {
         if (keyword.isEmpty())
             continue;
 

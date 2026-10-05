@@ -64,11 +64,10 @@
 #include "toolbarsearch.h"
 
 #include "autosaver.h"
-#include "browserapplication.h"
-#include "browsermainwindow.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchengineaction.h"
+#include "opensearchdialog.h"
 #include "opensearchmanager.h"
 #include "searchbutton.h"
 #include "webpage.h"
@@ -82,7 +81,7 @@
 #include <qstandarditemmodel.h>
 #include <qtimer.h>
 #include <qurl.h>
-#include <qwebsettings.h>
+#include <qwebengineprofile.h>
 
 OpenSearchManager *ToolbarSearch::s_openSearchManager = 0;
 
@@ -101,8 +100,8 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
     , m_suggestTimer(0)
     , m_completer(0)
 {
-    connect(openSearchManager(), SIGNAL(currentEngineChanged()),
-            this, SLOT(currentEngineChanged()));
+    connect(openSearchManager(), &OpenSearchManager::currentEngineChanged,
+            this, &ToolbarSearch::currentEngineChanged);
 
     m_completer = new QCompleter(m_model, this);
     m_completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
@@ -110,10 +109,19 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
 
     searchButton()->setShowMenuTriangle(true);
 
-    connect(searchButton(), SIGNAL(clicked()),
-            this, SLOT(showEnginesMenu()));
-    connect(this, SIGNAL(returnPressed()),
-            this, SLOT(searchNow()));
+    connect(searchButton(), &SearchButton::clicked,
+            this, &ToolbarSearch::showEnginesMenu);
+    connect(this, &QLineEdit::returnPressed,
+            this, &ToolbarSearch::searchNow);
+
+    // Qt4 wired these in focusInEvent() because QLineEdit dropped its
+    // completer connections on focus-out; Qt6 keeps them on the
+    // private control object, so connecting once here is enough (and
+    // re-connecting per focus-in would stack duplicates).
+    connect(m_completer, QOverload<const QModelIndex &>::of(&QCompleter::activated),
+            this, &ToolbarSearch::completerActivated);
+    connect(m_completer, QOverload<const QModelIndex &>::of(&QCompleter::highlighted),
+            this, &ToolbarSearch::completerHighlighted);
 
     load();
 
@@ -123,8 +131,13 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
 OpenSearchManager *ToolbarSearch::openSearchManager()
 {
     if (!s_openSearchManager)
-        s_openSearchManager = new OpenSearchManager;
+        s_openSearchManager = new OpenSearchManager(qApp);
     return s_openSearchManager;
+}
+
+void ToolbarSearch::setWebView(WebView *webView)
+{
+    m_webView = webView;
 }
 
 void ToolbarSearch::currentEngineChanged()
@@ -137,12 +150,12 @@ void ToolbarSearch::currentEngineChanged()
     if (m_suggestionsEnabled) {
         if (openSearchManager()->engineExists(m_currentEngine)) {
             OpenSearchEngine *oldEngine = openSearchManager()->engine(m_currentEngine);
-            disconnect(oldEngine, SIGNAL(suggestions(const QStringList &)),
-                       this, SLOT(newSuggestions(const QStringList &)));
+            disconnect(oldEngine, &OpenSearchEngine::suggestions,
+                       this, &ToolbarSearch::newSuggestions);
         }
 
-        connect(newEngine, SIGNAL(suggestions(const QStringList &)),
-                this, SLOT(newSuggestions(const QStringList &)));
+        connect(newEngine, &OpenSearchEngine::suggestions,
+                this, &ToolbarSearch::newSuggestions);
     }
 
     setInactiveText(newEngine->name());
@@ -165,24 +178,6 @@ bool ToolbarSearch::completerHighlighted(const QModelIndex &index)
         return false;
     setText(index.data().toString());
     return true;
-}
-
-void ToolbarSearch::focusInEvent(QFocusEvent *event)
-{
-    SearchLineEdit::focusInEvent(event);
-
-    // Every time we get a focus in event QLineEdit re-connects...
-    disconnect(completer(), SIGNAL(activated(QString)),
-               this, SLOT(setText(QString)));
-    disconnect(completer(), SIGNAL(highlighted(QString)),
-               this, SLOT(_q_completionHighlighted(QString)));
-
-    // And every time it gets a focus out it disconnects everything from the completer to this :(
-    // So we have to re-connect
-    connect(completer(), SIGNAL(activated(const QModelIndex &)),
-            this, SLOT(completerActivated(const QModelIndex &)));
-    connect(completer(), SIGNAL(highlighted(const QModelIndex &)),
-            this, SLOT(completerHighlighted(const QModelIndex &)));
 }
 
 ToolbarSearch::~ToolbarSearch()
@@ -208,8 +203,8 @@ void ToolbarSearch::load()
 
     m_suggestionsEnabled = settings.value(QLatin1String("useSuggestions"), true).toBool();
     if (m_suggestionsEnabled) {
-        connect(this, SIGNAL(textEdited(const QString &)),
-                this, SLOT(textEdited(const QString &)));
+        connect(this, &QLineEdit::textEdited,
+                this, &ToolbarSearch::textEdited);
     }
 
     settings.endGroup();
@@ -219,14 +214,14 @@ void ToolbarSearch::load()
 void ToolbarSearch::textEdited(const QString &text)
 {
     Q_UNUSED(text);
-    // delay settings this to prevent BrowserApplication from creating
-    // the object when it isn't needed on startup
+    // delay creating this to prevent the network manager singleton from
+    // being created when it isn't needed on startup
     if (!m_suggestTimer) {
         m_suggestTimer = new QTimer(this);
         m_suggestTimer->setSingleShot(true);
         m_suggestTimer->setInterval(200);
-        connect(m_suggestTimer, SIGNAL(timeout()),
-                this, SLOT(getSuggestions()));
+        connect(m_suggestTimer, &QTimer::timeout,
+                this, &ToolbarSearch::getSuggestions);
     }
     m_suggestTimer->start();
 }
@@ -239,7 +234,7 @@ void ToolbarSearch::getSuggestions()
         return;
 
     if (!engine->networkAccessManager())
-        engine->setNetworkAccessManager(BrowserApplication::networkAccessManager());
+        engine->setNetworkAccessManager(NetworkAccessManager::instance());
 
     engine->requestSuggestions(text());
 }
@@ -253,8 +248,11 @@ void ToolbarSearch::searchNow()
 
     QString searchText = text();
 
-    QWebSettings *globalSettings = QWebSettings::globalSettings();
-    if (!globalSettings->testAttribute(QWebSettings::PrivateBrowsingEnabled)) {
+    // Private browsing is a profile property under Qt WebEngine (MIG03):
+    // recent searches are only recorded when the bound view's page is
+    // not on an off-the-record profile.
+    QWebEnginePage *page = m_webView ? m_webView->webPage() : 0;
+    if (!page || !page->profile()->isOffTheRecord()) {
         QStringList newList = m_recentSearches;
         if (newList.contains(searchText))
             newList.removeAt(newList.indexOf(searchText));
@@ -308,7 +306,7 @@ void ToolbarSearch::showEnginesMenu()
         OpenSearchEngine *engine = openSearchManager()->engine(name);
         OpenSearchEngineAction *action = new OpenSearchEngineAction(engine, &menu);
         action->setData(name);
-        connect(action, SIGNAL(triggered()), this, SLOT(changeCurrentEngine()));
+        connect(action, &QAction::triggered, this, &ToolbarSearch::changeCurrentEngine);
         menu.addAction(action);
 
         if (openSearchManager()->currentEngineName() == name) {
@@ -317,40 +315,58 @@ void ToolbarSearch::showEnginesMenu()
         }
     }
 
-    WebView *webView = BrowserMainWindow::parentWindow(this)->currentTab();
-    QList<WebPageLinkedResource> engines = webView->webPage()->linkedResources(QLatin1String("search"));
+    // Page-advertised engines go between these two separators.
+    QAction *enginesSeparator = menu.addSeparator();
 
-    if (!engines.empty())
-        menu.addSeparator();
+    // TODO(MIG14): use the BrowserMainWindow's searchManagerAction()
+    // once it exists again so the entry also lives in the Tools menu.
+    menu.addAction(tr("Configure Search Engines..."), this, &ToolbarSearch::showEnginesDialog);
 
-    for (int i = 0; i < engines.count(); ++i) {
-        WebPageLinkedResource engine = engines.at(i);
+    if (!m_recentSearches.isEmpty())
+        menu.addAction(tr("Clear Recent Searches"), this, &ToolbarSearch::clear);
 
-        QUrl url = engine.href;
-        QString title = engine.title;
-        QString mimetype = engine.type;
+    // WebEngine has no synchronous DOM access; the page's linked
+    // resources are collected in the render process and arrive while
+    // this menu's exec() runs its nested event loop, so the "Add"
+    // actions appear as soon as the page reports them.
+    if (m_webView) {
+        WebPage *page = m_webView->webPage();
+        QPointer<QMenu> menuGuard(&menu);
+        QPointer<WebView> viewGuard(m_webView);
+        page->linkedResources(QStringLiteral("search"),
+                [this, menuGuard, viewGuard, enginesSeparator](const QList<WebPageLinkedResource> &engines) {
+            if (!menuGuard)
+                return;
+            for (const WebPageLinkedResource &engine : engines) {
+                QUrl url = engine.href;
+                QString title = engine.title;
 
-        if (mimetype != QLatin1String("application/opensearchdescription+xml"))
-            continue;
-        if (url.isEmpty())
-            continue;
+                if (engine.type != QLatin1String("application/opensearchdescription+xml"))
+                    continue;
+                if (url.isEmpty())
+                    continue;
 
-        if (title.isEmpty())
-            title = webView->title().isEmpty() ? url.host() : webView->title();
+                if (title.isEmpty())
+                    title = viewGuard && !viewGuard->title().isEmpty()
+                            ? viewGuard->title() : url.host();
 
-        QAction *action = menu.addAction(tr("Add '%1'").arg(title), this, SLOT(addEngineFromUrl()));
-        action->setData(url);
-        action->setIcon(webView->icon());
+                QAction *action = new QAction(tr("Add '%1'").arg(title), menuGuard);
+                connect(action, &QAction::triggered, this, &ToolbarSearch::addEngineFromUrl);
+                action->setData(url);
+                if (viewGuard)
+                    action->setIcon(viewGuard->icon());
+                menuGuard->insertAction(enginesSeparator, action);
+            }
+        });
     }
 
-    menu.addSeparator();
-    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this))
-        menu.addAction(window->searchManagerAction());
-
-    if (!m_recentSearches.empty())
-        menu.addAction(tr("Clear Recent Searches"), this, SLOT(clear()));
-
     menu.exec(pos);
+}
+
+void ToolbarSearch::showEnginesDialog()
+{
+    OpenSearchDialog dialog(this);
+    dialog.exec();
 }
 
 void ToolbarSearch::changeCurrentEngine()

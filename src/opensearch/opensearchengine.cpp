@@ -23,13 +23,14 @@
 
 #include <qbuffer.h>
 #include <qcoreapplication.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
 #include <qlocale.h>
 #include <qnetworkrequest.h>
 #include <qnetworkreply.h>
-#include <qregexp.h>
-#include <qscriptengine.h>
-#include <qscriptvalue.h>
+#include <qregularexpression.h>
 #include <qstringlist.h>
+#include <qurlquery.h>
 
 /*!
     \class OpenSearchEngine
@@ -87,20 +88,10 @@ OpenSearchEngine::OpenSearchEngine(QObject *parent)
     , m_suggestionsMethod(QLatin1String("get"))
     , m_networkAccessManager(0)
     , m_suggestionsReply(0)
-    , m_scriptEngine(0)
     , m_delegate(0)
 {
     m_requestMethods.insert(QLatin1String("get"), QNetworkAccessManager::GetOperation);
     m_requestMethods.insert(QLatin1String("post"), QNetworkAccessManager::PostOperation);
-}
-
-/*!
-    A destructor.
-*/
-OpenSearchEngine::~OpenSearchEngine()
-{
-    if (m_scriptEngine)
-        m_scriptEngine->deleteLater();
 }
 
 QString OpenSearchEngine::parseTemplate(const QString &searchTerm, const QString &searchTemplate)
@@ -116,7 +107,7 @@ QString OpenSearchEngine::parseTemplate(const QString &searchTerm, const QString
     result.replace(QLatin1String("{language}"), language);
     result.replace(QLatin1String("{inputEncoding}"), QLatin1String("UTF-8"));
     result.replace(QLatin1String("{outputEncoding}"), QLatin1String("UTF-8"));
-    result.replace(QRegExp(QLatin1String("\\{([^\\}]*:|)source\\??\\}")), QCoreApplication::applicationName());
+    result.replace(QRegularExpression(QLatin1String("\\{([^\\}]*:|)source\\??\\}")), QCoreApplication::applicationName());
     result.replace(QLatin1String("{searchTerms}"), QLatin1String(QUrl::toPercentEncoding(searchTerm)));
 
     return result;
@@ -208,10 +199,12 @@ QUrl OpenSearchEngine::searchUrl(const QString &searchTerm) const
     QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, m_searchUrlTemplate).toUtf8());
 
     if (m_searchMethod != QLatin1String("post")) {
+        QUrlQuery query(retVal);
         Parameters::const_iterator end = m_searchParameters.constEnd();
         Parameters::const_iterator i = m_searchParameters.constBegin();
         for (; i != end; ++i)
-            retVal.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
+            query.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
+        retVal.setQuery(query);
     }
 
     return retVal;
@@ -260,10 +253,12 @@ QUrl OpenSearchEngine::suggestionsUrl(const QString &searchTerm) const
     QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, m_suggestionsUrlTemplate).toUtf8());
 
     if (m_suggestionsMethod != QLatin1String("post")) {
+        QUrlQuery query(retVal);
         Parameters::const_iterator end = m_suggestionsParameters.constEnd();
         Parameters::const_iterator i = m_suggestionsParameters.constBegin();
         for (; i != end; ++i)
-            retVal.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
+            query.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
+        retVal.setQuery(query);
     }
 
     return retVal;
@@ -367,7 +362,7 @@ void OpenSearchEngine::loadImage() const
         return;
 
     QNetworkReply *reply = m_networkAccessManager->get(QNetworkRequest(QUrl::fromEncoded(m_imageUrl.toUtf8())));
-    connect(reply, SIGNAL(finished()), this, SLOT(imageObtained()));
+    connect(reply, &QNetworkReply::finished, this, &OpenSearchEngine::imageObtained);
 }
 
 void OpenSearchEngine::imageObtained()
@@ -486,7 +481,7 @@ void OpenSearchEngine::requestSuggestions(const QString &searchTerm)
         m_suggestionsReply = m_networkAccessManager->post(QNetworkRequest(suggestionsUrl(searchTerm)), data);
     }
 
-    connect(m_suggestionsReply, SIGNAL(finished()), this, SLOT(suggestionsObtained()));
+    connect(m_suggestionsReply, &QNetworkReply::finished, this, &OpenSearchEngine::suggestionsObtained);
 }
 
 /*!
@@ -525,8 +520,7 @@ void OpenSearchEngine::requestSearchResults(const QString &searchTerm)
 
 void OpenSearchEngine::suggestionsObtained()
 {
-    QString response(QString::fromUtf8(m_suggestionsReply->readAll()));
-    response = response.trimmed();
+    QByteArray response = m_suggestionsReply->readAll().trimmed();
 
     m_suggestionsReply->close();
     m_suggestionsReply->deleteLater();
@@ -535,23 +529,19 @@ void OpenSearchEngine::suggestionsObtained()
     if (response.isEmpty())
         return;
 
-    if (!response.startsWith(QLatin1Char('[')) || !response.endsWith(QLatin1Char(']')))
+    // The suggestions response is a JSON array: ["term", ["sug1", ...]].
+    const QJsonDocument document = QJsonDocument::fromJson(response);
+    if (!document.isArray())
         return;
 
-    if (!m_scriptEngine)
-        m_scriptEngine = new QScriptEngine();
-
-    // Evaluate the JSON response using QtScript.
-    if (!m_scriptEngine->canEvaluate(response))
-        return;
-
-    QScriptValue responseParts = m_scriptEngine->evaluate(response);
-
-    if (!responseParts.property(1).isArray())
+    const QJsonArray parts = document.array();
+    if (parts.size() < 2 || !parts.at(1).isArray())
         return;
 
     QStringList suggestionsList;
-    qScriptValueToSequence(responseParts.property(1), suggestionsList);
+    const QJsonArray suggestionsArray = parts.at(1).toArray();
+    for (const QJsonValue &value : suggestionsArray)
+        suggestionsList.append(value.toString());
 
     emit suggestions(suggestionsList);
 }

@@ -81,7 +81,6 @@ public:
 
     // Qt WebEngine has no synchronous DOM access; the linked resources are
     // collected in the render process and reported through the callback.
-    // TODO(MIG08): port the toolbarsearch.cpp caller.
     void linkedResources(const QString &relation,
                          const std::function<void(const QList<WebPageLinkedResource> &)> &resultCallback);
     void linkedResources(const std::function<void(const QList<WebPageLinkedResource> &)> &resultCallback);

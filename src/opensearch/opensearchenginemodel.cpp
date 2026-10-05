@@ -21,19 +21,20 @@
 
 #include "opensearchenginemodel.h"
 
-#include "browserapplication.h"
+#include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 
 #include <qimage.h>
 #include <qicon.h>
+#include <qregularexpression.h>
 
 OpenSearchEngineModel::OpenSearchEngineModel(OpenSearchManager *manager, QObject *parent)
     : QAbstractTableModel(parent)
     , m_manager(manager)
 {
-    connect(manager, SIGNAL(changed()),
-            this, SLOT(enginesChanged()));
+    connect(manager, &OpenSearchManager::changed,
+            this, &OpenSearchEngineModel::enginesChanged);
 }
 
 bool OpenSearchEngineModel::removeRows(int row, int count, const QModelIndex &parent)
@@ -101,7 +102,7 @@ QVariant OpenSearchEngineModel::data(const QModelIndex &index, int role) const
         case Qt::DecorationRole: {
             QImage image = engine->image();
             if (image.isNull())
-                return BrowserApplication::icon(engine->imageUrl());
+                return HistoryManager::instance()->icon(QUrl(engine->imageUrl()));
             return image;
         break;
         }
@@ -145,7 +146,7 @@ bool OpenSearchEngineModel::setData(const QModelIndex &index, const QVariant &va
         return false;
 
     QString engineName = m_manager->allEnginesNames().at(index.row());
-    QStringList keywords = value.toString().split(QRegExp(QLatin1String("[ ,]+")), QString::SkipEmptyParts);
+    QStringList keywords = value.toString().split(QRegularExpression(QLatin1String("[ ,]+")), Qt::SkipEmptyParts);
 
     m_manager->setKeywordsForEngine(m_manager->engine(engineName), keywords);
 
@@ -172,6 +173,7 @@ QVariant OpenSearchEngineModel::headerData(int section, Qt::Orientation orientat
 
 void OpenSearchEngineModel::enginesChanged()
 {
-    QAbstractTableModel::reset();
+    beginResetModel();
+    endResetModel();
 }
 

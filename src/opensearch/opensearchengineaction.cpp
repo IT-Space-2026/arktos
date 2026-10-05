@@ -19,7 +19,7 @@
 
 #include "opensearchengineaction.h"
 
-#include "browserapplication.h"
+#include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 
@@ -28,18 +28,18 @@ OpenSearchEngineAction::OpenSearchEngineAction(OpenSearchEngine *engine, QObject
     , m_engine(engine)
 {
     if (!engine->networkAccessManager())
-        engine->setNetworkAccessManager(BrowserApplication::networkAccessManager());
+        engine->setNetworkAccessManager(NetworkAccessManager::instance());
 
     setText(engine->name());
     imageChanged();
-    connect(engine, SIGNAL(imageChanged()), this, SLOT(imageChanged()));
+    connect(engine, &OpenSearchEngine::imageChanged, this, &OpenSearchEngineAction::imageChanged);
 }
 
 void OpenSearchEngineAction::imageChanged()
 {
     QImage image = m_engine->image();
     if (image.isNull())
-        setIcon(BrowserApplication::icon(m_engine->imageUrl()));
+        setIcon(HistoryManager::instance()->icon(QUrl(m_engine->imageUrl())));
     else
         setIcon(QIcon(QPixmap::fromImage(image)));
 }

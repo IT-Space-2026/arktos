@@ -19,15 +19,16 @@
 
 #include "locationbar.h"
 
-#include "browserapplication.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
 #include "privacyindicator.h"
 #include "searchlineedit.h"
 #include "webview.h"
 
+#include <qapplication.h>
 #include <qdrag.h>
 #include <qevent.h>
+#include <qmimedata.h>
 #include <qpainter.h>
 #include <qstyleoption.h>
 
@@ -53,10 +54,10 @@ LocationBar::LocationBar(QWidget *parent)
 
     // clear button on the right
     ClearButton *m_clearButton = new ClearButton(this);
-    connect(m_clearButton, SIGNAL(clicked()),
-            this, SLOT(clear()));
-    connect(this, SIGNAL(textChanged(const QString&)),
-            m_clearButton, SLOT(textChanged(const QString&)));
+    connect(m_clearButton, &ClearButton::clicked,
+            this, &QLineEdit::clear);
+    connect(this, &QLineEdit::textChanged,
+            m_clearButton, &ClearButton::textChanged);
     addWidget(m_clearButton, RightSide);
 
     updateTextMargins();
@@ -68,10 +69,11 @@ void LocationBar::setWebView(WebView *webView)
     Q_ASSERT(webView);
     m_webView = webView;
     m_siteIcon->setWebView(webView);
-    connect(webView, SIGNAL(urlChanged(const QUrl &)),
-            this, SLOT(webViewUrlChanged(const QUrl &)));
-    connect(webView, SIGNAL(loadProgress(int)),
-            this, SLOT(update()));
+    m_privacyIndicator->setWebView(webView);
+    connect(webView, &QWebEngineView::urlChanged,
+            this, &LocationBar::webViewUrlChanged);
+    connect(webView, &QWebEngineView::loadProgress,
+            this, [this]() { update(); });
 }
 
 WebView *LocationBar::webView() const

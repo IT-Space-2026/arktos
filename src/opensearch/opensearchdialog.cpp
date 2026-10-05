@@ -20,7 +20,6 @@
 
 #include "opensearchdialog.h"
 
-#include "browserapplication.h"
 #include "opensearchenginemodel.h"
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
@@ -45,14 +44,10 @@ OpenSearchDialog::OpenSearchDialog(QWidget *parent)
     m_tableView->setShowGrid(false);
     m_tableView->setAlternatingRowColors(true);
 
-    connect(m_closeButton, SIGNAL(clicked()),
-            this, SLOT(close()));
-    connect(m_addButton, SIGNAL(clicked()),
-            this, SLOT(addButtonClicked()));
-    connect(m_deleteButton, SIGNAL(clicked()),
-            this, SLOT(deleteButtonClicked()));
-    connect(m_restoreButton, SIGNAL(clicked()),
-            this, SLOT(restoreButtonClicked()));
+    connect(m_closeButton, &QPushButton::clicked, this, &QDialog::close);
+    connect(m_addButton, &QPushButton::clicked, this, &OpenSearchDialog::addButtonClicked);
+    connect(m_deleteButton, &QPushButton::clicked, this, &OpenSearchDialog::deleteButtonClicked);
+    connect(m_restoreButton, &QPushButton::clicked, this, &OpenSearchDialog::restoreButtonClicked);
 }
 
 void OpenSearchDialog::addButtonClicked()
@@ -62,7 +57,7 @@ void OpenSearchDialog::addButtonClicked()
                                                           QString(),
                                                           tr("OpenSearch") + QLatin1String(" (*.xml)"));
 
-    foreach (const QString &fileName, fileNames) {
+    for (const QString &fileName : fileNames) {
         if (!ToolbarSearch::openSearchManager()->addEngine(fileName)) {
             QMessageBox::critical(this, tr("Error"),
                     tr("%1 is not a valid OpenSearch 1.1 description or is already on your list.").arg(fileName));

@@ -19,10 +19,13 @@
 
 #include "locationbarsiteicon.h"
 
+#include <qapplication.h>
+#include <qdrag.h>
 #include <qevent.h>
+#include <qmimedata.h>
 #include <qurl.h>
 
-#include "browserapplication.h"
+#include "historymanager.h"
 #include "webview.h"
 
 LocationBarSiteIcon::LocationBarSiteIcon(QWidget *parent)
@@ -38,10 +41,10 @@ LocationBarSiteIcon::LocationBarSiteIcon(QWidget *parent)
 void LocationBarSiteIcon::setWebView(WebView *webView)
 {
     m_webView = webView;
-    connect(webView, SIGNAL(loadFinished(bool)),
-            this, SLOT(webViewSiteIconChanged()));
-    connect(webView, SIGNAL(iconChanged()),
-            this, SLOT(webViewSiteIconChanged()));
+    connect(webView, &QWebEngineView::loadFinished,
+            this, &LocationBarSiteIcon::webViewSiteIconChanged);
+    connect(webView, &QWebEngineView::iconChanged,
+            this, &LocationBarSiteIcon::webViewSiteIconChanged);
 }
 
 void LocationBarSiteIcon::webViewSiteIconChanged()
@@ -49,7 +52,7 @@ void LocationBarSiteIcon::webViewSiteIconChanged()
     QUrl url;
     if (m_webView)
         url = m_webView->url();
-    setPixmap(BrowserApplication::instance()->icon(url).pixmap(16, 16));
+    setPixmap(HistoryManager::instance()->icon(url).pixmap(16, 16));
 }
 
 void LocationBarSiteIcon::mousePressEvent(QMouseEvent *event)
@@ -73,9 +76,9 @@ void LocationBarSiteIcon::mouseMoveEvent(QMouseEvent *event)
         QList<QUrl> urls;
         urls.append(m_webView->url());
         mimeData->setUrls(urls);
-        const QPixmap *p = pixmap();
-        if (p)
-            drag->setPixmap(*p);
+        const QPixmap p = pixmap();
+        if (!p.isNull())
+            drag->setPixmap(p);
         drag->setMimeData(mimeData);
         drag->exec();
     }

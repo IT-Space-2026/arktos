@@ -32,7 +32,7 @@ exists(../.git/HEAD) {
 #     autofilldialog.ui \           # TODO(MIG10)
 #     acceptlanguagedialog.ui \     # TODO(MIG11)
 #     (downloaditem.ui/downloads.ui live — MIG05)
-#     searchbanner.ui \             # TODO(MIG08)
+#     (searchbanner.ui live — MIG08)
 #     settings.ui                   # TODO(MIG11)
 #
 # HEADERS += \
@@ -47,13 +47,13 @@ exists(../.git/HEAD) {
 #     (modelmenu.h live — MIG06 dep)
 #     (modeltoolbar.h live — MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
-#     searchbar.h \                 # TODO(MIG08)
+#     (searchbar.h live — MIG08)
 #     settings.h \                  # TODO(MIG11)
 #     sourcehighlighter.h \         # TODO(MIG12)
 #     sourceviewer.h \              # TODO(MIG12)
 #     tabbar.h \                    # TODO(MIG14)
 #     tabwidget.h \                 # TODO(MIG14)
-#     toolbarsearch.h \             # TODO(MIG08)
+#     (toolbarsearch.h live — MIG08)
 #     (webactionmapper/webpage/webview moved to live list — MIG02 done)
 #     (autosaver/clearbutton/searchbutton/searchlineedit live — MIG03)
 #     (webpageproxy + networkaccessmanagerproxy deleted — MIG04)
@@ -71,21 +71,21 @@ exists(../.git/HEAD) {
 #     (modelmenu.cpp live — MIG06 dep)
 #     (modeltoolbar.cpp live — MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
-#     searchbar.cpp \               # TODO(MIG08)
+#     (searchbar.cpp live — MIG08)
 #     settings.cpp \                # TODO(MIG11)
 #     sourcehighlighter.cpp \       # TODO(MIG12)
 #     sourceviewer.cpp \            # TODO(MIG12)
 #     tabbar.cpp \                  # TODO(MIG14)
 #     tabwidget.cpp \               # TODO(MIG14)
-#     toolbarsearch.cpp \           # TODO(MIG08)
+#     (toolbarsearch.cpp live — MIG08)
 #     webviewsearch.cpp             # TODO(MIG12)
 #
 # include(adblock/adblock.pri)        # TODO(MIG09)
 include(bookmarks/bookmarks.pri)      # MIG07 done
 include(history/history.pri)          # MIG06 done
-# include(locationbar/locationbar.pri)  # TODO(MIG08)
+include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
-# include(opensearch/opensearch.pri)  # TODO(MIG08)
+include(opensearch/opensearch.pri)    # MIG08 done
 # include(qwebplugins/qwebplugins.pri)  # TODO(MIG13): remove, Flash is dead
 # include(utils/utils.pri)            # TODO(MIG02..MIG13 per file)
 # include(useragent/useragent.pri)    # TODO(MIG14)
@@ -95,7 +95,8 @@ include(network/cookiejar/cookiejar.pri)
 
 FORMS += \
     downloaditem.ui \
-    downloads.ui
+    downloads.ui \
+    searchbanner.ui
 HEADERS += \
     autosaver.h \
     browserpaths.h \
@@ -103,8 +104,10 @@ HEADERS += \
     downloadmanager.h \
     modelmenu.h \
     modeltoolbar.h \
+    searchbar.h \
     searchbutton.h \
     searchlineedit.h \
+    toolbarsearch.h \
     webactionmapper.h \
     webpage.h \
     webview.h \
@@ -120,8 +123,10 @@ SOURCES += \
     downloadmanager.cpp \
     modelmenu.cpp \
     modeltoolbar.cpp \
+    searchbar.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
+    toolbarsearch.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \

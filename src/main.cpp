@@ -23,8 +23,14 @@
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "historymanager.h"
+#include "locationbar.h"
 #include "networkaccessmanager.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
+#include "opensearchreader.h"
+#include "opensearchwriter.h"
 #include "schemeaccesshandler.h"
+#include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
 #include "xbelreader.h"
@@ -73,9 +79,9 @@ int main(int argc, char **argv)
     SchemeAccessHandler::installAll(profile, &application);
 
     // MIG04: application-side fetch manager (opensearch, adblock
-    // subscriptions).  TODO(MIG15): BrowserApplication owns the
-    // singleton.
-    NetworkAccessManager *networkAccessManager = new NetworkAccessManager(&application);
+    // subscriptions).  TODO(MIG15): BrowserApplication delegates to
+    // the singleton.
+    NetworkAccessManager *networkAccessManager = NetworkAccessManager::instance();
 
     // MIG05: intercepts every profile it is installed on and turns
     // downloadRequested into DownloadItem rows.  TODO(MIG15): also call
@@ -277,6 +283,90 @@ int main(int argc, char **argv)
                     << "entity:" << entity << ")";
             application.exit(ok ? 0 : 1);
         });
+    }
+
+    // Headless verification for MIG08: the bundled OpenSearch
+    // descriptions load from the resource, template substitution
+    // produces a valid search url, the XML round-trips through
+    // writer+reader, keyword search resolves, and a suggestion query
+    // against a local file:// reply is parsed via QJsonDocument (the
+    // QtScript eval path is gone).  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--search-smoke"))) {
+        OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+        OpenSearchEngine *google = manager->engine(QLatin1String("Google"));
+        bool ok = manager->enginesCount() >= 6 && google && google->isValid()
+                && manager->currentEngine();
+        if (google) {
+            const QUrl url = google->searchUrl(QLatin1String("hello world"));
+            ok = ok && url.isValid()
+                 && QString::fromUtf8(url.toEncoded())
+                        .contains(QLatin1String("hello%20world"));
+        }
+
+        // Writer + reader round-trip of a bundled engine.
+        QByteArray xml;
+        QBuffer writeBuffer(&xml);
+        writeBuffer.open(QIODevice::WriteOnly);
+        OpenSearchWriter writer;
+        bool wrote = google && writer.write(&writeBuffer, google);
+        writeBuffer.close();
+        QBuffer readBuffer(&xml);
+        OpenSearchReader reader;
+        OpenSearchEngine *copy = reader.read(&readBuffer);
+        ok = ok && wrote && reader.error() == QXmlStreamReader::NoError
+             && copy->isValid()
+             && copy->name() == google->name()
+             && copy->searchUrlTemplate() == google->searchUrlTemplate();
+        delete copy;
+
+        // Location-bar keyword search ("g terms" -> engine search url).
+        manager->setEngineForKeyword(QLatin1String("g"), google);
+        ok = ok && manager->convertKeywordSearchToUrl(
+                QLatin1String("g arora")).isValid();
+
+        // The widget side constructs offscreen.
+        LocationBar locationBar(&window);
+        locationBar.setWebView(view);
+        ToolbarSearch toolbarSearch(&window);
+        toolbarSearch.setWebView(view);
+        ok = ok && toolbarSearch.openSearchManager() == manager;
+
+        if (!ok) {
+            qInfo() << "search-smoke: FAIL (engines:" << manager->enginesCount() << ")";
+            return 1;
+        } else {
+            // Suggestions: a throwaway engine pointed at a local file
+            // reply exercises the JSON suggestion parser end-to-end.
+            const QString fixturePath = QDir::temp().filePath(
+                QLatin1String("arora-suggest-smoke.json"));
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "search-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("[\"arora\",[\"arora browser\",\"arora git\"]]");
+            fixture.close();
+
+            OpenSearchEngine *suggest = new OpenSearchEngine(&application);
+            suggest->setName(QLatin1String("smoke"));
+            suggest->setSuggestionsUrlTemplate(
+                QLatin1String("file://") + fixturePath
+                + QLatin1String("?q={searchTerms}"));
+            suggest->setNetworkAccessManager(networkAccessManager);
+            QObject::connect(suggest, &OpenSearchEngine::suggestions,
+                             &application,
+                             [&application, fixturePath](const QStringList &suggestions) {
+                const bool pass = suggestions.count() == 2
+                    && suggestions.at(0) == QLatin1String("arora browser");
+                qInfo() << "search-smoke:" << (pass ? "PASS" : "FAIL")
+                        << "suggestions:" << suggestions;
+                QFile::remove(fixturePath);
+                application.exit(pass ? 0 : 1);
+            });
+            suggest->requestSuggestions(QLatin1String("arora"));
+            QTimer::singleShot(15000, &application,
+                               [&application]() { application.exit(1); });
+        }
     }
 
     return application.exec();

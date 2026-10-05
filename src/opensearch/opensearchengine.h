@@ -28,7 +28,6 @@
 #include <qurl.h>
 
 class QNetworkReply;
-class QScriptEngine;
 
 class OpenSearchEngineDelegate;
 class OpenSearchEngine : public QObject
@@ -57,7 +56,6 @@ public:
     Q_PROPERTY(QNetworkAccessManager *networkAccessManager READ networkAccessManager WRITE setNetworkAccessManager)
 
     OpenSearchEngine(QObject *parent = 0);
-    ~OpenSearchEngine();
 
     QString name() const;
     void setName(const QString &name);
@@ -134,8 +132,6 @@ private:
 
     QNetworkAccessManager *m_networkAccessManager;
     QNetworkReply *m_suggestionsReply;
-
-    QScriptEngine *m_scriptEngine;
 
     OpenSearchEngineDelegate *m_delegate;
 };

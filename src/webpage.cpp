@@ -22,6 +22,9 @@
 
 #include "fileaccesshandler.h"
 #include "historymanager.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
+#include "toolbarsearch.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -50,8 +53,7 @@ JavaScriptExternalObject::JavaScriptExternalObject(QObject *parent)
 
 void JavaScriptExternalObject::AddSearchProvider(const QString &url)
 {
-    Q_UNUSED(url);
-    // TODO(MIG08): ToolbarSearch::openSearchManager()->addEngine(QUrl(url));
+    ToolbarSearch::openSearchManager()->addEngine(QUrl(url));
 }
 
 JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
@@ -82,15 +84,13 @@ QString JavaScriptAroraObject::translate(const QString &string)
 
 QObject *JavaScriptAroraObject::currentEngine() const
 {
-    // TODO(MIG08): return ToolbarSearch::openSearchManager()->currentEngine();
-    return 0;
+    return ToolbarSearch::openSearchManager()->currentEngine();
 }
 
 QString JavaScriptAroraObject::searchUrl(const QString &string) const
 {
-    Q_UNUSED(string);
-    // TODO(MIG08): return ToolbarSearch::openSearchManager()->currentEngine()->searchUrl(string);
-    return QString();
+    OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine();
+    return engine ? engine->searchUrl(string).toString() : QString();
 }
 
 WebPage::WebPage(QObject *parent)

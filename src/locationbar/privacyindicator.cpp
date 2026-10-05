@@ -19,20 +19,33 @@
 
 #include "privacyindicator.h"
 
-#include "browserapplication.h"
+#include "webview.h"
+
+#include <qpixmap.h>
+#include <qwebenginepage.h>
+#include <qwebengineprofile.h>
 
 PrivacyIndicator::PrivacyIndicator(QWidget *parent)
     : QLabel(parent)
 {
     setPixmap(QPixmap(QLatin1String(":graphics/private.png")));
-    connect(BrowserApplication::instance(), SIGNAL(privacyChanged(bool)),
-            this, SLOT(setVisible(bool)));
     setCursor(Qt::ArrowCursor);
-    setVisible(BrowserApplication::isPrivate());
+    hide();
+}
+
+void PrivacyIndicator::setWebView(WebView *webView)
+{
+    // Private browsing is a profile property under Qt WebEngine (MIG03):
+    // the indicator shows whether this location bar's page lives on an
+    // off-the-record profile rather than a global QWebSettings flag.
+    QWebEnginePage *page = webView ? webView->page() : 0;
+    setVisible(page && page->profile()->isOffTheRecord());
 }
 
 void PrivacyIndicator::mousePressEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
-    BrowserApplication::instance()->setPrivate(false);
+    // TODO(MIG15): leaving private mode means
+    // BrowserApplication::setPrivate(false) plus replacing the window's
+    // pages — a page's profile cannot be switched in place.
 }

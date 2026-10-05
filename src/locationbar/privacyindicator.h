@@ -22,12 +22,14 @@
 
 #include <qlabel.h>
 
+class WebView;
 class PrivacyIndicator : public QLabel
 {
     Q_OBJECT
 
 public:
     PrivacyIndicator(QWidget *parent = 0);
+    void setWebView(WebView *webView);
 
 protected:
     void mousePressEvent(QMouseEvent *event);

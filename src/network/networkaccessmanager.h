@@ -85,6 +85,10 @@ signals:
 
 public:
     NetworkAccessManager(QObject *parent = 0);
+    // Lazy app singleton (qApp-owned), like HistoryManager::instance().
+    // Replaces BrowserApplication::networkAccessManager() while
+    // browserapplication.cpp is still uncompiled (MIG15 delegates to it).
+    static NetworkAccessManager *instance();
 
 protected:
     virtual QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0);

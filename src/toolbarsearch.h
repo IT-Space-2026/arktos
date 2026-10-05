@@ -67,6 +67,8 @@
 
 #include "tabwidget.h"
 
+#include <qpointer.h>
+
 class AutoSaver;
 class OpenSearchManager;
 class QCompleter;
@@ -75,6 +77,7 @@ class QStandardItem;
 class QStandardItemModel;
 class QTimer;
 class QUrl;
+class WebView;
 class ToolbarSearch : public SearchLineEdit
 {
     Q_OBJECT
@@ -86,6 +89,10 @@ public:
     ToolbarSearch(QWidget *parent = 0);
     ~ToolbarSearch();
     static OpenSearchManager *openSearchManager();
+    // The view searches run against and page-provided engines are
+    // collected from.  TODO(MIG14): BrowserMainWindow must call this on
+    // creation and update it when the current tab changes.
+    void setWebView(WebView *webView);
 
 public slots:
     void clear();
@@ -100,12 +107,12 @@ private slots:
     bool completerHighlighted(const QModelIndex &index);
     void getSuggestions();
     void showEnginesMenu();
+    void showEnginesDialog();
     void changeCurrentEngine();
     void addEngineFromUrl();
 
 protected:
     void changeEvent(QEvent *event);
-    void focusInEvent(QFocusEvent *event);
 
 private:
     void load();
@@ -127,6 +134,7 @@ private:
     QTimer *m_suggestTimer;
 
     QCompleter *m_completer;
+    QPointer<WebView> m_webView;
 };
 
 #endif // TOOLBARSEARCH_H

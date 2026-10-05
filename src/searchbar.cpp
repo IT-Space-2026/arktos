@@ -39,20 +39,21 @@ SearchBar::SearchBar(QWidget *parent)
                           m_widget->width(), m_widget->height());
     hide();
 
-    connect(ui.nextButton, SIGNAL(clicked()),
-            this, SLOT(findNext()));
-    connect(ui.previousButton, SIGNAL(clicked()),
-            this, SLOT(findPrevious()));
-    connect(ui.searchLineEdit, SIGNAL(returnPressed()),
-            this, SLOT(findNext()));
-    connect(ui.searchLineEdit, SIGNAL(textEdited(const QString &)),
-            this, SLOT(findNext()));
-    connect(ui.doneButton, SIGNAL(clicked()),
-            this, SLOT(animateHide()));
-    connect(m_timeLine, SIGNAL(frameChanged(int)),
-            this, SLOT(frameChanged(int)));
+    connect(ui.nextButton, &QToolButton::clicked,
+            this, &SearchBar::findNext);
+    connect(ui.previousButton, &QToolButton::clicked,
+            this, &SearchBar::findPrevious);
+    connect(ui.searchLineEdit, &QLineEdit::returnPressed,
+            this, &SearchBar::findNext);
+    connect(ui.searchLineEdit, &QLineEdit::textEdited,
+            this, &SearchBar::findNext);
+    connect(ui.doneButton, &QPushButton::clicked,
+            this, &SearchBar::animateHide);
+    connect(m_timeLine, &QTimeLine::frameChanged,
+            this, &SearchBar::frameChanged);
 
-    new QShortcut(QKeySequence(Qt::Key_Escape), this, SLOT(animateHide()));
+    QShortcut *shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(shortcut, &QShortcut::activated, this, &SearchBar::animateHide);
 }
 
 void SearchBar::initializeSearchWidget()
@@ -91,8 +92,8 @@ void SearchBar::showFind()
         show();
         m_timeLine->setFrameRange(-1 * m_widget->height(), 0);
         m_timeLine->setDirection(QTimeLine::Forward);
-        disconnect(m_timeLine, SIGNAL(finished()),
-                   this, SLOT(hide()));
+        disconnect(m_timeLine, &QTimeLine::finished,
+                   this, &QWidget::hide);
         m_timeLine->start();
     }
     ui.searchLineEdit->setFocus();
@@ -110,7 +111,7 @@ void SearchBar::animateHide()
 {
     m_timeLine->setDirection(QTimeLine::Backward);
     m_timeLine->start();
-    connect(m_timeLine, SIGNAL(finished()), this, SLOT(hide()));
+    connect(m_timeLine, &QTimeLine::finished, this, &QWidget::hide);
 }
 
 void SearchBar::frameChanged(int frame)
