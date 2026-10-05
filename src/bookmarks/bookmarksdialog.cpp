@@ -65,9 +65,10 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
-#include "browserapplication.h"
+#include "edittreeview.h"
 #include "treesortfilterproxymodel.h"
 
+#include <qcursor.h>
 #include <qheaderview.h>
 #include <qmenu.h>
 
@@ -79,7 +80,7 @@ BookmarksDialog::BookmarksDialog(QWidget *parent, BookmarksManager *manager)
 {
     m_bookmarksManager = manager;
     if (!m_bookmarksManager)
-        m_bookmarksManager = BrowserApplication::bookmarksManager();
+        m_bookmarksManager = BookmarksManager::instance();
     setupUi(this);
 
     tree->setUniformRowHeights(true);
@@ -89,25 +90,25 @@ BookmarksDialog::BookmarksDialog(QWidget *parent, BookmarksManager *manager)
     m_bookmarksModel = m_bookmarksManager->bookmarksModel();
     m_proxyModel = new TreeSortFilterProxyModel(this);
     m_proxyModel->setFilterKeyColumn(-1);
-    connect(search, SIGNAL(textChanged(QString)),
-            m_proxyModel, SLOT(setFilterFixedString(QString)));
-    connect(removeButton, SIGNAL(clicked()), tree, SLOT(removeSelected()));
+    connect(search, &SearchLineEdit::textChanged,
+            m_proxyModel, &QSortFilterProxyModel::setFilterFixedString);
+    connect(removeButton, &QPushButton::clicked, tree, &EditTreeView::removeSelected);
     m_proxyModel->setSourceModel(m_bookmarksModel);
     tree->setModel(m_proxyModel);
     tree->setDragDropMode(QAbstractItemView::InternalMove);
     tree->setExpanded(m_proxyModel->index(0, 0), true);
     tree->setAlternatingRowColors(true);
     QFontMetrics fm(font());
-    int header = fm.width(QLatin1Char('m')) * 40;
+    int header = fm.horizontalAdvance(QLatin1Char('m')) * 40;
     tree->header()->resizeSection(0, header);
     tree->header()->setStretchLastSection(true);
-    connect(tree, SIGNAL(activated(const QModelIndex&)),
-            this, SLOT(openBookmark()));
+    connect(tree, &EditTreeView::activated,
+            this, QOverload<>::of(&BookmarksDialog::openBookmark));
     tree->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(tree, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(customContextMenuRequested(const QPoint &)));
-    connect(addFolderButton, SIGNAL(clicked()),
-            this, SLOT(newFolder()));
+    connect(tree, &EditTreeView::customContextMenuRequested,
+            this, &BookmarksDialog::customContextMenuRequested);
+    connect(addFolderButton, &QPushButton::clicked,
+            this, &BookmarksDialog::newFolder);
     expandNodes(m_bookmarksManager->bookmarks());
 }
 
@@ -153,22 +154,22 @@ void BookmarksDialog::customContextMenuRequested(const QPoint &pos)
 {
     QMenu menu;
     QModelIndex index = tree->indexAt(pos);
-    index = index.sibling(index.row(), 0);
+    index = index.siblingAtColumn(0);
     QModelIndex sourceIndex = m_proxyModel->mapToSource(index);
     const BookmarkNode *node = m_bookmarksModel->node(sourceIndex);
     if (index.isValid() && node->type() != BookmarkNode::Folder) {
-        menu.addAction(tr("Open"), this, SLOT(openInCurrentTab()));
-        menu.addAction(tr("Open in New Tab"), this, SLOT(openInNewTab()));
+        menu.addAction(tr("Open"), this, &BookmarksDialog::openInCurrentTab);
+        menu.addAction(tr("Open in New Tab"), this, &BookmarksDialog::openInNewTab);
         menu.addSeparator();
     }
     menu.addSeparator();
-    QAction *renameAction = menu.addAction(tr("Edit Name"), this, SLOT(editName()));
+    QAction *renameAction = menu.addAction(tr("Edit Name"), this, &BookmarksDialog::editName);
     renameAction->setEnabled(index.flags() & Qt::ItemIsEditable);
     if (index.isValid() && node->type() != BookmarkNode::Folder) {
-        menu.addAction(tr("Edit Address"), this, SLOT(editAddress()));
+        menu.addAction(tr("Edit Address"), this, &BookmarksDialog::editAddress);
     }
     menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("Delete"), tree, SLOT(removeSelected()));
+    QAction *deleteAction = menu.addAction(tr("Delete"), tree, &EditTreeView::removeSelected);
     deleteAction->setEnabled(index.flags() & Qt::ItemIsDragEnabled);
     menu.exec(QCursor::pos());
 }
@@ -181,15 +182,16 @@ void BookmarksDialog::openBookmark(TabWidget::OpenUrlIn tab)
     if (!index.parent().isValid() || !node || node->type() == BookmarkNode::Folder)
         return;
     emit openUrl(
-          index.sibling(index.row(), 1).data(BookmarksModel::UrlRole).toUrl(),
+          index.siblingAtColumn(1).data(BookmarksModel::UrlRole).toUrl(),
           tab,
-          index.sibling(index.row(), 0).data(Qt::DisplayRole).toString());
+          index.siblingAtColumn(0).data(Qt::DisplayRole).toString());
 }
 
 void BookmarksDialog::openBookmark()
 {
-    BrowserApplication::instance()->setEventMouseButtons(qApp->mouseButtons());
-    BrowserApplication::instance()->setEventKeyboardModifiers(qApp->keyboardModifiers());
+    // TODO(MIG15): BrowserApplication modifier tracking
+    // (setEventMouseButtons/setEventKeyboardModifiers) is gone until
+    // MIG15 — UserOrCurrent always lands on the current tab for now.
     openBookmark(TabWidget::UserOrCurrent);
 }
 
@@ -206,14 +208,14 @@ void BookmarksDialog::openInNewTab()
 void BookmarksDialog::editName()
 {
     QModelIndex idx = tree->currentIndex();
-    idx = idx.sibling(idx.row(), 0);
+    idx = idx.siblingAtColumn(0);
     tree->edit(idx);
 }
 
 void BookmarksDialog::editAddress()
 {
     QModelIndex idx = tree->currentIndex();
-    idx = idx.sibling(idx.row(), 1);
+    idx = idx.siblingAtColumn(1);
     tree->edit(idx);
 }
 

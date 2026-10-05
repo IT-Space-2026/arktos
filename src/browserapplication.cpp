@@ -636,9 +636,10 @@ HistoryManager *BrowserApplication::historyManager()
 
 BookmarksManager *BrowserApplication::bookmarksManager()
 {
-    if (!s_bookmarksManager)
-        s_bookmarksManager = new BookmarksManager;
-    return s_bookmarksManager;
+    // MIG07: the store owns its application-wide singleton now.
+    // TODO(MIG15): remove the now-dead s_bookmarksManager static and
+    // the matching `delete` in the destructor (instance() is qApp-owned).
+    return BookmarksManager::instance();
 }
 
 LanguageManager *BrowserApplication::languageManager()

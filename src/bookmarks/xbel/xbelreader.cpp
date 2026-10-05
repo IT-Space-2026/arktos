@@ -66,24 +66,8 @@
 
 #include "bookmarknode.h"
 
-QString XmlEntityResolver::resolveUndeclaredEntity(const QString &entity)
-{
-    if (entity == QLatin1String("nbsp"))
-        return QLatin1String(" ");
-
-    return QString();
-}
-
 XbelReader::XbelReader()
-    : m_entityResolver(0)
 {
-    m_entityResolver = new XmlEntityResolver();
-    setEntityResolver(m_entityResolver);
-}
-
-XbelReader::~XbelReader()
-{
-    delete m_entityResolver;
 }
 
 BookmarkNode *XbelReader::read(const QString &fileName)
@@ -92,14 +76,19 @@ BookmarkNode *XbelReader::read(const QString &fileName)
     if (!file.exists()) {
         return new BookmarkNode(BookmarkNode::Root);
     }
-    file.open(QFile::ReadOnly);
+    if (!file.open(QFile::ReadOnly))
+        return new BookmarkNode(BookmarkNode::Root);
     return read(&file);
 }
 
 BookmarkNode *XbelReader::read(QIODevice *device)
 {
     BookmarkNode *root = new BookmarkNode(BookmarkNode::Root);
-    setDevice(device);
+    // Qt6 removed QXmlStreamEntityResolver: expand the entities the old
+    // XmlEntityResolver resolved (just &nbsp;) before parsing.
+    QByteArray data = device->readAll();
+    data.replace("&nbsp;", "&#160;");
+    addData(data);
     while (!atEnd()) {
         readNext();
         if (isStartElement()) {

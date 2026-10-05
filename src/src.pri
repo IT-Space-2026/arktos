@@ -45,7 +45,7 @@ exists(../.git/HEAD) {
 #     clearprivatedata.h \          # TODO(MIG11)
 #     (downloadmanager.h live — MIG05)
 #     (modelmenu.h live — MIG06 dep)
-#     modeltoolbar.h \              # TODO(MIG07)
+#     (modeltoolbar.h live — MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
 #     searchbar.h \                 # TODO(MIG08)
 #     settings.h \                  # TODO(MIG11)
@@ -69,7 +69,7 @@ exists(../.git/HEAD) {
 #     clearprivatedata.cpp \        # TODO(MIG11)
 #     (downloadmanager.cpp live — MIG05)
 #     (modelmenu.cpp live — MIG06 dep)
-#     modeltoolbar.cpp \            # TODO(MIG07)
+#     (modeltoolbar.cpp live — MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
 #     searchbar.cpp \               # TODO(MIG08)
 #     settings.cpp \                # TODO(MIG11)
@@ -81,7 +81,7 @@ exists(../.git/HEAD) {
 #     webviewsearch.cpp             # TODO(MIG12)
 #
 # include(adblock/adblock.pri)        # TODO(MIG09)
-# include(bookmarks/bookmarks.pri)    # TODO(MIG07)
+include(bookmarks/bookmarks.pri)      # MIG07 done
 include(history/history.pri)          # MIG06 done
 # include(locationbar/locationbar.pri)  # TODO(MIG08)
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
@@ -102,6 +102,7 @@ HEADERS += \
     clearbutton.h \
     downloadmanager.h \
     modelmenu.h \
+    modeltoolbar.h \
     searchbutton.h \
     searchlineedit.h \
     webactionmapper.h \
@@ -118,6 +119,7 @@ SOURCES += \
     clearbutton.cpp \
     downloadmanager.cpp \
     modelmenu.cpp \
+    modeltoolbar.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
     webactionmapper.cpp \

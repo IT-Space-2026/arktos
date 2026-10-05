@@ -26,6 +26,10 @@ Downloads (MIG05):
     The download manager now drives QWebEngineDownloadRequest: Chromium streams files to disk itself once the item has picked a name and accepted the request. The download list UI, progress/speed/ETA display, "Try Again", open-with-desktop and the external download program option are kept. Suggested server file names are reduced to a bare file name and de-duplicated with a -N suffix so existing files are never silently overwritten.
     "Try Again" re-issues the download through its page (or a hidden page when the original is gone, e.g. items restored from disk) and re-attaches the fresh request to the same row. The default download directory moved from the desktop to the platform Downloads folder.
 
+Bookmarks (MIG07):
+    Port the bookmarks store, model, dialogs, menu and toolbar to Qt 6. The bookmarks file moved from QDesktopServices' data location to the standard application-data directory (still bookmarks.xbel). Bookmark favicons come from the history manager's icon cache — WebEngine has no application icon database.
+    The XBEL reader no longer supports arbitrary undeclared entities (Qt 6 removed QXmlStreamEntityResolver); "&nbsp;" is still expanded. Until the application object lands, opening bookmarks via Ctrl/middle-click modifiers behaves like a plain click.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

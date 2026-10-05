@@ -65,24 +65,28 @@
 #include "addbookmarkdialog.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
-#include "browserapplication.h"
+#include "historymanager.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
+#include <qapplication.h>
 #include <qbuffer.h>
+#include <qdatastream.h>
 #include <qevent.h>
+#include <qmimedata.h>
+#include <qstyle.h>
 
 BookmarksModel::BookmarksModel(BookmarksManager *bookmarkManager, QObject *parent)
     : QAbstractItemModel(parent)
     , m_endMacro(false)
     , m_bookmarksManager(bookmarkManager)
 {
-    connect(bookmarkManager, SIGNAL(entryAdded(BookmarkNode *)),
-            this, SLOT(entryAdded(BookmarkNode *)));
-    connect(bookmarkManager, SIGNAL(entryRemoved(BookmarkNode *, int, BookmarkNode *)),
-            this, SLOT(entryRemoved(BookmarkNode *, int, BookmarkNode *)));
-    connect(bookmarkManager, SIGNAL(entryChanged(BookmarkNode *)),
-            this, SLOT(entryChanged(BookmarkNode *)));
+    connect(bookmarkManager, &BookmarksManager::entryAdded,
+            this, &BookmarksModel::entryAdded);
+    connect(bookmarkManager, &BookmarksManager::entryRemoved,
+            this, &BookmarksModel::entryRemoved);
+    connect(bookmarkManager, &BookmarksManager::entryChanged,
+            this, &BookmarksModel::entryChanged);
 }
 
 QModelIndex BookmarksModel::index(BookmarkNode *node) const
@@ -163,7 +167,7 @@ QVariant BookmarksModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
         if (bookmarkNode->type() == BookmarkNode::Separator) {
             switch (index.column()) {
-            case 0: return QString(50, 0xB7);
+            case 0: return QString(50, QChar(0xB7));
             case 1: return QString();
             }
         }
@@ -189,7 +193,9 @@ QVariant BookmarksModel::data(const QModelIndex &index, int role) const
         if (index.column() == 0) {
             if (bookmarkNode->type() == BookmarkNode::Folder)
                 return QApplication::style()->standardIcon(QStyle::SP_DirIcon);
-            return BrowserApplication::instance()->icon(bookmarkNode->url);
+            // Favicons live on the HistoryManager (MIG06); WebEngine
+            // has no WebKit-style app icon database.
+            return HistoryManager::instance()->icon(QUrl(bookmarkNode->url));
         }
     }
 
@@ -294,7 +300,7 @@ QMimeData *BookmarksModel::mimeData(const QModelIndexList &indexes) const
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
     QList<QUrl> urls;
-    foreach (const QModelIndex &index, indexes) {
+    for (const QModelIndex &index : indexes) {
         if (index.column() != 0 || !index.isValid())
             continue;
         QByteArray encodedData;

@@ -66,7 +66,6 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
-#include "browserapplication.h"
 
 #include <qheaderview.h>
 #include <qtreeview.h>
@@ -98,7 +97,7 @@ AddBookmarkDialog::AddBookmarkDialog(QWidget *parent, BookmarksManager *bookmark
     setupUi(this);
 
     if (!m_bookmarksManager)
-        m_bookmarksManager = BrowserApplication::bookmarksManager();
+        m_bookmarksManager = BookmarksManager::instance();
 
     m_proxyModel = new AddBookmarkProxyModel(this);
     BookmarksModel *model = m_bookmarksManager->bookmarksModel();

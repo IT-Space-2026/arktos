@@ -65,13 +65,12 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
-#include "browserapplication.h"
 
 BookmarksMenu::BookmarksMenu(QWidget *parent)
     : ModelMenu(parent)
 {
-    connect(this, SIGNAL(activated(const QModelIndex &)),
-            this, SLOT(activated(const QModelIndex &)));
+    connect(this, &ModelMenu::activated,
+            this, &BookmarksMenu::activated);
     setStatusBarTextRole(BookmarksModel::UrlStringRole);
     setSeparatorRole(BookmarksModel::SeparatorRole);
 }
@@ -79,8 +78,10 @@ BookmarksMenu::BookmarksMenu(QWidget *parent)
 ModelMenu *BookmarksMenu::createBaseMenu()
 {
     BookmarksMenu *menu = new BookmarksMenu(this);
-    connect(menu, SIGNAL(openUrl(const QUrl&, TabWidget::OpenUrlIn, const QString&)),
-            this, SIGNAL(openUrl(const QUrl&, TabWidget::OpenUrlIn, const QString&)));
+    connect(menu,
+            QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(&BookmarksMenu::openUrl),
+            this,
+            QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(&BookmarksMenu::openUrl));
     return menu;
 }
 
@@ -113,8 +114,8 @@ void BookmarksMenu::postPopulated()
 
     addSeparator();
     QAction *action = addAction(tr("Open in Tabs"));
-    connect(action, SIGNAL(triggered()),
-            this, SLOT(openAll()));
+    connect(action, &QAction::triggered,
+            this, &BookmarksMenu::openAll);
 }
 
 void BookmarksMenu::openAll()
@@ -147,7 +148,7 @@ BookmarksMenuBarMenu::BookmarksMenuBarMenu(QWidget *parent)
 
 bool BookmarksMenuBarMenu::prePopulated()
 {
-    m_bookmarksManager = BrowserApplication::bookmarksManager();
+    m_bookmarksManager = BookmarksManager::instance();
     setModel(m_bookmarksManager->bookmarksModel());
     setRootIndex(m_bookmarksManager->bookmarksModel()->index(m_bookmarksManager->menu()));
     // initial actions

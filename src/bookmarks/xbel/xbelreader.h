@@ -67,17 +67,10 @@
 #include <qdatetime.h>
 
 class BookmarkNode;
-class XmlEntityResolver : public QXmlStreamEntityResolver
-{
-public:
-    QString resolveUndeclaredEntity(const QString &entity);
-};
-
 class XbelReader : public QXmlStreamReader
 {
 public:
     XbelReader();
-    ~XbelReader();
 
     BookmarkNode *read(const QString &fileName);
     BookmarkNode *read(QIODevice *device);
@@ -90,9 +83,6 @@ private:
     void readSeparator(BookmarkNode *parent);
     void readFolder(BookmarkNode *parent);
     void readBookmarkNode(BookmarkNode *parent);
-
-private:
-    XmlEntityResolver *m_entityResolver;
 };
 
 #endif // XBELREADER_H

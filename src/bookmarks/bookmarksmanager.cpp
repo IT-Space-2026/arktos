@@ -65,24 +65,24 @@
 #include "autosaver.h"
 #include "bookmarknode.h"
 #include "bookmarksmodel.h"
-#include "browserapplication.h"
-#include "history.h"
+#include "browserpaths.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
 #include <qbuffer.h>
-#include <qdesktopservices.h>
+#include <qcoreapplication.h>
+#include <qdatetime.h>
 #include <qevent.h>
 #include <qfile.h>
 #include <qfiledialog.h>
 #include <qheaderview.h>
 #include <qicon.h>
+#include <qlocale.h>
 #include <qmessagebox.h>
 #include <qmimedata.h>
+#include <qpointer.h>
 #include <qtoolbutton.h>
 #include <qprocess.h>
-
-#include <qwebsettings.h>
 
 #include <qdebug.h>
 
@@ -98,12 +98,20 @@ BookmarksManager::BookmarksManager(QObject *parent)
     , m_menu(0)
     , m_bookmarkModel(0)
 {
-    connect(this, SIGNAL(entryAdded(BookmarkNode *)),
-            m_saveTimer, SLOT(changeOccurred()));
-    connect(this, SIGNAL(entryRemoved(BookmarkNode *, int, BookmarkNode *)),
-            m_saveTimer, SLOT(changeOccurred()));
-    connect(this, SIGNAL(entryChanged(BookmarkNode *)),
-            m_saveTimer, SLOT(changeOccurred()));
+    connect(this, &BookmarksManager::entryAdded,
+            m_saveTimer, &AutoSaver::changeOccurred);
+    connect(this, &BookmarksManager::entryRemoved,
+            m_saveTimer, &AutoSaver::changeOccurred);
+    connect(this, &BookmarksManager::entryChanged,
+            m_saveTimer, &AutoSaver::changeOccurred);
+}
+
+BookmarksManager *BookmarksManager::instance()
+{
+    static QPointer<BookmarksManager> manager;
+    if (!manager)
+        manager = new BookmarksManager(qApp);
+    return manager;
 }
 
 BookmarksManager::~BookmarksManager()
@@ -123,8 +131,7 @@ void BookmarksManager::load()
         return;
     m_loaded = true;
 
-    QString dir = QDesktopServices::storageLocation(QDesktopServices::DataLocation);
-    QString bookmarkFile = dir + QLatin1String("/bookmarks.xbel");
+    QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
     if (!QFile::exists(bookmarkFile))
         bookmarkFile = QLatin1String(":defaultbookmarks.xbel");
 
@@ -184,8 +191,7 @@ void BookmarksManager::save() const
         return;
 
     XbelWriter writer;
-    QString dir = QDesktopServices::storageLocation(QDesktopServices::DataLocation);
-    QString bookmarkFile = dir + QLatin1String("/bookmarks.xbel");
+    QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
     // Save root folder titles in English (i.e. not localized)
     m_menu->title = QLatin1String(BOOKMARKMENU);
     m_toolbar->title = QLatin1String(BOOKMARKBAR);
@@ -320,7 +326,7 @@ void BookmarksManager::importBookmarks()
     }
 
     importRootNode->setType(BookmarkNode::Folder);
-    importRootNode->title = (tr("Imported %1").arg(QDate::currentDate().toString(Qt::SystemLocaleShortDate)));
+    importRootNode->title = (tr("Imported %1").arg(QLocale().toString(QDate::currentDate(), QLocale::ShortFormat)));
     addBookmark(menu(), importRootNode);
 }
 

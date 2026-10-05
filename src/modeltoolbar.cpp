@@ -19,10 +19,13 @@
 
 #include "modeltoolbar.h"
 
-#include "browserapplication.h"
 #include "modelmenu.h"
 
+#include <qapplication.h>
+#include <qdrag.h>
 #include <qevent.h>
+#include <qmimedata.h>
+#include <qpixmap.h>
 #include <qtoolbutton.h>
 
 ModelToolBar::ModelToolBar(QWidget *parent)
@@ -48,27 +51,27 @@ ModelToolBar::ModelToolBar(const QString &title, QWidget *parent)
 void ModelToolBar::setModel(QAbstractItemModel *model)
 {
     if (m_model) {
-        disconnect(m_model, SIGNAL(modelReset()),
-                   this, SLOT(build()));
-        disconnect(m_model, SIGNAL(rowsInserted(const QModelIndex &, int, int)),
-                   this, SLOT(build()));
-        disconnect(m_model, SIGNAL(rowsRemoved(const QModelIndex &, int, int)),
-                   this, SLOT(build()));
-        disconnect(m_model, SIGNAL(dataChanged(const QModelIndex &, const QModelIndex &)),
-                   this, SLOT(build()));
+        disconnect(m_model, &QAbstractItemModel::modelReset,
+                   this, &ModelToolBar::build);
+        disconnect(m_model, &QAbstractItemModel::rowsInserted,
+                   this, &ModelToolBar::build);
+        disconnect(m_model, &QAbstractItemModel::rowsRemoved,
+                   this, &ModelToolBar::build);
+        disconnect(m_model, &QAbstractItemModel::dataChanged,
+                   this, &ModelToolBar::build);
     }
 
     m_model = model;
 
     if (m_model) {
-        connect(m_model, SIGNAL(modelReset()),
-                this, SLOT(build()));
-        connect(m_model, SIGNAL(rowsInserted(const QModelIndex &, int, int)),
-                this, SLOT(build()));
-        connect(m_model, SIGNAL(rowsRemoved(const QModelIndex &, int, int)),
-                this, SLOT(build()));
-        connect(m_model, SIGNAL(dataChanged(const QModelIndex &, const QModelIndex &)),
-                this, SLOT(build()));
+        connect(m_model, &QAbstractItemModel::modelReset,
+                this, &ModelToolBar::build);
+        connect(m_model, &QAbstractItemModel::rowsInserted,
+                this, &ModelToolBar::build);
+        connect(m_model, &QAbstractItemModel::rowsRemoved,
+                this, &ModelToolBar::build);
+        connect(m_model, &QAbstractItemModel::dataChanged,
+                this, &ModelToolBar::build);
     }
 }
 
@@ -145,10 +148,9 @@ bool ModelToolBar::eventFilter(QObject *object, QEvent *event)
         QToolButton *button = static_cast<QToolButton*>(object);
         Q_ASSERT(button);
 
-        QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
-
-        BrowserApplication::instance()->setEventMouseButtons(mouseEvent->button());
-        BrowserApplication::instance()->setEventKeyboardModifiers(mouseEvent->modifiers());
+        // TODO(MIG15): BrowserApplication modifier tracking
+        // (setEventMouseButtons/setEventKeyboardModifiers) is gone until
+        // MIG15 — activations always behave like a plain left click.
         QAction *action = button->defaultAction();
         Q_ASSERT(action);
         QModelIndex index = this->index(action);
@@ -160,7 +162,7 @@ bool ModelToolBar::eventFilter(QObject *object, QEvent *event)
         QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
 
         if (mouseEvent->buttons() & Qt::LeftButton)
-            m_dragStartPos = mapFromGlobal(mouseEvent->globalPos());
+            m_dragStartPos = mapFromGlobal(mouseEvent->globalPosition().toPoint());
     }
 
     return false;
@@ -174,7 +176,7 @@ void ModelToolBar::dragEnterEvent(QDragEnterEvent *event)
     }
 
     QStringList mimeTypes = m_model->mimeTypes();
-    foreach (const QString &mimeType, mimeTypes) {
+    for (const QString &mimeType : mimeTypes) {
         if (event->mimeData()->hasFormat(mimeType))
             event->acceptProposedAction();
     }
@@ -252,7 +254,7 @@ void ModelToolBar::mouseMoveEvent(QMouseEvent *event)
     QDrag *drag = new QDrag(this);
     drag->setMimeData(m_model->mimeData(QModelIndexList() << index));
     QRect actionRect = actionGeometry(action);
-    drag->setPixmap(QPixmap::grabWidget(this, actionRect));
+    drag->setPixmap(grab(actionRect));
 
     if (drag->exec() == Qt::MoveAction)
         m_model->removeRow(index.row(), m_rootIndex);

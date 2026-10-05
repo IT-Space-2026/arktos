@@ -25,9 +25,9 @@
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
 #include "bookmarksmodel.h"
-#include "browserapplication.h"
 #include "modelmenu.h"
 
+#include <qcursor.h>
 #include <qevent.h>
 
 BookmarksToolBar::BookmarksToolBar(BookmarksModel *model, QWidget *parent)
@@ -35,13 +35,13 @@ BookmarksToolBar::BookmarksToolBar(BookmarksModel *model, QWidget *parent)
     , m_bookmarksModel(model)
 {
     setModel(model);
-    setRootIndex(model->index(BrowserApplication::bookmarksManager()->toolbar()));
+    setRootIndex(model->index(BookmarksManager::instance()->toolbar()));
 
     setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(contextMenuRequested(const QPoint &)));
-    connect(this, SIGNAL(activated(const QModelIndex &)),
-            this, SLOT(bookmarkActivated(const QModelIndex &)));
+    connect(this, &BookmarksToolBar::customContextMenuRequested,
+            this, &BookmarksToolBar::contextMenuRequested);
+    connect(this, &ModelToolBar::activated,
+            this, &BookmarksToolBar::bookmarkActivated);
 
     setHidden(true);
     setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -60,23 +60,23 @@ void BookmarksToolBar::contextMenuRequested(const QPoint &position)
         QAction *menuAction = 0;
 
         if (!action->menu()) {
-            menuAction = menu.addAction(tr("Open"), this, SLOT(openBookmarkInCurrentTab()));
+            menuAction = menu.addAction(tr("Open"), this, &BookmarksToolBar::openBookmarkInCurrentTab);
             menuAction->setData(variant);
 
-            menuAction = menu.addAction(tr("Open in New &Tab"), this, SLOT(openBookmarkInNewTab()));
+            menuAction = menu.addAction(tr("Open in New &Tab"), this, &BookmarksToolBar::openBookmarkInNewTab);
             menuAction->setData(variant);
 
             menu.addSeparator();
         }
 
-        menuAction = menu.addAction(tr("Remove"), this, SLOT(removeBookmark()));
+        menuAction = menu.addAction(tr("Remove"), this, &BookmarksToolBar::removeBookmark);
         menuAction->setData(variant);
 
         menu.addSeparator();
     }
 
-    menu.addAction(tr("Add Bookmark..."), this, SLOT(newBookmark()));
-    menu.addAction(tr("Add Folder..."), this, SLOT(newFolder()));
+    menu.addAction(tr("Add Bookmark..."), this, &BookmarksToolBar::newBookmark);
+    menu.addAction(tr("Add Folder..."), this, &BookmarksToolBar::newFolder);
 
     menu.exec(QCursor::pos());
 }
@@ -144,10 +144,14 @@ void BookmarksToolBar::newFolder()
 ModelMenu *BookmarksToolBar::createMenu()
 {
     BookmarksMenu *menu = new BookmarksMenu(this);
-    connect(menu, SIGNAL(openUrl(const QUrl&, const QString&)),
-            this, SIGNAL(openUrl(const QUrl&, const QString&)));
-    connect(menu, SIGNAL(openUrl(const QUrl&, TabWidget::OpenUrlIn, const QString &)),
-            this, SIGNAL(openUrl(const QUrl&, TabWidget::OpenUrlIn, const QString &)));
+    connect(menu,
+            QOverload<const QUrl &, const QString &>::of(&BookmarksMenu::openUrl),
+            this,
+            QOverload<const QUrl &, const QString &>::of(&BookmarksToolBar::openUrl));
+    connect(menu,
+            QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(&BookmarksMenu::openUrl),
+            this,
+            QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(&BookmarksToolBar::openUrl));
     return menu;
 }
 

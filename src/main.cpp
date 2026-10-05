@@ -17,6 +17,9 @@
  * Boston, MA  02110-1301  USA
  */
 
+#include "bookmarknode.h"
+#include "bookmarksmanager.h"
+#include "bookmarksmodel.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "historymanager.h"
@@ -24,7 +27,10 @@
 #include "schemeaccesshandler.h"
 #include "webpage.h"
 #include "webview.h"
+#include "xbelreader.h"
+#include "xbelwriter.h"
 
+#include <QtCore/QBuffer>
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -208,6 +214,67 @@ int main(int argc, char **argv)
                     << "(allowed:" << allowed.count() << "blocked:" << blocked.count() << ")";
             // leave no test residue in the saved exception list
             cookieJar->setBlockedCookies(QStringList());
+            application.exit(ok ? 0 : 1);
+        });
+    }
+
+    // Headless verification for MIG07: exercise the app-wide bookmarks
+    // store — load (falls back to the bundled default XBEL), add /
+    // rename / remove a bookmark through the undo-stack API while the
+    // model watches, plus an XBEL round-trip and &nbsp; entity
+    // expansion (Qt6 dropped QXmlStreamEntityResolver).  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--bookmarks-smoke"))) {
+        QTimer::singleShot(0, &application, [&application]() {
+            BookmarksManager *manager = BookmarksManager::instance();
+            BookmarksModel *model = manager->bookmarksModel();
+            BookmarkNode *menu = manager->menu();
+            const int before = menu->children().count();
+
+            BookmarkNode *node = new BookmarkNode(BookmarkNode::Bookmark);
+            node->title = QStringLiteral("smoke");
+            node->url = QStringLiteral("http://example.com/");
+            manager->addBookmark(menu, node);
+            const bool added = menu->children().count() == before + 1
+                && model->data(model->index(node), Qt::DisplayRole)
+                       .toString() == QLatin1String("smoke");
+            manager->setTitle(node, QStringLiteral("smoke2"));
+            const bool renamed = node->title == QLatin1String("smoke2");
+            manager->removeBookmark(node);
+            const bool removed = menu->children().count() == before;
+
+            // XBEL round-trip through a temp file
+            const QString tmpFile = QDir::temp().filePath(
+                QLatin1String("arora-bookmarks-smoke.xbel"));
+            XbelWriter writer;
+            const bool wrote = writer.write(tmpFile, manager->bookmarks());
+            XbelReader reader;
+            BookmarkNode *copy = reader.read(tmpFile);
+            const bool roundtrip = wrote
+                && reader.error() == QXmlStreamReader::NoError
+                && copy->children().count()
+                       == manager->bookmarks()->children().count();
+            delete copy;
+            QFile::remove(tmpFile);
+
+            // &nbsp; expansion (the pre-Qt6 entity resolver's job)
+            QByteArray xbel =
+                "<xbel><folder folded=\"no\"><title>a&nbsp;b</title>"
+                "</folder></xbel>";
+            QBuffer buffer(&xbel);
+            buffer.open(QIODevice::ReadOnly);
+            XbelReader entityReader;
+            BookmarkNode *entityRoot = entityReader.read(&buffer);
+            const bool entity = entityReader.error() == QXmlStreamReader::NoError
+                && entityRoot->children().count() == 1
+                && entityRoot->children().first()->title
+                       == QString::fromUtf8("a\xc2\xa0" "b");
+            delete entityRoot;
+
+            const bool ok = added && renamed && removed && roundtrip && entity;
+            qInfo() << "bookmarks-smoke:" << (ok ? "PASS" : "FAIL")
+                    << "(added:" << added << "renamed:" << renamed
+                    << "removed:" << removed << "xbel:" << roundtrip
+                    << "entity:" << entity << ")";
             application.exit(ok ? 0 : 1);
         });
     }

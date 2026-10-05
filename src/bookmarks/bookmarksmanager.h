@@ -24,8 +24,6 @@
 
 #include <qundostack.h>
 
-#include "tabwidget.h"
-
 class AutoSaver;
 class BookmarkNode;
 class BookmarksModel;
@@ -41,6 +39,11 @@ signals:
 public:
     BookmarksManager(QObject *parent = 0);
     ~BookmarksManager();
+
+    // The application-wide bookmarks store (was
+    // BrowserApplication::bookmarksManager()).  Lazily created, owned by
+    // qApp so the destructor flushes pending saves at shutdown.
+    static BookmarksManager *instance();
 
     void addBookmark(BookmarkNode *parent, BookmarkNode *node, int row = -1);
     void removeBookmark(BookmarkNode *node);
