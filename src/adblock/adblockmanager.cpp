@@ -32,12 +32,15 @@
 #include "adblockdialog.h"
 #include "adblocknetwork.h"
 #include "adblockpage.h"
+#include "adblockrequestinterceptor.h"
+#include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
-#include "browserapplication.h"
+#include "browserpaths.h"
 #include "networkaccessmanager.h"
 
 #include <qstringlist.h>
 #include <qsettings.h>
+#include <qwebengineprofile.h>
 
 #include <qdebug.h>
 
@@ -54,8 +57,8 @@ AdBlockManager::AdBlockManager(QObject *parent)
     , m_adBlockNetwork(0)
     , m_adBlockPage(0)
 {
-    connect(this, SIGNAL(rulesChanged()),
-            m_saveTimer, SLOT(changeOccurred()));
+    connect(this, &AdBlockManager::rulesChanged,
+            m_saveTimer, &AutoSaver::changeOccurred);
 }
 
 AdBlockManager::~AdBlockManager()
@@ -67,7 +70,7 @@ AdBlockManager *AdBlockManager::instance()
 {
     if (!s_adBlockManager) {
         // Set a parent that will delete us before the application exits
-        s_adBlockManager = new AdBlockManager(BrowserApplication::networkAccessManager());
+        s_adBlockManager = new AdBlockManager(NetworkAccessManager::instance());
     }
     return s_adBlockManager;
 }
@@ -91,9 +94,26 @@ void AdBlockManager::setEnabled(bool enabled)
 
 AdBlockNetwork *AdBlockManager::network()
 {
-    if (!m_adBlockNetwork)
+    if (!m_adBlockNetwork) {
         m_adBlockNetwork = new AdBlockNetwork(this);
+        connect(this, &AdBlockManager::rulesChanged,
+                m_adBlockNetwork, &AdBlockNetwork::rebuildRules);
+        m_adBlockNetwork->rebuildRules();
+    }
     return m_adBlockNetwork;
+}
+
+void AdBlockManager::installOnProfile(QWebEngineProfile *profile)
+{
+    // Force rules to load and the matcher snapshot to be built on the
+    // GUI thread before the interceptor starts seeing requests on the
+    // WebEngine IO thread.
+    network()->rebuildRules();
+    profile->setUrlRequestInterceptor(new AdBlockRequestInterceptor(network(), this));
+    // abp:subscribe?... links are handled by a real url-scheme handler;
+    // the scheme itself is registered in main() before QApplication.
+    profile->installUrlSchemeHandler(AdBlockSchemeAccessHandler::schemeName(),
+                                     new AdBlockSchemeAccessHandler(this));
 }
 
 AdBlockPage *AdBlockManager::page()
@@ -105,7 +125,7 @@ AdBlockPage *AdBlockManager::page()
 
 static QUrl customSubscriptionLocation()
 {
-    QString fileName = BrowserApplication::dataFilePath(QLatin1String("adblock_subscription_custom"));
+    QString fileName = BrowserPaths::dataFilePath(QLatin1String("adblock_subscription_custom"));
     return QUrl::fromLocalFile(fileName);
 }
 
@@ -122,7 +142,7 @@ QUrl AdBlockManager::customSubscriptionUrl()
 AdBlockSubscription *AdBlockManager::customRules()
 {
     QUrl location = customSubscriptionLocation();
-    foreach (AdBlockSubscription *subscription, m_subscriptions) {
+    for (AdBlockSubscription *subscription : m_subscriptions) {
         if (subscription->location() == location)
             return subscription;
     }
@@ -163,8 +183,8 @@ void AdBlockManager::addSubscription(AdBlockSubscription *subscription)
     qDebug() << "AdBlockManager::" << __FUNCTION__ << subscription->location();
 #endif
     m_subscriptions.append(subscription);
-    connect(subscription, SIGNAL(rulesChanged()), this, SIGNAL(rulesChanged()));
-    connect(subscription, SIGNAL(changed()), this, SIGNAL(rulesChanged()));
+    connect(subscription, &AdBlockSubscription::rulesChanged, this, &AdBlockManager::rulesChanged);
+    connect(subscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
     emit rulesChanged();
 }
 
@@ -180,7 +200,7 @@ void AdBlockManager::save()
     settings.beginGroup(QLatin1String("AdBlock"));
     settings.setValue(QLatin1String("enabled"), m_enabled);
     QStringList subscriptions;
-    foreach (AdBlockSubscription *subscription, m_subscriptions) {
+    for (AdBlockSubscription *subscription : m_subscriptions) {
         if (!subscription)
             continue;
         subscriptions.append(QString::fromUtf8(subscription->url().toEncoded()));
@@ -208,11 +228,11 @@ void AdBlockManager::load()
     defaultSubscriptions.append(QLatin1String("abp:subscribe?location=http://adblockplus.mozdev.org/easylist/easylist.txt&title=EasyList"));
 
     QStringList subscriptions = settings.value(QLatin1String("subscriptions"), defaultSubscriptions).toStringList();
-    foreach (const QString &subscription, subscriptions) {
+    for (const QString &subscription : subscriptions) {
         QUrl url = QUrl::fromEncoded(subscription.toUtf8());
         AdBlockSubscription *adBlockSubscription = new AdBlockSubscription(url, this);
-        connect(adBlockSubscription, SIGNAL(rulesChanged()), this, SIGNAL(rulesChanged()));
-        connect(adBlockSubscription, SIGNAL(changed()), this, SIGNAL(rulesChanged()));
+        connect(adBlockSubscription, &AdBlockSubscription::rulesChanged, this, &AdBlockManager::rulesChanged);
+        connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
         m_subscriptions.append(adBlockSubscription);
     }
 }

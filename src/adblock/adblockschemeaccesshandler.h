@@ -31,16 +31,27 @@
 
 #include "schemeaccesshandler.h"
 
-// TODO(MIG09): SchemeAccessHandler is now a QWebEngineUrlSchemeHandler —
-// reimplement this as requestStarted(QWebEngineUrlRequestJob*) handling
-// "abp:subscribe" links, and decide whether abp: needs interception in
-// WebPage::acceptNavigationRequest instead of a registered scheme.
+#include <qpointer.h>
+
+class QWebEngineUrlRequestJob;
 class AdBlockSchemeAccessHandler : public SchemeAccessHandler
 {
+    Q_OBJECT
+
 public:
     AdBlockSchemeAccessHandler(QObject *parent = 0);
 
-    virtual QNetworkReply *createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData = 0);
+    QByteArray scheme() const;
+    static QByteArray schemeName();
+    // Declares the "abp" scheme with QWebEngineUrlScheme.  Must run
+    // before the QApplication constructor, like
+    // SchemeAccessHandler::registerUrlSchemes().
+    static void registerUrlScheme();
+
+    virtual void requestStarted(QWebEngineUrlRequestJob *job);
+
+private:
+    void handleSubscribe(QPointer<QWebEngineUrlRequestJob> job);
 };
 
 #endif // ADBLOCKSCHEMEACCESSHANDLER_H

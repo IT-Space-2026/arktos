@@ -32,11 +32,9 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
-#if QT_VERSION >= 0x040600
-#include <qwebelement.h>
-#endif
-#include <qwebpage.h>
-#include <qwebframe.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qwebenginepage.h>
 
 #include <qdebug.h>
 
@@ -47,73 +45,84 @@ AdBlockPage::AdBlockPage(QObject *parent)
 {
 }
 
-void AdBlockPage::checkRule(const AdBlockRule *rule, QWebPage *page, const QString &host)
+// Returns the element-hiding selector of a "domain##selector" filter
+// when it applies to host, an empty string otherwise.  Domain matching
+// keeps the WebKit semantics: a matching ~domain exclusion drops the
+// rule, a non-matching ~domain counts towards matching.
+QString AdBlockPage::cssSelectorForHost(const AdBlockRule *rule, const QString &host)
 {
     if (!rule->isEnabled())
-        return;
+        return QString();
 
     QString filter = rule->filter();
     int offset = filter.indexOf(QLatin1String("##"));
     if (offset == -1)
-        return;
+        return QString();
 
-    QString selectorQuery;
     if (offset > 0) {
-        QString domainRules = filter.mid(0, offset);
-        selectorQuery = filter.mid(offset + 2);
-        QStringList domains = domainRules.split(QLatin1Char(','));
+        QStringList domains = filter.left(offset).split(QLatin1Char(','));
 
         bool match = false;
-        foreach (const QString &domain, domains) {
-            bool reverse = (domain[0] == QLatin1Char('~'));
+        for (const QString &domain : domains) {
+            if (domain.isEmpty())
+                continue;
+            bool reverse = domain.startsWith(QLatin1Char('~'));
             if (reverse) {
                 QString xdomain = domain.mid(1);
                 if (host.endsWith(xdomain))
-                    return;
+                    return QString();
                 match = true;
             }
             if (host.endsWith(domain))
                 match = true;
         }
         if (!match)
-            return;
+            return QString();
     }
 
-    if (offset == 0)
-        selectorQuery = filter.mid(2);
-
-    Q_UNUSED(page);
-#if QT_VERSION >= 0x040600
-    QWebElement document = page->mainFrame()->documentElement();
-    QWebElementCollection elements = document.findAll(selectorQuery);
-#if defined(ADBLOCKPAGE_DEBUG)
-    if (elements.count() != 0)
-        qDebug() << "AdBlockPage::" << __FUNCTION__ << "blocking" << elements.count() << "items" << selectorQuery << elements.count() << "rule:" << rule->filter();
-#endif
-    foreach (QWebElement element, elements) {
-        element.setStyleProperty(QLatin1String("visibility"), QLatin1String("hidden"));
-        element.removeFromDocument();
-    }
-
-#endif
+    return filter.mid(offset + 2);
 }
 
-void AdBlockPage::applyRulesToPage(QWebPage *page)
+void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
 {
-    if (!page || !page->mainFrame())
+    if (!page)
         return;
     AdBlockManager *manager = AdBlockManager::instance();
     if (!manager->isEnabled())
         return;
-#if QT_VERSION >= 0x040600
-    QString host = page->mainFrame()->url().host();
-    QList<AdBlockSubscription*> subscriptions = manager->subscriptions();
-    foreach (AdBlockSubscription *subscription, subscriptions) {
-        QList<const AdBlockRule*> rules = subscription->pageRules();
-        foreach (const AdBlockRule *rule, rules) {
-            checkRule(rule, page, host);
+
+    const QString host = page->url().host();
+    QStringList selectors;
+    const QList<AdBlockSubscription*> subscriptions = manager->subscriptions();
+    for (const AdBlockSubscription *subscription : subscriptions) {
+        const QList<const AdBlockRule*> rules = subscription->pageRules();
+        for (const AdBlockRule *rule : rules) {
+            const QString selector = cssSelectorForHost(rule, host);
+            if (!selector.isEmpty())
+                selectors.append(selector);
         }
     }
-#endif
-}
+    if (selectors.isEmpty())
+        return;
 
+#if defined(ADBLOCKPAGE_DEBUG)
+    qDebug() << "AdBlockPage::" << __FUNCTION__ << "hiding" << selectors.count() << "selectors on" << host;
+#endif
+    // QWebElement DOM access is gone in Qt WebEngine; the filters are
+    // injected as a <style> element through runJavaScript instead.
+    // Unlike the old synchronous DOM walk, the stylesheet also hides
+    // matching elements added to the document after injection.
+    const QString css = selectors.join(QLatin1Char(','))
+        + QLatin1String(" { display: none !important; }");
+    // Serialize the CSS as a JSON literal so selector contents can
+    // never break out of the JavaScript string.
+    const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
+        .toJson(QJsonDocument::Compact);
+    const QString script = QLatin1String(
+        "(function(){var s=document.getElementById('arora-adblock');"
+        "if(!s){s=document.createElement('style');s.id='arora-adblock';"
+        "document.documentElement.appendChild(s);}"
+        "s.textContent=%1[0];})()")
+        .arg(QString::fromUtf8(jsonCss));
+    page->runJavaScript(script);
+}

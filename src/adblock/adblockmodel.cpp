@@ -36,12 +36,13 @@ AdBlockModel::AdBlockModel(QObject *parent)
     : QAbstractItemModel(parent)
     , m_manager(AdBlockManager::instance())
 {
-    connect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+    connect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
 }
 
 void AdBlockModel::rulesChanged()
 {
-    reset();
+    beginResetModel();
+    endResetModel();
 }
 
 const AdBlockRule AdBlockModel::rule(const QModelIndex &index) const
@@ -67,7 +68,7 @@ QModelIndex AdBlockModel::index(AdBlockSubscription *subscription)
     int row = m_manager->subscriptions().indexOf(subscription);
     if (row < 0 || row >= m_manager->subscriptions().count())
         return QModelIndex();
-    return createIndex(row, 0, 0);
+    return createIndex(row, 0, (void*)0);
 }
 
 QVariant AdBlockModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -159,7 +160,7 @@ QModelIndex AdBlockModel::parent(const QModelIndex &index) const
         return QModelIndex();
 
     int parentRow = m_manager->subscriptions().indexOf(parent);
-    return createIndex(parentRow, 0, 0);
+    return createIndex(parentRow, 0, (void*)0);
 }
 
 Qt::ItemFlags AdBlockModel::flags(const QModelIndex &index) const
@@ -187,25 +188,25 @@ bool AdBlockModel::removeRows(int row, int count, const QModelIndex &parent)
         return false;
 
     if (!parent.isValid()) {
-        disconnect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+        disconnect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
         beginRemoveRows(QModelIndex(), row, row + count - 1);
         for (int i = row + count - 1; i >= row; --i) {
             AdBlockManager *manager = AdBlockManager::instance();
             manager->removeSubscription(manager->subscriptions().at(i));
         }
         endRemoveRows();
-        connect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+        connect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
         return true;
     } else {
         AdBlockSubscription *sub = subscription(parent);
         if (sub) {
-            disconnect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+            disconnect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
             beginRemoveRows(parent, row, row + count - 1);
             QList<AdBlockRule> rules = sub->allRules();
             for (int i = row + count - 1; i >= row; --i)
                 sub->removeRule(i);
             endRemoveRows();
-            connect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+            connect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
             return true;
         }
     }
@@ -221,7 +222,7 @@ bool AdBlockModel::setData(const QModelIndex &index, const QVariant &value, int 
         || (flags(index) & Qt::ItemIsEditable) == 0)
         return false;
 
-    disconnect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+    disconnect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
     bool changed = false;
     switch (role) {
     case Qt::EditRole:
@@ -266,7 +267,7 @@ bool AdBlockModel::setData(const QModelIndex &index, const QVariant &value, int 
     default:
         break;
     }
-    connect(m_manager, SIGNAL(rulesChanged()), this, SLOT(rulesChanged()));
+    connect(m_manager, &AdBlockManager::rulesChanged, this, &AdBlockModel::rulesChanged);
     return changed;
 }
 

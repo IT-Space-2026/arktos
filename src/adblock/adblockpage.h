@@ -32,7 +32,7 @@
 #include <qobject.h>
 
 class AdBlockRule;
-class QWebPage;
+class QWebEnginePage;
 class AdBlockPage : public QObject
 {
     Q_OBJECT
@@ -40,10 +40,10 @@ class AdBlockPage : public QObject
 public:
     AdBlockPage(QObject *parent = 0);
 
-    void applyRulesToPage(QWebPage *page);
+    void applyRulesToPage(QWebEnginePage *page);
 
 private:
-    void checkRule(const AdBlockRule *rule, QWebPage *page, const QString &host);
+    static QString cssSelectorForHost(const AdBlockRule *rule, const QString &host);
 };
 
 #endif // ADBLOCKPAGE_H

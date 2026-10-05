@@ -32,24 +32,54 @@
 #include "adblocksubscription.h"
 #include "adblockdialog.h"
 
-#include <qnetworkrequest.h>
 #include <qmessagebox.h>
+#include <qwebengineurlrequestjob.h>
+#include <qwebengineurlscheme.h>
 
 AdBlockSchemeAccessHandler::AdBlockSchemeAccessHandler(QObject *parent)
     : SchemeAccessHandler(parent)
 {
 }
 
-QNetworkReply *AdBlockSchemeAccessHandler::createRequest(QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
+QByteArray AdBlockSchemeAccessHandler::scheme() const
 {
-    Q_UNUSED(outgoingData);
-    if (op != QNetworkAccessManager::GetOperation)
-        return 0;
+    return schemeName();
+}
 
-    if (request.url().path() != QLatin1String("subscribe"))
-        return 0;
+QByteArray AdBlockSchemeAccessHandler::schemeName()
+{
+    return QByteArrayLiteral("abp");
+}
 
-    AdBlockSubscription *subscription = new AdBlockSubscription(request.url(), AdBlockManager::instance());
+void AdBlockSchemeAccessHandler::registerUrlScheme()
+{
+    QWebEngineUrlScheme scheme(schemeName());
+    scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+    QWebEngineUrlScheme::registerScheme(scheme);
+}
+
+void AdBlockSchemeAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
+{
+    if (job->requestMethod() != "GET"
+        || job->requestUrl().path() != QLatin1String("subscribe")) {
+        job->fail(QWebEngineUrlRequestJob::UrlInvalid);
+        return;
+    }
+
+    // requestStarted() runs on the IO thread; the subscription prompt
+    // is GUI work, so it is queued onto the thread that owns this
+    // handler (same pattern as FileAccessHandler).
+    QMetaObject::invokeMethod(this, [this, job]() {
+        handleSubscribe(job);
+    }, Qt::QueuedConnection);
+}
+
+void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJob> job)
+{
+    if (!job)
+        return;
+
+    AdBlockSubscription *subscription = new AdBlockSubscription(job->requestUrl(), AdBlockManager::instance());
 
     QMessageBox::StandardButton result = QMessageBox::question(0
             , tr("Subscribe?")
@@ -64,6 +94,7 @@ QNetworkReply *AdBlockSchemeAccessHandler::createRequest(QNetworkAccessManager::
         dialog->treeView->setCurrentIndex(model->index(model->rowCount() -1, 0));
         dialog->setFocus();
     }
-    return 0;
+    // Nothing is ever served for abp: urls — they only carry the
+    // subscription parameters handled above.
+    job->fail(QWebEngineUrlRequestJob::RequestAborted);
 }
-

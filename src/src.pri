@@ -80,7 +80,7 @@ exists(../.git/HEAD) {
 #     (toolbarsearch.cpp live — MIG08)
 #     webviewsearch.cpp             # TODO(MIG12)
 #
-# include(adblock/adblock.pri)        # TODO(MIG09)
+include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
 include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done

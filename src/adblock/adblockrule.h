@@ -29,10 +29,10 @@
 #ifndef ADBLOCKRULE_H
 #define ADBLOCKRULE_H
 
+#include <qregularexpression.h>
 #include <qstringlist.h>
 
 class QUrl;
-class QRegExp;
 class AdBlockRule
 {
 
@@ -60,7 +60,7 @@ private:
     bool m_cssRule;
     bool m_exception;
     bool m_enabled;
-    QRegExp m_regExp;
+    QRegularExpression m_regExp;
     QStringList m_options;
 };
 

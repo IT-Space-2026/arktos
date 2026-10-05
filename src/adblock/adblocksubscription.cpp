@@ -28,7 +28,7 @@
 
 #include "adblocksubscription.h"
 
-#include "browserapplication.h"
+#include "browserpaths.h"
 #include "networkaccessmanager.h"
 
 #include <qcryptographichash.h>
@@ -36,6 +36,7 @@
 #include <qfile.h>
 #include <qnetworkreply.h>
 #include <qtextstream.h>
+#include <qurlquery.h>
 
 // #define ADBLOCKSUBSCRIPTION_DEBUG
 
@@ -58,11 +59,12 @@ void AdBlockSubscription::parseUrl(const QUrl &url)
     if (url.path() != QLatin1String("subscribe"))
         return;
 
-    m_title = QUrl::fromPercentEncoding(url.encodedQueryItemValue("title"));
-    m_enabled = QUrl::fromPercentEncoding(url.encodedQueryItemValue("enabled")) != QLatin1String("false");
-    m_location = QUrl::fromPercentEncoding(url.encodedQueryItemValue("location")).toUtf8();
-    QByteArray lastUpdateByteArray = url.encodedQueryItemValue("lastUpdate");
-    QString lastUpdateString = QUrl::fromPercentEncoding(lastUpdateByteArray);
+    // QUrl::PrettyDecoded keeps '+' literal like QUrl::fromPercentEncoding did
+    const QUrlQuery query(url);
+    m_title = query.queryItemValue(QLatin1String("title"), QUrl::PrettyDecoded);
+    m_enabled = query.queryItemValue(QLatin1String("enabled"), QUrl::PrettyDecoded) != QLatin1String("false");
+    m_location = query.queryItemValue(QLatin1String("location"), QUrl::PrettyDecoded).toUtf8();
+    const QString lastUpdateString = query.queryItemValue(QLatin1String("lastUpdate"), QUrl::PrettyDecoded);
     m_lastUpdate = QDateTime::fromString(lastUpdateString, Qt::ISODate);
     loadRules();
 }
@@ -73,16 +75,14 @@ QUrl AdBlockSubscription::url() const
     url.setScheme(QLatin1String("abp"));
     url.setPath(QLatin1String("subscribe"));
 
-    typedef QPair<QString, QString> Query;
-    QList<Query> queryItems;
-
-    queryItems.append(Query(QLatin1String("location"), QString::fromUtf8(m_location)));
-    queryItems.append(Query(QLatin1String("title"), m_title));
+    QUrlQuery query;
+    query.addQueryItem(QLatin1String("location"), QString::fromUtf8(m_location));
+    query.addQueryItem(QLatin1String("title"), m_title);
     if (!m_enabled)
-        queryItems.append(Query(QLatin1String("enabled"), QLatin1String("false")));
+        query.addQueryItem(QLatin1String("enabled"), QLatin1String("false"));
     if (m_lastUpdate.isValid())
-        queryItems.append(Query(QLatin1String("lastUpdate"), m_lastUpdate.toString(Qt::ISODate)));
-    url.setQueryItems(queryItems);
+        query.addQueryItem(QLatin1String("lastUpdate"), m_lastUpdate.toString(Qt::ISODate));
+    url.setQuery(query);
     return url;
 }
 
@@ -141,7 +141,7 @@ QString AdBlockSubscription::rulesFileName() const
         return QString();
 
     QByteArray sha1 = QCryptographicHash::hash(m_location, QCryptographicHash::Sha1).toHex();
-    QString fileName = BrowserApplication::dataFilePath(QString(QLatin1String("adblock_subscription_%1")).arg(QLatin1String(sha1)));
+    QString fileName = BrowserPaths::dataFilePath(QString(QLatin1String("adblock_subscription_%1")).arg(QLatin1String(sha1)));
     return fileName;
 }
 
@@ -211,9 +211,9 @@ void AdBlockSubscription::updateNow()
     }
 
     QNetworkRequest request(location());
-    QNetworkReply *reply = BrowserApplication::networkAccessManager()->get(request);
+    QNetworkReply *reply = NetworkAccessManager::instance()->get(request);
     m_downloading = reply;
-    connect(reply, SIGNAL(finished()), this, SLOT(rulesDownloaded()));
+    connect(reply, &QNetworkReply::finished, this, &AdBlockSubscription::rulesDownloaded);
 }
 
 void AdBlockSubscription::rulesDownloaded()
@@ -244,8 +244,8 @@ void AdBlockSubscription::rulesDownloaded()
         qDebug() << "AdBlockSubscription::" << __FUNCTION__ << "redirect to:" << redirect;
 #endif
         QNetworkRequest request(redirect);
-        m_downloading = BrowserApplication::networkAccessManager()->get(request);
-        connect(m_downloading, SIGNAL(finished()), this, SLOT(rulesDownloaded()));
+        m_downloading = NetworkAccessManager::instance()->get(request);
+        connect(m_downloading, &QNetworkReply::finished, this, &AdBlockSubscription::rulesDownloaded);
         return;
     }
 
@@ -283,9 +283,9 @@ void AdBlockSubscription::saveRules()
     }
 
     QTextStream textStream(&file);
-    textStream << "[Adblock Plus 0.7.1]" << endl;
-    foreach (const AdBlockRule &rule, m_rules)
-        textStream << rule.filter() << endl;
+    textStream << "[Adblock Plus 0.7.1]" << Qt::endl;
+    for (const AdBlockRule &rule : m_rules)
+        textStream << rule.filter() << Qt::endl;
 }
 
 QList<const AdBlockRule*> AdBlockSubscription::pageRules() const
@@ -295,7 +295,7 @@ QList<const AdBlockRule*> AdBlockSubscription::pageRules() const
 
 const AdBlockRule *AdBlockSubscription::allow(const QString &urlString) const
 {
-    foreach (const AdBlockRule *rule, m_networkExceptionRules) {
+    for (const AdBlockRule *rule : m_networkExceptionRules) {
         if (rule->networkMatch(urlString))
             return rule;
     }
@@ -304,7 +304,7 @@ const AdBlockRule *AdBlockSubscription::allow(const QString &urlString) const
 
 const AdBlockRule *AdBlockSubscription::block(const QString &urlString) const
 {
-    foreach (const AdBlockRule *rule, m_networkBlockRules) {
+    for (const AdBlockRule *rule : m_networkBlockRules) {
         if (rule->networkMatch(urlString))
             return rule;
     }

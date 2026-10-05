@@ -17,6 +17,11 @@
  * Boston, MA  02110-1301  USA
  */
 
+#include "adblockmanager.h"
+#include "adblocknetwork.h"
+#include "adblockrule.h"
+#include "adblockschemeaccesshandler.h"
+#include "adblocksubscription.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -41,11 +46,13 @@
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
+#include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
@@ -61,11 +68,19 @@ int main(int argc, char **argv)
 
     // Custom schemes (arora-file://) must be declared before QApplication.
     SchemeAccessHandler::registerUrlSchemes();
+    // abp:subscribe?... links for AdBlock subscriptions (MIG09).
+    AdBlockSchemeAccessHandler::registerUrlScheme();
 
     QApplication::setApplicationName(QStringLiteral("arora"));
     QApplication::setOrganizationName(QStringLiteral("Arora"));
 
     QApplication application(argc, argv);
+
+    const QStringList args = application.arguments();
+    // --adblock-smoke adds custom rules, which are persisted to the app
+    // data dir; isolate the writes so the test leaves no residue.
+    if (args.contains(QLatin1String("--adblock-smoke")))
+        QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
     // MIG15.  The normal browsing profile must be a NAMED profile:
@@ -89,13 +104,18 @@ int main(int argc, char **argv)
     DownloadManager *downloadManager = new DownloadManager();
     downloadManager->installOnProfile(profile);
 
+    // MIG09: profile-level url request interceptor replaces the
+    // WebKit-era QNetworkAccessManager hook for ad blocking; also
+    // installs the abp: subscription scheme handler.  TODO(MIG15):
+    // install on the off-the-record private profile too.
+    AdBlockManager::instance()->installOnProfile(profile);
+
     QMainWindow window;
     window.setWindowTitle(QStringLiteral("Arora"));
 
     WebView *view = new WebView(profile, &window);
     window.setCentralWidget(view);
 
-    const QStringList args = application.arguments();
     const QString firstUrl = (args.count() > 1 && !args.at(1).startsWith(QLatin1Char('-')))
             ? args.at(1) : QStringLiteral("about:blank");
     view->loadUrl(QUrl(firstUrl));
@@ -367,6 +387,90 @@ int main(int argc, char **argv)
             QTimer::singleShot(15000, &application,
                                [&application]() { application.exit(1); });
         }
+    }
+
+    // Headless verification for MIG09: the profile url request
+    // interceptor (the only request-blocking surface under WebEngine)
+    // must fail a request matching a custom rule (info.block() ->
+    // net::ERR_ACCESS_DENIED/ERR_BLOCKED_BY_CLIENT); an @@ exception
+    // must let the request through to fail on its own (any other net
+    // error proves the interceptor did not stop it); and a ## cosmetic
+    // filter must be injected as a <style> element into a loaded page.
+    // Exits 0 on
+    // PASS for all three stages.  App-data writes are isolated by the
+    // QStandardPaths test mode enabled earlier in main().
+    if (args.contains(QLatin1String("--adblock-smoke"))) {
+        AdBlockManager *manager = AdBlockManager::instance();
+        AdBlockSubscription *custom = manager->customRules();
+        custom->addRule(AdBlockRule(QLatin1String("||adblock-smoke.invalid^")));
+        custom->addRule(AdBlockRule(QLatin1String(".invalid^")));
+        custom->addRule(AdBlockRule(QLatin1String("@@||allowed-smoke.invalid^")));
+        custom->addRule(AdBlockRule(QLatin1String("##body")));
+
+        // Snapshot-level check of what the IO-thread matcher sees.
+        AdBlockNetwork *network = manager->network();
+        const bool matcherOk =
+            network->shouldBlock(QUrl(QLatin1String("http://adblock-smoke.invalid/banner.js")))
+            && !network->shouldBlock(QUrl(QLatin1String("http://allowed-smoke.invalid/page.js")))
+            && !network->shouldBlock(QUrl(QLatin1String("http://example.com/page.js")));
+        qInfo() << "adblock-smoke: matcher" << (matcherOk ? "PASS" : "FAIL");
+        if (!matcherOk)
+            return 1;
+
+        int stage = 0;
+        QObject::connect(view->webPage(), &QWebEnginePage::loadingChanged,
+                         &application,
+                         [view, &application, &stage](const QWebEngineLoadingInfo &info) {
+            if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+                return;
+            const QString host = info.url().host();
+            const bool blockedByInterceptor =
+                info.errorString().contains(QLatin1String("ERR_BLOCKED_BY_CLIENT"))
+                || info.errorString().contains(QLatin1String("ERR_ACCESS_DENIED"));
+            if (stage == 0 && host == QLatin1String("adblock-smoke.invalid")) {
+                qInfo() << "adblock-smoke: blocked navigation"
+                        << (blockedByInterceptor ? "PASS" : "FAIL") << info.errorString();
+                if (!blockedByInterceptor) {
+                    application.exit(1);
+                    return;
+                }
+                stage = 1;
+                view->loadUrl(QUrl(QLatin1String("http://allowed-smoke.invalid/")));
+            } else if (stage == 1 && host == QLatin1String("allowed-smoke.invalid")) {
+                const bool pass = !blockedByInterceptor;
+                qInfo() << "adblock-smoke: exception navigation"
+                        << (pass ? "PASS" : "FAIL") << info.errorString();
+                if (!pass) {
+                    application.exit(1);
+                    return;
+                }
+                stage = 2;
+                view->loadUrl(QUrl(QLatin1String("about:blank")));
+            }
+        });
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, &application, &stage](bool ok) {
+            if (stage != 2 || !ok
+                || view->url() != QUrl(QLatin1String("about:blank")))
+                return;
+            stage = 3;
+            // WebView::loadFinished -> AdBlockPage::applyRulesToPage
+            // queued its style-injection runJavaScript before this
+            // check runs, so the element must already exist.
+            view->webPage()->runJavaScript(
+                QLatin1String("!!document.getElementById('arora-adblock')"),
+                [&application](const QVariant &result) {
+                    const bool pass = result.toBool();
+                    qInfo() << "adblock-smoke: cosmetic injection"
+                            << (pass ? "PASS" : "FAIL");
+                    application.exit(pass ? 0 : 1);
+                });
+        });
+        QTimer::singleShot(20000, &application, [&application]() {
+            qInfo() << "adblock-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        view->loadUrl(QUrl(QLatin1String("http://adblock-smoke.invalid/")));
     }
 
     return application.exec();

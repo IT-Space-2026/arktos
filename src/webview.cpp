@@ -64,6 +64,9 @@
 
 #include "webview.h"
 
+#include "adblockdialog.h"
+#include "adblockmanager.h"
+#include "adblockpage.h"
 #include "webpage.h"
 
 #include <qapplication.h>
@@ -297,7 +300,8 @@ void WebView::copyImageLocationToClipboard()
 
 void WebView::blockImage()
 {
-    // TODO(MIG09): AdBlockManager::instance()->showDialog()->addCustomRule(url)
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        AdBlockManager::instance()->showDialog()->addCustomRule(action->data().toString());
 }
 
 void WebView::bookmarkLink()
@@ -376,7 +380,7 @@ void WebView::loadFinished()
                    << "Url:" << url();
     }
     m_progress = 0;
-    // TODO(MIG09): AdBlockManager::instance()->page()->applyRulesToPage(page());
+    AdBlockManager::instance()->page()->applyRulesToPage(page());
     // TODO(MIG10): BrowserApplication::instance()->autoFillManager()->fill(page());
 }
 

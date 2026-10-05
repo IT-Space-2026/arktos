@@ -29,10 +29,28 @@
 #ifndef ADBLOCKNETWORK_H
 #define ADBLOCKNETWORK_H
 
-#include <qobject.h>
+#include "adblockrule.h"
 
-class QNetworkRequest;
-class QNetworkReply;
+#include <qobject.h>
+#include <qreadwritelock.h>
+
+class QUrl;
+
+/*
+    Matches request URLs against the adblock network rules.
+
+    Under Qt WebKit this class hooked into the application's
+    QNetworkAccessManager and returned a blocked QNetworkReply.  Qt
+    WebEngine does its own networking in the Chromium IO thread, so all
+    request blocking now goes through the profile's
+    QWebEngineUrlRequestInterceptor (AdBlockRequestInterceptor), which
+    calls shouldBlock() from that thread.
+
+    Because the interceptor runs off the GUI thread, shouldBlock() never
+    touches the live AdBlockSubscription objects: rebuildRules() (GUI
+    thread only) copies the enabled network rules into a snapshot that
+    shouldBlock() walks under a read lock.
+*/
 class AdBlockNetwork : public QObject
 {
     Q_OBJECT
@@ -40,9 +58,22 @@ class AdBlockNetwork : public QObject
 public:
     AdBlockNetwork(QObject *parent = 0);
 
-    QNetworkReply *block(const QNetworkRequest &request);
+    // Thread-safe; called by the request interceptor on the IO thread.
+    bool shouldBlock(const QUrl &url) const;
 
+public slots:
+    // Snapshots the current subscriptions' network rules.  GUI thread only.
+    void rebuildRules();
+
+private:
+    struct SubscriptionRules {
+        QList<AdBlockRule> exceptionRules;
+        QList<AdBlockRule> blockRules;
+    };
+
+    QList<SubscriptionRules> m_subscriptions;
+    bool m_enabled;
+    mutable QReadWriteLock m_lock;
 };
 
 #endif // ADBLOCKNETWORK_H
-

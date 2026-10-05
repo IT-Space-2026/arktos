@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2009, Benjamin C. Meyer <ben@meyerhome.net>
+ * Copyright (c) 2026, The Arora Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,33 +26,30 @@
  * SUCH DAMAGE.
  */
 
-#include "adblockblockednetworkreply.h"
+#ifndef ADBLOCKREQUESTINTERCEPTOR_H
+#define ADBLOCKREQUESTINTERCEPTOR_H
 
-#include "adblockrule.h"
+#include <qwebengineurlrequestinterceptor.h>
 
-#include <qnetworkrequest.h>
-#include <qtimer.h>
+class AdBlockNetwork;
+class QWebEngineUrlRequestInfo;
 
-AdBlockBlockedNetworkReply::AdBlockBlockedNetworkReply(const QNetworkRequest &request, const AdBlockRule *rule, QObject *parent)
-    : QNetworkReply(parent)
+// Profile-level request interceptor: the only request-blocking surface
+// Qt WebEngine offers (there is no per-request page hook like WebKit's
+// QNetworkAccessManager integration).  interceptRequest() is invoked on
+// the WebEngine IO thread, so it only consults the lock-guarded rule
+// snapshot in AdBlockNetwork and never touches live GUI state.
+class AdBlockRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
-    setOperation(QNetworkAccessManager::GetOperation);
-    setRequest(request);
-    setUrl(request.url());
-    setError(QNetworkReply::ContentAccessDenied, tr("Blocked by AdBlockRule: %1").arg(rule->filter()));
-    QTimer::singleShot(0, this, SLOT(delayedFinished()));
-}
+    Q_OBJECT
 
-qint64 AdBlockBlockedNetworkReply::readData(char *data, qint64 maxSize)
-{
-    Q_UNUSED(data);
-    Q_UNUSED(maxSize);
-    return -1;
-}
+public:
+    AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent = 0);
 
-void AdBlockBlockedNetworkReply::delayedFinished()
-{
-    emit error(QNetworkReply::ContentAccessDenied);
-    emit finished();
-}
+    virtual void interceptRequest(QWebEngineUrlRequestInfo &info);
 
+private:
+    AdBlockNetwork *m_network;
+};
+
+#endif // ADBLOCKREQUESTINTERCEPTOR_H

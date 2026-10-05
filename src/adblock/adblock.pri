@@ -2,27 +2,26 @@ INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
 HEADERS += \
-    adblockblockednetworkreply.h \
-    adblockdialog.h \
-    adblockmanager.h \
-    adblockmodel.h \
-    adblocknetwork.h \
-    adblockpage.h \
-    adblockrule.h \
-    adblockschemeaccesshandler.h \
-    adblocksubscription.h
+    $$PWD/adblockdialog.h \
+    $$PWD/adblockmanager.h \
+    $$PWD/adblockmodel.h \
+    $$PWD/adblocknetwork.h \
+    $$PWD/adblockpage.h \
+    $$PWD/adblockrequestinterceptor.h \
+    $$PWD/adblockrule.h \
+    $$PWD/adblockschemeaccesshandler.h \
+    $$PWD/adblocksubscription.h
 
 SOURCES += \
-    adblockblockednetworkreply.cpp \
-    adblockdialog.cpp \
-    adblockmanager.cpp \
-    adblockmodel.cpp \
-    adblocknetwork.cpp \
-    adblockpage.cpp \
-    adblockrule.cpp \
-    adblockschemeaccesshandler.cpp \
-    adblocksubscription.cpp
+    $$PWD/adblockdialog.cpp \
+    $$PWD/adblockmanager.cpp \
+    $$PWD/adblockmodel.cpp \
+    $$PWD/adblocknetwork.cpp \
+    $$PWD/adblockpage.cpp \
+    $$PWD/adblockrequestinterceptor.cpp \
+    $$PWD/adblockrule.cpp \
+    $$PWD/adblockschemeaccesshandler.cpp \
+    $$PWD/adblocksubscription.cpp
 
 FORMS += \
-    adblockdialog.ui
-
+    $$PWD/adblockdialog.ui

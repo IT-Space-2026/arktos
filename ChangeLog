@@ -6,7 +6,7 @@ Build system:
 Core web layer (MIG02):
     Port WebView/WebPage/WebActionMapper to QWebEngineView/QWebEnginePage. Context menus use QWebEngineContextMenuRequest, downloads go through QWebEngineDownloadRequest (saved to the default download directory until the download manager is ported), JavaScript window objects ("external", "arora") are exposed via QWebChannel, and failed loads show the Arora notfound.html error page again. Custom user agent strings apply through QWebEngineProfile::httpUserAgent.
     The Ctrl access-key link hints are dropped: they needed synchronous DOM access that WebEngine does not provide.
-    "Open in New Tab" context menu entries open a standalone window until the tab widget is ported; bookmark-link, "Search with...", block-image and add-to-toolbar-search entries are temporarily disabled while the bookmarks, opensearch and adblock modules are still being ported.
+    "Open in New Tab" context menu entries open a standalone window until the tab widget is ported; bookmark-link, "Search with..." and add-to-toolbar-search entries are temporarily disabled while the bookmarks and opensearch modules are still being ported.
 
 Cookie layer (MIG03):
     Port the cookie jar and its dialogs to QWebEngineCookieStore on the application QWebEngineProfile. Cookies are now persisted by the WebEngine profile itself; the accept/keep policy and the domain exception lists (block / allow / allow-for-session) are enforced through the store's cookie filter and stored in the application settings (cookies.ini is gone). "Accept only from sites navigated to" now blocks third-party cookies.
@@ -34,6 +34,10 @@ Location bar + search (MIG08):
     Port the location bar (site icon, privacy indicator, load progress), the search banner widget and the OpenSearch stack to Qt 6 / WebEngine. Search suggestions are parsed with QJsonDocument now that QtScript is gone; engine definitions load/save through the OpenSearch XML reader/writer as before, stored in the standard application-data directory.
     "Add '<engine>'" entries for page-advertised OpenSearch descriptions are collected asynchronously from the render process and drop into the search button's menu as they arrive. The private-browsing indicator follows the page's off-the-record profile; clicking it no longer exits private mode yet — that needs the application object (setPrivate is a whole-window affair under WebEngine).
     The JavaScript window.external.AddSearchProvider hook and the start page's arora.currentEngine/searchUrl bindings are live again via QWebChannel.
+
+AdBlock (MIG09):
+    Port the AdBlock stack to Qt WebEngine: requests are now blocked by a QWebEngineUrlRequestInterceptor installed on the browsing profile (Chromium fails them with net::ERR_ACCESS_DENIED), replacing the QNetworkAccessManager hook WebKit used. Rule parsing, subscriptions, the configuration dialog and "abp:subscribe" links are kept — abp: is now a registered custom URL scheme whose handler shows the subscribe prompt.
+    Element-hiding ("##") rules are injected as a stylesheet into loaded pages instead of walking the DOM; as a side benefit they also hide matching elements added after the page loads. The "Block Image" context menu entry works again, feeding a custom rule into the dialog.
 
 0.11.0
 Interface:

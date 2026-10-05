@@ -34,7 +34,9 @@ public:
     // Declares every application scheme with QWebEngineUrlScheme.
     // Must run before the QApplication constructor; afterwards
     // installAll() can attach the handlers to a profile.
-    // TODO(MIG09): the "abp" AdBlockSchemeAccessHandler belongs here too.
+    // The "abp" adblock scheme lives outside network/ — it is declared
+    // by AdBlockSchemeAccessHandler::registerUrlScheme() (called from
+    // main) and installed by AdBlockManager::installOnProfile().
     static void registerUrlSchemes();
     static void installAll(QWebEngineProfile *profile, QObject *parent = 0);
 };

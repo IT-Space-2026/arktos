@@ -32,7 +32,6 @@
 #include "adblocksubscription.h"
 
 #include <qdebug.h>
-#include <qregexp.h>
 #include <qurl.h>
 
 // #define ADBLOCKRULE_DEBUG
@@ -84,7 +83,7 @@ void AdBlockRule::setFilter(const QString &filter)
     setPattern(parsedLine, regExpRule);
 
     if (m_options.contains(QLatin1String("match-case"))) {
-        m_regExp.setCaseSensitivity(Qt::CaseSensitive);
+        m_regExp.setPatternOptions(QRegularExpression::NoPatternOption);
         m_options.removeOne(QLatin1String("match-case"));
     }
 }
@@ -105,19 +104,21 @@ bool AdBlockRule::networkMatch(const QString &encodedUrl) const
         return false;
     }
 
-    bool matched = m_regExp.indexIn(encodedUrl) != -1;
+    bool matched = m_regExp.match(encodedUrl).hasMatch();
 
     if (matched
         && !m_options.isEmpty()) {
 
         // we only support domain right now
         if (m_options.count() == 1) {
-            foreach (const QString &option, m_options) {
+            for (const QString &option : m_options) {
                 if (option.startsWith(QLatin1String("domain="))) {
                     QUrl url = QUrl::fromEncoded(encodedUrl.toUtf8());
                     QString host = url.host();
                     QStringList domainOptions = option.mid(7).split(QLatin1Char('|'));
-                    foreach (QString domainOption, domainOptions) {
+                    for (QString domainOption : domainOptions) {
+                        if (domainOption.isEmpty())
+                            continue;
                         bool negate = domainOption.at(0) == QLatin1Char('~');
                         if (negate)
                             domainOption = domainOption.mid(1);
@@ -175,24 +176,35 @@ QString AdBlockRule::regExpPattern() const
 
 static QString convertPatternToRegExp(const QString &wildcardPattern) {
     QString pattern = wildcardPattern;
-    return pattern.replace(QRegExp(QLatin1String("\\*+")), QLatin1String("*"))   // remove multiple wildcards
-        .replace(QRegExp(QLatin1String("\\^\\|$")), QLatin1String("^"))        // remove anchors following separator placeholder
-        .replace(QRegExp(QLatin1String("^(\\*)")), QLatin1String(""))          // remove leading wildcards
-        .replace(QRegExp(QLatin1String("(\\*)$")), QLatin1String(""))          // remove trailing wildcards
-        .replace(QRegExp(QLatin1String("(\\W)")), QLatin1String("\\\\1"))      // escape special symbols
-        .replace(QRegExp(QLatin1String("^\\\\\\|\\\\\\|")),
-                 QLatin1String("^[\\w\\-]+:\\/+(?!\\/)(?:[^\\/]+\\.)?"))       // process extended anchor at expression start
-        .replace(QRegExp(QLatin1String("\\\\\\^")),
-                 QLatin1String("(?:[^\\w\\d\\-.%]|$)"))                        // process separator placeholders
-        .replace(QRegExp(QLatin1String("^\\\\\\|")), QLatin1String("^"))       // process anchor at expression start
-        .replace(QRegExp(QLatin1String("\\\\\\|$")), QLatin1String("$"))       // process anchor at expression end
-        .replace(QRegExp(QLatin1String("\\\\\\*")), QLatin1String(".*"))       // replace wildcards by .*
-        ;
+    pattern.replace(QRegularExpression(QLatin1String("\\*+")), QLatin1String("*"));    // remove multiple wildcards
+    pattern.replace(QRegularExpression(QLatin1String("\\^\\|$")), QLatin1String("^")); // remove anchors following separator placeholder
+    pattern.replace(QRegularExpression(QLatin1String("^(\\*)")), QString());           // remove leading wildcards
+    pattern.replace(QRegularExpression(QLatin1String("(\\*)$")), QString());           // remove trailing wildcards
+    pattern.replace(QRegularExpression(QLatin1String("(\\W)")), QLatin1String("\\\\1"));// escape special symbols
+
+    // The steps below have literal before/after strings (the pattern text
+    // is already escaped at this point), so plain QString::replace is
+    // used: QRegularExpression replacement strings would interpret the
+    // backslashes in the replacements themselves.
+    // process extended anchor at expression start ("||" was escaped to "\|\|")
+    if (pattern.startsWith(QLatin1String("\\|\\|")))
+        pattern = QLatin1String("^[\\w\\-]+:\\/+(?!\\/)(?:[^\\/]+\\.)?")
+                  + pattern.mid(4);
+    // process separator placeholders (escaped "^")
+    pattern.replace(QLatin1String("\\^"), QLatin1String("(?:[^\\w\\d\\-.%]|$)"));
+    // process anchors at expression start / end (escaped "|")
+    if (pattern.startsWith(QLatin1String("\\|")))
+        pattern = QLatin1String("^") + pattern.mid(2);
+    if (pattern.endsWith(QLatin1String("\\|")))
+        pattern = pattern.left(pattern.size() - 2) + QLatin1String("$");
+    // replace escaped wildcards by .*
+    pattern.replace(QLatin1String("\\*"), QLatin1String(".*"));
+    return pattern;
 }
 
 void AdBlockRule::setPattern(const QString &pattern, bool isRegExp)
 {
-    m_regExp = QRegExp(isRegExp ? pattern : convertPatternToRegExp(pattern),
-                           Qt::CaseInsensitive, QRegExp::RegExp2);
+    m_regExp = QRegularExpression(isRegExp ? pattern : convertPatternToRegExp(pattern),
+                                  QRegularExpression::CaseInsensitiveOption);
 }
 

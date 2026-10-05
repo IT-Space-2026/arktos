@@ -34,6 +34,7 @@
 #include <qpointer.h>
 
 class QUrl;
+class QWebEngineProfile;
 class AutoSaver;
 class AdBlockDialog;
 class AdBlockNetwork;
@@ -62,6 +63,10 @@ public:
     AdBlockNetwork *network();
     AdBlockPage *page();
     AdBlockSubscription *customRules();
+
+    // Installs the AdBlockRequestInterceptor on the profile; WebEngine
+    // routes all page loads through it instead of the application QNAM.
+    void installOnProfile(QWebEngineProfile *profile);
 
 public slots:
     void setEnabled(bool enabled);

@@ -47,17 +47,17 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     m_proxyModel = new TreeSortFilterProxyModel(this);
     m_proxyModel->setSourceModel(m_adBlockModel);
     treeView->setModel(m_proxyModel);
-    connect(search, SIGNAL(textChanged(QString)),
-            m_proxyModel, SLOT(setFilterFixedString(QString)));
+    connect(search, &SearchLineEdit::textChanged,
+            m_proxyModel, &TreeSortFilterProxyModel::setFilterFixedString);
 
     AdBlockManager *manager = AdBlockManager::instance();
     adblockCheckBox->setChecked(manager->isEnabled());
-    connect(adblockCheckBox, SIGNAL(toggled(bool)),
-            AdBlockManager::instance(), SLOT(setEnabled(bool)));
+    connect(adblockCheckBox, &QCheckBox::toggled,
+            AdBlockManager::instance(), &AdBlockManager::setEnabled);
 
     QMenu *menu = new QMenu(this);
-    connect(menu, SIGNAL(aboutToShow()),
-            this, SLOT(aboutToShowActionMenu()));
+    connect(menu, &QMenu::aboutToShow,
+            this, &AdBlockDialog::aboutToShowActionMenu);
     actionToolButton->setMenu(menu);
     actionToolButton->setIcon(QIcon(QLatin1String(":128x128/run.png")));
     actionToolButton->setPopupMode(QToolButton::InstantPopup);
@@ -73,27 +73,27 @@ void AdBlockDialog::aboutToShowActionMenu()
     menu->clear();
 
     QAction *addRule = menu->addAction(tr("Add Custom Rule"));
-    connect(addRule, SIGNAL(triggered()), this, SLOT(addCustomRule()));
+    connect(addRule, &QAction::triggered, this, [this]() { addCustomRule(); });
 
     QAction *learnRule = menu->addAction(tr("Learn more about writing rules..."));
-    connect(learnRule, SIGNAL(triggered()), this, SLOT(learnAboutWritingFilters()));
+    connect(learnRule, &QAction::triggered, this, &AdBlockDialog::learnAboutWritingFilters);
 
     menu->addSeparator();
 
     QModelIndex idx = m_proxyModel->mapToSource(treeView->currentIndex());
 
     QAction *updateSubscription = menu->addAction(tr("Update Subscription"));
-    connect(updateSubscription, SIGNAL(triggered()), this, SLOT(updateSubscription()));
+    connect(updateSubscription, &QAction::triggered, this, &AdBlockDialog::updateSubscription);
     if (!idx.isValid())
         updateSubscription->setEnabled(false);
 
     QAction *addSubscription = menu->addAction(tr("Browse Subscriptions..."));
-    connect(addSubscription, SIGNAL(triggered()), this, SLOT(browseSubscriptions()));
+    connect(addSubscription, &QAction::triggered, this, &AdBlockDialog::browseSubscriptions);
 
     menu->addSeparator();
 
     QAction *removeSubscription = menu->addAction(tr("Remove Subscription"));
-    connect(removeSubscription, SIGNAL(triggered()), this, SLOT(removeSubscription()));
+    connect(removeSubscription, &QAction::triggered, this, &AdBlockDialog::removeSubscription);
     if (!idx.isValid())
         removeSubscription->setEnabled(false);
 }

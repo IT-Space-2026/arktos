@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2009, Benjamin C. Meyer <ben@meyerhome.net>
+ * Copyright (c) 2026, The Arora Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,27 +26,23 @@
  * SUCH DAMAGE.
  */
 
-#ifndef ADBLOCKBLOCKEDNETWORKREPLY_H
-#define ADBLOCKBLOCKEDNETWORKREPLY_H
+#include "adblockrequestinterceptor.h"
 
-#include <qnetworkreply.h>
+#include "adblocknetwork.h"
 
-class AdBlockRule;
-class AdBlockBlockedNetworkReply : public QNetworkReply
+#include <qwebengineurlrequestinfo.h>
+
+AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent)
+    : QWebEngineUrlRequestInterceptor(parent)
+    , m_network(network)
 {
-    Q_OBJECT
+}
 
-public:
-    AdBlockBlockedNetworkReply(const QNetworkRequest &request, const AdBlockRule *rule, QObject *parent = 0);
-    void abort() {};
-
-protected:
-    qint64 readData(char *data, qint64 maxSize);
-
-private slots:
-    void delayedFinished();
-
-};
-
-#endif // ADBLOCKBLOCKEDNETWORKREPLY_H
-
+void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
+{
+    // Runs on the WebEngine IO thread.  info.block(true) fails the
+    // request with net::ERR_BLOCKED_BY_CLIENT, the same net result the
+    // old ContentAccessDenied QNetworkReply produced.
+    if (m_network->shouldBlock(info.requestUrl()))
+        info.block(true);
+}
