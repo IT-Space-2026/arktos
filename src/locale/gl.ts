@@ -871,40 +871,6 @@ Desexa recargar todas as páxinas?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Cargar<byte value="x9"/></translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Cargar todo</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Engadir %1 á lista branca</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Quitar da lista branca</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Axustes</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Cargar «Flash»</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Lista branca de sitios</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1820,10 +1786,6 @@ Ignorar estes erros?&lt;/qt&gt;</translation>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Idiomas preferidos para ver páxinas web:</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Use ClickToFlash nas estensións flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

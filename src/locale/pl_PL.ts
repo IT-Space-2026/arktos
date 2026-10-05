@@ -827,40 +827,6 @@ Czy chcesz odświeżyć wszystkie strony?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Wczytaj</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Wczytaj wszystkie</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Dodaj %1 do białej listy</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Usuń z białej listy</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Ustawienia</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Wczytaj Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Strony na białej liście</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1691,11 +1657,6 @@ Czy chcesz zignorować te błędy?&lt;/qt&gt;</translation>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Preferowane języki do przeglądania stron:</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translatorcomment>not sure if ClickToFlash needs to be translated at all...</translatorcomment>
-        <translation>Użyj ClickToFlash dla pluginów flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

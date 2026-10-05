@@ -866,40 +866,6 @@ Download Manager
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Carrega</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Carrega-ho tot</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Afegeix %1 a la llista blanca</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Elimina de la llista blanca</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Arranjament</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Carrega Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Llista blanca de llocs</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1651,10 +1617,6 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
     <message>
         <source>Enable Plugins</source>
         <translation>Habilita connectors</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Usa ClickToFlash en els connectors Flash</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

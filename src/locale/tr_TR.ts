@@ -942,40 +942,6 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Yükle</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Hepsini Yükle</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>%1 i aklisteye ekle</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Aklisteden kaldır</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Ayarlar</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Flash Yükle</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Akliste siteleri</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1975,10 +1941,6 @@ Bu hataları görmezden gelmek istiyor musunuz?&lt;/qt&gt;</translation>
     <message>
         <source>Http (Transparent)</source>
         <translation>Http (Transparent)</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Flash eklentilerinde ClickToFlash kullan</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

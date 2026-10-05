@@ -869,40 +869,6 @@ Você deseja recarregar todas as páginas?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Carregar</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Carregar todos</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Adicionar %1 à Lista branca</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Remover da Lista branca</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Configurações</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Carregar flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Sites de Lista branca</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1666,10 +1632,6 @@ Você deseja ignorar esses erros?&lt;/qt&gt;</translation>
     <message>
         <source>Enable Plugins</source>
         <translation>Habilitar plug-ins</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Utilizar Clique para Instalar nos plug-ins flash</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

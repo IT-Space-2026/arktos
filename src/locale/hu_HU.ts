@@ -864,40 +864,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Betöltés</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Összes betöltése</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>%1 hozzáadása az engedélyezési listához</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Eltávolítás az engedélyezési listáról</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Beállítások</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Flash betöltése</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Engedélyezett oldalak</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1661,10 +1627,6 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
     <message>
         <source>Enable Plugins</source>
         <translation>Bővítmények engedélyezése</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Flash tartalmak megjelenítése kattintásra</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

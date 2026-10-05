@@ -816,40 +816,6 @@ Vuoi ricaricare tutte le pagine?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Carica</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Carica tutto</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Aggiungi %1 ai siti autorizzati</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Rimuovi dai siti autorizzati</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Impostazioni</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Carica Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Siti autorizzati</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1903,10 +1869,6 @@ Vuoi ignorare questi errori?&lt;/qt&gt;</translation>
     <message>
         <source>Http (Transparent)</source>
         <translation>Http (Trasparente)</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Utilizza ClickToFlash sui plugin flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

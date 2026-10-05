@@ -44,7 +44,7 @@
 
 SingleApplication::SingleApplication(int &argc, char **argv)
     : QApplication(argc, argv)
-    , m_localServer(0)
+    , m_localServer(nullptr)
 {
 }
 
@@ -81,8 +81,8 @@ bool SingleApplication::startSingleServer()
         return false;
 
     m_localServer = new QLocalServer(this);
-    connect(m_localServer, SIGNAL(newConnection()),
-            this, SLOT(newConnection()));
+    connect(m_localServer, &QLocalServer::newConnection,
+            this, &SingleApplication::newConnection);
     bool success = false;
     if (!m_localServer->listen(serverName())) {
         if (QAbstractSocket::AddressInUseError == m_localServer->serverError()) {
@@ -114,14 +114,14 @@ bool SingleApplication::startSingleServer()
 
     if (!success) {
         delete m_localServer;
-        m_localServer = 0;
+        m_localServer = nullptr;
     }
     return success;
 }
 
 bool SingleApplication::isRunning() const
 {
-    return (0 != m_localServer);
+    return (nullptr != m_localServer);
 }
 
 void SingleApplication::newConnection()
@@ -138,28 +138,17 @@ QString SingleApplication::serverName() const
 {
     QString serverName = QCoreApplication::applicationName();
     Q_ASSERT(!serverName.isEmpty());
-#ifdef Q_WS_QWS
-    serverName += QLatin1String("_qws");
-#endif
 #ifndef Q_OS_WIN
     serverName += QString(QLatin1String("_%1_%2")).arg(getuid()).arg(getgid());
 #else
     static QString login;
     if (login.isEmpty()) {
-        QT_WA({
-            wchar_t buffer[256];
-            DWORD bufferSize = sizeof(buffer) / sizeof(wchar_t) - 1;
-            GetUserNameW(buffer, &bufferSize);
-            login = QString::fromUtf16((ushort*)buffer);
-        },
-        {
-            char buffer[256];
-            DWORD bufferSize = sizeof(buffer) / sizeof(char) - 1;
-            GetUserNameA(buffer, &bufferSize);
-            login = QString::fromLocal8Bit(buffer);
-        });
+        wchar_t buffer[256];
+        DWORD bufferSize = sizeof(buffer) / sizeof(wchar_t) - 1;
+        if (GetUserNameW(buffer, &bufferSize))
+            login = QString::fromWCharArray(buffer, bufferSize);
     }
-    serverName += QString::fromAscii("_%1").arg(login);
+    serverName += QString::fromLatin1("_%1").arg(login);
 #endif
     return serverName;
 }

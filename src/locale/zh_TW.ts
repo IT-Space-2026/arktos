@@ -837,40 +837,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>載入</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>全部載入</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>加入 %1 至白名單</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>從白名單中移除</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>設定</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>載入 Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>白名單網站</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1557,10 +1523,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>Enable Plugins</source>
         <translation>啟用外掛程式</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>在 Flash 加上「載入 flash」按鈕</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

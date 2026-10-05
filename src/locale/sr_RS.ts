@@ -819,40 +819,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Учитај</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Учитај све</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Додај %1 на белу листу</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Уклони са беле листе</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Подешавање</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Учитај флеш</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Сајтови на белој листи</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1538,10 +1504,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>Enable Plugins</source>
         <translation>Омогући прикључке</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Користи &quot;Кликни за флеш&quot; за флеш прикључке</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

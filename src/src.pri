@@ -86,9 +86,10 @@ include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
-# include(qwebplugins/qwebplugins.pri)  # TODO(MIG13): remove, Flash is dead
-# include(utils/utils.pri)            # TODO(MIG02..MIG13 per file)
 # include(useragent/useragent.pri)    # TODO(MIG14)
+# MIG13: qwebplugins/ deleted (plugin machinery removed per user
+# directive); utils.pri retired — remaining utils/ files are in the
+# live lists below.
 # ------------------------------------------------------------------------
 
 include(network/cookiejar/cookiejar.pri)
@@ -129,6 +130,7 @@ HEADERS += \
     utils/languagemanager.h \
     utils/lineedit.h \
     utils/lineedit_p.h \
+    utils/singleapplication.h \
     utils/squeezelabel.h \
     utils/treesortfilterproxymodel.h
 SOURCES += \
@@ -158,6 +160,7 @@ SOURCES += \
     utils/edittreeview.cpp \
     utils/languagemanager.cpp \
     utils/lineedit.cpp \
+    utils/singleapplication.cpp \
     utils/squeezelabel.cpp \
     utils/treesortfilterproxymodel.cpp
 

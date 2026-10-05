@@ -948,40 +948,6 @@ Vil du laste alle sider på nytt?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Last</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Last alle</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Legg til %1 i godkjentlisten</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Fjern fra godkjentlisten</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Innstilinger</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Last Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Godkjente sider</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -2005,10 +1971,6 @@ Vil du ignorere disse feilene?&lt;qt&gt;</translation>
         <source>Http (Transparent)</source>
         <translatorcomment>I don&apos;t know the Norwegian equivalent of this word in this context.</translatorcomment>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Bruk ClickToFlash på flash-programtillegg</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

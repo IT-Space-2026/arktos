@@ -977,40 +977,6 @@ Chcete znovu načíst všechny stránky?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Načíst</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Načíst vše</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Přidat %1 do povolených</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Odebrat z povolených</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Nastavení</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Načíst flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Povolené weby</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1994,10 +1960,6 @@ Chceš ignorovat tyto chyby?</translation>
     <message>
         <source>Home Page:</source>
         <translation>Domovská stránka:</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Používat ClickToFlash na zásuvných modulech flash</translation>
     </message>
     <message>
         <source>View Images</source>

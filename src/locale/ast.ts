@@ -897,40 +897,6 @@ Download Manager
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Cargar</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Cargar too</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Amestar %1 a la llista blanca</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Quitar de la llista blanca</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Axustes</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Cargar «Flash»</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Llista blanca de sitios</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1840,10 +1806,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Llingües preferíes pa visualizar páxines web en:</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Usar ClickToFlash nes estensiones flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

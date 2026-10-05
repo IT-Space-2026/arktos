@@ -834,40 +834,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Charger</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Tout charger</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Ajouter %1 à la liste blanche</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Supprimer de la liste blanche</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Paramètres</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Charger Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Sites en liste blanche</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1694,10 +1660,6 @@ Voulez-vous ignorer ces erreurs?&lt;/qt&gt;</translation>
     <message>
         <source>Http (Transparent)</source>
         <translation>Http (Transparent)</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Utiliser ClickToFlash pour les plugins flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

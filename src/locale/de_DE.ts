@@ -989,40 +989,6 @@ Sollen alle Seiten neu geladen werden?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Laden</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Alle Laden</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>%1 zur Whitelist hinzufügen</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Von der Whitelist entfernen</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Einstellungen</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Flash laden</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Webseiten auf der Whitelist</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1951,10 +1917,6 @@ Möchten Sie diese Fehler ignorieren?</translation>
     <message>
         <source>Enable Plugins</source>
         <translation>Plugins aktivieren</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>KlickToFlash benutzen</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

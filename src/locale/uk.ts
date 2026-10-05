@@ -928,40 +928,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Завантажити</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Завантажити все</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Долучити %1 до рекомендаційного списку</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Вилучити з рекомендаційного списку</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Налаштування</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Завантажити Flash</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Сайти, які рекомендовано до списку</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -2044,10 +2010,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>Http (Transparent)</source>
         <translation>Http (прозоре)</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Використовувати ClickToFlash для модулів Flash</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>

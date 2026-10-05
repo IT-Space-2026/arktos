@@ -818,40 +818,6 @@ Da li želite da ponovo učitate sve stranice?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Učitaj</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Učitaj sve</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>Dodaj %1 na belu listu</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Ukloni sa bele liste</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Podešavanje</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Učitaj fleš</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Sajtovi na beloj listi</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1537,10 +1503,6 @@ Da li želite da zanemarite ove greške?&lt;/qt&gt;</translation>
     <message>
         <source>Enable Plugins</source>
         <translation>Omogući priključke</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>Koristi &quot;Klikni za fleš&quot; za fleš priključke</translation>
     </message>
     <message>
         <source>Enable Javascript</source>

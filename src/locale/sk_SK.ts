@@ -893,40 +893,6 @@ Chcete znovu načítať všetky stránky?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation type="unfinished"></translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation type="unfinished"></translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1878,10 +1844,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Http (Transparent)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

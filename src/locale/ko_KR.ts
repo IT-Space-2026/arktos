@@ -1028,47 +1028,6 @@ Do you want to reload all pages?</source>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.ui" line="43"/>
-        <source>Load Flash</source>
-        <translation>플래시 불러오기</translation>
-    </message>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.cpp" line="59"/>
-        <source>Load</source>
-        <translation>불러오기</translation>
-    </message>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.cpp" line="60"/>
-        <source>Load All</source>
-        <translation>모두 불러오기</translation>
-    </message>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.cpp" line="63"/>
-        <source>Add %1 to Whitelist</source>
-        <translation>%1 을(를) 허용 목록에 추가</translation>
-    </message>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.cpp" line="64"/>
-        <source>Remove from Whitelist</source>
-        <translation>허용 목록에서 제거</translation>
-    </message>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflash.cpp" line="69"/>
-        <source>Settings</source>
-        <translation>설정</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <location filename="../qwebplugins/clicktoflash/clicktoflashsettings.ui" line="17"/>
-        <source>Whitelist sites</source>
-        <translation>사이트 허용 목록</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <location filename="../network/cookiejar/cookieexceptionsmodel.cpp" line="93"/>
@@ -1939,16 +1898,6 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <location filename="../settings.ui" line="393"/>
         <source>Enable Plugins</source>
         <translation>플러그인 활성화</translation>
-    </message>
-    <message>
-        <location filename="../settings.ui" line="425"/>
-        <source>If you enable this option, no flash objects will be loaded by default. Instead, each will be replaced by a button, allowing you to control which objects to load, and which not. </source>
-        <translation>이 옵션을 활성화하면 플래시 객체를 바로 불러들이지 않도록 않도록 설정됩니다. 이 플래시 객체는 각각 버튼으로 대체되며, 사용자가 버튼을 눌러 이 플래시 객체를 불러들일 것인지 선택할 수 있습니다. </translation>
-    </message>
-    <message>
-        <location filename="../settings.ui" line="428"/>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>플래시 플러그인에 ClickToFlash 사용</translation>
     </message>
     <message>
         <location filename="../settings.ui" line="438"/>

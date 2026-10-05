@@ -819,40 +819,6 @@ Wilt u alle pagina&apos;s herladen?</translation>
     </message>
 </context>
 <context>
-    <name>ClickToFlash</name>
-    <message>
-        <source>Load</source>
-        <translation>Laden</translation>
-    </message>
-    <message>
-        <source>Load All</source>
-        <translation>Alles laden</translation>
-    </message>
-    <message>
-        <source>Add %1 to Whitelist</source>
-        <translation>%1 aan whitelist toevoegen</translation>
-    </message>
-    <message>
-        <source>Remove from Whitelist</source>
-        <translation>Van whitelist verwijderen</translation>
-    </message>
-    <message>
-        <source>Settings</source>
-        <translation>Instellingen</translation>
-    </message>
-    <message>
-        <source>Load Flash</source>
-        <translation>Flash laden</translation>
-    </message>
-</context>
-<context>
-    <name>ClickToFlashSettings</name>
-    <message>
-        <source>Whitelist sites</source>
-        <translation>Whitelist-sites</translation>
-    </message>
-</context>
-<context>
     <name>CookieExceptionsModel</name>
     <message>
         <source>Website</source>
@@ -1675,10 +1641,6 @@ Wilt u deze fouten negeren?&lt;/qt&gt;</translation>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Voorkeurstaal om webpagina&apos;s in te zien:</translation>
-    </message>
-    <message>
-        <source>Use ClickToFlash on flash plugins</source>
-        <translation>ClickToFlash gebruiken bij flashplugins</translation>
     </message>
     <message>
         <source>Filter Tracking Cookies</source>
