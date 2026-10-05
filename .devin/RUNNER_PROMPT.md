@@ -4,7 +4,7 @@ ported from Qt 4.5 to Qt 6.x / QtWebEngine).
 
 Your job in THIS run:
 
-1. Read `.devin/TASKS.md`. It contains a markdown table of tasks with a
+1. Read `.devin/Arora-Task.md`. It contains a markdown table of tasks with a
    Status column (pending / in_progress / done / blocked).
 2. Pick the FIRST row whose Status is `pending` or `in_progress`
    (in_progress means a previous run was interrupted — inspect the
@@ -20,9 +20,9 @@ Your job in THIS run:
    cannot be cheaply installed (no sudo — user-local installs under
    ~/Qt or ~/venvs only, no network, wrong OS), do NOT start the task —
    set Status `blocked` with Notes `blocked:missing <what>`, commit
-   just TASKS.md, and stop. Never burn the run grinding on an
+   just Arora-Task.md, and stop. Never burn the run grinding on an
    impossible prerequisite.
-4. Set that row's Status to `in_progress` and save TASKS.md.
+4. Set that row's Status to `in_progress` and save Arora-Task.md.
 5. Do the task fully:
    - The task row points at relevant files. Follow existing code
      conventions (Qt-style code, qmake .pro/.pri build files).
@@ -37,7 +37,7 @@ Your job in THIS run:
    - Verify per the task's "Verify:" hint.
 6. On success:
    a. Update the row Status to `done` and write a one-line summary +
-      verification result into the Notes column of `.devin/TASKS.md`.
+      verification result into the Notes column of `.devin/Arora-Task.md`.
    b. Append a bullet to `ChangeLog` (user-visible change wording).
    c. Update `README` if the change affects documented features,
       requirements, or usage — otherwise skip.
@@ -46,7 +46,7 @@ Your job in THIS run:
    e. `git add -A`, `git commit` with a descriptive message
       (why, not just what), then `git push`.
 7. If you genuinely cannot complete it, set Status `blocked` and Notes
-   `blocked:<short reason>`, then commit+push just the TASKS.md update.
+   `blocked:<short reason>`, then commit+push just the Arora-Task.md update.
 8. STOP after exactly one task. Do NOT start the next row — the outer
    loop launches a fresh run for it.
 

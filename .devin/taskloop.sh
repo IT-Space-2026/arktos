@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# taskloop.sh — drive .devin/TASKS.md through the Devin CLI.
+# taskloop.sh — drive .devin/Arora-Task.md through the Devin CLI.
 #
 # Each iteration launches one non-interactive `devin -p` run that works
 # ONE task (the first pending/in_progress row), marks it done and
 # commits. If the run crashes, times out, or exits without finishing
 # the task, the loop bumps the row's Attempts counter and restarts it —
 # the next run sees the row still in_progress and continues the work
-# (state lives in TASKS.md + git, so a fresh session is more robust
+# (state lives in Arora-Task.md + git, so a fresh session is more robust
 # than resuming a possibly-corrupted one).
 #
 # After MAX_ATTEMPTS crashes on the same task the row is marked
@@ -31,7 +31,7 @@ unset ACP_BACKEND WINDSURF_IDE_TYPE WINDSURF_EXT_HOST_PID \
       VSCODE_NLS_CONFIG VSCODE_HANDLES_UNCAUGHT_ERRORS 2>/dev/null || true
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TASKS="$REPO/.devin/TASKS.md"
+TASKS="$REPO/.devin/Arora-Task.md"
 PROMPT="$REPO/.devin/RUNNER_PROMPT.md"
 LOG="$REPO/.devin/taskloop.log"
 STOPFILE="$REPO/.devin/STOP_TASKLOOP"
