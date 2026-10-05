@@ -20,6 +20,7 @@
 
 #include "webpage.h"
 
+#include "autofillmanager.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
@@ -98,6 +99,7 @@ WebPage::WebPage(QObject *parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
+    , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
 {
     init();
@@ -108,6 +110,7 @@ WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
     , m_openTargetBlankLinksIn(TabWidget::NewWindow)
     , m_javaScriptExternalObject(new JavaScriptExternalObject(this))
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
+    , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
 {
     init();
@@ -124,6 +127,10 @@ void WebPage::init()
     // TODO(MIG16): make startpage.html pull in qrc:///qtwebchannel/qwebchannel.js.
     m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
     m_webChannel->registerObject(QLatin1String("arora"), m_javaScriptAroraObject);
+    // MIG10: form-submit reports from the injected autofill.js arrive
+    // through this object; the manager enables/disables capture per
+    // page (off-the-record pages never capture).
+    m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
     setWebChannel(m_webChannel);
 
     // Chromium's built-in error pages are disabled so the Arora

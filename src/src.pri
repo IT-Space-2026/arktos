@@ -29,7 +29,7 @@ exists(../.git/HEAD) {
 #
 # FORMS += \
 #     aboutdialog.ui \              # TODO(MIG14)
-#     autofilldialog.ui \           # TODO(MIG10)
+#     (autofilldialog.ui live — MIG10)
 #     acceptlanguagedialog.ui \     # TODO(MIG11)
 #     (downloaditem.ui/downloads.ui live — MIG05)
 #     (searchbanner.ui live — MIG08)
@@ -38,8 +38,7 @@ exists(../.git/HEAD) {
 # HEADERS += \
 #     aboutdialog.h \               # TODO(MIG14)
 #     acceptlanguagedialog.h \      # TODO(MIG11)
-#     autofilldialog.h \            # TODO(MIG10)
-#     autofillmanager.h \           # TODO(MIG10)
+#     (autofilldialog.h/autofillmanager.h live — MIG10)
 #     browserapplication.h \        # TODO(MIG15)
 #     browsermainwindow.h \         # TODO(MIG14)
 #     clearprivatedata.h \          # TODO(MIG11)
@@ -62,8 +61,7 @@ exists(../.git/HEAD) {
 # SOURCES += \
 #     aboutdialog.cpp \             # TODO(MIG14)
 #     acceptlanguagedialog.cpp \    # TODO(MIG11)
-#     autofilldialog.cpp \          # TODO(MIG10)
-#     autofillmanager.cpp \         # TODO(MIG10)
+#     (autofilldialog.cpp/autofillmanager.cpp live — MIG10)
 #     browserapplication.cpp \      # TODO(MIG15)
 #     browsermainwindow.cpp \       # TODO(MIG14)
 #     clearprivatedata.cpp \        # TODO(MIG11)
@@ -94,10 +92,13 @@ include(opensearch/opensearch.pri)    # MIG08 done
 include(network/cookiejar/cookiejar.pri)
 
 FORMS += \
+    autofilldialog.ui \
     downloaditem.ui \
     downloads.ui \
     searchbanner.ui
 HEADERS += \
+    autofilldialog.h \
+    autofillmanager.h \
     autosaver.h \
     browserpaths.h \
     clearbutton.h \
@@ -118,6 +119,8 @@ HEADERS += \
     utils/squeezelabel.h \
     utils/treesortfilterproxymodel.h
 SOURCES += \
+    autofilldialog.cpp \
+    autofillmanager.cpp \
     autosaver.cpp \
     clearbutton.cpp \
     downloadmanager.cpp \

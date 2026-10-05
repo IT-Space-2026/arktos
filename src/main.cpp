@@ -23,6 +23,7 @@
 #include "adblockrule.h"
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
+#include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -110,7 +111,8 @@ int main(int argc, char **argv)
     // the writes so the test leaves no residue.
     if (args.contains(QLatin1String("--adblock-smoke"))
         || args.contains(QLatin1String("--adblock-list-smoke"))
-        || args.contains(QLatin1String("--adblock-rust-smoke")))
+        || args.contains(QLatin1String("--adblock-rust-smoke"))
+        || args.contains(QLatin1String("--autofill-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
@@ -593,6 +595,171 @@ int main(int argc, char **argv)
             qInfo() << "adblock-list-smoke: FAIL (timeout)";
             application.exit(1);
         });
+    }
+
+    // Headless verification for MIG10: stored form data is filled into
+    // a loaded page by the injected autofill.js; a submit is reported
+    // back through the aroraAutofill channel object and merged into the
+    // store; an off-the-record page is still filled (old private-mode
+    // parity) but must never be captured; and the store round-trips
+    // through autofill.dat.  Exits 0 on PASS for all stages.
+    if (args.contains(QLatin1String("--autofill-smoke"))) {
+        AutoFillManager *autoFill = AutoFillManager::instance();
+
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-autofill-smoke.html"));
+        QFile fixture(fixturePath);
+        if (!fixture.open(QIODevice::WriteOnly)) {
+            qInfo() << "autofill-smoke: FAIL (cannot write fixture)";
+            return 1;
+        }
+        fixture.write("<html><body><form name=\"login\""
+                      " onsubmit=\"return false\">"
+                      "<input id=\"u\" name=\"user\" type=\"text\">"
+                      "<input id=\"p\" name=\"pass\" type=\"password\">"
+                      "<input type=\"submit\" value=\"go\">"
+                      "</form></body></html>");
+        fixture.close();
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+
+        // A stored entry for the fixture url means later captures take
+        // the replace path and never hit the interactive
+        // save-password prompt (which cannot be answered offscreen).
+        AutoFillManager::Form seed;
+        seed.url = fixtureUrl;
+        seed.name = QLatin1String("login");
+        seed.hasAPassword = true;
+        seed.elements
+            << qMakePair(QStringLiteral("user"), QStringLiteral("seeduser"))
+            << qMakePair(QStringLiteral("pass"), QStringLiteral("seedpass"));
+        autoFill->setForms(QList<AutoFillManager::Form>() << seed);
+
+        auto hasElement = [autoFill](const QString &name, const QString &value) {
+            const QList<AutoFillManager::Form> forms = autoFill->forms();
+            for (const AutoFillManager::Form &form : forms)
+                for (const AutoFillManager::Element &element : form.elements)
+                    if (element.first == name && element.second == value)
+                        return true;
+            return false;
+        };
+
+        int stage = 0;
+        // Capture on the main (persistent) profile: a requestSubmit()
+        // fires the submit event, the injected listener serializes the
+        // form and reports it through the aroraAutofill bridge, which
+        // replaces the seeded entry via autoFillChanged.
+        QObject::connect(autoFill, &AutoFillManager::autoFillChanged,
+                         &application,
+                         [&application, autoFill, hasElement, &stage]() {
+            if (stage != 1)
+                return;
+            const bool pass = autoFill->forms().count() == 1
+                && hasElement(QLatin1String("user"), QLatin1String("newuser"))
+                && hasElement(QLatin1String("pass"), QLatin1String("newpass"));
+            qInfo() << "autofill-smoke: capture" << (pass ? "PASS" : "FAIL")
+                    << "forms:" << autoFill->forms().count();
+            if (!pass) {
+                application.exit(1);
+                return;
+            }
+            stage = 2;
+
+            // Off-the-record profile: fill still applies (parity with
+            // the old global private mode) but the bridge must drop
+            // every submit report.
+            QWebEngineProfile *otrProfile = new QWebEngineProfile(&application);
+            WebView *otrView = new WebView(otrProfile);
+            otrView->setAttribute(Qt::WA_DeleteOnClose);
+            otrView->show();
+            const QUrl fixtureUrl =
+                autoFill->forms().first().url; // same fixture page
+            QObject::connect(otrView, &QWebEngineView::loadFinished,
+                             &application,
+                             [&application, otrView, hasElement, fixtureUrl](bool ok) {
+                if (!ok || otrView->url() != fixtureUrl)
+                    return;
+                otrView->webPage()->runJavaScript(
+                    QLatin1String("document.getElementById('u').value"),
+                    [&application, otrView, hasElement](const QVariant &result) {
+                    // The stored entry holds the values captured in the
+                    // previous stage (the seed was replaced).
+                    const bool filled =
+                        result.toString() == QLatin1String("newuser");
+                    qInfo() << "autofill-smoke: otr fill"
+                            << (filled ? "PASS" : "FAIL");
+                    if (!filled) {
+                        application.exit(1);
+                        return;
+                    }
+                    // Give the (supposedly absent) capture hook no
+                    // chance: submit and check nothing was stored.
+                    otrView->webPage()->runJavaScript(QLatin1String(
+                        "document.getElementById('u').value='otruser';"
+                        "document.getElementById('p').value='otrpass';"
+                        "document.forms[0].requestSubmit();"));
+                    QTimer::singleShot(2000, &application,
+                                       [&application, hasElement]() {
+                        const bool pass = !hasElement(
+                            QLatin1String("user"), QLatin1String("otruser"));
+                        qInfo() << "autofill-smoke: otr capture dropped"
+                                << (pass ? "PASS" : "FAIL");
+                        if (!pass) {
+                            application.exit(1);
+                            return;
+                        }
+                        // autofill.dat round-trip through a fresh
+                        // manager reading the same data dir.
+                        AutoFillManager *autoFill =
+                            AutoFillManager::instance();
+                        QMetaObject::invokeMethod(autoFill, "save",
+                                                  Qt::DirectConnection);
+                        AutoFillManager probe(&application);
+                        bool stored = false;
+                        for (const AutoFillManager::Form &form : probe.forms())
+                            for (const AutoFillManager::Element &e : form.elements)
+                                stored |= (e.first == QLatin1String("user")
+                                           && e.second == QLatin1String("newuser"));
+                        qInfo() << "autofill-smoke: persistence"
+                                << (stored ? "PASS" : "FAIL")
+                                << "forms:" << probe.forms().count();
+                        application.exit(stored ? 0 : 1);
+                    });
+                });
+            });
+            otrView->loadUrl(fixtureUrl);
+        });
+
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, &application, fixtureUrl, &stage](bool ok) {
+            if (stage != 0 || !ok || view->url() != fixtureUrl)
+                return;
+            stage = 1;
+            // Fill check, then rewrite the fields and submit once the
+            // channel handshake has had time to install the listener.
+            view->webPage()->runJavaScript(
+                QLatin1String("document.getElementById('u').value"),
+                [&application, view](const QVariant &result) {
+                const bool filled =
+                    result.toString() == QLatin1String("seeduser");
+                qInfo() << "autofill-smoke: fill" << (filled ? "PASS" : "FAIL")
+                        << "got:" << result.toString();
+                if (!filled) {
+                    application.exit(1);
+                    return;
+                }
+                QTimer::singleShot(700, &application, [view]() {
+                    view->webPage()->runJavaScript(QLatin1String(
+                        "document.getElementById('u').value='newuser';"
+                        "document.getElementById('p').value='newpass';"
+                        "document.forms[0].requestSubmit();"));
+                });
+            });
+        });
+        QTimer::singleShot(30000, &application, [&application]() {
+            qInfo() << "autofill-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        view->loadUrl(fixtureUrl);
     }
 
     // ADB02 coverage comparison (CONFIG+=adblock_rust builds only):

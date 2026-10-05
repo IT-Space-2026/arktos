@@ -48,6 +48,10 @@ AdBlock (ADB02):
     Optional alternate filter engine: configuring with `qmake CONFIG+=adblock_rust` (after `cargo build --release` in src/adblock/rust, needing a user-local Rust toolchain) delegates request matching to Brave's adblock-rust engine over a small C FFI wrapper — subscriptions, the dialog and the UI are unchanged. The engine applies native uBO semantics for $badfilter, $denyallow, $important, $removeparam, $redirect= to bundled stubs and cosmetic selectors; the built-in C++ matcher stays the default.
     `./arora --adblock-rust-smoke` diffs both engines on a fixed rule+URL probe set.
 
+Autofill (MIG10):
+    Password form saving and filling is back, reimplemented for WebEngine: an injected script (src/data/autofill.js, replacing parseForms.js) fills stored credentials after each page load and reports form submits through a per-page QWebChannel object instead of the old QNetworkAccessManager POST hook, which no longer exists. The stored-forms list, the save-password prompt ("Never for this site" / "Not now"), the preferences pane and the Form Passwords dialog are unchanged, and the autofill.dat store keeps its format.
+    Private windows (off-the-record profile) still get forms filled but are never recorded. Feature deltas vs the WebKit version: submits inside iframes and submits fired before the page's channel handshake completes can be missed, and a submit that navigates immediately may race the report delivery — WebEngine gives no way to observe the POST itself.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

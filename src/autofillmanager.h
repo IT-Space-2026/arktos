@@ -31,10 +31,35 @@
 
 #include <qobject.h>
 
-#include <qnetworkrequest.h>
+#include <qurl.h>
+#include <qvariantmap.h>
 
-class QWebPage;
+class QDataStream;
+class QWebEnginePage;
 class AutoSaver;
+
+// Per-page bridge exposed to JavaScript as "aroraAutofill" through the
+// page's QWebChannel (registered in WebPage::init).  The injected
+// autofill.js reports submitted forms through submitForm(); the bridge
+// tags each report with the url the page had when the hook was
+// installed so a page cannot forge form data for a different origin.
+class AutoFillBridge : public QObject
+{
+    Q_OBJECT
+
+public:
+    AutoFillBridge(QObject *parent = 0);
+
+    void setPageInfo(const QUrl &pageUrl, bool captureEnabled);
+
+public slots:
+    void submitForm(const QString &reportedUrl, const QVariantMap &formData);
+
+private:
+    QUrl m_pageUrl;
+    bool m_captureEnabled;
+};
+
 class AutoFillManager : public QObject
 {
     Q_OBJECT
@@ -46,9 +71,9 @@ public:
     typedef QPair<QString, QString> Element;
     class Form {
     public:
-        bool isValid() { return !elements.isEmpty(); }
-        static void load(QDataStream &in, Form &subscription);
-        static void save(QDataStream &out, const Form &subscription);
+        bool isValid() const { return !elements.isEmpty(); }
+        static void load(QDataStream &in, Form &form);
+        static void save(QDataStream &out, const Form &form);
 
         QList<Element> elements;
         QUrl url;
@@ -56,26 +81,41 @@ public:
         bool hasAPassword;
     };
 
+    // Lazy qApp-owned singleton (same pattern as HistoryManager /
+    // BookmarksManager / AdBlockManager).  BrowserApplication delegates
+    // here; the manager reads the profile-independent store itself.
+    static AutoFillManager *instance();
+
     AutoFillManager(QObject *parent = 0);
     ~AutoFillManager();
 
     void loadSettings();
 
-    void post(const QNetworkRequest &request, const QByteArray &outgoingData);
-    void fill(QWebPage *page) const;
+    // Called from WebView::loadFinished for every completed load.
+    // Installs the submit-capture hook — unless the page lives on an
+    // off-the-record profile — and fills any stored forms matching the
+    // page's url.
+    void attachToPage(QWebEnginePage *page);
 
     void setForms(const QList<Form> &forms);
     QList<Form> forms() const;
+
+public slots:
+    // Invoked by the page's AutoFillBridge when the injected script
+    // reports a submitted form.
+    void formSubmitted(const QUrl &pageUrl, const QString &reportedUrl,
+                       const QVariantMap &formData);
 
 private slots:
     void save() const;
 
 private:
-    Form findForm(QWebPage *page, const QByteArray &outgoingData) const;
     static QUrl stripUrl(const QUrl &url);
     static QString autoFillDataFile();
     bool allowedToAutoFill(bool password) const;
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
+    QString autoFillScript(const QList<Form> &forms, bool capture) const;
+    bool promptToSave(const QUrl &url);
 
     void saveFormData() const;
     void loadFormData();
@@ -92,4 +132,3 @@ QDataStream &operator<<(QDataStream &, const AutoFillManager::Form &form);
 QDataStream &operator>>(QDataStream &, AutoFillManager::Form &form);
 
 #endif // AUTOFILLMANAGER_H
-

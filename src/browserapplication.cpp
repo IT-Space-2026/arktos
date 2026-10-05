@@ -658,10 +658,10 @@ LanguageManager *BrowserApplication::languageManager()
 
 AutoFillManager *BrowserApplication::autoFillManager()
 {
-    if (!s_autoFillManager) {
-        s_autoFillManager = new AutoFillManager;
-    }
-    return s_autoFillManager;
+    // MIG10: the store owns its application-wide singleton now.
+    // TODO(MIG15): remove the now-dead s_autoFillManager static and
+    // the matching `delete` in the destructor (instance() is qApp-owned).
+    return AutoFillManager::instance();
 }
 
 QIcon BrowserApplication::icon(const QUrl &url)

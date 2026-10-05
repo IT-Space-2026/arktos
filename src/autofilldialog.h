@@ -61,9 +61,8 @@ class AutoFillDialog : public QDialog, public Ui_AutoFillDialog
     Q_OBJECT
 
 public:
-    AutoFillDialog(QWidget *parent = 0, Qt::WindowFlags flags = 0);
+    AutoFillDialog(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
 
 };
 
 #endif // AUTOFILLDIALOG_H
-

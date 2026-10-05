@@ -67,6 +67,7 @@
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "adblockpage.h"
+#include "autofillmanager.h"
 #include "webpage.h"
 
 #include <qapplication.h>
@@ -381,7 +382,7 @@ void WebView::loadFinished()
     }
     m_progress = 0;
     AdBlockManager::instance()->page()->applyRulesToPage(page());
-    // TODO(MIG10): BrowserApplication::instance()->autoFillManager()->fill(page());
+    AutoFillManager::instance()->attachToPage(m_page);
 }
 
 void WebView::loadUrl(const QUrl &url, const QString &title)

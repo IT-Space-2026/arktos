@@ -29,24 +29,26 @@
 #include "autofilldialog.h"
 
 #include "autofillmanager.h"
-#include "browserapplication.h"
 
 #include <qdebug.h>
 
 AutoFillModel::AutoFillModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
-    AutoFillManager *manager = BrowserApplication::instance()->autoFillManager();
+    AutoFillManager *manager = AutoFillManager::instance();
     Q_ASSERT(manager);
-    connect(manager, SIGNAL(autoFillChanged()), this, SLOT(autoFillChanged()));
+    connect(manager, &AutoFillManager::autoFillChanged,
+            this, &AutoFillModel::autoFillChanged);
     autoFillChanged();
 }
 
 void AutoFillModel::autoFillChanged()
 {
-    AutoFillManager *manager = BrowserApplication::instance()->autoFillManager();
-    m_forms = manager->forms();
-    reset();
+    AutoFillManager *manager = AutoFillManager::instance();
+    const QList<AutoFillManager::Form> forms = manager->forms();
+    beginResetModel();
+    m_forms = forms;
+    endResetModel();
 }
 
 QVariant AutoFillModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -77,7 +79,7 @@ QVariant AutoFillModel::data(const QModelIndex &index, int role) const
         case 1: {
             QStringList help;
             QStringList choices;
-            foreach (const AutoFillManager::Element &element, m_forms[index.row()].elements) {
+            for (const AutoFillManager::Element &element : m_forms[index.row()].elements) {
                 QString key = element.first.toLower();
                 if (key.contains(QLatin1String("pass")))
                     continue;
@@ -120,10 +122,14 @@ bool AutoFillModel::removeRows(int row, int count, const QModelIndex &parent)
     beginRemoveRows(parent, row, lastRow);
     for (int i = lastRow; i >= row; --i)
         m_forms.removeAt(i);
-    AutoFillManager *manager = BrowserApplication::instance()->autoFillManager();
-    disconnect(manager, SIGNAL(autoFillChanged()), this, SLOT(autoFillChanged()));
+    AutoFillManager *manager = AutoFillManager::instance();
+    // setForms() emits autoFillChanged(); suppress the re-entrant reset
+    // while the remove is in flight (the signal re-syncs afterwards).
+    disconnect(manager, &AutoFillManager::autoFillChanged,
+               this, &AutoFillModel::autoFillChanged);
     manager->setForms(m_forms);
-    connect(manager, SIGNAL(autoFillChanged()), this, SLOT(autoFillChanged()));
+    connect(manager, &AutoFillManager::autoFillChanged,
+            this, &AutoFillModel::autoFillChanged);
     endRemoveRows();
     return true;
 }
@@ -133,8 +139,8 @@ AutoFillDialog::AutoFillDialog(QWidget *parent, Qt::WindowFlags flags)
 {
     setupUi(this);
     setWindowFlags(Qt::Sheet);
-    connect(removeButton, SIGNAL(clicked()), tableView, SLOT(removeSelected()));
-    connect(removeAllButton, SIGNAL(clicked()), tableView, SLOT(removeAll()));
+    connect(removeButton, &QPushButton::clicked, tableView, &EditTableView::removeSelected);
+    connect(removeAllButton, &QPushButton::clicked, tableView, &EditTableView::removeAll);
     tableView->verticalHeader()->hide();
     tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
     tableView->setAlternatingRowColors(true);
@@ -142,10 +148,10 @@ AutoFillDialog::AutoFillDialog(QWidget *parent, Qt::WindowFlags flags)
     tableView->setShowGrid(false);
     tableView->setSortingEnabled(true);
 
-    AutoFillModel *model = new AutoFillModel();
+    AutoFillModel *model = new AutoFillModel(this);
     QSortFilterProxyModel *m_proxyModel = new QSortFilterProxyModel(this);
-    connect(search, SIGNAL(textChanged(QString)),
-            m_proxyModel, SLOT(setFilterFixedString(QString)));
+    connect(search, &SearchLineEdit::textChanged,
+            m_proxyModel, &QSortFilterProxyModel::setFilterFixedString);
     m_proxyModel->setSourceModel(model);
     tableView->setModel(m_proxyModel);
 
@@ -159,16 +165,15 @@ AutoFillDialog::AutoFillDialog(QWidget *parent, Qt::WindowFlags flags)
         int header = tableView->horizontalHeader()->sectionSizeHint(i);
         switch (i) {
         case 0:
-            header = fm.width(QLatin1String("averagehost.domain.com"));
+            header = fm.horizontalAdvance(QLatin1String("averagehost.domain.com"));
             break;
         case 1:
-            header = fm.width(QLatin1String("_session_id"));
+            header = fm.horizontalAdvance(QLatin1String("_session_id"));
             break;
         }
-        int buffer = fm.width(QLatin1String("xx"));
+        int buffer = fm.horizontalAdvance(QLatin1String("xx"));
         header += buffer;
         tableView->horizontalHeader()->resizeSection(i, header);
     }
     tableView->horizontalHeader()->setStretchLastSection(true);
 }
-

@@ -38,6 +38,7 @@ public:
 
 class QWebEngineLoadingInfo;
 class QWebChannel;
+class AutoFillBridge;
 class OpenSearchEngine;
 // See https://developer.mozilla.org/en/adding_search_engines_from_web_pages
 class JavaScriptExternalObject : public QObject
@@ -105,6 +106,7 @@ protected:
     QUrl m_requestedUrl;
     JavaScriptExternalObject *m_javaScriptExternalObject;
     JavaScriptAroraObject *m_javaScriptAroraObject;
+    AutoFillBridge *m_autoFillBridge;
     QWebChannel *m_webChannel;
 };
 
