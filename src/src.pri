@@ -39,20 +39,16 @@ exists(../.git/HEAD) {
 # HEADERS += \
 #     aboutdialog.h \               # TODO(MIG14)
 #     acceptlanguagedialog.h \      # TODO(MIG11)
-#     autosaver.h \                 # TODO(MIG14)
 #     autofilldialog.h \            # TODO(MIG10)
 #     autofillmanager.h \           # TODO(MIG10)
 #     browserapplication.h \        # TODO(MIG15)
 #     browsermainwindow.h \         # TODO(MIG14)
 #     clearprivatedata.h \          # TODO(MIG11)
-#     clearbutton.h \               # TODO(MIG08)
 #     downloadmanager.h \           # TODO(MIG05)
 #     modelmenu.h \                 # TODO(MIG07)
 #     modeltoolbar.h \              # TODO(MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
 #     searchbar.h \                 # TODO(MIG08)
-#     searchbutton.h \              # TODO(MIG08)
-#     searchlineedit.h \            # TODO(MIG08)
 #     settings.h \                  # TODO(MIG11)
 #     sourcehighlighter.h \         # TODO(MIG12)
 #     sourceviewer.h \              # TODO(MIG12)
@@ -60,25 +56,22 @@ exists(../.git/HEAD) {
 #     tabwidget.h \                 # TODO(MIG14)
 #     toolbarsearch.h \             # TODO(MIG08)
 #     (webactionmapper/webpage/webview moved to live list — MIG02 done)
+#     (autosaver/clearbutton/searchbutton/searchlineedit live — MIG03)
 #     webviewsearch.h               # TODO(MIG12)
 #
 # SOURCES += \
 #     aboutdialog.cpp \             # TODO(MIG14)
 #     acceptlanguagedialog.cpp \    # TODO(MIG11)
-#     autosaver.cpp \               # TODO(MIG14)
 #     autofilldialog.cpp \          # TODO(MIG10)
 #     autofillmanager.cpp \         # TODO(MIG10)
 #     browserapplication.cpp \      # TODO(MIG15)
 #     browsermainwindow.cpp \       # TODO(MIG14)
 #     clearprivatedata.cpp \        # TODO(MIG11)
-#     clearbutton.cpp \             # TODO(MIG08)
 #     downloadmanager.cpp \         # TODO(MIG05)
 #     modelmenu.cpp \               # TODO(MIG07)
 #     modeltoolbar.cpp \            # TODO(MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
 #     searchbar.cpp \               # TODO(MIG08)
-#     searchbutton.cpp \            # TODO(MIG08)
-#     searchlineedit.cpp \          # TODO(MIG08)
 #     settings.cpp \                # TODO(MIG11)
 #     sourcehighlighter.cpp \       # TODO(MIG12)
 #     sourceviewer.cpp \            # TODO(MIG12)
@@ -91,25 +84,40 @@ exists(../.git/HEAD) {
 # include(bookmarks/bookmarks.pri)    # TODO(MIG07)
 # include(history/history.pri)        # TODO(MIG06)
 # include(locationbar/locationbar.pri)  # TODO(MIG08)
-# include(network/network.pri)        # TODO(MIG03+MIG04)
+# include(network/network.pri)        # TODO(MIG04); cookiejar.pri split out (MIG03)
 # include(opensearch/opensearch.pri)  # TODO(MIG08)
 # include(qwebplugins/qwebplugins.pri)  # TODO(MIG13): remove, Flash is dead
 # include(utils/utils.pri)            # TODO(MIG02..MIG13 per file)
 # include(useragent/useragent.pri)    # TODO(MIG14)
 # ------------------------------------------------------------------------
 
+include(network/cookiejar/cookiejar.pri)
+
 FORMS +=
 HEADERS += \
+    autosaver.h \
+    clearbutton.h \
+    searchbutton.h \
+    searchlineedit.h \
     webactionmapper.h \
     webpage.h \
     webview.h \
+    utils/edittableview.h \
+    utils/lineedit.h \
+    utils/lineedit_p.h \
     utils/webpageproxy.h \
     utils/networkaccessmanagerproxy.h \
     utils/networkaccessmanagerproxy_p.h
 SOURCES += \
+    autosaver.cpp \
+    clearbutton.cpp \
+    searchbutton.cpp \
+    searchlineedit.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \
+    utils/edittableview.cpp \
+    utils/lineedit.cpp \
     utils/webpageproxy.cpp \
     utils/networkaccessmanagerproxy.cpp
 

@@ -134,6 +134,10 @@ void WebPage::init()
             this, &WebPage::handleDownloadRequested);
     connect(this, &QWebEnginePage::loadingChanged,
             this, &WebPage::handleLoadingChanged);
+    // Apply the configured user agent to whichever profile this page is
+    // on (private windows run on the off-the-record profile).
+    if (!s_userAgent.isEmpty())
+        profile()->setHttpUserAgent(s_userAgent);
     loadSettings();
 }
 
@@ -199,8 +203,8 @@ void WebPage::setUserAgent(const QString &userAgent)
 
     s_userAgent = userAgent;
 
-    // TODO(MIG03): apply to the app-wide QWebEngineProfile once it is wired
-    // up in BrowserApplication.
+    // Applied to the default profile here; WebPage::init() applies it to
+    // whatever profile each new page is created on.
     QWebEngineProfile::defaultProfile()->setHttpUserAgent(userAgent);
 }
 

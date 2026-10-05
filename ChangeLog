@@ -8,6 +8,10 @@ Core web layer (MIG02):
     The Ctrl access-key link hints are dropped: they needed synchronous DOM access that WebEngine does not provide.
     "Open in New Tab" context menu entries open a standalone window until the tab widget is ported; bookmark-link, "Search with...", block-image and add-to-toolbar-search entries are temporarily disabled while the bookmarks, opensearch and adblock modules are still being ported.
 
+Cookie layer (MIG03):
+    Port the cookie jar and its dialogs to QWebEngineCookieStore on the application QWebEngineProfile. Cookies are now persisted by the WebEngine profile itself; the accept/keep policy and the domain exception lists (block / allow / allow-for-session) are enforced through the store's cookie filter and stored in the application settings (cookies.ini is gone). "Accept only from sites navigated to" now blocks third-party cookies.
+    Private browsing selects an off-the-record WebEngine profile instead of a global flag — pages already open keep their profile, newly created windows/tabs are private.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

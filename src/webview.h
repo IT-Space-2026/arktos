@@ -68,6 +68,7 @@
 
 #include "tabwidget.h"
 
+class QWebEngineProfile;
 class BrowserMainWindow;
 class TabWidget;
 class WebPage;
@@ -77,6 +78,9 @@ class WebView : public QWebEngineView
 
 public:
     WebView(QWidget *parent = 0);
+    // Creates the view's WebPage on the given profile (used to point tabs
+    // at the private off-the-record profile, for example).
+    WebView(QWebEngineProfile *profile, QWidget *parent = 0);
     WebPage *webPage() const { return m_page; }
 
     void loadSettings();
@@ -108,6 +112,7 @@ protected:
 
 private:
     int levelForZoom(int zoom);
+    void init();
 
 private slots:
     void setProgress(int progress);

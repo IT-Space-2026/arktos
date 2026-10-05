@@ -3,23 +3,20 @@ DEPENDPATH += $$PWD
 
 # MIG02: webpageproxy.* and networkaccessmanagerproxy.* were moved to the
 # live lists in src.pri (ported to Qt WebEngine).
+# MIG03: edittableview.* and lineedit.*/lineedit_p.h moved to the live
+# lists in src.pri (needed by the cookiejar dialogs).
 HEADERS += \
     editlistview.h \
-    edittableview.h \
     edittreeview.h \
     languagemanager.h \
-    lineedit.h \
-    lineedit_p.h \
     singleapplication.h \
     squeezelabel.h \
     treesortfilterproxymodel.h
 
 SOURCES += \
     editlistview.cpp \
-    edittableview.cpp \
     edittreeview.cpp \
     languagemanager.cpp \
-    lineedit.cpp \
     singleapplication.cpp \
     squeezelabel.cpp \
     treesortfilterproxymodel.cpp

@@ -78,6 +78,7 @@ class HistoryManager;
 class NetworkAccessManager;
 class LanguageManager;
 class QLocalSocket;
+class QWebEngineProfile;
 class BrowserApplication : public SingleApplication
 {
     Q_OBJECT
@@ -99,6 +100,9 @@ public:
 
     static HistoryManager *historyManager();
     static CookieJar *cookieJar();
+    // The profile pages are created on: the default profile normally, an
+    // off-the-record profile while private browsing is enabled (MIG03).
+    static QWebEngineProfile *webEngineProfile();
     static DownloadManager *downloadManager();
     static NetworkAccessManager *networkAccessManager();
     static BookmarksManager *bookmarksManager();

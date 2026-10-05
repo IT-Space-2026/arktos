@@ -66,9 +66,11 @@
 
 #include <qheaderview.h>
 #include <qcompleter.h>
+#include <qpushbutton.h>
 #include "cookiemodel.h"
 #include "cookiejar.h"
 #include "cookieexceptionsmodel.h"
+#include "edittableview.h"
 
 CookieExceptionsDialog::CookieExceptionsDialog(CookieJar *cookieJar, QWidget *parent)
     : QDialog(parent)
@@ -76,8 +78,8 @@ CookieExceptionsDialog::CookieExceptionsDialog(CookieJar *cookieJar, QWidget *pa
 {
     setupUi(this);
     setWindowFlags(Qt::Sheet);
-    connect(removeButton, SIGNAL(clicked()), exceptionTable, SLOT(removeSelected()));
-    connect(removeAllButton, SIGNAL(clicked()), exceptionTable, SLOT(removeAll()));
+    connect(removeButton, &QPushButton::clicked, exceptionTable, &EditTableView::removeSelected);
+    connect(removeAllButton, &QPushButton::clicked, exceptionTable, &EditTableView::removeAll);
     exceptionTable->verticalHeader()->hide();
     exceptionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     exceptionTable->setAlternatingRowColors(true);
@@ -87,18 +89,18 @@ CookieExceptionsDialog::CookieExceptionsDialog(CookieJar *cookieJar, QWidget *pa
     m_exceptionsModel = new CookieExceptionsModel(cookieJar, this);
     m_proxyModel = new QSortFilterProxyModel(this);
     m_proxyModel->setSourceModel(m_exceptionsModel);
-    connect(search, SIGNAL(textChanged(QString)),
-            m_proxyModel, SLOT(setFilterFixedString(QString)));
+    connect(search, &QLineEdit::textChanged,
+            m_proxyModel, &QSortFilterProxyModel::setFilterFixedString);
     exceptionTable->setModel(m_proxyModel);
 
     CookieModel *cookieModel = new CookieModel(cookieJar, this);
     domainLineEdit->setCompleter(new QCompleter(cookieModel, domainLineEdit));
 
-    connect(domainLineEdit, SIGNAL(textChanged(const QString &)),
-            this, SLOT(textChanged(const QString &)));
-    connect(blockButton, SIGNAL(clicked()), this, SLOT(block()));
-    connect(allowButton, SIGNAL(clicked()), this, SLOT(allow()));
-    connect(allowForSessionButton, SIGNAL(clicked()), this, SLOT(allowForSession()));
+    connect(domainLineEdit, &QLineEdit::textChanged,
+            this, &CookieExceptionsDialog::textChanged);
+    connect(blockButton, &QPushButton::clicked, this, &CookieExceptionsDialog::block);
+    connect(allowButton, &QPushButton::clicked, this, &CookieExceptionsDialog::allow);
+    connect(allowForSessionButton, &QPushButton::clicked, this, &CookieExceptionsDialog::allowForSession);
 
     QFont f = font();
     f.setPointSize(10);
@@ -110,13 +112,13 @@ CookieExceptionsDialog::CookieExceptionsDialog(CookieJar *cookieJar, QWidget *pa
         int header = exceptionTable->horizontalHeader()->sectionSizeHint(i);
         switch (i) {
         case 0:
-            header = fm.width(QLatin1String("averagebiglonghost.domain.com"));
+            header = fm.horizontalAdvance(QLatin1String("averagebiglonghost.domain.com"));
             break;
         case 1:
-            header = fm.width(QLatin1String("Allow For Session"));
+            header = fm.horizontalAdvance(QLatin1String("Allow For Session"));
             break;
         }
-        int buffer = fm.width(QLatin1String("xx"));
+        int buffer = fm.horizontalAdvance(QLatin1String("xx"));
         header += buffer;
         exceptionTable->horizontalHeader()->resizeSection(i, header);
     }

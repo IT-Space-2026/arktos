@@ -78,10 +78,13 @@
 #include <qdesktopservices.h>
 #include <qdir.h>
 #include <qevent.h>
+#include <qhash.h>
 #include <qlibraryinfo.h>
 #include <qlocalsocket.h>
 #include <qmessagebox.h>
 #include <qsettings.h>
+#include <qstandardpaths.h>
+#include <qwebengineprofile.h>
 #include <qwebsettings.h>
 
 #include <qdebug.h>
@@ -98,6 +101,12 @@ NetworkAccessManager *BrowserApplication::s_networkAccessManager = 0;
 BookmarksManager *BrowserApplication::s_bookmarksManager = 0;
 LanguageManager *BrowserApplication::s_languageManager = 0;
 AutoFillManager *BrowserApplication::s_autoFillManager = 0;
+
+// MIG03: private browsing is a profile property under Qt WebEngine —
+// while enabled, new windows/pages are created on an off-the-record
+// profile instead of the default one.
+static bool s_isPrivate = false;
+static QWebEngineProfile *s_privateProfile = 0;
 
 BrowserApplication::BrowserApplication(int &argc, char **argv)
     : SingleApplication(argc, argv)
@@ -429,8 +438,7 @@ void BrowserApplication::saveSession()
     settings.setValue(QLatin1String("restoring"), false);
     settings.endGroup();
 
-    QWebSettings *globalSettings = QWebSettings::globalSettings();
-    if (globalSettings->testAttribute(QWebSettings::PrivateBrowsingEnabled))
+    if (isPrivate())
         return;
 
     clean();
@@ -578,7 +586,26 @@ BrowserMainWindow *BrowserApplication::mainWindow()
 
 CookieJar *BrowserApplication::cookieJar()
 {
-    return (CookieJar*)networkAccessManager()->cookieJar();
+    // One CookieJar per profile: the store filter/mirror is bound to the
+    // profile's QWebEngineCookieStore, so the private profile gets its
+    // own (non-persistent) jar.
+    static QHash<QWebEngineProfile*, CookieJar*> jars;
+    QWebEngineProfile *profile = webEngineProfile();
+    CookieJar *&jar = jars[profile];
+    if (!jar)
+        jar = new CookieJar(profile, instance());
+    return jar;
+}
+
+QWebEngineProfile *BrowserApplication::webEngineProfile()
+{
+    if (isPrivate()) {
+        // An unnamed profile is off-the-record: nothing hits disk.
+        if (!s_privateProfile)
+            s_privateProfile = new QWebEngineProfile(instance());
+        return s_privateProfile;
+    }
+    return QWebEngineProfile::defaultProfile();
 }
 
 DownloadManager *BrowserApplication::downloadManager()
@@ -658,7 +685,7 @@ QString BrowserApplication::installedDataDirectory()
 
 QString BrowserApplication::dataFilePath(const QString &fileName)
 {
-    QString directory = QDesktopServices::storageLocation(QDesktopServices::DataLocation);
+    QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (directory.isEmpty())
         directory = QDir::homePath() + QLatin1String("/.") + QCoreApplication::applicationName();
     if (!QFile::exists(directory)) {
@@ -681,12 +708,16 @@ void BrowserApplication::setZoomTextOnly(bool textOnly)
 
 bool BrowserApplication::isPrivate()
 {
-    return QWebSettings::globalSettings()->testAttribute(QWebSettings::PrivateBrowsingEnabled);
+    // There is no global private-browsing attribute in Qt WebEngine; the
+    // flag selects which profile webEngineProfile() hands out.
+    return s_isPrivate;
 }
 
 void BrowserApplication::setPrivate(bool isPrivate)
 {
-    QWebSettings::globalSettings()->setAttribute(QWebSettings::PrivateBrowsingEnabled, isPrivate);
+    if (s_isPrivate == isPrivate)
+        return;
+    s_isPrivate = isPrivate;
     emit instance()->privacyChanged(isPrivate);
 }
 

@@ -63,12 +63,28 @@
 #ifndef COOKIEJAR_H
 #define COOKIEJAR_H
 
-#include "networkcookiejar.h"
-
+#include <qobject.h>
+#include <qnetworkcookie.h>
+#include <qpointer.h>
+#include <qreadwritelock.h>
 #include <qstringlist.h>
 
 class AutoSaver;
-class CookieJar : public NetworkCookieJar
+class QWebEngineCookieStore;
+class QWebEngineProfile;
+
+/*!
+    Cookie policy and cookie-jar model for the application's
+    QWebEngineProfile.
+
+    Under Qt WebEngine the actual cookie storage lives inside Chromium's
+    profile; QWebEngineCookieStore is the only control surface.  This
+    class installs a cookie filter on the store for the accept/exception
+    rules and keeps an in-process mirror of the jar (fed by the store's
+    cookieAdded/cookieRemoved signals) so the models and dialogs keep a
+    synchronous read API.
+*/
+class CookieJar : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(AcceptPolicy acceptPolicy READ acceptPolicy WRITE setAcceptPolicy)
@@ -76,9 +92,6 @@ class CookieJar : public NetworkCookieJar
     Q_PROPERTY(QStringList blockedCookies READ blockedCookies WRITE setBlockedCookies)
     Q_PROPERTY(QStringList allowedCookies READ allowedCookies WRITE setAllowedCookies)
     Q_PROPERTY(QStringList allowForSessionCookies READ allowForSessionCookies WRITE setAllowForSessionCookies)
-    Q_ENUMS(KeepPolicy)
-    Q_ENUMS(AcceptPolicy)
-    Q_ENUMS(CookieRule)
 
 signals:
     void cookiesChanged();
@@ -89,22 +102,30 @@ public:
         AcceptNever,
         AcceptOnlyFromSitesNavigatedTo
     };
+    Q_ENUM(AcceptPolicy)
 
     enum KeepPolicy {
         KeepUntilExpire,
         KeepUntilExit,
         KeepUntilTimeLimit
     };
+    Q_ENUM(KeepPolicy)
 
     enum CookieRule {
         Allow,
         AllowForSession,
         Block
     };
+    Q_ENUM(CookieRule)
 
 
-    CookieJar(QObject *parent = 0);
+    // A null profile binds to QWebEngineProfile::defaultProfile().
+    explicit CookieJar(QWebEngineProfile *profile, QObject *parent = 0);
+    explicit CookieJar(QObject *parent = 0);
     ~CookieJar();
+
+    QWebEngineProfile *profile() const;
+    bool isPrivate() const;
 
     QList<QNetworkCookie> cookiesForUrl(const QUrl &url) const;
     bool setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const QUrl &url);
@@ -129,23 +150,43 @@ public:
     bool filterTrackingCookies() const;
     void setFilterTrackingCookies(bool filterTrackingCookies);
 
-    void setPrivate(bool isPrivate);
-
 public slots:
     void clear();
     void loadSettings();
 
 private slots:
     void save();
+    void handleCookieAdded(const QNetworkCookie &cookie);
+    void handleCookieRemoved(const QNetworkCookie &cookie);
 
 protected:
     static bool isOnDomainList(const QStringList &rules, const QString &domain);
 
 private:
+    bool isAllowedForHost(const QString &host, bool thirdParty) const;
+    void updatePolicySnapshot();
     void applyRules();
-    void purgeOldCookies();
-    void load();
-    bool m_loaded;
+    void applyKeepPolicy();
+
+    QWebEngineProfile *m_profile;   // not owned
+    // QPointer: the store can die during WebEngine teardown before this
+    // jar is destroyed.
+    QPointer<QWebEngineCookieStore> m_store;
+
+    // The store filter callback runs on the browser IO thread, so the
+    // data it reads lives in this lock-guarded snapshot.  The plain
+    // members below are only touched on the GUI thread.
+    mutable QReadWriteLock m_policyLock;
+    struct PolicySnapshot {
+        AcceptPolicy acceptCookies;
+        bool filterTrackingCookies;
+        QStringList block;
+        QStringList allow;
+        QStringList allowForSession;
+    };
+    PolicySnapshot m_policy;
+
+    QList<QNetworkCookie> m_cookies;  // mirror of the cookie store
     AutoSaver *m_saveTimer;
     bool m_filterTrackingCookies;
 
@@ -155,7 +196,6 @@ private:
     QStringList m_exceptions_block;
     QStringList m_exceptions_allow;
     QStringList m_exceptions_allowForSession;
-    bool m_isPrivate;
     int m_sessionLength;
 };
 

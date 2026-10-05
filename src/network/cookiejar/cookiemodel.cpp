@@ -72,7 +72,8 @@ CookieModel::CookieModel(CookieJar *cookieJar, QObject *parent)
     : QAbstractTableModel(parent)
     , m_cookieJar(cookieJar)
 {
-    connect(m_cookieJar, SIGNAL(cookiesChanged()), this, SLOT(cookiesChanged()));
+    connect(m_cookieJar, &CookieJar::cookiesChanged,
+            this, &CookieModel::cookiesChanged);
     m_cookies = m_cookieJar->cookies();
 }
 
@@ -83,7 +84,7 @@ QVariant CookieModel::headerData(int section, Qt::Orientation orientation, int r
         font.setPointSize(10);
         QFontMetrics fm(font);
         int height = fm.height() + fm.height() / 3;
-        int width = fm.width(headerData(section, orientation, Qt::DisplayRole).toString());
+        int width = fm.horizontalAdvance(headerData(section, orientation, Qt::DisplayRole).toString());
         return QSize(width, height);
     }
 
@@ -135,6 +136,7 @@ QVariant CookieModel::data(const QModelIndex &index, int role) const
             return cookie.value();
         }
     }
+    Q_FALLTHROUGH();
     case Qt::DisplayRole:
     case Qt::EditRole: {
         QNetworkCookie cookie = m_cookies.at(index.row());
@@ -153,6 +155,7 @@ QVariant CookieModel::data(const QModelIndex &index, int role) const
             return cookie.value();
         }
     }
+    Q_FALLTHROUGH();
     case Qt::FontRole: {
         QFont font;
         font.setPointSize(10);
@@ -183,9 +186,11 @@ bool CookieModel::removeRows(int row, int count, const QModelIndex &parent)
     for (int i = lastRow; i >= row; --i) {
         lst.removeAt(i);
     }
-    disconnect(m_cookieJar, SIGNAL(cookiesChanged()), this, SLOT(cookiesChanged()));
+    disconnect(m_cookieJar, &CookieJar::cookiesChanged,
+               this, &CookieModel::cookiesChanged);
     m_cookieJar->setCookies(lst);
-    connect(m_cookieJar, SIGNAL(cookiesChanged()), this, SLOT(cookiesChanged()));
+    connect(m_cookieJar, &CookieJar::cookiesChanged,
+            this, &CookieModel::cookiesChanged);
 
     m_cookies = lst;
     endRemoveRows();
@@ -194,7 +199,9 @@ bool CookieModel::removeRows(int row, int count, const QModelIndex &parent)
 
 void CookieModel::cookiesChanged()
 {
-    if (m_cookieJar)
-        m_cookies = m_cookieJar->cookies();
-    reset();
+    if (!m_cookieJar)
+        return;
+    beginResetModel();
+    m_cookies = m_cookieJar->cookies();
+    endResetModel();
 }

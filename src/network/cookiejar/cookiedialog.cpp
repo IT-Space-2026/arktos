@@ -65,9 +65,11 @@
 #include <qsortfilterproxymodel.h>
 #include <qdatetime.h>
 #include <qheaderview.h>
+#include <qpushbutton.h>
 
 #include "cookiemodel.h"
 #include "cookieexceptionsdialog.h"
+#include "edittableview.h"
 
 CookieDialog::CookieDialog(CookieJar *cookieJar, QWidget *parent)
     : QDialog(parent)
@@ -77,11 +79,11 @@ CookieDialog::CookieDialog(CookieJar *cookieJar, QWidget *parent)
     setWindowFlags(Qt::Sheet);
     CookieModel *model = new CookieModel(cookieJar, this);
     m_proxyModel = new QSortFilterProxyModel(this);
-    connect(search, SIGNAL(textChanged(QString)),
-            m_proxyModel, SLOT(setFilterFixedString(QString)));
-    connect(removeButton, SIGNAL(clicked()), cookiesTable, SLOT(removeSelected()));
-    connect(removeAllButton, SIGNAL(clicked()), cookiesTable, SLOT(removeAll()));
-    connect(addRuleButton, SIGNAL(clicked()), this, SLOT(addRule()));
+    connect(search, &QLineEdit::textChanged,
+            m_proxyModel, &QSortFilterProxyModel::setFilterFixedString);
+    connect(removeButton, &QPushButton::clicked, cookiesTable, &EditTableView::removeSelected);
+    connect(removeAllButton, &QPushButton::clicked, cookiesTable, &EditTableView::removeAll);
+    connect(addRuleButton, &QPushButton::clicked, this, &CookieDialog::addRule);
     m_proxyModel->setSourceModel(model);
     m_proxyModel->setSortRole(CookieModel::SortRole);
     cookiesTable->verticalHeader()->hide();
@@ -101,16 +103,16 @@ CookieDialog::CookieDialog(CookieJar *cookieJar, QWidget *parent)
         int header = cookiesTable->horizontalHeader()->sectionSizeHint(i);
         switch (i) {
         case 0:
-            header = fm.width(QLatin1String("averagehost.domain.com"));
+            header = fm.horizontalAdvance(QLatin1String("averagehost.domain.com"));
             break;
         case 1:
-            header = fm.width(QLatin1String("_session_id"));
+            header = fm.horizontalAdvance(QLatin1String("_session_id"));
             break;
         case 4:
-            header = fm.width(QDateTime::currentDateTime().toString(Qt::LocalDate));
+            header = fm.horizontalAdvance(QDateTime::currentDateTime().toString());
             break;
         }
-        int buffer = fm.width(QLatin1String("xx"));
+        int buffer = fm.horizontalAdvance(QLatin1String("xx"));
         header += buffer;
         cookiesTable->horizontalHeader()->resizeSection(i, header);
     }

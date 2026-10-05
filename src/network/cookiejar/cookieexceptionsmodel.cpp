@@ -82,7 +82,7 @@ QVariant CookieExceptionsModel::headerData(int section, Qt::Orientation orientat
         font.setPointSize(10);
         QFontMetrics fm(font);
         int height = fm.height() + fm.height() / 3;
-        int width = fm.width(headerData(section, orientation, Qt::DisplayRole).toString());
+        int width = fm.horizontalAdvance(headerData(section, orientation, Qt::DisplayRole).toString());
         return QSize(width, height);
     }
 
@@ -134,6 +134,7 @@ QVariant CookieExceptionsModel::data(const QModelIndex &index, int role) const
             }
         }
     }
+    Q_FALLTHROUGH();
     case Qt::FontRole: {
         QFont font;
         font.setPointSize(10);
@@ -217,6 +218,8 @@ void CookieExceptionsModel::addHost(QString host, QStringList &add, QStringList 
     add.removeOne(otherRule);
     remove1.removeOne(otherRule);
     remove2.removeOne(otherRule);
-    reset();
+
+    beginResetModel();
+    endResetModel();
 }
 

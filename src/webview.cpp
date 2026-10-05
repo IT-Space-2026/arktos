@@ -82,6 +82,20 @@ WebView::WebView(QWidget *parent)
     , m_currentZoom(100)
     , m_page(new WebPage(this))
 {
+    init();
+}
+
+WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
+    : QWebEngineView(parent)
+    , m_progress(0)
+    , m_currentZoom(100)
+    , m_page(new WebPage(profile, this))
+{
+    init();
+}
+
+void WebView::init()
+{
     setPage(m_page);
     connect(m_page, &QWebEnginePage::linkHovered,
             this, &WebView::setStatusBarText);

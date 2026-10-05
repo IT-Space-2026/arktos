@@ -45,10 +45,10 @@ void SearchLineEdit::init()
 
     // clear button on the right
     m_clearButton = new ClearButton(this);
-    connect(m_clearButton, SIGNAL(clicked()),
-            this, SLOT(clear()));
-    connect(this, SIGNAL(textChanged(const QString&)),
-            m_clearButton, SLOT(textChanged(const QString&)));
+    connect(m_clearButton, &ClearButton::clicked,
+            this, &SearchLineEdit::clear);
+    connect(this, &SearchLineEdit::textChanged,
+            m_clearButton, &ClearButton::textChanged);
     addWidget(m_clearButton, RightSide);
     m_clearButton->hide();
 
