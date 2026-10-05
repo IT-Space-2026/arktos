@@ -26,12 +26,12 @@
 #include <qnetworkreply.h>
 #include <qnetworkrequest.h>
 #include <qplaintextedit.h>
+#include <qpointer.h>
 #include <qshortcut.h>
 #include <qsettings.h>
-#include <qwebframe.h>
-#include <qwebpage.h>
+#include <qtimer.h>
+#include <qwebenginepage.h>
 
-#include "browserapplication.h"
 #include "networkaccessmanager.h"
 #include "plaintexteditsearch.h"
 #include "sourcehighlighter.h"
@@ -46,6 +46,7 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     , m_menuBar(new QMenuBar(this))
     , m_editMenu(new QMenu(tr("&Edit"), m_menuBar))
     , m_findAction(new QAction(tr("&Find"), m_editMenu))
+    , m_reply(0)
     , m_source(source)
 {
     setWindowTitle(tr("Source of Page %1").arg(title));
@@ -66,8 +67,8 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     m_menuBar->addMenu(m_editMenu);
     m_editMenu->addAction(m_findAction);
     m_findAction->setShortcuts(QKeySequence::Find);
-    connect(m_findAction, SIGNAL(triggered()),
-            m_plainTextEditSearch, SLOT(showFind()));
+    connect(m_findAction, &QAction::triggered,
+            m_plainTextEditSearch, &SearchBar::showFind);
 
     m_layout->setSpacing(0);
     m_layout->setContentsMargins(0, 0, 0, 0);
@@ -76,10 +77,13 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     m_layout->addWidget(m_edit);
     setLayout(m_layout);
 
+    // Web page traffic belongs to Chromium, but this re-fetch is an
+    // application-side GET so it goes through the app's NAM (proxy,
+    // disk cache, Accept-Language) exactly like the WebKit version did.
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    m_reply = BrowserApplication::networkAccessManager()->get(request);
-    connect(m_reply, SIGNAL(finished()), this, SLOT(loadingFinished()));
+    m_reply = NetworkAccessManager::instance()->get(request);
+    connect(m_reply, &QNetworkReply::finished, this, &SourceViewer::loadingFinished);
     m_reply->setParent(this);
 }
 
@@ -92,16 +96,58 @@ SourceViewer::~SourceViewer()
 
 void SourceViewer::loadingFinished()
 {
-    QWebPage page;
-    QByteArray response = m_reply->readAll();
-    page.mainFrame()->setContent(response, QString(), m_reply->request().url());
-
-    /* If original request was POST or a different problem is there, fall
-       back to modified version of QWebFrame.toHtml() */
-    if (page.mainFrame()->toHtml() != m_source)
-        m_edit->setPlainText(m_source);
-    else
-        m_edit->setPlainText(QLatin1String(response));
-
+    const QByteArray response = m_reply->readAll();
+    const QUrl url = m_reply->request().url();
+    const bool failed = m_reply->error() != QNetworkReply::NoError;
+    // Qt 6's setContent treats an empty mime type as text/plain;
+    // without a reply Content-Type assume the page was HTML.
+    QString mimeType =
+        m_reply->header(QNetworkRequest::ContentTypeHeader).toString()
+            .section(QLatin1Char(';'), 0, 0);
+    if (mimeType.isEmpty())
+        mimeType = QLatin1String("text/html");
     m_reply->close();
+    m_reply->deleteLater();
+    m_reply = 0;
+
+    if (failed) {
+        m_edit->setPlainText(m_source);
+        return;
+    }
+
+    /* If the raw bytes parse to the same DOM the page reported, show
+       the pristine wire source; otherwise (POST result, a document the
+       page rewrote...) fall back to the DOM serialization the caller
+       passed in.  WebEngine has no synchronous HTML parser like
+       QWebFrame::setContent, so the comparison runs on a throwaway
+       page asynchronously. */
+    QWebEnginePage *probe = new QWebEnginePage(this);
+    QPointer<SourceViewer> self(this);
+    connect(probe, &QWebEnginePage::loadFinished, this,
+            [self, probe, response](bool ok) {
+        if (!ok) {
+            self->m_edit->setPlainText(self->m_source);
+            probe->deleteLater();
+            return;
+        }
+        probe->toHtml([self, probe, response](const QString &markup) {
+            if (self) {
+                self->m_edit->setPlainText(
+                    markup == self->m_source
+                        ? QString::fromUtf8(response)
+                        : self->m_source);
+            }
+            delete probe;
+        });
+    });
+    // If the probe never reports back (setContent can silently fail),
+    // the DOM dump is a valid fallback.
+    QPointer<QWebEnginePage> probeGuard(probe);
+    QTimer::singleShot(5000, this, [self, probeGuard]() {
+        if (self && probeGuard) {
+            self->m_edit->setPlainText(self->m_source);
+            delete probeGuard.data();
+        }
+    });
+    probe->setContent(response, mimeType, url);
 }

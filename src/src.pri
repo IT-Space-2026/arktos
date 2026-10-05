@@ -45,11 +45,11 @@ exists(../.git/HEAD) {
 #     (downloadmanager.h live — MIG05)
 #     (modelmenu.h live — MIG06 dep)
 #     (modeltoolbar.h live — MIG07)
-#     plaintexteditsearch.h \       # TODO(MIG12)
+#     (plaintexteditsearch.h live — MIG12)
 #     (searchbar.h live — MIG08)
 #     (settings.h/browserprofile.h live — MIG11)
-#     sourcehighlighter.h \         # TODO(MIG12)
-#     sourceviewer.h \              # TODO(MIG12)
+#     (sourcehighlighter.h live — MIG12)
+#     (sourceviewer.h live — MIG12)
 #     tabbar.h \                    # TODO(MIG14)
 #     tabwidget.h \                 # TODO(MIG14)
 #     (toolbarsearch.h live — MIG08)
@@ -57,7 +57,7 @@ exists(../.git/HEAD) {
 #     (autosaver/clearbutton/searchbutton/searchlineedit live — MIG03)
 #     (languagemanager live — MIG11 dep)
 #     (webpageproxy + networkaccessmanagerproxy deleted — MIG04)
-#     webviewsearch.h               # TODO(MIG12)
+#     (webviewsearch.h live — MIG12)
 #
 # SOURCES += \
 #     aboutdialog.cpp \             # TODO(MIG14)
@@ -69,16 +69,16 @@ exists(../.git/HEAD) {
 #     (downloadmanager.cpp live — MIG05)
 #     (modelmenu.cpp live — MIG06 dep)
 #     (modeltoolbar.cpp live — MIG07)
-#     plaintexteditsearch.cpp \     # TODO(MIG12)
+#     (plaintexteditsearch.cpp live — MIG12)
 #     (searchbar.cpp live — MIG08)
 #     (settings.cpp/browserprofile.cpp live — MIG11)
-#     sourcehighlighter.cpp \       # TODO(MIG12)
-#     sourceviewer.cpp \            # TODO(MIG12)
+#     (sourcehighlighter.cpp live — MIG12)
+#     (sourceviewer.cpp live — MIG12)
 #     tabbar.cpp \                  # TODO(MIG14)
 #     tabwidget.cpp \               # TODO(MIG14)
 #     (toolbarsearch.cpp live — MIG08)
 #     (languagemanager live — MIG11 dep)
-#     webviewsearch.cpp             # TODO(MIG12)
+#     (webviewsearch.cpp live — MIG12)
 #
 include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
@@ -112,14 +112,18 @@ HEADERS += \
     downloadmanager.h \
     modelmenu.h \
     modeltoolbar.h \
+    plaintexteditsearch.h \
     searchbar.h \
     searchbutton.h \
     searchlineedit.h \
     settings.h \
+    sourcehighlighter.h \
+    sourceviewer.h \
     toolbarsearch.h \
     webactionmapper.h \
     webpage.h \
     webview.h \
+    webviewsearch.h \
     utils/edittableview.h \
     utils/edittreeview.h \
     utils/languagemanager.h \
@@ -138,14 +142,18 @@ SOURCES += \
     downloadmanager.cpp \
     modelmenu.cpp \
     modeltoolbar.cpp \
+    plaintexteditsearch.cpp \
     searchbar.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
     settings.cpp \
+    sourcehighlighter.cpp \
+    sourceviewer.cpp \
     toolbarsearch.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \
+    webviewsearch.cpp \
     utils/edittableview.cpp \
     utils/edittreeview.cpp \
     utils/languagemanager.cpp \

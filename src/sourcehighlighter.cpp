@@ -20,6 +20,7 @@
 #include "sourcehighlighter.h"
 
 #include <qpalette.h>
+#include <qregularexpression.h>
 
 SourceHighlighter::SourceHighlighter(QTextDocument *document)
     : QSyntaxHighlighter(document)
@@ -100,14 +101,16 @@ void SourceHighlighter::highlightBlock(const QString &text)
     int len = text.length();
     int start = 0;
     int pos = 0;
-    QRegExp regex;
+
+    static const QRegularExpression tagOrEntity(QLatin1String("[<&]"));
+    static const QRegularExpression entity(QLatin1String("&[a-zA-Z0-9]+;"));
+    static const QRegularExpression tagEnd(QLatin1String("[>\"]"));
 
     while (pos >= 0 && pos < len && len > 0) {
         switch (state) {
         default:
         case Normal:
-            regex.setPattern(QLatin1String("[<&]"));
-            pos = regex.indexIn(text, pos);
+            pos = tagOrEntity.match(text, pos).capturedStart();
             if (pos >= 0) {
                 if (text.at(pos) == QLatin1Char('<')) {
                     start = pos;
@@ -118,17 +121,16 @@ void SourceHighlighter::highlightBlock(const QString &text)
                     }
                     ++pos;
                 } else if (text.at(pos) == QLatin1Char('&')) {
-                    regex.setPattern(QLatin1String("&[a-zA-Z0-9]+;"));
-                    if (regex.indexIn(text, pos) == pos) {
-                        setFormat(pos, regex.matchedLength(), formats[Entity]);
+                    const QRegularExpressionMatch match = entity.match(text, pos);
+                    if (match.capturedStart() == pos) {
+                        setFormat(pos, match.capturedLength(), formats[Entity]);
                     }
                     ++pos;
                 }
             }
             break;
         case InComment:
-            regex.setPattern(QLatin1String("-->"));
-            pos = regex.indexIn(text, pos);
+            pos = text.indexOf(QLatin1String("-->"), pos);
             if (pos >= 0) {
                 state = Normal;
                 pos += 3;
@@ -139,8 +141,7 @@ void SourceHighlighter::highlightBlock(const QString &text)
             }
             break;
          case InTag:
-            regex.setPattern(QLatin1String("[>\"]"));
-            pos = regex.indexIn(text, pos);
+            pos = tagEnd.match(text, pos).capturedStart();
             if (pos >= 0) {
                 if (text.at(pos) == QLatin1Char('>')) {
                     state = Normal;
@@ -157,8 +158,7 @@ void SourceHighlighter::highlightBlock(const QString &text)
             }
             break;
         case InAttribute:
-            regex.setPattern(QLatin1String("\""));
-            pos = regex.indexIn(text, pos);
+            pos = text.indexOf(QLatin1Char('"'), pos);
             if (pos >= 0) {
                 setFormat(start, pos - start, formats[Attribute]);
                 state = InTag;

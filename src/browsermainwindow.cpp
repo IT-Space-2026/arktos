@@ -1399,11 +1399,14 @@ void BrowserMainWindow::viewPageSource()
         return;
 
     QString title = currentTab()->title();
-    QString markup = currentTab()->page()->mainFrame()->toHtml();
     QUrl url = currentTab()->url();
-    SourceViewer *viewer = new SourceViewer(markup, title, url);
-    viewer->setAttribute(Qt::WA_DeleteOnClose);
-    viewer->show();
+    // Qt6: QWebEnginePage::toHtml answers asynchronously — the viewer
+    // opens once the serialized DOM arrives from the render process.
+    currentTab()->page()->toHtml([title, url](const QString &markup) {
+        SourceViewer *viewer = new SourceViewer(markup, title, url);
+        viewer->setAttribute(Qt::WA_DeleteOnClose);
+        viewer->show();
+    });
 }
 
 void BrowserMainWindow::goHome()

@@ -55,6 +55,10 @@ Autofill (MIG10):
 Settings and private data (MIG11):
     Port the preferences dialog, accept-language dialog and Clear Private Data to WebEngine. Settings now live on a shared QWebEngineProfile (fonts, JavaScript/images/popups/plugins toggles, disk cache size, Accept-Language header) applied through a new BrowserProfile helper; the custom user style sheet is injected as a page script since WebEngine has no setUserStyleSheetUrl. Clear Private Data wipes history, favicons, downloads, search-box history, cookies, Chromium visited links and both the WebEngine and application disk caches. Feature deltas vs the WebKit version: the "maximum pages in memory cache" option and the Ctrl access-key hint toggle are gone (no WebEngine equivalent), and Clear Private Data no longer needs to restart the browser to empty the cache.
 
+View source + page search (MIG12):
+    Port the source viewer, source syntax highlighter, plain-text search helper and the page find bar to Qt 6 / WebEngine. Page find now drives the asynchronous QWebEnginePage::findText and reports match counts and the active match from QWebEngineFindTextResult; "highlight all occurrences" is emulated by re-running the search since WebEngine has no such flag.
+    View Source re-fetches the page through the application network access manager and shows the raw wire bytes when they match the DOM serialization (a probe WebEngine page performs the comparison asynchronously), otherwise the live DOM dump; the syntax highlighter now runs on QRegularExpression.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -20,61 +20,76 @@
 #include "webviewsearch.h"
 
 #include <qevent.h>
+#include <qlayout.h>
+#include <qlineedit.h>
+#include <qpointer.h>
 #include <qshortcut.h>
 #include <qtimeline.h>
+#include <qtoolbutton.h>
 
-#include <qwebframe.h>
-#include <qwebview.h>
+#include <qwebenginefindtextresult.h>
+#include <qwebengineview.h>
 
 #include <qdebug.h>
 
-WebViewSearch::WebViewSearch(QWebView *webView, QWidget *parent)
+WebViewSearch::WebViewSearch(QWebEngineView *webView, QWidget *parent)
     : SearchBar(parent)
 {
     setSearchObject(webView);
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
     ui.highlightAllButton->setVisible(true);
-    connect(ui.highlightAllButton, SIGNAL(toggled(bool)),
-            this, SLOT(highlightAll()));
-    connect(ui.searchLineEdit, SIGNAL(textEdited(const QString &)),
-            this, SLOT(highlightAll()));
-#endif
+    connect(ui.highlightAllButton, &QToolButton::toggled,
+            this, &WebViewSearch::highlightAll);
+    connect(ui.searchLineEdit, &QLineEdit::textEdited,
+            this, &WebViewSearch::highlightAll);
 }
 
 void WebViewSearch::findNext()
 {
-    find(QWebPage::FindWrapsAroundDocument);
+    // Qt WebEngine's find always wraps around the document; the
+    // WebKit FindWrapsAroundDocument flag is gone.
+    find(QWebEnginePage::FindFlags());
 }
 
 void WebViewSearch::findPrevious()
 {
-    find(QWebPage::FindBackward | QWebPage::FindWrapsAroundDocument);
+    find(QWebEnginePage::FindBackward);
 }
 
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
 void WebViewSearch::highlightAll()
 {
-    webView()->findText(QString(), QWebPage::HighlightAllOccurrences);
-
+    if (!webView())
+        return;
+    // WebEngine has no HighlightAllOccurrences flag: a find always
+    // highlights every match in the renderer.  The toggle can only
+    // choose between showing those highlights (run the find again)
+    // and clearing them (findText with an empty string); the next
+    // findNext()/findPrevious() re-highlights either way.
     if (ui.highlightAllButton->isChecked())
-        find(QWebPage::HighlightAllOccurrences);
+        find(QWebEnginePage::FindFlags());
+    else
+        webView()->findText(QString());
 }
-#endif
 
-void WebViewSearch::find(QWebPage::FindFlags flags)
+void WebViewSearch::find(QWebEnginePage::FindFlags flags)
 {
     QString searchString = ui.searchLineEdit->text();
-    if (!searchObject() || searchString.isEmpty())
+    if (!webView() || searchString.isEmpty())
         return;
-    QString infoString;
-    if (!webView()->findText(searchString, flags))
-        infoString = tr("Not Found");
-    ui.searchInfo->setText(infoString);
+    // findText answers asynchronously from the render process.
+    QPointer<WebViewSearch> guard(this);
+    webView()->findText(searchString, flags,
+                        [guard](const QWebEngineFindTextResult &result) {
+        if (guard) {
+            guard->ui.searchInfo->setText(
+                result.numberOfMatches() > 0 ? QString()
+                                             : guard->tr("Not Found"));
+        }
+    });
 }
 
-QWebView *WebViewSearch::webView() const
+QWebEngineView *WebViewSearch::webView() const
 {
-    return qobject_cast<QWebView*>(searchObject());
+    return qobject_cast<QWebEngineView*>(searchObject());
 }
 
 WebViewWithSearch::WebViewWithSearch(WebView *webView, QWidget *parent)
@@ -90,4 +105,3 @@ WebViewWithSearch::WebViewWithSearch(WebView *webView, QWidget *parent)
     layout->addWidget(m_webView);
     setLayout(layout);
 }
-

@@ -39,11 +39,15 @@
 #include "opensearchmanager.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
+#include "plaintexteditsearch.h"
 #include "schemeaccesshandler.h"
 #include "settings.h"
+#include "sourcehighlighter.h"
+#include "sourceviewer.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
+#include "webviewsearch.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
@@ -56,18 +60,26 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
+#include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
 #include <QtGui/QPixmap>
+#include <QtGui/QTextDocument>
+#include <QtGui/QTextLayout>
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
+#include <QtWebEngineCore/QWebEngineFindTextResult>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineScriptCollection>
 #include <QtWebEngineCore/QWebEngineSettings>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QToolButton>
 
 #if defined(ARORA_ADBLOCK_RUST)
 #include <QtCore/QJsonArray>
@@ -122,7 +134,9 @@ int main(int argc, char **argv)
         || args.contains(QLatin1String("--adblock-list-smoke"))
         || args.contains(QLatin1String("--adblock-rust-smoke"))
         || args.contains(QLatin1String("--autofill-smoke"))
-        || args.contains(QLatin1String("--settings-smoke")))
+        || args.contains(QLatin1String("--settings-smoke"))
+        || args.contains(QLatin1String("--find-smoke"))
+        || args.contains(QLatin1String("--source-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
@@ -953,6 +967,327 @@ int main(int argc, char **argv)
 
         qInfo() << "settings-smoke:" << (ok ? "PASS" : "FAIL");
         return ok ? 0 : 1;
+    }
+
+    // Headless verification for MIG12: the in-page find bar drives
+    // QWebEngineView::findText — forward/backward wrap freely
+    // (WebEngine always wraps, the FindWrapsAroundDocument flag is
+    // gone), a miss sets the "Not Found" info label, and the
+    // Highlight-All toggle reduces to re-find/clear since WebEngine
+    // highlights every match anyway.  The render-side selection is
+    // read back through window.getSelection().  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--find-smoke"))) {
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-find-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "find-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><body><p>needle one</p>"
+                          "<p>haystack</p><p>needle two</p></body></html>");
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+
+        // A leftover ##body cosmetic rule in the shared test-mode
+        // settings hides the whole page (display:none text is
+        // unfindable); suspend adblocking for the duration and put the
+        // persisted flag back on the way out.
+        AdBlockManager *adblock = AdBlockManager::instance();
+        const bool adblockWasEnabled = adblock->isEnabled();
+        adblock->setEnabled(false);
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         &application, [adblock, adblockWasEnabled]() {
+            adblock->setEnabled(adblockWasEnabled);
+        });
+
+        WebViewSearch *searchBar = new WebViewSearch(view, &window);
+        QLineEdit *searchEdit =
+            searchBar->findChild<QLineEdit*>(QLatin1String("searchLineEdit"));
+        QLabel *searchInfo =
+            searchBar->findChild<QLabel*>(QLatin1String("searchInfo"));
+        QToolButton *highlightAll =
+            searchBar->findChild<QToolButton*>(QLatin1String("highlightAllButton"));
+        if (!searchEdit || !searchInfo || !highlightAll) {
+            qInfo() << "find-smoke: FAIL (search bar widgets missing)";
+            return 1;
+        }
+
+        // findText answers asynchronously; every reply lands here.
+        // (The find highlight is renderer-internal — window.getSelection()
+        // does not observe it — so the result object is the readback.)
+        int *resultsSeen = new int(0);
+        int *lastMatches = new int(-1);
+        int *lastActive = new int(-1);
+        QObject::connect(view->webPage(), &QWebEnginePage::findTextFinished,
+                         &application,
+                         [resultsSeen, lastMatches, lastActive]
+                         (const QWebEngineFindTextResult &result) {
+            *lastMatches = result.numberOfMatches();
+            *lastActive = result.activeMatch();
+            ++*resultsSeen;
+        });
+
+        // Runs ready() once a findText reply newer than 'before' has
+        // arrived (or after ~5s — the check then fails on stale data).
+        auto awaitResult = [resultsSeen](int before,
+                                         std::function<void()> ready) {
+            int *ticks = new int(0);
+            QTimer *poll = new QTimer(qApp);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [resultsSeen, before, ready, ticks, poll]() {
+                if (*resultsSeen > before || ++*ticks > 100) {
+                    poll->stop();
+                    poll->deleteLater();
+                    ready();
+                }
+            });
+            poll->start(50);
+        };
+        // A short grace period after each reply lets the search bar's
+        // own callback (which owns the info label) settle.
+        auto settle = [](std::function<void()> fn) {
+            QTimer::singleShot(200, qApp, [fn]() { fn(); });
+        };
+
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [view, fixtureUrl, fixturePath, searchBar, searchEdit,
+             searchInfo, highlightAll, resultsSeen, lastMatches, lastActive,
+             awaitResult, settle](bool ok) {
+            if (!ok || view->url() != fixtureUrl)
+                return;
+
+            // Stage 1: forward find selects the first of two matches.
+            searchEdit->setText(QLatin1String("needle"));
+            const int base1 = *resultsSeen;
+            searchBar->findNext();
+            awaitResult(base1, [=]() {
+                settle([=]() {
+                const bool pass = *lastMatches == 2 && *lastActive >= 0
+                    && searchInfo->text().isEmpty();
+                qInfo() << "find-smoke: next" << (pass ? "PASS" : "FAIL")
+                        << "matches:" << *lastMatches
+                        << "active:" << *lastActive;
+                if (!pass) { qApp->exit(1); return; }
+                const int active1 = *lastActive;
+
+                // Stage 2: forward again moves to the second match.
+                const int base2 = *resultsSeen;
+                searchBar->findNext();
+                awaitResult(base2, [=]() {
+                settle([=]() {
+                const bool pass = *lastMatches == 2
+                    && *lastActive != active1;
+                qInfo() << "find-smoke: next-wrap"
+                        << (pass ? "PASS" : "FAIL")
+                        << "active:" << *lastActive;
+                if (!pass) { qApp->exit(1); return; }
+
+                // Stage 3: backward returns to the first match.
+                const int base3 = *resultsSeen;
+                searchBar->findPrevious();
+                awaitResult(base3, [=]() {
+                settle([=]() {
+                const bool pass = *lastMatches == 2
+                    && *lastActive == active1;
+                qInfo() << "find-smoke: previous"
+                        << (pass ? "PASS" : "FAIL")
+                        << "active:" << *lastActive;
+                if (!pass) { qApp->exit(1); return; }
+
+                // Stage 4: a miss reports Not Found on the info label.
+                searchEdit->setText(QLatin1String("zzz-absent"));
+                const int base4 = *resultsSeen;
+                searchBar->findNext();
+                awaitResult(base4, [=]() {
+                settle([=]() {
+                const bool pass = *lastMatches == 0
+                    && !searchInfo->text().isEmpty();
+                qInfo() << "find-smoke: not-found"
+                        << (pass ? "PASS" : "FAIL")
+                        << "info:" << searchInfo->text();
+                if (!pass) { qApp->exit(1); return; }
+
+                // Stage 5: toggling Highlight-All on re-runs the find
+                // (WebEngine always highlights every match).
+                searchEdit->setText(QLatin1String("needle"));
+                const int base5 = *resultsSeen;
+                highlightAll->setChecked(true);
+                awaitResult(base5, [=]() {
+                const bool pass = *lastMatches == 2;
+                qInfo() << "find-smoke: highlight-all"
+                        << (pass ? "PASS" : "FAIL")
+                        << "matches:" << *lastMatches;
+                if (!pass) { qApp->exit(1); return; }
+
+                // Stage 6: toggling off clears the find (no reply is
+                // emitted for an empty needle — verify the next find
+                // still works afterwards).
+                highlightAll->setChecked(false);
+                const int base6 = *resultsSeen;
+                searchBar->findNext();
+                awaitResult(base6, [=]() {
+                const bool pass = *lastMatches == 2;
+                qInfo() << "find-smoke:"
+                        << (pass ? "PASS" : "FAIL")
+                        << "(refind-after-clear:" << pass << ")";
+                QFile::remove(fixturePath);
+                qApp->exit(pass ? 0 : 1);
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+            });
+        });
+        QTimer::singleShot(20000, &application, []() {
+            qInfo() << "find-smoke: FAIL (timeout)";
+            qApp->exit(1);
+        });
+        view->loadUrl(fixtureUrl);
+    }
+
+    // Headless verification for MIG12 (view source): the viewer
+    // re-fetches the page through the app-side NAM and shows the raw
+    // wire bytes when they parse to the same DOM the page serialized
+    // — otherwise the DOM dump is shown.  A second viewer fed a bogus
+    // dump exercises the fallback branch.  The syntax highlighter is
+    // checked on a standalone document (no renderer needed) and the
+    // in-viewer find bar exercises PlainTextEditSearch.  Exits 0 on
+    // PASS.
+    if (args.contains(QLatin1String("--source-smoke"))) {
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-source-smoke.html"));
+        const QByteArray bytes =
+            "<html><!--c--><body><p class=\"x\">needle &amp; more</p>"
+            "</body></html>";
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "source-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write(bytes);
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+
+        // Cosmetic adblock rules would be injected into the serialized
+        // DOM the viewer compares against (see --find-smoke); suspend
+        // adblocking for the duration.
+        AdBlockManager *adblock = AdBlockManager::instance();
+        const bool adblockWasEnabled = adblock->isEnabled();
+        adblock->setEnabled(false);
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         &application, [adblock, adblockWasEnabled]() {
+            adblock->setEnabled(adblockWasEnabled);
+        });
+
+        // The ported QRegularExpression state machine must mark up a
+        // document without any WebEngine involvement.
+        QTextDocument document;
+        SourceHighlighter highlighter(&document);
+        document.setPlainText(QString::fromUtf8(bytes));
+        // Highlighting lands in the block layout, which is computed lazily.
+        document.documentLayout()->documentSize();
+        if (document.firstBlock().layout()->formats().isEmpty()) {
+            qInfo() << "source-smoke: FAIL (highlighter produced no formats)";
+            return 1;
+        }
+        qInfo() << "source-smoke: highlighter PASS";
+
+        int *pending = new int(0);
+        int *failures = new int(0);
+        auto finish = [&application, pending, failures,
+                       fixturePath](bool ok) {
+            *failures += ok ? 0 : 1;
+            if (--*pending == 0) {
+                qInfo() << "source-smoke:"
+                        << (*failures == 0 ? "PASS" : "FAIL");
+                QFile::remove(fixturePath);
+                application.exit(*failures == 0 ? 0 : 1);
+            }
+        };
+
+        // Waits out the re-fetch + probe-page comparison, then checks
+        // the shown text and drives the viewer's find bar.
+        auto checkViewer = [finish](SourceViewer *viewer,
+                                    const QString &expected,
+                                    const char *what) {
+            QPlainTextEdit *edit = viewer->findChild<QPlainTextEdit*>();
+            PlainTextEditSearch *search =
+                viewer->findChild<PlainTextEditSearch*>();
+            QLineEdit *searchEdit = search
+                ? search->findChild<QLineEdit*>(QLatin1String("searchLineEdit"))
+                : 0;
+            if (!edit || !search || !searchEdit) {
+                finish(false);
+                return;
+            }
+            int *ticks = new int(0);
+            QTimer *poll = new QTimer(viewer);
+            QObject::connect(poll, &QTimer::timeout, viewer,
+                [viewer, edit, search, searchEdit, expected, what,
+                 ticks, poll, finish]() {
+                if (edit->toPlainText() == QLatin1String("Loading...")) {
+                    if (++*ticks > 100) {
+                        poll->stop();
+                        qInfo() << "source-smoke:" << what
+                                << "FAIL (probe timeout)";
+                        finish(false);
+                    }
+                    return;
+                }
+                poll->stop();
+                const bool contentOk = edit->toPlainText() == expected;
+                if (!contentOk)
+                    qInfo() << "source-smoke:" << what << "shown was:"
+                            << edit->toPlainText().left(200)
+                            << "| expected:" << expected.left(200);
+                searchEdit->setText(QLatin1String("needle"));
+                search->findNext();
+                const bool findOk =
+                    !expected.contains(QLatin1String("needle"))
+                    || edit->textCursor().selectedText()
+                           == QLatin1String("needle");
+                qInfo() << "source-smoke:" << what
+                        << (contentOk && findOk ? "PASS" : "FAIL")
+                        << "(content:" << contentOk << "find:" << findOk << ")";
+                finish(contentOk && findOk);
+            });
+            poll->start(100);
+        };
+
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [view, fixtureUrl, bytes, pending, checkViewer](bool ok) {
+            if (!ok || view->url() != fixtureUrl)
+                return;
+            // Serialize the loaded DOM exactly like
+            // BrowserMainWindow::viewPageSource() does.
+            view->webPage()->toHtml(
+                [view, fixtureUrl, bytes, pending, checkViewer](const QString &markup) {
+                // The faithful DOM dump: the probe must judge the raw
+                // bytes equivalent and show them verbatim.
+                *pending += 2;
+                checkViewer(new SourceViewer(markup, view->title(),
+                                             fixtureUrl, view),
+                            QString::fromUtf8(bytes), "raw");
+                // A mismatched dump must be shown as-is (probe's
+                // toHtml never equals it).
+                checkViewer(new SourceViewer(QLatin1String("bogus-dom-dump"),
+                                             view->title(), fixtureUrl, view),
+                            QLatin1String("bogus-dom-dump"), "fallback");
+            });
+        });
+        QTimer::singleShot(30000, &application, [&application]() {
+            qInfo() << "source-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        view->loadUrl(fixtureUrl);
     }
 
     return application.exec();
