@@ -98,7 +98,7 @@ void tst_AdBlockNetwork::adblocknetwork_data()
 void tst_AdBlockNetwork::adblocknetwork()
 {
     SubAdBlockNetwork network;
-    QCOMPARE(network.block(QNetworkRequest()), (QNetworkReply*)0);
+    QCOMPARE(network.shouldBlock(QUrl()), false);
 }
 
 void tst_AdBlockNetwork::data()
@@ -116,11 +116,8 @@ void tst_AdBlockNetwork::data()
     rule.setEnabled(true);
     subscription->addRule(rule);
 
-    QNetworkReply *reply = 0;
-    QNetworkRequest request = QNetworkRequest(QUrl("data://foobar"));
-
-    reply = network.block(request);
-    QVERIFY(!reply);
+    network.rebuildRules();
+    QVERIFY(!network.shouldBlock(QUrl("data://foobar")));
 }
 
 void tst_AdBlockNetwork::enabled_data()
@@ -155,11 +152,8 @@ void tst_AdBlockNetwork::enabled()
     rule.setEnabled(enableRule);
     subscription->addRule(rule);
 
-    QNetworkReply *reply = 0;
-    QNetworkRequest grequest = QNetworkRequest(QUrl("http://www.google.com"));
-
-    reply = network.block(grequest);
-    QCOMPARE((reply != 0), block);
+    network.rebuildRules();
+    QCOMPARE(network.shouldBlock(QUrl("http://www.google.com")), block);
 }
 
 // check that block block and !block blocks other sites
@@ -214,9 +208,8 @@ void tst_AdBlockNetwork::block()
     foreach (const QString &rule, rules)
         subscription->addRule(AdBlockRule(rule));
 
-    QNetworkReply *reply = network.block(QNetworkRequest(url));
-    bool blocked = (reply != 0);
-    QCOMPARE(blocked, block);
+    network.rebuildRules();
+    QCOMPARE(network.shouldBlock(url), block);
 }
 
 QTEST_MAIN(tst_AdBlockNetwork)

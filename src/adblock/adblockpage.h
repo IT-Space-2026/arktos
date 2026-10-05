@@ -41,9 +41,6 @@ public:
     AdBlockPage(QObject *parent = 0);
 
     void applyRulesToPage(QWebEnginePage *page);
-
-private:
-    static QString cssSelectorForHost(const AdBlockRule *rule, const QString &host);
 };
 
 #endif // ADBLOCKPAGE_H

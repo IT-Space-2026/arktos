@@ -19,6 +19,7 @@
 
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
+#include "adblockresourcehandler.h"
 #include "adblockrule.h"
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
@@ -49,6 +50,7 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
+#include <QtCore/QUrlQuery>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
@@ -70,6 +72,8 @@ int main(int argc, char **argv)
     SchemeAccessHandler::registerUrlSchemes();
     // abp:subscribe?... links for AdBlock subscriptions (MIG09).
     AdBlockSchemeAccessHandler::registerUrlScheme();
+    // arora-resource:// serves the bundled $redirect= adblock stubs.
+    AdBlockResourceHandler::registerUrlScheme();
 
     QApplication::setApplicationName(QStringLiteral("arora"));
     QApplication::setOrganizationName(QStringLiteral("Arora"));
@@ -77,9 +81,11 @@ int main(int argc, char **argv)
     QApplication application(argc, argv);
 
     const QStringList args = application.arguments();
-    // --adblock-smoke adds custom rules, which are persisted to the app
-    // data dir; isolate the writes so the test leaves no residue.
-    if (args.contains(QLatin1String("--adblock-smoke")))
+    // --adblock-smoke / --adblock-list-smoke add custom rules and
+    // download lists, which are persisted to the app data dir; isolate
+    // the writes so the test leaves no residue.
+    if (args.contains(QLatin1String("--adblock-smoke"))
+        || args.contains(QLatin1String("--adblock-list-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
@@ -471,6 +477,97 @@ int main(int argc, char **argv)
             application.exit(1);
         });
         view->loadUrl(QUrl(QLatin1String("http://adblock-smoke.invalid/")));
+    }
+
+    // Headless verification for ADB01: subscribe to a real filter list
+    // (default: live EasyList over https), let AdBlockSubscription
+    // download it through the app-side NetworkAccessManager, then check
+    // that the parsed rules actually reach the IO-thread matcher —
+    // including a URL derived from a rule taken out of the downloaded
+    // list itself — alongside a second (custom) subscription.  Exits 0
+    // on PASS.
+    const int listSmokeIndex = args.indexOf(QLatin1String("--adblock-list-smoke"));
+    if (listSmokeIndex != -1) {
+        QUrl listUrl(QStringLiteral("https://easylist.to/easylist/easylist.txt"));
+        if (args.count() > listSmokeIndex + 1
+            && !args.at(listSmokeIndex + 1).startsWith(QLatin1Char('-')))
+            listUrl = QUrl(args.at(listSmokeIndex + 1));
+
+        AdBlockManager *manager = AdBlockManager::instance();
+        AdBlockNetwork *network = manager->network();
+
+        // A second subscription proves multi-subscription matching.
+        AdBlockSubscription *custom = manager->customRules();
+        custom->addRule(AdBlockRule(QLatin1String("||list-smoke.invalid^")));
+
+        QUrl subscribeUrl;
+        subscribeUrl.setScheme(QLatin1String("abp"));
+        subscribeUrl.setPath(QLatin1String("subscribe"));
+        QUrlQuery subscribeQuery;
+        subscribeQuery.addQueryItem(QLatin1String("location"),
+                                    QString::fromUtf8(listUrl.toEncoded()));
+        subscribeQuery.addQueryItem(QLatin1String("title"),
+                                    QStringLiteral("list-smoke"));
+        subscribeUrl.setQuery(subscribeQuery);
+        AdBlockSubscription *subscription =
+            new AdBlockSubscription(subscribeUrl, manager);
+        manager->addSubscription(subscription);
+
+        QObject::connect(subscription, &AdBlockSubscription::rulesChanged,
+                         &application,
+                         [&application, subscription, network]() {
+            const QList<AdBlockRule> rules = subscription->allRules();
+            int cosmetic = 0;
+            int probes = 0;
+            QUrl derivedUrl;
+            bool foundRule = false;
+            for (const AdBlockRule &rule : rules) {
+                if (!rule.isEnabled())
+                    continue;
+                if (rule.isCSSRule()) {
+                    ++cosmetic;
+                    continue;
+                }
+                if (foundRule || probes >= 25 || rule.isException()
+                    || !rule.isSupported())
+                    continue;
+                ++probes;
+                // Turn "||host^..." / substring patterns into a probe
+                // URL the rule must match.
+                QString pattern = rule.filter();
+                const int dollar = pattern.indexOf(QLatin1Char('$'));
+                if (dollar != -1)
+                    pattern = pattern.left(dollar);
+                pattern.remove(QLatin1Char('|')).remove(QLatin1Char('^'))
+                    .remove(QLatin1Char('*'));
+                if (pattern.size() < 4)
+                    continue;
+                if (!pattern.contains(QLatin1Char('/'))
+                    && pattern.contains(QLatin1Char('.'))) {
+                    derivedUrl = QUrl(QLatin1String("http://")
+                                      + pattern + QLatin1Char('/'));
+                } else {
+                    derivedUrl = QUrl(QLatin1String("http://example.com/")
+                                      + pattern);
+                }
+                if (network->match(derivedUrl).action
+                    != AdBlockDecision::Allow)
+                    foundRule = true;
+            }
+            const bool customOk = network->shouldBlock(
+                QUrl(QLatin1String("http://list-smoke.invalid/x")));
+            const bool pass = rules.count() > 5000 && cosmetic > 0
+                && foundRule && customOk;
+            qInfo() << "adblock-list-smoke:" << (pass ? "PASS" : "FAIL")
+                    << "rules:" << rules.count() << "cosmetic:" << cosmetic
+                    << "derived:" << derivedUrl << "found:" << foundRule
+                    << "custom:" << customOk;
+            application.exit(pass ? 0 : 1);
+        });
+        QTimer::singleShot(90000, &application, [&application]() {
+            qInfo() << "adblock-list-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
     }
 
     return application.exec();

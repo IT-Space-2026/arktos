@@ -40,6 +40,10 @@ private slots:
     void regexpCreation();
     void networkMatch_data();
     void networkMatch();
+    void networkMatchContext_data();
+    void networkMatchContext();
+    void optionParsing_data();
+    void optionParsing();
 
 };
 
@@ -214,21 +218,24 @@ void tst_AdBlockRule::networkMatch_data()
                         << false;
 
     // Specifying filter options
-    // type
+    // type — with no document context the resource type is unknown and
+    // falls into "other", which the positive list includes
     QTest::newRow("o0") << QString("*/ads/*$script,image,background,stylesheet,object,xbl,ping,xmlhttprequest,object-subrequest,object-subrequest,dtd,subdocument,document,other")
                         << QUrl("foo.bar/ads/foo.jpg")
-                        << false;
-    // Inverse type
+                        << true;
+    // Inverse type — "other" is negated too, so an unknown-type
+    // request still can't match
     QTest::newRow("o1") << QString("*/ads/*$~script, ~image, ~background, ~stylesheet, ~object, ~xbl, ~ping, ~xmlhttprequest, ~object-subrequest, ~dtd, ~subdocument, ~document, ~other")
                         << QUrl("foo.bar/ads/foo.jpg")
                         << false;
-    // Restriction to third-party/first-party requests
+    // Restriction to third-party/first-party requests — with no
+    // document host the request is its own (first) party
     QTest::newRow("o2") << QString("*/ads/*$third-party")
                         << QUrl("foo.bar/ads/foo.jpg")
                         << false;
     QTest::newRow("o3") << QString("*/ads/*$first-party")
                         << QUrl("foo.bar/ads/foo.jpg")
-                        << false;
+                        << true;
     // Domain restrictions
     QTest::newRow("o4") << QString("*/ads/*$domain=example.com|example.net")
                         << QUrl("http://example.com/ads/foo.jpg")
@@ -259,14 +266,13 @@ void tst_AdBlockRule::networkMatch_data()
     QTest::newRow("o12") << QString("*/BannerAd.gif$match-case")
                          << QUrl("http://example.com/bannerad.gif")
                          << false;
-    // collapse
-    // TODO test collapse somehow
+    // collapse — a UI hint only; the filter itself still matches
     QTest::newRow("o13") << QString("*/BannerAd.gif$collapse")
                          << QUrl("http://example.com/bannerad.gif")
-                         << false;
+                         << true;
     QTest::newRow("o14") << QString("*/BannerAd.gif$~collapse")
                          << QUrl("http://example.com/bannerad.gif")
-                         << false;
+                         << true;
     // Regular expressions
     QTest::newRow("r0") << QString("/banner\\d+/")
                          << QUrl("banner123")
@@ -299,10 +305,11 @@ void tst_AdBlockRule::networkMatch_data()
                         << QUrl("example.com")
                         << false;
 
-    // Seen on the internet
+    // Seen on the internet — with no document context the request is
+    // first-party, so the third-party restriction does not apply
     QTest::newRow("i0") << QString("||snap.com^$third-party")
                         << QUrl("http://spa.snap.com/snap_preview_anywhere.js?ap=1&key=89743df349c6c38afc3094e9566cb98e&sb=1&link_icon=off&domain=pub-6332280-www.techcrunch.com")
-                        << true;
+                        << false;
 
     QTest::newRow("i1") << QString("|http://ads.")
                         << QUrl("http://ads.cnn.com/html.ng/site=cnn&cnn_pagetype=main&cnn_position=336x280_adlinks&cnn_rollup=homepage&page.allowcompete=yes&params.styles=fs&tile=8837285713521&domId=463050")
@@ -333,6 +340,176 @@ void tst_AdBlockRule::networkMatch()
         qDebug() << "\tResult : " << (result ? "match" : "NOT match");
     }
     QCOMPARE(AdBlockRule.networkMatch(url.toEncoded()), networkMatch);
+}
+
+// Matching with a document (first-party) host and resource type, the
+// way AdBlockRequestInterceptor calls it.
+void tst_AdBlockRule::networkMatchContext_data()
+{
+    QTest::addColumn<QString>("filter");
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<QString>("documentHost");
+    QTest::addColumn<int>("resourceType");
+    QTest::addColumn<bool>("networkMatch");
+
+    // resource-type options (QWebEngineUrlRequestInfo::ResourceType:
+    // Script=3, Image=4, Xhr=13, MainFrame=0)
+    QTest::newRow("t0") << QString("||ads.example^$script")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 3 << true;
+    QTest::newRow("t1") << QString("||ads.example^$script")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 4 << false;
+    QTest::newRow("t2") << QString("||ads.example^$~script")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 4 << true;
+    QTest::newRow("t3") << QString("||ads.example^$~script")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 3 << false;
+
+    // third-party / first-party against the document host
+    QTest::newRow("p0") << QString("||snap.com^$third-party")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("techcrunch.com") << 3 << true;
+    QTest::newRow("p1") << QString("||snap.com^$third-party")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("snap.com") << 3 << false;
+    QTest::newRow("p2") << QString("||snap.com^$first-party")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("www.snap.com") << 3 << true;
+
+    // domain= restricts the document host, suffix-subdomain style
+    QTest::newRow("d0") << QString("||ads.example^$domain=example.com")
+                        << QString("http://ads.example/x")
+                        << QString("www.example.com") << 4 << true;
+    QTest::newRow("d1") << QString("||ads.example^$domain=example.com")
+                        << QString("http://ads.example/x")
+                        << QString("other.example") << 4 << false;
+    QTest::newRow("d2") << QString("||ads.example^$domain=~example.com")
+                        << QString("http://ads.example/x")
+                        << QString("www.example.com") << 4 << false;
+    QTest::newRow("d3") << QString("||ads.example^$domain=example.com|~foo.example.com")
+                        << QString("http://ads.example/x")
+                        << QString("foo.example.com") << 4 << false;
+
+    // denyallow excludes request target hosts
+    QTest::newRow("w0") << QString("adserver.$denyallow=cdn.adserver.example")
+                        << QString("http://cdn.adserver.example/x")
+                        << QString() << -1 << false;
+    QTest::newRow("w1") << QString("adserver.$denyallow=cdn.adserver.example")
+                        << QString("http://cdn2.adserver.example/x")
+                        << QString() << -1 << true;
+    QTest::newRow("w2") << QString("adserver.$denyallow=adserver.example")
+                        << QString("http://sub.adserver.example/x")
+                        << QString() << -1 << false;
+
+    // unsupported options make the filter inert
+    QTest::newRow("u0") << QString("||ads.example^$csp=script-src 'none'")
+                        << QString("http://ads.example/x")
+                        << QString() << -1 << false;
+    QTest::newRow("u1") << QString("||ads.example^$popup")
+                        << QString("http://ads.example/x")
+                        << QString() << -1 << false;
+
+    // cosmetic filters never match network urls
+    QTest::newRow("c0") << QString("example.com#@#.ad")
+                        << QString("http://example.com/.ad")
+                        << QString() << -1 << false;
+    QTest::newRow("c1") << QString("example.com#?#div:-abp-has(p)")
+                        << QString("http://example.com/")
+                        << QString() << -1 << false;
+    QTest::newRow("c2") << QString("example.com##+js(set-constant, x, 1)")
+                        << QString("http://example.com/")
+                        << QString() << -1 << false;
+    QTest::newRow("c3") << QString("example.com#$#hide-if-contains ad")
+                        << QString("http://example.com/")
+                        << QString() << -1 << false;
+}
+
+void tst_AdBlockRule::networkMatchContext()
+{
+    QFETCH(QString, filter);
+    QFETCH(QString, url);
+    QFETCH(QString, documentHost);
+    QFETCH(int, resourceType);
+    QFETCH(bool, networkMatch);
+
+    SubAdBlockRule rule(filter);
+    QCOMPARE(rule.networkMatch(url, documentHost, resourceType),
+             networkMatch);
+}
+
+void tst_AdBlockRule::optionParsing_data()
+{
+    QTest::addColumn<QString>("filter");
+    QTest::addColumn<bool>("cssRule");
+    QTest::addColumn<bool>("cssException");
+    QTest::addColumn<bool>("scriptlet");
+    QTest::addColumn<bool>("supported");
+    QTest::addColumn<bool>("important");
+    QTest::addColumn<bool>("badFilter");
+    QTest::addColumn<QString>("redirect");
+    QTest::addColumn<QString>("removeParam");
+
+    QTest::newRow("css") << QString("example.com##.ad")
+                         << true << false << false << true << false << false
+                         << QString() << QString();
+    QTest::newRow("css-exc") << QString("example.com#@#.ad")
+                             << true << true << false << true << false << false
+                             << QString() << QString();
+    QTest::newRow("ext-css") << QString("example.com#?#div:-abp-has(p)")
+                             << true << false << false << true << false << false
+                             << QString() << QString();
+    QTest::newRow("scriptlet") << QString("example.com##+js(aopr, x)")
+                               << true << false << true << true << false << false
+                               << QString() << QString();
+    QTest::newRow("snippet") << QString("example.com#$#hide-if-contains ad")
+                             << true << false << true << true << false << false
+                             << QString() << QString();
+    QTest::newRow("important") << QString("||a^$important")
+                               << false << false << false << true << true << false
+                               << QString() << QString();
+    QTest::newRow("badfilter") << QString("||a^$badfilter")
+                               << false << false << false << true << false << true
+                               << QString() << QString();
+    QTest::newRow("redirect") << QString("||a^$redirect=noop.js")
+                              << false << false << false << true << false << false
+                              << QString("noop.js") << QString();
+    QTest::newRow("redirect-rule") << QString("||a^$redirect-rule=1x1.gif")
+                                   << false << false << false << true << false << false
+                                   << QString("1x1.gif") << QString();
+    QTest::newRow("removeparam") << QString("||a^$removeparam=utm_source")
+                                 << false << false << false << true << false << false
+                                 << QString() << QString("utm_source");
+    QTest::newRow("removeparam-all") << QString("||a^$removeparam")
+                                     << false << false << false << true << false << false
+                                     << QString() << QString("*");
+    QTest::newRow("csp") << QString("||a^$csp=script-src 'none'")
+                         << false << false << false << false << false << false
+                         << QString() << QString();
+}
+
+void tst_AdBlockRule::optionParsing()
+{
+    QFETCH(QString, filter);
+    QFETCH(bool, cssRule);
+    QFETCH(bool, cssException);
+    QFETCH(bool, scriptlet);
+    QFETCH(bool, supported);
+    QFETCH(bool, important);
+    QFETCH(bool, badFilter);
+    QFETCH(QString, redirect);
+    QFETCH(QString, removeParam);
+
+    SubAdBlockRule rule(filter);
+    QCOMPARE(rule.isCSSRule(), cssRule);
+    QCOMPARE(rule.isCosmeticException(), cssException);
+    QCOMPARE(rule.isScriptletRule(), scriptlet);
+    QCOMPARE(rule.isSupported(), supported);
+    QCOMPARE(rule.isImportant(), important);
+    QCOMPARE(rule.isBadFilter(), badFilter);
+    QCOMPARE(rule.redirectResource(), redirect);
+    QCOMPARE(rule.removeParam(), removeParam);
 }
 
 void tst_AdBlockRule::regexpCreation_data()

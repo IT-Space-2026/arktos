@@ -42,34 +42,132 @@ AdBlockNetwork::AdBlockNetwork(QObject *parent)
 {
 }
 
-bool AdBlockNetwork::shouldBlock(const QUrl &url) const
+// ResourceTypeMainFrame from QWebEngineUrlRequestInfo::ResourceType.
+static const int sc_mainFrameType = 0;
+
+AdBlockDecision AdBlockNetwork::match(const QUrl &url,
+                                      const QUrl &firstPartyUrl,
+                                      int resourceType) const
 {
+    AdBlockDecision decision;
     if (url.scheme() == QLatin1String("data"))
-        return false;
+        return decision;
 
     QReadLocker locker(&m_lock);
     if (!m_enabled)
-        return false;
+        return decision;
 
     const QString urlString = QString::fromUtf8(url.toEncoded());
-    // Per-subscription order is preserved from the WebKit implementation:
-    // the first subscription to produce a decision wins, and inside a
-    // subscription an exception beats a block.
+    const QString documentHost =
+            firstPartyUrl.isEmpty() ? QString() : firstPartyUrl.host();
+    const QString documentString = firstPartyUrl.isEmpty()
+            ? urlString : QString::fromUtf8(firstPartyUrl.toEncoded());
+
+    // Document-level exceptions (uBO/ABP unbreak options): a $document
+    // exception turns blocking off for the whole page, $genericblock
+    // suppresses rules that are not domain-restricted.
+    bool genericBlock = false;
     for (const SubscriptionRules &rules : m_subscriptions) {
         for (const AdBlockRule &rule : rules.exceptionRules) {
-            if (rule.networkMatch(urlString))
-                return false;
-        }
-        for (const AdBlockRule &rule : rules.blockRules) {
-            if (rule.networkMatch(urlString)) {
-#if defined(ADBLOCKNETWORK_DEBUG)
-                qDebug() << "AdBlockNetwork::" << __FUNCTION__ << "rule:" << rule.filter() << url;
-#endif
-                return true;
-            }
+            if (rule.isDocumentException()
+                && rule.networkMatch(documentString, documentHost,
+                                     sc_mainFrameType))
+                return decision;
+            if (rule.isGenericBlock()
+                && rule.networkMatch(documentString, documentHost,
+                                     sc_mainFrameType))
+                genericBlock = true;
         }
     }
-    return false;
+
+    // Per-subscription order is preserved from the WebKit
+    // implementation: the first subscription to produce a decision
+    // wins, and inside a subscription an exception beats a block
+    // (except that a block with $important overrides a non-important
+    // exception, per uBO).
+    for (const SubscriptionRules &rules : m_subscriptions) {
+        const AdBlockRule *exception = 0;
+        for (const AdBlockRule &rule : rules.exceptionRules) {
+            if (rule.isElemHide() || rule.isGenericHide()
+                || rule.isGenericBlock() || rule.isDocumentException())
+                continue; // page-level modifiers, not request vetoes
+            if (rule.networkMatch(urlString, documentHost, resourceType)) {
+                exception = &rule;
+                break;
+            }
+        }
+        for (const AdBlockRule &rule : rules.blockRules) {
+            if (genericBlock && !rule.hasDomainOption()
+                && !rule.isException())
+                continue; // generic rules suppressed for this page
+            if (!rule.networkMatch(urlString, documentHost, resourceType))
+                continue;
+            if (exception
+                && !(rule.isImportant() && !exception->isImportant())) {
+                decision.action = AdBlockDecision::Allow;
+                return decision;
+            }
+#if defined(ADBLOCKNETWORK_DEBUG)
+            qDebug() << "AdBlockNetwork::" << __FUNCTION__
+                     << "rule:" << rule.filter() << url;
+#endif
+            if (!rule.redirectResource().isEmpty()) {
+                decision.action = AdBlockDecision::Redirect;
+                decision.redirectResource = rule.redirectResource();
+            } else {
+                decision.action = AdBlockDecision::Block;
+            }
+            return decision;
+        }
+        if (exception)
+            return decision; // allowed by this subscription
+    }
+
+    // $removeparam rules never block; they rewrite the query string.
+    // An @@...$removeparam exception cancels stripping (bare = all
+    // params, removeparam=name = just that name).
+    bool exceptAll = false;
+    QStringList excepted;
+    for (const SubscriptionRules &rules : m_subscriptions) {
+        for (const AdBlockRule &rule : rules.removeParamExceptions) {
+            if (!rule.networkMatch(urlString, documentHost, resourceType))
+                continue;
+            const QString spec = rule.removeParam();
+            if (spec.isEmpty() || spec == QLatin1String("*"))
+                exceptAll = true;
+            else if (!excepted.contains(spec))
+                excepted.append(spec);
+        }
+    }
+    if (!exceptAll) {
+        QStringList specs;
+        for (const SubscriptionRules &rules : m_subscriptions) {
+            for (const AdBlockRule &rule : rules.removeParamRules) {
+                if (!rule.networkMatch(urlString, documentHost, resourceType))
+                    continue;
+                const QString spec = rule.removeParam();
+                if (spec.isEmpty() || excepted.contains(spec))
+                    continue;
+                if (spec == QLatin1String("*")) {
+                    specs.clear();
+                    specs.append(spec);
+                    break;
+                }
+                if (!specs.contains(QLatin1String("*"))
+                    && !specs.contains(spec))
+                    specs.append(spec);
+            }
+            if (specs.contains(QLatin1String("*")))
+                break;
+        }
+        decision.removeParams = specs;
+    }
+    return decision;
+}
+
+bool AdBlockNetwork::shouldBlock(const QUrl &url) const
+{
+    return match(url).action != AdBlockDecision::Allow;
 }
 
 void AdBlockNetwork::rebuildRules()
@@ -84,14 +182,17 @@ void AdBlockNetwork::rebuildRules()
         if (!subscription->isEnabled())
             continue;
         SubscriptionRules rules;
-        const QList<AdBlockRule> allRules = subscription->allRules();
-        for (const AdBlockRule &rule : allRules) {
-            if (!rule.isEnabled() || rule.isCSSRule())
-                continue;
-            if (rule.isException())
-                rules.exceptionRules.append(rule);
+        for (const AdBlockRule *rule : subscription->networkExceptionRules()) {
+            if (!rule->removeParam().isEmpty())
+                rules.removeParamExceptions.append(*rule);
             else
-                rules.blockRules.append(rule);
+                rules.exceptionRules.append(*rule);
+        }
+        for (const AdBlockRule *rule : subscription->networkBlockRules()) {
+            if (!rule->removeParam().isEmpty())
+                rules.removeParamRules.append(*rule);
+            else
+                rules.blockRules.append(*rule);
         }
         snapshot.append(rules);
     }

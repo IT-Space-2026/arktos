@@ -48,6 +48,7 @@ signals:
 
 public:
     AdBlockSubscription(const QUrl &url, QObject *parent = 0);
+    ~AdBlockSubscription();
     QUrl url() const;
 
     bool isEnabled() const;
@@ -67,6 +68,8 @@ public:
     const AdBlockRule *allow(const QString &urlString) const;
     const AdBlockRule *block(const QString &urlString) const;
     QList<const AdBlockRule*> pageRules() const;
+    QList<const AdBlockRule*> networkExceptionRules() const;
+    QList<const AdBlockRule*> networkBlockRules() const;
 
     QList<AdBlockRule> allRules() const;
     void addRule(const AdBlockRule &rule);

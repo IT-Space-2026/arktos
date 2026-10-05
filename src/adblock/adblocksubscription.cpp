@@ -35,6 +35,7 @@
 #include <qdebug.h>
 #include <qfile.h>
 #include <qnetworkreply.h>
+#include <qset.h>
 #include <qtextstream.h>
 #include <qurlquery.h>
 
@@ -46,7 +47,30 @@ AdBlockSubscription::AdBlockSubscription(const QUrl &url, QObject *parent)
     , m_enabled(false)
     , m_downloading(0)
 {
+    // A download finishing while the application (and the
+    // NetworkAccessManager singleton) is being torn down is a crash —
+    // subscriptions are leaked singleton children, so hook aboutToQuit
+    // rather than relying on a destructor that never runs.
+    if (QCoreApplication *app = QCoreApplication::instance()) {
+        connect(app, &QCoreApplication::aboutToQuit, this, [this]() {
+            if (!m_downloading)
+                return;
+            disconnect(m_downloading, 0, this, 0);
+            m_downloading->abort();
+            m_downloading->deleteLater();
+            m_downloading = 0;
+        });
+    }
     parseUrl(url);
+}
+
+AdBlockSubscription::~AdBlockSubscription()
+{
+    if (m_downloading) {
+        disconnect(m_downloading, 0, this, 0);
+        m_downloading->abort();
+        m_downloading->deleteLater();
+    }
 }
 
 void AdBlockSubscription::parseUrl(const QUrl &url)
@@ -63,7 +87,7 @@ void AdBlockSubscription::parseUrl(const QUrl &url)
     const QUrlQuery query(url);
     m_title = query.queryItemValue(QLatin1String("title"), QUrl::PrettyDecoded);
     m_enabled = query.queryItemValue(QLatin1String("enabled"), QUrl::PrettyDecoded) != QLatin1String("false");
-    m_location = query.queryItemValue(QLatin1String("location"), QUrl::PrettyDecoded).toUtf8();
+    m_location = query.queryItemValue(QLatin1String("location"), QUrl::FullyDecoded).toUtf8();
     const QString lastUpdateString = query.queryItemValue(QLatin1String("lastUpdate"), QUrl::PrettyDecoded);
     m_lastUpdate = QDateTime::fromString(lastUpdateString, Qt::ISODate);
     loadRules();
@@ -256,7 +280,7 @@ void AdBlockSubscription::rulesDownloaded()
 
     QString fileName = rulesFileName();
     QFile file(fileName);
-    if (!file.open(QFile::ReadWrite)) {
+    if (!file.open(QFile::WriteOnly)) {
         qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "Unable to open adblock file for writing:" << fileName;
         return;
     }
@@ -291,6 +315,16 @@ void AdBlockSubscription::saveRules()
 QList<const AdBlockRule*> AdBlockSubscription::pageRules() const
 {
     return m_pageRules;
+}
+
+QList<const AdBlockRule*> AdBlockSubscription::networkExceptionRules() const
+{
+    return m_networkExceptionRules;
+}
+
+QList<const AdBlockRule*> AdBlockSubscription::networkBlockRules() const
+{
+    return m_networkBlockRules;
 }
 
 const AdBlockRule *AdBlockSubscription::allow(const QString &urlString) const
@@ -355,9 +389,19 @@ void AdBlockSubscription::populateCache()
     if (!isEnabled())
         return;
 
+    // $badfilter rules disable the identical filter (same text minus
+    // the badfilter option) within this subscription.
+    QSet<QString> disabled;
+    for (const AdBlockRule &rule : m_rules) {
+        if (rule.isBadFilter())
+            disabled.insert(rule.badFilterKey());
+    }
+
     for (int i = 0; i < m_rules.count(); ++i) {
         const AdBlockRule *rule = &m_rules.at(i);
-        if (!rule->isEnabled())
+        if (!rule->isEnabled() || !rule->isSupported()
+            || rule->isBadFilter()
+            || disabled.contains(rule->badFilterKey()))
             continue;
 
         if (rule->isCSSRule()) {

@@ -39,6 +39,11 @@ AdBlock (MIG09):
     Port the AdBlock stack to Qt WebEngine: requests are now blocked by a QWebEngineUrlRequestInterceptor installed on the browsing profile (Chromium fails them with net::ERR_ACCESS_DENIED), replacing the QNetworkAccessManager hook WebKit used. Rule parsing, subscriptions, the configuration dialog and "abp:subscribe" links are kept — abp: is now a registered custom URL scheme whose handler shows the subscribe prompt.
     Element-hiding ("##") rules are injected as a stylesheet into loaded pages instead of walking the DOM; as a side benefit they also hide matching elements added after the page loads. The "Block Image" context menu entry works again, feeding a custom rule into the dialog.
 
+AdBlock (ADB01):
+    Upgrade the filter engine toward uBlock-Origin coverage: rules now understand resource-type options, third-party/first-party and domain=/denyallow= restrictions, $important, $badfilter, $match-case and the document/elemhide/generichide/genericblock page exceptions. Matched requests can be redirected to bundled stub resources via $redirect=/$redirect-rule= (served from the new arora-resource:// scheme — transparent pixels, noop.js, empty VAST/VMAP and friends), and $removeparam strips tracking query parameters instead of blocking.
+    Cosmetic filtering understands the extended syntax: :-abp-has/-abp-contains style selectors, :has-text, :matches-css, :style, :remove*, :upward and a small +js scriptlet subset (set-constant, abort-on-property-read/write, hide-if-contains, remove-class), including #@#/#?#/#$# exception and snippet markers.
+    Default subscriptions now point at live lists — EasyList and EasyPrivacy from easylist.to plus the uBlock "filters" list — and stored subscriptions on the dead adblockplus.mozdev.org/easylist.adblockplus.org hosts are migrated automatically, keeping their list file names.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

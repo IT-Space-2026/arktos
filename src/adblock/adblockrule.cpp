@@ -1,6 +1,7 @@
 /**
  * Copyright (c) 2009, Zsombor Gegesy <gzsombor@gmail.com>
  * Copyright (c) 2009, Benjamin C. Meyer <ben@meyerhome.net>
+ * Copyright (c) 2026, The Arora Authors
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +30,114 @@
 
 #include "adblockrule.h"
 
-#include "adblocksubscription.h"
-
 #include <qdebug.h>
 #include <qurl.h>
 
 // #define ADBLOCKRULE_DEBUG
+
+// Bit layout for the request-type masks.  Bits 0..21 mirror
+// QWebEngineUrlRequestInfo::ResourceType values, 22 is WebSocket
+// (resource type 254) and 23 is Unknown/other catch-all.
+static quint32 typeBit(int resourceType)
+{
+    if (resourceType >= 0 && resourceType <= 21)
+        return 1u << resourceType;
+    if (resourceType == 254) // ResourceTypeWebSocket
+        return 1u << 22;
+    return 1u << 23;         // ResourceTypeUnknown / -1
+}
+
+// ResourceType values from QWebEngineUrlRequestInfo (kept numeric so
+// this class stays QtCore-only).
+enum {
+    RtMainFrame = 0,
+    RtSubFrame = 1,
+    RtStylesheet = 2,
+    RtScript = 3,
+    RtImage = 4,
+    RtFontResource = 5,
+    RtSubResource = 6,
+    RtObject = 7,
+    RtMedia = 8,
+    RtWorker = 9,
+    RtSharedWorker = 10,
+    RtPrefetch = 11,
+    RtFavicon = 12,
+    RtXhr = 13,
+    RtPing = 14,
+    RtServiceWorker = 15,
+    RtCspReport = 16,
+    RtPluginResource = 17,
+    RtNavigationPreloadMainFrame = 19,
+    RtNavigationPreloadSubFrame = 20,
+    RtJson = 21
+};
+
+static quint32 otherTypeMask()
+{
+    // Everything not covered by a named ABP type.
+    quint32 named = typeBit(RtScript) | typeBit(RtImage)
+            | typeBit(RtStylesheet) | typeBit(RtObject)
+            | typeBit(RtSubFrame) | typeBit(RtMainFrame)
+            | typeBit(RtXhr) | typeBit(RtPing) | typeBit(RtMedia)
+            | typeBit(RtFontResource) | typeBit(254);
+    return ~named & 0xFFFFFFu;
+}
+
+static quint32 typeOptionMask(const QString &name, bool *ok)
+{
+    *ok = true;
+    if (name == QLatin1String("script"))
+        return typeBit(RtScript);
+    if (name == QLatin1String("image")
+        || name == QLatin1String("background"))
+        return typeBit(RtImage);
+    if (name == QLatin1String("stylesheet"))
+        return typeBit(RtStylesheet);
+    if (name == QLatin1String("object")
+        || name == QLatin1String("object-subrequest")
+        || name == QLatin1String("object_subrequest"))
+        return typeBit(RtObject);
+    if (name == QLatin1String("media"))
+        return typeBit(RtMedia);
+    if (name == QLatin1String("font"))
+        return typeBit(RtFontResource);
+    if (name == QLatin1String("subdocument"))
+        return typeBit(RtSubFrame);
+    if (name == QLatin1String("document"))
+        return typeBit(RtMainFrame);
+    if (name == QLatin1String("xmlhttprequest")
+        || name == QLatin1String("xhr"))
+        return typeBit(RtXhr);
+    if (name == QLatin1String("ping"))
+        return typeBit(RtPing);
+    if (name == QLatin1String("websocket"))
+        return typeBit(254);
+    if (name == QLatin1String("other"))
+        return otherTypeMask();
+    *ok = false;
+    return 0;
+}
+
+// Options that alter matching in ways we cannot honor; a filter using
+// one is parsed but never applied.
+static bool isUnsupportedOption(const QString &name)
+{
+    static const QStringList unsupported = {
+        QLatin1String("csp"),         // needs response headers
+        QLatin1String("rewrite"),     // uBO response rewrite
+        QLatin1String("header"),      // uBO response header
+        QLatin1String("replace"),     // ABP response body rewrite
+        QLatin1String("cookie"),      // response cookies
+        QLatin1String("sitekey"),     // page-supplied key
+        QLatin1String("webrtc"),      // non-HTTP traffic
+        QLatin1String("popup"),       // new-window context only
+        QLatin1String("mp4")          // redirect alias we don't ship
+    };
+    const int eq = name.indexOf(QLatin1Char('='));
+    const QString base = (eq == -1) ? name : name.left(eq);
+    return unsupported.contains(base);
+}
 
 AdBlockRule::AdBlockRule(const QString &filter)
 {
@@ -50,17 +153,67 @@ void AdBlockRule::setFilter(const QString &filter)
 {
     m_filter = filter;
 
-    m_cssRule = false;
+    m_cosmetic = false;
+    m_cosmeticException = false;
+    m_scriptlet = false;
+    m_markerOffset = -1;
+    m_markerLength = 0;
     m_enabled = true;
     m_exception = false;
+    m_supported = true;
+    m_important = false;
+    m_badFilter = false;
+    m_documentException = false;
+    m_elemHide = false;
+    m_genericHide = false;
+    m_genericBlock = false;
+    m_party = AnyParty;
+    m_typeMask = 0;
+    m_notTypeMask = 0;
+    m_domainOption.clear();
+    m_denyAllow.clear();
+    m_redirect.clear();
+    m_removeParam.clear();
     bool regExpRule = false;
 
     if (filter.startsWith(QLatin1String("!"))
         || filter.trimmed().isEmpty())
         m_enabled = false;
 
-    if (filter.contains(QLatin1String("##")))
-        m_cssRule = true;
+    // Cosmetic-family markers; the earliest one wins.  In uBO/ABP a
+    // '#' can only introduce a cosmetic filter (fragment '#' inside a
+    // URL pattern is already the end of the matchable string and a
+    // single '#' is not a marker).
+    static const char *const markers[] = {
+        "#@?#", "#@$#", "##", "#@#", "#?#", "#$#", "$$"
+    };
+    int earliest = -1;
+    const char *earliestMarker = 0;
+    for (const char *marker : markers) {
+        const int offset = filter.indexOf(QLatin1String(marker));
+        if (offset != -1 && (earliest == -1 || offset < earliest)) {
+            earliest = offset;
+            earliestMarker = marker;
+        }
+    }
+    if (earliest != -1) {
+        m_cosmetic = true;
+        m_markerOffset = earliest;
+        m_markerLength = qstrlen(earliestMarker);
+        const QLatin1String marker(earliestMarker);
+        m_cosmeticException = (marker == QLatin1String("#@#")
+                               || marker == QLatin1String("#@?#")
+                               || marker == QLatin1String("#@$#"));
+        m_scriptlet = (marker == QLatin1String("#$#")
+                       || marker == QLatin1String("#@$#")
+                       || (marker == QLatin1String("##")
+                           && cosmeticBody().startsWith(QLatin1String("+js(")))
+                       || (marker == QLatin1String("#?#")
+                           && cosmeticBody().startsWith(QLatin1String("+js("))));
+        if (marker == QLatin1String("$$"))
+            m_supported = false; // uBO HTML filters need response rewriting
+        return;
+    }
 
     QString parsedLine = filter;
     if (parsedLine.startsWith(QLatin1String("@@"))) {
@@ -75,72 +228,216 @@ void AdBlockRule::setFilter(const QString &filter)
         }
     }
     int options = parsedLine.indexOf(QLatin1String("$"), 0);
+    bool matchCase = false;
     if (options >= 0) {
-        m_options = parsedLine.mid(options + 1).split(QLatin1Char(','));
+        const QStringList rawOptions =
+            parsedLine.mid(options + 1).split(QLatin1Char(','));
         parsedLine = parsedLine.left(options);
+        QStringList cleaned;
+        cleaned.reserve(rawOptions.count());
+        for (QString option : rawOptions) {
+            option = option.trimmed();
+            if (!option.isEmpty())
+                cleaned.append(option);
+        }
+        matchCase = cleaned.contains(QLatin1String("match-case"));
+        parseOptions(cleaned);
     }
 
     setPattern(parsedLine, regExpRule);
-
-    if (m_options.contains(QLatin1String("match-case"))) {
+    if (matchCase)
         m_regExp.setPatternOptions(QRegularExpression::NoPatternOption);
-        m_options.removeOne(QLatin1String("match-case"));
-    }
 }
 
-bool AdBlockRule::networkMatch(const QString &encodedUrl) const
+void AdBlockRule::parseOptions(const QStringList &options)
 {
-    if (m_cssRule) {
-#if defined(ADBLOCKRULE_DEBUG)
-        qDebug() << "AdBlockRule::" << __FUNCTION__ << "m_cssRule" << m_cssRule;
-#endif
-        return false;
-    }
-
-    if (!m_enabled) {
-#if defined(ADBLOCKRULE_DEBUG)
-        qDebug() << "AdBlockRule::" << __FUNCTION__ << "is not enabled";
-#endif
-        return false;
-    }
-
-    bool matched = m_regExp.match(encodedUrl).hasMatch();
-
-    if (matched
-        && !m_options.isEmpty()) {
-
-        // we only support domain right now
-        if (m_options.count() == 1) {
-            for (const QString &option : m_options) {
-                if (option.startsWith(QLatin1String("domain="))) {
-                    QUrl url = QUrl::fromEncoded(encodedUrl.toUtf8());
-                    QString host = url.host();
-                    QStringList domainOptions = option.mid(7).split(QLatin1Char('|'));
-                    for (QString domainOption : domainOptions) {
-                        if (domainOption.isEmpty())
-                            continue;
-                        bool negate = domainOption.at(0) == QLatin1Char('~');
-                        if (negate)
-                            domainOption = domainOption.mid(1);
-                        bool hostMatched = domainOption == host;
-                        if (hostMatched && !negate)
-                            return true;
-                        if (!hostMatched && negate)
-                            return true;
-                    }
-                }
-            }
+    for (const QString &option : options) {
+        if (isUnsupportedOption(option)) {
+            m_supported = false;
+            continue;
         }
 
+        const int eq = option.indexOf(QLatin1Char('='));
+        const QString name = (eq == -1) ? option : option.left(eq);
+        const QString value = (eq == -1) ? QString() : option.mid(eq + 1);
+
+        if (name == QLatin1String("match-case")) {
+            continue; // applied after setPattern() by setFilter()
+        } else if (name == QLatin1String("~match-case")) {
+            continue; // explicitly case-insensitive (the default)
+        } else if (name == QLatin1String("important")) {
+            m_important = true;
+        } else if (name == QLatin1String("badfilter")) {
+            m_badFilter = true;
+        } else if (name == QLatin1String("elemhide")) {
+            m_elemHide = true;
+        } else if (name == QLatin1String("generichide")) {
+            m_genericHide = true;
+        } else if (name == QLatin1String("genericblock")) {
+            m_genericBlock = true;
+        } else if (name == QLatin1String("third-party")) {
+            m_party = ThirdParty;
+        } else if (name == QLatin1String("first-party")
+                   || name == QLatin1String("~third-party")) {
+            m_party = FirstParty;
+        } else if (name == QLatin1String("~first-party")) {
+            m_party = ThirdParty;
+        } else if (name == QLatin1String("domain")) {
+            m_domainOption += value.split(QLatin1Char('|'),
+                                          Qt::SkipEmptyParts);
+        } else if (name == QLatin1String("denyallow")) {
+            m_denyAllow += value.split(QLatin1Char('|'),
+                                       Qt::SkipEmptyParts);
+        } else if (name == QLatin1String("redirect")
+                   || name == QLatin1String("redirect-rule")) {
+            // redirect-rule (uBO) = request must not be a main frame;
+            // enforced at match time via m_typeMask-free flag storage.
+            if (name == QLatin1String("redirect-rule"))
+                m_notTypeMask |= typeBit(RtMainFrame);
+            m_redirect = value;
+        } else if (name == QLatin1String("removeparam")) {
+            m_removeParam = value.isEmpty()
+                    ? QLatin1String("*") : value;
+        } else if (name == QLatin1String("empty")) {
+            m_redirect = QLatin1String("noop.txt"); // uBO shorthand
+        } else if (name == QLatin1String("all")) {
+            // explicitly no type restriction
+        } else if (name == QLatin1String("collapse")
+                   || name == QLatin1String("~collapse")
+                   || name == QLatin1String("donottrack")
+                   || name == QLatin1String("xbl")
+                   || name == QLatin1String("dtd")) {
+            // Dead types / UI hints; ignored.
+        } else if (name.startsWith(QLatin1Char('~'))) {
+            bool ok = false;
+            const quint32 mask = typeOptionMask(name.mid(1), &ok);
+            if (ok)
+                m_notTypeMask |= mask;
+            // Unknown ~types are ignored.
+        } else {
+            bool ok = false;
+            const quint32 mask = typeOptionMask(name, &ok);
+            if (ok)
+                m_typeMask |= mask;
+            // Unknown options are ignored (the filter still applies).
+        }
+    }
+
+    // `document` on an exception is also a page-unbreak modifier.
+    if (m_exception && (m_typeMask & typeBit(RtMainFrame)))
+        m_documentException = true;
+}
+
+static bool hostMatchesDomain(const QString &host, const QString &domain)
+{
+    return host == domain || host.endsWith(QLatin1Char('.') + domain);
+}
+
+// hostInList: true if host suffix-matches any entry.  Entries are
+// matched as "same or subdomain" per ABP semantics.
+static bool hostInList(const QString &host, const QStringList &list)
+{
+    for (const QString &entry : list) {
+        if (hostMatchesDomain(host, entry))
+            return true;
+    }
+    return false;
+}
+
+// Approximation of ABP's eTLD+1 party test: hosts in the same
+// subdomain tree — or sharing the last two labels — are the same
+// party.  No public-suffix list, so two unrelated hosts under a
+// multi-level public suffix (a.co.uk / b.co.uk) read as same-party.
+static bool sameParty(const QString &a, const QString &b)
+{
+    if (a.isEmpty() || b.isEmpty())
+        return a == b;
+    if (hostMatchesDomain(a, b) || hostMatchesDomain(b, a))
+        return true;
+    const QStringList aParts = a.split(QLatin1Char('.'));
+    const QStringList bParts = b.split(QLatin1Char('.'));
+    const QString aBase = aParts.size() > 2
+        ? aParts.mid(aParts.size() - 2).join(QLatin1Char('.')) : a;
+    const QString bBase = bParts.size() > 2
+        ? bParts.mid(bParts.size() - 2).join(QLatin1Char('.')) : b;
+    return aBase == bBase;
+}
+
+QString AdBlockRule::cosmeticDomains() const
+{
+    if (!m_cosmetic)
+        return QString();
+    return m_filter.left(m_markerOffset);
+}
+
+QString AdBlockRule::cosmeticBody() const
+{
+    if (!m_cosmetic)
+        return QString();
+    return m_filter.mid(m_markerOffset + m_markerLength);
+}
+
+bool AdBlockRule::networkMatch(const QString &encodedUrl,
+                               const QString &documentHost,
+                               int resourceType) const
+{
+    if (m_cosmetic || !m_enabled || !m_supported || m_badFilter) {
 #if defined(ADBLOCKRULE_DEBUG)
-        qDebug() << "AdBlockRule::" << __FUNCTION__ << "options are currently not supported" << m_options;
+        qDebug() << "AdBlockRule::" << __FUNCTION__
+                 << "cosmetic/disabled/unsupported/badfilter";
 #endif
         return false;
     }
+
+    const quint32 bit = typeBit(resourceType);
+    if (m_typeMask && !(m_typeMask & bit))
+        return false;
+    if (m_notTypeMask & bit)
+        return false;
+
+    if (!m_domainOption.isEmpty() || m_party != AnyParty
+        || !m_denyAllow.isEmpty()) {
+        const QString requestHost =
+            QUrl::fromEncoded(encodedUrl.toUtf8()).host();
+        QString sourceHost = documentHost.isEmpty()
+                ? requestHost : documentHost;
+
+        if (!m_denyAllow.isEmpty()
+            && hostInList(requestHost, m_denyAllow))
+            return false;
+
+        if (m_party != AnyParty) {
+            const bool thirdParty = !sameParty(requestHost, sourceHost);
+            if (m_party == ThirdParty && !thirdParty)
+                return false;
+            if (m_party == FirstParty && thirdParty)
+                return false;
+        }
+
+        if (!m_domainOption.isEmpty()) {
+            bool hasPositive = false;
+            bool positiveMatch = false;
+            for (QString domain : m_domainOption) {
+                if (domain.isEmpty())
+                    continue;
+                if (domain.startsWith(QLatin1Char('~'))) {
+                    if (hostMatchesDomain(sourceHost, domain.mid(1)))
+                        return false;
+                } else {
+                    hasPositive = true;
+                    if (hostMatchesDomain(sourceHost, domain))
+                        positiveMatch = true;
+                }
+            }
+            if (hasPositive && !positiveMatch)
+                return false;
+        }
+    }
+
+    const bool matched = m_regExp.match(encodedUrl).hasMatch();
 #if defined(ADBLOCKRULE_DEBUG)
     //qDebug() << "AdBlockRule::" << __FUNCTION__ << encodedUrl << "MATCHED" << matched << filter();
 #endif
-
     return matched;
 }
 
@@ -167,6 +464,15 @@ void AdBlockRule::setEnabled(bool enabled)
     } else {
         m_filter = m_filter.mid(1);
     }
+}
+
+QString AdBlockRule::badFilterKey() const
+{
+    QString key = m_filter;
+    key.remove(QLatin1String("$badfilter"));
+    key.remove(QLatin1String(",badfilter"));
+    key.remove(QLatin1String("badfilter,"));
+    return key;
 }
 
 QString AdBlockRule::regExpPattern() const
@@ -207,4 +513,3 @@ void AdBlockRule::setPattern(const QString &pattern, bool isRegExp)
     m_regExp = QRegularExpression(isRegExp ? pattern : convertPatternToRegExp(pattern),
                                   QRegularExpression::CaseInsensitiveOption);
 }
-

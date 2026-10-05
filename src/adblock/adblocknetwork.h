@@ -33,8 +33,20 @@
 
 #include <qobject.h>
 #include <qreadwritelock.h>
+#include <qurl.h>
 
-class QUrl;
+// What the matcher decided for one request.
+struct AdBlockDecision {
+    enum Action { Allow, Block, Redirect } action;
+    // Set on Redirect: canonical name of a bundled stub resource
+    // (served on the arora-resource:// scheme).
+    QString redirectResource;
+    // Query-parameter specs to strip (uBO $removeparam): entries are
+    // "*", a parameter name, or a /regular expression/.
+    QStringList removeParams;
+
+    AdBlockDecision() : action(Allow) { }
+};
 
 /*
     Matches request URLs against the adblock network rules.
@@ -44,12 +56,12 @@ class QUrl;
     WebEngine does its own networking in the Chromium IO thread, so all
     request blocking now goes through the profile's
     QWebEngineUrlRequestInterceptor (AdBlockRequestInterceptor), which
-    calls shouldBlock() from that thread.
+    calls match() from that thread.
 
-    Because the interceptor runs off the GUI thread, shouldBlock() never
+    Because the interceptor runs off the GUI thread, match() never
     touches the live AdBlockSubscription objects: rebuildRules() (GUI
     thread only) copies the enabled network rules into a snapshot that
-    shouldBlock() walks under a read lock.
+    match() walks under a read lock.
 */
 class AdBlockNetwork : public QObject
 {
@@ -59,6 +71,11 @@ public:
     AdBlockNetwork(QObject *parent = 0);
 
     // Thread-safe; called by the request interceptor on the IO thread.
+    // firstPartyUrl may be empty (treated as the request's own party);
+    // resourceType is a QWebEngineUrlRequestInfo::ResourceType value.
+    AdBlockDecision match(const QUrl &requestUrl,
+                          const QUrl &firstPartyUrl = QUrl(),
+                          int resourceType = -1) const;
     bool shouldBlock(const QUrl &url) const;
 
 public slots:
@@ -69,6 +86,8 @@ private:
     struct SubscriptionRules {
         QList<AdBlockRule> exceptionRules;
         QList<AdBlockRule> blockRules;
+        QList<AdBlockRule> removeParamRules;
+        QList<AdBlockRule> removeParamExceptions;
     };
 
     QList<SubscriptionRules> m_subscriptions;

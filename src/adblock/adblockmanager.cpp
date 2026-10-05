@@ -33,13 +33,16 @@
 #include "adblocknetwork.h"
 #include "adblockpage.h"
 #include "adblockrequestinterceptor.h"
+#include "adblockresourcehandler.h"
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 
+#include <qhash.h>
 #include <qstringlist.h>
 #include <qsettings.h>
+#include <qurlquery.h>
 #include <qwebengineprofile.h>
 
 #include <qdebug.h>
@@ -114,6 +117,9 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile)
     // the scheme itself is registered in main() before QApplication.
     profile->installUrlSchemeHandler(AdBlockSchemeAccessHandler::schemeName(),
                                      new AdBlockSchemeAccessHandler(this));
+    // arora-resource:// serves the bundled $redirect= stub resources.
+    profile->installUrlSchemeHandler(AdBlockResourceHandler::schemeName(),
+                                     new AdBlockResourceHandler(this));
 }
 
 AdBlockPage *AdBlockManager::page()
@@ -223,11 +229,56 @@ void AdBlockManager::load()
     settings.beginGroup(QLatin1String("AdBlock"));
     m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
 
+    // Default subscriptions point at live mirrors of the community
+    // lists; the historical adblockplus.mozdev.org host is dead.
     QStringList defaultSubscriptions;
     defaultSubscriptions.append(QString::fromUtf8(customSubscriptionUrl().toEncoded()));
-    defaultSubscriptions.append(QLatin1String("abp:subscribe?location=http://adblockplus.mozdev.org/easylist/easylist.txt&title=EasyList"));
+    defaultSubscriptions.append(QLatin1String("abp:subscribe?location=https%3A%2F%2Feasylist.to%2Feasylist%2Feasylist.txt&title=EasyList"));
+    defaultSubscriptions.append(QLatin1String("abp:subscribe?location=https%3A%2F%2Feasylist.to%2Feasylist%2Feasyprivacy.txt&title=EasyPrivacy"));
+    defaultSubscriptions.append(QLatin1String("abp:subscribe?location=https%3A%2F%2Fublockorigin.github.io%2FuAssets%2Ffilters%2Ffilters.txt&title=uBlock%20filters"));
 
     QStringList subscriptions = settings.value(QLatin1String("subscriptions"), defaultSubscriptions).toStringList();
+
+    // Upgrade stored subscriptions pointing at dead list hosts; the
+    // file name is preserved so an easyprivacy subscription keeps
+    // tracking EasyPrivacy.
+    static const QStringList deadListHosts = {
+        QStringLiteral("adblockplus.mozdev.org"),
+        QStringLiteral("easylist.adblockplus.org"),
+        QStringLiteral("easylist-downloads.adblockplus.org"),
+    };
+    for (QString &subscription : subscriptions) {
+        const QUrl url = QUrl::fromEncoded(subscription.toUtf8());
+        if (url.scheme() != QLatin1String("abp"))
+            continue;
+        const QUrlQuery query(url);
+        const QUrl location = QUrl(query.queryItemValue(
+            QLatin1String("location"), QUrl::FullyDecoded));
+        if (!deadListHosts.contains(location.host()))
+            continue;
+        QString fileName = location.fileName();
+        if (!fileName.endsWith(QLatin1String(".txt")))
+            fileName = QLatin1String("easylist.txt");
+        const QString replacement =
+            QLatin1String("https://easylist.to/easylist/") + fileName;
+        QUrlQuery updated;
+        updated.addQueryItem(QLatin1String("location"), replacement);
+        updated.addQueryItem(QLatin1String("title"),
+                             query.queryItemValue(QLatin1String("title"),
+                                                  QUrl::PrettyDecoded));
+        if (!query.queryItemValue(QLatin1String("enabled"),
+                                QUrl::PrettyDecoded).isEmpty())
+            updated.addQueryItem(QLatin1String("enabled"),
+                                 query.queryItemValue(
+                                     QLatin1String("enabled"),
+                                     QUrl::PrettyDecoded));
+        QUrl migrated;
+        migrated.setScheme(QLatin1String("abp"));
+        migrated.setPath(QLatin1String("subscribe"));
+        migrated.setQuery(updated);
+        subscription = QString::fromUtf8(migrated.toEncoded());
+    }
+
     for (const QString &subscription : subscriptions) {
         QUrl url = QUrl::fromEncoded(subscription.toUtf8());
         AdBlockSubscription *adBlockSubscription = new AdBlockSubscription(url, this);

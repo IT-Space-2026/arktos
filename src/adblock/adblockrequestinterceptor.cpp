@@ -29,8 +29,13 @@
 #include "adblockrequestinterceptor.h"
 
 #include "adblocknetwork.h"
+#include "adblockresourcehandler.h"
 
+#include <qregularexpression.h>
+#include <qurlquery.h>
 #include <qwebengineurlrequestinfo.h>
+
+// #define ADBLOCKINTERCEPTOR_DEBUG
 
 AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
@@ -38,11 +43,87 @@ AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QO
 {
 }
 
+// Applies the $removeparam specs to url; returns true when the URL
+// changed.  Runs on the IO thread — keep it allocation-light.
+static bool stripQueryParams(QUrl *url, const QStringList &specs)
+{
+    if (specs.isEmpty())
+        return false;
+    QUrlQuery query(*url);
+    const QList<QPair<QString, QString> > items = query.queryItems();
+    if (items.isEmpty())
+        return false;
+
+    QUrlQuery kept;
+    bool removed = false;
+    const bool stripAll = specs.contains(QLatin1String("*"));
+    for (const QPair<QString, QString> &item : items) {
+        bool strip = stripAll;
+        if (!strip) {
+            for (const QString &spec : specs) {
+                if (spec.startsWith(QLatin1Char('/'))
+                    && spec.endsWith(QLatin1Char('/'))) {
+                    const QRegularExpression re(
+                        spec.mid(1, spec.size() - 2));
+                    if (re.isValid() && re.match(item.first).hasMatch())
+                        strip = true;
+                } else if (item.first == spec) {
+                    strip = true;
+                }
+                if (strip)
+                    break;
+            }
+        }
+        if (strip)
+            removed = true;
+        else
+            kept.addQueryItem(item.first, item.second);
+    }
+    if (!removed)
+        return false;
+
+    url->setQuery(kept);
+    return true;
+}
+
 void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread.  info.block(true) fails the
     // request with net::ERR_BLOCKED_BY_CLIENT, the same net result the
     // old ContentAccessDenied QNetworkReply produced.
-    if (m_network->shouldBlock(info.requestUrl()))
+    const AdBlockDecision decision = m_network->match(
+        info.requestUrl(), info.firstPartyUrl(), info.resourceType());
+
+    switch (decision.action) {
+    case AdBlockDecision::Allow:
+        break;
+    case AdBlockDecision::Redirect: {
+        const QByteArray resource = AdBlockResourceHandler::canonicalResourceName(
+            decision.redirectResource);
+        if (resource.isEmpty()) {
+            info.block(true); // unknown stub — plain block
+        } else {
+#if defined(ADBLOCKINTERCEPTOR_DEBUG)
+            qDebug() << "AdBlockRequestInterceptor: redirect"
+                     << info.requestUrl() << "->" << resource;
+#endif
+            info.redirect(AdBlockResourceHandler::urlForResource(resource));
+        }
+        return;
+    }
+    case AdBlockDecision::Block:
         info.block(true);
+        return;
+    }
+
+    if (!decision.removeParams.isEmpty()) {
+        QUrl url = info.requestUrl();
+        if (stripQueryParams(&url, decision.removeParams)) {
+#if defined(ADBLOCKINTERCEPTOR_DEBUG)
+            qDebug() << "AdBlockRequestInterceptor: removeparam"
+                     << info.requestUrl() << "->" << url;
+#endif
+            info.redirect(url);
+        }
+    }
 }
