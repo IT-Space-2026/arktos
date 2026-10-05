@@ -1,4 +1,4 @@
-Qt 6 port (in progress)
+0.2 (unreleased) — Qt 6 port in progress
 Build system:
     Add a QtWebEngineWidgets smoke test (autotests/smoke) that verifies the Qt 6.11.3 toolchain can run WebEngine headless before porting begins.
     Port the qmake build to Qt 6: QT += webenginewidgets webchannel printsupport uitools core5compat replaces webkit; webkittrunk.pri and the Qt4/OS2 conditionals are gone. Only a skeleton builds for now — main.cpp launches a stub window with a QWebEngineView while the rest of src/ waits on the per-module port tasks.
