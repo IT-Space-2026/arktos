@@ -17,26 +17,38 @@
  * Boston, MA  02110-1301  USA
  */
 
-#include "browserapplication.h"
+#include <QtCore/QUrl>
+#include <QtWebEngineWidgets/QWebEngineView>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QMainWindow>
 
-#ifdef Q_OS_WIN
-#include "explorerstyle.h"
-#endif
-
+// TODO(MIG15): replace this skeleton with BrowserApplication —
+// single-instance via QLocalServer/QLocalSocket, session restore,
+// QCommandLineParser, translator loading, WebEngine init order.
+// TODO(MIG14): replace the stub window below with BrowserMainWindow.
 int main(int argc, char **argv)
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
-#ifdef Q_WS_X11
-    QApplication::setGraphicsSystem(QString::fromLatin1("raster"));
-#endif
-    BrowserApplication application(argc, argv);
-    if (!application.isRunning())
-        return 0;
-#ifdef Q_OS_WIN
-    application.setStyle(new ExplorerStyle);
-#endif
-    application.newMainWindow();
+
+    QApplication::setApplicationName(QStringLiteral("arora"));
+    QApplication::setOrganizationName(QStringLiteral("Arora"));
+
+    QApplication application(argc, argv);
+
+    QMainWindow window;
+    window.setWindowTitle(QStringLiteral("Arora"));
+
+    QWebEngineView *view = new QWebEngineView(&window);
+    window.setCentralWidget(view);
+    view->load(QUrl(QStringLiteral("about:blank")));
+
+    // Headless verification hook: exit once the first page load
+    // finishes so CI can prove WebEngine ran (autotests/smoke style).
+    if (application.arguments().contains(QLatin1String("--quit-after-load")))
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, &QApplication::quit);
+
+    window.show();
     return application.exec();
 }
-

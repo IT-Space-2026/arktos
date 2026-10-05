@@ -1,9 +1,11 @@
-lessThan(QT_VERSION, 4.5) {
-    error("Arora requires Qt 4.5 or greater")
+lessThan(QT_MAJOR_VERSION, 6) {
+    error("Arora requires Qt 6 or greater")
 }
 
 TEMPLATE = subdirs
-SUBDIRS  = src tools
+SUBDIRS  = src
+# TODO(TST01): re-enable autotests once the suite is ported to Qt6.
+# TODO(AUD01): tools/ utilities are Qt4-era; audit before re-enabling.
 CONFIG += ordered
 
 unix {

@@ -3,7 +3,6 @@ TEMPLATE = app
 TARGET = arora
 mac {
     TARGET = Arora
-    QMAKE_MACOSX_DEPLOYMENT_TARGET = 10.4
 }
 
 DEFINES += \
