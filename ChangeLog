@@ -1,3 +1,7 @@
+Qt 6 port (in progress)
+Build system:
+    Add a QtWebEngineWidgets smoke test (autotests/smoke) that verifies the Qt 6.11.3 toolchain can run WebEngine headless before porting begins.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
