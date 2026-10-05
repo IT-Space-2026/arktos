@@ -63,17 +63,20 @@
 #include "historymanager.h"
 
 #include "autosaver.h"
-#include "browserapplication.h"
+#include "browserpaths.h"
 #include "history.h"
 
+#include <algorithm>
+
 #include <qbuffer.h>
+#include <qcoreapplication.h>
 #include <qdesktopservices.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qfileinfo.h>
+#include <qpointer.h>
 #include <qsettings.h>
 #include <qtemporaryfile.h>
-#include <qwebhistoryinterface.h>
-#include <qwebsettings.h>
 
 #include <qdebug.h>
 
@@ -92,7 +95,7 @@ QString HistoryEntry::userTitle() const
 static const unsigned int HISTORY_VERSION = 23;
 
 HistoryManager::HistoryManager(QObject *parent)
-    : QWebHistoryInterface(parent)
+    : QObject(parent)
     , m_saveTimer(new AutoSaver(this))
     , m_daysToExpire(30)
     , m_historyModel(0)
@@ -100,20 +103,25 @@ HistoryManager::HistoryManager(QObject *parent)
     , m_historyTreeModel(0)
 {
     m_expiredTimer.setSingleShot(true);
-    connect(&m_expiredTimer, SIGNAL(timeout()),
-            this, SLOT(checkForExpired()));
-    connect(this, SIGNAL(entryAdded(const HistoryEntry &)),
-            m_saveTimer, SLOT(changeOccurred()));
-    connect(this, SIGNAL(entryRemoved(const HistoryEntry &)),
-            m_saveTimer, SLOT(changeOccurred()));
+    connect(&m_expiredTimer, &QTimer::timeout,
+            this, &HistoryManager::checkForExpired);
+    connect(this, &HistoryManager::entryAdded,
+            m_saveTimer, &AutoSaver::changeOccurred);
+    connect(this, &HistoryManager::entryRemoved,
+            m_saveTimer, &AutoSaver::changeOccurred);
     load();
 
     m_historyModel = new HistoryModel(this, this);
     m_historyFilterModel = new HistoryFilterModel(m_historyModel, this);
     m_historyTreeModel = new HistoryTreeModel(m_historyFilterModel, this);
+}
 
-    // QWebHistoryInterface will delete the history manager
-    QWebHistoryInterface::setDefaultInterface(this);
+HistoryManager *HistoryManager::instance()
+{
+    static QPointer<HistoryManager> manager;
+    if (!manager)
+        manager = new HistoryManager(qApp);
+    return manager;
 }
 
 HistoryManager::~HistoryManager()
@@ -127,6 +135,21 @@ HistoryManager::~HistoryManager()
 QList<HistoryEntry> HistoryManager::history() const
 {
     return m_history;
+}
+
+QIcon HistoryManager::icon(const QUrl &url) const
+{
+    QIcon icon = m_icons.value(url.toString());
+    if (icon.isNull())
+        icon = QIcon(QLatin1String(":graphics/defaulticon.png"));
+    return icon;
+}
+
+void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
+{
+    if (icon.isNull())
+        return;
+    m_icons.insert(url.toString(), icon);
 }
 
 bool HistoryManager::historyContains(const QString &url) const
@@ -149,7 +172,7 @@ void HistoryManager::setHistory(const QList<HistoryEntry> &history, bool loadedA
 
     // verify that it is sorted by date
     if (!loadedAndSorted)
-        qSort(m_history.begin(), m_history.end());
+        std::sort(m_history.begin(), m_history.end());
 
     checkForExpired();
 
@@ -208,10 +231,10 @@ void HistoryManager::checkForExpired()
 
 void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
 {
-    QWebSettings *globalSettings = QWebSettings::globalSettings();
-    if (globalSettings->testAttribute(QWebSettings::PrivateBrowsingEnabled))
-        return;
-
+    // Private browsing is a property of the page's profile now: WebPage
+    // only feeds urls to the manager when its profile is not
+    // off-the-record (the old QWebSettings::PrivateBrowsingEnabled
+    // global flag is gone).
     m_history.prepend(item);
     emit entryAdded(item);
     if (m_history.count() == 1)
@@ -287,7 +310,7 @@ void HistoryManager::load()
 {
     loadSettings();
 
-    QFile historyFile(BrowserApplication::dataFilePath(QLatin1String("history")));
+    QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
 
     if (!historyFile.exists())
         return;
@@ -338,7 +361,7 @@ void HistoryManager::load()
         lastInsertedItem = item;
     }
     if (needToSort)
-        qSort(list.begin(), list.end());
+        std::sort(list.begin(), list.end());
 
     setHistory(list, true);
 
@@ -378,7 +401,7 @@ void HistoryManager::save()
     if (first == m_history.count() - 1)
         saveAll = true;
 
-    QFile historyFile(BrowserApplication::dataFilePath(QLatin1String("history")));
+    QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));
 
     // When saving everything use a temporary file to prevent possible data loss.
     QTemporaryFile tempFile;

@@ -65,6 +65,7 @@
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
+#include "browserpaths.h"
 #include "browsermainwindow.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
@@ -107,6 +108,7 @@ AutoFillManager *BrowserApplication::s_autoFillManager = 0;
 // profile instead of the default one.
 static bool s_isPrivate = false;
 static QWebEngineProfile *s_privateProfile = 0;
+static QWebEngineProfile *s_defaultProfile = 0;
 
 BrowserApplication::BrowserApplication(int &argc, char **argv)
     : SingleApplication(argc, argv)
@@ -605,7 +607,11 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
             s_privateProfile = new QWebEngineProfile(instance());
         return s_privateProfile;
     }
-    return QWebEngineProfile::defaultProfile();
+    // MIG06: QWebEngineProfile::defaultProfile() is itself
+    // off-the-record — the persistent "normal" profile must be named.
+    if (!s_defaultProfile)
+        s_defaultProfile = new QWebEngineProfile(QLatin1String("arora"), instance());
+    return s_defaultProfile;
 }
 
 DownloadManager *BrowserApplication::downloadManager()
@@ -624,9 +630,8 @@ NetworkAccessManager *BrowserApplication::networkAccessManager()
 
 HistoryManager *BrowserApplication::historyManager()
 {
-    if (!s_historyManager)
-        s_historyManager = new HistoryManager();
-    return s_historyManager;
+    // MIG06: the store owns its application-wide singleton now.
+    return HistoryManager::instance();
 }
 
 BookmarksManager *BrowserApplication::bookmarksManager()
@@ -660,18 +665,9 @@ AutoFillManager *BrowserApplication::autoFillManager()
 
 QIcon BrowserApplication::icon(const QUrl &url)
 {
-    QIcon icon = QWebSettings::iconForUrl(url);
-    if (!icon.isNull())
-        return icon.pixmap(16, 16);
-    if (icon.isNull()) {
-        QPixmap pixmap = QWebSettings::webGraphic(QWebSettings::DefaultFrameIconGraphic);
-        if (pixmap.isNull()) {
-            pixmap = QPixmap(QLatin1String(":graphics/defaulticon.png"));
-            QWebSettings::setWebGraphic(QWebSettings::DefaultFrameIconGraphic, pixmap);
-        }
-        return pixmap;
-    }
-    return icon;
+    // MIG06: icons are cached on the HistoryManager, fed by
+    // QWebEnginePage::iconChanged (the WebKit icon database is gone).
+    return HistoryManager::instance()->icon(url);
 }
 
 QString BrowserApplication::installedDataDirectory()
@@ -685,14 +681,9 @@ QString BrowserApplication::installedDataDirectory()
 
 QString BrowserApplication::dataFilePath(const QString &fileName)
 {
-    QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (directory.isEmpty())
-        directory = QDir::homePath() + QLatin1String("/.") + QCoreApplication::applicationName();
-    if (!QFile::exists(directory)) {
-        QDir dir;
-        dir.mkpath(directory);
-    }
-    return directory + QLatin1String("/") + fileName;
+    // MIG06: shared implementation moved to browserpaths.h so ported
+    // modules can reach the data dir before this file compiles again.
+    return BrowserPaths::dataFilePath(fileName);
 }
 
 bool BrowserApplication::zoomTextOnly()

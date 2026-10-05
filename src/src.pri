@@ -44,7 +44,7 @@ exists(../.git/HEAD) {
 #     browsermainwindow.h \         # TODO(MIG14)
 #     clearprivatedata.h \          # TODO(MIG11)
 #     (downloadmanager.h live — MIG05)
-#     modelmenu.h \                 # TODO(MIG07)
+#     (modelmenu.h live — MIG06 dep)
 #     modeltoolbar.h \              # TODO(MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
 #     searchbar.h \                 # TODO(MIG08)
@@ -68,7 +68,7 @@ exists(../.git/HEAD) {
 #     browsermainwindow.cpp \       # TODO(MIG14)
 #     clearprivatedata.cpp \        # TODO(MIG11)
 #     (downloadmanager.cpp live — MIG05)
-#     modelmenu.cpp \               # TODO(MIG07)
+#     (modelmenu.cpp live — MIG06 dep)
 #     modeltoolbar.cpp \            # TODO(MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
 #     searchbar.cpp \               # TODO(MIG08)
@@ -82,7 +82,7 @@ exists(../.git/HEAD) {
 #
 # include(adblock/adblock.pri)        # TODO(MIG09)
 # include(bookmarks/bookmarks.pri)    # TODO(MIG07)
-# include(history/history.pri)        # TODO(MIG06)
+include(history/history.pri)          # MIG06 done
 # include(locationbar/locationbar.pri)  # TODO(MIG08)
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 # include(opensearch/opensearch.pri)  # TODO(MIG08)
@@ -98,29 +98,36 @@ FORMS += \
     downloads.ui
 HEADERS += \
     autosaver.h \
+    browserpaths.h \
     clearbutton.h \
     downloadmanager.h \
+    modelmenu.h \
     searchbutton.h \
     searchlineedit.h \
     webactionmapper.h \
     webpage.h \
     webview.h \
     utils/edittableview.h \
+    utils/edittreeview.h \
     utils/lineedit.h \
     utils/lineedit_p.h \
-    utils/squeezelabel.h
+    utils/squeezelabel.h \
+    utils/treesortfilterproxymodel.h
 SOURCES += \
     autosaver.cpp \
     clearbutton.cpp \
     downloadmanager.cpp \
+    modelmenu.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \
     utils/edittableview.cpp \
+    utils/edittreeview.cpp \
     utils/lineedit.cpp \
-    utils/squeezelabel.cpp
+    utils/squeezelabel.cpp \
+    utils/treesortfilterproxymodel.cpp
 
 RESOURCES += \
     $$PWD/data/data.qrc \

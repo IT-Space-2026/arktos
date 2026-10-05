@@ -21,6 +21,7 @@
 #include "webpage.h"
 
 #include "fileaccesshandler.h"
+#include "historymanager.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -135,6 +136,28 @@ void WebPage::init()
     // off-the-record profile too when private browsing is wired up.
     connect(this, &QWebEnginePage::loadingChanged,
             this, &WebPage::handleLoadingChanged);
+
+    // MIG06: feed the app-side history store.  QtWebKit pushed visited
+    // urls into QWebHistoryInterface itself; WebEngine keeps Chromium's
+    // own internal history, so the application records visits from page
+    // signals instead.  Pages on the off-the-record profile never reach
+    // the manager — that is the private-browsing guarantee now.
+    if (!profile()->isOffTheRecord()) {
+        HistoryManager *history = HistoryManager::instance();
+        connect(this, &QWebEnginePage::loadFinished, this,
+                [this, history](bool ok) {
+            if (ok)
+                history->addHistoryEntry(url().toString());
+        });
+        connect(this, &QWebEnginePage::titleChanged, this,
+                [this, history](const QString &title) {
+            history->updateHistoryEntry(url(), title);
+        });
+        connect(this, &QWebEnginePage::iconChanged, this,
+                [this, history](const QIcon &icon) {
+            history->setIcon(url(), icon);
+        });
+    }
     // Apply the configured user agent to whichever profile this page is
     // on (private windows run on the off-the-record profile).
     if (!s_userAgent.isEmpty())
@@ -295,8 +318,10 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString)
                     tr("If the address is correct, try checking the network connection."),
                     tr("If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network."));
     setHtml(html, errorUrl);
-    // TODO(MIG06): BrowserApplication::instance()->historyManager()
-    //              ->removeHistoryEntry(errorUrl, title());
+    // A failed load is normally never recorded (only loadFinished(true)
+    // feeds the manager), but a page that loaded and then errored —
+    // e.g. a navigation interrupted mid-way — may have gotten in.
+    HistoryManager::instance()->removeHistoryEntry(errorUrl, this->title());
 }
 
 void WebPage::loadSettings()

@@ -24,7 +24,7 @@
 #include "history.h"
 
 #include <qcompleter.h>
-#include <qregexp.h>
+#include <qregularexpression.h>
 #include <qsortfilterproxymodel.h>
 #include <qtableview.h>
 #include <qtimer.h>
@@ -76,8 +76,7 @@ protected:
 
 private:
     QString m_searchString;
-    QRegExp m_searchMatcher;
-    QRegExp m_wordMatcher;
+    QRegularExpression m_wordMatcher;
     bool m_isValid;
 };
 

@@ -44,7 +44,7 @@ HistoryCompletionView::HistoryCompletionView(QWidget *parent)
 
 void HistoryCompletionView::resizeEvent(QResizeEvent *event)
 {
-    horizontalHeader()->resizeSection(0, 0.65 * width());
+    horizontalHeader()->resizeSection(0, int(0.65 * width()));
     horizontalHeader()->setStretchLastSection(true);
 
     QTableView::resizeEvent(event);
@@ -59,8 +59,6 @@ int HistoryCompletionView::sizeHintForRow(int row) const
 
 HistoryCompletionModel::HistoryCompletionModel(QObject *parent)
     : QSortFilterProxyModel(parent)
-    , m_searchMatcher(QString(), Qt::CaseInsensitive, QRegExp::FixedString)
-    , m_wordMatcher(QString(), Qt::CaseInsensitive)
     , m_isValid(false)
 {
     setDynamicSortFilter(true);
@@ -100,9 +98,10 @@ void HistoryCompletionModel::setSearchString(const QString &str)
         return;
 
     m_searchString = str;
-    m_searchMatcher.setPattern(str);
-    m_wordMatcher.setPattern(QLatin1String("\\b") + QRegExp::escape(str));
-    invalidateFilter();
+    m_wordMatcher.setPattern(QLatin1String("\\b") + QRegularExpression::escape(str));
+    m_wordMatcher.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+    beginFilterChange();
+    endFilterChange();
 }
 
 bool HistoryCompletionModel::isValid() const
@@ -129,12 +128,12 @@ bool HistoryCompletionModel::filterAcceptsRow(int source_row, const QModelIndex 
     QModelIndex idx = sourceModel()->index(source_row, 0, source_parent);
     QString url = sourceModel()->data(idx, HistoryModel::UrlStringRole).toString();
 
-    if (m_searchMatcher.indexIn(url) != -1)
+    if (url.contains(m_searchString, Qt::CaseInsensitive))
         return true;
 
     QString title = sourceModel()->data(idx, HistoryModel::TitleRole).toString();
 
-    if (m_searchMatcher.indexIn(title) != -1)
+    if (title.contains(m_searchString, Qt::CaseInsensitive))
         return true;
 
     return false;
@@ -151,13 +150,13 @@ bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex
     QString url_l = sourceModel()->data(left, HistoryModel::UrlRole).toUrl().host();
     QString title_l = sourceModel()->data(left, HistoryModel::TitleRole).toString();
 
-    if (m_wordMatcher.indexIn(url_l) != -1 || m_wordMatcher.indexIn(title_l) != -1)
+    if (m_wordMatcher.match(url_l).hasMatch() || m_wordMatcher.match(title_l).hasMatch())
         frecency_l *= 2;
 
     int frecency_r = sourceModel()->data(right, HistoryFilterModel::FrecencyRole).toInt();
     QString url_r = sourceModel()->data(right, HistoryModel::UrlRole).toUrl().host();
     QString title_r = sourceModel()->data(right, HistoryModel::TitleRole).toString();
-    if (m_wordMatcher.indexIn(url_r) != -1 || m_wordMatcher.indexIn(title_r) != -1)
+    if (m_wordMatcher.match(url_r).hasMatch() || m_wordMatcher.match(title_r).hasMatch())
         frecency_r *= 2;
 
     // sort results in descending frecency-derived score
@@ -189,7 +188,7 @@ void HistoryCompleter::init()
     setModelSorting(QCompleter::CaseSensitivelySortedModel);
 
     m_filterTimer.setSingleShot(true);
-    connect(&m_filterTimer, SIGNAL(timeout()), this, SLOT(updateFilter()));
+    connect(&m_filterTimer, &QTimer::timeout, this, &HistoryCompleter::updateFilter);
 }
 
 QString HistoryCompleter::pathFromIndex(const QModelIndex &index) const

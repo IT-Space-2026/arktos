@@ -19,6 +19,7 @@
 
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "schemeaccesshandler.h"
 #include "webpage.h"
@@ -55,9 +56,13 @@ int main(int argc, char **argv)
     QApplication application(argc, argv);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
-    // MIG15: the default profile persists cookies/cache to disk, and a
-    // CookieJar applies the accept/exception policy to its cookie store.
-    QWebEngineProfile *profile = QWebEngineProfile::defaultProfile();
+    // MIG15.  The normal browsing profile must be a NAMED profile:
+    // QWebEngineProfile::defaultProfile() is off-the-record (nothing —
+    // cookies, cache, storage — persists to disk).  A named profile
+    // gives Arora's normal browsing its persistent state; private
+    // browsing gets the lazily-created off-the-record profile.
+    QWebEngineProfile *profile =
+        new QWebEngineProfile(QStringLiteral("arora"), &application);
     CookieJar *cookieJar = new CookieJar(profile, &application);
     SchemeAccessHandler::installAll(profile, &application);
 
@@ -112,6 +117,26 @@ int main(int argc, char **argv)
             qInfo() << "nam-smoke:" << reply->error() << reply->url();
             application.exit(reply->error() == QNetworkReply::NoError ? 0 : 1);
         });
+    }
+
+    // Headless verification for MIG06: a successful main-frame load
+    // must land in the app-side HistoryManager — WebEngine doesn't push
+    // visited urls into the app like QWebHistoryInterface did.  Exits 0
+    // when the loaded url is found in history.
+    if (args.contains(QLatin1String("--history-smoke"))) {
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, &application](bool ok) {
+            if (!ok)
+                return;
+            const QString urlString = view->url().toString();
+            const bool found =
+                HistoryManager::instance()->historyContains(urlString);
+            qInfo() << "history-smoke:" << (found ? "PASS" : "FAIL") << urlString
+                    << "entries:" << HistoryManager::instance()->history().count();
+            application.exit(found ? 0 : 1);
+        });
+        QTimer::singleShot(15000, &application,
+                           [&application]() { application.exit(1); });
     }
 
     // Headless verification for MIG05: issue a real WebEngine download

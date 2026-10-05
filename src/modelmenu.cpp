@@ -63,11 +63,11 @@
 
 #include "modelmenu.h"
 
-#include "browserapplication.h"
-
 #include <qabstractitemmodel.h>
 #include <qapplication.h>
+#include <qdrag.h>
 #include <qevent.h>
+#include <qmimedata.h>
 
 #include <qdebug.h>
 
@@ -82,8 +82,8 @@ ModelMenu::ModelMenu(QWidget *parent)
 {
     setAcceptDrops(true);
 
-    connect(this, SIGNAL(aboutToShow()), this, SLOT(aboutToShow()));
-    connect(this, SIGNAL(triggered(QAction*)), this, SLOT(actionTriggered(QAction*)));
+    connect(this, &QMenu::aboutToShow, this, &ModelMenu::aboutToShow);
+    connect(this, &QMenu::triggered, this, &ModelMenu::actionTriggered);
 }
 
 bool ModelMenu::prePopulated()
@@ -183,8 +183,8 @@ void ModelMenu::createMenu(const QModelIndex &parent, int max, QMenu *parentMenu
         QString title = parent.data().toString();
         ModelMenu *modelMenu = createBaseMenu();
         // triggered goes all the way up the menu structure
-        disconnect(modelMenu, SIGNAL(triggered(QAction*)),
-                   modelMenu, SLOT(actionTriggered(QAction*)));
+        disconnect(modelMenu, &QMenu::triggered,
+                   modelMenu, &ModelMenu::actionTriggered);
         modelMenu->setTitle(title);
         QIcon icon = qvariant_cast<QIcon>(parent.data(Qt::DecorationRole));
         modelMenu->setIcon(icon);
@@ -234,7 +234,7 @@ QAction *ModelMenu::makeAction(const QIcon &icon, const QString &text, QObject *
 {
     QFontMetrics fm(font());
     if (-1 == m_maxWidth)
-        m_maxWidth = fm.width(QLatin1Char('m')) * 30;
+        m_maxWidth = fm.horizontalAdvance(QLatin1Char('m')) * 30;
     QString smallText = fm.elidedText(text, Qt::ElideMiddle, m_maxWidth);
     return new QAction(icon, smallText, parent);
 }
@@ -265,7 +265,7 @@ void ModelMenu::dragEnterEvent(QDragEnterEvent *event)
     }
 
     QStringList mimeTypes = m_model->mimeTypes();
-    foreach (const QString &mimeType, mimeTypes) {
+    for (const QString &mimeType : mimeTypes) {
         if (event->mimeData()->hasFormat(mimeType))
             event->acceptProposedAction();
     }
@@ -309,8 +309,9 @@ void ModelMenu::mousePressEvent(QMouseEvent *event)
 
 void ModelMenu::mouseReleaseEvent(QMouseEvent *event)
 {
-    BrowserApplication::instance()->setEventMouseButtons(event->button());
-    BrowserApplication::instance()->setEventKeyboardModifiers(event->modifiers());
+    // TODO(MIG15): record event->button()/modifiers() on
+    // BrowserApplication so activated() consumers can honor
+    // open-in-tab modifiers (was setEventMouseButtons/KeyboardModifiers).
     QMenu::mouseReleaseEvent(event);
 }
 
@@ -339,12 +340,12 @@ void ModelMenu::mouseMoveEvent(QMouseEvent *event)
     QDrag *drag = new QDrag(this);
     drag->setMimeData(m_model->mimeData((QModelIndexList() << idx)));
     QRect actionRect = actionGeometry(action);
-    drag->setPixmap(QPixmap::grabWidget(this, actionRect));
+    drag->setPixmap(grab(actionRect));
 
     if (drag->exec() == Qt::MoveAction) {
         m_model->removeRow(idx.row(), m_root);
 
-        if (!this->isAncestorOf(drag->target()))
+        if (!this->isAncestorOf(qobject_cast<QWidget*>(drag->target())))
             close();
         else
             aboutToShow();

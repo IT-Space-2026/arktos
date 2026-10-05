@@ -65,9 +65,9 @@
 
 #include <qdatetime.h>
 #include <qhash.h>
+#include <qicon.h>
 #include <qtimer.h>
 #include <qurl.h>
-#include <qwebhistoryinterface.h>
 
 class HistoryEntry
 {
@@ -97,7 +97,12 @@ class AutoSaver;
 class HistoryModel;
 class HistoryFilterModel;
 class HistoryTreeModel;
-class HistoryManager : public QWebHistoryInterface
+// QtWebKit's QWebHistoryInterface pushed visited urls into the
+// application; QtWebEngine keeps Chromium's own internal history, so
+// this remains a purely app-side store that WebPage feeds from its
+// load/title/icon signals (see WebPage::init()).  Pages on the
+// off-the-record profile never reach it.
+class HistoryManager : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(int daysToExpire READ daysToExpire WRITE setDaysToExpire)
@@ -113,6 +118,11 @@ public:
     HistoryManager(QObject *parent = 0);
     ~HistoryManager();
 
+    // The application-wide history store (was
+    // BrowserApplication::historyManager()).  Lazily created, owned by
+    // qApp so the destructor flushes pending saves at shutdown.
+    static HistoryManager *instance();
+
     bool historyContains(const QString &url) const;
     void addHistoryEntry(const QString &url);
     void updateHistoryEntry(const QUrl &url, const QString &title);
@@ -123,6 +133,13 @@ public:
 
     QList<HistoryEntry> history() const;
     void setHistory(const QList<HistoryEntry> &history, bool loadedAndSorted = false);
+
+    // Favicon lookup for the history models (replaces
+    // BrowserApplication::icon() / the WebKit icon database).  Pages
+    // feed entries via setIcon(); the cache is memory-only — WebEngine
+    // has no app-visible on-disk icon store.
+    QIcon icon(const QUrl &url) const;
+    void setIcon(const QUrl &url, const QIcon &icon);
 
     // History manager keeps around these models for use by the completer and other classes
     HistoryModel *historyModel() const;
@@ -152,6 +169,7 @@ private:
     QHash<QString, int> m_atomicStringHash;
     QList<HistoryEntry> m_history;
     QString m_lastSavedUrl;
+    QHash<QString, QIcon> m_icons;
 
     HistoryModel *m_historyModel;
     HistoryFilterModel *m_historyFilterModel;

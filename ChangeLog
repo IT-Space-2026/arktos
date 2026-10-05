@@ -17,6 +17,11 @@ Network layer (MIG04):
     file:// directory listings are served by a custom "arora-file" URL scheme (QWebEngineUrlSchemeHandler on the profile) — navigating to a local directory redirects to it and renders the classic Arora listing with icons.
     The QWebPage-tagging proxy classes (WebPageProxy, NetworkAccessManagerProxy) are deleted; WebPage now derives straight from QWebEnginePage.
 
+History (MIG06):
+    Port the history store, models, dialog, menu and location-bar completer to Qt 6. QtWebKit's QWebHistoryInterface is gone — WebEngine keeps Chromium's own internal history — so WebPage now feeds the application store from its loadFinished/titleChanged/iconChanged signals. Pages on an off-the-record profile never reach it; that is the private-browsing guarantee now.
+    Normal browsing now runs on a named, persistent WebEngine profile ("arora"): QWebEngineProfile::defaultProfile() is itself off-the-record, so the previous wiring left cookies, cache and storage non-persistent.
+    Favicons in the history views come from a memory-only icon cache fed by QWebEnginePage::iconChanged — WebEngine has no application-visible on-disk icon database.
+
 Downloads (MIG05):
     The download manager now drives QWebEngineDownloadRequest: Chromium streams files to disk itself once the item has picked a name and accepted the request. The download list UI, progress/speed/ETA display, "Try Again", open-with-desktop and the external download program option are kept. Suggested server file names are reduced to a bare file name and de-duplicated with a -N suffix so existing files are never silently overwritten.
     "Try Again" re-issues the download through its page (or a hidden page when the original is gone, e.g. items restored from disk) and re-attaches the fresh request to the same row. The default download directory moved from the desktop to the platform Downloads folder.
