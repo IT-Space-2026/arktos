@@ -24,7 +24,8 @@
 #include "tabwidget.h"
 
 #include <qlist.h>
-#include <qnetworkrequest.h>
+
+#include <functional>
 
 class WebPageLinkedResource
 {
@@ -35,9 +36,10 @@ public:
     QString title;
 };
 
+class QWebEngineDownloadRequest;
+class QWebEngineLoadingInfo;
+class QWebChannel;
 class OpenSearchEngine;
-class QNetworkReply;
-class WebPluginFactory;
 // See https://developer.mozilla.org/en/adding_search_engines_from_web_pages
 class JavaScriptExternalObject : public QObject
 {
@@ -74,41 +76,39 @@ signals:
 
 public:
     WebPage(QObject *parent = 0);
-    ~WebPage();
+    WebPage(QWebEngineProfile *profile, QObject *parent = 0);
 
     void loadSettings();
 
-    static WebPluginFactory *webPluginFactory();
-    QList<WebPageLinkedResource> linkedResources(const QString &relation = QString());
+    // Qt WebEngine has no synchronous DOM access; the linked resources are
+    // collected in the render process and reported through the callback.
+    // TODO(MIG08): port the toolbarsearch.cpp caller.
+    void linkedResources(const QString &relation,
+                         const std::function<void(const QList<WebPageLinkedResource> &)> &resultCallback);
+    void linkedResources(const std::function<void(const QList<WebPageLinkedResource> &)> &resultCallback);
 
     static QString userAgent();
     static void setUserAgent(const QString &userAgent);
 
 protected:
-    QString userAgentForUrl(const QUrl &url) const;
-    bool acceptNavigationRequest(QWebFrame *frame, const QNetworkRequest &request,
-                                 NavigationType type);
-    QObject *createPlugin(const QString &classId, const QUrl &url, const QStringList &paramNames, const QStringList &paramValues);
-    QWebPage *createWindow(QWebPage::WebWindowType type);
+    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame);
+    QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type);
 
-protected slots:
-    void handleUnsupportedContent(QNetworkReply *reply);
-    void addExternalBinding(QWebFrame *frame = 0);
+private slots:
+    void handleDownloadRequested(QWebEngineDownloadRequest *download);
+    void handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo);
+
+private:
+    void init();
+    void showErrorPage(const QUrl &url, const QString &errorString);
 
 protected:
-    void populateNetworkRequest(QNetworkRequest &request);
     static QString s_userAgent;
-    static WebPluginFactory *s_webPluginFactory;
     TabWidget::OpenUrlIn m_openTargetBlankLinksIn;
     QUrl m_requestedUrl;
     JavaScriptExternalObject *m_javaScriptExternalObject;
     JavaScriptAroraObject *m_javaScriptAroraObject;
-
-private:
-    QNetworkRequest lastRequest;
-    QWebPage::NavigationType lastRequestType;
-
+    QWebChannel *m_webChannel;
 };
 
 #endif // WEBPAGE_H
-

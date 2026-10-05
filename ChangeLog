@@ -3,6 +3,11 @@ Build system:
     Add a QtWebEngineWidgets smoke test (autotests/smoke) that verifies the Qt 6.11.3 toolchain can run WebEngine headless before porting begins.
     Port the qmake build to Qt 6: QT += webenginewidgets webchannel printsupport uitools core5compat replaces webkit; webkittrunk.pri and the Qt4/OS2 conditionals are gone. Only a skeleton builds for now — main.cpp launches a stub window with a QWebEngineView while the rest of src/ waits on the per-module port tasks.
 
+Core web layer (MIG02):
+    Port WebView/WebPage/WebActionMapper to QWebEngineView/QWebEnginePage. Context menus use QWebEngineContextMenuRequest, downloads go through QWebEngineDownloadRequest (saved to the default download directory until the download manager is ported), JavaScript window objects ("external", "arora") are exposed via QWebChannel, and failed loads show the Arora notfound.html error page again. Custom user agent strings apply through QWebEngineProfile::httpUserAgent.
+    The Ctrl access-key link hints are dropped: they needed synchronous DOM access that WebEngine does not provide.
+    "Open in New Tab" context menu entries open a standalone window until the tab widget is ported; bookmark-link, "Search with...", block-image and add-to-toolbar-search entries are temporarily disabled while the bookmarks, opensearch and adblock modules are still being ported.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

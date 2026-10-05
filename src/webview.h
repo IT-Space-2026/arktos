@@ -64,19 +64,14 @@
 #ifndef WEBVIEW_H
 #define WEBVIEW_H
 
-#include <qwebview.h>
+#include <qwebengineview.h>
 
 #include "tabwidget.h"
-
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-#include <qwebelement.h>
-class QLabel;
-#endif
 
 class BrowserMainWindow;
 class TabWidget;
 class WebPage;
-class WebView : public QWebView
+class WebView : public QWebEngineView
 {
     Q_OBJECT
 
@@ -84,15 +79,7 @@ public:
     WebView(QWidget *parent = 0);
     WebPage *webPage() const { return m_page; }
 
-#if !(QT_VERSION >= 0x040600)
-    static QUrl guessUrlFromString(const QString &url);
-#endif
     void loadSettings();
-
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    void keyReleaseEvent(QKeyEvent *event);
-    void focusOutEvent(QFocusEvent *event);
-#endif
 
     void loadUrl(const QUrl &url, const QString &title = QString());
     QUrl url() const;
@@ -115,11 +102,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event);
     void contextMenuEvent(QContextMenuEvent *event);
     void wheelEvent(QWheelEvent *event);
-    void resizeEvent(QResizeEvent *event);
     void dragEnterEvent(QDragEnterEvent *event);
     void dragMoveEvent(QDragMoveEvent *event);
     void dropEvent(QDropEvent *event);
-    void keyPressEvent(QKeyEvent *event);
 
 private:
     int levelForZoom(int zoom);
@@ -128,23 +113,16 @@ private slots:
     void setProgress(int progress);
     void loadFinished();
     void setStatusBarText(const QString &string);
-    void downloadRequested(const QNetworkRequest &request);
     void openActionUrlInNewTab();
     void openActionUrlInNewWindow();
     void downloadLinkToDisk();
     void copyLinkToClipboard();
-    void openImageInNewWindow();
     void downloadImageToDisk();
     void copyImageToClipboard();
     void copyImageLocationToClipboard();
     void blockImage();
     void bookmarkLink();
     void searchRequested(QAction *action);
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    void addSearchEngine();
-    void hideAccessKeys();
-    void accessKeyShortcut();
-#endif
 
 private:
     QString m_statusBarText;
@@ -153,16 +131,6 @@ private:
     int m_currentZoom;
     QList<int> m_zoomLevels;
     WebPage *m_page;
-
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    bool m_enableAccessKeys;
-    bool checkForAccessKey(QKeyEvent *event);
-    void showAccessKeys();
-    void makeAccessKeyLabel(const QChar &accessKey, const QWebElement &element);
-    QList<QLabel*> m_accessKeyLabels;
-    QHash<QChar, QWebElement> m_accessKeyNodes;
-    bool m_accessKeysPressed;
-#endif
 };
 
 #endif

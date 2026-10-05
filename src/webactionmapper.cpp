@@ -64,7 +64,7 @@
 
 #include <qaction.h>
 
-WebActionMapper::WebActionMapper(QAction *root, QWebPage::WebAction webAction, QObject *parent)
+WebActionMapper::WebActionMapper(QAction *root, QWebEnginePage::WebAction webAction, QObject *parent)
     : QObject(parent)
     , m_currentParent(0)
     , m_root(root)
@@ -72,8 +72,8 @@ WebActionMapper::WebActionMapper(QAction *root, QWebPage::WebAction webAction, Q
 {
     if (!m_root)
         return;
-    connect(m_root, SIGNAL(triggered()), this, SLOT(rootTriggered()));
-    connect(root, SIGNAL(destroyed(QObject *)), this, SLOT(rootDestroyed()));
+    connect(m_root, &QAction::triggered, this, &WebActionMapper::rootTriggered);
+    connect(root, &QAction::destroyed, this, &WebActionMapper::rootDestroyed);
     root->setEnabled(false);
 }
 
@@ -91,10 +91,10 @@ void WebActionMapper::addChild(QAction *action)
 {
     if (!action)
         return;
-    connect(action, SIGNAL(changed()), this, SLOT(childChanged()));
+    connect(action, &QAction::changed, this, &WebActionMapper::childChanged);
 }
 
-QWebPage::WebAction WebActionMapper::webAction() const
+QWebEnginePage::WebAction WebActionMapper::webAction() const
 {
     return m_webAction;
 }
@@ -119,11 +119,11 @@ void WebActionMapper::childChanged()
     }
 }
 
-void WebActionMapper::updateCurrent(QWebPage *currentParent)
+void WebActionMapper::updateCurrent(QWebEnginePage *currentParent)
 {
     if (m_currentParent)
-        disconnect(m_currentParent, SIGNAL(destroyed(QObject *)),
-                   this, SLOT(currentDestroyed()));
+        disconnect(m_currentParent, &QWebEnginePage::destroyed,
+                   this, &WebActionMapper::currentDestroyed);
 
     m_currentParent = currentParent;
     if (!m_root)
@@ -138,7 +138,7 @@ void WebActionMapper::updateCurrent(QWebPage *currentParent)
         return;
     m_root->setChecked(source->isChecked());
     m_root->setEnabled(source->isEnabled());
-    connect(m_currentParent, SIGNAL(destroyed(QObject *)),
-            this, SLOT(currentDestroyed()));
+    connect(m_currentParent, &QWebEnginePage::destroyed,
+            this, &WebActionMapper::currentDestroyed);
 }
 

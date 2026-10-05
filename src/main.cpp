@@ -17,8 +17,9 @@
  * Boston, MA  02110-1301  USA
  */
 
+#include "webview.h"
+
 #include <QtCore/QUrl>
-#include <QtWebEngineWidgets/QWebEngineView>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
 
@@ -39,9 +40,13 @@ int main(int argc, char **argv)
     QMainWindow window;
     window.setWindowTitle(QStringLiteral("Arora"));
 
-    QWebEngineView *view = new QWebEngineView(&window);
+    WebView *view = new WebView(&window);
     window.setCentralWidget(view);
-    view->load(QUrl(QStringLiteral("about:blank")));
+
+    const QStringList args = application.arguments();
+    const QString firstUrl = (args.count() > 1 && !args.at(1).startsWith(QLatin1Char('-')))
+            ? args.at(1) : QStringLiteral("about:blank");
+    view->loadUrl(QUrl(firstUrl));
 
     // Headless verification hook: exit once the first page load
     // finishes so CI can prove WebEngine ran (autotests/smoke style).

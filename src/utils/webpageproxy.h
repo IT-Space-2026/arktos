@@ -30,14 +30,23 @@
 #define WEBPAGEPROXY_H
 
 #include <qnetworkaccessmanager.h>
-#include <qwebpage.h>
+#include <qwebenginepage.h>
 
-class WebPageProxy : public QWebPage
+/*
+    WebPageProxy used to tag each QNetworkRequest with the QWebPage that
+    issued it so the shared cookie jar could attribute cookies to pages.
+    Under Qt WebEngine the application no longer sees web traffic through
+    QNetworkAccessManager (Chromium does the networking), so the tagging
+    is kept only for source compatibility with the not-yet-ported
+    network/ code.  TODO(MIG04): collapse this into WebPage.
+*/
+class WebPageProxy : public QWebEnginePage
 {
     Q_OBJECT
 
 public:
     WebPageProxy(QObject *parent = 0);
+    WebPageProxy(QWebEngineProfile *profile, QObject *parent = 0);
     static int pageAttributeId();
 
 protected:
@@ -46,4 +55,3 @@ protected:
 };
 
 #endif // WEBPAGEPROXY_H
-

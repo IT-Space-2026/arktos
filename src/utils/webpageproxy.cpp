@@ -34,7 +34,12 @@
 #define ATTRIBUTE_ID QNetworkRequest::User + 100
 
 WebPageProxy::WebPageProxy(QObject *parent)
-    : QWebPage(parent)
+    : QWebEnginePage(parent)
+{
+}
+
+WebPageProxy::WebPageProxy(QWebEngineProfile *profile, QObject *parent)
+    : QWebEnginePage(profile, parent)
 {
 }
 
@@ -45,7 +50,6 @@ int WebPageProxy::pageAttributeId()
 
 void WebPageProxy::populateNetworkRequest(QNetworkRequest &request)
 {
-    QVariant variant = qVariantFromValue((void *) this);
+    QVariant variant = QVariant::fromValue((void *) this);
     request.setAttribute((QNetworkRequest::Attribute)(pageAttributeId()), variant);
 }
-

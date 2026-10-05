@@ -2,8 +2,8 @@ CONFIG += qt warn_on
 
 win32:Debug:CONFIG += console
 
-INCLUDEPATH += $$PWD
-DEPENDPATH += $$PWD
+INCLUDEPATH += $$PWD $$PWD/utils
+DEPENDPATH += $$PWD $$PWD/utils
 
 QT += core gui widgets network printsupport webenginewidgets webchannel uitools core5compat
 
@@ -59,9 +59,7 @@ exists(../.git/HEAD) {
 #     tabbar.h \                    # TODO(MIG14)
 #     tabwidget.h \                 # TODO(MIG14)
 #     toolbarsearch.h \             # TODO(MIG08)
-#     webactionmapper.h \           # TODO(MIG02)
-#     webpage.h \                   # TODO(MIG02)
-#     webview.h \                   # TODO(MIG02)
+#     (webactionmapper/webpage/webview moved to live list — MIG02 done)
 #     webviewsearch.h               # TODO(MIG12)
 #
 # SOURCES += \
@@ -87,9 +85,6 @@ exists(../.git/HEAD) {
 #     tabbar.cpp \                  # TODO(MIG14)
 #     tabwidget.cpp \               # TODO(MIG14)
 #     toolbarsearch.cpp \           # TODO(MIG08)
-#     webactionmapper.cpp \         # TODO(MIG02)
-#     webpage.cpp \                 # TODO(MIG02)
-#     webview.cpp \                 # TODO(MIG02)
 #     webviewsearch.cpp             # TODO(MIG12)
 #
 # include(adblock/adblock.pri)        # TODO(MIG09)
@@ -104,8 +99,19 @@ exists(../.git/HEAD) {
 # ------------------------------------------------------------------------
 
 FORMS +=
-HEADERS +=
-SOURCES +=
+HEADERS += \
+    webactionmapper.h \
+    webpage.h \
+    webview.h \
+    utils/webpageproxy.h \
+    utils/networkaccessmanagerproxy.h \
+    utils/networkaccessmanagerproxy_p.h
+SOURCES += \
+    webactionmapper.cpp \
+    webpage.cpp \
+    webview.cpp \
+    utils/webpageproxy.cpp \
+    utils/networkaccessmanagerproxy.cpp
 
 RESOURCES += \
     $$PWD/data/data.qrc \
