@@ -36,7 +36,6 @@ public:
     QString title;
 };
 
-class QWebEngineDownloadRequest;
 class QWebEngineLoadingInfo;
 class QWebChannel;
 class OpenSearchEngine;
@@ -95,7 +94,6 @@ protected:
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type);
 
 private slots:
-    void handleDownloadRequested(QWebEngineDownloadRequest *download);
     void handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo);
 
 private:

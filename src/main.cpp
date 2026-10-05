@@ -18,15 +18,21 @@
  */
 
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "networkaccessmanager.h"
 #include "schemeaccesshandler.h"
+#include "webpage.h"
 #include "webview.h"
 
 #include <QtCore/QDebug>
+#include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtCore/QSettings>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
+#include <QtWebEngineCore/QWebEngineDownloadRequest>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
@@ -56,9 +62,15 @@ int main(int argc, char **argv)
     SchemeAccessHandler::installAll(profile, &application);
 
     // MIG04: application-side fetch manager (opensearch, adblock
-    // subscriptions, download manager).  TODO(MIG15): BrowserApplication
-    // owns the singleton.
+    // subscriptions).  TODO(MIG15): BrowserApplication owns the
+    // singleton.
     NetworkAccessManager *networkAccessManager = new NetworkAccessManager(&application);
+
+    // MIG05: intercepts every profile it is installed on and turns
+    // downloadRequested into DownloadItem rows.  TODO(MIG15): also call
+    // installOnProfile() on the off-the-record private profile.
+    DownloadManager *downloadManager = new DownloadManager();
+    downloadManager->installOnProfile(profile);
 
     QMainWindow window;
     window.setWindowTitle(QStringLiteral("Arora"));
@@ -100,6 +112,45 @@ int main(int argc, char **argv)
             qInfo() << "nam-smoke:" << reply->error() << reply->url();
             application.exit(reply->error() == QNetworkReply::NoError ? 0 : 1);
         });
+    }
+
+    // Headless verification for MIG05: issue a real WebEngine download
+    // of the given URL.  The DownloadManager picks a file name inside a
+    // scratch download dir; exit 0 once the file lands on disk.
+    const int downloadSmokeIndex = args.indexOf(QLatin1String("--download-smoke"));
+    if (downloadSmokeIndex != -1 && args.count() > downloadSmokeIndex + 1) {
+        const QUrl downloadUrl(args.at(downloadSmokeIndex + 1));
+        const QString smokeDir =
+            QDir::temp().filePath(QLatin1String("arora-download-smoke"));
+        QDir().mkpath(smokeDir);
+        downloadManager->setDownloadDirectory(smokeDir);
+        // A save-as prompt can't be answered under offscreen QPA.
+        QSettings().setValue(
+            QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
+        QObject::connect(profile, &QWebEngineProfile::downloadRequested,
+                         &application,
+                         [&application](QWebEngineDownloadRequest *request) {
+            QObject::connect(request, &QWebEngineDownloadRequest::stateChanged,
+                             &application,
+                             [&application, request](QWebEngineDownloadRequest::DownloadState state) {
+                if (state == QWebEngineDownloadRequest::DownloadCompleted) {
+                    const QString path = request->downloadDirectory()
+                        + QLatin1Char('/') + request->downloadFileName();
+                    const bool ok = QFile::exists(path) && QFileInfo(path).size() > 0;
+                    qInfo() << "download-smoke:" << (ok ? "PASS" : "FAIL")
+                            << path << request->receivedBytes() << "bytes";
+                    application.exit(ok ? 0 : 1);
+                } else if (state == QWebEngineDownloadRequest::DownloadInterrupted
+                           || state == QWebEngineDownloadRequest::DownloadCancelled) {
+                    qInfo() << "download-smoke: FAIL"
+                            << request->interruptReasonString();
+                    application.exit(1);
+                }
+            });
+        });
+        QTimer::singleShot(30000, &application,
+                           [&application]() { application.exit(1); });
+        view->webPage()->download(downloadUrl);
     }
 
     // Headless verification for MIG03: push a cookie through the jar's

@@ -35,7 +35,6 @@
 #include <qtimer.h>
 #include <qvariant.h>
 #include <qwebchannel.h>
-#include <qwebenginedownloadrequest.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -130,10 +129,10 @@ void WebPage::init()
     // notfound.html page can be injected from handleLoadingChanged().
     settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, false);
 
-    // TODO(MIG05): forward downloads to DownloadManager; accepting here
-    // keeps downloads functional (default download directory) meanwhile.
-    connect(profile(), &QWebEngineProfile::downloadRequested,
-            this, &WebPage::handleDownloadRequested);
+    // Downloads are handled application-wide: DownloadManager hooks
+    // QWebEngineProfile::downloadRequested for each profile it is
+    // installed on (MIG05).  TODO(MIG15): install it on the
+    // off-the-record profile too when private browsing is wired up.
     connect(this, &QWebEnginePage::loadingChanged,
             this, &WebPage::handleLoadingChanged);
     // Apply the configured user agent to whichever profile this page is
@@ -256,13 +255,6 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
     webView->setAttribute(Qt::WA_DeleteOnClose);
     webView->show();
     return webView->webPage();
-}
-
-void WebPage::handleDownloadRequested(QWebEngineDownloadRequest *download)
-{
-    if (download->page() != this)
-        return;
-    download->accept();
 }
 
 void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)

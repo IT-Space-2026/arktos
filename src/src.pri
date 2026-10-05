@@ -31,8 +31,7 @@ exists(../.git/HEAD) {
 #     aboutdialog.ui \              # TODO(MIG14)
 #     autofilldialog.ui \           # TODO(MIG10)
 #     acceptlanguagedialog.ui \     # TODO(MIG11)
-#     downloaditem.ui \             # TODO(MIG05)
-#     downloads.ui \                # TODO(MIG05)
+#     (downloaditem.ui/downloads.ui live — MIG05)
 #     searchbanner.ui \             # TODO(MIG08)
 #     settings.ui                   # TODO(MIG11)
 #
@@ -44,7 +43,7 @@ exists(../.git/HEAD) {
 #     browserapplication.h \        # TODO(MIG15)
 #     browsermainwindow.h \         # TODO(MIG14)
 #     clearprivatedata.h \          # TODO(MIG11)
-#     downloadmanager.h \           # TODO(MIG05)
+#     (downloadmanager.h live — MIG05)
 #     modelmenu.h \                 # TODO(MIG07)
 #     modeltoolbar.h \              # TODO(MIG07)
 #     plaintexteditsearch.h \       # TODO(MIG12)
@@ -68,7 +67,7 @@ exists(../.git/HEAD) {
 #     browserapplication.cpp \      # TODO(MIG15)
 #     browsermainwindow.cpp \       # TODO(MIG14)
 #     clearprivatedata.cpp \        # TODO(MIG11)
-#     downloadmanager.cpp \         # TODO(MIG05)
+#     (downloadmanager.cpp live — MIG05)
 #     modelmenu.cpp \               # TODO(MIG07)
 #     modeltoolbar.cpp \            # TODO(MIG07)
 #     plaintexteditsearch.cpp \     # TODO(MIG12)
@@ -94,10 +93,13 @@ include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG
 
 include(network/cookiejar/cookiejar.pri)
 
-FORMS +=
+FORMS += \
+    downloaditem.ui \
+    downloads.ui
 HEADERS += \
     autosaver.h \
     clearbutton.h \
+    downloadmanager.h \
     searchbutton.h \
     searchlineedit.h \
     webactionmapper.h \
@@ -105,17 +107,20 @@ HEADERS += \
     webview.h \
     utils/edittableview.h \
     utils/lineedit.h \
-    utils/lineedit_p.h
+    utils/lineedit_p.h \
+    utils/squeezelabel.h
 SOURCES += \
     autosaver.cpp \
     clearbutton.cpp \
+    downloadmanager.cpp \
     searchbutton.cpp \
     searchlineedit.cpp \
     webactionmapper.cpp \
     webpage.cpp \
     webview.cpp \
     utils/edittableview.cpp \
-    utils/lineedit.cpp
+    utils/lineedit.cpp \
+    utils/squeezelabel.cpp
 
 RESOURCES += \
     $$PWD/data/data.qrc \

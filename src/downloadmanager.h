@@ -39,12 +39,7 @@
 **
 ** Please review the following information to ensure GNU General
 ** Public Licensing requirements will be met:
-** http://trolltech.com/products/qt/licenses/licensing/opensource/. If
-** you are unsure which license is appropriate for your use, please
-** review the following information:
-** http://trolltech.com/products/qt/licenses/licensing/licensingoverview
-** or contact the sales department at sales@trolltech.com.
-**
+** http://trolltech.com/products/qt/licenses/licensing/opensource/.
 ** In addition, as a special exception, Trolltech, as the sole
 ** copyright holder for Qt Designer, grants users of the Qt/Eclipse
 ** Integration plug-in the right for the Qt/Eclipse Integration to
@@ -67,10 +62,12 @@
 #include "ui_downloads.h"
 #include "ui_downloaditem.h"
 
-#include <qnetworkreply.h>
+#include <qelapsedtimer.h>
+#include <qpointer.h>
+#include <qwebenginedownloadrequest.h>
 
-#include <qfile.h>
-#include <qdatetime.h>
+class QWebEnginePage;
+class QWebEngineProfile;
 
 class DownloadItem : public QWidget, public Ui_DownloadItem
 {
@@ -82,7 +79,7 @@ signals:
     void downloadFinished();
 
 public:
-    DownloadItem(QNetworkReply *reply = 0, bool requestFileName = false, QWidget *parent = 0);
+    DownloadItem(QWebEngineDownloadRequest *download = 0, bool requestFileName = false, QWidget *parent = 0);
     bool downloading() const;
     bool downloadedSuccessfully() const;
 
@@ -91,20 +88,20 @@ public:
     double remainingTime() const;
     double currentSpeed() const;
 
-    QUrl m_url;
+    // Re-attaches the item to a fresh request.  "Try Again" re-issues the
+    // download through the page, which produces a new request object.
+    void attach(QWebEngineDownloadRequest *download);
 
-    QFile m_output;
-    QNetworkReply *m_reply;
+    QUrl m_url;
+    QString m_outputFileName;
 
 private slots:
     void stop();
     void tryAgain();
     void open();
 
-    void downloadReadyRead();
-    void error(QNetworkReply::NetworkError code);
-    void downloadProgress(qint64 bytesReceived, qint64 bytesTotal);
-    void metaDataChanged();
+    void downloadProgressUpdate();
+    void downloadStateChanged(QWebEngineDownloadRequest::DownloadState state);
     void finished();
 
 private:
@@ -114,14 +111,16 @@ private:
 
     QString saveFileName(const QString &directory) const;
 
+    QPointer<QWebEngineDownloadRequest> m_download;
     bool m_requestFileName;
     qint64 m_bytesReceived;
-    QTime m_downloadTime;
-    bool m_startedSaving;
+    QElapsedTimer m_downloadTime;
     bool m_finishedDownloading;
     bool m_gettingFileName;
     bool m_canceledFileSelect;
-    QTime m_lastProgressTime;
+    bool m_awaitingRetry;
+    bool m_offTheRecord;
+    QElapsedTimer m_lastProgressTime;
 
     friend class DownloadManager;
 };
@@ -137,7 +136,6 @@ class DownloadManager : public QDialog, public Ui_DownloadDialog
 {
     Q_OBJECT
     Q_PROPERTY(RemovePolicy removePolicy READ removePolicy WRITE setRemovePolicy)
-    Q_ENUMS(RemovePolicy)
 
 public:
     enum RemovePolicy {
@@ -145,6 +143,7 @@ public:
         Exit,
         SuccessFullDownload
     };
+    Q_ENUM(RemovePolicy)
 
     DownloadManager(QWidget *parent = 0);
     ~DownloadManager();
@@ -160,11 +159,20 @@ public:
     void setDownloadDirectory(const QString &directory);
     QString downloadDirectory();
 
+    // Hooks this manager into the profile's downloadRequested signal.
+    // Must be called once for every profile that can produce downloads
+    // (default profile and the off-the-record private profile).
+    void installOnProfile(QWebEngineProfile *profile);
+
+    // Hidden page used to re-issue downloads whose originating page is
+    // already gone (retry of an interrupted or restored download).
+    QWebEnginePage *retryPage(bool offTheRecord);
+
 public slots:
-    void download(const QNetworkRequest &request, bool requestFileName = false);
-    inline void download(const QUrl &url, bool requestFileName = false)
-        { download(QNetworkRequest(url), requestFileName); }
-    void handleUnsupportedContent(QNetworkReply *reply, bool requestFileName = false);
+    // WebEngine downloads can only be initiated from a page; there is no
+    // profile-level download() entry point.
+    void download(QWebEnginePage *page, const QUrl &url, bool requestFileName = false);
+    void handleDownloadRequested(QWebEngineDownloadRequest *download);
     void cleanup();
 
 private slots:
@@ -182,13 +190,18 @@ private:
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;
-    QNetworkAccessManager *m_manager;
     QFileIconProvider *m_iconProvider;
+    QWebEnginePage *m_retryPage;
+    QWebEnginePage *m_retryPageOtr;
     QList<DownloadItem*> m_downloads;
     RemovePolicy m_removePolicy;
     QString m_downloadDirectory;
+    // Consumed by the next downloadRequested for a download issued
+    // through download() with requestFileName set.
+    bool m_requestFileNameNext;
 
     friend class DownloadModel;
+    friend class DownloadItem;
 };
 
 class DownloadModel : public QAbstractListModel
@@ -210,4 +223,3 @@ private:
 };
 
 #endif // DOWNLOADMANAGER_H
-
