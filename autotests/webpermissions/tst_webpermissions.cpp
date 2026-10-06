@@ -47,7 +47,7 @@ class LocalHttpServer : public QObject
     Q_OBJECT
 
 public:
-    LocalHttpServer(QObject *parent = 0)
+    LocalHttpServer(QObject *parent = nullptr)
         : QObject(parent)
     {
         connect(&m_server, &QTcpServer::newConnection, this,

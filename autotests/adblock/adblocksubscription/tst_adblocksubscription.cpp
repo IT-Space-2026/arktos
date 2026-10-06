@@ -177,7 +177,7 @@ void tst_AdBlockSubscription::allow()
     const AdBlockRule *rule = subscription.allow(QString::fromUtf8(url.toEncoded()));
     if (rule)
         QVERIFY(rule->isException());
-    QCOMPARE((0 != rule), allow);
+    QCOMPARE((nullptr != rule), allow);
 }
 
 void tst_AdBlockSubscription::block_data()
@@ -202,7 +202,7 @@ void tst_AdBlockSubscription::block()
     const AdBlockRule *rule = subscription.block(QString::fromUtf8(url.toEncoded()));
     if (rule)
         QVERIFY(!rule->isException());
-    QCOMPARE((0 != rule), block);
+    QCOMPARE((nullptr != rule), block);
 }
 
 void tst_AdBlockSubscription::isEnabled_data()

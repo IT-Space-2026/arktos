@@ -125,7 +125,7 @@ void tst_SafeText::delegateDisplayText()
 void tst_SafeText::downloadItemLabelsArePlain()
 {
     // A null request short-circuits init(); the ui is still built.
-    DownloadItem item(0, false);
+    DownloadItem item(nullptr, false);
     QCOMPARE(item.fileNameLabel->textFormat(), Qt::PlainText);
     QCOMPARE(item.downloadInfoLabel->textFormat(), Qt::PlainText);
 }

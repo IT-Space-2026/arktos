@@ -44,7 +44,7 @@ class SubModelMenu : public ModelMenu
 {
 public:
     void call_createMenu(const QModelIndex &parent, int max,
-                         QMenu *parentMenu = 0, QMenu *menu = 0)
+                         QMenu *parentMenu = nullptr, QMenu *menu = nullptr)
         { return ModelMenu::createMenu(parent, max, parentMenu, menu); }
     bool call_prePopulated()
         { return ModelMenu::prePopulated(); }
@@ -99,7 +99,7 @@ void tst_ModelMenu::accessors()
     QVERIFY(!menu.call_prePopulated());
     menu.call_postPopulated();
     QVERIFY(menu.call_createBaseMenu());
-    QVERIFY(!menu.index(0).isValid());
+    QVERIFY(!menu.index(nullptr).isValid());
 }
 
 // aboutToShow rebuilds the menu from the model: flat rows become
@@ -257,7 +257,7 @@ void tst_ModelMenu::modelToolBar()
 
     bar.setRootIndex(model.index(0, 0));
     QCOMPARE(bar.rootIndex().row(), 0);
-    QVERIFY(!ModelToolBar::index(0).isValid());
+    QVERIFY(!ModelToolBar::index(nullptr).isValid());
     QVERIFY(ModelToolBar::index(bar.actions().first()).isValid());
 }
 

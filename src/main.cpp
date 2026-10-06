@@ -1368,7 +1368,7 @@ int main(int argc, char **argv)
                 viewer->findChild<PlainTextEditSearch*>();
             QLineEdit *searchEdit = search
                 ? search->findChild<QLineEdit*>(QLatin1String("searchLineEdit"))
-                : 0;
+                : nullptr;
             if (!edit || !search || !searchEdit) {
                 finish(false);
                 return;
@@ -1576,7 +1576,7 @@ int main(int argc, char **argv)
     };
     QString extensionId;
     QString extDir;
-    QTimer *enablePoll = 0;
+    QTimer *enablePoll = nullptr;
     std::shared_ptr<int> pollTicks;
     if (args.contains(QLatin1String("--extension-smoke"))) {
         extensions = ExtensionManager::instance();

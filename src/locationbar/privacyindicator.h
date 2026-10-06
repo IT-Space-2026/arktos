@@ -28,11 +28,11 @@ class PrivacyIndicator : public QLabel
     Q_OBJECT
 
 public:
-    PrivacyIndicator(QWidget *parent = 0);
+    PrivacyIndicator(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
 
 protected:
-    void mousePressEvent(QMouseEvent *event);
+    void mousePressEvent(QMouseEvent *event) override;
 
 };
 

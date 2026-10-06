@@ -44,7 +44,7 @@ signals:
     void languageChanged(const QString &language);
 
 public:
-    LanguageManager(QObject *parent = 0);
+    LanguageManager(QObject *parent = nullptr);
 
     // Lazy qApp-owned singleton with the application locale directories
     // already registered — replaces

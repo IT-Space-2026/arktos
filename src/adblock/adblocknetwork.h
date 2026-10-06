@@ -31,6 +31,8 @@
 
 #include "adblockrule.h"
 
+#include <memory>
+
 #include <qhash.h>
 #include <qobject.h>
 #include <qreadwritelock.h>
@@ -77,7 +79,7 @@ class AdBlockNetwork : public QObject
     Q_OBJECT
 
 public:
-    AdBlockNetwork(QObject *parent = 0);
+    AdBlockNetwork(QObject *parent = nullptr);
 #if defined(ARORA_ADBLOCK_RUST)
     ~AdBlockNetwork();
 #endif
@@ -163,7 +165,7 @@ private:
     mutable QReadWriteLock m_lock;
 
 #if defined(ARORA_ADBLOCK_RUST)
-    AdBlockRustEngine *m_rustEngine; // swapped under m_lock
+    std::unique_ptr<AdBlockRustEngine> m_rustEngine; // swapped under m_lock
 #endif
 };
 

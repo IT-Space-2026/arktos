@@ -42,7 +42,7 @@
 class TestLocationBar : public LocationBar
 {
 public:
-    TestLocationBar(QWidget *parent = 0)
+    TestLocationBar(QWidget *parent = nullptr)
         : LocationBar(parent)
     {
     }

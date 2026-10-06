@@ -64,7 +64,7 @@ public:
         bool granted;
     };
 
-    explicit WebPermissionManager(QObject *parent = 0);
+    explicit WebPermissionManager(QObject *parent = nullptr);
 
     // Lazy qApp-owned singleton (HistoryManager pattern); the class is
     // still directly constructible for autotests.

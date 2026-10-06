@@ -74,7 +74,7 @@ static QWebEngineExtensionManager *managerFor(const QList<QWebEngineProfile *> &
         if (profile && !profile->isOffTheRecord() && profile->extensionManager())
             return profile->extensionManager();
     }
-    return 0;
+    return nullptr;
 }
 
 #endif // QT_CONFIG(webengine_extensions)
@@ -86,7 +86,7 @@ ExtensionManager::ExtensionManager(QObject *parent)
 
 ExtensionManager *ExtensionManager::instance()
 {
-    static ExtensionManager *manager = 0;
+    static ExtensionManager *manager = nullptr;
     if (!manager)
         manager = new ExtensionManager(qApp);
     return manager;

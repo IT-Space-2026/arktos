@@ -52,7 +52,7 @@ class AutoFillBridge : public QObject
     Q_OBJECT
 
 public:
-    AutoFillBridge(QObject *parent = 0);
+    AutoFillBridge(QObject *parent = nullptr);
 
     void setPageInfo(const QUrl &pageUrl, bool captureEnabled,
                      const QString &reportToken);
@@ -93,7 +93,7 @@ public:
     // here; the manager reads the profile-independent store itself.
     static AutoFillManager *instance();
 
-    AutoFillManager(QObject *parent = 0);
+    AutoFillManager(QObject *parent = nullptr);
     ~AutoFillManager();
 
     void loadSettings();

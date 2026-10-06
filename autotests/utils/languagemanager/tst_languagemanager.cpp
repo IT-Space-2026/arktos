@@ -67,7 +67,7 @@ public:
 class TestWidget : public QWidget
 {
 public:
-    void changeEvent(QEvent *event) {
+    void changeEvent(QEvent *event) override {
         if (event->type() == QEvent::LanguageChange)
             retranslate = true;
         QWidget::changeEvent(event);

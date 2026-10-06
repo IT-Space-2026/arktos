@@ -36,10 +36,10 @@ class TreeSortFilterProxyModel : public QSortFilterProxyModel
     Q_OBJECT
 
 public:
-    TreeSortFilterProxyModel(QObject *parent = 0);
+    TreeSortFilterProxyModel(QObject *parent = nullptr);
 
 protected:
-    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const;
+    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override;
 
 };
 

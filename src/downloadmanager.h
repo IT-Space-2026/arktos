@@ -64,6 +64,7 @@
 
 #include <qelapsedtimer.h>
 #include <qpointer.h>
+#include <qscopedpointer.h>
 #include <qwebenginedownloadrequest.h>
 
 class QWebEnginePage;
@@ -79,7 +80,7 @@ signals:
     void downloadFinished();
 
 public:
-    DownloadItem(QWebEngineDownloadRequest *download = 0, bool requestFileName = false, QWidget *parent = 0);
+    DownloadItem(QWebEngineDownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
     bool downloading() const;
     bool downloadedSuccessfully() const;
 
@@ -94,9 +95,9 @@ public:
 
     // SEC01 hardening helpers — static so autotests can drive them
     // without a live download.
-    static QString sanitizeFileName(const QString &suggestedName);
-    static bool isDangerousExtension(const QString &fileName);
-    static bool isExecutableMimeType(const QString &mimeType);
+    [[nodiscard]] static QString sanitizeFileName(const QString &suggestedName);
+    [[nodiscard]] static bool isDangerousExtension(const QString &fileName);
+    [[nodiscard]] static bool isExecutableMimeType(const QString &mimeType);
     static void removeExecutableBit(const QString &path);
 
     QUrl m_url;
@@ -155,7 +156,7 @@ public:
     };
     Q_ENUM(RemovePolicy)
 
-    DownloadManager(QWidget *parent = 0);
+    DownloadManager(QWidget *parent = nullptr);
     ~DownloadManager();
 
     // Lazy app singleton — replaces BrowserApplication::downloadManager()
@@ -171,7 +172,7 @@ public:
     static QString timeString(double timeRemaining);
     static QString dataString(qint64 size);
 
-    void setDownloadDirectory(const QString &directory);
+    void setDownloadDirectory(QString directory);
     QString downloadDirectory();
 
     // Hooks this manager into the profile's downloadRequested signal.
@@ -213,7 +214,7 @@ private:
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;
-    QFileIconProvider *m_iconProvider;
+    QScopedPointer<QFileIconProvider> m_iconProvider;
     QWebEnginePage *m_retryPage;
     QWebEnginePage *m_retryPageOtr;
     QList<DownloadItem*> m_downloads;
@@ -233,12 +234,12 @@ class DownloadModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    DownloadModel(DownloadManager *downloadManager, QObject *parent = 0);
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
-    Qt::ItemFlags flags(const QModelIndex &index) const;
-    QMimeData *mimeData(const QModelIndexList &indexes) const;
+    DownloadModel(DownloadManager *downloadManager, QObject *parent = nullptr);
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+    QMimeData *mimeData(const QModelIndexList &indexes) const override;
 
 private:
     DownloadManager *m_downloadManager;

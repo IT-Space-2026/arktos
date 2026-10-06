@@ -53,7 +53,7 @@ SchemeAccessHandler::SchemeAccessHandler(QObject *parent)
 class CertErrorSchemeHandler : public QWebEngineUrlSchemeHandler
 {
 public:
-    CertErrorSchemeHandler(QObject *parent = 0)
+    CertErrorSchemeHandler(QObject *parent = nullptr)
         : QWebEngineUrlSchemeHandler(parent)
     {
     }

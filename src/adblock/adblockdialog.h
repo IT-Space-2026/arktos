@@ -39,7 +39,7 @@ class AdBlockDialog : public QDialog, public Ui_AdBlockDialog
     Q_OBJECT
 
 public:
-    AdBlockDialog(QWidget *parent = 0);
+    AdBlockDialog(QWidget *parent = nullptr);
 
 public slots:
     void addCustomRule(const QString &rule = QString());

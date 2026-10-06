@@ -205,8 +205,8 @@ void tst_Xbel::xbelwriter_data()
 void tst_Xbel::xbelwriter()
 {
     SubXbelWriter writer;
-    QCOMPARE(writer.write(QString(), 0), false);
-    QCOMPARE(writer.write(QString(), 0), false);
+    QCOMPARE(writer.write(QString(), nullptr), false);
+    QCOMPARE(writer.write(QString(), nullptr), false);
 
 }
 

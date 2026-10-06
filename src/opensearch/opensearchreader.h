@@ -29,10 +29,10 @@ class OpenSearchReader : public QXmlStreamReader
 public:
     OpenSearchReader();
 
-    OpenSearchEngine *read(QIODevice *device);
+    [[nodiscard]] OpenSearchEngine *read(QIODevice *device);
 
 private:
-    OpenSearchEngine *read();
+    [[nodiscard]] OpenSearchEngine *read();
 
 };
 

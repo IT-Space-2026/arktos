@@ -99,5 +99,5 @@ static const char *const twoLevelDomains[] = {
     "za",
     "zm",
     "zw",
-    0
+    nullptr
 };

@@ -75,8 +75,8 @@ class CookieExceptionsDialog : public QDialog, public Ui_CookiesExceptionsDialog
     Q_OBJECT
 
 public:
-    CookieExceptionsDialog(CookieJar *cookieJar, QWidget *parent = 0);
-    void accept();
+    CookieExceptionsDialog(CookieJar *cookieJar, QWidget *parent = nullptr);
+    void accept() override;
     void setDomainName(const QString &domainName);
 
 private slots:

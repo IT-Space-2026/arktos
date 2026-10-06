@@ -69,8 +69,8 @@ void tst_SearchLineEdit::searchlineedit_data()
 void tst_SearchLineEdit::searchlineedit()
 {
     SubSearchLineEdit edit;
-    QVERIFY(edit.clearButton() != 0);
-    QVERIFY(edit.searchButton() != 0);
+    QVERIFY(edit.clearButton() != nullptr);
+    QVERIFY(edit.searchButton() != nullptr);
 }
 
 QTEST_MAIN(tst_SearchLineEdit)

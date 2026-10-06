@@ -36,8 +36,8 @@ signals:
     void activated(const QModelIndex &index);
 
 public:
-    ModelToolBar(QWidget *parent = 0);
-    ModelToolBar(const QString &title, QWidget *parent = 0);
+    ModelToolBar(QWidget *parent = nullptr);
+    ModelToolBar(const QString &title, QWidget *parent = nullptr);
 
     void setModel(QAbstractItemModel *model);
     QAbstractItemModel *model() const;
@@ -50,13 +50,13 @@ public:
 protected:
     virtual ModelMenu *createMenu();
 
-    bool eventFilter(QObject *object, QEvent *event);
+    bool eventFilter(QObject *object, QEvent *event) override;
 
-    void hideEvent(QHideEvent *event);
-    void showEvent(QShowEvent *event);
-    void dragEnterEvent(QDragEnterEvent *event);
-    void dropEvent(QDropEvent *event);
-    void mouseMoveEvent(QMouseEvent *event);
+    void hideEvent(QHideEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
 
 protected slots:
     void build();

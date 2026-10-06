@@ -86,7 +86,7 @@ Qt::ItemFlags OpenSearchEngineModel::flags(const QModelIndex &index) const
         Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
         OpenSearchEngine *engine = index.row() < m_manager->enginesCount()
             ? m_manager->engine(m_manager->allEnginesNames().at(index.row()))
-            : 0;
+            : nullptr;
         if (engine && engine->providesSuggestions())
             flags |= Qt::ItemIsUserCheckable;
         return flags;

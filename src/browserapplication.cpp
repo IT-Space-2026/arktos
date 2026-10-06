@@ -513,7 +513,7 @@ bool BrowserApplication::restoreLastSession()
         QSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         if (settings.value(QLatin1String("restoring"), false).toBool()) {
-            QMessageBox::StandardButton result = QMessageBox::question(0, tr("Restore failed"),
+            QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
                 tr("Arora crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
             if (result == QMessageBox::No)
                 return false;
@@ -553,7 +553,7 @@ bool BrowserApplication::restoreLastSession()
         windows.append(windowState);
     }
     for (int i = 0; i < windows.count(); ++i) {
-        BrowserMainWindow *newWindow = 0;
+        BrowserMainWindow *newWindow = nullptr;
         if (i == 0 && m_mainWindows.count() >= 1) {
             newWindow = mainWindow();
         } else {
@@ -621,7 +621,7 @@ BrowserMainWindow *BrowserApplication::mainWindow()
 {
     clean();
 
-    BrowserMainWindow *activeWindow = 0;
+    BrowserMainWindow *activeWindow = nullptr;
 
     if (m_mainWindows.isEmpty()) {
         activeWindow = newMainWindow();

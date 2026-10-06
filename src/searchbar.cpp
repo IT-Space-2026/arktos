@@ -27,8 +27,8 @@
 
 SearchBar::SearchBar(QWidget *parent)
     : QWidget(parent)
-    , m_object(0)
-    , m_widget(0)
+    , m_object(nullptr)
+    , m_widget(nullptr)
     , m_timeLine(new QTimeLine(150, this))
 {
     initializeSearchWidget();

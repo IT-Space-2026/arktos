@@ -77,7 +77,7 @@ BookmarkNode::~BookmarkNode()
         m_parent->remove(this);
     for (int i = m_children.count() -1; i >= 0; --i)
         delete m_children[i];
-    m_parent = 0;
+    m_parent = nullptr;
     m_type = BookmarkNode::Root;
 }
 
@@ -139,7 +139,7 @@ void BookmarkNode::remove(BookmarkNode *child)
 {
     if (!child)
         return;
-    child->m_parent = 0;
+    child->m_parent = nullptr;
     m_children.removeAll(child);
 }
 

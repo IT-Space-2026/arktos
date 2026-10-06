@@ -115,7 +115,7 @@ public:
         NewTab = NewNotSelectedTab
     };
 
-    TabWidget(QWidget *parent = 0);
+    TabWidget(QWidget *parent = nullptr);
 
     void loadSettings();
     TabBar *tabBar() { return m_tabBar; }
@@ -145,7 +145,7 @@ public:
     WebView *getView(OpenUrlIn tab, WebView *currentView);
 
 protected:
-    void changeEvent(QEvent *event);
+    void changeEvent(QEvent *event) override;
 
 public slots:
     void loadString(const QString &string, OpenUrlIn tab = CurrentTab);

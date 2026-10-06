@@ -46,7 +46,7 @@ SourceViewer::SourceViewer(const QString &source, const QString &title,
     , m_menuBar(new QMenuBar(this))
     , m_editMenu(new QMenu(tr("&Edit"), m_menuBar))
     , m_findAction(new QAction(tr("&Find"), m_editMenu))
-    , m_reply(0)
+    , m_reply(nullptr)
     , m_source(source)
 {
     setWindowTitle(tr("Source of Page %1").arg(title));
@@ -108,7 +108,7 @@ void SourceViewer::loadingFinished()
         mimeType = QLatin1String("text/html");
     m_reply->close();
     m_reply->deleteLater();
-    m_reply = 0;
+    m_reply = nullptr;
 
     if (failed) {
         m_edit->setPlainText(m_source);

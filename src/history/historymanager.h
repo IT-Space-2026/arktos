@@ -72,7 +72,7 @@
 class HistoryEntry
 {
 public:
-    HistoryEntry() {}
+    HistoryEntry() = default;
     HistoryEntry(const QString &u,
                 const QDateTime &d = QDateTime(), const QString &t = QString())
             : url(u), title(t), dateTime(d) {}
@@ -115,7 +115,7 @@ signals:
     void entryUpdated(int offset);
 
 public:
-    HistoryManager(QObject *parent = 0);
+    HistoryManager(QObject *parent = nullptr);
     ~HistoryManager();
 
     // The application-wide history store (was

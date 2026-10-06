@@ -179,7 +179,7 @@ void NetworkAccessManager::loadSettings()
         setCache(diskCache);
         diskCache->loadSettings();
     } else {
-        setCache(0);
+        setCache(nullptr);
     }
     settings.endGroup();
 }
@@ -204,7 +204,7 @@ void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthent
     passwordDialog.setupUi(&dialog);
 
     passwordDialog.iconLabel->setText(QString());
-    passwordDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
+    passwordDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, nullptr, mainWindow).pixmap(32, 32));
 
     QString introMessage = tr("<qt>Enter username and password for \"%1\" at %2</qt>");
     introMessage = introMessage.arg(auth->realm().toHtmlEscaped()).arg(reply->url().toString().toHtmlEscaped());
@@ -234,7 +234,7 @@ void NetworkAccessManager::proxyAuthenticationRequired(const QNetworkProxy &prox
     proxyDialog.setupUi(&dialog);
 
     proxyDialog.iconLabel->setText(QString());
-    proxyDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, 0, mainWindow).pixmap(32, 32));
+    proxyDialog.iconLabel->setPixmap(dialog.style()->standardIcon(QStyle::SP_MessageBoxQuestion, nullptr, mainWindow).pixmap(32, 32));
 
     QString introMessage = tr("<qt>Connect to proxy \"%1\" using:</qt>");
     introMessage = introMessage.arg(proxy.hostName().toHtmlEscaped());

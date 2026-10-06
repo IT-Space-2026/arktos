@@ -30,7 +30,7 @@ public:
     void setHttpProxy(const QNetworkProxy &proxy);
     void setGlobalProxy(const QNetworkProxy &proxy);
 
-    virtual QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery &query = QNetworkProxyQuery());
+    virtual QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery &query = QNetworkProxyQuery()) override;
 
 private:
     QNetworkProxy m_httpProxy;

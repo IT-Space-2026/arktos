@@ -92,12 +92,12 @@ public:
         MaxRole = TitleRole
     };
 
-    HistoryModel(HistoryManager *history, QObject *parent = 0);
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
+    HistoryModel(HistoryManager *history, QObject *parent = nullptr);
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
 
 private:
     HistoryManager *m_history;
@@ -113,7 +113,7 @@ class HistoryFilterModel : public QAbstractProxyModel
     Q_OBJECT
 
 public:
-    HistoryFilterModel(QAbstractItemModel *sourceModel, QObject *parent = 0);
+    HistoryFilterModel(QAbstractItemModel *sourceModel, QObject *parent = nullptr);
 
     inline bool historyContains(const QString &url) const
         { load(); return m_historyHash.contains(url); }
@@ -124,16 +124,16 @@ public:
         MaxRole = FrecencyRole
     };
 
-    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const;
-    QModelIndex mapToSource(const QModelIndex &proxyIndex) const;
-    void setSourceModel(QAbstractItemModel *sourceModel);
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex parent(const QModelIndex &index = QModelIndex()) const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
+    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const override;
+    QModelIndex mapToSource(const QModelIndex &proxyIndex) const override;
+    void setSourceModel(QAbstractItemModel *sourceModel) override;
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index = QModelIndex()) const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
 
     void recalculateFrecencies();
 
@@ -191,15 +191,15 @@ class HistoryMenuModel : public QAbstractProxyModel
     Q_OBJECT
 
 public:
-    HistoryMenuModel(HistoryTreeModel *sourceModel, QObject *parent = 0);
-    int columnCount(const QModelIndex &parent) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex mapFromSource(const QModelIndex & sourceIndex) const;
-    QModelIndex mapToSource(const QModelIndex & proxyIndex) const;
-    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex parent(const QModelIndex &index = QModelIndex()) const;
-    QMimeData *mimeData(const QModelIndexList &indexes) const;
-    QModelIndex buddy(const QModelIndex &index) const;
+    HistoryMenuModel(HistoryTreeModel *sourceModel, QObject *parent = nullptr);
+    int columnCount(const QModelIndex &parent) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex mapFromSource(const QModelIndex & sourceIndex) const override;
+    QModelIndex mapToSource(const QModelIndex & proxyIndex) const override;
+    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index = QModelIndex()) const override;
+    QMimeData *mimeData(const QModelIndexList &indexes) const override;
+    QModelIndex buddy(const QModelIndex &index) const override;
 
     int bumpedRows() const;
 
@@ -216,12 +216,12 @@ signals:
     void openUrl(const QUrl &url, const QString &title);
 
 public:
-    HistoryMenu(QWidget *parent = 0);
+    HistoryMenu(QWidget *parent = nullptr);
     void setInitialActions(QList<QAction*> actions);
 
 protected:
-    bool prePopulated();
-    void postPopulated();
+    bool prePopulated() override;
+    void postPopulated() override;
 
 private slots:
     void activated(const QModelIndex &index);
@@ -242,20 +242,20 @@ class HistoryTreeModel : public QAbstractProxyModel
     Q_OBJECT
 
 public:
-    HistoryTreeModel(QAbstractItemModel *sourceModel, QObject *parent = 0);
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-    int columnCount(const QModelIndex &parent) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const;
-    QModelIndex mapToSource(const QModelIndex &proxyIndex) const;
-    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex parent(const QModelIndex &index = QModelIndex()) const;
-    bool hasChildren(const QModelIndex &parent = QModelIndex()) const;
-    Qt::ItemFlags flags(const QModelIndex &index) const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
+    HistoryTreeModel(QAbstractItemModel *sourceModel, QObject *parent = nullptr);
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int columnCount(const QModelIndex &parent) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const override;
+    QModelIndex mapToSource(const QModelIndex &proxyIndex) const override;
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index = QModelIndex()) const override;
+    bool hasChildren(const QModelIndex &parent = QModelIndex()) const override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
 
-    void setSourceModel(QAbstractItemModel *sourceModel);
+    void setSourceModel(QAbstractItemModel *sourceModel) override;
 
 private slots:
     void sourceReset();
@@ -279,11 +279,11 @@ signals:
     void openUrl(const QUrl &url, const QString &title);
 
 public:
-    HistoryDialog(QWidget *parent = 0, HistoryManager *history = 0);
+    HistoryDialog(QWidget *parent = nullptr, HistoryManager *history = nullptr);
 
 private slots:
     void customContextMenuRequested(const QPoint &pos);
-    void open();
+    void open() override;
     void copy();
 
 };

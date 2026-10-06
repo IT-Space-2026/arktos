@@ -44,11 +44,11 @@ class NetworkCookieJarPrivate;
 class NetworkCookieJar : public QNetworkCookieJar {
     Q_OBJECT
 public:
-    NetworkCookieJar(QObject *parent = 0);
+    NetworkCookieJar(QObject *parent = nullptr);
     ~NetworkCookieJar();
 
-    virtual QList<QNetworkCookie> cookiesForUrl(const QUrl & url) const;
-    virtual bool setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const QUrl &url);
+    virtual QList<QNetworkCookie> cookiesForUrl(const QUrl & url) const override;
+    virtual bool setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const QUrl &url) override;
 
 protected:
     QByteArray saveState() const;
@@ -57,7 +57,7 @@ protected:
 
     QList<QNetworkCookie> allCookies() const;
     void setAllCookies(const QList<QNetworkCookie> &cookieList);
-    void setSecondLevelDomains(const QStringList &secondLevelDomains);
+    void setSecondLevelDomains(QStringList secondLevelDomains);
 
 private:
     NetworkCookieJarPrivate *d;

@@ -39,16 +39,16 @@ class AdBlockSchemeAccessHandler : public SchemeAccessHandler
     Q_OBJECT
 
 public:
-    AdBlockSchemeAccessHandler(QObject *parent = 0);
+    AdBlockSchemeAccessHandler(QObject *parent = nullptr);
 
-    QByteArray scheme() const;
+    QByteArray scheme() const override;
     static QByteArray schemeName();
     // Declares the "abp" scheme with QWebEngineUrlScheme.  Must run
     // before the QApplication constructor, like
     // SchemeAccessHandler::registerUrlSchemes().
     static void registerUrlScheme();
 
-    virtual void requestStarted(QWebEngineUrlRequestJob *job);
+    virtual void requestStarted(QWebEngineUrlRequestJob *job) override;
 
 private:
     void handleSubscribe(QPointer<QWebEngineUrlRequestJob> job);

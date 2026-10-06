@@ -118,7 +118,7 @@ void tst_AddBookmarkDialog::addbookmarkdialog()
     QCOMPARE(menu->children().count(), 0);
     QCOMPARE(toolbar->children().count(), 0);
 
-    SubAddBookmarkDialog dialog(0, manager);
+    SubAddBookmarkDialog dialog(nullptr, manager);
     dialog.setUrl(url);
     dialog.setTitle(title);
     QComboBox *combobox = dialog.findChild<QComboBox*>();
@@ -136,7 +136,7 @@ void tst_AddBookmarkDialog::addbookmarkdialog()
 
     QCOMPARE(menu->children().count(), menuCount);
     QCOMPARE(toolbar->children().count(), toolbarCount);
-    BookmarkNode *node = 0;
+    BookmarkNode *node = nullptr;
     if (menuCount == 1) node = menu->children()[0];
     if (toolbarCount == 1) node = toolbar->children()[0];
     if (node) {

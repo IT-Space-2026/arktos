@@ -98,9 +98,9 @@ HistoryManager::HistoryManager(QObject *parent)
     : QObject(parent)
     , m_saveTimer(new AutoSaver(this))
     , m_daysToExpire(30)
-    , m_historyModel(0)
-    , m_historyFilterModel(0)
-    , m_historyTreeModel(0)
+    , m_historyModel(nullptr)
+    , m_historyFilterModel(nullptr)
+    , m_historyTreeModel(nullptr)
 {
     m_expiredTimer.setSingleShot(true);
     connect(&m_expiredTimer, &QTimer::timeout,

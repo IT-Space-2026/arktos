@@ -36,16 +36,12 @@
 /*!
     Constructs the delegate.
 */
-OpenSearchEngineDelegate::OpenSearchEngineDelegate()
-{
-}
+OpenSearchEngineDelegate::OpenSearchEngineDelegate() = default;
 
 /*!
     Destructs the delegate.
 */
-OpenSearchEngineDelegate::~OpenSearchEngineDelegate()
-{
-}
+OpenSearchEngineDelegate::~OpenSearchEngineDelegate() = default;
 
 /*!
     \fn void performSearchRequest(const QNetworkRequest &request,

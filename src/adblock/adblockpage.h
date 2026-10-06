@@ -38,7 +38,7 @@ class AdBlockPage : public QObject
     Q_OBJECT
 
 public:
-    AdBlockPage(QObject *parent = 0);
+    AdBlockPage(QObject *parent = nullptr);
 
     void applyRulesToPage(QWebEnginePage *page);
 };

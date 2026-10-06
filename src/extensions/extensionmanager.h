@@ -135,7 +135,7 @@ signals:
     void userScriptsChanged();
 
 private:
-    explicit ExtensionManager(QObject *parent = 0);
+    explicit ExtensionManager(QObject *parent = nullptr);
 
     void reloadUserScripts(QWebEngineProfile *profile);
 

@@ -333,8 +333,8 @@ QMimeData *HistoryMenuModel::mimeData(const QModelIndexList &indexes) const
 
 HistoryMenu::HistoryMenu(QWidget *parent)
     : ModelMenu(parent)
-    , m_history(0)
-    , m_historyMenuModel(0)
+    , m_history(nullptr)
+    , m_historyMenuModel(nullptr)
 {
     setMaxRows(7);
     connect(this, &ModelMenu::activated,

@@ -86,7 +86,7 @@ public slots:
     void changeOccurred();
 
 protected:
-    void timerEvent(QTimerEvent *event);
+    void timerEvent(QTimerEvent *event) override;
 
 private:
     QBasicTimer m_timer;

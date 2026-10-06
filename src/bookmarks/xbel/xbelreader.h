@@ -72,8 +72,8 @@ class XbelReader : public QXmlStreamReader
 public:
     XbelReader();
 
-    BookmarkNode *read(const QString &fileName);
-    BookmarkNode *read(QIODevice *device);
+    [[nodiscard]] BookmarkNode *read(const QString &fileName);
+    [[nodiscard]] BookmarkNode *read(QIODevice *device);
 
 private:
     void skipUnknownElement();

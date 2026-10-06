@@ -68,33 +68,33 @@ public:
 class ColorModel : public QAbstractItemModel
 {
 public:
-    ColorModel(QObject *parent = 0)
+    ColorModel(QObject *parent = nullptr)
         : QAbstractItemModel(parent)
     {
         m_colours = QColor::colorNames();
     }
 
-    bool hasChildren(const QModelIndex &parent = QModelIndex()) const
+    bool hasChildren(const QModelIndex &parent = QModelIndex()) const override
     {
         Q_UNUSED(parent)
         return false;
     }
 
-    int rowCount(const QModelIndex &parent = QModelIndex()) const
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override
     {
         if (parent.isValid())
             return 0;
         return m_colours.count();
     }
 
-    int columnCount(const QModelIndex &parent = QModelIndex()) const
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override
     {
         if (parent.isValid())
             return 0;
         return 1;
     }
 
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override
     {
         if (index.parent().isValid() || index.column() > 0)
             return QVariant();
@@ -109,13 +109,13 @@ public:
         }
     }
 
-    QModelIndex parent(const QModelIndex &index) const
+    QModelIndex parent(const QModelIndex &index) const override
     {
         Q_UNUSED(index);
         return QModelIndex();
     }
 
-    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override
     {
         if (parent.isValid())
             return QModelIndex();
@@ -152,7 +152,7 @@ void tst_ModelToolBar::modeltoolbar()
 {
     SubModelToolBar bar;
     QCOMPARE(bar.model(), (QAbstractItemModel*)0);
-    QCOMPARE(bar.index(0), QModelIndex());
+    QCOMPARE(bar.index(nullptr), QModelIndex());
     QCOMPARE(bar.rootIndex(), QModelIndex());
     bar.setModel(new QStandardItemModel(&bar));
     QVERIFY(bar.model());
@@ -199,7 +199,7 @@ void tst_ModelToolBar::model()
 {
     SubModelToolBar bar;
     QCOMPARE(bar.model(), (QAbstractItemModel*)0);
-    bar.setModel(0);
+    bar.setModel(nullptr);
     QCOMPARE(bar.model(), (QAbstractItemModel*)0);
 
     ColorModel model;

@@ -123,7 +123,7 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
 }
 
 CookieJar::CookieJar(QObject *parent)
-    : CookieJar(0, parent)
+    : CookieJar(nullptr, parent)
 {
 }
 
@@ -465,27 +465,27 @@ QStringList CookieJar::allowForSessionCookies() const
     return m_exceptions_allowForSession;
 }
 
-void CookieJar::setBlockedCookies(const QStringList &list)
+void CookieJar::setBlockedCookies(QStringList list)
 {
-    m_exceptions_block = list;
+    m_exceptions_block = std::move(list);
     std::sort(m_exceptions_block.begin(), m_exceptions_block.end());
     updatePolicySnapshot();
     applyRules();
     m_saveTimer->changeOccurred();
 }
 
-void CookieJar::setAllowedCookies(const QStringList &list)
+void CookieJar::setAllowedCookies(QStringList list)
 {
-    m_exceptions_allow = list;
+    m_exceptions_allow = std::move(list);
     std::sort(m_exceptions_allow.begin(), m_exceptions_allow.end());
     updatePolicySnapshot();
     applyRules();
     m_saveTimer->changeOccurred();
 }
 
-void CookieJar::setAllowForSessionCookies(const QStringList &list)
+void CookieJar::setAllowForSessionCookies(QStringList list)
 {
-    m_exceptions_allowForSession = list;
+    m_exceptions_allowForSession = std::move(list);
     std::sort(m_exceptions_allowForSession.begin(), m_exceptions_allowForSession.end());
     updatePolicySnapshot();
     applyRules();

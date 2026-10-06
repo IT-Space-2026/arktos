@@ -28,12 +28,12 @@ class LocationBarSiteIcon : public QLabel
     Q_OBJECT
 
 public:
-    LocationBarSiteIcon(QWidget *parent = 0);
+    LocationBarSiteIcon(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
 
 protected:
-    void mousePressEvent(QMouseEvent *event);
-    void mouseMoveEvent(QMouseEvent *event);
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
 
 private slots:
     void webViewSiteIconChanged();

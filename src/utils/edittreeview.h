@@ -37,8 +37,8 @@ class EditTreeView : public QTreeView
     Q_OBJECT
 
 public:
-    EditTreeView(QWidget *parent = 0);
-    void keyPressEvent(QKeyEvent *event);
+    EditTreeView(QWidget *parent = nullptr);
+    void keyPressEvent(QKeyEvent *event) override;
 
 public slots:
     void removeSelected();

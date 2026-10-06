@@ -452,7 +452,7 @@ void tst_Dialogs::userAgentMenu()
     const QString defaultAgent = WebPage::userAgent();
 
     // Triggering a parsed entry sets the profile user agent.
-    QAction *custom = 0;
+    QAction *custom = nullptr;
     const QList<QAction *> menuActions = menu.actions();
     for (QAction *action : menuActions) {
         if (!action->data().toString().isEmpty()) {

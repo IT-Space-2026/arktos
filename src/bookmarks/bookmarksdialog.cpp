@@ -75,9 +75,9 @@
 
 BookmarksDialog::BookmarksDialog(QWidget *parent, BookmarksManager *manager)
     : QDialog(parent)
-    , m_bookmarksManager(0)
-    , m_bookmarksModel(0)
-    , m_proxyModel(0)
+    , m_bookmarksManager(nullptr)
+    , m_bookmarksModel(nullptr)
+    , m_proxyModel(nullptr)
 {
     m_bookmarksManager = manager;
     if (!m_bookmarksManager)

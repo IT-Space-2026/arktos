@@ -84,7 +84,7 @@ signals:
     void loadUrl(const QUrl &url, TabWidget::OpenUrlIn tab);
 
 public:
-    TabBar(QWidget *parent = 0);
+    TabBar(QWidget *parent = nullptr);
 
     bool showTabBarWhenOneTab() const;
     void setShowTabBarWhenOneTab(bool enabled);
@@ -92,15 +92,15 @@ public:
     QTabBar::ButtonPosition freeSide();
 
 protected:
-    void mouseDoubleClickEvent(QMouseEvent *event);
-    void mouseReleaseEvent(QMouseEvent *event);
-    void mousePressEvent(QMouseEvent *event);
-    void mouseMoveEvent(QMouseEvent *event);
-    void dragEnterEvent(QDragEnterEvent *event);
-    void dropEvent(QDropEvent *event);
-    QSize tabSizeHint(int index) const;
-    void tabInserted(int position);
-    void tabRemoved(int position);
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+    QSize tabSizeHint(int index) const override;
+    void tabInserted(int position) override;
+    void tabRemoved(int position) override;
 
 private slots:
     void selectTabAction();

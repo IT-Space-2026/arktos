@@ -93,7 +93,7 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
     QWebEnginePage *page = qobject_cast<QWebEnginePage*>(parent());
     const QString source = page
             ? QString::fromUtf8(page->url().toEncoded()) : QString();
-    QPointer<QWidget> view = page ? QWebEngineView::forPage(page) : 0;
+    QPointer<QWidget> view = page ? QWebEngineView::forPage(page) : nullptr;
 
     // Queued: a modal exec() inside the channel dispatch stack is
     // asking for re-entrancy trouble — same pattern as the
@@ -550,7 +550,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString)
     QString title = tr("Error loading page: %1").arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(notFoundErrorFile.readAll());
     QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, 0, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -655,7 +655,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
             .arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(certErrorFile.readAll());
     QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, 0, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {

@@ -72,8 +72,8 @@ class SettingsDialog : public QDialog, public Ui_Settings
     Q_OBJECT
 
 public:
-    SettingsDialog(QWidget *parent = 0);
-    void accept();
+    SettingsDialog(QWidget *parent = nullptr);
+    void accept() override;
 
 private slots:
     void loadDefaults();

@@ -33,11 +33,11 @@ class QResizeEvent;
 class HistoryCompletionView : public QTableView
 {
 public:
-    HistoryCompletionView(QWidget *parent = 0);
-    int sizeHintForRow(int row) const;
+    HistoryCompletionView(QWidget *parent = nullptr);
+    int sizeHintForRow(int row) const override;
 
 protected:
-    void resizeEvent(QResizeEvent *event);
+    void resizeEvent(QResizeEvent *event) override;
 };
 
 // These two classes constitute a dirty hack around QCompleter's inflexibility:
@@ -58,21 +58,21 @@ class HistoryCompletionModel : public QSortFilterProxyModel
     Q_PROPERTY(QString searchString READ searchString WRITE setSearchString)
 
 public:
-    HistoryCompletionModel(QObject *parent = 0);
+    HistoryCompletionModel(QObject *parent = nullptr);
 
     enum Roles { HistoryCompletionRole = HistoryFilterModel::MaxRole + 1 };
 
     QString searchString() const;
-    void setSearchString(const QString &str);
+    void setSearchString(QString str);
 
     bool isValid() const;
     void setValid(bool b);
 
-    virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
+    virtual QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
 
 protected:
-    virtual bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const;
-    virtual bool lessThan(const QModelIndex &left, const QModelIndex &right) const;
+    virtual bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) const override;
+    virtual bool lessThan(const QModelIndex &left, const QModelIndex &right) const override;
 
 private:
     QString m_searchString;
@@ -85,14 +85,14 @@ class HistoryCompleter : public QCompleter
     Q_OBJECT
 
 public:
-    HistoryCompleter(QObject *parent = 0);
-    HistoryCompleter(QAbstractItemModel *model, QObject *parent = 0);
+    HistoryCompleter(QObject *parent = nullptr);
+    HistoryCompleter(QAbstractItemModel *model, QObject *parent = nullptr);
 
-    virtual QString pathFromIndex(const QModelIndex &index) const;
-    virtual QStringList splitPath(const QString &path) const;
+    virtual QString pathFromIndex(const QModelIndex &index) const override;
+    virtual QStringList splitPath(const QString &path) const override;
 
 protected:
-    bool eventFilter(QObject *obj, QEvent *event);
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private slots:
     void updateFilter();

@@ -56,7 +56,7 @@
 class ModalAnswer : public QObject
 {
 public:
-    ModalAnswer(QMessageBox::StandardButton button, QObject *parent = 0)
+    ModalAnswer(QMessageBox::StandardButton button, QObject *parent = nullptr)
         : QObject(parent)
         , m_button(button)
     {

@@ -36,9 +36,9 @@
 
 LocationBar::LocationBar(QWidget *parent)
     : LineEdit(parent)
-    , m_webView(0)
-    , m_siteIcon(0)
-    , m_privacyIndicator(0)
+    , m_webView(nullptr)
+    , m_siteIcon(nullptr)
+    , m_privacyIndicator(nullptr)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);

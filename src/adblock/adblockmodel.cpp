@@ -56,10 +56,10 @@ AdBlockSubscription *AdBlockModel::subscription(const QModelIndex &index) const
 {
     const AdBlockSubscription *parent = static_cast<AdBlockSubscription*>(index.internalPointer());
     if (parent)
-        return 0;
+        return nullptr;
     int row = index.row();
     if (row < 0 || row >= m_manager->subscriptions().count())
-        return 0;
+        return nullptr;
     return m_manager->subscriptions().at(row);
 }
 
@@ -130,7 +130,7 @@ int AdBlockModel::rowCount(const QModelIndex &parent) const
     if (!parent.isValid())
         return m_manager->subscriptions().count();
 
-    if (parent.internalPointer() != 0)
+    if (parent.internalPointer() != nullptr)
         return 0;
 
     const AdBlockSubscription *parentNode = subscription(parent);
@@ -275,7 +275,7 @@ bool AdBlockModel::hasChildren(const QModelIndex &parent) const
 {
     if (!parent.isValid())
         return true;
-    if (parent.internalPointer() == 0)
+    if (parent.internalPointer() == nullptr)
         return true;
     return false;
 }

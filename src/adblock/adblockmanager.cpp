@@ -49,16 +49,16 @@
 
 // #define ADBLOCKMANAGER_DEBUG
 
-AdBlockManager *AdBlockManager::s_adBlockManager = 0;
+AdBlockManager *AdBlockManager::s_adBlockManager = nullptr;
 
 AdBlockManager::AdBlockManager(QObject *parent)
     : QObject(parent)
     , m_loaded(false)
     , m_enabled(true)
     , m_saveTimer(new AutoSaver(this))
-    , m_adBlockDialog(0)
-    , m_adBlockNetwork(0)
-    , m_adBlockPage(0)
+    , m_adBlockDialog(nullptr)
+    , m_adBlockNetwork(nullptr)
+    , m_adBlockPage(nullptr)
 {
     connect(this, &AdBlockManager::rulesChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
@@ -288,7 +288,7 @@ void AdBlockManager::load()
         for (const AdBlockSubscription *existing : m_subscriptions) {
             if (existing->location() == adBlockSubscription->location()) {
                 delete adBlockSubscription;
-                adBlockSubscription = 0;
+                adBlockSubscription = nullptr;
                 break;
             }
         }
@@ -303,7 +303,7 @@ void AdBlockManager::load()
 AdBlockDialog *AdBlockManager::showDialog()
 {
     if (!m_adBlockDialog) {
-        m_adBlockDialog = new AdBlockDialog(0);
+        m_adBlockDialog = new AdBlockDialog(nullptr);
         m_adBlockDialog->setAttribute(Qt::WA_DeleteOnClose, true);
     }
     m_adBlockDialog->show();

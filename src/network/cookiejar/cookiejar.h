@@ -120,8 +120,8 @@ public:
 
 
     // A null profile binds to QWebEngineProfile::defaultProfile().
-    explicit CookieJar(QWebEngineProfile *profile, QObject *parent = 0);
-    explicit CookieJar(QObject *parent = 0);
+    explicit CookieJar(QWebEngineProfile *profile, QObject *parent = nullptr);
+    explicit CookieJar(QObject *parent = nullptr);
     ~CookieJar();
 
     // One application-wide jar per profile (normal and off-the-record),
@@ -129,7 +129,7 @@ public:
     // BrowserApplication::cookieJar() while browserapplication.cpp is
     // uncompiled (MIG15 delegates to this).  A null profile argument
     // resolves to BrowserProfile::normalProfile().
-    static CookieJar *instance(QWebEngineProfile *profile = 0);
+    static CookieJar *instance(QWebEngineProfile *profile = nullptr);
 
     QWebEngineProfile *profile() const;
     bool isPrivate() const;
@@ -150,9 +150,9 @@ public:
     QStringList allowedCookies() const;
     QStringList allowForSessionCookies() const;
 
-    void setBlockedCookies(const QStringList &list);
-    void setAllowedCookies(const QStringList &list);
-    void setAllowForSessionCookies(const QStringList &list);
+    void setBlockedCookies(QStringList list);
+    void setAllowedCookies(QStringList list);
+    void setAllowForSessionCookies(QStringList list);
 
     bool filterTrackingCookies() const;
     void setFilterTrackingCookies(bool filterTrackingCookies);

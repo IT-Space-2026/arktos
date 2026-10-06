@@ -35,7 +35,7 @@ WebPermissionManager::WebPermissionManager(QObject *parent)
 
 WebPermissionManager *WebPermissionManager::instance()
 {
-    static WebPermissionManager *manager = 0;
+    static WebPermissionManager *manager = nullptr;
     if (!manager)
         manager = new WebPermissionManager(qApp);
     return manager;

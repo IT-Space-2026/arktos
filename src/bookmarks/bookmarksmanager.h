@@ -20,6 +20,8 @@
 #ifndef BOOKMARKSMANAGER_H
 #define BOOKMARKSMANAGER_H
 
+#include <memory>
+
 #include <qobject.h>
 
 #include <qundostack.h>
@@ -37,7 +39,7 @@ signals:
     void entryChanged(BookmarkNode *item);
 
 public:
-    BookmarksManager(QObject *parent = 0);
+    BookmarksManager(QObject *parent = nullptr);
     ~BookmarksManager();
 
     // The application-wide bookmarks store (was
@@ -73,7 +75,7 @@ private:
 
     bool m_loaded;
     AutoSaver *m_saveTimer;
-    BookmarkNode *m_bookmarkRootNode;
+    std::unique_ptr<BookmarkNode> m_bookmarkRootNode;
     BookmarkNode *m_toolbar;
     BookmarkNode *m_menu;
     BookmarksModel *m_bookmarkModel;
@@ -89,8 +91,8 @@ class RemoveBookmarksCommand : public QUndoCommand
 public:
     RemoveBookmarksCommand(BookmarksManager *m_bookmarkManagaer, BookmarkNode *parent, int row);
     ~RemoveBookmarksCommand();
-    void undo();
-    void redo();
+    void undo() override;
+    void redo() override;
 
 protected:
     int m_row;
@@ -106,10 +108,10 @@ class InsertBookmarksCommand : public RemoveBookmarksCommand
 public:
     InsertBookmarksCommand(BookmarksManager *m_bookmarkManagaer,
                            BookmarkNode *parent, BookmarkNode *node, int row);
-    void undo() {
+    void undo() override {
         RemoveBookmarksCommand::redo();
     }
-    void redo() {
+    void redo() override {
         RemoveBookmarksCommand::undo();
     }
 
@@ -121,8 +123,8 @@ class ChangeBookmarkCommand : public QUndoCommand
 public:
     ChangeBookmarkCommand(BookmarksManager *m_bookmarkManagaer,
                           BookmarkNode *node, const QString &newValue, bool title);
-    void undo();
-    void redo();
+    void undo() override;
+    void redo() override;
 
 private:
     BookmarksManager *m_bookmarkManagaer;

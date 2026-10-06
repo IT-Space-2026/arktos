@@ -696,7 +696,7 @@ void SettingsDialog::removeExtension()
 void SettingsDialog::extensionSelectionChanged()
 {
     QTreeWidgetItem *item = extensionsTree->currentItem();
-    extensionRemoveButton->setEnabled(item != 0);
+    extensionRemoveButton->setEnabled(item != nullptr);
     if (!item) {
         extensionDetailsLabel->clear();
         return;
@@ -850,7 +850,7 @@ void SettingsDialog::refreshPermissions()
 
 void SettingsDialog::permissionSelectionChanged()
 {
-    permissionRemoveButton->setEnabled(permissionsTree->currentItem() != 0);
+    permissionRemoveButton->setEnabled(permissionsTree->currentItem() != nullptr);
 }
 
 void SettingsDialog::removePermission()

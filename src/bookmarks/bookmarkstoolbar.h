@@ -39,10 +39,10 @@ signals:
     void openUrl(const QUrl &url, TabWidget::OpenUrlIn tab, const QString &title);
 
 public:
-    BookmarksToolBar(BookmarksModel *model, QWidget *parent = 0);
+    BookmarksToolBar(BookmarksModel *model, QWidget *parent = nullptr);
 
 protected:
-    virtual ModelMenu *createMenu();
+    virtual ModelMenu *createMenu() override;
 
 private slots:
     void contextMenuRequested(const QPoint &position);

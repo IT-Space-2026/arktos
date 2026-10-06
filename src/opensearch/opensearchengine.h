@@ -55,22 +55,22 @@ public:
     Q_PROPERTY(bool valid READ isValid)
     Q_PROPERTY(QNetworkAccessManager *networkAccessManager READ networkAccessManager WRITE setNetworkAccessManager)
 
-    OpenSearchEngine(QObject *parent = 0);
+    OpenSearchEngine(QObject *parent = nullptr);
 
     QString name() const;
-    void setName(const QString &name);
+    void setName(QString name);
 
     QString description() const;
-    void setDescription(const QString &description);
+    void setDescription(QString description);
 
     QString searchUrlTemplate() const;
-    void setSearchUrlTemplate(const QString &searchUrl);
+    void setSearchUrlTemplate(QString searchUrl);
     QUrl searchUrl(const QString &searchTerm) const;
 
     bool providesSuggestions() const;
 
     QString suggestionsUrlTemplate() const;
-    void setSuggestionsUrlTemplate(const QString &suggestionsUrl);
+    void setSuggestionsUrlTemplate(QString suggestionsUrl);
     QUrl suggestionsUrl(const QString &searchTerm) const;
 
     Parameters searchParameters() const;
@@ -86,7 +86,7 @@ public:
     void setSuggestionsMethod(const QString &method);
 
     QString imageUrl() const;
-    void setImageUrl(const QString &url);
+    void setImageUrl(QString url);
 
     QImage image() const;
     void setImage(const QImage &image);

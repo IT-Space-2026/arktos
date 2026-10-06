@@ -85,7 +85,7 @@
 #include <qurl.h>
 #include <qwebengineprofile.h>
 
-OpenSearchManager *ToolbarSearch::s_openSearchManager = 0;
+OpenSearchManager *ToolbarSearch::s_openSearchManager = nullptr;
 
 /*
     ToolbarSearch is a search widget that also contains a small history
@@ -96,10 +96,10 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
     , m_autosaver(new AutoSaver(this))
     , m_maxSavedSearches(10)
     , m_model(new QStandardItemModel(this))
-    , m_suggestionsItem(0)
-    , m_recentSearchesItem(0)
-    , m_suggestTimer(0)
-    , m_completer(0)
+    , m_suggestionsItem(nullptr)
+    , m_recentSearchesItem(nullptr)
+    , m_suggestTimer(nullptr)
+    , m_completer(nullptr)
 {
     connect(openSearchManager(), &OpenSearchManager::currentEngineChanged,
             this, &ToolbarSearch::currentEngineChanged);
@@ -292,7 +292,7 @@ void ToolbarSearch::searchNow()
     // land in is not off-the-record.  The app-level private flag covers
     // the cases the bound view cannot (no view wired, or a new tab the
     // search itself would create on the private profile).
-    QWebEnginePage *page = m_webView ? m_webView->webPage() : 0;
+    QWebEnginePage *page = m_webView ? m_webView->webPage() : nullptr;
     const bool privateTarget = BrowserApplication::isPrivate()
         || (page && page->profile()->isOffTheRecord());
     if (!privateTarget) {
@@ -458,7 +458,7 @@ void ToolbarSearch::setupList()
         || (m_model->rowCount() > 0
             && m_model->item(0) != m_suggestionsItem)) {
         m_model->clear();
-        m_suggestionsItem = 0;
+        m_suggestionsItem = nullptr;
     } else {
         m_model->removeRows(1, m_model->rowCount() - 1);
     }

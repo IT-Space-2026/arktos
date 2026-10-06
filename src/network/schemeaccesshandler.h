@@ -30,7 +30,7 @@ class QWebEngineProfile;
 class SchemeAccessHandler : public QWebEngineUrlSchemeHandler
 {
 public:
-    SchemeAccessHandler(QObject *parent = 0);
+    SchemeAccessHandler(QObject *parent = nullptr);
 
     // The scheme this handler serves, e.g. "arora-file".
     virtual QByteArray scheme() const = 0;
@@ -42,7 +42,7 @@ public:
     // by AdBlockSchemeAccessHandler::registerUrlScheme() (called from
     // main) and installed by AdBlockManager::installOnProfile().
     static void registerUrlSchemes();
-    static void installAll(QWebEngineProfile *profile, QObject *parent = 0);
+    static void installAll(QWebEngineProfile *profile, QObject *parent = nullptr);
 
     // SEC06: certificate-error interstitial plumbing.  WebPage renders
     // the per-error markup and publishes it under a random nonce; the

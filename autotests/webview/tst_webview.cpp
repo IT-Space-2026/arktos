@@ -45,12 +45,12 @@
 class TestWebView : public WebView
 {
 public:
-    TestWebView(QWidget *parent = 0)
+    TestWebView(QWidget *parent = nullptr)
         : WebView(parent)
     {
     }
 
-    TestWebView(QWebEngineProfile *profile, QWidget *parent = 0)
+    TestWebView(QWebEngineProfile *profile, QWidget *parent = nullptr)
         : WebView(profile, parent)
     {
     }

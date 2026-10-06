@@ -77,10 +77,10 @@ class WebView : public QWebEngineView
     Q_OBJECT
 
 public:
-    WebView(QWidget *parent = 0);
+    WebView(QWidget *parent = nullptr);
     // Creates the view's WebPage on the given profile (used to point tabs
     // at the private off-the-record profile, for example).
-    WebView(QWebEngineProfile *profile, QWidget *parent = 0);
+    WebView(QWebEngineProfile *profile, QWidget *parent = nullptr);
     WebPage *webPage() const { return m_page; }
 
     void loadSettings();
@@ -110,13 +110,13 @@ public slots:
     void applyZoom();
 
 protected:
-    void mousePressEvent(QMouseEvent *event);
-    void mouseReleaseEvent(QMouseEvent *event);
-    void contextMenuEvent(QContextMenuEvent *event);
-    void wheelEvent(QWheelEvent *event);
-    void dragEnterEvent(QDragEnterEvent *event);
-    void dragMoveEvent(QDragMoveEvent *event);
-    void dropEvent(QDropEvent *event);
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
     int levelForZoom(int zoom);
@@ -126,7 +126,7 @@ private:
 private slots:
     void setProgress(int progress);
     void loadFinished();
-    void setStatusBarText(const QString &string);
+    void setStatusBarText(QString string);
     void openActionUrlInNewTab();
     void openActionUrlInNewWindow();
     void downloadLinkToDisk();

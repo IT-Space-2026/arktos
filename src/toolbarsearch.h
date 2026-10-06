@@ -86,7 +86,7 @@ signals:
     void search(const QUrl &url, TabWidget::OpenUrlIn tab);
 
 public:
-    ToolbarSearch(QWidget *parent = 0);
+    ToolbarSearch(QWidget *parent = nullptr);
     ~ToolbarSearch();
     static OpenSearchManager *openSearchManager();
     // The view searches run against and page-provided engines are
@@ -113,7 +113,7 @@ private slots:
     void addEngineFromUrl();
 
 protected:
-    void changeEvent(QEvent *event);
+    void changeEvent(QEvent *event) override;
 
 private:
     void load();

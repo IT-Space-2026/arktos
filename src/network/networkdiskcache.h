@@ -39,11 +39,11 @@ class NetworkDiskCache : public QNetworkDiskCache
     Q_OBJECT
 
 public:
-    NetworkDiskCache(QObject *parent = 0);
+    NetworkDiskCache(QObject *parent = nullptr);
 
     void loadSettings();
 
-    virtual QIODevice *prepare(const QNetworkCacheMetaData &metaData);
+    virtual QIODevice *prepare(const QNetworkCacheMetaData &metaData) override;
 
 public slots:
     void setPrivate(bool isPrivate);

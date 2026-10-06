@@ -86,9 +86,9 @@ OpenSearchEngine::OpenSearchEngine(QObject *parent)
     : QObject(parent)
     , m_searchMethod(QLatin1String("get"))
     , m_suggestionsMethod(QLatin1String("get"))
-    , m_networkAccessManager(0)
-    , m_suggestionsReply(0)
-    , m_delegate(0)
+    , m_networkAccessManager(nullptr)
+    , m_suggestionsReply(nullptr)
+    , m_delegate(nullptr)
 {
     m_requestMethods.insert(QLatin1String("get"), QNetworkAccessManager::GetOperation);
     m_requestMethods.insert(QLatin1String("post"), QNetworkAccessManager::PostOperation);
@@ -124,9 +124,9 @@ QString OpenSearchEngine::name() const
     return m_name;
 }
 
-void OpenSearchEngine::setName(const QString &name)
+void OpenSearchEngine::setName(QString name)
 {
-    m_name = name;
+    m_name = std::move(name);
 }
 
 /*!
@@ -140,9 +140,9 @@ QString OpenSearchEngine::description() const
     return m_description;
 }
 
-void OpenSearchEngine::setDescription(const QString &description)
+void OpenSearchEngine::setDescription(QString description)
 {
-    m_description = description;
+    m_description = std::move(description);
 }
 
 /*!
@@ -156,9 +156,9 @@ QString OpenSearchEngine::searchUrlTemplate() const
     return m_searchUrlTemplate;
 }
 
-void OpenSearchEngine::setSearchUrlTemplate(const QString &searchUrlTemplate)
+void OpenSearchEngine::setSearchUrlTemplate(QString searchUrlTemplate)
 {
-    m_searchUrlTemplate = searchUrlTemplate;
+    m_searchUrlTemplate = std::move(searchUrlTemplate);
 }
 
 /*!
@@ -230,9 +230,9 @@ QString OpenSearchEngine::suggestionsUrlTemplate() const
     return m_suggestionsUrlTemplate;
 }
 
-void OpenSearchEngine::setSuggestionsUrlTemplate(const QString &suggestionsUrlTemplate)
+void OpenSearchEngine::setSuggestionsUrlTemplate(QString suggestionsUrlTemplate)
 {
-    m_suggestionsUrlTemplate = suggestionsUrlTemplate;
+    m_suggestionsUrlTemplate = std::move(suggestionsUrlTemplate);
 }
 
 /*!
@@ -351,9 +351,9 @@ QString OpenSearchEngine::imageUrl() const
     return m_imageUrl;
 }
 
-void OpenSearchEngine::setImageUrl(const QString &imageUrl)
+void OpenSearchEngine::setImageUrl(QString imageUrl)
 {
-    m_imageUrl = imageUrl;
+    m_imageUrl = std::move(imageUrl);
 }
 
 void OpenSearchEngine::loadImage() const
@@ -470,7 +470,7 @@ void OpenSearchEngine::requestSuggestions(const QString &searchTerm)
         m_suggestionsReply->disconnect(this);
         m_suggestionsReply->abort();
         m_suggestionsReply->deleteLater();
-        m_suggestionsReply = 0;
+        m_suggestionsReply = nullptr;
     }
 
     Q_ASSERT(m_requestMethods.contains(m_suggestionsMethod));
@@ -533,7 +533,7 @@ void OpenSearchEngine::suggestionsObtained()
 
     m_suggestionsReply->close();
     m_suggestionsReply->deleteLater();
-    m_suggestionsReply = 0;
+    m_suggestionsReply = nullptr;
 
     if (response.isEmpty())
         return;

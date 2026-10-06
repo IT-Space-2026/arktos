@@ -48,7 +48,7 @@ signals:
     void rulesChanged();
 
 public:
-    AdBlockManager(QObject *parent = 0);
+    AdBlockManager(QObject *parent = nullptr);
     ~AdBlockManager();
 
     void load();

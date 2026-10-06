@@ -30,7 +30,7 @@
 
 LocationBarSiteIcon::LocationBarSiteIcon(QWidget *parent)
     : QLabel(parent)
-    , m_webView(0)
+    , m_webView(nullptr)
 {
     resize(QSize(16, 16));
     webViewSiteIconChanged();

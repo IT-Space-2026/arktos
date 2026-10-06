@@ -73,11 +73,11 @@ class AddBookmarkProxyModel : public QSortFilterProxyModel
     Q_OBJECT
 
 public:
-    AddBookmarkProxyModel(QObject *parent = 0);
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
+    AddBookmarkProxyModel(QObject *parent = nullptr);
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
 
 protected:
-    bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const;
+    bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 };
 
 class BookmarkNode;
@@ -88,7 +88,7 @@ class AddBookmarkDialog : public QDialog, public Ui_AddBookmarkDialog
     Q_OBJECT
 
 public:
-    AddBookmarkDialog(QWidget *parent = 0, BookmarksManager *bookmarksManager = 0);
+    AddBookmarkDialog(QWidget *parent = nullptr, BookmarksManager *bookmarksManager = nullptr);
 
     void setUrl(const QString &url);
     QString url() const;
@@ -105,7 +105,7 @@ public:
     BookmarkNode *addedNode() const;
 
 private slots:
-    void accept();
+    void accept() override;
 
 private:
     QTreeView *m_treeView;

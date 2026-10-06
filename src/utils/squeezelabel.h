@@ -40,10 +40,10 @@ class SqueezeLabel : public QLabel
     Q_OBJECT
 
 public:
-    SqueezeLabel(QWidget *parent = 0);
+    SqueezeLabel(QWidget *parent = nullptr);
 
 protected:
-    void paintEvent(QPaintEvent *event);
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     QString m_SqueezedTextCache;

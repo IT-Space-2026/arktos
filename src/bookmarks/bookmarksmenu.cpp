@@ -142,7 +142,7 @@ void BookmarksMenu::openAll()
 
 BookmarksMenuBarMenu::BookmarksMenuBarMenu(QWidget *parent)
     : BookmarksMenu(parent)
-    , m_bookmarksManager(0)
+    , m_bookmarksManager(nullptr)
 {
 }
 

@@ -30,8 +30,8 @@ class AcceptLanguageDialog : public QDialog, public Ui_AcceptLanguage
     Q_OBJECT
 
 public:
-    AcceptLanguageDialog(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
-    void accept();
+    AcceptLanguageDialog(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
+    void accept() override;
     static QByteArray httpString(const QStringList &list);
     static QStringList defaultAcceptList();
     // The effective Accept-Language list: the stored preference, else

@@ -147,7 +147,7 @@ TabWidget *WebView::tabWidget() const
             return tabWidget;
         widget = widget->parent();
     }
-    return 0;
+    return nullptr;
 }
 
 void WebView::contextMenuEvent(QContextMenuEvent *event)
@@ -282,7 +282,7 @@ void WebView::openActionUrlInNewWindow()
 
 void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
 {
-    WebView *newView = 0;
+    WebView *newView = nullptr;
     if (TabWidget *tabs = tabWidget())
         newView = tabs->getView(target, this);
     if (!newView) {
@@ -535,8 +535,8 @@ void WebView::mouseReleaseEvent(QMouseEvent *event)
     event->setAccepted(isAccepted);
 }
 
-void WebView::setStatusBarText(const QString &string)
+void WebView::setStatusBarText(QString string)
 {
-    m_statusBarText = string;
-    emit statusBarMessage(string);
+    m_statusBarText = std::move(string);
+    emit statusBarMessage(m_statusBarText);
 }

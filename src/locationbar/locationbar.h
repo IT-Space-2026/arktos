@@ -33,17 +33,17 @@ class LocationBar : public LineEdit
     Q_OBJECT
 
 public:
-    LocationBar(QWidget *parent = 0);
+    LocationBar(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
     WebView *webView() const;
 
 protected:
-    void paintEvent(QPaintEvent *event);
-    void focusOutEvent(QFocusEvent *event);
-    void mouseDoubleClickEvent(QMouseEvent *event);
-    void keyPressEvent(QKeyEvent *event);
-    void dragEnterEvent(QDragEnterEvent *event);
-    void dropEvent(QDropEvent *event);
+    void paintEvent(QPaintEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void webViewUrlChanged(const QUrl &url);

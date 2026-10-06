@@ -66,7 +66,7 @@
 
 WebActionMapper::WebActionMapper(QAction *root, QWebEnginePage::WebAction webAction, QObject *parent)
     : QObject(parent)
-    , m_currentParent(0)
+    , m_currentParent(nullptr)
     , m_root(root)
     , m_webAction(webAction)
 {
@@ -79,12 +79,12 @@ WebActionMapper::WebActionMapper(QAction *root, QWebEnginePage::WebAction webAct
 
 void WebActionMapper::rootDestroyed()
 {
-    m_root = 0;
+    m_root = nullptr;
 }
 
 void WebActionMapper::currentDestroyed()
 {
-    updateCurrent(0);
+    updateCurrent(nullptr);
 }
 
 void WebActionMapper::addChild(QAction *action)

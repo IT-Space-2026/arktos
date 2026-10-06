@@ -57,6 +57,6 @@ void NetworkDiskCache::setPrivate(bool isPrivate)
 QIODevice *NetworkDiskCache::prepare(const QNetworkCacheMetaData &metaData)
 {
     if (m_private)
-        return 0;
+        return nullptr;
     return QNetworkDiskCache::prepare(metaData);
 }

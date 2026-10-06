@@ -119,7 +119,7 @@ void tst_TabBar::tabbar()
     SubTabBar bar;
     QCOMPARE(bar.showTabBarWhenOneTab(), true);
     bar.setShowTabBarWhenOneTab(false);
-    QVERIFY(bar.viewTabBarAction() != 0);
+    QVERIFY(bar.viewTabBarAction() != nullptr);
     bar.call_tabLayoutChange();
 }
 

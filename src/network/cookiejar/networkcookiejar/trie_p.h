@@ -224,7 +224,7 @@ const Trie<T>* Trie<T>::walkTo(const QStringList &key) const {
         end = node->childrenKeys.constEnd();
         childIterator = std::lower_bound(begin, end, currentLevelKey);
         if (childIterator == end || *childIterator != currentLevelKey)
-            return 0;
+            return nullptr;
         node = &node->children.at(childIterator - begin);
     }
     return node;
@@ -247,7 +247,7 @@ Trie<T>* Trie<T>::walkTo(const QStringList &key, bool create) {
         int index = -1;
         if (iterator == end || *iterator != currentLevelKey) {
             if (!create)
-                return 0;
+                return nullptr;
             index = iterator - begin;
             node->childrenKeys.insert(iterator, currentLevelKey);
             node->children.insert(index, Trie<T>());

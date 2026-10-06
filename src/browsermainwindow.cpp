@@ -114,13 +114,13 @@
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
-    , m_navigationBar(0)
-    , m_navigationSplitter(0)
-    , m_toolbarSearch(0)
+    , m_navigationBar(nullptr)
+    , m_navigationSplitter(nullptr)
+    , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
     , m_bookmarksToolbarFrame(0)
 #endif
-    , m_bookmarksToolbar(0)
+    , m_bookmarksToolbar(nullptr)
     , m_tabWidget(new TabWidget(this))
     , m_autoSaver(new AutoSaver(this))
 {
@@ -269,7 +269,7 @@ BrowserMainWindow *BrowserMainWindow::parentWindow(QWidget *widget)
     // instance() is null when qApp is not a BrowserApplication (autotests).
     if (BrowserApplication *application = BrowserApplication::instance())
         return application->mainWindow();
-    return 0;
+    return nullptr;
 }
 
 void BrowserMainWindow::loadDefaultState()
@@ -1022,7 +1022,7 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->setObjectName(QLatin1String("NavigationToolBar"));
     addToolBar(m_navigationBar);
 
-    m_historyBackAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack, 0, this));
+    m_historyBackAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack, nullptr, this));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -1031,7 +1031,7 @@ void BrowserMainWindow::setupToolBar()
             this, &BrowserMainWindow::openActionUrl);
     m_navigationBar->addAction(m_historyBackAction);
 
-    m_historyForwardAction->setIcon(style()->standardIcon(QStyle::SP_ArrowForward, 0, this));
+    m_historyForwardAction->setIcon(style()->standardIcon(QStyle::SP_ArrowForward, nullptr, this));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);

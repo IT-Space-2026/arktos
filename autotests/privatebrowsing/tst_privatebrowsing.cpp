@@ -62,7 +62,7 @@ class LocalHttpServer : public QObject
     Q_OBJECT
 
 public:
-    LocalHttpServer(QObject *parent = 0)
+    LocalHttpServer(QObject *parent = nullptr)
         : QObject(parent)
     {
         connect(&m_server, &QTcpServer::newConnection, this, [this]() {
@@ -223,7 +223,7 @@ void tst_PrivateBrowsing::initTestCase()
 
     m_server = new LocalHttpServer(this);
     QVERIFY(m_server->start());
-    m_subscription = 0;
+    m_subscription = nullptr;
 }
 
 void tst_PrivateBrowsing::init()
@@ -240,7 +240,7 @@ void tst_PrivateBrowsing::cleanup()
     BrowserApplication::setPrivate(false);
     if (m_subscription)
         AdBlockManager::instance()->removeSubscription(m_subscription);
-    m_subscription = 0;
+    m_subscription = nullptr;
 }
 
 // Private browsing hands out a dedicated off-the-record profile; tabs

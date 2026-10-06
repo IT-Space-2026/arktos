@@ -44,7 +44,7 @@ private slots:
 class SubAutoSaver : public AutoSaver
 {
 public:
-    SubAutoSaver(QObject *parent = 0) : AutoSaver(parent) {}
+    SubAutoSaver(QObject *parent = nullptr) : AutoSaver(parent) {}
     void call_timerEvent(QTimerEvent *event)
         { return SubAutoSaver::timerEvent(event); }
 };
@@ -57,7 +57,7 @@ signals:
     void saveCalled();
 
 public:
-    TestClass(QObject *parent = 0) : QObject(parent), AutoSaver(new SubAutoSaver(this))
+    TestClass(QObject *parent = nullptr) : QObject(parent), AutoSaver(new SubAutoSaver(this))
     {
     }
 

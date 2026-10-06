@@ -36,13 +36,13 @@ class ClearButton : public QAbstractButton
     Q_OBJECT
 
 public:
-    ClearButton(QWidget *parent = 0);
+    ClearButton(QWidget *parent = nullptr);
 
 public slots:
     void textChanged(const QString &text);
 
 protected:
-    void paintEvent(QPaintEvent *event);
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     QImage m_styleImage;

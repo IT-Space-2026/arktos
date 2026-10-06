@@ -48,17 +48,11 @@
 AdBlockNetwork::AdBlockNetwork(QObject *parent)
     : QObject(parent)
     , m_enabled(true)
-#if defined(ARORA_ADBLOCK_RUST)
-    , m_rustEngine(0)
-#endif
 {
 }
 
 #if defined(ARORA_ADBLOCK_RUST)
-AdBlockNetwork::~AdBlockNetwork()
-{
-    delete m_rustEngine;
-}
+AdBlockNetwork::~AdBlockNetwork() = default;
 #endif
 
 // ResourceTypeMainFrame from QWebEngineUrlRequestInfo::ResourceType.
@@ -231,7 +225,7 @@ AdBlockDecision AdBlockNetwork::matchNativeUnlocked(
     // (except that a block with $important overrides a non-important
     // exception, per uBO).
     for (const SubscriptionRules &rules : m_subscriptions) {
-        const AdBlockRule *exception = 0;
+        const AdBlockRule *exception = nullptr;
         for (const int i : indexCandidates(rules.exceptionIndex,
                                            urlLower)) {
             const AdBlockRule &rule = rules.exceptionRules.at(i);
@@ -351,7 +345,7 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
     // (except that a block with $important overrides a non-important
     // exception, per uBO).
     for (const SubscriptionRules &rules : m_subscriptions) {
-        const AdBlockRule *exception = 0;
+        const AdBlockRule *exception = nullptr;
         for (const AdBlockRule &rule : rules.exceptionRules) {
             if (rule.isElemHide() || rule.isGenericHide()
                 || rule.isGenericBlock() || rule.isDocumentException())
@@ -486,14 +480,13 @@ void AdBlockNetwork::rebuildRules()
     // Engine construction parses the whole corpus — do it before
     // taking the write lock so IO-thread readers are not stalled.
     AdBlockRustEngine *rustEngine =
-            enabled ? AdBlockRustEngine::create(rustText) : 0;
+            enabled ? AdBlockRustEngine::create(rustText) : nullptr;
 #endif
 
     QWriteLocker locker(&m_lock);
     m_subscriptions = snapshot;
     m_enabled = enabled;
 #if defined(ARORA_ADBLOCK_RUST)
-    delete m_rustEngine;
-    m_rustEngine = rustEngine;
+    m_rustEngine.reset(rustEngine);
 #endif
 }

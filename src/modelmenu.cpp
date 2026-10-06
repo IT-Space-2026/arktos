@@ -81,7 +81,7 @@ ModelMenu::ModelMenu(QWidget *parent)
     , m_maxWidth(-1)
     , m_statusBarTextRole(0)
     , m_separatorRole(0)
-    , m_model(0)
+    , m_model(nullptr)
 {
     setAcceptDrops(true);
 

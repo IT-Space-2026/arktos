@@ -476,7 +476,7 @@ void DownloadItem::tryAgain()
     if (!tryAgainButton->isEnabled())
         return;
 
-    QWebEnginePage *page = m_download ? m_download->page() : 0;
+    QWebEnginePage *page = m_download ? m_download->page() : nullptr;
     if (!page) {
         // The page that started the download is gone (or this item was
         // restored from disk); use a hidden page to re-issue it.
@@ -669,9 +669,9 @@ DownloadManager::DownloadManager(QWidget *parent)
     : QDialog(parent)
     , m_autoSaver(new AutoSaver(this))
     , m_model(new DownloadModel(this, this))
-    , m_iconProvider(0)
-    , m_retryPage(0)
-    , m_retryPageOtr(0)
+    , m_iconProvider()
+    , m_retryPage(nullptr)
+    , m_retryPageOtr(nullptr)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
@@ -699,8 +699,6 @@ DownloadManager::~DownloadManager()
 {
     m_autoSaver->changeOccurred();
     m_autoSaver->saveIfNeccessary();
-    if (m_iconProvider)
-        delete m_iconProvider;
 }
 
 void DownloadManager::installOnProfile(QWebEngineProfile *profile)
@@ -900,8 +898,8 @@ void DownloadManager::updateRow(DownloadItem *item)
     int row = m_downloads.indexOf(item);
     if (-1 == row)
         return;
-    if (!m_iconProvider)
-        m_iconProvider = new QFileIconProvider();
+    if (m_iconProvider.isNull())
+        m_iconProvider.reset(new QFileIconProvider);
     QIcon icon = m_iconProvider->icon(QFileInfo(item->m_outputFileName));
     if (icon.isNull())
         icon = style()->standardIcon(QStyle::SP_FileIcon);
@@ -989,7 +987,7 @@ void DownloadManager::load()
         QString fileName = settings.value(key + QLatin1String("location")).toString();
         bool done = settings.value(key + QLatin1String("done"), true).toBool();
         if (!url.isEmpty() && !fileName.isEmpty()) {
-            DownloadItem *item = new DownloadItem(0, false, this);
+            DownloadItem *item = new DownloadItem(nullptr, false, this);
             item->m_outputFileName = fileName;
             item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
             item->m_url = url;
@@ -1013,10 +1011,8 @@ void DownloadManager::cleanup()
     m_model->removeRows(0, m_downloads.count());
     updateItemCount();
     updateActiveItemCount();
-    if (m_downloads.isEmpty() && m_iconProvider) {
-        delete m_iconProvider;
-        m_iconProvider = 0;
-    }
+    if (m_downloads.isEmpty())
+        m_iconProvider.reset();
     m_autoSaver->changeOccurred();
 }
 
@@ -1026,9 +1022,9 @@ void DownloadManager::updateItemCount()
     itemCount->setText(tr("%n Download(s)", "", count));
 }
 
-void DownloadManager::setDownloadDirectory(const QString &directory)
+void DownloadManager::setDownloadDirectory(QString directory)
 {
-    m_downloadDirectory = directory;
+    m_downloadDirectory = std::move(directory);
     if (!m_downloadDirectory.isEmpty())
         m_downloadDirectory += QLatin1Char('/');
 }

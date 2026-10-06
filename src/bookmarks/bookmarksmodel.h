@@ -86,26 +86,26 @@ public:
         SeparatorRole = Qt::UserRole + 4
     };
 
-    BookmarksModel(BookmarksManager *bookmarkManager, QObject *parent = 0);
+    BookmarksModel(BookmarksManager *bookmarkManager, QObject *parent = nullptr);
     inline BookmarksManager *bookmarksManager() const {
         return m_bookmarksManager;
     }
 
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex parent(const QModelIndex &index = QModelIndex()) const;
-    Qt::ItemFlags flags(const QModelIndex &index) const;
-    Qt::DropActions supportedDropActions() const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
-    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole);
-    QMimeData *mimeData(const QModelIndexList &indexes) const;
-    QStringList mimeTypes() const;
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex index(int, int, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index = QModelIndex()) const override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+    Qt::DropActions supportedDropActions() const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+    QMimeData *mimeData(const QModelIndexList &indexes) const override;
+    QStringList mimeTypes() const override;
     bool dropMimeData(const QMimeData *data,
-                      Qt::DropAction action, int row, int column, const QModelIndex &parent);
-    bool hasChildren(const QModelIndex &parent = QModelIndex()) const;
+                      Qt::DropAction action, int row, int column, const QModelIndex &parent) override;
+    bool hasChildren(const QModelIndex &parent = QModelIndex()) const override;
 
     BookmarkNode *node(const QModelIndex &index) const;
     QModelIndex index(BookmarkNode *node) const;

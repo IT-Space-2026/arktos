@@ -45,7 +45,7 @@ public:
     QByteArray response;
     QList<QByteArray> requestHeaders;
 
-    explicit HttpServer(QObject *parent = 0) : QTcpServer(parent)
+    explicit HttpServer(QObject *parent = nullptr) : QTcpServer(parent)
     {
         connect(this, &QTcpServer::newConnection, this, [this]() {
             while (QTcpSocket *socket = nextPendingConnection()) {

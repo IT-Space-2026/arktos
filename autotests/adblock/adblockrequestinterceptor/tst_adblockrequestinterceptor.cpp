@@ -56,7 +56,7 @@ class LocalHttpServer : public QObject
     Q_OBJECT
 
 public:
-    LocalHttpServer(QObject *parent = 0)
+    LocalHttpServer(QObject *parent = nullptr)
         : QObject(parent)
     {
         connect(&m_server, &QTcpServer::newConnection, this,
@@ -268,7 +268,7 @@ void tst_AdBlockRequestInterceptor::cleanup()
 {
     if (m_subscription)
         AdBlockManager::instance()->removeSubscription(m_subscription);
-    m_subscription = 0;
+    m_subscription = nullptr;
 }
 
 // Subresource blocking: the request never reaches the network and the

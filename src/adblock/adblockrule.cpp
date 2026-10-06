@@ -295,7 +295,7 @@ void AdBlockRule::setFilter(const QString &filter)
         "#@?#", "#@$#", "##", "#@#", "#?#", "#$#", "$$"
     };
     int earliest = -1;
-    const char *earliestMarker = 0;
+    const char *earliestMarker = nullptr;
     for (const char *marker : markers) {
         const int offset = filter.indexOf(QLatin1String(marker));
         if (offset != -1 && (earliest == -1 || offset < earliest)) {

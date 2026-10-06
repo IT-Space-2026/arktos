@@ -479,7 +479,7 @@ void tst_HistoryManager::big()
 
     QCOMPARE(dialogModel.rowCount(), 328);
 
-    HistoryDialog dialog(0, &history);
+    HistoryDialog dialog(nullptr, &history);
     QTest::qWait(100);
 }
 
@@ -527,7 +527,7 @@ void tst_HistoryManager::historyDialog()
     SubHistory history;
     history.setDaysToExpire(-1);
     history.setHistory(bigHistory);
-    HistoryDialog dialog(0, &history);
+    HistoryDialog dialog(nullptr, &history);
     //QTest::qWait(300);
 
     QAbstractItemModel *model = dialog.tree->model();

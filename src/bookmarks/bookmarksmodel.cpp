@@ -235,7 +235,7 @@ QModelIndex BookmarksModel::parent(const QModelIndex &index) const
         return QModelIndex();
 
     BookmarkNode *itemNode = node(index);
-    BookmarkNode *parentNode = (itemNode ? itemNode->parent() : 0);
+    BookmarkNode *parentNode = (itemNode ? itemNode->parent() : nullptr);
     if (!parentNode || parentNode == m_bookmarksManager->bookmarks())
         return QModelIndex();
 

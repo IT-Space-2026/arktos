@@ -39,7 +39,7 @@ QWebEngineProfile *normalProfile()
     // Lazily-created so callers do not need to coordinate with main():
     // every user (main.cpp, CookieJar::instance(), the settings dialog)
     // gets the same named "arora" profile.
-    static QWebEngineProfile *profile = 0;
+    static QWebEngineProfile *profile = nullptr;
     if (!profile) {
         profile = new QWebEngineProfile(QLatin1String("arora"), qApp);
         // HARD01: a previous session's site-data clear may have
@@ -52,7 +52,7 @@ QWebEngineProfile *normalProfile()
     return profile;
 }
 
-static QWebEngineProfile *s_privateProfile = 0;
+static QWebEngineProfile *s_privateProfile = nullptr;
 
 QWebEngineProfile *privateProfile()
 {

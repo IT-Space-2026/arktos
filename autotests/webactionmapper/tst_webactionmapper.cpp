@@ -89,9 +89,9 @@ void tst_WebActionMapper::webactionmapper_data()
 
 void tst_WebActionMapper::webactionmapper()
 {
-    SubWebActionMapper mapper(0, QWebEnginePage::Stop, 0);
-    mapper.addChild(0);
-    mapper.updateCurrent(0);
+    SubWebActionMapper mapper(nullptr, QWebEnginePage::Stop, nullptr);
+    mapper.addChild(nullptr);
+    mapper.updateCurrent(nullptr);
     QCOMPARE(mapper.webAction(), QWebEnginePage::Stop);
 }
 
@@ -99,7 +99,7 @@ void tst_WebActionMapper::webactionmapper()
 void tst_WebActionMapper::addChild()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Stop, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Stop, nullptr);
     QVERIFY(!root->isEnabled());
 
     QAction *child = new QAction(this);
@@ -119,7 +119,7 @@ void tst_WebActionMapper::updateCurrent_data()
 void tst_WebActionMapper::updateCurrent()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Stop, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Stop, nullptr);
     QVERIFY(!root->isEnabled());
 
     WebView webView;
@@ -130,7 +130,7 @@ void tst_WebActionMapper::updateCurrent()
     QCOMPARE(root->isChecked(), childAction->isChecked());
     QCOMPARE(root->isEnabled(), childAction->isEnabled());
 
-    mapper.updateCurrent(0);
+    mapper.updateCurrent(nullptr);
     QCOMPARE(root->isChecked(), false);
     QCOMPARE(root->isEnabled(), false);
 }
@@ -138,7 +138,7 @@ void tst_WebActionMapper::updateCurrent()
 void tst_WebActionMapper::triggerRoot()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
 
     WebView webView;
     QAction *childAction = webView.page()->action(mapper.webAction());
@@ -155,7 +155,7 @@ void tst_WebActionMapper::triggerRoot()
 void tst_WebActionMapper::destroyRoot()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
 
     WebView webView;
     QAction *childAction = webView.page()->action(mapper.webAction());
@@ -174,7 +174,7 @@ void tst_WebActionMapper::destroyRoot()
 void tst_WebActionMapper::destroyCurrent()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
 
     WebView *webView = new WebView;
     QAction *childAction = webView->page()->action(mapper.webAction());
@@ -197,7 +197,7 @@ void tst_WebActionMapper::childChanged()
 {
     QFETCH(bool, isCurrent);
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, 0);
+    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
 
     WebView webView;
     QAction *childAction = webView.page()->action(mapper.webAction());

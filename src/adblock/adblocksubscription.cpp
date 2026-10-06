@@ -45,7 +45,7 @@ AdBlockSubscription::AdBlockSubscription(const QUrl &url, QObject *parent)
     : QObject(parent)
     , m_url(url.toEncoded())
     , m_enabled(false)
-    , m_downloading(0)
+    , m_downloading(nullptr)
 {
     // A download finishing while the application (and the
     // NetworkAccessManager singleton) is being torn down is a crash —
@@ -55,10 +55,10 @@ AdBlockSubscription::AdBlockSubscription(const QUrl &url, QObject *parent)
         connect(app, &QCoreApplication::aboutToQuit, this, [this]() {
             if (!m_downloading)
                 return;
-            disconnect(m_downloading, 0, this, 0);
+            disconnect(m_downloading, nullptr, this, nullptr);
             m_downloading->abort();
             m_downloading->deleteLater();
-            m_downloading = 0;
+            m_downloading = nullptr;
         });
     }
     parseUrl(url);
@@ -67,7 +67,7 @@ AdBlockSubscription::AdBlockSubscription(const QUrl &url, QObject *parent)
 AdBlockSubscription::~AdBlockSubscription()
 {
     if (m_downloading) {
-        disconnect(m_downloading, 0, this, 0);
+        disconnect(m_downloading, nullptr, this, nullptr);
         m_downloading->abort();
         m_downloading->deleteLater();
     }
@@ -129,11 +129,11 @@ QString AdBlockSubscription::title() const
     return m_title;
 }
 
-void AdBlockSubscription::setTitle(const QString &title)
+void AdBlockSubscription::setTitle(QString title)
 {
     if (m_title == title)
         return;
-    m_title = title;
+    m_title = std::move(title);
     emit changed();
 }
 
@@ -304,7 +304,7 @@ void AdBlockSubscription::rulesDownloaded()
     m_lastUpdate = QDateTime::currentDateTime();
     loadRules();
     emit changed();
-    m_downloading = 0;
+    m_downloading = nullptr;
 }
 
 void AdBlockSubscription::saveRules()
@@ -349,7 +349,7 @@ const AdBlockRule *AdBlockSubscription::allow(const QString &urlString) const
         if (rule->networkMatch(urlString))
             return rule;
     }
-    return 0;
+    return nullptr;
 }
 
 const AdBlockRule *AdBlockSubscription::block(const QString &urlString) const
@@ -358,7 +358,7 @@ const AdBlockRule *AdBlockSubscription::block(const QString &urlString) const
         if (rule->networkMatch(urlString))
             return rule;
     }
-    return 0;
+    return nullptr;
 }
 
 QList<AdBlockRule> AdBlockSubscription::allRules() const

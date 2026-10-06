@@ -109,7 +109,7 @@ class SuggestionsTestNetworkReply : public QNetworkReply
     Q_OBJECT
 
 public:
-    SuggestionsTestNetworkReply(const QNetworkRequest &request, QObject *parent = 0)
+    SuggestionsTestNetworkReply(const QNetworkRequest &request, QObject *parent = nullptr)
         : QNetworkReply(parent)
     {
         setOperation(QNetworkAccessManager::GetOperation);
@@ -118,7 +118,7 @@ public:
         setOpenMode(QIODevice::ReadOnly);
 
         expectedResult.setFileName(":/suggestions.txt");
-        expectedResult.open(QIODevice::ReadOnly);
+        QVERIFY(expectedResult.open(QIODevice::ReadOnly));
         setError(QNetworkReply::NoError, tr("No Error"));
 
         QTimer::singleShot(50, this, SLOT(sendSuggestions()));
@@ -129,22 +129,22 @@ public:
         close();
     }
 
-    qint64 bytesAvailable() const
+    qint64 bytesAvailable() const override
     {
         return expectedResult.bytesAvailable() + QNetworkReply::bytesAvailable();
     }
 
-    void close()
+    void close() override
     {
         expectedResult.close();
     }
 
-    qint64 readData(char *data, qint64 maxSize)
+    qint64 readData(char *data, qint64 maxSize) override
     {
         return expectedResult.read(data, maxSize);
     }
 
-    void abort()
+    void abort() override
     {
     }
 
@@ -170,7 +170,7 @@ private:
 class SuggestionsTestNetworkAccessManager : public QNetworkAccessManager
 {
 public:
-    SuggestionsTestNetworkAccessManager(QObject *parent = 0)
+    SuggestionsTestNetworkAccessManager(QObject *parent = nullptr)
         : QNetworkAccessManager(parent)
     {
     }
@@ -180,13 +180,13 @@ public:
     bool lastOutgoingData;
 
 protected:
-    QNetworkReply *createRequest(QNetworkAccessManager::Operation operation, const QNetworkRequest &request, QIODevice *outgoingData = 0)
+    QNetworkReply *createRequest(QNetworkAccessManager::Operation operation, const QNetworkRequest &request, QIODevice *outgoingData = nullptr) override
     {
         lastOperation = operation;
         lastRequest = request;
         lastOutgoingData = (bool)outgoingData;
 
-        return new SuggestionsTestNetworkReply(request, 0);
+        return new SuggestionsTestNetworkReply(request, nullptr);
     }
 };
 
@@ -205,8 +205,8 @@ class Delegate : public OpenSearchEngineDelegate
 
         void performSearchRequest(const QNetworkRequest &request,
                                   QNetworkAccessManager::Operation operation,
-                                  const QByteArray &data)
-        {
+                                  const QByteArray &data) override
+                                  {
             ++callsCount;
             lastRequest = request;
             lastOperation = operation;
@@ -853,7 +853,7 @@ void tst_OpenSearchEngine::delegate()
     engine.setSearchUrlTemplate(QString("http://foobar.baz/?q={searchTerms}"));
 
     QCOMPARE(engine.delegate(), (Delegate*)0);
-    engine.setDelegate(0);
+    engine.setDelegate(nullptr);
     QCOMPARE(engine.delegate(), (Delegate*)0);
     engine.requestSearchResults(QString("baz"));
 

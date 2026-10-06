@@ -46,7 +46,7 @@ protected:
         InTag,
         InAttribute
     };
-    void highlightBlock(const QString &text);
+    void highlightBlock(const QString &text) override;
 
 private:
     QTextCharFormat formats[LastConstruct + 1];

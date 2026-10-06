@@ -73,7 +73,7 @@ private slots:
 class ModalAnswer : public QObject
 {
 public:
-    ModalAnswer(QMessageBox::StandardButton button, QObject *parent = 0)
+    ModalAnswer(QMessageBox::StandardButton button, QObject *parent = nullptr)
         : QObject(parent)
         , m_button(button)
         , m_answered(0)
@@ -149,7 +149,7 @@ static void serveStalledDownload(QTcpServer *server, const QByteArray &fileName)
 class SubDownloadManager : public DownloadManager
 {
 public:
-    SubDownloadManager(QWidget *parent = 0)
+    SubDownloadManager(QWidget *parent = nullptr)
      : DownloadManager(parent)
         {}
 
@@ -195,8 +195,8 @@ void tst_DownloadManager::downloadmanager()
 {
     SubDownloadManager manager;
     manager.cleanup();
-    manager.download(0, QUrl());
-    manager.handleDownloadRequested(0);
+    manager.download(nullptr, QUrl());
+    manager.handleDownloadRequested(nullptr);
     QCOMPARE(manager.removePolicy(), DownloadManager::Never);
     manager.setRemovePolicy(DownloadManager::Never);
 }
@@ -262,7 +262,7 @@ void tst_DownloadManager::cleanupButton()
         QVERIFY(bar);
 
         QList<QPushButton*>buttons = manager.findChildren<QPushButton*>();
-        QPushButton *tryAgainButton = 0;
+        QPushButton *tryAgainButton = nullptr;
         for (int i = 0; i < buttons.count(); ++i)
             if (buttons[i]->text().contains("Try"))
                 tryAgainButton = buttons[i];

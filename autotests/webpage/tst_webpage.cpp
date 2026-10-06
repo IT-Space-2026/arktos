@@ -89,7 +89,7 @@ public:
     int pageHits = 0;
     int engineHits = 0;
 
-    LocalHttpServer(QObject *parent = 0)
+    LocalHttpServer(QObject *parent = nullptr)
         : QObject(parent)
     {
         connect(&m_server, &QTcpServer::newConnection, this, [this]() {

@@ -64,9 +64,9 @@ public:
     // bundled stub resources so $redirect= resolves to data: URLs.
     // Slow for large lists — call outside locks.  Returns 0 when the
     // text is empty or the engine cannot be built.
-    static AdBlockRustEngine *create(const QByteArray &ruleText);
+    [[nodiscard]] static AdBlockRustEngine *create(const QByteArray &ruleText);
 
-    bool isValid() const { return m_engine != 0; }
+    bool isValid() const { return m_engine != nullptr; }
 
     // Same contract as AdBlockNetwork::match: Redirect decisions carry
     // either redirectUrl (data:/rewritten URL, ready to load) or a
@@ -81,7 +81,7 @@ public:
 
 private:
     AdBlockRustEngine();
-    Q_DISABLE_COPY(AdBlockRustEngine)
+    Q_DISABLE_COPY_MOVE(AdBlockRustEngine)
 
     AroraAdBlockEngine *m_engine;
     mutable QMutex m_mutex;

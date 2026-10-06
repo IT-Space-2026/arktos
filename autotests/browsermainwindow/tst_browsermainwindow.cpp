@@ -50,7 +50,7 @@
 class SubWindow : public BrowserMainWindow
 {
 public:
-    SubWindow(QWidget *parent = 0)
+    SubWindow(QWidget *parent = nullptr)
         : BrowserMainWindow(parent)
     {
     }
@@ -68,7 +68,7 @@ static void closeWindow(QWidget *window)
     if (!window)
         return;
     window->close();
-    QApplication::sendPostedEvents(0, QEvent::DeferredDelete);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 class tst_BrowserMainWindow : public QObject
@@ -244,7 +244,7 @@ void tst_BrowserMainWindow::dialogSlots()
     if (QDialog *downloads = qobject_cast<QDialog *>(
             BrowserApplication::downloadManager()))
         downloads->close();
-    QApplication::sendPostedEvents(0, QEvent::DeferredDelete);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     closeWindow(window);
 }
 
@@ -286,7 +286,7 @@ void tst_BrowserMainWindow::events()
     // Last-tab-closed closes the window (and, via WA_DeleteOnClose,
     // schedules its deletion) — leave this last.
     QVERIFY(QMetaObject::invokeMethod(window, "lastTabClosed"));
-    QApplication::sendPostedEvents(0, QEvent::DeferredDelete);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 // With confirmClosingMultipleTabs on, closeEvent() raises a Yes/No
@@ -306,7 +306,7 @@ void tst_BrowserMainWindow::closeConfirm()
             box->button(QMessageBox::No)->animateClick();
     });
     window->close();
-    QApplication::sendPostedEvents(0, QEvent::DeferredDelete);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(!window.isNull());
 
     // "Yes" accepts — WA_DeleteOnClose schedules the delete.
@@ -317,7 +317,7 @@ void tst_BrowserMainWindow::closeConfirm()
     });
     window->close();
     QTest::qWait(200);
-    QApplication::sendPostedEvents(0, QEvent::DeferredDelete);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(window.isNull());
 
     QSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), false);

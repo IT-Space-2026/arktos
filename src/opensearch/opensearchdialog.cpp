@@ -29,7 +29,7 @@
 
 OpenSearchDialog::OpenSearchDialog(QWidget *parent)
     : QDialog(parent)
-    , m_model(0)
+    , m_model(nullptr)
 {
     setModal(true);
     setupUi(this);

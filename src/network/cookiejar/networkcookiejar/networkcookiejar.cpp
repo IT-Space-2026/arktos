@@ -366,10 +366,10 @@ bool NetworkCookieJarPrivate::matchingDomain(const QNetworkCookie &cookie, const
     return true;
 }
 
-void NetworkCookieJar::setSecondLevelDomains(const QStringList &secondLevelDomains)
+void NetworkCookieJar::setSecondLevelDomains(QStringList secondLevelDomains)
 {
     d->setSecondLevelDomain = true;
-    d->secondLevelDomains = secondLevelDomains;
+    d->secondLevelDomains = std::move(secondLevelDomains);
     std::sort(d->secondLevelDomains.begin(), d->secondLevelDomains.end());
 }
 

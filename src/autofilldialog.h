@@ -41,12 +41,12 @@ class AutoFillModel : public QAbstractTableModel
     Q_OBJECT
 
 public:
-    AutoFillModel(QObject *parent = 0);
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
-    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex());
+    AutoFillModel(QObject *parent = nullptr);
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    bool removeRows(int row, int count, const QModelIndex &parent = QModelIndex()) override;
 
 private slots:
     void autoFillChanged();
@@ -61,7 +61,7 @@ class AutoFillDialog : public QDialog, public Ui_AutoFillDialog
     Q_OBJECT
 
 public:
-    AutoFillDialog(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
+    AutoFillDialog(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
 
 };
 

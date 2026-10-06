@@ -33,7 +33,7 @@ class SearchBar : public QWidget
     Q_OBJECT
 
 public:
-    SearchBar(QWidget *parent = 0);
+    SearchBar(QWidget *parent = nullptr);
     void setSearchObject(QObject *object);
     QObject *searchObject() const;
 
@@ -45,7 +45,7 @@ public slots:
     virtual void findPrevious() = 0;
 
 protected:
-    void resizeEvent(QResizeEvent *event);
+    void resizeEvent(QResizeEvent *event) override;
     Ui_SearchBanner ui;
 
 private slots:

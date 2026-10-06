@@ -55,8 +55,8 @@ private slots:
 class SubHistoryFilterModel : public HistoryFilterModel
 {
 public:
-    SubHistoryFilterModel(QObject *parent = 0)
-        : HistoryFilterModel(0, parent)
+    SubHistoryFilterModel(QObject *parent = nullptr)
+        : HistoryFilterModel(nullptr, parent)
     {
         history = new HistoryManager(this);
         historyModel = new HistoryModel(history, this);
@@ -98,7 +98,7 @@ void tst_HistoryFilterModel::historyfiltermodel()
 {
     SubHistoryFilterModel model;
     QCOMPARE(model.historyContains(QString()), false);
-    model.setSourceModel(0);
+    model.setSourceModel(nullptr);
     model.historyLocation(QString());
 }
 

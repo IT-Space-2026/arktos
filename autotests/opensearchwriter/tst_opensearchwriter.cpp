@@ -120,7 +120,7 @@ void tst_OpenSearchWriter::write()
     writer.write(&buffer, &engine);
 
     QFile expected(fileName);
-    expected.open(QIODevice::ReadOnly);
+    QVERIFY(expected.open(QIODevice::ReadOnly));
 
     QCOMPARE(output, expected.readAll());
 }

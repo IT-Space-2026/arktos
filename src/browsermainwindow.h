@@ -87,9 +87,9 @@ class BrowserMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    BrowserMainWindow(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
+    BrowserMainWindow(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
     ~BrowserMainWindow();
-    QSize sizeHint() const;
+    QSize sizeHint() const override;
 
 public:
     static BrowserMainWindow *parentWindow(QWidget *widget);
@@ -108,10 +108,10 @@ public slots:
     void zoomTextOnlyChanged(bool textOnly);
 
 protected:
-    void closeEvent(QCloseEvent *event);
-    void keyPressEvent(QKeyEvent *event);
-    void mousePressEvent(QMouseEvent *event);
-    void changeEvent(QEvent *event);
+    void closeEvent(QCloseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void save();

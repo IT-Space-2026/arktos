@@ -103,18 +103,18 @@
 
 TabWidget::TabWidget(QWidget *parent)
     : QTabWidget(parent)
-    , m_recentlyClosedTabsAction(0)
-    , m_newTabAction(0)
-    , m_closeTabAction(0)
-    , m_bookmarkTabsAction(0)
-    , m_nextTabAction(0)
-    , m_previousTabAction(0)
-    , m_recentlyClosedTabsMenu(0)
-    , m_lineEditCompleter(0)
-    , m_locationBars(0)
+    , m_recentlyClosedTabsAction(nullptr)
+    , m_newTabAction(nullptr)
+    , m_closeTabAction(nullptr)
+    , m_bookmarkTabsAction(nullptr)
+    , m_nextTabAction(nullptr)
+    , m_previousTabAction(nullptr)
+    , m_recentlyClosedTabsMenu(nullptr)
+    , m_lineEditCompleter(nullptr)
+    , m_locationBars(nullptr)
     , m_tabBar(new TabBar(this))
-    , addTabButton(0)
-    , closeTabButton(0)
+    , addTabButton(nullptr)
+    , closeTabButton(nullptr)
 {
     setElideMode(Qt::ElideRight);
 
@@ -338,7 +338,7 @@ WebView *TabWidget::webView(int index) const
     if (WebViewWithSearch *webViewWithSearch = qobject_cast<WebViewWithSearch*>(widget)) {
         return webViewWithSearch->m_webView;
     }
-    return 0;
+    return nullptr;
 }
 
 WebViewSearch *TabWidget::webViewSearch(int index) const
@@ -347,7 +347,7 @@ WebViewSearch *TabWidget::webViewSearch(int index) const
     if (WebViewWithSearch *webViewWithSearch = qobject_cast<WebViewWithSearch*>(widget)) {
         return webViewWithSearch->m_webViewSearch;
     }
-    return 0;
+    return nullptr;
 }
 
 int TabWidget::webViewIndex(WebView *webView) const
@@ -594,7 +594,7 @@ void TabWidget::closeTab(int index)
 
     QWidget *webViewWithSearch = widget(index);
     removeTab(index);
-    webViewWithSearch->setParent(0);
+    webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
 
     emit tabsChanged();
@@ -607,7 +607,7 @@ void TabWidget::closeTab(int index)
 QLabel *TabWidget::animationLabel(int index, bool addMovie)
 {
     if (-1 == index)
-        return 0;
+        return nullptr;
     QTabBar::ButtonPosition side = m_tabBar->freeSide();
     QLabel *loadingAnimation = qobject_cast<QLabel*>(m_tabBar->tabButton(index, side));
     if (!loadingAnimation) {
@@ -956,7 +956,7 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
  */
 WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
 {
-    WebView *webView = 0;
+    WebView *webView = nullptr;
     switch (tab) {
         case NewWindow: {
 #ifdef USERMODIFIEDBEHAVIOR_DEBUG
@@ -1003,7 +1003,7 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
 #endif
             webView = currentView;
             if (!webView)
-                return 0;
+                return nullptr;
             webView->setFocus();
             break;
     }

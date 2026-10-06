@@ -79,7 +79,7 @@ static QByteArray requestTypeName(int resourceType)
 }
 
 AdBlockRustEngine::AdBlockRustEngine()
-    : m_engine(0)
+    : m_engine(nullptr)
 {
 }
 
@@ -91,14 +91,14 @@ AdBlockRustEngine::~AdBlockRustEngine()
 AdBlockRustEngine *AdBlockRustEngine::create(const QByteArray &ruleText)
 {
     if (ruleText.isEmpty())
-        return 0;
+        return nullptr;
 
     AdBlockRustEngine *wrapper = new AdBlockRustEngine;
     wrapper->m_engine = arora_adblock_engine_new(
         ruleText.constData(), size_t(ruleText.size()));
     if (!wrapper->m_engine) {
         delete wrapper;
-        return 0;
+        return nullptr;
     }
 
     // Register every name the resource handler can serve (canonical

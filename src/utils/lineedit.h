@@ -55,8 +55,8 @@ public:
         RightSide
     };
 
-    LineEdit(QWidget *parent = 0);
-    LineEdit(const QString &contents, QWidget *parent = 0);
+    LineEdit(QWidget *parent = nullptr);
+    LineEdit(const QString &contents, QWidget *parent = nullptr);
 
     void addWidget(QWidget *widget, WidgetPosition position);
     void removeWidget(QWidget *widget);
@@ -64,13 +64,13 @@ public:
     int widgetSpacing() const;
     int textMargin(WidgetPosition position) const;
     QString inactiveText() const;
-    void setInactiveText(const QString &text);
+    void setInactiveText(QString text);
 
-    void paintEvent(QPaintEvent *event);
+    void paintEvent(QPaintEvent *event) override;
 
 protected:
-    void resizeEvent(QResizeEvent *event);
-    bool event(QEvent *event);
+    void resizeEvent(QResizeEvent *event) override;
+    bool event(QEvent *event) override;
 
 protected slots:
     void updateTextMargins();

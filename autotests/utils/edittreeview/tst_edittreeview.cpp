@@ -54,7 +54,7 @@ public:
         QStandardItemModel *model = new QStandardItemModel(this);
         QStandardItem *parentItem = model->invisibleRootItem();
         for (int i = 0; i < 4; ++i) {
-            QStandardItem *item = 0;
+            QStandardItem *item = nullptr;
             for (int j = 0; j < 4; ++j) {
                 item = new QStandardItem(QString("item %0").arg(j));
                 parentItem->appendRow(item);

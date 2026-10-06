@@ -19,6 +19,8 @@
 
 #include <QtTest/QtTest>
 
+#include <memory>
+
 #include "qtest_arora.h"
 
 #include "opensearchengine.h"
@@ -130,14 +132,14 @@ void tst_OpenSearchManager::addRemoveEngine()
     engine->setSearchUrlTemplate(searchUrlTemplate);
     // The manager only takes ownership of engines it accepts; keep a
     // guard for the invalid row so the test does not leak it.
-    QScopedPointer<OpenSearchEngine> engineGuard(engine);
+    std::unique_ptr<OpenSearchEngine> engineGuard(engine);
 
     QCOMPARE(manager.enginesCount(), 1);
     QVERIFY(!manager.engineExists(name));
 
     bool result = manager.addEngine(engine);
     if (result)
-        engineGuard.take();
+        engineGuard.release();
 
     QCOMPARE(result, valid);
     QCOMPARE(manager.enginesCount(), (valid ? 2 : 1));
@@ -182,11 +184,11 @@ void tst_OpenSearchManager::setCurrentEngine()
     engine->setName(name);
     engine->setDescription(description);
     engine->setSearchUrlTemplate(searchUrlTemplate);
-    QScopedPointer<OpenSearchEngine> engineGuard(engine);
+    std::unique_ptr<OpenSearchEngine> engineGuard(engine);
 
     bool result = manager.addEngine(engine);
     if (result)
-        engineGuard.take();
+        engineGuard.release();
     QCOMPARE(result, valid);
 
     manager.setCurrentEngineName(name);
@@ -252,14 +254,14 @@ void tst_OpenSearchManager::keywords()
         QVERIFY(!manager.engineForKeyword("foo"));
         QVERIFY(!manager.engineForKeyword(QString()));
 
-        manager.setEngineForKeyword("foo", 0);
-        manager.setEngineForKeyword(QString(), 0);
+        manager.setEngineForKeyword("foo", nullptr);
+        manager.setEngineForKeyword(QString(), nullptr);
         QVERIFY(!manager.engineForKeyword("foo"));
         QVERIFY(!manager.engineForKeyword(QString()));
-        QCOMPARE(manager.keywordsForEngine(0), QStringList());
+        QCOMPARE(manager.keywordsForEngine(nullptr), QStringList());
 
-        manager.setKeywordsForEngine(0, QStringList() << "foo");
-        QCOMPARE(manager.keywordsForEngine(0), QStringList());
+        manager.setKeywordsForEngine(nullptr, QStringList() << "foo");
+        QCOMPARE(manager.keywordsForEngine(nullptr), QStringList());
 
         manager.restoreDefaults();
 
@@ -323,7 +325,7 @@ void tst_OpenSearchManager::keywords()
         QCOMPARE(keys2, QStringList() << "bar" << "foo");
         QCOMPARE(manager.keywordsForEngine(engine1), QStringList() << "baz");
 
-        manager.setEngineForKeyword("foo", 0);
+        manager.setEngineForKeyword("foo", nullptr);
 
         QVERIFY(!manager.engineForKeyword("foo"));
         QCOMPARE(*manager.engineForKeyword("bar"), *engine2);

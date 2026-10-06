@@ -29,10 +29,10 @@ class ClearPrivateData : public QDialog
     Q_OBJECT
 
 public:
-    ClearPrivateData(QWidget *parent = 0);
+    ClearPrivateData(QWidget *parent = nullptr);
 
 public slots:
-    void accept();
+    void accept() override;
 
 private:
     QCheckBox *m_browsingHistory;

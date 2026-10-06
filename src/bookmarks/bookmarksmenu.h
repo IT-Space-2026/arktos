@@ -82,11 +82,11 @@ signals:
     void openUrl(const QUrl &url, TabWidget::OpenUrlIn tab, const QString &title);
 
 public:
-    BookmarksMenu(QWidget *parent = 0);
+    BookmarksMenu(QWidget *parent = nullptr);
 
 protected:
-    void postPopulated();
-    ModelMenu *createBaseMenu();
+    void postPopulated() override;
+    ModelMenu *createBaseMenu() override;
 
 private slots:
     void openAll();
@@ -100,11 +100,11 @@ class BookmarksMenuBarMenu : public BookmarksMenu
     Q_OBJECT
 
 public:
-    BookmarksMenuBarMenu(QWidget *parent = 0);
+    BookmarksMenuBarMenu(QWidget *parent = nullptr);
     void setInitialActions(QList<QAction*> actions);
 
 protected:
-    bool prePopulated();
+    bool prePopulated() override;
 
 private:
     BookmarksManager *m_bookmarksManager;

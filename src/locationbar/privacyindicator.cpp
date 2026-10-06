@@ -39,7 +39,7 @@ void PrivacyIndicator::setWebView(WebView *webView)
     // Private browsing is a profile property under Qt WebEngine (MIG03):
     // the indicator shows whether this location bar's page lives on an
     // off-the-record profile rather than a global QWebSettings flag.
-    QWebEnginePage *page = webView ? webView->page() : 0;
+    QWebEnginePage *page = webView ? webView->page() : nullptr;
     setVisible(page && page->profile()->isOffTheRecord());
 }
 

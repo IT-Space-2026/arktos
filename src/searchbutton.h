@@ -28,12 +28,12 @@ class SearchButton : public QAbstractButton
     Q_OBJECT
 
 public:
-    SearchButton(QWidget *parent = 0);
+    SearchButton(QWidget *parent = nullptr);
     void setImage(const QImage &image);
     void setShowMenuTriangle(bool show);
     bool showMenuTriangle() const;
-    void paintEvent(QPaintEvent *event);
-    QSize sizeHint() const;
+    void paintEvent(QPaintEvent *event) override;
+    QSize sizeHint() const override;
 
 private:
     QImage generateSearchImage(bool dropDown);

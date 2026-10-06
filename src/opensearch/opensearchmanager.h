@@ -45,14 +45,14 @@ signals:
     void suggestionsEnabledChanged();
 
 public:
-    OpenSearchManager(QObject *parent = 0);
+    OpenSearchManager(QObject *parent = nullptr);
     ~OpenSearchManager();
 
     QStringList allEnginesNames() const;
     int enginesCount() const;
 
     QString currentEngineName() const;
-    void setCurrentEngineName(const QString &currentName);
+    void setCurrentEngineName(QString currentName);
 
     OpenSearchEngine *currentEngine() const;
     void setCurrentEngine(OpenSearchEngine *current);

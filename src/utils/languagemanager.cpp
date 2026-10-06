@@ -48,8 +48,8 @@
 
 LanguageManager::LanguageManager(QObject *parent)
     : QObject(parent)
-    , m_sysTranslator(0)
-    , m_appTranslator(0)
+    , m_sysTranslator(nullptr)
+    , m_appTranslator(nullptr)
     , m_loaded(false)
 {
 #ifdef LANGUAGEMANAGER_DEBUG
@@ -59,7 +59,7 @@ LanguageManager::LanguageManager(QObject *parent)
 
 LanguageManager *LanguageManager::instance()
 {
-    static LanguageManager *manager = 0;
+    static LanguageManager *manager = nullptr;
     if (!manager) {
         manager = new LanguageManager(qApp);
         // Same locale search path BrowserApplication used to wire up.
@@ -169,8 +169,8 @@ bool LanguageManager::setCurrentLanguage(const QString &language)
     if (m_currentLanguage.isEmpty()) {
         delete m_appTranslator;
         delete m_sysTranslator;
-        m_appTranslator = 0;
-        m_sysTranslator = 0;
+        m_appTranslator = nullptr;
+        m_sysTranslator = nullptr;
         emit languageChanged(currentLanguage());
         return true;
     }
@@ -189,7 +189,7 @@ bool LanguageManager::setCurrentLanguage(const QString &language)
     QString translatorFileName = QLatin1String("qt_") + languageFile;
     if (!newSysTranslator->load(translatorFileName, resourceDir)) {
         delete newSysTranslator;
-        newSysTranslator = 0;
+        newSysTranslator = nullptr;
     }
 
     if (!loaded) {
@@ -284,7 +284,7 @@ void LanguageManager::chooseNewLanguage()
         defaultItem = items.count() - 1;
 
     bool ok;
-    QString item = QInputDialog::getItem(0,
+    QString item = QInputDialog::getItem(nullptr,
         tr("Choose language"),
         tr("<p>You can run with a different language than<br>"
         "the operating system default.</p>"

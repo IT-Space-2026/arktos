@@ -30,13 +30,13 @@ class FileAccessHandler : public SchemeAccessHandler
     Q_OBJECT
 
 public:
-    FileAccessHandler(QObject *parent = 0);
+    FileAccessHandler(QObject *parent = nullptr);
 
-    QByteArray scheme() const;
+    QByteArray scheme() const override;
     static QByteArray schemeName();
     static QUrl urlForLocalPath(const QString &path);
 
-    virtual void requestStarted(QWebEngineUrlRequestJob *job);
+    virtual void requestStarted(QWebEngineUrlRequestJob *job) override;
 
 private:
     void replyToJob(QPointer<QWebEngineUrlRequestJob> job);

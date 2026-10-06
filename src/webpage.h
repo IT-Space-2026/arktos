@@ -47,7 +47,7 @@ class JavaScriptExternalObject : public QObject
     Q_OBJECT
 
 public:
-    JavaScriptExternalObject(QObject *parent = 0);
+    JavaScriptExternalObject(QObject *parent = nullptr);
 
 public slots:
     void AddSearchProvider(const QString &url);
@@ -64,7 +64,7 @@ class JavaScriptAroraObject : public QObject
                NOTIFY currentEngineNameChanged)
 
 public:
-    JavaScriptAroraObject(QObject *parent = 0);
+    JavaScriptAroraObject(QObject *parent = nullptr);
 
     QString currentEngineName() const;
 
@@ -88,8 +88,8 @@ signals:
     void certificateErrorInterstitial(const QUrl &url);
 
 public:
-    WebPage(QObject *parent = 0);
-    WebPage(QWebEngineProfile *profile, QObject *parent = 0);
+    WebPage(QObject *parent = nullptr);
+    WebPage(QWebEngineProfile *profile, QObject *parent = nullptr);
 
     void loadSettings();
 
@@ -103,8 +103,8 @@ public:
     static void setUserAgent(const QString &userAgent);
 
 protected:
-    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame);
-    QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type);
+    bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
+    QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
 
 private slots:
     void handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo);

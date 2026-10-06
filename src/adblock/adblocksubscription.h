@@ -48,7 +48,7 @@ signals:
     void rulesChanged();
 
 public:
-    AdBlockSubscription(const QUrl &url, QObject *parent = 0);
+    AdBlockSubscription(const QUrl &url, QObject *parent = nullptr);
     ~AdBlockSubscription();
     QUrl url() const;
 
@@ -56,7 +56,7 @@ public:
     void setEnabled(bool enabled);
 
     QString title() const;
-    void setTitle(const QString &title);
+    void setTitle(QString title);
 
     QUrl location() const;
     void setLocation(const QUrl &url);

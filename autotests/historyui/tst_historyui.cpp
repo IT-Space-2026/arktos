@@ -196,7 +196,7 @@ void tst_HistoryUi::completer()
 void tst_HistoryUi::historyDialog()
 {
     HistoryManager *manager = HistoryManager::instance();
-    HistoryDialog dialog(0, manager);
+    HistoryDialog dialog(nullptr, manager);
     dialog.show();
 
     QVERIFY(dialog.tree->model()->rowCount() >= 1);

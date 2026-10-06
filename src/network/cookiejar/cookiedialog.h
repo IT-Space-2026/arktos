@@ -74,7 +74,7 @@ class CookieDialog : public QDialog, public Ui_CookiesDialog
     Q_OBJECT
 
 public:
-    CookieDialog(CookieJar *cookieJar, QWidget *parent = 0);
+    CookieDialog(CookieJar *cookieJar, QWidget *parent = nullptr);
 
 private:
     QSortFilterProxyModel *m_proxyModel;

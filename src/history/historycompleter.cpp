@@ -96,14 +96,14 @@ QString HistoryCompletionModel::searchString() const
     return m_searchString;
 }
 
-void HistoryCompletionModel::setSearchString(const QString &str)
+void HistoryCompletionModel::setSearchString(QString str)
 {
     if (str == m_searchString)
         return;
 
-    m_searchString = str;
     m_wordMatcher.setPattern(QLatin1String("\\b") + QRegularExpression::escape(str));
     m_wordMatcher.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
+    m_searchString = std::move(str);
     beginFilterChange();
     endFilterChange();
 }

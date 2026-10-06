@@ -90,7 +90,7 @@ int TabShortcut::tab()
 
 TabBar::TabBar(QWidget *parent)
     : QTabBar(parent)
-    , m_viewTabBarAction(0)
+    , m_viewTabBarAction(nullptr)
     , m_showTabBarWhenOneTab(true)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
@@ -133,7 +133,7 @@ QAction *TabBar::viewTabBarAction() const
 
 QTabBar::ButtonPosition TabBar::freeSide()
 {
-    QTabBar::ButtonPosition side = (QTabBar::ButtonPosition)style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, 0, this);
+    QTabBar::ButtonPosition side = (QTabBar::ButtonPosition)style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, this);
     side = (side == QTabBar::LeftSide) ? QTabBar::RightSide : QTabBar::LeftSide;
     return side;
 }

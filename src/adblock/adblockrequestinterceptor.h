@@ -44,9 +44,9 @@ class AdBlockRequestInterceptor : public QWebEngineUrlRequestInterceptor
     Q_OBJECT
 
 public:
-    AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent = 0);
+    AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent = nullptr);
 
-    virtual void interceptRequest(QWebEngineUrlRequestInfo &info);
+    virtual void interceptRequest(QWebEngineUrlRequestInfo &info) override;
 
 private:
     AdBlockNetwork *m_network;

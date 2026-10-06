@@ -49,7 +49,7 @@ class AdBlockResourceHandler : public QWebEngineUrlSchemeHandler
     Q_OBJECT
 
 public:
-    AdBlockResourceHandler(QObject *parent = 0);
+    AdBlockResourceHandler(QObject *parent = nullptr);
 
     static QByteArray schemeName();
     static void registerUrlScheme();
