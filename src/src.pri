@@ -2,6 +2,8 @@ CONFIG += qt warn_on
 
 win32:Debug:CONFIG += console
 
+include($$PWD/../coverage.pri)
+
 INCLUDEPATH += $$PWD $$PWD/utils
 DEPENDPATH += $$PWD $$PWD/utils
 

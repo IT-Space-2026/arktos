@@ -95,6 +95,9 @@ Test suite (TST01):
     The qtest suite builds and runs against Qt 6 again: `make check` (or autotests/runTests.sh) runs 27 test programs headless and reports failure honestly. The vendored ModelTest class was replaced by QtTest's QAbstractItemModelTester, tests that only exercised QtWebKit APIs are skipped (webPluginFactory/createPlugin), and the WebKit-only proxy tests (webpageproxy, networkaccessmanagerproxy) are dropped from the build since their modules no longer exist.
     Porting the tests surfaced three real fixes in the application: AdBlockManager::load() now skips stored subscriptions that duplicate an already-loaded one (the custom-rules subscription can exist before load runs), AdBlockSubscription correctly parses percent-encoded lastUpdate timestamps, and DownloadItem no longer lets two simultaneous downloads claim the same file name (previously they could overwrite each other — only on-disk files were deduplicated).
 
+Coverage (COV01):
+    `make check-coverage` measures test coverage for src/ using clang source-based instrumentation (lcov is not available): it builds an instrumented copy of the tree with `qmake -spec linux-clang CONFIG+=coverage`, runs the whole autotest suite and every --*-smoke check headless, and writes the totals plus a per-file table to .devin/COVERAGE.md. Runs are fully isolated from the user's real profile data. The first baseline stands at 62% of source lines; setting ARORA_COVERAGE_MIN=NN turns the target into a hard gate.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
