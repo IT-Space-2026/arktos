@@ -67,8 +67,18 @@
 #include "bookmarknode.h"
 
 XbelReader::XbelReader()
+    : m_depth(0)
 {
 }
+
+// Element nesting deep enough to be real in a hand-maintained
+// bookmarks file is on the order of tens of levels; 256 is a generous
+// bound that still protects the recursive parse below.
+static const int MaximumNestingDepth = 256;
+
+// Real bookmark files are megabytes at most; cap at 64 MB so a hostile
+// or corrupt source cannot exhaust memory.
+static const qint64 MaximumInputSize = 64 * 1024 * 1024;
 
 BookmarkNode *XbelReader::read(const QString &fileName)
 {
@@ -76,19 +86,33 @@ BookmarkNode *XbelReader::read(const QString &fileName)
     if (!file.exists()) {
         return new BookmarkNode(BookmarkNode::Root);
     }
-    if (!file.open(QFile::ReadOnly))
+    if (file.size() > MaximumInputSize || !file.open(QFile::ReadOnly)) {
+        if (file.size() > MaximumInputSize) {
+            clear();
+            raiseError(QObject::tr("The XBEL document is too large."));
+        }
         return new BookmarkNode(BookmarkNode::Root);
+    }
     return read(&file);
 }
 
 BookmarkNode *XbelReader::read(QIODevice *device)
 {
     BookmarkNode *root = new BookmarkNode(BookmarkNode::Root);
+    clear();
+    m_depth = 0;
+    if (!device->isReadable()) {
+        raiseError(QObject::tr("Unable to read the XBEL document."));
+        return root;
+    }
+    QByteArray data = device->read(MaximumInputSize + 1);
+    if (data.size() > MaximumInputSize || !device->atEnd()) {
+        raiseError(QObject::tr("The XBEL document is too large."));
+        return root;
+    }
     // Qt6 removed QXmlStreamEntityResolver: expand the entities the old
     // XmlEntityResolver resolved (just &nbsp;) before parsing.
-    QByteArray data = device->readAll();
     data.replace("&nbsp;", " ");
-    clear();
     addData(data);
     while (!atEnd()) {
         readNext();
@@ -131,6 +155,12 @@ void XbelReader::readFolder(BookmarkNode *parent)
 {
     Q_ASSERT(isStartElement() && name() == QLatin1String("folder"));
 
+    if (m_depth >= MaximumNestingDepth) {
+        raiseError(QObject::tr("The XBEL document is nested too deeply."));
+        return;
+    }
+    ++m_depth;
+
     BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder, parent);
     folder->expanded = (attributes().value(QLatin1String("folded")) == QLatin1String("no"));
 
@@ -155,6 +185,7 @@ void XbelReader::readFolder(BookmarkNode *parent)
                 skipUnknownElement();
         }
     }
+    --m_depth;
 }
 
 void XbelReader::readTitle(BookmarkNode *parent)
@@ -203,6 +234,12 @@ void XbelReader::skipUnknownElement()
 {
     Q_ASSERT(isStartElement());
 
+    if (m_depth >= MaximumNestingDepth) {
+        raiseError(QObject::tr("The XBEL document is nested too deeply."));
+        return;
+    }
+    ++m_depth;
+
     while (!atEnd()) {
         readNext();
 
@@ -212,5 +249,6 @@ void XbelReader::skipUnknownElement()
         if (isStartElement())
             skipUnknownElement();
     }
+    --m_depth;
 }
 

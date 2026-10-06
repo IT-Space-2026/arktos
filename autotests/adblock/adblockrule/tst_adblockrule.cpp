@@ -44,6 +44,7 @@ private slots:
     void networkMatchContext();
     void optionParsing_data();
     void optionParsing();
+    void hostileFilters();
 
 };
 
@@ -555,6 +556,45 @@ void tst_AdBlockRule::regexpCreation()
 
      SubAdBlockRule rule(input);
      QCOMPARE(rule.regExpPattern(), output);
+}
+
+// Hostile filter lines (SEC04): oversized filters and
+// catastrophic-backtracking regexes must be kept inert — matching runs
+// on the WebEngine IO thread where a stalling regex freezes all loads.
+void tst_AdBlockRule::hostileFilters()
+{
+    // A gigantic filter is parsed but never compiled into a live rule.
+    SubAdBlockRule giant(QString(5000, QLatin1Char('a')));
+    QVERIFY(!giant.isSupported());
+    QVERIFY(!giant.networkMatch(QLatin1String("http://example.com/aaaa")));
+
+    // Classic nested-quantifier ReDoS shapes are marked unsupported.
+    SubAdBlockRule redos1(QLatin1String("/(a+)+$/"));
+    QVERIFY(!redos1.isSupported());
+    SubAdBlockRule redos2(QLatin1String("/((a+)b)*$/"));
+    QVERIFY(!redos2.isSupported());
+    SubAdBlockRule redos3(QLatin1String("/([a-z]+){2,}$/"));
+    QVERIFY(!redos3.isSupported());
+    SubAdBlockRule invalidRe(QLatin1String("/[/"));
+    QVERIFY(!invalidRe.isSupported());
+
+    // $removeparam regex specs get the same treatment.
+    SubAdBlockRule badParam(QLatin1String("||x$removeparam=/(a+)+/"));
+    QVERIFY(!badParam.isSupported());
+    SubAdBlockRule okParam(QLatin1String("||x$removeparam=/(ok|fine)+/"));
+    QVERIFY(okParam.isSupported());
+    QCOMPARE(okParam.removeParam(), QString("/(ok|fine)+/"));
+
+    // Ordinary regex rules and plain quantified groups still match.
+    SubAdBlockRule fine(QLatin1String("/banner\\d+\\.gif/"));
+    QVERIFY(fine.isSupported());
+    QVERIFY(fine.networkMatch(QLatin1String("http://example.com/banner9.gif")));
+    SubAdBlockRule grouped(QLatin1String("/(a|b)+c$/"));
+    QVERIFY(grouped.isSupported());
+    QVERIFY(grouped.networkMatch(QLatin1String("http://example.com/aac")));
+    SubAdBlockRule wildcard(QLatin1String("||ad.example/banner*"));
+    QVERIFY(wildcard.isSupported());
+    QVERIFY(wildcard.networkMatch(QLatin1String("http://ad.example/banner123")));
 }
 
 QTEST_MAIN(tst_AdBlockRule)

@@ -121,7 +121,9 @@ void OpenSearchManager::addEngine(const QUrl &url)
 bool OpenSearchManager::addEngine(const QString &fileName)
 {
     QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly))
+    // The reader bounds its input as well; rejecting here avoids
+    // opening obviously-oversized files at all.
+    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
         return false;
 
     OpenSearchReader reader;
@@ -319,7 +321,8 @@ void OpenSearchManager::engineFromUrlAvailable()
     if (!reply)
         return;
 
-    if (reply->error() != QNetworkReply::NoError) {
+    if (reply->error() != QNetworkReply::NoError
+        || reply->size() > 1024 * 1024) {
         reply->close();
         reply->deleteLater();
         return;

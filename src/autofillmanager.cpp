@@ -31,6 +31,7 @@
 #include "autosaver.h"
 #include "browserpaths.h"
 #include "securestore.h"
+#include "streamingutils.h"
 
 #include <qdatastream.h>
 #include <qfile.h>
@@ -201,14 +202,15 @@ void AutoFillManager::loadFormData()
             return;
         }
         QDataStream stream(payload);
-        stream >> m_forms;
+        StreamingUtils::readBoundedList(stream, m_forms);
         return;
     }
 
     // Legacy plaintext store from the Qt4 era — it is migrated to the
-    // sealed format on the next save.
+    // sealed format on the next save.  The bounded read guards against
+    // a corrupt count prefix in the unauthenticated legacy file.
     QDataStream stream(raw);
-    stream >> m_forms;
+    StreamingUtils::readBoundedList(stream, m_forms);
 }
 
 void AutoFillManager::attachToPage(QWebEnginePage *page)
@@ -401,7 +403,7 @@ QDataStream &operator<<(QDataStream &out, const AutoFillManager::Form &form)
 
 void AutoFillManager::Form::load(QDataStream &in, AutoFillManager::Form &form)
 {
-    in >> form.elements;
+    StreamingUtils::readBoundedList(in, form.elements);
     in >> form.url;
     in >> form.name;
     in >> form.hasAPassword;

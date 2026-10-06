@@ -390,6 +390,9 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
         m_statusBarVisible = showStatusbar;
     }
 
+    if (stream.status() != QDataStream::Ok)
+        return false;
+
     if (size.isValid())
         resize(size);
 

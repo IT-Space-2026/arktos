@@ -119,13 +119,16 @@ static bool parseTag(const QString &html, int *pos, HtmlTag *tag)
 }
 
 // Returns the offset of the next "</name" sequence terminated by '>',
-// whitespace or '/', or -1.
+// whitespace or '/', or -1.  The scan window is bounded — element
+// bodies are titles, i.e. short — so a hostile file full of unclosed
+// tags cannot turn the scan quadratic.
 static int findClosingTag(const QString &html, int pos, const QString &name)
 {
+    const int end = qMin(html.size(), pos + 256 * 1024);
     const QString needle = QLatin1String("</") + name;
     for (;;) {
         pos = html.indexOf(needle, pos, Qt::CaseInsensitive);
-        if (pos < 0)
+        if (pos < 0 || pos + needle.size() > end)
             return -1;
         int after = pos + needle.size();
         if (after >= html.size() || html.at(after) == QLatin1Char('>')

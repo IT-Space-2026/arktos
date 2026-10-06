@@ -48,6 +48,7 @@ private slots:
     void write_data();
     void write();
 
+    void hostileInput();
 };
 
 // Subclass that exposes the protected functions.
@@ -234,6 +235,84 @@ void tst_Xbel::write()
     QVERIFY(*writtenRoot == *root);
     delete root;
     delete writtenRoot;
+}
+
+// Hostile input: element nesting drives recursion in readFolder() and
+// skipUnknownElement(), so the parser caps it instead of exhausting
+// the C stack (SEC04).
+void tst_Xbel::hostileInput()
+{
+    // 400 nested <folder> elements exceed the depth cap.
+    {
+        QByteArray doc = "<xbel version=\"1.0\">";
+        for (int i = 0; i < 400; ++i)
+            doc += "<folder>";
+        for (int i = 0; i < 400; ++i)
+            doc += "</folder>";
+        doc += "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // Deeply nested unknown elements hit the same cap through
+    // skipUnknownElement().
+    {
+        QByteArray doc = "<xbel version=\"1.0\">";
+        for (int i = 0; i < 400; ++i)
+            doc += "<info>";
+        for (int i = 0; i < 400; ++i)
+            doc += "</info>";
+        doc += "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // Moderate nesting is unaffected; a bare DOCTYPE is still accepted
+    // (htmlToXBel emits one and Qt bounds entity expansion itself).
+    {
+        QByteArray doc = "<!DOCTYPE xbel><xbel version=\"1.0\">";
+        for (int i = 0; i < 32; ++i)
+            doc += "<folder><title>t</title>";
+        for (int i = 0; i < 32; ++i)
+            doc += "</folder>";
+        doc += "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+        int levels = 0;
+        const BookmarkNode *node = root;
+        while (!node->children().isEmpty()) {
+            node = node->children().first();
+            ++levels;
+        }
+        QCOMPARE(levels, 32);
+        delete root;
+    }
+
+    // An oversized document is refused before parsing.
+    {
+        QByteArray doc(64 * 1024 * 1024 + 8, 'x');
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
 }
 
 QTEST_MAIN(tst_Xbel)

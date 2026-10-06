@@ -42,6 +42,8 @@
 #include <qdatastream.h>
 #include <qstringlist.h>
 
+#include "streamingutils.h"
+
 #include <algorithm>
 
 #if defined(TRIE_DEBUG)
@@ -195,10 +197,16 @@ QDataStream &operator<<(QDataStream &out, const Trie<T>&trie) {
 template<class T>
 QDataStream &operator>>(QDataStream &in, Trie<T> &trie) {
     trie.clear();
-    in >> trie.values;
-    in >> trie.childrenKeys;
-    in >> trie.children;
-    Q_ASSERT(trie.childrenKeys.count() == trie.children.count());
+    StreamingUtils::readBoundedList(in, trie.values);
+    StreamingUtils::readBoundedList(in, trie.childrenKeys);
+    StreamingUtils::readBoundedList(in, trie.children);
+    if (in.status() != QDataStream::Ok
+        || trie.childrenKeys.count() != trie.children.count()) {
+        // The count match is load-bearing: walkTo() indexes children
+        // by a childrenKeys bisect — a mismatch is memory-unsafe.
+        trie.clear();
+        in.setStatus(QDataStream::ReadCorruptData);
+    }
     return in;
 }
 

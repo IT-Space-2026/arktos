@@ -66,6 +66,10 @@ OpenSearchReader::OpenSearchReader()
     \note The lifetime of the returned OpenSearchEngine object is up to the user.
           The object should be deleted once it is not used anymore to avoid memory leaks.
 */
+// OpenSearch description documents are a few kilobytes at most; cap
+// the input so a hostile or corrupt source cannot exhaust memory.
+static const qint64 MaximumDocumentSize = 1024 * 1024;
+
 OpenSearchEngine *OpenSearchReader::read(QIODevice *device)
 {
     clear();
@@ -73,7 +77,21 @@ OpenSearchEngine *OpenSearchReader::read(QIODevice *device)
     if (!device->isOpen())
         device->open(QIODevice::ReadOnly);
 
-    setDevice(device);
+    if (!device->isReadable()) {
+        raiseError(QObject::tr("Unable to read the OpenSearch description."));
+        return new OpenSearchEngine();
+    }
+
+    // Read eagerly with an upper bound instead of streaming the
+    // device: for a sequential source (QNetworkReply) this also
+    // guarantees the loop below cannot be starved mid-document.
+    const QByteArray data = device->read(MaximumDocumentSize + 1);
+    if (data.size() > MaximumDocumentSize || !device->atEnd()) {
+        raiseError(QObject::tr("The OpenSearch description is too large."));
+        return new OpenSearchEngine();
+    }
+
+    addData(data);
     return read();
 }
 
@@ -81,8 +99,17 @@ OpenSearchEngine *OpenSearchReader::read()
 {
     OpenSearchEngine *engine = new OpenSearchEngine();
 
-    while (!isStartElement() && !atEnd())
+    // Reject DTDs outright: no legitimate OpenSearch document carries
+    // one, and dropping it removes the whole entity-expansion surface
+    // (Qt already bounds internal entity expansion and never resolves
+    // external entities, but defense in depth is free here).
+    while (!isStartElement() && !atEnd()) {
+        if (tokenType() == QXmlStreamReader::DTD) {
+            raiseError(QObject::tr("The OpenSearch description must not contain a DTD."));
+            return engine;
+        }
         readNext();
+    }
 
     if (name() != QLatin1String("OpenSearchDescription")
         || namespaceUri() != QLatin1String("http://a9.com/-/spec/opensearch/1.1/")) {
@@ -123,7 +150,9 @@ OpenSearchEngine *OpenSearchReader::read()
 
             readNext();
 
-            while (!(isEndElement() && name() == QLatin1String("Url"))) {
+            // atEnd() covers truncation: without it a document that
+            // ends inside <Url> spins forever on an exhausted reader.
+            while (!atEnd() && !(isEndElement() && name() == QLatin1String("Url"))) {
                 if (!isStartElement() || (name() != QLatin1String("Param") && name() != QLatin1String("Parameter"))) {
                     readNext();
                     continue;
@@ -135,7 +164,7 @@ OpenSearchEngine *OpenSearchReader::read()
                 if (!key.isEmpty() && !value.isEmpty())
                     parameters.append(OpenSearchEngine::Parameter(key, value));
 
-                while (!isEndElement())
+                while (!isEndElement() && !atEnd())
                     readNext();
             }
 

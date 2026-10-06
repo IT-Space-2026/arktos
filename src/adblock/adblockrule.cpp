@@ -139,6 +139,107 @@ static bool isUnsupportedOption(const QString &name)
     return unsupported.contains(base);
 }
 
+// A filter line longer than this is hostile or corrupt input — real
+// ABP/uBO filters are a few hundred characters; the rule is parsed
+// but kept inert instead of compiling an arbitrarily large pattern.
+static const int MaximumFilterLength = 4096;
+
+// Raw /regex/ rules are handed to PCRE2 verbatim.  QRegularExpression
+// exposes no match-time budget, so a catastrophic-backtracking pattern
+// in a hostile subscription would stall the IO thread that runs
+// matching.  Reject the classic shape — a group containing an
+// unbounded quantifier that is itself unbounded-quantified, e.g.
+// (a+)+ / (.*)* / ([a-z]+){2,}.  Deliberately conservative: a false
+// positive just means the rule never matches.
+static bool hasNestedQuantifiers(const QString &pattern)
+{
+    QList<bool> groupHasQuantifier;
+    bool escaped = false;
+    bool inClass = false;
+    const int size = pattern.size();
+    for (int i = 0; i < size; ++i) {
+        const QChar c = pattern.at(i);
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (c == QLatin1Char('\\')) {
+            escaped = true;
+            continue;
+        }
+        if (inClass) {
+            if (c == QLatin1Char(']'))
+                inClass = false;
+            continue;
+        }
+        if (c == QLatin1Char('[')) {
+            inClass = true;
+            continue;
+        }
+        if (c == QLatin1Char('(')) {
+            groupHasQuantifier.append(false);
+            continue;
+        }
+        if (c == QLatin1Char('*') || c == QLatin1Char('+')
+            || c == QLatin1Char('{')) {
+            if (!groupHasQuantifier.isEmpty())
+                groupHasQuantifier.last() = true;
+            continue;
+        }
+        if (c != QLatin1Char(')') || groupHasQuantifier.isEmpty())
+            continue;
+        const bool inner = groupHasQuantifier.takeLast();
+        // A quantifier inside a nested group still counts for the
+        // enclosing one: ((a+))* is as catastrophic as (a+)*.
+        if (inner && !groupHasQuantifier.isEmpty())
+            groupHasQuantifier.last() = true;
+        if (!inner)
+            continue;
+        // The group is only dangerous when its own repetition is not
+        // bounded to a single iteration: * + {n,} {n,m>m} {n>1}.
+        if (i + 1 >= size)
+            continue;
+        const QChar q = pattern.at(i + 1);
+        if (q == QLatin1Char('*') || q == QLatin1Char('+'))
+            return true;
+        if (q == QLatin1Char('{')) {
+            int j = i + 2;
+            int minReps = 0, maxReps = 0;
+            bool comma = false, sawMaxDigit = false;
+            while (j < size && pattern.at(j) != QLatin1Char('}')) {
+                if (pattern.at(j).isDigit()) {
+                    if (comma) {
+                        maxReps = maxReps * 10 + pattern.at(j).digitValue();
+                        sawMaxDigit = true;
+                    } else {
+                        minReps = minReps * 10 + pattern.at(j).digitValue();
+                    }
+                } else if (pattern.at(j) == QLatin1Char(',')) {
+                    comma = true;
+                } else {
+                    break;
+                }
+                ++j;
+            }
+            if (j < size && pattern.at(j) == QLatin1Char('}')) {
+                // {n,} is unbounded; {n,m} is dangerous when m > n.
+                if ((comma && (!sawMaxDigit || maxReps > qMax(minReps, 1)))
+                    || (!comma && minReps > 1))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+// True when spec is a valid, non-catastrophic /regex/ parameter.
+static bool isUsableRegExpSpec(const QString &spec)
+{
+    const QString inner = spec.mid(1, spec.size() - 2);
+    const QRegularExpression re(inner);
+    return re.isValid() && !hasNestedQuantifiers(inner);
+}
+
 AdBlockRule::AdBlockRule(const QString &filter)
 {
     setFilter(filter);
@@ -175,6 +276,11 @@ void AdBlockRule::setFilter(const QString &filter)
     m_redirect.clear();
     m_removeParam.clear();
     bool regExpRule = false;
+
+    if (filter.size() > MaximumFilterLength) {
+        m_supported = false;
+        return;
+    }
 
     if (filter.startsWith(QLatin1String("!"))
         || filter.trimmed().isEmpty())
@@ -245,6 +351,11 @@ void AdBlockRule::setFilter(const QString &filter)
     }
 
     setPattern(parsedLine, regExpRule);
+    // Raw /regex/ filters come straight from the list — invalid or
+    // catastrophic patterns are kept inert (see hasNestedQuantifiers).
+    if (regExpRule
+        && (!m_regExp.isValid() || hasNestedQuantifiers(parsedLine)))
+        m_supported = false;
     if (matchCase)
         m_regExp.setPatternOptions(QRegularExpression::NoPatternOption);
 }
@@ -296,6 +407,15 @@ void AdBlockRule::parseOptions(const QStringList &options)
                 m_notTypeMask |= typeBit(RtMainFrame);
             m_redirect = value;
         } else if (name == QLatin1String("removeparam")) {
+            // A /regex/ spec is compiled per request on the IO thread;
+            // drop rules whose spec is invalid or catastrophic.
+            if (value.startsWith(QLatin1Char('/'))
+                && value.endsWith(QLatin1Char('/'))
+                && value.size() > 1
+                && !isUsableRegExpSpec(value)) {
+                m_supported = false;
+                continue;
+            }
             m_removeParam = value.isEmpty()
                     ? QLatin1String("*") : value;
         } else if (name == QLatin1String("empty")) {

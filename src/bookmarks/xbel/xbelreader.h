@@ -83,6 +83,11 @@ private:
     void readSeparator(BookmarkNode *parent);
     void readFolder(BookmarkNode *parent);
     void readBookmarkNode(BookmarkNode *parent);
+
+    // readFolder() and skipUnknownElement() recurse once per level of
+    // element nesting; m_depth bounds that recursion so a crafted file
+    // cannot exhaust the stack.
+    int m_depth;
 };
 
 #endif // XBELREADER_H

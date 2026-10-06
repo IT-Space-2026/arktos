@@ -71,6 +71,7 @@ private slots:
     void tabsChanged();
 
     void saveState();
+    void restoreStateCorrupt();
 };
 
 // Subclass that exposes the protected functions.
@@ -696,6 +697,39 @@ void tst_TabWidget::saveState()
     widget.closeTab();
 }
 
+
+// SEC04: the serialized session blob is unauthenticated — a bogus
+// element count must fail fast rather than being trusted by the
+// container deserializer (a 0x7fffffff count used to force a giant
+// allocation).
+void tst_TabWidget::restoreStateCorrupt()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    const int before = widget.count();
+
+    {
+        QByteArray blob;
+        QDataStream out(&blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(1) << qint32(0x7fffffff);
+        QVERIFY(!widget.restoreState(blob));
+        QCOMPARE(widget.count(), before);
+    }
+
+    // Truncation inside the tab list is likewise rejected.
+    {
+        QByteArray blob;
+        QDataStream out(&blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(1)
+            << (QStringList() << QLatin1String("http://a/")
+                              << QLatin1String("http://b/"));
+        blob.chop(3);
+        QVERIFY(!widget.restoreState(blob));
+        QCOMPARE(widget.count(), before);
+    }
+
+    widget.closeTab();
+}
 
 QTEST_MAIN(tst_TabWidget)
 #include "tst_tabwidget.moc"

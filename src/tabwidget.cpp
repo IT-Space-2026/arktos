@@ -74,6 +74,7 @@
 #include "locationbar.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "streamingutils.h"
 #include "tabbar.h"
 #include "toolbarsearch.h"
 #include "webactionmapper.h"
@@ -552,8 +553,10 @@ static QUrl currentSerializedHistoryUrl(const QByteArray &data)
     qint32 version = 0;
     QStringList urls;
     qint32 currentIndex = -1;
-    stream >> version >> urls >> currentIndex;
-    if (version != 1)
+    stream >> version;
+    StreamingUtils::readBoundedList(stream, urls);
+    stream >> currentIndex;
+    if (stream.status() != QDataStream::Ok || version != 1)
         return QUrl();
     return QUrl::fromEncoded(urls.value(currentIndex).toUtf8());
 }
@@ -1051,13 +1054,15 @@ bool TabWidget::restoreState(const QByteArray &state)
         return false;
 
     QStringList openTabs;
-    stream >> openTabs;
+    StreamingUtils::readBoundedList(stream, openTabs);
 
-    int currentTab;
+    int currentTab = -1;
     stream >> currentTab;
     setCurrentIndex(currentTab);
     QList<QByteArray> tabHistory;
-    stream >> tabHistory;
+    StreamingUtils::readBoundedList(stream, tabHistory);
+    if (stream.status() != QDataStream::Ok)
+        return false;
 
     for (int i = 0; i < openTabs.count(); ++i) {
         QUrl url = QUrl::fromEncoded(openTabs.at(i).toUtf8());

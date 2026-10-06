@@ -535,9 +535,19 @@ bool BrowserApplication::restoreLastSession()
 
     qint32 windowCount;
     stream >> windowCount;
+    // Bound the count by the blob itself — each serialized window
+    // occupies at least a 4-byte length prefix, so a corrupt blob
+    // claiming more windows than its size permits is invalid.
+    const qint64 maxWindows = stream.device()
+        ? stream.device()->bytesAvailable() / qint64(sizeof(qint32))
+        : 0;
+    if (windowCount < 0 || windowCount > maxWindows)
+        return false;
     for (qint32 i = 0; i < windowCount; ++i) {
         QByteArray windowState;
         stream >> windowState;
+        if (stream.status() != QDataStream::Ok)
+            return false;
         windows.append(windowState);
     }
     for (int i = 0; i < windows.count(); ++i) {

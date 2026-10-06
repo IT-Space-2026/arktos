@@ -35,6 +35,7 @@ public slots:
 private slots:
     void read_data();
     void read();
+    void hostileInput();
 };
 
 // This will be called before the first test function is executed.
@@ -123,7 +124,7 @@ void tst_OpenSearchReader::read()
     QFETCH(QString, suggestionsMethod);
 
     QFile file(fileName);
-    file.open(QIODevice::ReadOnly);
+    static_cast<void>(file.open(QIODevice::ReadOnly));
     OpenSearchReader reader;
     OpenSearchEngine *engine = reader.read(&file);
 
@@ -139,6 +140,65 @@ void tst_OpenSearchReader::read()
     QCOMPARE(engine->suggestionsMethod(), suggestionsMethod);
 
     delete engine;
+}
+
+// Hostile/malformed input: the parser must terminate and report an
+// error on every case (SEC04).
+void tst_OpenSearchReader::hostileInput()
+{
+    // Truncated inside <Url> — before the atEnd() guards this spun
+    // forever on the exhausted reader.
+    {
+        QByteArray doc =
+            "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+            "<Url type='text/html' template='http://example.com/?q={searchTerms}'>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&buffer);
+        QVERIFY(engine);
+        QVERIFY(!engine->isValid());
+        QVERIFY(reader.hasError());
+        delete engine;
+    }
+
+    // A DTD is never legitimate in an OpenSearch description — it is
+    // rejected before any entity handling comes into play.
+    {
+        QByteArray doc =
+            "<!DOCTYPE d [ <!ENTITY a 'x'> ]>"
+            "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+            "<ShortName>x</ShortName>"
+            "<Url template='http://example.com/?q={searchTerms}'/>"
+            "</OpenSearchDescription>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&buffer);
+        QVERIFY(reader.hasError());
+        delete engine;
+    }
+
+    // Oversized input is refused before it is parsed.
+    {
+        QByteArray doc(1024 * 1024 + 8, 'x');
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&buffer);
+        QVERIFY(reader.hasError());
+        delete engine;
+    }
+
+    // An unreadable device reports an error instead of silently
+    // returning a half-parsed engine.
+    {
+        QBuffer buffer;
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&buffer);
+        QVERIFY(reader.hasError());
+        delete engine;
+    }
 }
 
 QTEST_MAIN(tst_OpenSearchReader)

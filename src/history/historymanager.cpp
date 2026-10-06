@@ -336,6 +336,10 @@ void HistoryManager::load()
     stream.setDevice(&buffer);
     while (!historyFile.atEnd()) {
         in >> data;
+        // A corrupt file can carry a bogus block length; stop rather
+        // than rescanning the rest of the stream as pseudo-entries.
+        if (in.status() != QDataStream::Ok)
+            break;
         buffer.close();
         buffer.setBuffer(&data);
         buffer.open(QIODevice::ReadOnly);

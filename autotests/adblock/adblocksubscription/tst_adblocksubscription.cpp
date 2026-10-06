@@ -33,6 +33,7 @@
 #include <adblocksubscription.h>
 
 #include <qdir.h>
+#include <qtemporaryfile.h>
 #include <qurlquery.h>
 
 class tst_AdBlockSubscription : public QObject
@@ -65,6 +66,8 @@ private slots:
     void block();
     void addRule();
     void removeRule();
+    void hostileList();
+    void oversizedList();
 };
 
 // Subclass that exposes the protected functions.
@@ -358,6 +361,44 @@ void tst_AdBlockSubscription::removeRule()
     QCOMPARE(subscription.allRules().count(), 0);
 }
 
+
+// SEC04: a hostile list can carry megabyte-long lines — reads are
+// capped so parsing continues to the well-formed rules that follow,
+// and the oversized fragments are kept inert by AdBlockRule's own
+// filter-length cap.
+void tst_AdBlockSubscription::hostileList()
+{
+    SubAdBlockSubscription subscription;
+    subscription.setLocation(QUrl::fromLocalFile(
+        QDir::currentPath() + "/hostile_rules.txt"));
+    subscription.setEnabled(true);
+    subscription.updateNow();
+
+    QVERIFY(subscription.block(QString::fromUtf8(
+        QUrl("http://real-ad.example/x").toEncoded())));
+    const QList<AdBlockRule> rules = subscription.allRules();
+    QVERIFY(rules.count() >= 2);
+    for (const AdBlockRule &rule : rules) {
+        if (rule.filter().size() > 4096)
+            QVERIFY(!rule.isSupported());
+    }
+}
+
+// SEC04: a rules file beyond the size cap is not parsed at all.
+void tst_AdBlockSubscription::oversizedList()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    QVERIFY(file.resize(64 * 1024 * 1024 + 1));
+    file.flush();
+
+    SubAdBlockSubscription subscription;
+    subscription.setLocation(QUrl::fromLocalFile(file.fileName()));
+    subscription.setEnabled(true);
+    subscription.updateNow();
+
+    QCOMPARE(subscription.allRules().count(), 0);
+}
 
 QTEST_MAIN(tst_AdBlockSubscription)
 #include "tst_adblocksubscription.moc"

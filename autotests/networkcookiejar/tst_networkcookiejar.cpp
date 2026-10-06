@@ -293,6 +293,16 @@ void tst_NetworkCookieJar::restoreStateInvalid()
     SubNetworkCookieJar jar;
     QCOMPARE(jar.call_restoreState(QByteArray()), false);
     QCOMPARE(jar.call_restoreState(QByteArray("junk")), false);
+
+    // Valid header followed by a bogus trie element count (SEC04):
+    // the bounded container read rejects it instead of trusting the
+    // prefix and allocating gigabytes.
+    {
+        QByteArray blob;
+        QDataStream out(&blob, QIODevice::WriteOnly);
+        out << qint32(0xae) << qint32(1) << qint32(0x7fffffff);
+        QCOMPARE(jar.call_restoreState(blob), false);
+    }
 }
 
 // protected void endSession()

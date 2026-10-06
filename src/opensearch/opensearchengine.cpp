@@ -372,7 +372,13 @@ void OpenSearchEngine::imageObtained()
     if (!reply)
         return;
 
-    QByteArray response = reply->readAll();
+    // Engine icons are small; drop oversized responses instead of
+    // letting a hostile server pump unlimited data into the image
+    // decoder.
+    static const qint64 MaximumImageSize = 1024 * 1024;
+    QByteArray response;
+    if (reply->size() <= MaximumImageSize)
+        response = reply->readAll();
 
     reply->close();
     reply->deleteLater();
@@ -520,7 +526,10 @@ void OpenSearchEngine::requestSearchResults(const QString &searchTerm)
 
 void OpenSearchEngine::suggestionsObtained()
 {
-    QByteArray response = m_suggestionsReply->readAll().trimmed();
+    // Suggestions replies are small JSON arrays; cap what we parse.
+    static const qint64 MaximumSuggestionsSize = 256 * 1024;
+    QByteArray response = m_suggestionsReply->size() <= MaximumSuggestionsSize
+        ? m_suggestionsReply->readAll().trimmed() : QByteArray();
 
     m_suggestionsReply->close();
     m_suggestionsReply->deleteLater();

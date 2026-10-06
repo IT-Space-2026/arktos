@@ -253,7 +253,8 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     }
 
     QFile file(manifestPath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    // manifests are kilobytes; refuse absurd sizes before parsing.
+    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly)) {
         manifest.error = tr("cannot read %1").arg(manifestPath);
         return manifest;
     }

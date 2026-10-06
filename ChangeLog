@@ -125,6 +125,12 @@ URL scheme & external protocol hardening (SEC02):
 Credential storage (SEC03):
     Saved passwords are no longer written to disk in plaintext. The autofill.dat store (form data including passwords) is now sealed with AES-256-GCM and the proxy password in the application settings is stored as a sealed value; legacy plaintext files and settings are read back transparently and migrated on the next save. The encryption key lives in securestore.key in the application data directory with owner-only permissions — the same guarantee Chromium provides on Linux without a desktop keyring. When the crypto backend is unavailable Arora refuses to write password forms back to disk instead of silently downgrading to plaintext. The full storage audit is in .devin/SEC03-report.md.
 
+Untrusted-input parser hardening (SEC04):
+    OpenSearch description documents are now capped at 1 MB, DTDs are rejected outright (removing the whole entity-expansion surface), and a document that ends abruptly inside an element no longer makes the reader spin on an exhausted parser. Remote engine descriptions, suggestion replies and engine icons are size-capped before parsing or decoding.
+    Bookmark (XBEL) files are capped at 64 MB and folder/element nesting at 256 levels — a crafted document can no longer crash import via unbounded recursion, and oversized or truncated files report a parse error instead.
+    Adblock subscriptions are bounded at 64 MB per file, 16 KB per line and 500k rules, and individual filters over 4 KB are kept inert. Filter rules written as raw regular expressions — including $removeparam patterns — are refused when the pattern is invalid or has the nested-quantifier shape that causes catastrophic backtracking, so a hostile list cannot stall page loads.
+    The binary state files the browser reads back at startup (session restore, tab history, autofill, saved cookies, window layout) now bound serialized element counts against the bytes actually present before allocating, so a corrupt or hostile blob is rejected instead of triggering giant allocations. Extension manifests are capped at 1 MB.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

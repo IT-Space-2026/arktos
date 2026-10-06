@@ -169,6 +169,17 @@ QString AdBlockSubscription::rulesFileName() const
     return fileName;
 }
 
+// A subscription list is at most a few megabytes (EasyList ≈ 4 MB);
+// anything larger is corrupt or hostile and is not parsed.  64 MB is a
+// generous bound.
+static const qint64 MaximumRulesFileSize = 64 * 1024 * 1024;
+// Filter lines are a few hundred characters; cap reads so a giant
+// single-line file cannot produce a giant QString per rule.
+static const qint64 MaximumLineLength = 16 * 1024;
+// Bound total rules so a hostile list cannot exhaust memory compiling
+// regular expressions (EasyList is ~60k rules; 500k is generous).
+static const int MaximumRuleCount = 500 * 1000;
+
 void AdBlockSubscription::loadRules()
 {
     QString fileName = rulesFileName();
@@ -177,7 +188,9 @@ void AdBlockSubscription::loadRules()
 #endif
     QFile file(fileName);
     if (file.exists()) {
-        if (!file.open(QFile::ReadOnly)) {
+        if (file.size() > MaximumRulesFileSize) {
+            qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "adblock file too large" << fileName;
+        } else if (!file.open(QFile::ReadOnly)) {
             qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "Unable to open adblock file for reading" << fileName;
         } else {
             QTextStream textStream(&file);
@@ -189,8 +202,9 @@ void AdBlockSubscription::loadRules()
                 m_lastUpdate = QDateTime();
             } else {
                 m_rules.clear();
-                while (!textStream.atEnd()) {
-                    QString line = textStream.readLine();
+                while (!textStream.atEnd()
+                       && m_rules.count() < MaximumRuleCount) {
+                    QString line = textStream.readLine(MaximumLineLength);
                     m_rules.append(AdBlockRule(line));
                 }
                 populateCache();
@@ -253,7 +267,9 @@ void AdBlockSubscription::rulesDownloaded()
         return;
     }
 
-    QByteArray response = reply->readAll();
+    // Bound the response before buffering it into the rules file.
+    const QByteArray response = reply->size() <= MaximumRulesFileSize
+        ? reply->readAll() : QByteArray();
     QUrl redirect = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
     reply->close();
     reply->deleteLater();
