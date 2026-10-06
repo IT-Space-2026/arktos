@@ -34,6 +34,7 @@
 #include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "extensionmanager.h"
 #include "historymanager.h"
 #include "locationbar.h"
 #include "networkaccessmanager.h"
@@ -167,7 +168,7 @@ int main(int argc, char **argv)
         "bookmarks-smoke", "search-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
-        "app-smoke",
+        "app-smoke", "extension-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -780,6 +781,7 @@ int main(int argc, char **argv)
                     qInfo() << "autofill-smoke: otr fill"
                             << (filled ? "PASS" : "FAIL");
                     if (!filled) {
+                        delete otrView;
                         application.exit(1);
                         return;
                     }
@@ -790,12 +792,14 @@ int main(int argc, char **argv)
                         "document.getElementById('p').value='otrpass';"
                         "document.forms[0].requestSubmit();"));
                     QTimer::singleShot(2000, &application,
-                                       [&application, hasElement]() {
+                                       [&application, hasElement,
+                                        otrView]() {
                         const bool pass = !hasElement(
                             QLatin1String("user"), QLatin1String("otruser"));
                         qInfo() << "autofill-smoke: otr capture dropped"
                                 << (pass ? "PASS" : "FAIL");
                         if (!pass) {
+                            delete otrView;
                             application.exit(1);
                             return;
                         }
@@ -814,6 +818,9 @@ int main(int argc, char **argv)
                         qInfo() << "autofill-smoke: persistence"
                                 << (stored ? "PASS" : "FAIL")
                                 << "forms:" << probe.forms().count();
+                        // Delete the OTR view before exit — its page
+                        // must die before the OTR profile is released.
+                        delete otrView;
                         application.exit(stored ? 0 : 1);
                     });
                 });
@@ -1367,6 +1374,9 @@ int main(int argc, char **argv)
         // would restyle the page; suspend adblock for determinism.
         AdBlockManager::instance()->setEnabled(false);
 
+        // The window is deleted before application.exit() below: an
+        // unregistered window would otherwise outlive the profile at
+        // teardown and crash inside QtWebEngine's shutdown.
         BrowserMainWindow *browserWindow = new BrowserMainWindow();
         browserWindow->show();
         TabWidget *tabWidget = browserWindow->tabWidget();
@@ -1419,6 +1429,7 @@ int main(int argc, char **argv)
                     << "title:" << browserWindow->windowTitle();
             if (!titleOk) {
                 QFile::remove(fixturePath);
+                delete browserWindow;
                 application.exit(1);
                 return;
             }
@@ -1448,21 +1459,213 @@ int main(int argc, char **argv)
                 QCoreApplication::sendEvent(proxy, &release);
             });
             QTimer::singleShot(3000, &application,
-                               [&application, tabWidget, fixturePath]() {
+                               [&application, tabWidget, browserWindow,
+                                fixturePath]() {
                 const bool pass = tabWidget->count() == 3;
                 qInfo() << "browser-smoke: target=_blank tab"
                         << (pass ? "PASS" : "FAIL")
                         << "tabs:" << tabWidget->count();
                 qInfo() << "browser-smoke:" << (pass ? "PASS" : "FAIL");
                 QFile::remove(fixturePath);
+                delete browserWindow;
                 application.exit(pass ? 0 : 1);
             });
         });
-        QTimer::singleShot(20000, &application, [&application]() {
+        QTimer::singleShot(20000, &application,
+                           [&application, browserWindow]() {
             qInfo() << "browser-smoke: FAIL (timeout)";
+            delete browserWindow;
             application.exit(1);
         });
         tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
+    }
+
+    // Headless verification for EXT01: the QWebEngineExtensionManager
+    // preview must drive a Manifest-V3 fixture through the whole
+    // lifecycle — load (arrives disabled), enable, unload, install
+    // into the profile's installPath, uninstall — while the manifest
+    // inspector and the user-scripts QWebEngineScriptCollection path
+    // are checked synchronously.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--extension-smoke"))) {
+        ExtensionManager *extensions = ExtensionManager::instance();
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "extension-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto die = [&application](const QString &why) {
+            qInfo() << "extension-smoke: FAIL" << why;
+            application.exit(1);
+        };
+
+        check(ExtensionManager::isSupported(), "webengine_extensions feature");
+        check(!extensions->extensions().isEmpty(),
+              "built-in components listed");
+
+        // Manifest-V3 fixture on disk.
+        const QString extDir = QDir::temp().filePath(
+            QLatin1String("arora-ext-smoke"));
+        QDir().mkpath(extDir);
+        {
+            QFile manifestFile(extDir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-smoke: FAIL (cannot write manifest)";
+                return 1;
+            }
+            manifestFile.write(
+                "{\"manifest_version\":3,"
+                "\"name\":\"arora-smoke-ext\","
+                "\"version\":\"0.1\","
+                "\"description\":\"EXT01 smoke fixture\","
+                "\"permissions\":[\"storage\",\"tabs\",\"nativeMessaging\"],"
+                "\"host_permissions\":[\"https://*.example.com/*\"],"
+                "\"action\":{\"default_title\":\"smoke\"},"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+            QFile worker(extDir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-smoke: FAIL (cannot write worker)";
+                return 1;
+            }
+            worker.write("chrome.runtime.onInstalled.addListener(function(){});\n");
+        }
+
+        // Synchronous checks: manifest inspector + permission
+        // classification + the user-scripts script-collection path.
+        const ExtensionManager::Manifest manifest =
+            ExtensionManager::inspectManifest(extDir);
+        check(manifest.valid && manifest.manifestVersion == 3
+              && manifest.name == QLatin1String("arora-smoke-ext")
+              && manifest.hasBackground && manifest.hasAction
+              && manifest.permissions.size() == 3
+              && manifest.hostPermissions.size() == 1,
+              "manifest parsed");
+        check(manifest.unsupported.contains(QLatin1String("tabs"))
+              && manifest.unsupported.contains(QLatin1String("nativeMessaging"))
+              && !manifest.unsupported.contains(QLatin1String("storage")),
+              "unsupported chrome.* APIs flagged");
+        const ExtensionManager::Manifest mv2 =
+            ExtensionManager::inspectManifest(QString());
+        check(!mv2.valid && !mv2.error.isEmpty(),
+              "missing manifest reported");
+
+        const QString scriptDir = ExtensionManager::userScriptsPath();
+        const QString scriptPath = scriptDir
+            + QLatin1String("/smoke-user.js");
+        {
+            QFile script(scriptPath);
+            if (!script.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-smoke: FAIL (cannot write user script)";
+                return 1;
+            }
+            script.write("// smoke\n");
+        }
+        extensions->reloadUserScripts();
+        bool scriptInstalled = false;
+        const QList<QWebEngineScript> profileScripts = profile->scripts()->toList();
+        for (const QWebEngineScript &script : profileScripts) {
+            if (script.name() == QLatin1String("userscript:smoke-user.js"))
+                scriptInstalled = true;
+        }
+        check(scriptInstalled, "user script injected into profile");
+        check(extensions->userScriptNames().contains(QLatin1String("smoke-user.js")),
+              "user script listed");
+        QFile::remove(scriptPath);
+        extensions->reloadUserScripts();
+
+        // Async lifecycle driven by the manager's finished signals.
+        QString extensionId;
+        QTimer *enablePoll = new QTimer(&application);
+        int *pollTicks = new int(0);
+
+        QObject::connect(extensions, &ExtensionManager::extensionLoaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name != QLatin1String("arora-smoke-ext"))
+                return;
+            check(info.loaded && info.error.isEmpty(),
+                  "loadExtension finished");
+            check(!info.enabled, "extension loads disabled");
+            extensionId = info.id;
+            extensions->setExtensionEnabled(extensionId, true);
+            *pollTicks = 0;
+            enablePoll->start(200);
+        });
+
+        QObject::connect(enablePoll, &QTimer::timeout, &application, [&]() {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : extensions->extensions()) {
+                if (info.id == extensionId && info.enabled) {
+                    enablePoll->stop();
+                    qInfo() << "extension-smoke: enable PASS";
+                    // Loaded-but-not-installed removes via unload.
+                    extensions->removeExtension(extensionId);
+                    return;
+                }
+            }
+            if (++*pollTicks > 25) {
+                enablePoll->stop();
+                die(QStringLiteral("setExtensionEnabled never applied"));
+            }
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionUnloaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.id != extensionId)
+                return;
+            qInfo() << "extension-smoke: unload PASS";
+            extensions->installExtension(extDir);
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionInstalled,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name != QLatin1String("arora-smoke-ext")) {
+                qInfo() << "extension-smoke: installFinished ignored"
+                        << "name:" << info.name << "id:" << info.id
+                        << "installed:" << info.installed
+                        << "loaded:" << info.loaded
+                        << "error:" << info.error;
+                return;
+            }
+            check(info.installed && info.error.isEmpty(),
+                  "installExtension finished");
+            check(!extensions->installPath().isEmpty()
+                  && info.path.startsWith(extensions->installPath()),
+                  "install persisted under profile installPath");
+            extensionId = info.id;
+            extensions->removeExtension(extensionId);
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionUninstalled,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.id != extensionId)
+                return;
+            bool gone = true;
+            for (const ExtensionManager::ExtensionInfo &rest
+                 : extensions->extensions()) {
+                if (rest.id == extensionId)
+                    gone = false;
+            }
+            check(gone, "uninstall removes extension");
+            qInfo() << "extension-smoke:"
+                    << (failures == 0 ? "PASS" : "FAIL")
+                    << "failures:" << failures;
+            QDir(extDir).removeRecursively();
+            application.exit(failures == 0 ? 0 : 1);
+        });
+
+        QObject::connect(extensions, &ExtensionManager::errorOccurred,
+            &application, [die](const QString &message) {
+            die(QStringLiteral("errorOccurred: %1").arg(message));
+        });
+
+        QTimer::singleShot(20000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+        extensions->loadExtension(extDir);
+
+        // exec() must run while this block's locals are still alive:
+        // the finished-signal lambdas above capture them by reference.
+        return application.exec();
     }
 
     return application.exec();

@@ -69,18 +69,24 @@
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
+#include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "tabwidget.h"
 #include "webview.h"
 
 #include <qapplication.h>
+#include <qdesktopservices.h>
+#include <qdir.h>
 #include <qfile.h>
 #include <qfontdialog.h>
+#include <qlistwidget.h>
+#include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qfiledialog.h>
+#include <qtreewidget.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
@@ -99,6 +105,28 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(styleSheetBrowseButton, &QPushButton::clicked, this, &SettingsDialog::chooseStyleSheet);
 
     connect(editAutoFillUserButton, &QPushButton::clicked, this, &SettingsDialog::editAutoFillUser);
+
+    connect(extensionLoadButton, &QPushButton::clicked, this, &SettingsDialog::loadExtension);
+    connect(extensionInstallButton, &QPushButton::clicked, this, &SettingsDialog::installExtension);
+    connect(extensionRemoveButton, &QPushButton::clicked, this, &SettingsDialog::removeExtension);
+    connect(extensionsTree, &QTreeWidget::itemSelectionChanged, this, &SettingsDialog::extensionSelectionChanged);
+    connect(extensionsTree, &QTreeWidget::itemChanged, this, &SettingsDialog::extensionItemChanged);
+    connect(userScriptsOpenButton, &QPushButton::clicked, this, &SettingsDialog::openUserScriptsFolder);
+    connect(userScriptsReloadButton, &QPushButton::clicked, this, &SettingsDialog::reloadUserScripts);
+
+    ExtensionManager *extensions = ExtensionManager::instance();
+    connect(extensions, &ExtensionManager::changed, this, &SettingsDialog::refreshExtensions);
+    connect(extensions, &ExtensionManager::userScriptsChanged, this, &SettingsDialog::refreshUserScripts);
+    connect(extensions, &ExtensionManager::errorOccurred, this, &SettingsDialog::extensionError);
+    if (!ExtensionManager::isSupported()) {
+        extensionsTree->setEnabled(false);
+        extensionLoadButton->setEnabled(false);
+        extensionInstallButton->setEnabled(false);
+        extensionsHintLabel->setText(
+            tr("This build of Qt WebEngine was compiled without extension support."));
+    }
+    refreshExtensions();
+    refreshUserScripts();
 
     loadDefaults();
     loadFromSettings();
@@ -531,4 +559,216 @@ void SettingsDialog::editAutoFillUser()
 {
     AutoFillDialog dialog(this);
     dialog.exec();
+}
+
+// Shared manifest pre-check for load/install: warns about MV2
+// packages and chrome.* APIs Qt WebEngine cannot serve, and asks
+// whether to proceed anyway.
+static bool confirmExtensionLoad(const ExtensionManager::Manifest &manifest,
+                                 const QString &title, QWidget *parent)
+{
+    QStringList warnings;
+    if (!manifest.error.isEmpty())
+        warnings << manifest.error;
+    if (!manifest.unsupported.isEmpty())
+        warnings << SettingsDialog::tr("Declares chrome.* APIs unavailable in "
+                                       "Qt WebEngine (calls will fail): %1")
+                    .arg(manifest.unsupported.join(QLatin1String(", ")));
+    if (!manifest.unverified.isEmpty())
+        warnings << SettingsDialog::tr("Declares chrome.* APIs with only "
+                                       "partial Qt WebEngine support: %1")
+                    .arg(manifest.unverified.join(QLatin1String(", ")));
+    if (warnings.isEmpty())
+        return true;
+    return QMessageBox::warning(parent, title,
+        warnings.join(QLatin1String("\n\n"))
+            + SettingsDialog::tr("\n\nContinue anyway?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            == QMessageBox::Yes;
+}
+
+void SettingsDialog::loadExtension()
+{
+    const QString path = QFileDialog::getExistingDirectory(
+        this, tr("Select Unpacked Extension Folder"), QDir::homePath());
+    if (path.isEmpty())
+        return;
+    if (!confirmExtensionLoad(ExtensionManager::inspectManifest(path),
+                              tr("Load Extension"), this))
+        return;
+    ExtensionManager::instance()->loadExtension(path);
+}
+
+void SettingsDialog::installExtension()
+{
+    QMessageBox choice(this);
+    choice.setWindowTitle(tr("Install Extension"));
+    choice.setText(tr("Install from an unpacked folder or a .zip package?"));
+    QAbstractButton *folderButton =
+        choice.addButton(tr("Folder..."), QMessageBox::AcceptRole);
+    QAbstractButton *zipButton =
+        choice.addButton(tr("ZIP Package..."), QMessageBox::AcceptRole);
+    choice.addButton(QMessageBox::Cancel);
+    choice.exec();
+
+    QString path;
+    if (choice.clickedButton() == folderButton)
+        path = QFileDialog::getExistingDirectory(
+            this, tr("Select Unpacked Extension Folder"), QDir::homePath());
+    else if (choice.clickedButton() == zipButton)
+        path = QFileDialog::getOpenFileName(
+            this, tr("Select Extension Package"), QDir::homePath(),
+            tr("Extension packages (*.zip);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    if (!confirmExtensionLoad(ExtensionManager::inspectManifest(path),
+                              tr("Install Extension"), this))
+        return;
+    ExtensionManager::instance()->installExtension(path);
+}
+
+void SettingsDialog::removeExtension()
+{
+    QTreeWidgetItem *item = extensionsTree->currentItem();
+    if (!item)
+        return;
+    const QString id = item->data(0, Qt::UserRole).toString();
+    if (id.isEmpty())
+        return;
+    if (QMessageBox::question(this, tr("Remove Extension"),
+            tr("Remove the extension \"%1\"?").arg(item->text(0)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes)
+        return;
+    ExtensionManager::instance()->removeExtension(id);
+}
+
+void SettingsDialog::extensionSelectionChanged()
+{
+    QTreeWidgetItem *item = extensionsTree->currentItem();
+    extensionRemoveButton->setEnabled(item != 0);
+    if (!item) {
+        extensionDetailsLabel->clear();
+        return;
+    }
+    const QString id = item->data(0, Qt::UserRole).toString();
+    const QList<ExtensionManager::ExtensionInfo> list =
+        ExtensionManager::instance()->extensions();
+    for (const ExtensionManager::ExtensionInfo &info : list) {
+        if (info.id != id)
+            continue;
+        // Built-in component extensions ship with the profile and
+        // cannot be uninstalled.
+        extensionRemoveButton->setEnabled(!info.builtin);
+        QStringList lines;
+        if (!info.description.isEmpty())
+            lines << info.description;
+        if (!info.error.isEmpty())
+            lines << tr("Error: %1").arg(info.error);
+        if (info.builtin)
+            lines << tr("Built-in component extension.");
+        if (info.actionPopupUrl.isValid())
+            lines << tr("Popup URL: %1").arg(info.actionPopupUrl.toString());
+        if (!info.path.isEmpty()) {
+            const ExtensionManager::Manifest manifest =
+                ExtensionManager::inspectManifest(info.path);
+            if (!manifest.version.isEmpty())
+                lines << tr("Version %1").arg(manifest.version);
+            if (!manifest.permissions.isEmpty())
+                lines << tr("Permissions: %1")
+                             .arg(manifest.permissions.join(QLatin1String(", ")));
+            if (!manifest.unsupported.isEmpty())
+                lines << tr("Not available in Qt WebEngine: %1")
+                             .arg(manifest.unsupported.join(QLatin1String(", ")));
+            if (!manifest.unverified.isEmpty())
+                lines << tr("Partially supported in Qt WebEngine: %1")
+                             .arg(manifest.unverified.join(QLatin1String(", ")));
+        }
+        extensionDetailsLabel->setText(lines.join(QLatin1Char('\n')));
+        return;
+    }
+    extensionDetailsLabel->clear();
+}
+
+void SettingsDialog::extensionItemChanged(QTreeWidgetItem *item, int column)
+{
+    if (column != 0 || !item)
+        return;
+    const QString id = item->data(0, Qt::UserRole).toString();
+    if (id.isEmpty())
+        return;
+    const QList<ExtensionManager::ExtensionInfo> list =
+        ExtensionManager::instance()->extensions();
+    for (const ExtensionManager::ExtensionInfo &info : list) {
+        if (info.id != id)
+            continue;
+        const bool enabled = item->checkState(0) == Qt::Checked;
+        if (enabled != info.enabled)
+            ExtensionManager::instance()->setExtensionEnabled(id, enabled);
+        return;
+    }
+}
+
+void SettingsDialog::extensionError(const QString &message)
+{
+    QMessageBox::warning(this, tr("Extensions"), message);
+}
+
+void SettingsDialog::refreshExtensions()
+{
+    QString selectedId;
+    if (QTreeWidgetItem *current = extensionsTree->currentItem())
+        selectedId = current->data(0, Qt::UserRole).toString();
+
+    // itemChanged would fire on every checkbox sync while rebuilding.
+    const QSignalBlocker blocker(extensionsTree);
+    extensionsTree->clear();
+    const QList<ExtensionManager::ExtensionInfo> list =
+        ExtensionManager::instance()->extensions();
+    for (const ExtensionManager::ExtensionInfo &info : list) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(extensionsTree);
+        item->setText(0, info.name.isEmpty() ? info.id : info.name);
+        item->setCheckState(0, info.enabled ? Qt::Checked : Qt::Unchecked);
+        QString status;
+        if (!info.error.isEmpty())
+            status = tr("Error");
+        else if (!info.loaded)
+            status = tr("Not loaded");
+        else
+            status = info.enabled ? tr("Enabled") : tr("Disabled");
+        item->setText(1, status);
+        item->setText(2, info.builtin ? tr("Built-in")
+                                    : (info.installed ? tr("Installed")
+                                                      : tr("Session")));
+        item->setData(0, Qt::UserRole, info.id);
+        item->setToolTip(0, info.path);
+        if (info.id == selectedId)
+            extensionsTree->setCurrentItem(item);
+    }
+    extensionSelectionChanged();
+}
+
+void SettingsDialog::refreshUserScripts()
+{
+    userScriptsList->clear();
+    const QStringList names = ExtensionManager::instance()->userScriptNames();
+    if (names.isEmpty()) {
+        QListWidgetItem *empty = new QListWidgetItem(
+            tr("(empty — drop .js files in the folder)"), userScriptsList);
+        empty->setFlags(Qt::NoItemFlags);
+        return;
+    }
+    userScriptsList->addItems(names);
+}
+
+void SettingsDialog::openUserScriptsFolder()
+{
+    QDesktopServices::openUrl(
+        QUrl::fromLocalFile(ExtensionManager::userScriptsPath()));
+}
+
+void SettingsDialog::reloadUserScripts()
+{
+    // userScriptsChanged refreshes the list once the profiles re-scan.
+    ExtensionManager::instance()->reloadUserScripts();
 }

@@ -1014,6 +1014,159 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="tab_8">
+      <attribute name="title">
+       <string>Extensions</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_8">
+       <item>
+        <widget class="QLabel" name="extensionsHintLabel">
+         <property name="text">
+          <string>Manifest V3 extensions: load an unpacked folder for the session, or install a folder/.zip into the profile. Newly loaded extensions start disabled.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTreeWidget" name="extensionsTree">
+         <property name="rootIsDecorated">
+          <bool>false</bool>
+         </property>
+         <property name="itemsExpandable">
+          <bool>false</bool>
+         </property>
+         <column>
+          <property name="text">
+           <string>Name</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Status</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Source</string>
+          </property>
+         </column>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="extensionsButtonLayout">
+         <item>
+          <widget class="QPushButton" name="extensionLoadButton">
+           <property name="text">
+            <string>Load Unpacked...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="extensionInstallButton">
+           <property name="text">
+            <string>Install...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="extensionRemoveButton">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="text">
+            <string>Remove</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="extensionsButtonSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="extensionDetailsLabel">
+         <property name="text">
+          <string/>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="userScriptsGroup">
+         <property name="title">
+          <string>User Scripts</string>
+         </property>
+         <layout class="QVBoxLayout" name="userScriptsLayout">
+          <item>
+           <widget class="QLabel" name="userScriptsHintLabel">
+            <property name="text">
+             <string>.js files in this folder run on every page at document end. Drop scripts here for what extensions cannot cover.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QListWidget" name="userScriptsList">
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>80</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="userScriptsButtonLayout">
+            <item>
+             <widget class="QPushButton" name="userScriptsOpenButton">
+              <property name="text">
+               <string>Open Folder...</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="userScriptsReloadButton">
+              <property name="text">
+               <string>Reload</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="userScriptsButtonSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
   </layout>
@@ -1054,6 +1207,13 @@
   <tabstop>userStyleSheet</tabstop>
   <tabstop>networkCache</tabstop>
   <tabstop>networkCacheMaximumSizeSpinBox</tabstop>
+  <tabstop>extensionsTree</tabstop>
+  <tabstop>extensionLoadButton</tabstop>
+  <tabstop>extensionInstallButton</tabstop>
+  <tabstop>extensionRemoveButton</tabstop>
+  <tabstop>userScriptsList</tabstop>
+  <tabstop>userScriptsOpenButton</tabstop>
+  <tabstop>userScriptsReloadButton</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>

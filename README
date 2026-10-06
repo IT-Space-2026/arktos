@@ -13,3 +13,10 @@ FFI static library with `cargo build --release` in src/adblock/rust
 (needs a user-local Rust toolchain), then run `qmake CONFIG+=adblock_rust`
 and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
 fixed probe set.
+
+Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
+WebEngine's (tech preview) extension manager — the Extensions page in
+the preferences dialog loads unpacked folders or installs .zip packages,
+with a warning for chrome.* APIs Qt does not serve.  Plain user scripts
+(any *.js file in the "userscripts" data directory) are injected into
+every page at document-ready.

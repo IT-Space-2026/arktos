@@ -71,6 +71,7 @@
 #include "browsermainwindow.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "extensionmanager.h"
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -123,6 +124,10 @@ static void prepareProfile(QWebEngineProfile *profile)
     BrowserProfile::applySettings(profile);
     DownloadManager::instance()->installOnProfile(profile);
     AdBlockManager::instance()->installOnProfile(profile);
+    // QWebEngineExtensionManager wiring + user-scripts injection.
+    // The OTR profile is skipped for extensions upstream but still
+    // receives user scripts.
+    ExtensionManager::instance()->installOnProfile(profile);
 }
 
 BrowserApplication::BrowserApplication(int &argc, char **argv)

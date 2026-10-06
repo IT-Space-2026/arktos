@@ -66,6 +66,7 @@
 #include <qdialog.h>
 #include "ui_settings.h"
 
+class QTreeWidgetItem;
 class SettingsDialog : public QDialog, public Ui_Settings
 {
     Q_OBJECT
@@ -91,6 +92,17 @@ private slots:
 
     void chooseStyleSheet();
     void editAutoFillUser();
+
+    void loadExtension();
+    void installExtension();
+    void removeExtension();
+    void extensionSelectionChanged();
+    void extensionItemChanged(QTreeWidgetItem *item, int column);
+    void extensionError(const QString &message);
+    void refreshExtensions();
+    void refreshUserScripts();
+    void openUserScriptsFolder();
+    void reloadUserScripts();
 
 private:
     QFont m_standardFont;

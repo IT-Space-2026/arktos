@@ -82,6 +82,12 @@ Translations, desktop integration and install rules (MIG16):
 Qt 6 API sweep (MIG17):
     Last deprecated-API stragglers are gone: the View menu's Text Encoding submenu is populated from QStringConverter::availableCodecs() instead of Qt5Compat's QTextCodec, the network access manager's auth/proxy/SSL signal hookups use typed function-pointer connects, and remaining foreach loops, QMouseEvent::pos(), QAction::activate() and the Qt::CTRL shortcut modifier are converted to their Qt 6 forms. The whole tree now builds with zero compiler warnings under -Wall -Wextra.
 
+Extensions (EXT01):
+    Chrome Manifest-V3 extension support lands via Qt WebEngine's tech-preview QWebEngineExtensionManager: the Settings dialog gains an Extensions page that can load unpacked extension folders, install folders or .zip packages into the profile, toggle extensions on and off, and remove them. Installed extensions persist under the profile's data directory across sessions. Because Qt only ships a subset of the chrome.* API surface, Arora inspects manifest.json up front and warns which declared permissions are unsupported or only partially wired instead of letting extensions fail silently. Built-in component extensions (Chromium PDF viewer, Hangouts) are listed but can't be removed.
+    A user-scripts path covers what extensions cannot: every *.js file dropped into the per-user "userscripts" data directory is injected into pages at document-ready (including private windows) and can be reloaded from the same Settings page.
+    Known limits: Manifest V3 only (MV2 packages are rejected by Qt), extensions can't be loaded into off-the-record profiles, and the tech-preview API surfaces no per-extension permission prompt — consent is the up-front warning dialog.
+    Also fixed two latent teardown crashes exposed while verifying this: AdBlockSubscription tracked its in-flight download reply with a raw pointer that dangled on error paths (now QPointer), and the browser/autofill smokes now delete their windows before exit so WebEnginePages die before the profile is released.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

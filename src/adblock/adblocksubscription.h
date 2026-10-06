@@ -35,6 +35,7 @@
 
 #include <qlist.h>
 #include <qdatetime.h>
+#include <qpointer.h>
 
 class QNetworkReply;
 class QUrl;
@@ -92,7 +93,7 @@ private:
     QDateTime m_lastUpdate;
     bool m_enabled;
 
-    QNetworkReply *m_downloading;
+    QPointer<QNetworkReply> m_downloading;
     QList<AdBlockRule> m_rules;
 
     // sorted list

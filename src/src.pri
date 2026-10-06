@@ -34,6 +34,7 @@ exists(../.git/HEAD) {
 #
 include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
+include(extensions/extensions.pri)    # EXT01 done
 include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
