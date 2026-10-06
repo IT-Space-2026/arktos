@@ -66,6 +66,7 @@
 #include "bookmarknode.h"
 #include "bookmarksmodel.h"
 #include "browserpaths.h"
+#include "converter.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
@@ -82,7 +83,6 @@
 #include <qmimedata.h>
 #include <qpointer.h>
 #include <qtoolbutton.h>
-#include <qprocess.h>
 
 #include <qdebug.h>
 
@@ -294,24 +294,33 @@ void BookmarksManager::importBookmarks()
     XbelReader reader;
     BookmarkNode *importRootNode = nullptr;
     if (fileName.endsWith(QLatin1String(".html"))) {
-        QString program = QLatin1String("htmlToXBel");
-        QStringList arguments;
-        arguments << fileName;
-        QProcess process;
-        process.start(program, arguments);
-        process.waitForFinished(-1);
-        if (process.error() != QProcess::UnknownError) {
-            if (process.error() == QProcess::FailedToStart) {
-                QMessageBox::warning(nullptr, tr("htmlToXBel tool required"),
-                    tr("htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, "
-                       "is not installed or not available in the search paths."));
-            } else {
-                QMessageBox::warning(nullptr, tr("Loading Bookmark"),
-                    tr("Error when loading HTML bookmarks: %1\n").arg(process.errorString()));
-            }
+        // Convert in-process: the Netscape-HTML parser is shared with
+        // tools/htmlToXBel and is internally bounded (256 KiB
+        // closing-tag scan windows), so it is safe on the GUI thread.
+        // The Qt4 flow spawned the tool and blocked the event loop in
+        // waitForFinished(-1) — and the binary is never installed, so
+        // the feature was dead in packaged builds anyway.
+        QFile file(fileName);
+        if (!file.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+                tr("Unable to open HTML bookmarks file %1.").arg(fileName));
             return;
         }
-        importRootNode = reader.read(&process);
+        if (file.size() > 64 * 1024 * 1024) {
+            QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+                tr("Bookmarks file %1 is too large to import.").arg(fileName));
+            return;
+        }
+        QBuffer buffer;
+        buffer.open(QIODevice::ReadWrite);
+        if (convertHtmlToXbel(QString::fromUtf8(file.readAll()), &buffer) != 0) {
+            QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+                tr("Error when loading HTML bookmarks: no bookmarks "
+                   "found in %1.").arg(fileName));
+            return;
+        }
+        buffer.seek(0);
+        importRootNode = reader.read(&buffer);
     } else {
         importRootNode = reader.read(fileName);
     }

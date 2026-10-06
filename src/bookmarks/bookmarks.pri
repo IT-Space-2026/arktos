@@ -1,5 +1,9 @@
-INCLUDEPATH += $$PWD
+INCLUDEPATH += $$PWD $$PWD/../../tools/htmlToXBel
 DEPENDPATH += $$PWD
+
+# Netscape-HTML import uses the same bounded parser as the
+# htmlToXBel tool instead of spawning it as a subprocess (FRZ01).
+SOURCES += $$PWD/../../tools/htmlToXBel/converter.cpp
 
 HEADERS += \
     $$PWD/addbookmarkdialog.h \

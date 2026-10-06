@@ -37,6 +37,7 @@ private slots:
 
     void notRunningUntilServerStarts();
     void messageRoundTrip();
+    void stalledClientDoesNotBlockServer();
     void socketIsUserOnly();
 };
 
@@ -68,6 +69,25 @@ void tst_SingleApplication::messageRoundTrip()
 
     // Starting a second server on the same name is refused.
     QVERIFY(!app->startSingleServer() || app->isRunning());
+}
+
+// FRZ01: a same-uid client that connects but never writes used to
+// freeze the server's GUI thread in waitForReadyRead() for the full
+// socket timeout.  The handoff is driven off readyRead now — a real
+// client behind a staller must still be serviced promptly.
+void tst_SingleApplication::stalledClientDoesNotBlockServer()
+{
+    SingleApplication *app = qobject_cast<SingleApplication *>(qApp);
+    QVERIFY(app);
+    QVERIFY(app->isRunning() || app->startSingleServer());
+
+    QLocalSocket staller;
+    staller.connectToServer(app->serverAddress());
+    QVERIFY(staller.waitForConnected(500));
+
+    QSignalSpy spy(app, &SingleApplication::messageReceived);
+    QVERIFY(app->sendMessage(QByteArray("still-responsive"), 500));
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 5000);
 }
 
 // SEC09: a connected client can push urls into the running browser —

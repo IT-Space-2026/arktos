@@ -190,6 +190,9 @@ C++ modernization sweep (CPP01):
 Zero-warning gate (WRN01):
     The deprecation warnings are now pinned in the build configuration (-Wdeprecated/-Wdeprecated-declarations on gcc, -Wdeprecated-warnings/-Wdeprecated-declarations on clang) alongside the -Wall -Wextra that warn_on already supplied, and the whole shipping tree compiles with zero diagnostics. `make check` now runs a check-warnings gate first — it builds a throwaway copy of the tree and fails before any test runs if the compiler emits even one warning or error while compiling the shipping code. No -Werror was added to the shipped configuration so distro/packaging builds are unaffected.
 
+Event-loop blocking audit (FRZ01):
+    Removed every GUI-thread blocking wait found by the sweep. The single-instance server no longer freezes: a client that connects but never writes used to stall the whole browser inside waitForReadyRead() — connections are now serviced asynchronously off readyRead and idle sockets are reaped. The IPC write waits are bounded (2s). Importing Netscape-format bookmark HTML no longer spawns the htmlToXBel tool and blocks on waitForFinished — the same parser now runs in-process, which also fixes the feature in installed builds (the tool's binary was never installed, only its man page).
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

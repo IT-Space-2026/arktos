@@ -331,7 +331,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #endif
         QString message = QLatin1String("aroramessage://winid/") + winid;
         socket->write(message.toUtf8());
-        socket->waitForBytesWritten();
+        socket->waitForBytesWritten(2000);
         return;
     }
 

@@ -103,9 +103,10 @@ void AdBlockDialog::addCustomRule(const QString &rule)
     AdBlockManager *manager = AdBlockManager::instance();
     AdBlockSubscription *subscription = manager->customRules();
     Q_ASSERT(subscription);
+    // addRule emits rulesChanged synchronously, which resets the
+    // model through AdBlockManager — no processEvents() needed (it
+    // would also let arbitrary handlers re-enter this slot).
     subscription->addRule(AdBlockRule(rule));
-    // reset the model
-    qApp->processEvents();
 
     QModelIndex parent = m_adBlockModel->index(subscription);
     int x = m_adBlockModel->rowCount(parent);

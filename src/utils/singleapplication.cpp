@@ -33,6 +33,7 @@
 #include <qlocalsocket.h>
 #include <qstandardpaths.h>
 #include <qtextstream.h>
+#include <qtimer.h>
 #include <qfile.h>
 
 #ifndef Q_OS_WIN
@@ -60,7 +61,7 @@ bool SingleApplication::sendMessage(const QByteArray &message, int waitMsecsForR
         return false;
     socket.write(message);
     socket.flush();
-    socket.waitForBytesWritten();
+    socket.waitForBytesWritten(2000);
     bool success = true;
     if (socket.error() != QLocalSocket::UnknownSocketError) {
 #ifdef SINGALAPPLICATION_DEBUG
@@ -135,9 +136,21 @@ void SingleApplication::newConnection()
     QLocalSocket *socket = m_localServer->nextPendingConnection();
     if (!socket)
         return;
-    socket->waitForReadyRead();
-    emit messageReceived(socket);
-    delete socket;
+    // The old waitForReadyRead() here blocked the GUI thread until the
+    // client wrote — a same-uid process that connects and stalls froze
+    // the whole browser for the full socket timeout, repeatably.
+    // Dispatch on readyRead instead and reap clients that never send
+    // anything so they cannot keep the socket alive forever either.
+    connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
+        disconnect(socket, nullptr, this, nullptr);
+        emit messageReceived(socket);
+        socket->deleteLater();
+    });
+    connect(socket, &QLocalSocket::disconnected,
+            socket, &QLocalSocket::deleteLater);
+    QTimer::singleShot(10 * 1000, socket, [socket]() {
+        socket->deleteLater();
+    });
 }
 
 QString SingleApplication::serverAddress() const
