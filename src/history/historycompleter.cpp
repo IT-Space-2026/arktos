@@ -19,6 +19,8 @@
 
 #include "historycompleter.h"
 
+#include "safetext.h"
+
 #include <qevent.h>
 #include <qfontmetrics.h>
 #include <qheaderview.h>
@@ -26,6 +28,8 @@
 HistoryCompletionView::HistoryCompletionView(QWidget *parent)
     : QTableView(parent)
 {
+    // Page titles are web-controlled; keep markup-looking text literal.
+    setItemDelegate(new PlainTextItemDelegate(this));
     horizontalHeader()->hide();
     verticalHeader()->hide();
 

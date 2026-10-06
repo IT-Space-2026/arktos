@@ -29,11 +29,17 @@
 
 #include "edittableview.h"
 
+#include "safetext.h"
+
 #include <qevent.h>
 
 EditTableView::EditTableView(QWidget *parent)
     : QTableView(parent)
 {
+    // These views display web-controlled strings (autofill fields,
+    // cookie values, engine names); the delegate keeps markup-looking
+    // text literal.
+    setItemDelegate(new PlainTextItemDelegate(this));
 }
 
 void EditTableView::keyPressEvent(QKeyEvent *event)

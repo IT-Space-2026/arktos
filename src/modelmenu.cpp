@@ -64,6 +64,7 @@
 #include "modelmenu.h"
 
 #include "browserapplication.h"
+#include "safetext.h"
 
 #include <qabstractitemmodel.h>
 #include <qapplication.h>
@@ -237,8 +238,13 @@ QAction *ModelMenu::makeAction(const QIcon &icon, const QString &text, QObject *
     QFontMetrics fm(font());
     if (-1 == m_maxWidth)
         m_maxWidth = fm.horizontalAdvance(QLatin1Char('m')) * 30;
-    QString smallText = fm.elidedText(text, Qt::ElideMiddle, m_maxWidth);
-    return new QAction(icon, smallText, parent);
+    // Model strings are often page titles: '&' would become a
+    // mnemonic and '\t' a fake shortcut column, and the action text
+    // doubles as a tooltip where markup would render.
+    QString smallText = fm.elidedText(SafeText::menu(text), Qt::ElideMiddle, m_maxWidth);
+    QAction *action = new QAction(icon, smallText, parent);
+    action->setToolTip(SafeText::escaped(text));
+    return action;
 }
 
 void ModelMenu::actionTriggered(QAction *action)

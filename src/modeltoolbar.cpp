@@ -21,6 +21,7 @@
 
 #include "browserapplication.h"
 #include "modelmenu.h"
+#include "safetext.h"
 
 #include <qapplication.h>
 #include <qdrag.h>
@@ -106,7 +107,11 @@ void ModelToolBar::build()
         QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
         bool hasChildren = m_model->hasChildren(index);
 
-        QAction *action = addAction(icon, title);
+        // Model titles are web-controlled: '&'/'\t' would inject
+        // mnemonics and a fake shortcut column, and the action text
+        // becomes the button's tooltip where markup would render.
+        QAction *action = addAction(icon, SafeText::menu(title));
+        action->setToolTip(SafeText::escaped(title));
         action->setData(variant);
 
         QWidget *actionWidget = widgetForAction(action);

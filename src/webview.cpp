@@ -73,6 +73,7 @@
 #include "browsermainwindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "safetext.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 
@@ -202,7 +203,10 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         QMenu *searchMenu = menu->addMenu(tr("Search with"));
         const QStringList engineNames = ToolbarSearch::openSearchManager()->allEnginesNames();
         for (const QString &name : engineNames) {
-            QAction *action = searchMenu->addAction(name);
+            // Engine names come from opensearch XML; keep '&'/'\t'
+            // out of the menu text and carry the real name in data.
+            QAction *action = searchMenu->addAction(SafeText::menu(name));
+            action->setData(name);
             connect(action, &QAction::triggered,
                     this, [this, action]() { searchRequested(action); });
         }
@@ -335,8 +339,10 @@ void WebView::searchRequested(QAction *action)
 {
     if (!action)
         return;
+    // The menu text is mnemonic-escaped; the real engine name is in
+    // the action data.
     OpenSearchEngine *engine =
-        ToolbarSearch::openSearchManager()->engine(action->text());
+        ToolbarSearch::openSearchManager()->engine(action->data().toString());
     if (!engine || selectedText().isEmpty())
         return;
     emit search(engine->searchUrl(selectedText()), TabWidget::NewSelectedTab);

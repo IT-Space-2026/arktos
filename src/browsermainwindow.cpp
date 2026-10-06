@@ -80,6 +80,7 @@
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchdialog.h"
+#include "safetext.h"
 #include "settings.h"
 #include "sourceviewer.h"
 #include "tabbar.h"
@@ -1532,7 +1533,7 @@ void BrowserMainWindow::aboutToShowBackMenu()
         action->setData(-1 * (historyCount - i - 1));
         QIcon icon = BrowserApplication::icon(item.url());
         action->setIcon(icon);
-        action->setText(item.title());
+        action->setText(SafeText::menu(item.title()));
         m_historyBackMenu->addAction(action);
     }
 }
@@ -1551,7 +1552,7 @@ void BrowserMainWindow::aboutToShowForwardMenu()
         action->setData(historyCount - i);
         QIcon icon = BrowserApplication::icon(item.url());
         action->setIcon(icon);
-        action->setText(item.title());
+        action->setText(SafeText::menu(item.title()));
         m_historyForwardMenu->addAction(action);
     }
 }
@@ -1573,7 +1574,7 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     QList<BrowserMainWindow*> windows = application->mainWindows();
     for (int i = 0; i < windows.count(); ++i) {
         BrowserMainWindow *window = windows.at(i);
-        QAction *action = m_windowMenu->addAction(window->windowTitle(), this, &BrowserMainWindow::showWindow);
+        QAction *action = m_windowMenu->addAction(SafeText::menu(window->windowTitle()), this, &BrowserMainWindow::showWindow);
         action->setData(i);
         action->setCheckable(true);
         if (window == this)

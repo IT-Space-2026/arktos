@@ -22,6 +22,7 @@
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
+#include "safetext.h"
 
 OpenSearchEngineAction::OpenSearchEngineAction(OpenSearchEngine *engine, QObject *parent)
     : QAction(parent)
@@ -30,7 +31,9 @@ OpenSearchEngineAction::OpenSearchEngineAction(OpenSearchEngine *engine, QObject
     if (!engine->networkAccessManager())
         engine->setNetworkAccessManager(NetworkAccessManager::instance());
 
-    setText(engine->name());
+    // Engine names come from opensearch XML; a bare '&' or '\t' would
+    // inject a mnemonic or fake shortcut column into menus.
+    setText(SafeText::menu(engine->name()));
     imageChanged();
     connect(engine, &OpenSearchEngine::imageChanged, this, &OpenSearchEngineAction::imageChanged);
 }

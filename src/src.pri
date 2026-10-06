@@ -93,6 +93,7 @@ HEADERS += \
     $$PWD/utils/languagemanager.h \
     $$PWD/utils/lineedit.h \
     $$PWD/utils/lineedit_p.h \
+    $$PWD/utils/safetext.h \
     $$PWD/utils/singleapplication.h \
     $$PWD/utils/squeezelabel.h \
     $$PWD/utils/treesortfilterproxymodel.h
@@ -130,6 +131,7 @@ SOURCES += \
     $$PWD/utils/edittreeview.cpp \
     $$PWD/utils/languagemanager.cpp \
     $$PWD/utils/lineedit.cpp \
+    $$PWD/utils/safetext.cpp \
     $$PWD/utils/singleapplication.cpp \
     $$PWD/utils/squeezelabel.cpp \
     $$PWD/utils/treesortfilterproxymodel.cpp

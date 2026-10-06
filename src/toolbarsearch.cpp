@@ -70,6 +70,7 @@
 #include "opensearchengineaction.h"
 #include "opensearchdialog.h"
 #include "opensearchmanager.h"
+#include "safetext.h"
 #include "searchbutton.h"
 #include "webpage.h"
 #include "webview.h"
@@ -106,6 +107,10 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
 
     m_completer = new QCompleter(m_model, this);
     m_completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
+    // Suggestion strings come straight from the engine's network
+    // endpoint; keep markup-looking text literal.
+    m_completer->popup()->setItemDelegate(
+        new PlainTextItemDelegate(m_completer->popup()));
     setCompleter(m_completer);
 
     searchButton()->setShowMenuTriangle(true);
@@ -355,7 +360,8 @@ void ToolbarSearch::showEnginesMenu()
                     title = viewGuard && !viewGuard->title().isEmpty()
                             ? viewGuard->title() : url.host();
 
-                QAction *action = new QAction(tr("Add '%1'").arg(title), menuGuard);
+                // The advertised title is page-controlled.
+                QAction *action = new QAction(tr("Add '%1'").arg(SafeText::menu(title)), menuGuard);
                 connect(action, &QAction::triggered, this, &ToolbarSearch::addEngineFromUrl);
                 action->setData(url);
                 if (viewGuard)

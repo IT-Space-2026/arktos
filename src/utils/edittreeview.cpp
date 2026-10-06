@@ -29,11 +29,16 @@
 
 #include "edittreeview.h"
 
+#include "safetext.h"
+
 #include <qevent.h>
 
 EditTreeView::EditTreeView(QWidget *parent)
     : QTreeView(parent)
 {
+    // These views display web-controlled strings (page titles, cookie
+    // values); the delegate keeps markup-looking text literal.
+    setItemDelegate(new PlainTextItemDelegate(this));
 }
 
 void EditTreeView::keyPressEvent(QKeyEvent *event)

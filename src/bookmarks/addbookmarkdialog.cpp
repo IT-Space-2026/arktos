@@ -66,6 +66,7 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
+#include "safetext.h"
 
 #include <qheaderview.h>
 #include <qtreeview.h>
@@ -104,6 +105,9 @@ AddBookmarkDialog::AddBookmarkDialog(QWidget *parent, BookmarksManager *bookmark
     m_proxyModel->setSourceModel(model);
 
     m_treeView = new QTreeView(this);
+    // Folder names are derived from page titles; keep markup-looking
+    // text literal.
+    m_treeView->setItemDelegate(new PlainTextItemDelegate(m_treeView));
     m_treeView->setModel(m_proxyModel);
     m_treeView->expandAll();
     m_treeView->header()->setStretchLastSection(true);

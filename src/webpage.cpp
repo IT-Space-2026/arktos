@@ -102,12 +102,17 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
         QString shown = QString::fromUtf8(descriptorUrl.toEncoded());
         if (shown.size() > 256)
             shown = shown.left(256) + QLatin1String("…");
-        const QMessageBox::StandardButton choice = QMessageBox::question(
-            view, WebPage::tr("Add Search Engine"),
+        QMessageBox box(QMessageBox::Question,
+            WebPage::tr("Add Search Engine"),
             WebPage::tr("The page at %1 wants to add a search engine "
                         "described by:\n\n%2\n\nDownload and inspect "
                         "it?").arg(source, shown),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            QMessageBox::Yes | QMessageBox::No, view);
+        // URLs are page-controlled; render the prompt literally.
+        box.setTextFormat(Qt::PlainText);
+        box.setDefaultButton(QMessageBox::No);
+        const QMessageBox::StandardButton choice =
+            static_cast<QMessageBox::StandardButton>(box.exec());
         s_searchProviderPromptActive = false;
         if (choice == QMessageBox::Yes)
             ToolbarSearch::openSearchManager()->addEngine(descriptorUrl);
@@ -402,13 +407,17 @@ void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
         QString shown = QString::fromUtf8(url.toEncoded());
         if (shown.size() > 256)
             shown = shown.left(256) + QLatin1String("…");
-        const QMessageBox::StandardButton choice = QMessageBox::question(
-            parent, WebPage::tr("Open External Application"),
+        QMessageBox box(QMessageBox::Question,
+            WebPage::tr("Open External Application"),
             WebPage::tr("The page at %1 wants to open an external "
                         "application to handle this link:\n\n%2\n\n"
                         "Allow it?").arg(source, shown),
-            QMessageBox::Open | QMessageBox::Cancel,
-            QMessageBox::Cancel);
+            QMessageBox::Open | QMessageBox::Cancel, parent);
+        // URLs are page-controlled; render the prompt literally.
+        box.setTextFormat(Qt::PlainText);
+        box.setDefaultButton(QMessageBox::Cancel);
+        const QMessageBox::StandardButton choice =
+            static_cast<QMessageBox::StandardButton>(box.exec());
         s_externalPromptActive = false;
         if (choice != QMessageBox::Open)
             return;

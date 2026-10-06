@@ -74,6 +74,7 @@
 #include "locationbar.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "safetext.h"
 #include "streamingutils.h"
 #include "tabbar.h"
 #include "toolbarsearch.h"
@@ -702,9 +703,11 @@ void TabWidget::webViewTitleChanged(const QString &title)
     QString tabTitle = title;
     if (title.isEmpty())
         tabTitle = QString::fromUtf8(webView->url().toEncoded());
-    tabTitle.replace(QLatin1Char('&'), QLatin1String("&&"));
-    setTabText(index, tabTitle);
-    setTabToolTip(index, tabTitle);
+    // The title is page-controlled: '&' would become a mnemonic on the
+    // tab label and markup would render in the tooltip (tooltips are
+    // always rich-text capable).
+    setTabText(index, SafeText::menu(tabTitle));
+    setTabToolTip(index, SafeText::escaped(tabTitle));
     if (currentIndex() == index)
         emit setCurrentTitle(title);
     // History title updates are handled by WebPage::init (MIG06).
@@ -741,7 +744,7 @@ void TabWidget::aboutToShowRecentTabsMenu()
         action->setData(m_recentlyClosedTabsHistory.at(i));
         QIcon icon = BrowserApplication::icon(m_recentlyClosedTabs.at(i));
         action->setIcon(icon);
-        action->setText(m_recentlyClosedTabs.at(i).toString());
+        action->setText(SafeText::menu(m_recentlyClosedTabs.at(i).toString()));
         m_recentlyClosedTabsMenu->addAction(action);
     }
 }

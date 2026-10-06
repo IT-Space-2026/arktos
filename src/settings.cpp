@@ -72,6 +72,7 @@
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
+#include "safetext.h"
 #include "securestore.h"
 #include "tabwidget.h"
 #include "webpermissionmanager.h"
@@ -116,6 +117,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(userScriptsOpenButton, &QPushButton::clicked, this, &SettingsDialog::openUserScriptsFolder);
     connect(userScriptsReloadButton, &QPushButton::clicked, this, &SettingsDialog::reloadUserScripts);
 
+    // Extension names come from manifest.json and userscript names
+    // from filenames — markup-looking text stays literal.
+    extensionsTree->setItemDelegate(new PlainTextItemDelegate(extensionsTree));
+    userScriptsList->setItemDelegate(new PlainTextItemDelegate(userScriptsList));
+
     ExtensionManager *extensions = ExtensionManager::instance();
     connect(extensions, &ExtensionManager::changed, this, &SettingsDialog::refreshExtensions);
     connect(extensions, &ExtensionManager::userScriptsChanged, this, &SettingsDialog::refreshUserScripts);
@@ -131,6 +137,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     refreshUserScripts();
 
     // SEC05: auditable list of remembered site-permission decisions.
+    permissionsTree->setItemDelegate(new PlainTextItemDelegate(permissionsTree));
     WebPermissionManager *permissions = WebPermissionManager::instance();
     connect(permissionRemoveButton, &QPushButton::clicked,
             this, &SettingsDialog::removePermission);
@@ -755,7 +762,7 @@ void SettingsDialog::refreshExtensions()
                                     : (info.installed ? tr("Installed")
                                                       : tr("Session")));
         item->setData(0, Qt::UserRole, info.id);
-        item->setToolTip(0, info.path);
+        item->setToolTip(0, SafeText::escaped(info.path));
         if (info.id == selectedId)
             extensionsTree->setCurrentItem(item);
     }

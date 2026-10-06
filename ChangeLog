@@ -155,6 +155,10 @@ URL input perimeter (SEC09):
     The external download program option (Settings > Downloads) now only hands http/https/ftp urls to the configured command — file:, data:, blob:, javascript: and Arora's internal schemes are refused and fall back to the internal downloader. The url travels as exactly one percent-encoded argv element, so it cannot smuggle extra arguments into the handler.
     The single-instance socket moved out of the shared temp dir into a user-only location (the runtime dir, or a 0700 per-user directory as fallback) and is created with user-only access bits at bind time — other local accounts can no longer connect to it and push urls into the running browser.
 
+Chrome markup injection (SEC10):
+    Page-controlled strings can no longer inject markup into browser chrome. Qt widgets auto-detect HTML by default (Qt::AutoText), so a page title like "<img src=x onerror=...>" previously rendered as markup in tab tooltips, history menus, download items and dialogs. A new SafeText helper (src/utils/safetext.h) now handles every such sink: labels and message boxes that take web text use Qt::PlainText, tooltips and other AutoText contexts use a reliably-escaped form, and menu/action text is sanitized so '&' can't become a hidden mnemonic and a tab can't fake a shortcut column.
+    A PlainTextItemDelegate is installed on every view fed web-controlled models — history/bookmarks/download/autofill/cookie/search-engine trees and the location-bar and search-suggestion completer popups — so model strings are always painted literally. Tab tooltips, back/forward and recently-closed history menus, the download list, search suggestions, "Add '<engine>'" entries, adblock subscribe and external-application prompts, and user-agent menu entries are all covered by the audit.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

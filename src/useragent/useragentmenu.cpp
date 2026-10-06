@@ -30,6 +30,7 @@
 #include "useragentmenu.h"
 
 #include "browserapplication.h"
+#include "safetext.h"
 #include "webpage.h"
 
 #include <qactiongroup.h>
@@ -109,9 +110,11 @@ void UserAgentMenu::addActionsFromFile(const QString &fileName)
             QString userAgent = attributes.value(QLatin1String("useragent")).toString();
 
             QAction *action = new QAction(this);
-            action->setText(title);
+            // The xml is an installable data file — treat its strings
+            // as untrusted display text.
+            action->setText(SafeText::menu(title));
             action->setData(userAgent);
-            action->setToolTip(userAgent);
+            action->setToolTip(SafeText::escaped(userAgent));
             action->setCheckable(true);
             action->setChecked(userAgent == currentUserAgentString);
             connect(action, &QAction::triggered, this, &UserAgentMenu::changeUserAgent);

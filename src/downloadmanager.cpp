@@ -102,6 +102,10 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     , m_offTheRecord(false)
 {
     setupUi(this);
+    // Server-supplied file names may contain markup-looking text;
+    // the labels must always render it literally.
+    fileNameLabel->setTextFormat(Qt::PlainText);
+    downloadInfoLabel->setTextFormat(Qt::PlainText);
     QPalette p = downloadInfoLabel->palette();
     p.setColor(QPalette::Text, Qt::darkGray);
     downloadInfoLabel->setPalette(p);
@@ -350,10 +354,13 @@ bool DownloadItem::confirmSafeToSave(const QString &fileName)
     const QString source = m_url.host().isEmpty() ? m_url.toString() : m_url.host();
     text += QLatin1Char('\n') + tr("Keep this file only if you trust %1.").arg(source);
 
-    return QMessageBox::warning(this, tr("Download Security Warning"), text,
-                                QMessageBox::Save | QMessageBox::Discard,
-                                QMessageBox::Discard)
-           == QMessageBox::Save;
+    // The file name and MIME type are server-controlled; render the
+    // prompt literally so markup-looking content cannot spoof chrome.
+    QMessageBox box(QMessageBox::Warning, tr("Download Security Warning"),
+                    text, QMessageBox::Save | QMessageBox::Discard, this);
+    box.setTextFormat(Qt::PlainText);
+    box.setDefaultButton(QMessageBox::Discard);
+    return box.exec() == QMessageBox::Save;
 }
 
 void DownloadItem::removeExecutableBit(const QString &path)

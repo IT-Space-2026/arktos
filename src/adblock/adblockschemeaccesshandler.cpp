@@ -81,11 +81,15 @@ void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJo
 
     AdBlockSubscription *subscription = new AdBlockSubscription(job->requestUrl(), AdBlockManager::instance());
 
-    QMessageBox::StandardButton result = QMessageBox::question(0
-            , tr("Subscribe?")
-            , tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title())
-            , QMessageBox::Yes | QMessageBox::No
-            , QMessageBox::No);
+    // The subscription title arrives inside the abp:subscribe URL —
+    // page-controlled, so render it literally.
+    QMessageBox box(QMessageBox::Question, tr("Subscribe?"),
+            tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title()),
+            QMessageBox::Yes | QMessageBox::No);
+    box.setTextFormat(Qt::PlainText);
+    box.setDefaultButton(QMessageBox::No);
+    const QMessageBox::StandardButton result =
+        static_cast<QMessageBox::StandardButton>(box.exec());
     if (result == QMessageBox::No) {
         delete subscription;
     } else {
