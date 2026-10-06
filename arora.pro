@@ -14,11 +14,22 @@ unix {
     QMAKE_EXTRA_TARGETS += doxygen
 }
 
-# `make check` builds and runs the QtTest suite headless.
+# `make check` builds and runs the QtTest suite headless.  The
+# check-warnings gate runs first so a warning regression fails the
+# suite before a single test executes.
 check.target = check
 check.commands = cd autotests && ./runTests.sh
-check.depends = sub-src sub-autotests
+check.depends = check-warnings sub-src sub-autotests
 QMAKE_EXTRA_TARGETS += check
+
+# `make check-warnings` is the WRN01 zero-warning gate — it builds a
+# throwaway copy of the tree in /tmp (never polluting the in-tree
+# build) and fails if compiling the shipping code (src/ + tools/)
+# emits any warning or error.  No -Werror in the shipped config; this
+# target is the gate.
+check-warnings.target = check-warnings
+check-warnings.commands = ./.devin/check-warnings.sh
+QMAKE_EXTRA_TARGETS += check-warnings
 
 # `make check-coverage` runs the COV01 clang source-based coverage
 # harness — it builds its own instrumented copy of the tree, so it does

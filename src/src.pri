@@ -1,5 +1,17 @@
 CONFIG += qt warn_on
 
+# WRN01: warn_on already maps to -Wall -Wextra on gcc/clang; pin the
+# deprecation warnings too so the baseline survives a warn_on default
+# change.  No -Werror in the shipped config (packaging fragility) —
+# the zero-warning gate lives in `make check` via check-warnings.
+# (compiler family is tested via CONFIG — the clang spec also sets
+# CONFIG+=gcc, so clang must be checked first)
+clang {
+    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated-warnings -Wdeprecated-declarations
+} else:gcc {
+    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
+}
+
 win32:Debug:CONFIG += console
 
 include($$PWD/../coverage.pri)
