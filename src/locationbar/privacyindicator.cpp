@@ -19,6 +19,7 @@
 
 #include "privacyindicator.h"
 
+#include "browserapplication.h"
 #include "webview.h"
 
 #include <qpixmap.h>
@@ -45,7 +46,9 @@ void PrivacyIndicator::setWebView(WebView *webView)
 void PrivacyIndicator::mousePressEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
-    // TODO(MIG15): leaving private mode means
-    // BrowserApplication::setPrivate(false) plus replacing the window's
-    // pages — a page's profile cannot be switched in place.
+    // Leaving private mode: setPrivate(false) emits privacyChanged and
+    // each BrowserMainWindow::privacyChanged clears its tabs — a page's
+    // profile cannot be switched in place, so the off-the-record pages
+    // have to go.
+    BrowserApplication::setPrivate(false);
 }

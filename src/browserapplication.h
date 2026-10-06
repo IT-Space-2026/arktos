@@ -87,6 +87,10 @@ public:
     BrowserApplication(int &argc, char **argv);
     ~BrowserApplication();
     static BrowserApplication *instance();
+    // A run with any --option argument (smoke tests, --quit-after-load,
+    // --help, ...) is standalone: it does not take part in the
+    // single-instance handshake and always runs locally.
+    bool isStandalone() const;
     void loadSettings();
 
     BrowserMainWindow *mainWindow();
@@ -150,17 +154,12 @@ signals:
 
 private:
     QString parseArgumentUrl(const QString &string) const;
+    QString argumentUrl() const;
     void clean();
-
-    static HistoryManager *s_historyManager;
-    static DownloadManager *s_downloadManager;
-    static NetworkAccessManager *s_networkAccessManager;
-    static BookmarksManager *s_bookmarksManager;
-    static LanguageManager *s_languageManager;
-    static AutoFillManager *s_autoFillManager;
 
     QList<QPointer<BrowserMainWindow> > m_mainWindows;
     QByteArray m_lastSession;
+    bool m_standalone;
     bool quitting;
 
     Qt::MouseButtons m_eventMouseButtons;

@@ -63,6 +63,7 @@
 #include "history.h"
 
 #include "autosaver.h"
+#include "browserapplication.h"
 #include "historymanager.h"
 #include "treesortfilterproxymodel.h"
 
@@ -457,8 +458,12 @@ void HistoryDialog::open()
     QModelIndex index = tree->currentIndex();
     if (!index.parent().isValid())
         return;
-    // TODO(MIG15): record qApp->mouseButtons()/keyboardModifiers() on
-    // BrowserApplication so openUrl() can honor open-in-tab modifiers.
+    // Record the activating click's button/modifiers so openUrl() can
+    // honor open-in-tab behavior.
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        application->setEventMouseButtons(qApp->mouseButtons());
+        application->setEventKeyboardModifiers(qApp->keyboardModifiers());
+    }
     emit openUrl(index.data(HistoryModel::UrlRole).toUrl(),
                  index.data(HistoryModel::TitleRole).toString());
 }

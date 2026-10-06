@@ -423,9 +423,11 @@ void SettingsDialog::saveToSettings()
 
     // Re-apply: the profile-level settings (was
     // BrowserApplication::loadSettings()), then each live manager.
-    // TODO(MIG15): also apply to the off-the-record profile once
-    // private browsing creates pages on it.
+    // The off-the-record profile gets the same treatment when it
+    // exists — private browsing keeps user preferences.
     BrowserProfile::applySettings(BrowserProfile::normalProfile());
+    if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
+        BrowserProfile::applySettings(otrProfile);
     NetworkAccessManager::instance()->loadSettings();
     CookieJar::instance()->loadSettings();
     HistoryManager::instance()->loadSettings();

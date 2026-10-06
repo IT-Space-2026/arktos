@@ -118,8 +118,12 @@ void WebView::init()
             this, [this]() { loadFinished(); });
     connect(m_page, &WebPage::aboutToLoadUrl,
             this, &QWebEngineView::urlChanged);
-    // TODO(MIG15): reconnect BrowserApplication::zoomTextOnlyChanged ->
-    // applyZoom; Qt WebEngine has no text-only zoom mode.
+    // Qt WebEngine has no text-only zoom mode (Chromium zooms the whole
+    // page), but keep the zoom-text-only toggle re-applying the zoom so
+    // the preference stays wired to something visible.
+    if (BrowserApplication *application = BrowserApplication::instance())
+        connect(application, &BrowserApplication::zoomTextOnlyChanged,
+                this, &WebView::applyZoom);
     setAcceptDrops(true);
 
     // the zoom values (in percent) are chosen to be like in Mozilla Firefox 3

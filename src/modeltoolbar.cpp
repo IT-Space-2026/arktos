@@ -19,6 +19,7 @@
 
 #include "modeltoolbar.h"
 
+#include "browserapplication.h"
 #include "modelmenu.h"
 
 #include <qapplication.h>
@@ -148,9 +149,13 @@ bool ModelToolBar::eventFilter(QObject *object, QEvent *event)
         QToolButton *button = static_cast<QToolButton*>(object);
         Q_ASSERT(button);
 
-        // TODO(MIG15): BrowserApplication modifier tracking
-        // (setEventMouseButtons/setEventKeyboardModifiers) is gone until
-        // MIG15 — activations always behave like a plain left click.
+        // Record the click's button/modifiers so activated() consumers
+        // can honor open-in-tab behavior.
+        if (BrowserApplication *application = BrowserApplication::instance()) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            application->setEventMouseButtons(mouseEvent->button());
+            application->setEventKeyboardModifiers(mouseEvent->modifiers());
+        }
         QAction *action = button->defaultAction();
         Q_ASSERT(action);
         QModelIndex index = this->index(action);

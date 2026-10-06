@@ -62,6 +62,7 @@
 
 #include "browserapplication.h"
 
+#include "adblockmanager.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -73,6 +74,7 @@
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "schemeaccesshandler.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -84,6 +86,7 @@
 #include <qlibraryinfo.h>
 #include <qlocalsocket.h>
 #include <qmessagebox.h>
+#include <qset.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qwebengineprofile.h>
@@ -97,22 +100,37 @@
 
 // #define BROWSERAPPLICATION_DEBUG
 
-DownloadManager *BrowserApplication::s_downloadManager = 0;
-HistoryManager *BrowserApplication::s_historyManager = 0;
-NetworkAccessManager *BrowserApplication::s_networkAccessManager = 0;
-BookmarksManager *BrowserApplication::s_bookmarksManager = 0;
-LanguageManager *BrowserApplication::s_languageManager = 0;
-AutoFillManager *BrowserApplication::s_autoFillManager = 0;
-
 // MIG03: private browsing is a profile property under Qt WebEngine —
 // while enabled, new windows/pages are created on an off-the-record
 // profile instead of the default one.
 static bool s_isPrivate = false;
 
+// Profiles that already carry the application-level services — cookie
+// jar, custom scheme handlers, download manager, adblock interceptor —
+// so prepareProfile() never installs them twice.  The off-the-record
+// profile is created lazily, hence prepared on first use (MIG15: this
+// resolves the "install on the OTR profile too" TODOs left by
+// MIG03/MIG05/MIG09).
+static QSet<QWebEngineProfile *> s_preparedProfiles;
+
+static void prepareProfile(QWebEngineProfile *profile)
+{
+    if (!profile || s_preparedProfiles.contains(profile))
+        return;
+    s_preparedProfiles.insert(profile);
+    CookieJar::instance(profile);
+    SchemeAccessHandler::installAll(profile, qApp);
+    BrowserProfile::applySettings(profile);
+    DownloadManager::instance()->installOnProfile(profile);
+    AdBlockManager::instance()->installOnProfile(profile);
+}
+
 BrowserApplication::BrowserApplication(int &argc, char **argv)
     : SingleApplication(argc, argv)
+    , m_standalone(false)
     , quitting(false)
 {
+    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
     QCoreApplication::setApplicationVersion(QLatin1String("0.2"
@@ -122,26 +140,37 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     ));
 
 #ifndef AUTOTESTS
-    connect(this, &SingleApplication::messageReceived,
-            this, &BrowserApplication::messageReceived);
-
-    QStringList args = QCoreApplication::arguments();
-    if (args.count() > 1) {
-        QString message = parseArgumentUrl(args.last());
-        sendMessage(message.toUtf8());
+    // Any option-style argument makes the run standalone: smoke tests
+    // and --quit-after-load must always run locally, and --help /
+    // --version should not be forwarded to a running instance.
+    const QStringList args = QCoreApplication::arguments();
+    for (const QString &arg : args) {
+        if (arg.startsWith(QLatin1String("--"))) {
+            m_standalone = true;
+            break;
+        }
     }
-    // If we could connect to another Arora then exit
-    QString message = QString(QLatin1String("aroramessage://getwinid"));
-    if (sendMessage(message.toUtf8(), 500))
-        return;
+
+    if (!m_standalone) {
+        connect(this, &SingleApplication::messageReceived,
+                this, &BrowserApplication::messageReceived);
+
+        const QString url = argumentUrl();
+        if (!url.isEmpty())
+            sendMessage(url.toUtf8());
+        // If we could connect to another Arora then exit
+        QString message = QString(QLatin1String("aroramessage://getwinid"));
+        if (sendMessage(message.toUtf8(), 500))
+            return;
 
 #ifdef BROWSERAPPLICATION_DEBUG
-    qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arora";
+        qDebug() << "BrowserApplication::" << __FUNCTION__ << "I am the only arora";
 #endif
 
-    // not sure what else to do...
-    if (!startSingleServer())
-        return;
+        // not sure what else to do...
+        if (!startSingleServer())
+            return;
+    }
 #endif
 
 #if defined(Q_OS_MACOS)
@@ -153,9 +182,18 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     QDesktopServices::setUrlHandler(QLatin1String("http"), this, "openUrl");
 
     // Chromium defaults to 16 too, but keep the explicit value the
-    // WebKit port forced.
-    QWebEngineProfile::defaultProfile()->settings()->setFontSize(QWebEngineSettings::DefaultFontSize, 16);
-    QWebEngineProfile::defaultProfile()->settings()->setFontSize(QWebEngineSettings::DefaultFixedFontSize, 16);
+    // WebKit port forced.  Applied to the named browsing profile —
+    // QWebEngineProfile::defaultProfile() is off-the-record in Qt6, so
+    // it is the wrong target (MIG06).
+    QWebEngineSettings *engineSettings = BrowserProfile::normalProfile()->settings();
+    engineSettings->setFontSize(QWebEngineSettings::DefaultFontSize, 16);
+    engineSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, 16);
+
+    // Bring up the normal browsing profile and attach the per-profile
+    // services (prepareProfile applies the persisted settings over the
+    // baseline above).  The private profile is prepared lazily by
+    // webEngineProfile() the first time private browsing hands it out.
+    webEngineProfile();
 
     QSettings settings;
     settings.beginGroup(QLatin1String("sessions"));
@@ -174,19 +212,20 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 #ifndef AUTOTESTS
     QTimer::singleShot(0, this, &BrowserApplication::postLaunch);
 #endif
-    languageManager();
+
+    // Installs the translators for the persisted/system language.
+    connect(languageManager(), &LanguageManager::languageChanged,
+            this, &BrowserApplication::retranslate);
+    // The app-side fetch manager swaps to a fresh volatile cookie jar
+    // and marks its disk cache private while private browsing is on.
+    connect(this, &BrowserApplication::privacyChanged,
+            networkAccessManager(), &NetworkAccessManager::privacyChanged);
 }
 
 BrowserApplication::~BrowserApplication()
 {
     quitting = true;
-    delete s_downloadManager;
     qDeleteAll(m_mainWindows);
-    delete s_networkAccessManager;
-    delete s_bookmarksManager;
-    delete s_languageManager;
-    delete s_historyManager;
-    delete s_autoFillManager;
 }
 
 #if defined(Q_OS_MACOS)
@@ -206,6 +245,11 @@ BrowserApplication *BrowserApplication::instance()
     return dynamic_cast<BrowserApplication*>(QCoreApplication::instance());
 }
 
+bool BrowserApplication::isStandalone() const
+{
+    return m_standalone;
+}
+
 void BrowserApplication::retranslate()
 {
     bookmarksManager()->retranslate();
@@ -221,6 +265,18 @@ QString BrowserApplication::parseArgumentUrl(const QString &string) const
         return info.canonicalFilePath();
     }
     return string;
+}
+
+// The url operand is the last argument that is not an option — the
+// QCommandLineParser in main() treats all --flags as options.
+QString BrowserApplication::argumentUrl() const
+{
+    const QStringList args = QCoreApplication::arguments();
+    for (int i = args.count() - 1; i > 0; --i) {
+        if (!args.at(i).startsWith(QLatin1Char('-')))
+            return parseArgumentUrl(args.at(i));
+    }
+    return QString();
 }
 
 void BrowserApplication::messageReceived(QLocalSocket *socket)
@@ -284,7 +340,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 
 void BrowserApplication::quitBrowser()
 {
-    if (s_downloadManager && !downloadManager()->allowQuit())
+    if (!downloadManager()->allowQuit())
         return;
 
     if (QSettings().value(QLatin1String("tabs/confirmClosingMultipleTabs"), true).toBool()) {
@@ -327,18 +383,17 @@ void BrowserApplication::postLaunch()
         QSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         int startup = settings.value(QLatin1String("startupBehavior")).toInt();
-        QStringList args = QCoreApplication::arguments();
+        const QString url = argumentUrl();
 
-        if (args.count() > 1) {
-            QString argumentUrl = parseArgumentUrl(args.last());
+        if (!url.isEmpty()) {
             switch (startup) {
             case 2: {
                 restoreLastSession();
-                mainWindow()->tabWidget()->loadString(argumentUrl, TabWidget::NewSelectedTab);
+                mainWindow()->tabWidget()->loadString(url, TabWidget::NewSelectedTab);
                 break;
             }
             default:
-                mainWindow()->tabWidget()->loadString(argumentUrl);
+                mainWindow()->tabWidget()->loadString(url);
                 break;
             }
         } else {
@@ -364,9 +419,11 @@ void BrowserApplication::loadSettings()
     // file is uncompiled.  Dropped keys with no WebEngine equivalent:
     // enableInspector (devtools always available), userStyleSheet is
     // now injected as a QWebEngineScript, maximumPagesInCache (Chromium
-    // manages its own cache).  TODO(MIG15): also apply to the
-    // off-the-record profile once it exists.
-    BrowserProfile::applySettings(webEngineProfile());
+    // manages its own cache).  Applied to every profile the app has
+    // brought up — private browsing keeps user preferences too.
+    BrowserProfile::applySettings(BrowserProfile::normalProfile());
+    if (QWebEngineProfile *otr = BrowserProfile::privateProfileIfCreated())
+        BrowserProfile::applySettings(otr);
 }
 
 QList<BrowserMainWindow*> BrowserApplication::mainWindows()
@@ -384,10 +441,7 @@ bool BrowserApplication::allowToCloseWindow(BrowserMainWindow *window)
     if (mainWindows().count() > 1)
         return true;
 
-    if (s_downloadManager)
-        return downloadManager()->allowQuit();
-
-    return true;
+    return downloadManager()->allowQuit();
 }
 
 void BrowserApplication::clean()
@@ -565,26 +619,26 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
 {
     // MIG11: the lazy profile singletons live in BrowserProfile so
     // compiled modules share the same named "arora"/OTR profiles.
-    // TODO(MIG15): remove the now-dead s_privateProfile/s_defaultProfile
-    // statics.
-    if (isPrivate())
-        return BrowserProfile::privateProfile();
-    return BrowserProfile::normalProfile();
+    // prepareProfile() attaches the app-level services the first time a
+    // profile is handed out — this is where the off-the-record profile
+    // picks up its cookie jar, scheme handlers, download manager and
+    // adblock interceptor when private browsing starts.
+    QWebEngineProfile *profile = isPrivate()
+        ? BrowserProfile::privateProfile()
+        : BrowserProfile::normalProfile();
+    prepareProfile(profile);
+    return profile;
 }
 
 DownloadManager *BrowserApplication::downloadManager()
 {
     // MIG11: the dialog owns its application-wide singleton now.
-    // TODO(MIG15): remove the now-dead s_downloadManager static and the
-    // matching `delete` in the destructor.
     return DownloadManager::instance();
 }
 
 NetworkAccessManager *BrowserApplication::networkAccessManager()
 {
     // MIG04: the manager owns its application-wide singleton now.
-    // TODO(MIG15): remove the now-dead s_networkAccessManager static and
-    // the matching `delete` in the destructor.
     return NetworkAccessManager::instance();
 }
 
@@ -597,25 +651,18 @@ HistoryManager *BrowserApplication::historyManager()
 BookmarksManager *BrowserApplication::bookmarksManager()
 {
     // MIG07: the store owns its application-wide singleton now.
-    // TODO(MIG15): remove the now-dead s_bookmarksManager static and
-    // the matching `delete` in the destructor (instance() is qApp-owned).
     return BookmarksManager::instance();
 }
 
 LanguageManager *BrowserApplication::languageManager()
 {
     // MIG11: the manager owns its application-wide singleton now.
-    // TODO(MIG15): remove the now-dead s_languageManager static and the
-    // matching `delete` in the destructor, and restore the
-    // languageChanged -> retranslate() connection here.
     return LanguageManager::instance();
 }
 
 AutoFillManager *BrowserApplication::autoFillManager()
 {
     // MIG10: the store owns its application-wide singleton now.
-    // TODO(MIG15): remove the now-dead s_autoFillManager static and
-    // the matching `delete` in the destructor (instance() is qApp-owned).
     return AutoFillManager::instance();
 }
 

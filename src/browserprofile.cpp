@@ -42,13 +42,19 @@ QWebEngineProfile *normalProfile()
     return profile;
 }
 
+static QWebEngineProfile *s_privateProfile = 0;
+
 QWebEngineProfile *privateProfile()
 {
     // An unnamed profile is off-the-record: nothing hits disk.
-    static QWebEngineProfile *profile = 0;
-    if (!profile)
-        profile = new QWebEngineProfile(qApp);
-    return profile;
+    if (!s_privateProfile)
+        s_privateProfile = new QWebEngineProfile(qApp);
+    return s_privateProfile;
+}
+
+QWebEngineProfile *privateProfileIfCreated()
+{
+    return s_privateProfile;
 }
 
 // QWebEngineScript has no "replace" — remove a previously installed

@@ -63,6 +63,8 @@
 
 #include "modelmenu.h"
 
+#include "browserapplication.h"
+
 #include <qabstractitemmodel.h>
 #include <qapplication.h>
 #include <qdrag.h>
@@ -309,9 +311,12 @@ void ModelMenu::mousePressEvent(QMouseEvent *event)
 
 void ModelMenu::mouseReleaseEvent(QMouseEvent *event)
 {
-    // TODO(MIG15): record event->button()/modifiers() on
-    // BrowserApplication so activated() consumers can honor
-    // open-in-tab modifiers (was setEventMouseButtons/KeyboardModifiers).
+    // Record the click's button/modifiers so activated() consumers can
+    // honor open-in-tab behavior (consumed by TabWidget::loadUrl).
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        application->setEventMouseButtons(event->button());
+        application->setEventKeyboardModifiers(event->modifiers());
+    }
     QMenu::mouseReleaseEvent(event);
 }
 

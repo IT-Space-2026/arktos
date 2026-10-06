@@ -63,6 +63,8 @@
 #include "networkaccessmanager.h"
 
 #include "acceptlanguagedialog.h"
+#include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "networkcookiejar.h"
 #include "networkdiskcache.h"
 #include "networkproxyfactory.h"
@@ -103,8 +105,8 @@ NetworkAccessManager::NetworkAccessManager(QObject *parent)
     connect(this, SIGNAL(sslErrors(QNetworkReply*, const QList<QSslError>&)),
             SLOT(sslErrors(QNetworkReply*, const QList<QSslError>&)));
 #endif
-    // TODO(MIG15): connect BrowserApplication::privacyChanged to
-    // privacyChanged() once BrowserApplication is compiled again.
+    // BrowserApplication's constructor connects its privacyChanged
+    // signal to the privacyChanged() slot of this singleton.
     loadSettings();
 
     // Web cookies live in the profile's QWebEngineCookieStore (MIG03);
@@ -186,8 +188,13 @@ void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthent
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__ << reply;
 #endif
-    // TODO(MIG15): parent these dialogs on BrowserApplication::mainWindow().
+    // Parent the dialog on the application's main window when one is
+    // already up; under a plain QApplication (autotests, the standalone
+    // smoke harness) the active window is the best we have.
     QWidget *mainWindow = QApplication::activeWindow();
+    if (BrowserApplication *application = BrowserApplication::instance())
+        if (!application->mainWindows().isEmpty())
+            mainWindow = application->mainWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -215,6 +222,9 @@ void NetworkAccessManager::proxyAuthenticationRequired(const QNetworkProxy &prox
     qDebug() << __FUNCTION__;
 #endif
     QWidget *mainWindow = QApplication::activeWindow();
+    if (BrowserApplication *application = BrowserApplication::instance())
+        if (!application->mainWindows().isEmpty())
+            mainWindow = application->mainWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -267,6 +277,9 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
     qDebug() << __FUNCTION__;
 #endif
     QWidget *mainWindow = QApplication::activeWindow();
+    if (BrowserApplication *application = BrowserApplication::instance())
+        if (!application->mainWindows().isEmpty())
+            mainWindow = application->mainWindow();
 
     QSettings settings;
     QList<QSslCertificate> ca_merge = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());

@@ -28,6 +28,7 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
+#include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "clearprivatedata.h"
@@ -54,6 +55,7 @@
 #include "xbelwriter.h"
 
 #include <QtCore/QBuffer>
+#include <QtCore/QCommandLineParser>
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -110,72 +112,84 @@ static int adblockDecisionKind(const AdBlockDecision &decision)
 }
 #endif
 
-// TODO(MIG15): replace this skeleton with BrowserApplication —
-// single-instance via QLocalServer/QLocalSocket, session restore,
-// QCommandLineParser, translator loading, WebEngine init order.
-// TODO(MIG14): replace the stub window below with BrowserMainWindow.
 int main(int argc, char **argv)
 {
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
 
-    // Custom schemes (arora-file://) must be declared before QApplication.
+    // Custom URL schemes must be registered before the application
+    // exists: arora-file:// directory listings (MIG04), abp:subscribe
+    // adblock links (MIG09), arora-resource:// bundled $redirect= stubs
+    // (ADB01).  Apart from this constraint Qt6 WebEngineWidgets needs
+    // no explicit initialize() call — QtWebEngineQuick::initialize()
+    // is for the Quick module only; the engine spins up lazily with
+    // the first page.
     SchemeAccessHandler::registerUrlSchemes();
-    // abp:subscribe?... links for AdBlock subscriptions (MIG09).
     AdBlockSchemeAccessHandler::registerUrlScheme();
-    // arora-resource:// serves the bundled $redirect= adblock stubs.
     AdBlockResourceHandler::registerUrlScheme();
 
-    QApplication::setApplicationName(QStringLiteral("arora"));
-    QApplication::setOrganizationName(QStringLiteral("Arora"));
-
-    QApplication application(argc, argv);
-
-    const QStringList args = application.arguments();
-    // --adblock-smoke / --adblock-list-smoke add custom rules and
-    // download lists, which are persisted to the app data dir; isolate
-    // the writes so the test leaves no residue.
-    if (args.contains(QLatin1String("--adblock-smoke"))
-        || args.contains(QLatin1String("--adblock-list-smoke"))
-        || args.contains(QLatin1String("--adblock-rust-smoke"))
-        || args.contains(QLatin1String("--autofill-smoke"))
-        || args.contains(QLatin1String("--settings-smoke"))
-        || args.contains(QLatin1String("--find-smoke"))
-        || args.contains(QLatin1String("--source-smoke"))
-        || args.contains(QLatin1String("--browser-smoke")))
+    // The --*-smoke development runs keep their writes out of the
+    // user's real data and settings locations.  argv is scanned before
+    // the application exists because the BrowserApplication
+    // constructor already brings up the browsing profile and its
+    // managers.
+    bool smokeRun = false;
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg(argv[i]);
+        if (arg.startsWith("--") && arg.endsWith("-smoke"))
+            smokeRun = true;
+    }
+    if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
 
-    // MIG03: app-wide profile wiring. BrowserApplication will own this in
-    // MIG15.  The normal browsing profile must be a NAMED profile:
-    // QWebEngineProfile::defaultProfile() is off-the-record (nothing —
-    // cookies, cache, storage — persists to disk).  The named "arora"
-    // profile gives normal browsing its persistent state; private
-    // browsing gets BrowserProfile::privateProfile().  MIG11: the lazy
-    // singletons live in BrowserProfile/CookieJar so the settings dialog
-    // and clear-private-data reach the same objects.
-    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+    BrowserApplication application(argc, argv);
+
+    // A non-standalone run that could not take the single-instance
+    // socket already forwarded its url to the running instance and is
+    // done.  Standalone runs (any --option) never join the handshake.
+    if (!application.isStandalone() && !application.isRunning())
+        return 0;
+
+    QCommandLineParser parser;
+    parser.setApplicationDescription(
+        QCoreApplication::translate("main",
+            "Arora — a lightweight cross-platform web browser."));
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addPositionalArgument(
+        QLatin1String("url"),
+        QCoreApplication::translate("main", "Url to open on startup."),
+        QStringLiteral("[url...]"));
+    // Internal development/verification flags.
+    const char *const internalOptions[] = {
+        "quit-after-load",
+        "nam-smoke", "history-smoke", "download-smoke", "cookie-smoke",
+        "bookmarks-smoke", "search-smoke", "adblock-smoke",
+        "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
+        "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
+        "app-smoke",
+    };
+    for (const char *option : internalOptions)
+        parser.addOption(QCommandLineOption(QLatin1String(option)));
+    parser.process(application);
+
+    if (!application.isStandalone()) {
+        // Normal launch: postLaunch() (queued by the constructor)
+        // applies the startup behavior — homepage, last-session
+        // restore or the url operand — to this first window.
+        application.newMainWindow();
+        return application.exec();
+    }
+
+    // Standalone development harness: a stub window hosting a WebView
+    // on the browsing profile drives --quit-after-load and the smokes.
+    const QStringList args = application.arguments();
+
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
     CookieJar *cookieJar = CookieJar::instance(profile);
-    SchemeAccessHandler::installAll(profile, &application);
-    // MIG11: apply the persisted websettings/network groups (was
-    // BrowserApplication::loadSettings()).
-    BrowserProfile::applySettings(profile);
-
-    // MIG04: application-side fetch manager (opensearch, adblock
-    // subscriptions).  TODO(MIG15): BrowserApplication delegates to
-    // the singleton.
-    NetworkAccessManager *networkAccessManager = NetworkAccessManager::instance();
-
-    // MIG05: intercepts every profile it is installed on and turns
-    // downloadRequested into DownloadItem rows.  TODO(MIG15): also call
-    // installOnProfile() on the off-the-record private profile.
-    DownloadManager *downloadManager = DownloadManager::instance();
-    downloadManager->installOnProfile(profile);
-
-    // MIG09: profile-level url request interceptor replaces the
-    // WebKit-era QNetworkAccessManager hook for ad blocking; also
-    // installs the abp: subscription scheme handler.  TODO(MIG15):
-    // install on the off-the-record private profile too.
-    AdBlockManager::instance()->installOnProfile(profile);
+    NetworkAccessManager *networkAccessManager =
+        BrowserApplication::networkAccessManager();
+    DownloadManager *downloadManager = BrowserApplication::downloadManager();
 
     QMainWindow window;
     window.setWindowTitle(QStringLiteral("Arora"));
@@ -183,9 +197,53 @@ int main(int argc, char **argv)
     WebView *view = new WebView(profile, &window);
     window.setCentralWidget(view);
 
-    const QString firstUrl = (args.count() > 1 && !args.at(1).startsWith(QLatin1Char('-')))
-            ? args.at(1) : QStringLiteral("about:blank");
+    const QString firstUrl = parser.positionalArguments()
+        .value(0, QStringLiteral("about:blank"));
     view->loadUrl(QUrl(firstUrl));
+
+    // Headless verification for MIG15: exercise the real application
+    // path — BrowserApplication brings up the profile and services,
+    // opens a BrowserMainWindow and a tab that loads a fixture page,
+    // the title propagating to the window.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--app-smoke"))) {
+        // Suppress postLaunch()'s startup behavior (goHome / session
+        // restore) so the fixture load is the only navigation.
+        QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 1);
+        BrowserMainWindow *browserWindow = application.newMainWindow();
+        WebView *tab = browserWindow->currentTab();
+
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-app-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "app-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><head><title>app-smoke-page</title>"
+                          "</head><body>app</body></html>");
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+
+        QObject::connect(tab, &QWebEngineView::loadFinished, &application,
+                         [&application, tab, fixtureUrl, fixturePath,
+                          browserWindow](bool ok) {
+            if (!ok || tab->url() != fixtureUrl)
+                return;
+            const bool pass = browserWindow->windowTitle()
+                .contains(QLatin1String("app-smoke-page"));
+            qInfo() << "app-smoke:" << (pass ? "PASS" : "FAIL")
+                    << tab->url() << browserWindow->windowTitle();
+            QFile::remove(fixturePath);
+            application.exit(pass ? 0 : 1);
+        });
+        QTimer::singleShot(15000, &application, [&application]() {
+            qInfo() << "app-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        browserWindow->tabWidget()->loadUrl(fixtureUrl,
+                                            TabWidget::CurrentTab);
+    }
 
     // Headless verification hook: exit once the first page load
     // succeeds so CI can prove WebEngine ran (autotests/smoke style).

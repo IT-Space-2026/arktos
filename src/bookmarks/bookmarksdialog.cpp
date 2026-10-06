@@ -62,6 +62,7 @@
 
 #include "bookmarksdialog.h"
 
+#include "browserapplication.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -189,9 +190,12 @@ void BookmarksDialog::openBookmark(TabWidget::OpenUrlIn tab)
 
 void BookmarksDialog::openBookmark()
 {
-    // TODO(MIG15): BrowserApplication modifier tracking
-    // (setEventMouseButtons/setEventKeyboardModifiers) is gone until
-    // MIG15 — UserOrCurrent always lands on the current tab for now.
+    // Record the activating click's button/modifiers so the url opener
+    // can honor open-in-tab behavior.
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        application->setEventMouseButtons(qApp->mouseButtons());
+        application->setEventKeyboardModifiers(qApp->keyboardModifiers());
+    }
     openBookmark(TabWidget::UserOrCurrent);
 }
 

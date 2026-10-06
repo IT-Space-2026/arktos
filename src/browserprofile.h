@@ -38,6 +38,12 @@ QWebEngineProfile *normalProfile();
 // nothing — cookies, cache, storage — persists to disk.
 QWebEngineProfile *privateProfile();
 
+// The private profile only if it has already been brought up —
+// nullptr otherwise.  For callers that want to adjust an existing
+// private session without forcing one into existence (settings
+// re-application).
+QWebEngineProfile *privateProfileIfCreated();
+
 // Applies the persisted preferences to the profile's
 // QWebEngineSettings (was BrowserApplication::loadSettings() writing
 // to QWebSettings::globalSettings()):
@@ -49,8 +55,6 @@ QWebEngineProfile *privateProfile();
 // Settings with no WebEngine equivalent (DeveloperExtrasEnabled,
 // ZoomTextOnly, maximumPagesInCache, the access-keys feature) are
 // intentionally not applied; see MIG11 notes in .devin/Arora-Task.md.
-// TODO(MIG15): also apply to privateProfile() once private browsing
-// creates pages on it.
 void applySettings(QWebEngineProfile *profile);
 
 } // namespace BrowserProfile

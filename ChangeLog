@@ -68,6 +68,12 @@ Browser chrome (MIG14):
     The application class (BrowserApplication) is now compiled in and supplies the profile-aware new window/tab plumbing: target=_blank links and Ctrl/Shift-modified link clicks open background or foreground tabs through WebPage::createWindow, and private-browsing windows run on the off-the-record WebEngine profile.
     Feature deltas vs the WebKit version: "zoom text only" is kept as a preference but WebEngine always zooms the whole page; the WebKit page inspector shortcut and global icon database are gone; the text-encoding menu still applies per page via QWebEngineSettings; session save/restore serializes each tab's WebEngine history items explicitly since they have no stream operators.
 
+App entry (MIG15):
+    `arora` runs as the real application again instead of the migration skeleton: main() constructs BrowserApplication, single-instance forwarding is back (a second `arora <url>` hands the url to the running instance and exits), session save/restore works, and the startup-behavior preference (homepage / blank page / restore session / url operand) is honored. Command-line handling uses QCommandLineParser — `--help` and `--version` work, and any `--option` run is standalone and never forwarded to a running instance.
+    Application-level services are now attached per WebEngine profile: the named "arora" profile gets the cookie jar, the custom scheme handlers, the download manager and the adblock interceptor at startup, and the off-the-record private profile picks up the same wiring the first time private browsing is used. Settings changes reapply to both profiles.
+    Restored behavior that waited on the application object: clicking the private-browsing indicator exits private mode; Ctrl/Shift/Alt/middle-click in history and bookmark menus/toolbars opens entries in new or background tabs again; non-http navigations (mailto:, ftp:, ...) go through the recursion-guarded desktop handler; auth, proxy and SSL dialogs parent on the main window when one exists; language changes retranslate bookmarks and network settings.
+    Settings and application data moved to the "Arora" application scope (the Qt 6 skeleton used lowercase "arora").
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

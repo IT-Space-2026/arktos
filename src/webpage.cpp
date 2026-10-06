@@ -21,6 +21,7 @@
 #include "webpage.h"
 
 #include "autofillmanager.h"
+#include "browserapplication.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
@@ -140,8 +141,8 @@ void WebPage::init()
 
     // Downloads are handled application-wide: DownloadManager hooks
     // QWebEngineProfile::downloadRequested for each profile it is
-    // installed on (MIG05).  TODO(MIG15): install it on the
-    // off-the-record profile too when private browsing is wired up.
+    // installed on (MIG05) — BrowserApplication installs it on both the
+    // normal and the off-the-record private profile (MIG15).
     connect(this, &QWebEnginePage::loadingChanged,
             this, &WebPage::handleLoadingChanged);
 
@@ -245,8 +246,12 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     QString scheme = url.scheme();
     if (scheme == QLatin1String("mailto")
         || scheme == QLatin1String("ftp")) {
-        // TODO(MIG15): BrowserApplication::instance()->askDesktopToOpenUrl(url)
-        QDesktopServices::openUrl(url);
+        // askDesktopToOpenUrl records the url so a scheme handler that
+        // loops back into the browser is detected and dropped.
+        if (BrowserApplication *application = BrowserApplication::instance())
+            application->askDesktopToOpenUrl(url);
+        else
+            QDesktopServices::openUrl(url);
         return false;
     }
 

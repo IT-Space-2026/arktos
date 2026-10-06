@@ -69,8 +69,8 @@ LanguageManager *LanguageManager::instance()
         manager->addLocaleDirectory(QLatin1String(PKGDATADIR) + QLatin1String("/locale"));
 #endif
         manager->loadLanguageFromSettings();
-        // TODO(MIG15): connect languageChanged to
-        // BrowserApplication::retranslate once it is compiled again.
+        // languageChanged is connected to BrowserApplication::
+        // retranslate() by the BrowserApplication constructor.
     }
     return manager;
 }

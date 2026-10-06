@@ -30,7 +30,7 @@ exists(../.git/HEAD) {
 #
 # MIG14 moved in: aboutdialog, browsermainwindow, tabbar, tabwidget,
 # useragent.pri — plus browserapplication, which the chrome needs for
-# linking (full app-entry wiring is still MIG15).
+# linking (MIG15 wired it up as the real application object).
 #
 include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
