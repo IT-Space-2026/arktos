@@ -51,6 +51,7 @@ private slots:
     void download();
     void removePolicy_data();
     void removePolicy();
+    void modelAccessors();
     void helpers();
 };
 
@@ -279,6 +280,52 @@ void tst_DownloadManager::removePolicy()
     QTableView *view = manager.findChild<QTableView*>();
     QVERIFY(view);
     QCOMPARE(view->model()->rowCount(), removePolicy == DownloadManager::Never ? 1 : 0);
+}
+
+// DownloadModel row accessors: flags, mime data, removeRows — plus the
+// manager counters over a finished download.
+void tst_DownloadManager::modelAccessors()
+{
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    {
+        SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
+        QTableView *view = manager.findChild<QTableView*>();
+        QVERIFY(view);
+        QAbstractItemModel *model = view->model();
+        QVERIFY(model);
+
+        // Out-of-range accessors on an empty model.
+        QCOMPARE(model->data(QModelIndex()), QVariant());
+        QCOMPARE(model->flags(QModelIndex()), Qt::ItemFlags());
+        QCOMPARE(model->rowCount(model->index(0, 0)), 0);
+
+        QWebEnginePage *page = manager.retryPage(false);
+        manager.download(page, downloadUrl());
+        QTRY_COMPARE(model->rowCount(), 1);
+
+        QProgressBar *bar = manager.findChild<QProgressBar*>();
+        QVERIFY(bar);
+        QTRY_VERIFY(bar->value() == bar->maximum());
+        QCOMPARE(manager.activeDownloads(), 0);
+        QVERIFY(manager.allowQuit());
+
+        const QModelIndex index = model->index(0, 0);
+        QVERIFY(index.isValid());
+        // Finished downloads produce no tooltip and are draggable.
+        QCOMPARE(model->data(index, Qt::ToolTipRole), QVariant());
+        QVERIFY(model->flags(index) & Qt::ItemIsDragEnabled);
+        // removeRows under a valid parent is refused outright.
+        QCOMPARE(model->removeRows(0, 1, index), false);
+        QMimeData *mime = model->mimeData(QModelIndexList() << index);
+        QVERIFY(mime);
+        QVERIFY(mime->hasUrls());
+        delete mime;
+
+        QVERIFY(model->removeRows(0, 1));
+        QCOMPARE(model->rowCount(), 0);
+    }
 }
 
 // static helpers

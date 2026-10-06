@@ -3,6 +3,7 @@ SUBDIRS  = \
     adblockmanager \
     adblocknetwork \
     adblockpage \
+    adblockrequestinterceptor \
     adblockrule \
     adblocksubscription
 

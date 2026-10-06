@@ -101,6 +101,9 @@ Coverage (COV01):
 Coverage (COV02):
     Three new test programs raise coverage of the highest-value untested logic: tst_networkcookiejar exercises the application network cookie jar (domain matching including the two-level-domain blacklist, path/secure/expiry filtering, state save/restore), tst_cookiemodel covers the cookie and cookie-exception table models, and tst_bookmarksmodel covers the bookmarks tree model including drag-and-drop mime data and undo-stack edits. Overall src/ line coverage is now 65.8% — the cookie exception model is at 96%, the network cookie jar at 93%, the bookmarks model at 84%.
 
+Coverage (COV03):
+    Four new test programs plus a DownloadModel extension cover the WebEngine-adjacent logic end to end offscreen: tst_schemehandlers drives the arora-file, arora-resource and abp:subscribe custom scheme handlers through real page loads (directory listings, stub-resource canonicalization, the subscribe confirmation dialog), tst_adblockrequestinterceptor runs the profile's request interceptor against an in-process HTTP server (subresource block, @@ exception, $redirect to bundled stubs, $removeparam rewriting, main-frame refusal), tst_locationbar exercises the location bar's modifier suffixes, url tracking, Escape/focus-out restore, drag & drop, site icon and privacy indicator, and tst_webview covers zoom, javascript: urls, Ctrl+wheel zoom, navigation mouse buttons, url drops and asynchronous in-page find. src/ line coverage is now 69.4% — the adblock interceptor is at 96%, the arora-resource handler at 100%, the file-access handler at 90% and the location bar at 91%.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
