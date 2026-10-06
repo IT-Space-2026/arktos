@@ -171,6 +171,8 @@ void OpenSearchManager::removeEngine(const QString &name)
     m_engines[name] = 0;
     m_engines.remove(name);
 
+    m_suggestionsEnabled.removeAll(name);
+
     QString file = QDir(enginesDirectory()).filePath(generateEngineFileName(name));
     QFile::remove(file);
 
@@ -240,6 +242,8 @@ void OpenSearchManager::save()
     }
     settings.endArray();
 
+    settings.setValue(QLatin1String("suggestions"), m_suggestionsEnabled);
+
     settings.endGroup();
 }
 
@@ -282,12 +286,41 @@ void OpenSearchManager::load()
     }
     settings.endArray();
 
+    m_suggestionsEnabled = settings.value(QLatin1String("suggestions")).toStringList();
+
     settings.endGroup();
 
     if (!m_engines.contains(m_current) && m_engines.count() > 0)
         m_current = m_engines.keys().at(0);
 
     emit currentEngineChanged();
+}
+
+bool OpenSearchManager::suggestionsEnabledForEngine(const QString &engineName) const
+{
+    return m_suggestionsEnabled.contains(engineName);
+}
+
+void OpenSearchManager::setSuggestionsEnabledForEngine(const QString &engineName, bool enabled)
+{
+    if (!m_engines.contains(engineName))
+        return;
+
+    if (enabled == suggestionsEnabledForEngine(engineName))
+        return;
+
+    if (enabled)
+        m_suggestionsEnabled.append(engineName);
+    else
+        m_suggestionsEnabled.removeAll(engineName);
+
+    emit suggestionsEnabledChanged();
+    emit changed();
+}
+
+QStringList OpenSearchManager::suggestionsEnabledEngines() const
+{
+    return m_suggestionsEnabled;
 }
 
 void OpenSearchManager::restoreDefaults()

@@ -30,6 +30,7 @@
 #include "toolbarsearch.h"
 #include "searchbar.h"
 #include "searchbutton.h"
+#include "networkaccessmanager.h"
 #include "opensearchmanager.h"
 #include "opensearchengine.h"
 #include "webview.h"
@@ -61,12 +62,14 @@ private slots:
     void recentSearches();
     void completerPaths();
     void enginesMenu();
+    void suggestionsOptIn();
     void searchBarAnimation();
 };
 
 void tst_ToolbarSearch::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_toolbarsearch");
+    QStandardPaths::setTestModeEnabled(true);
     QSettings settings;
     settings.clear();
     ToolbarSearch::openSearchManager()->restoreDefaults();
@@ -161,6 +164,116 @@ void tst_ToolbarSearch::enginesMenu()
     });
     QTest::mouseClick(search.searchButton(), Qt::LeftButton);
     QTest::qWait(150);
+}
+
+// SEC11: suggestions are a per-engine opt-in — with the flag off (the
+// default) typing must produce ZERO requests on the app-side NAM, and
+// the opt-in of one engine must not leak onto another.
+void tst_ToolbarSearch::suggestionsOptIn()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+
+    // A hermetic engine: its suggest endpoint is a local file so the
+    // enabled-path check never leaves the box.
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-suggest-test.json"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("[\"hi\",[\"hi there\"]]");
+    }
+    OpenSearchEngine *capable = new OpenSearchEngine;
+    capable->setName(QLatin1String("suggest-test"));
+    capable->setSearchUrlTemplate(
+        QLatin1String("http://suggest-test.invalid/q={searchTerms}"));
+    capable->setSuggestionsUrlTemplate(
+        QLatin1String("file://") + fixturePath
+        + QLatin1String("?q={searchTerms}"));
+    QVERIFY(capable->providesSuggestions());
+    QVERIFY(manager->addEngine(capable));
+
+    OpenSearchEngine *incapable = new OpenSearchEngine;
+    incapable->setName(QLatin1String("nosuggest-test"));
+    incapable->setSearchUrlTemplate(
+        QLatin1String("http://nosuggest-test.invalid/q={searchTerms}"));
+    QVERIFY(!incapable->providesSuggestions());
+    QVERIFY(manager->addEngine(incapable));
+
+    // Off by default for every engine — including ones that could serve.
+    const QStringList names = manager->allEnginesNames();
+    for (const QString &name : names)
+        QVERIFY2(!manager->suggestionsEnabledForEngine(name),
+                 qPrintable(name));
+
+    // Every app-side request the NAM creates reports through this
+    // signal — a suggest fetch cannot hide from it.
+    NetworkAccessManager *nam = NetworkAccessManager::instance();
+    QStringList requestUrls;
+    const QMetaObject::Connection requestConn =
+        QObject::connect(nam, &NetworkAccessManager::requestCreated, nam,
+            [&requestUrls](QNetworkAccessManager::Operation,
+                           const QNetworkRequest &request, QNetworkReply *) {
+                requestUrls << request.url().toString();
+            });
+
+    manager->setCurrentEngineName(capable->name());
+    {
+        ToolbarSearch search;
+        QTest::keyClicks(&search, QLatin1String("secret passw"));
+        QTest::qWait(500); // past the 200ms debounce timer
+        QCOMPARE(requestUrls.count(), 0);
+    }
+
+    // Opt in for this engine only: typing now reaches the suggest URL.
+    manager->setSuggestionsEnabledForEngine(capable->name(), true);
+    QVERIFY(manager->suggestionsEnabledEngines()
+            == QStringList() << capable->name());
+    {
+        ToolbarSearch search;
+        QTest::keyClicks(&search, QLatin1String("hi"));
+        QTRY_VERIFY_WITH_TIMEOUT(!requestUrls.isEmpty(), 3000);
+        QVERIFY(requestUrls.last().contains(fixturePath));
+    }
+
+    // Switching to an engine that is not opted in silences the path
+    // again even though a suggest-capable engine was enabled before.
+    manager->setCurrentEngineName(incapable->name());
+    {
+        ToolbarSearch search;
+        const int baseline = requestUrls.count();
+        QTest::keyClicks(&search, QLatin1String("still secret"));
+        QTest::qWait(500);
+        QCOMPARE(requestUrls.count(), baseline);
+    }
+
+    // Back on the enabled engine the opt-in applies again, and revoking
+    // it mid-flight stops further requests.
+    manager->setCurrentEngineName(capable->name());
+    {
+        ToolbarSearch search;
+        const int baseline = requestUrls.count();
+        QTest::keyClicks(&search, QLatin1String("go"));
+        QTRY_VERIFY_WITH_TIMEOUT(requestUrls.count() > baseline, 3000);
+        manager->setSuggestionsEnabledForEngine(capable->name(), false);
+        const int revoked = requestUrls.count();
+        QTest::keyClicks(&search, QLatin1String(" more"));
+        QTest::qWait(500);
+        QCOMPARE(requestUrls.count(), revoked);
+    }
+
+    // Persistence: save() serializes the opt-in list under openSearch.
+    manager->setSuggestionsEnabledForEngine(capable->name(), true);
+    manager->save();
+    QCOMPARE(QSettings().value(QLatin1String("openSearch/suggestions"))
+                 .toStringList(),
+             QStringList() << capable->name());
+    manager->setSuggestionsEnabledForEngine(capable->name(), false);
+    manager->save();
+
+    QObject::disconnect(requestConn);
+    manager->removeEngine(incapable->name());
+    manager->removeEngine(capable->name());
+    QFile::remove(fixturePath);
 }
 
 // showFind/animateHide run the QTimeLine geometry animation.

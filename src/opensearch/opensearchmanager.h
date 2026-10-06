@@ -42,6 +42,7 @@ class OpenSearchManager : public QObject
 signals:
     void changed();
     void currentEngineChanged();
+    void suggestionsEnabledChanged();
 
 public:
     OpenSearchManager(QObject *parent = 0);
@@ -59,6 +60,13 @@ public:
     OpenSearchEngine *engine(const QString &name);
 
     bool engineExists(const QString &name);
+
+    // SEC11: suggestion requests stream every keystroke to the
+    // engine's suggest endpoint, so they are an explicit per-engine
+    // opt-in — nothing is sent until an engine is enabled here.
+    bool suggestionsEnabledForEngine(const QString &engineName) const;
+    void setSuggestionsEnabledForEngine(const QString &engineName, bool enabled);
+    QStringList suggestionsEnabledEngines() const;
 
     QUrl convertKeywordSearchToUrl(const QString &string);
     OpenSearchEngine *engineForKeyword(const QString &keyword) const;
@@ -94,6 +102,7 @@ private:
 
     QHash<QString, OpenSearchEngine*> m_engines;
     QHash<QString, OpenSearchEngine*> m_keywords;
+    QStringList m_suggestionsEnabled;
     QString m_current;
 };
 

@@ -31,6 +31,9 @@
 #include "browserapplication.h"
 #include "browserprofile.h"
 #include "cookiejar.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
+#include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -44,6 +47,7 @@ private slots:
 
     void constructDefaults();
     void saveAndReload();
+    void suggestionsCheckbox();
     void subDialogButtons();
     void setHomeToCurrentPage();
 };
@@ -128,6 +132,47 @@ void tst_SettingsDialog::saveAndReload()
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }
+}
+
+// SEC11: the Privacy tab's Search Suggestions checkbox is bound to the
+// current engine's per-engine opt-in on the OpenSearchManager.
+void tst_SettingsDialog::suggestionsCheckbox()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+
+    // The checkbox only makes sense for an engine with a suggest
+    // endpoint — pick one (bundled Google/Wikipedia have them).
+    OpenSearchEngine *engine = manager->currentEngine();
+    if (!engine || !engine->providesSuggestions()) {
+        for (const QString &name : manager->allEnginesNames()) {
+            if (manager->engine(name)->providesSuggestions()) {
+                manager->setCurrentEngineName(name);
+                break;
+            }
+        }
+        engine = manager->currentEngine();
+    }
+    QVERIFY(engine);
+    QVERIFY(engine->providesSuggestions());
+    QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.searchSuggestionsCheckBox->isEnabled());
+        QVERIFY(!dialog.searchSuggestionsCheckBox->isChecked());
+        dialog.searchSuggestionsCheckBox->setChecked(true);
+        dialog.accept();
+    }
+    QVERIFY(manager->suggestionsEnabledForEngine(engine->name()));
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.searchSuggestionsCheckBox->isChecked());
+        dialog.searchSuggestionsCheckBox->setChecked(false);
+        dialog.accept();
+    }
+    QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
 }
 
 // Each button that pops a nested dialog runs it under a timer that

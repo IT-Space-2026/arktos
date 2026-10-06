@@ -101,8 +101,20 @@ QStringList AcceptLanguageDialog::acceptLanguages()
     QStringList list = settings.value(QLatin1String("network/acceptLanguages")).toStringList();
     if (list.isEmpty())
         list = defaultAcceptList();
-    if (list.isEmpty())
-        list = QLocale().uiLanguages();
+    if (list.isEmpty()) {
+        // SEC11: never fall back to QLocale().uiLanguages() — that
+        // dumps every configured system locale into the header.  A
+        // minimal "locale, language" pair leaks no more than the UI
+        // language itself (and matches what other browsers send).
+        const QString tag = QString(QLocale().name())
+            .replace(QLatin1Char('_'), QLatin1Char('-'));
+        if (!tag.isEmpty() && tag != QLatin1String("C")) {
+            list << tag;
+            const QString base = tag.section(QLatin1Char('-'), 0, 0);
+            if (base != tag)
+                list << base;
+        }
+    }
     return list;
 }
 

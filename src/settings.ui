@@ -633,6 +633,32 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="searchSuggestionsGroupBox">
+         <property name="title">
+          <string>Search Suggestions</string>
+         </property>
+         <layout class="QGridLayout">
+          <item row="0" column="0">
+           <widget class="QCheckBox" name="searchSuggestionsCheckBox">
+            <property name="text">
+             <string>Show suggestions while typing in the search box</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="searchSuggestionsHint">
+            <property name="text">
+             <string>Suggestions send each keystroke to the search engine before you press Enter. Off by default; the choice is stored per engine.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer>
          <property name="orientation">
           <enum>Qt::Vertical</enum>

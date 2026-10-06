@@ -170,7 +170,7 @@ void tst_Dialogs::openSearchEngineModel()
     ModelTest tester(&model);
     Q_UNUSED(tester);
 
-    QCOMPARE(model.columnCount(), 2);
+    QCOMPARE(model.columnCount(), 3);
     QCOMPARE(model.rowCount(), manager.enginesCount());
     QVERIFY(!model.index(0, 0).data(Qt::DisplayRole).toString().isEmpty());
     QVERIFY(model.index(0, 0).data(Qt::ToolTipRole).toString()
@@ -179,6 +179,42 @@ void tst_Dialogs::openSearchEngineModel()
     QVERIFY(model.flags(model.index(0, 1)).testFlag(Qt::ItemIsEditable));
     QCOMPARE(model.headerData(0, Qt::Horizontal).toString(),
              QLatin1String("Name"));
+    QCOMPARE(model.headerData(2, Qt::Horizontal).toString(),
+             QLatin1String("Suggestions"));
+
+    // SEC11: the Suggestions column is the per-engine opt-in —
+    // checkable only for engines with a suggest endpoint.
+    int capableRow = -1, incapableRow = -1;
+    const QStringList names = manager.allEnginesNames();
+    for (int row = 0; row < names.count(); ++row) {
+        OpenSearchEngine *engine = manager.engine(names.at(row));
+        if (engine->providesSuggestions() && capableRow == -1)
+            capableRow = row;
+        if (!engine->providesSuggestions() && incapableRow == -1)
+            incapableRow = row;
+    }
+    QVERIFY(capableRow != -1);
+    QVERIFY(incapableRow != -1);
+    const QModelIndex capable = model.index(capableRow, 2);
+    const QModelIndex incapable = model.index(incapableRow, 2);
+    QVERIFY(model.flags(capable).testFlag(Qt::ItemIsUserCheckable));
+    QVERIFY(!model.flags(incapable).testFlag(Qt::ItemIsUserCheckable));
+    QCOMPARE(capable.data(Qt::CheckStateRole).toInt(),
+             static_cast<int>(Qt::Unchecked));
+    QVERIFY(!incapable.data(Qt::CheckStateRole).isValid());
+
+    const QString capableName = names.at(capableRow);
+    QVERIFY(model.setData(capable, Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(manager.suggestionsEnabledForEngine(capableName));
+    QCOMPARE(model.index(capableRow, 2).data(Qt::CheckStateRole).toInt(),
+             static_cast<int>(Qt::Checked));
+    // The toggle emits changed() -> full model reset, so re-fetch.
+    QVERIFY(model.setData(model.index(capableRow, 2), Qt::Unchecked,
+                          Qt::CheckStateRole));
+    QVERIFY(!manager.suggestionsEnabledForEngine(capableName));
+    // An engine without a suggest endpoint cannot be opted in.
+    QVERIFY(!model.setData(model.index(incapableRow, 2), Qt::Checked,
+                           Qt::CheckStateRole));
 
     OpenSearchEngine *engine = manager.engine(manager.allEnginesNames().first());
     QVERIFY(engine);

@@ -93,7 +93,6 @@ OpenSearchManager *ToolbarSearch::s_openSearchManager = 0;
  */
 ToolbarSearch::ToolbarSearch(QWidget *parent)
     : SearchLineEdit(parent)
-    , m_suggestionsEnabled(true)
     , m_autosaver(new AutoSaver(this))
     , m_maxSavedSearches(10)
     , m_model(new QStandardItemModel(this))
@@ -104,6 +103,8 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
 {
     connect(openSearchManager(), &OpenSearchManager::currentEngineChanged,
             this, &ToolbarSearch::currentEngineChanged);
+    connect(openSearchManager(), &OpenSearchManager::suggestionsEnabledChanged,
+            this, &ToolbarSearch::updateSuggestionsEnabled);
 
     m_completer = new QCompleter(m_model, this);
     m_completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
@@ -153,21 +154,54 @@ void ToolbarSearch::currentEngineChanged()
     if (!newEngine)
         return;
 
-    if (m_suggestionsEnabled) {
-        if (openSearchManager()->engineExists(m_currentEngine)) {
-            OpenSearchEngine *oldEngine = openSearchManager()->engine(m_currentEngine);
-            disconnect(oldEngine, &OpenSearchEngine::suggestions,
-                       this, &ToolbarSearch::newSuggestions);
-        }
-
-        connect(newEngine, &OpenSearchEngine::suggestions,
-                this, &ToolbarSearch::newSuggestions);
+    // Whether a suggestions connection existed depends on the previous
+    // engine's opt-in flag; disconnect unconditionally.
+    if (openSearchManager()->engineExists(m_currentEngine)) {
+        OpenSearchEngine *oldEngine = openSearchManager()->engine(m_currentEngine);
+        disconnect(oldEngine, &OpenSearchEngine::suggestions,
+                   this, &ToolbarSearch::newSuggestions);
     }
 
     setInactiveText(newEngine->name());
     m_currentEngine = newEngine->name();
     m_suggestions.clear();
+    updateSuggestionsEnabled();
     setupList();
+}
+
+/*
+    SEC11: suggestion requests stream every typed character to the
+    engine's suggest endpoint, so the whole data path — the keystroke
+    hookup, the debounce timer and the reply hook — is only wired while
+    the current engine is opted in via
+    OpenSearchManager::setSuggestionsEnabledForEngine().  Disabling also
+    stops a pending timer and drops any suggestions already fetched.
+ */
+void ToolbarSearch::updateSuggestionsEnabled()
+{
+    const bool enabled =
+        openSearchManager()->suggestionsEnabledForEngine(m_currentEngine);
+    OpenSearchEngine *engine = openSearchManager()->currentEngine();
+
+    if (enabled) {
+        connect(this, &QLineEdit::textEdited,
+                this, &ToolbarSearch::textEdited, Qt::UniqueConnection);
+        if (engine)
+            connect(engine, &OpenSearchEngine::suggestions,
+                    this, &ToolbarSearch::newSuggestions, Qt::UniqueConnection);
+    } else {
+        disconnect(this, &QLineEdit::textEdited,
+                   this, &ToolbarSearch::textEdited);
+        if (engine)
+            disconnect(engine, &OpenSearchEngine::suggestions,
+                       this, &ToolbarSearch::newSuggestions);
+        if (m_suggestTimer)
+            m_suggestTimer->stop();
+        if (!m_suggestions.isEmpty()) {
+            m_suggestions.clear();
+            setupList();
+        }
+    }
 }
 
 void ToolbarSearch::completerActivated(const QModelIndex &index)
@@ -207,12 +241,6 @@ void ToolbarSearch::load()
     m_recentSearches = settings.value(QLatin1String("recentSearches")).toStringList();
     m_maxSavedSearches = settings.value(QLatin1String("maximumSaved"), m_maxSavedSearches).toInt();
 
-    m_suggestionsEnabled = settings.value(QLatin1String("useSuggestions"), true).toBool();
-    if (m_suggestionsEnabled) {
-        connect(this, &QLineEdit::textEdited,
-                this, &ToolbarSearch::textEdited);
-    }
-
     settings.endGroup();
     setupList();
 }
@@ -237,6 +265,11 @@ void ToolbarSearch::getSuggestions()
     OpenSearchEngine *engine = openSearchManager()->currentEngine();
     Q_ASSERT(engine);
     if (!engine)
+        return;
+
+    // Belt-and-suspenders: even a queued timer fires only while the
+    // current engine is opted in (SEC11).
+    if (!openSearchManager()->suggestionsEnabledForEngine(engine->name()))
         return;
 
     if (!engine->networkAccessManager())
@@ -327,6 +360,24 @@ void ToolbarSearch::showEnginesMenu()
 
     // Page-advertised engines go between these two separators.
     QAction *enginesSeparator = menu.addSeparator();
+
+    // Per-engine opt-in for suggestions (SEC11): off by default,
+    // toggleable right where the engine is picked.  Engines without a
+    // suggest endpoint show a greyed entry.
+    {
+        QAction *suggestionsAction = new QAction(tr("Search Suggestions"), &menu);
+        suggestionsAction->setCheckable(true);
+        OpenSearchEngine *current = openSearchManager()->currentEngine();
+        const bool capable = current && current->providesSuggestions();
+        suggestionsAction->setEnabled(capable);
+        suggestionsAction->setChecked(capable &&
+            openSearchManager()->suggestionsEnabledForEngine(current->name()));
+        connect(suggestionsAction, &QAction::toggled, this, [this](bool checked) {
+            openSearchManager()->setSuggestionsEnabledForEngine(
+                m_currentEngine, checked);
+        });
+        menu.addAction(suggestionsAction);
+    }
 
     // TODO(MIG14): use the BrowserMainWindow's searchManagerAction()
     // once it exists again so the entry also lives in the Tools menu.

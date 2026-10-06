@@ -72,9 +72,12 @@
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
 #include "safetext.h"
 #include "securestore.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -299,6 +302,24 @@ void SettingsDialog::loadFromSettings()
     filterTrackingCookiesCheckbox->setChecked(settings.value(QLatin1String("filterTrackingCookies"), false).toBool());
     settings.endGroup();
 
+    // Search suggestions are a per-engine opt-in (SEC11): the checkbox
+    // controls the currently selected engine, and the hint names it so
+    // it is clear which endpoint the keystrokes would go to.
+    {
+        OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
+        OpenSearchEngine *currentEngine = searchManager->currentEngine();
+        const bool capable = currentEngine && currentEngine->providesSuggestions();
+        searchSuggestionsCheckBox->setEnabled(capable);
+        searchSuggestionsCheckBox->setChecked(capable &&
+            searchManager->suggestionsEnabledForEngine(currentEngine->name()));
+        if (currentEngine) {
+            searchSuggestionsHint->setText(
+                tr("Suggestions send each keystroke to %1 before you press "
+                   "Enter. Off by default; the choice is stored per engine.")
+                    .arg(currentEngine->name()));
+        }
+    }
+
     // Network — also drives the profile's http cache through
     // BrowserProfile::applySettings().
     settings.beginGroup(QLatin1String("network"));
@@ -439,6 +460,14 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("sessionLength"), sessionLength);
     settings.setValue(QLatin1String("filterTrackingCookies"), filterTrackingCookiesCheckbox->isChecked());
     settings.endGroup();
+
+    // Per-engine opt-in — a disabled checkbox means the current engine
+    // has no suggest endpoint; leave its stored choice alone.
+    if (searchSuggestionsCheckBox->isEnabled()) {
+        if (OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine())
+            ToolbarSearch::openSearchManager()->setSuggestionsEnabledForEngine(
+                engine->name(), searchSuggestionsCheckBox->isChecked());
+    }
 
     // Network
     settings.beginGroup(QLatin1String("network"));

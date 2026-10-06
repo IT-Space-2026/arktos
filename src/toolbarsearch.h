@@ -106,6 +106,7 @@ private slots:
     void completerActivated(const QModelIndex &index);
     bool completerHighlighted(const QModelIndex &index);
     void getSuggestions();
+    void updateSuggestionsEnabled();
     void showEnginesMenu();
     void showEnginesDialog();
     void changeCurrentEngine();
@@ -121,7 +122,6 @@ private:
 
     static OpenSearchManager *s_openSearchManager;
     QString m_currentEngine;
-    bool m_suggestionsEnabled;
 
     AutoSaver *m_autosaver;
     int m_maxSavedSearches;

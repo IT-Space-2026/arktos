@@ -70,7 +70,7 @@ int OpenSearchEngineModel::rowCount(const QModelIndex &parent) const
 int OpenSearchEngineModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
-    return 2;
+    return 3;
 }
 
 Qt::ItemFlags OpenSearchEngineModel::flags(const QModelIndex &index) const
@@ -81,6 +81,16 @@ Qt::ItemFlags OpenSearchEngineModel::flags(const QModelIndex &index) const
     switch (index.column()) {
     case 1:
         return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
+    case 2: {
+        // Only engines with a suggest endpoint can be opted in.
+        Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        OpenSearchEngine *engine = index.row() < m_manager->enginesCount()
+            ? m_manager->engine(m_manager->allEnginesNames().at(index.row()))
+            : 0;
+        if (engine && engine->providesSuggestions())
+            flags |= Qt::ItemIsUserCheckable;
+        return flags;
+    }
     default:
         return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
     }
@@ -132,6 +142,21 @@ QVariant OpenSearchEngineModel::data(const QModelIndex &index, int role) const
                       "followed by search terms to search with this engine");
         }
         break;
+
+    case 2:
+        switch (role) {
+        case Qt::CheckStateRole:
+            if (!engine->providesSuggestions())
+                return QVariant();
+            return m_manager->suggestionsEnabledForEngine(engine->name())
+                ? Qt::Checked : Qt::Unchecked;
+        case Qt::ToolTipRole:
+            if (!engine->providesSuggestions())
+                return tr("This engine does not provide contextual suggestions");
+            return tr("Send what is typed in the search box to this engine "
+                      "for suggestions (off by default)");
+        }
+        break;
     }
 
     return QVariant();
@@ -139,10 +164,20 @@ QVariant OpenSearchEngineModel::data(const QModelIndex &index, int role) const
 
 bool OpenSearchEngineModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
-    if (index.column() != 1)
+    if (index.row() >= rowCount() || index.row() < 0)
         return false;
 
-    if (index.row() >= rowCount() || index.row() < 0)
+    if (index.column() == 2 && role == Qt::CheckStateRole) {
+        QString engineName = m_manager->allEnginesNames().at(index.row());
+        OpenSearchEngine *engine = m_manager->engine(engineName);
+        if (!engine || !engine->providesSuggestions())
+            return false;
+        m_manager->setSuggestionsEnabledForEngine(
+            engineName, value.toInt() == Qt::Checked);
+        return true;
+    }
+
+    if (index.column() != 1)
         return false;
 
     if (role != Qt::EditRole)
@@ -169,6 +204,8 @@ QVariant OpenSearchEngineModel::headerData(int section, Qt::Orientation orientat
         return tr("Name");
     case 1:
         return tr("Keywords");
+    case 2:
+        return tr("Suggestions");
     }
 
     return QVariant();
