@@ -25,6 +25,7 @@ SUBDIRS  = \
     opensearchmanager \
     opensearchreader \
     opensearchwriter \
+    privatebrowsing \
     schemehandlers \
     searchlineedit \
     settingsdialog \

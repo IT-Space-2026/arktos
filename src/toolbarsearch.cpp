@@ -64,6 +64,7 @@
 #include "toolbarsearch.h"
 
 #include "autosaver.h"
+#include "browserapplication.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchengineaction.h"
@@ -249,10 +250,14 @@ void ToolbarSearch::searchNow()
     QString searchText = text();
 
     // Private browsing is a profile property under Qt WebEngine (MIG03):
-    // recent searches are only recorded when the bound view's page is
-    // not on an off-the-record profile.
+    // recent searches are only recorded when the page the search will
+    // land in is not off-the-record.  The app-level private flag covers
+    // the cases the bound view cannot (no view wired, or a new tab the
+    // search itself would create on the private profile).
     QWebEnginePage *page = m_webView ? m_webView->webPage() : 0;
-    if (!page || !page->profile()->isOffTheRecord()) {
+    const bool privateTarget = BrowserApplication::isPrivate()
+        || (page && page->profile()->isOffTheRecord());
+    if (!privateTarget) {
         QStringList newList = m_recentSearches;
         if (newList.contains(searchText))
             newList.removeAt(newList.indexOf(searchText));

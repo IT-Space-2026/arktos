@@ -1052,6 +1052,13 @@ void BrowserMainWindow::setupToolBar()
             m_tabWidget, [this](const QUrl &url, TabWidget::OpenUrlIn tab) {
         m_tabWidget->loadUrl(url, tab);
     });
+    // The search box records recent searches only when the page the
+    // search lands in is not private (SEC07), so it has to track the
+    // current tab's view — private browsing is a per-page profile
+    // property under WebEngine.
+    connect(m_tabWidget, &QTabWidget::currentChanged, this,
+            [this](int) { m_toolbarSearch->setWebView(currentTab()); });
+    m_toolbarSearch->setWebView(currentTab());
     m_navigationSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     m_tabWidget->locationBarStack()->setMinimumWidth(120);
     m_navigationSplitter->setCollapsible(0, false);

@@ -94,6 +94,7 @@
 #include <qstyle.h>
 #include <qtoolbutton.h>
 #include <qwebenginehistory.h>
+#include <qwebengineprofile.h>
 
 #include <qdebug.h>
 
@@ -569,12 +570,15 @@ void TabWidget::closeTab(int index)
     if (index < 0 || index >= count())
         return;
 
-    bool hasFocus = false;
     WebView *tab = webView(index);
+    bool hasFocus = tab && tab->hasFocus();
 
-    if (tab && !tab->url().isEmpty()) {
-        hasFocus = tab->hasFocus();
-
+    // A private tab is never queued for reopen: "Open Last Closed Tab"
+    // would load the url in a normal-profile page where the visit is
+    // recorded — the very trace private browsing avoids (SEC07).
+    const bool recordable = tab && !tab->url().isEmpty()
+        && !(tab->page() && tab->page()->profile()->isOffTheRecord());
+    if (recordable) {
         m_recentlyClosedTabsAction->setEnabled(true);
         m_recentlyClosedTabs.prepend(tab->url());
         m_recentlyClosedTabsHistory.prepend(serializePageHistory(tab->history()));
@@ -1019,20 +1023,26 @@ QByteArray TabWidget::saveState() const
 
     QStringList tabs;
     QList<QByteArray> tabsHistory;
+    // Private tabs live on the off-the-record profile — their urls and
+    // history are never written into the saved session (SEC07).  The
+    // current index is remapped onto the filtered list.
+    int savedCurrentIndex = -1;
     for (int i = 0; i < count(); ++i) {
-        if (WebView *tab = webView(i)) {
-            tabs.append(QString::fromUtf8(tab->url().toEncoded()));
-            if (tab->history()->count() != 0)
-                tabsHistory.append(serializePageHistory(tab->history()));
-            else
-                tabsHistory.append(QByteArray());
-        } else {
-            tabs.append(QString());
+        WebView *tab = webView(i);
+        if (!tab)
+            continue;
+        if (tab->page() && tab->page()->profile()->isOffTheRecord())
+            continue;
+        if (i == currentIndex())
+            savedCurrentIndex = tabs.count();
+        tabs.append(QString::fromUtf8(tab->url().toEncoded()));
+        if (tab->history()->count() != 0)
+            tabsHistory.append(serializePageHistory(tab->history()));
+        else
             tabsHistory.append(QByteArray());
-        }
     }
     stream << tabs;
-    stream << currentIndex();
+    stream << savedCurrentIndex;
     stream << tabsHistory;
 
     return data;

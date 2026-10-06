@@ -923,13 +923,19 @@ void DownloadManager::save() const
     if (m_removePolicy == Exit)
         return;
 
+    int saved = 0;
     for (int i = 0; i < m_downloads.count(); ++i) {
-        QString key = QString(QLatin1String("download_%1_")).arg(i);
+        // Off-the-record downloads leave no record: an in-flight
+        // private download's url and target path must never reach
+        // QSettings (SEC07).
+        if (m_downloads[i]->m_offTheRecord)
+            continue;
+        QString key = QString(QLatin1String("download_%1_")).arg(saved++);
         settings.setValue(key + QLatin1String("url"), m_downloads[i]->m_url);
         settings.setValue(key + QLatin1String("location"), m_downloads[i]->m_outputFileName);
         settings.setValue(key + QLatin1String("done"), m_downloads[i]->downloadedSuccessfully());
     }
-    int i = m_downloads.count();
+    int i = saved;
     QString key = QString(QLatin1String("download_%1_")).arg(i);
     while (settings.contains(key + QLatin1String("url"))) {
         settings.remove(key + QLatin1String("url"));

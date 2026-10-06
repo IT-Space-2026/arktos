@@ -141,6 +141,10 @@ Certificate-error interstitial (SEC06):
     "Back to safety" is the prominent action and returns to the previous page (or the start page when there is no history). "Proceed anyway (unsafe)" only appears for errors Chromium allows overriding — never for unoverridable failures such as HSTS-pinned hosts — and trusts just that host-and-certificate pair for the rest of the session. Nothing is written to a trust store: a new session, or a different profile, asks again.
     Certificate errors inside sub-frames are denied without disturbing the host page, and the interstitial itself is kept out of the browsing history.
 
+Private browsing hardening (SEC07):
+    Audited every application-side store against the off-the-record profile and closed the leaks found. In-flight private downloads are no longer written into the persisted download list — previously their url and save path reached QSettings through the auto-save. Private tabs are now skipped when the session is serialized, so quitting with a private tab open no longer stores its urls and page history into the restorable session. Closed private tabs no longer enter the Recently Closed Tabs list, which could reopen the private url in a recorded normal page. And searches typed into the toolbar search box while the target page is private are no longer added to the saved recent-searches list — the search box now follows the current tab's profile instead of a stale global flag.
+    Verified end to end with a new autotest: private tabs really live on an off-the-record profile, private loads leave no history entry, cookies stay inside the throwaway private store, downloads/searches/tabs persist nothing, and the adblock interceptor still blocks content on private pages.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

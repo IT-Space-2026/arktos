@@ -90,8 +90,8 @@ public:
     ~ToolbarSearch();
     static OpenSearchManager *openSearchManager();
     // The view searches run against and page-provided engines are
-    // collected from.  TODO(MIG14): BrowserMainWindow must call this on
-    // creation and update it when the current tab changes.
+    // collected from.  BrowserMainWindow keeps this pointed at the
+    // current tab so searchNow() can tell private targets apart.
     void setWebView(WebView *webView);
 
 public slots:
