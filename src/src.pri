@@ -85,6 +85,7 @@ HEADERS += \
     $$PWD/toolbarsearch.h \
     $$PWD/webactionmapper.h \
     $$PWD/webpage.h \
+    $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
     $$PWD/utils/edittableview.h \
@@ -122,6 +123,7 @@ SOURCES += \
     $$PWD/toolbarsearch.cpp \
     $$PWD/webactionmapper.cpp \
     $$PWD/webpage.cpp \
+    $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
     $$PWD/utils/edittableview.cpp \

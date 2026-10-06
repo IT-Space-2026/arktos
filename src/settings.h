@@ -104,6 +104,11 @@ private slots:
     void openUserScriptsFolder();
     void reloadUserScripts();
 
+    void refreshPermissions();
+    void permissionSelectionChanged();
+    void removePermission();
+    void clearPermissions();
+
 private:
     QFont m_standardFont;
     QFont m_fixedFont;

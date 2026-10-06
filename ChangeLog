@@ -131,6 +131,11 @@ Untrusted-input parser hardening (SEC04):
     Adblock subscriptions are bounded at 64 MB per file, 16 KB per line and 500k rules, and individual filters over 4 KB are kept inert. Filter rules written as raw regular expressions — including $removeparam patterns — are refused when the pattern is invalid or has the nested-quantifier shape that causes catastrophic backtracking, so a hostile list cannot stall page loads.
     The binary state files the browser reads back at startup (session restore, tab history, autofill, saved cookies, window layout) now bound serialized element counts against the bytes actually present before allocating, so a corrupt or hostile blob is rejected instead of triggering giant allocations. Extension manifests are capped at 1 MB.
 
+Web permission broker (SEC05):
+    Web pages can no longer touch sensitive features silently. Notifications, geolocation and mouse-lock requests now raise a consent dialog that names the requesting origin and the feature, with Deny as the default and an opt-in "Remember this decision" checkbox. Camera/microphone, screen capture, clipboard read/write, local-font enumeration and unknown features are denied outright without prompting.
+    Remembered decisions are stored per security origin and per feature in the application settings, and a new "Site Permissions" list in the Privacy settings tab shows every remembered grant/deny with Remove and Clear All controls. Answers are always remembered for the session so a page cannot spam prompts; only checked "remember" answers are written to disk, and off-the-record pages never persist anything.
+    The WebEngine profile is now pinned to AskEveryTime: previously Chromium persisted every granted/denied permission to permissions.json on disk on its own, bypassing both the consent prompt and the audit list. The surface-widening settings are pinned off as well: JavaScript clipboard access and paste, screen capture, local-content access to remote URLs, insecure content on secure pages and geolocation on insecure origins, and WebRTC is restricted to public interfaces.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

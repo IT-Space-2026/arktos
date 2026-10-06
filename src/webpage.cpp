@@ -29,6 +29,7 @@
 #include "opensearchmanager.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "webpermissionmanager.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -148,6 +149,18 @@ void WebPage::init()
     // normal and the off-the-record private profile (MIG15).
     connect(this, &QWebEnginePage::loadingChanged,
             this, &WebPage::handleLoadingChanged);
+
+    // SEC05: route every feature-permission request (notifications,
+    // geolocation, capture devices, clipboard, ...) through the
+    // default-deny broker.  Without this connect the request is left
+    // pending and the site simply hangs; Chromium never grants
+    // unhandled requests, but nothing resolved them either.
+    connect(this, &QWebEnginePage::permissionRequested,
+            this, [this](const QWebEnginePermission &permission) {
+        WebPermissionManager::instance()->handleRequest(
+            QWebEngineView::forPage(this), permission,
+            profile()->isOffTheRecord());
+    });
 
     // MIG06: feed the app-side history store.  QtWebKit pushed visited
     // urls into QWebHistoryInterface itself; WebEngine keeps Chromium's

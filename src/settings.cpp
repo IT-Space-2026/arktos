@@ -74,6 +74,7 @@
 #include "networkaccessmanager.h"
 #include "securestore.h"
 #include "tabwidget.h"
+#include "webpermissionmanager.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -128,6 +129,18 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     }
     refreshExtensions();
     refreshUserScripts();
+
+    // SEC05: auditable list of remembered site-permission decisions.
+    WebPermissionManager *permissions = WebPermissionManager::instance();
+    connect(permissionRemoveButton, &QPushButton::clicked,
+            this, &SettingsDialog::removePermission);
+    connect(permissionClearAllButton, &QPushButton::clicked,
+            this, &SettingsDialog::clearPermissions);
+    connect(permissionsTree, &QTreeWidget::itemSelectionChanged,
+            this, &SettingsDialog::permissionSelectionChanged);
+    connect(permissions, &WebPermissionManager::changed,
+            this, &SettingsDialog::refreshPermissions);
+    refreshPermissions();
 
     loadDefaults();
     loadFromSettings();
@@ -772,4 +785,60 @@ void SettingsDialog::reloadUserScripts()
 {
     // userScriptsChanged refreshes the list once the profiles re-scan.
     ExtensionManager::instance()->reloadUserScripts();
+}
+
+void SettingsDialog::refreshPermissions()
+{
+    QString selectedKey;
+    if (QTreeWidgetItem *current = permissionsTree->currentItem())
+        selectedKey = current->data(0, Qt::UserRole).toString();
+
+    permissionsTree->clear();
+    const QList<WebPermissionManager::Entry> entries =
+        WebPermissionManager::instance()->entries();
+    for (const WebPermissionManager::Entry &entry : entries) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(permissionsTree);
+        item->setText(0, QString::fromUtf8(entry.origin.toEncoded()));
+        item->setText(1, WebPermissionManager::typeName(entry.type));
+        item->setText(2, entry.granted ? tr("Allowed") : tr("Denied"));
+        // Removal needs the origin + type back; both are recoverable
+        // from one key.
+        item->setData(0, Qt::UserRole,
+            QString::fromUtf8(entry.origin.toEncoded()) + QLatin1Char('|')
+            + QString::number(static_cast<int>(entry.type)));
+        if (item->data(0, Qt::UserRole).toString() == selectedKey)
+            permissionsTree->setCurrentItem(item);
+    }
+    permissionSelectionChanged();
+}
+
+void SettingsDialog::permissionSelectionChanged()
+{
+    permissionRemoveButton->setEnabled(permissionsTree->currentItem() != 0);
+}
+
+void SettingsDialog::removePermission()
+{
+    QTreeWidgetItem *item = permissionsTree->currentItem();
+    if (!item)
+        return;
+    const QStringList parts = item->data(0, Qt::UserRole).toString()
+        .split(QLatin1Char('|'));
+    if (parts.count() != 2)
+        return;
+    WebPermissionManager::instance()->removeEntry(
+        QUrl::fromEncoded(parts.at(0).toUtf8()),
+        static_cast<QWebEnginePermission::PermissionType>(parts.at(1).toInt()));
+}
+
+void SettingsDialog::clearPermissions()
+{
+    if (WebPermissionManager::instance()->entries().isEmpty())
+        return;
+    if (QMessageBox::question(this, tr("Clear Site Permissions"),
+            tr("Remove every remembered site permission?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes)
+        return;
+    WebPermissionManager::instance()->clearEntries();
 }

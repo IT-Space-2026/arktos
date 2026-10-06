@@ -34,6 +34,7 @@ SUBDIRS  = \
     utils \
     webactionmapper \
     webpage \
+    webpermissions \
     webview \
     xbel
 

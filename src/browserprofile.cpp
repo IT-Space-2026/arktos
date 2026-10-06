@@ -174,6 +174,40 @@ void applySettings(QWebEngineProfile *profile)
                                  settings.value(QLatin1String("enableLocalStorage"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
 
+    // SEC05 surface audit: attributes that would let a page sidestep
+    // the WebPermissionManager broker stay off.  Several are already
+    // off by default in Qt 6.11 — they are pinned anyway so a future
+    // Qt default flip or a stale settings file cannot re-open them.
+    //   JavascriptCanAccessClipboard / JavascriptCanPaste
+    //     silent clipboard reads/writes, bypassing ClipboardReadWrite
+    //   ScreenCaptureEnabled          getDisplayMedia without consent
+    //   LocalContentCanAccessRemoteUrls   file:// pages phoning home
+    //   AllowRunningInsecureContent   http subresources on https pages
+    //   AllowGeolocationOnInsecureOrigins location on plain http
+    // WebRTCPublicInterfacesOnly keeps WebRTC peer connections off
+    // LAN/private addresses (media capture is denied anyway).
+    engineSettings->setAttribute(QWebEngineSettings::JavascriptCanAccessClipboard, false);
+    engineSettings->setAttribute(QWebEngineSettings::JavascriptCanPaste, false);
+    engineSettings->setAttribute(QWebEngineSettings::ScreenCaptureEnabled, false);
+    engineSettings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
+    engineSettings->setAttribute(QWebEngineSettings::AllowRunningInsecureContent, false);
+    engineSettings->setAttribute(QWebEngineSettings::AllowGeolocationOnInsecureOrigins, false);
+    engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly, true);
+
+    // Named profiles default to StoreOnDisk: Chromium would write every
+    // grant()/deny() to permissions.json on disk and silently apply it
+    // on later visits without even emitting permissionRequested —
+    // bypassing the WebPermissionManager broker, its "Remember this
+    // decision" checkbox and its auditable store.  AskEveryTime keeps
+    // the engine stateless so the broker is the only authority.
+    profile->setPersistentPermissionsPolicy(
+        QWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
+    // Deliberately NOT pinned: LocalContentCanAccessFileUrls stays at
+    // Qt's default (on) or local HTML files could not reference sibling
+    // images/css; FullScreenSupportEnabled stays off (Qt default)
+    // because there is no fullScreenRequested handler wired to the
+    // window yet.
+
     installUserStyleSheet(profile, settings.value(QLatin1String("userStyleSheet")).toUrl());
     settings.endGroup();
 
