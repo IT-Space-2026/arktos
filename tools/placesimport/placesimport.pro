@@ -6,14 +6,21 @@ INCLUDEPATH += .
 win32|os2: CONFIG += console
 mac:CONFIG -= app_bundle
 
-QT += sql
+QT += sql widgets
+
+# Match src.pro so the shared src/.obj objects are flag-identical.
+DEFINES += \
+    QT_NO_CAST_FROM_ASCII \
+    QT_NO_CAST_TO_ASCII \
+    QT_STRICT_ITERATORS \
 
 # Input
 SOURCES += main_placesimport.cpp
 
 include(../../install.pri)
-# This can be improved to just include the history manager and utility classes
-# once the history classes are separated out into individual files.
+# Reuses the whole ported tree (shared src/.obj objects) for the history
+# store, single-instance guard and serialization code — same approach the
+# Qt4 tool took.
 include(../../src/src.pri)
 
 !mac {

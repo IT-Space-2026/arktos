@@ -88,6 +88,9 @@ Extensions (EXT01):
     Known limits: Manifest V3 only (MV2 packages are rejected by Qt), extensions can't be loaded into off-the-record profiles, and the tech-preview API surfaces no per-extension permission prompt — consent is the up-front warning dialog.
     Also fixed two latent teardown crashes exposed while verifying this: AdBlockSubscription tracked its in-flight download reply with a raw pointer that dangled on error paths (now QPointer), and the browser/autofill smokes now delete their windows before exit so WebEnginePages die before the profile is released.
 
+Tools (TOOL01):
+    Port the bundled command-line tools to Qt 6 and build them again with the browser. htmlToXBel no longer needs a web engine — Netscape bookmark HTML is scanned by a small forgiving parser and written out as XBEL, and bookmark folders marked FOLDED now export folded="true". arora-cacheinfo inspects Arora's application-level network disk cache under the standard cache location (QtWebEngine's own Chromium cache stays opaque). arora-placesimport imports Firefox places.sqlite visits into the current history store.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

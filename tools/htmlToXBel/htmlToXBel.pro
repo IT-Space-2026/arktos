@@ -6,7 +6,8 @@ INCLUDEPATH += .
 win32|os2: CONFIG += console
 mac:CONFIG -= app_bundle
 
-QT += network webkit
+# QtGui for QTextDocumentFragment (HTML entity decoding); no engine needed.
+QT += gui
 
 # Input
 SOURCES += main.cpp
@@ -15,8 +16,6 @@ RCC_DIR     = $$PWD/.rcc
 UI_DIR      = $$PWD/.ui
 MOC_DIR     = $$PWD/.moc
 OBJECTS_DIR = $$PWD/.obj
-
-RESOURCES += source.qrc
 
 include(../../install.pri)
 

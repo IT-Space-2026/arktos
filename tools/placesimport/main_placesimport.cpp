@@ -31,10 +31,12 @@
 #include "singleapplication.h"
 #include "historymanager.h"
 
-static HistoryEntry formatEntry(QByteArray url, QByteArray title, qlonglong prdate)
+static HistoryEntry formatEntry(const QString &url, const QString &title, qlonglong prdate)
 {
-    QDateTime dateTime = QDateTime::fromTime_t(prdate / 1000000);
-    dateTime.addMSecs((prdate % 1000000) / 1000);
+    // Firefox stores visit_date as microseconds since the unix epoch.
+    QDateTime dateTime = QDateTime::fromSecsSinceEpoch(prdate / 1000000)
+            .addMSecs((prdate % 1000000) / 1000)
+            .toLocalTime();
     HistoryEntry entry(url, dateTime, title);
     return entry;
 }
@@ -42,6 +44,8 @@ static HistoryEntry formatEntry(QByteArray url, QByteArray title, qlonglong prda
 int main(int argc, char **argv)
 {
     SingleApplication application(argc, argv);
+    // Match the browser's scope so QStandardPaths finds the same data dir.
+    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
 
@@ -54,12 +58,12 @@ int main(int argc, char **argv)
     args.takeFirst();
     if (args.isEmpty()) {
         QTextStream stream(stdout);
-        stream << "arora-placesimport is a tool for importing browser history from Firefox 3 and up" << endl;
-        stream << "arora-placesinfo ~/.mozilla/firefox/[profile-dir]/places.sqlite" << endl;
+        stream << "arora-placesimport is a tool for importing browser history from Firefox 3 and up" << Qt::endl;
+        stream << "arora-placesinfo ~/.mozilla/firefox/[profile-dir]/places.sqlite" << Qt::endl;
         return 0;
     }
 
-    QSqlDatabase placesDatabase = QSqlDatabase::addDatabase("QSQLITE");
+    QSqlDatabase placesDatabase = QSqlDatabase::addDatabase(QLatin1String("QSQLITE"));
     placesDatabase.setDatabaseName(args.first());
 
     if (!placesDatabase.open()) {
@@ -68,9 +72,9 @@ int main(int argc, char **argv)
     }
 
     QSqlQuery historyQuery(
-        "SELECT moz_places.url, moz_places.title, moz_historyvisits.visit_date "
+        QLatin1String("SELECT moz_places.url, moz_places.title, moz_historyvisits.visit_date "
         "FROM moz_places, moz_historyvisits "
-        "WHERE moz_places.id = moz_historyvisits.place_id;");
+        "WHERE moz_places.id = moz_historyvisits.place_id;"));
     historyQuery.setForwardOnly(true);
 
     if (!historyQuery.exec()) {
@@ -81,8 +85,8 @@ int main(int argc, char **argv)
     HistoryManager manager;
     QList<HistoryEntry> history = manager.history();
     while (historyQuery.next()) {
-        QByteArray url = historyQuery.value(0).toByteArray();
-        QByteArray title = historyQuery.value(1).toByteArray();
+        QString url = historyQuery.value(0).toString();
+        QString title = historyQuery.value(1).toString();
         qlonglong prdate = historyQuery.value(2).toLongLong();
         HistoryEntry entry = formatEntry(url, title, prdate);
         history.append(entry);
@@ -91,4 +95,3 @@ int main(int argc, char **argv)
 
     return 0;
 }
-

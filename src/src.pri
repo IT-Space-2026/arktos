@@ -48,85 +48,85 @@ include(useragent/useragent.pri)      # MIG14 done
 include(network/cookiejar/cookiejar.pri)
 
 FORMS += \
-    aboutdialog.ui \
-    acceptlanguagedialog.ui \
-    autofilldialog.ui \
-    downloaditem.ui \
-    downloads.ui \
-    searchbanner.ui \
-    settings.ui
+    $$PWD/aboutdialog.ui \
+    $$PWD/acceptlanguagedialog.ui \
+    $$PWD/autofilldialog.ui \
+    $$PWD/downloaditem.ui \
+    $$PWD/downloads.ui \
+    $$PWD/searchbanner.ui \
+    $$PWD/settings.ui
 HEADERS += \
-    aboutdialog.h \
-    acceptlanguagedialog.h \
-    autofilldialog.h \
-    autofillmanager.h \
-    autosaver.h \
-    browserapplication.h \
-    browsermainwindow.h \
-    browserpaths.h \
-    browserprofile.h \
-    clearbutton.h \
-    clearprivatedata.h \
-    downloadmanager.h \
-    modelmenu.h \
-    modeltoolbar.h \
-    plaintexteditsearch.h \
-    searchbar.h \
-    searchbutton.h \
-    searchlineedit.h \
-    settings.h \
-    sourcehighlighter.h \
-    sourceviewer.h \
-    tabbar.h \
-    tabwidget.h \
-    toolbarsearch.h \
-    webactionmapper.h \
-    webpage.h \
-    webview.h \
-    webviewsearch.h \
-    utils/edittableview.h \
-    utils/edittreeview.h \
-    utils/languagemanager.h \
-    utils/lineedit.h \
-    utils/lineedit_p.h \
-    utils/singleapplication.h \
-    utils/squeezelabel.h \
-    utils/treesortfilterproxymodel.h
+    $$PWD/aboutdialog.h \
+    $$PWD/acceptlanguagedialog.h \
+    $$PWD/autofilldialog.h \
+    $$PWD/autofillmanager.h \
+    $$PWD/autosaver.h \
+    $$PWD/browserapplication.h \
+    $$PWD/browsermainwindow.h \
+    $$PWD/browserpaths.h \
+    $$PWD/browserprofile.h \
+    $$PWD/clearbutton.h \
+    $$PWD/clearprivatedata.h \
+    $$PWD/downloadmanager.h \
+    $$PWD/modelmenu.h \
+    $$PWD/modeltoolbar.h \
+    $$PWD/plaintexteditsearch.h \
+    $$PWD/searchbar.h \
+    $$PWD/searchbutton.h \
+    $$PWD/searchlineedit.h \
+    $$PWD/settings.h \
+    $$PWD/sourcehighlighter.h \
+    $$PWD/sourceviewer.h \
+    $$PWD/tabbar.h \
+    $$PWD/tabwidget.h \
+    $$PWD/toolbarsearch.h \
+    $$PWD/webactionmapper.h \
+    $$PWD/webpage.h \
+    $$PWD/webview.h \
+    $$PWD/webviewsearch.h \
+    $$PWD/utils/edittableview.h \
+    $$PWD/utils/edittreeview.h \
+    $$PWD/utils/languagemanager.h \
+    $$PWD/utils/lineedit.h \
+    $$PWD/utils/lineedit_p.h \
+    $$PWD/utils/singleapplication.h \
+    $$PWD/utils/squeezelabel.h \
+    $$PWD/utils/treesortfilterproxymodel.h
 SOURCES += \
-    aboutdialog.cpp \
-    acceptlanguagedialog.cpp \
-    autofilldialog.cpp \
-    autofillmanager.cpp \
-    autosaver.cpp \
-    browserapplication.cpp \
-    browsermainwindow.cpp \
-    browserprofile.cpp \
-    clearbutton.cpp \
-    clearprivatedata.cpp \
-    downloadmanager.cpp \
-    modelmenu.cpp \
-    modeltoolbar.cpp \
-    plaintexteditsearch.cpp \
-    searchbar.cpp \
-    searchbutton.cpp \
-    searchlineedit.cpp \
-    settings.cpp \
-    sourcehighlighter.cpp \
-    sourceviewer.cpp \
-    tabbar.cpp \
-    tabwidget.cpp \
-    toolbarsearch.cpp \
-    webactionmapper.cpp \
-    webpage.cpp \
-    webview.cpp \
-    webviewsearch.cpp \
-    utils/edittableview.cpp \
-    utils/edittreeview.cpp \
-    utils/languagemanager.cpp \
-    utils/lineedit.cpp \
-    utils/singleapplication.cpp \
-    utils/squeezelabel.cpp \
-    utils/treesortfilterproxymodel.cpp
+    $$PWD/aboutdialog.cpp \
+    $$PWD/acceptlanguagedialog.cpp \
+    $$PWD/autofilldialog.cpp \
+    $$PWD/autofillmanager.cpp \
+    $$PWD/autosaver.cpp \
+    $$PWD/browserapplication.cpp \
+    $$PWD/browsermainwindow.cpp \
+    $$PWD/browserprofile.cpp \
+    $$PWD/clearbutton.cpp \
+    $$PWD/clearprivatedata.cpp \
+    $$PWD/downloadmanager.cpp \
+    $$PWD/modelmenu.cpp \
+    $$PWD/modeltoolbar.cpp \
+    $$PWD/plaintexteditsearch.cpp \
+    $$PWD/searchbar.cpp \
+    $$PWD/searchbutton.cpp \
+    $$PWD/searchlineedit.cpp \
+    $$PWD/settings.cpp \
+    $$PWD/sourcehighlighter.cpp \
+    $$PWD/sourceviewer.cpp \
+    $$PWD/tabbar.cpp \
+    $$PWD/tabwidget.cpp \
+    $$PWD/toolbarsearch.cpp \
+    $$PWD/webactionmapper.cpp \
+    $$PWD/webpage.cpp \
+    $$PWD/webview.cpp \
+    $$PWD/webviewsearch.cpp \
+    $$PWD/utils/edittableview.cpp \
+    $$PWD/utils/edittreeview.cpp \
+    $$PWD/utils/languagemanager.cpp \
+    $$PWD/utils/lineedit.cpp \
+    $$PWD/utils/singleapplication.cpp \
+    $$PWD/utils/squeezelabel.cpp \
+    $$PWD/utils/treesortfilterproxymodel.cpp
 
 RESOURCES += \
     $$PWD/data/data.qrc \
@@ -134,11 +134,11 @@ RESOURCES += \
     $$PWD/data/searchengines/searchengines.qrc \
     $$PWD/htmls/htmls.qrc
 
-DISTFILES += ../AUTHORS \
-    ../ChangeLog \
-    ../LICENSE.GPL2 \
-    ../LICENSE.GPL3 \
-    ../README
+DISTFILES += $$PWD/../AUTHORS \
+    $$PWD/../ChangeLog \
+    $$PWD/../LICENSE.GPL2 \
+    $$PWD/../LICENSE.GPL3 \
+    $$PWD/../README
 
 win32 {
     RC_FILE = $$PWD/browser.rc
@@ -146,8 +146,8 @@ win32 {
 }
 
 mac {
-    ICON = browser.icns
-    QMAKE_INFO_PLIST = Info_mac.plist
+    ICON = $$PWD/browser.icns
+    QMAKE_INFO_PLIST = $$PWD/Info_mac.plist
 }
 
 unix {

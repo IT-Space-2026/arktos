@@ -17,20 +17,28 @@
  * Boston, MA  02110-1301  USA
  */
 
-#include <QtNetwork/QtNetwork>
-#include <QtGui/QtGui>
+#include <qcoreapplication.h>
+#include <qdebug.h>
+#include <qfile.h>
+#include <qfileinfo.h>
+#include <qnetworkdiskcache.h>
+#include <qstandardpaths.h>
+#include <qtextstream.h>
+#include <qurl.h>
 
 class NetworkDiskCache : public QNetworkDiskCache
 {
 public:
-    QNetworkCacheMetaData _fileMetaData(const QString &fileName)
-        { return fileMetaData(fileName); }
+    using QNetworkDiskCache::fileMetaData;
 
 };
 
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    // Match the browser's scope so QStandardPaths::CacheLocation resolves
+    // to the same directory (see BrowserApplication and NetworkDiskCache).
+    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
 
@@ -38,13 +46,15 @@ int main(int argc, char **argv)
     args.takeFirst();
     if (args.isEmpty()) {
         QTextStream stream(stdout);
-        stream << "arora-cacheinfo is a tool for viewing and extracting information out of Arora cache files." << endl;
-        stream << "arora-cacheinfo [-o cachefile] [file | url]" << endl;
+        stream << "arora-cacheinfo is a tool for viewing and extracting information out of Arora cache files." << Qt::endl;
+        stream << "arora-cacheinfo [-o cachefile] [file | url]" << Qt::endl;
+        stream << "This inspects Arora's application-level QNetworkDiskCache; the QtWebEngine/Chromium" << Qt::endl;
+        stream << "disk cache is internal to the engine and cannot be read with this tool." << Qt::endl;
         return 0;
     }
 
     NetworkDiskCache diskCache;
-    QString location = QDesktopServices::storageLocation(QDesktopServices::CacheLocation)
+    QString location = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
             + QLatin1String("/browser/");
     diskCache.setCacheDirectory(location);
 
@@ -52,10 +62,10 @@ int main(int argc, char **argv)
     QString last = args.takeLast();
     if (QFile::exists(last)) {
         qDebug() << "Reading in from a file and not a URL.";
-        metaData = diskCache._fileMetaData(last);
+        metaData = diskCache.fileMetaData(last);
     } else {
         qDebug() << "Reading in from a URL and not a file.";
-        metaData = diskCache.metaData(last);
+        metaData = diskCache.metaData(QUrl(last));
     }
 
     if (!args.isEmpty()
@@ -92,22 +102,21 @@ int main(int argc, char **argv)
     }
 
     QTextStream stream(stdout);
-    stream << "URL: " << metaData.url().toString() << endl;
-    stream << "Expiration Date: " << metaData.expirationDate().toString() << endl;
-    stream << "Last Modified Date: " << metaData.lastModified().toString() << endl;
-    stream << "Save to disk: " << metaData.saveToDisk() << endl;
-    stream << "Headers:" << endl;
-    foreach (const QNetworkCacheMetaData::RawHeader &header, metaData.rawHeaders())
-        stream << "\t" << header.first << ": " << header.second << endl;
+    stream << "URL: " << metaData.url().toString() << Qt::endl;
+    stream << "Expiration Date: " << metaData.expirationDate().toString() << Qt::endl;
+    stream << "Last Modified Date: " << metaData.lastModified().toString() << Qt::endl;
+    stream << "Save to disk: " << metaData.saveToDisk() << Qt::endl;
+    stream << "Headers:" << Qt::endl;
+    for (const QNetworkCacheMetaData::RawHeader &header : metaData.rawHeaders())
+        stream << "\t" << header.first << ": " << header.second << Qt::endl;
     QIODevice *device = diskCache.data(metaData.url());
     if (device) {
-        stream << "Data Size: " << device->size() << endl;
+        stream << "Data Size: " << device->size() << Qt::endl;
         stream << "First line: " << device->readLine(100);
     } else {
-        stream << "No data? Either the file is corrupt or there is an error." << endl;
+        stream << "No data? Either the file is corrupt or there is an error." << Qt::endl;
     }
 
     delete device;
     return 0;
 }
-

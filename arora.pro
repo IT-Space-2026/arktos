@@ -3,9 +3,8 @@ lessThan(QT_MAJOR_VERSION, 6) {
 }
 
 TEMPLATE = subdirs
-SUBDIRS  = src
+SUBDIRS  = src tools
 # TODO(TST01): re-enable autotests once the suite is ported to Qt6.
-# TODO(AUD01): tools/ utilities are Qt4-era; audit before re-enabling.
 CONFIG += ordered
 
 unix {
