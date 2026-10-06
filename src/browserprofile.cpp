@@ -22,7 +22,9 @@
 #include "acceptlanguagedialog.h"
 
 #include <qapplication.h>
+#include <qdir.h>
 #include <qfile.h>
+#include <qfileinfo.h>
 #include <qregularexpression.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
@@ -231,6 +233,94 @@ void applySettings(QWebEngineProfile *profile)
         settings.value(QLatin1String("userAgent")).toString();
     profile->setHttpUserAgent(
         userAgent.isEmpty() ? defaultHttpUserAgent() : userAgent);
+
+    // SEC12: the profile tree must stay owner-only.  This runs at
+    // startup so a storage dir loosened by a umask quirk or a manual
+    // copy is repaired before Chromium writes more into it.
+    if (!profile->isOffTheRecord())
+        ensureUserOnlyPermissions(profile->persistentStoragePath());
+}
+
+bool ensureUserOnlyPermissions(const QString &path)
+{
+    const QFile::Permissions dirPerms =
+        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
+    const QFile::Permissions filePerms =
+        QFile::ReadOwner | QFile::WriteOwner;
+
+    QDir dir(path);
+    if (!dir.exists())
+        return true;
+
+    bool ok = QFile::setPermissions(dir.absolutePath(), dirPerms);
+    const QFileInfoList entries = dir.entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo &entry : entries) {
+        // Never chmod through a symlink — it could point outside the
+        // profile tree.
+        if (entry.isSymLink())
+            continue;
+        if (entry.isDir())
+            ok &= ensureUserOnlyPermissions(entry.absoluteFilePath());
+        else
+            ok &= QFile::setPermissions(entry.absoluteFilePath(), filePerms);
+    }
+    return ok;
+}
+
+bool clearSiteStorage(QWebEngineProfile *profile)
+{
+    // Off-the-record profiles keep everything in memory — nothing to
+    // remove — and their storage path may be empty.
+    if (!profile || profile->isOffTheRecord())
+        return true;
+
+    const QString storagePath = profile->persistentStoragePath();
+    if (storagePath.isEmpty())
+        return true;
+
+    // Per-origin DOM storage trees Chromium keeps under the profile
+    // dir.  There is no Qt removal API (clearHttpCache() does not
+    // reach these), so the entries are removed outright.
+    static const char *const siteDataDirs[] = {
+        "Local Storage",        // localStorage leveldb
+        "Session Storage",      // sessionStorage leveldb
+        "IndexedDB",
+        "Service Worker",       // registrations + script cache
+        "databases",            // WebSQL
+        "File System",          // FileSystem API / OPFS buckets
+        "blob_storage",
+        "WebStorage",           // QuotaManager bookkeeping
+        "Shared Dictionary",
+        "Platform Notifications",
+        "InterestGroups",
+        "PrivateAggregation",
+        "AttributionReporting",
+    };
+    static const char *const siteDataFiles[] = {
+        "Trust Tokens",
+        "Trust Tokens-journal",
+        "DIPS",
+        "DIPS-journal",
+        "Network Persistent State",     // persisted HSTS state
+    };
+
+    bool ok = true;
+    for (const char *name : siteDataDirs) {
+        QDir dir(storagePath + QLatin1Char('/') + QLatin1String(name));
+        if (dir.exists())
+            ok &= dir.removeRecursively();
+    }
+    for (const char *name : siteDataFiles) {
+        QFile file(storagePath + QLatin1Char('/') + QLatin1String(name));
+        if (file.exists())
+            ok &= file.remove();
+    }
+
+    // Whatever survived or was recreated still sits inside the
+    // private-data tree — keep it owner-only.
+    ensureUserOnlyPermissions(storagePath);
+    return ok;
 }
 
 } // namespace BrowserProfile

@@ -64,6 +64,26 @@ QString defaultHttpUserAgent();
 // intentionally not applied; see MIG11 notes in .devin/Arora-Task.md.
 void applySettings(QWebEngineProfile *profile);
 
+// SEC12: QWebEngineProfile exposes no API for DOM storage —
+// clearHttpCache() only reaches the HTTP cache.  This removes the
+// per-site storage trees Chromium persists under the profile's
+// persistentStoragePath(): localStorage/sessionStorage leveldb,
+// IndexedDB, service workers, WebSQL, File System/OPFS, blobs, quota
+// bookkeeping, trust tokens, shared dictionaries and the persisted
+// network state (HSTS).  Chromium recreates them on demand.
+// Callers should also clear live origins through a page-side script
+// sweep (ClearPrivateData does) — Chromium caches recently used
+// storage areas in the browser process and could otherwise re-flush
+// stale data back to disk.  Returns false if a listed entry could
+// not be removed; off-the-record profiles are a no-op.
+bool clearSiteStorage(QWebEngineProfile *profile);
+
+// SEC12: force a profile data tree owner-only — 0700 directories,
+// 0600 files.  Chromium already creates them that way; this repairs
+// trees loosened by umask quirks or manual copies.  Returns false if
+// any permission could not be fixed.
+bool ensureUserOnlyPermissions(const QString &path);
+
 } // namespace BrowserProfile
 
 #endif // BROWSERPROFILE_H

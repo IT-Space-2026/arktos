@@ -35,7 +35,9 @@
 #include <qlist.h>
 #include <qpushbutton.h>
 #include <qsettings.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebengineview.h>
 
 ClearPrivateData::ClearPrivateData(QWidget *parent)
     : QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint)
@@ -63,6 +65,14 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     m_cookies = new QCheckBox(tr("&Cookies"));
     m_cookies->setChecked(settings.value(QLatin1String("cookies"), true).toBool());
     layout->addWidget(m_cookies);
+
+    // DOM storage — the data trackers actually use.  The web cache
+    // checkbox cannot cover it: clearHttpCache() never touches
+    // localStorage/IndexedDB/service workers.
+    m_siteData = new QCheckBox(tr("Site &Data"));
+    m_siteData->setToolTip(tr("localStorage, IndexedDB, service workers and other site databases"));
+    m_siteData->setChecked(settings.value(QLatin1String("siteData"), true).toBool());
+    layout->addWidget(m_siteData);
 
     // The web cache lives inside the profile now (Chromium's http
     // cache), so this stays enabled even when the app-side NAM disk
@@ -100,6 +110,7 @@ void ClearPrivateData::accept()
     settings.setValue(QLatin1String("downloadHistory"), m_downloadHistory->isChecked());
     settings.setValue(QLatin1String("searchHistory"), m_searchHistory->isChecked());
     settings.setValue(QLatin1String("cookies"), m_cookies->isChecked());
+    settings.setValue(QLatin1String("siteData"), m_siteData->isChecked());
     settings.setValue(QLatin1String("cache"), m_cache->isChecked());
     settings.setValue(QLatin1String("favIcons"), m_favIcons->isChecked());
 
@@ -133,6 +144,32 @@ void ClearPrivateData::accept()
 
     if (m_cookies->isChecked()) {
         CookieJar::instance()->clear();
+    }
+
+    if (m_siteData->isChecked()) {
+        // Chromium caches live origins' DOM storage in the browser
+        // process, so sweep every open page of this profile first —
+        // an emptied storage area cannot be re-flushed to disk.
+        const QString wipeScript = QStringLiteral(
+            "try{localStorage.clear()}catch(e){}"
+            "try{sessionStorage.clear()}catch(e){}"
+            "try{if(window.indexedDB&&indexedDB.databases)"
+            "indexedDB.databases().then(function(dbs){dbs.forEach("
+            "function(db){indexedDB.deleteDatabase(db.name)})})}catch(e){}"
+            "try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)"
+            "navigator.serviceWorker.getRegistrations().then(function(rs){"
+            "rs.forEach(function(r){r.unregister()})})}catch(e){}"
+            "try{if(window.caches&&caches.keys)"
+            "caches.keys().then(function(ns){ns.forEach(function(n){caches.delete(n)})})}catch(e){}");
+        const QWidgetList widgets = qApp->allWidgets();
+        for (QWidget *widget : widgets) {
+            QWebEngineView *view = qobject_cast<QWebEngineView*>(widget);
+            if (view && view->page() && view->page()->profile() == profile)
+                view->page()->runJavaScript(wipeScript);
+        }
+        // Then remove the on-disk storage trees for every origin,
+        // open or not — Qt exposes no DOM-storage clear API.
+        BrowserProfile::clearSiteStorage(profile);
     }
 
     if (m_cache->isChecked()) {

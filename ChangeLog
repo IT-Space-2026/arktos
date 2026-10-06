@@ -163,6 +163,10 @@ Search suggestion privacy (SEC11):
     Search suggestions are now off by default: typing in the search box previously streamed every keystroke to the current engine's suggest endpoint without asking. Suggestions are a per-engine opt-in — enable them for the current engine from the new "Search Suggestions" group on the Privacy settings tab (the label names the engine the keystrokes would go to), from the checkable "Search Suggestions" entry in the search-button's engines menu, or per engine via the new "Suggestions" column in the OpenSearch manager dialog. With the flag off the suggestion data path issues no network requests at all.
     Accept-Language audit: when no language list is configured the header no longer falls back to the full system locale list (QLocale::uiLanguages); it now sends just the process locale and its base language, matching what other browsers send. Configured lists (the accept-language dialog) are unchanged.
 
+Clear private data completeness (SEC12):
+    The "Clear Private Data" dialog now really removes DOM storage — a new "Site Data" checkbox (on by default) wipes localStorage, sessionStorage, IndexedDB, service workers, WebSQL/File System data, blobs, quota bookkeeping, trust tokens and persisted HSTS/network state. Qt WebEngine exposes no DOM-storage clear API (clearHttpCache only reaches the HTTP cache — exactly the data trackers use), so the clear first sweeps every open page on the profile with a storage-clearing script — an emptied storage area cannot be re-flushed from Chromium's in-memory copy — then removes the on-disk storage trees, which Chromium recreates empty.
+    The profile storage directory and everything under it are kept owner-only (0700 directories / 0600 files): repaired at startup and after each site-data wipe. One honest limit: origins that were recently open but have no page open at clear time can still be cached in Chromium's storage areas and may be rewritten once before their cache is dropped — closing the tabs or restarting covers them completely.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

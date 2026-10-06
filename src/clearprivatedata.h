@@ -39,6 +39,7 @@ private:
     QCheckBox *m_downloadHistory;
     QCheckBox *m_searchHistory;
     QCheckBox *m_cookies;
+    QCheckBox *m_siteData;
     QCheckBox *m_cache;
     QCheckBox *m_favIcons;
 };

@@ -24,10 +24,17 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include <QtNetwork/QtNetwork>
+#include <qcheckbox.h>
 #include <qstandarditemmodel.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
+#include <qtemporarydir.h>
+#include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebengineview.h>
 
 #include "aboutdialog.h"
+#include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
@@ -56,6 +63,27 @@
 #include "qtest_arora.h"
 #include "qtry.h"
 
+// SEC12 helper: does any file under rootPath contain the needle?
+// Files >= 4 MiB are skipped — nothing we seed gets that large.
+static bool storageTreeContains(const QString &rootPath, const QByteArray &needle)
+{
+    const QFileInfoList entries = QDir(rootPath).entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo &entry : entries) {
+        if (entry.isSymLink())
+            continue;
+        if (entry.isDir()) {
+            if (storageTreeContains(entry.absoluteFilePath(), needle))
+                return true;
+        } else if (entry.size() < 4 * 1024 * 1024) {
+            QFile file(entry.absoluteFilePath());
+            if (file.open(QIODevice::ReadOnly) && file.readAll().contains(needle))
+                return true;
+        }
+    }
+    return false;
+}
+
 class tst_Dialogs : public QObject
 {
     Q_OBJECT
@@ -77,6 +105,8 @@ private slots:
     void adBlockDialog();
     void editTableView();
     void userAgentMenu();
+    void clearSiteData();
+    void storagePermissions();
 };
 
 void tst_Dialogs::initTestCase()
@@ -415,6 +445,172 @@ void tst_Dialogs::userAgentMenu()
     // "Default" restores the bundled UA.
     menu.actions().first()->trigger();
     QCOMPARE(WebPage::userAgent(), defaultAgent);
+}
+
+// SEC12: DOM storage is what trackers actually use, and
+// clearHttpCache() never touches it.  Seed localStorage/IndexedDB and
+// a cookie through a real page on the normal profile, run the
+// dialog's clear path, then prove the data is gone from the live
+// profile AND from the on-disk storage tree.
+void tst_Dialogs::clearSiteData()
+{
+    CookieJar *jar = CookieJar::instance(BrowserProfile::normalProfile());
+    QWebEngineProfile *profile = jar->profile();
+    const QString storagePath = profile->persistentStoragePath();
+    QVERIFY(!storagePath.isEmpty());
+
+    // Loopback origin — the first hit serves a seeding page, later
+    // hits a plain one so re-loading does not re-seed.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    int requests = 0;
+    connect(&server, &QTcpServer::newConnection, this, [&server, &requests] {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                             [socket, &requests] {
+                socket->readAll();
+                const QByteArray script = ++requests == 1
+                    ? QByteArrayLiteral(
+                        "<script>localStorage.setItem('sec12key','sec12val');"
+                        "var r=indexedDB.open('sec12db',1);"
+                        "r.onupgradeneeded=function(e){"
+                        "e.target.result.createObjectStore('s')};"
+                        "document.cookie='sec12cookie=1; path=/';</script>")
+                    : QByteArrayLiteral("");
+                const QByteArray body =
+                    QByteArrayLiteral("<html><body>") + script +
+                    QByteArrayLiteral("done</body></html>");
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                              "Content-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\n\r\n" + body);
+            });
+        }
+    });
+    const QUrl pageUrl(QStringLiteral("http://127.0.0.1:%1/")
+                       .arg(server.serverPort()));
+
+    QWebEngineView view;
+    QWebEnginePage *page = new QWebEnginePage(profile, &view);
+    view.setPage(page);
+    QSignalSpy loadedSpy(page, &QWebEnginePage::loadFinished);
+    view.load(pageUrl);
+    QVERIFY(loadedSpy.wait(15000));
+
+    QVariant seeded;
+    page->runJavaScript(QStringLiteral("String(localStorage.getItem('sec12key'))"),
+                        [&seeded](const QVariant &v) { seeded = v; });
+    QTRY_VERIFY(seeded.isValid());
+    QCOMPARE(seeded.toString(), QLatin1String("sec12val"));
+
+    // The cookie reaches the profile's jar asynchronously.
+    const auto hasSeededCookie = [jar] {
+        const QList<QNetworkCookie> cookies = jar->cookies();
+        for (const QNetworkCookie &cookie : cookies) {
+            if (cookie.name() == "sec12cookie")
+                return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY(hasSeededCookie());
+
+    // Chromium commits localStorage to its leveldb lazily (several
+    // seconds) — wait until the seeded value is actually on disk so
+    // the filesystem wipe is genuinely exercised.
+    bool onDisk = false;
+    for (int ms = 0; ms < 20000 && !onDisk; ms += 250) {
+        QTest::qWait(250);
+        onDisk = storageTreeContains(storagePath, QByteArrayLiteral("sec12val"));
+    }
+    QVERIFY2(onDisk, "localStorage never reached the profile storage tree");
+
+    ClearPrivateData dialog;
+    const QList<QCheckBox*> boxes = dialog.findChildren<QCheckBox*>();
+    QVERIFY(!boxes.isEmpty());
+    for (QCheckBox *box : boxes)
+        box->setChecked(true);
+    dialog.accept();
+
+    // The open page's live storage area was emptied by the sweep.
+    QVariant cleared;
+    page->runJavaScript(QStringLiteral("String(localStorage.getItem('sec12key'))"),
+                        [&cleared](const QVariant &v) { cleared = v; });
+    QTRY_VERIFY(cleared.isValid());
+    QCOMPARE(cleared.toString(), QLatin1String("null"));
+
+    // A fresh page on the same origin sees nothing either — the
+    // browser-process storage is empty, not just the tab's.
+    QWebEngineView secondView;
+    QWebEnginePage *secondPage = new QWebEnginePage(profile, &secondView);
+    secondView.setPage(secondPage);
+    QSignalSpy secondLoaded(secondPage, &QWebEnginePage::loadFinished);
+    secondView.load(pageUrl);
+    QVERIFY(secondLoaded.wait(15000));
+    QVariant reread;
+    secondPage->runJavaScript(
+        QStringLiteral("String(localStorage.getItem('sec12key'))"),
+        [&reread](const QVariant &v) { reread = v; });
+    QTRY_VERIFY(reread.isValid());
+    QCOMPARE(reread.toString(), QLatin1String("null"));
+
+    // Nothing on disk may still carry the seeded bytes.  Poll: a
+    // commit racing the sweep could briefly rewrite a fresh leveldb,
+    // but the emptied storage area converges to clean.
+    bool residue = true;
+    for (int ms = 0; ms < 15000 && residue; ms += 250) {
+        QTest::qWait(250);
+        residue = storageTreeContains(storagePath, QByteArrayLiteral("sec12val"));
+    }
+    QVERIFY(!residue);
+    QVERIFY(!hasSeededCookie());
+
+    // The storage tree itself must be owner-only.
+    QVERIFY(QFileInfo::exists(storagePath));
+    const QFile::Permissions nonOwner =
+        QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+    QVERIFY(!(QFileInfo(storagePath).permissions() & nonOwner));
+}
+
+// SEC12: ensureUserOnlyPermissions repairs a loosened profile tree —
+// directories end up 0700, files 0600.
+void tst_Dialogs::storagePermissions()
+{
+    QTemporaryDir tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(QDir(tree.path()).mkdir(QLatin1String("sub")));
+    const QString filePath = tree.filePath(QLatin1String("sub/loose.txt"));
+    {
+        QFile file(filePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("x");
+    }
+
+    const QFile::Permissions looseDir =
+        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+        | QFile::ReadGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::ExeOther;
+    const QFile::Permissions looseFile =
+        QFile::ReadOwner | QFile::WriteOwner
+        | QFile::ReadGroup | QFile::ReadOther;
+    QVERIFY(QFile::setPermissions(tree.path(), looseDir));
+    QVERIFY(QFile::setPermissions(tree.filePath(QLatin1String("sub")), looseDir));
+    QVERIFY(QFile::setPermissions(filePath, looseFile));
+
+    QVERIFY(BrowserProfile::ensureUserOnlyPermissions(tree.path()));
+
+    const QFile::Permissions nonOwner =
+        QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+    QVERIFY(!(QFileInfo(tree.path()).permissions() & nonOwner));
+    QVERIFY(!(QFileInfo(tree.filePath(QLatin1String("sub"))).permissions()
+              & nonOwner));
+    QVERIFY(!(QFileInfo(filePath).permissions() & nonOwner));
+
+    // Conforming trees and missing paths report success too.
+    QVERIFY(BrowserProfile::ensureUserOnlyPermissions(tree.path()));
+    QVERIFY(BrowserProfile::ensureUserOnlyPermissions(
+                tree.filePath(QLatin1String("no-such-dir"))));
 }
 
 QTEST_MAIN(tst_Dialogs)
