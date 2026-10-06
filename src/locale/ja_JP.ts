@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="ja_JP">
+<TS version="2.1" language="ja_JP">
 <context>
     <name>AboutDialog</name>
     <message>
@@ -17,7 +17,19 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>WebKit ベースの軽いブラウザ</translation>
+        <translation type="vanished">WebKit ベースの軽いブラウザ</translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
@@ -43,13 +55,17 @@ p, li { white-space: pre-wrap; }
         <source>About %1</source>
         <translation>%1 について</translation>
     </message>
-    <message utf8="true">
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -57,7 +73,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>WebKit version: %1</source>
-        <translation>WebKit バージョン: %1</translation>
+        <translation type="vanished">WebKit バージョン: %1</translation>
     </message>
 </context>
 <context>
@@ -91,7 +107,7 @@ p, li { white-space: pre-wrap; }
     <name>AdBlockBlockedNetworkReply</name>
     <message>
         <source>Blocked by AdBlockRule: %1</source>
-        <translation>AdBlock ルール:%1 によってブロックされました</translation>
+        <translation type="vanished">AdBlock ルール:%1 によってブロックされました</translation>
     </message>
 </context>
 <context>
@@ -198,7 +214,11 @@ p, li { white-space: pre-wrap; }
     <name>AutoFillManager</name>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
-        <translation>&lt;b&gt;パスワードを保存しますか?&lt;/b&gt;&lt;br&gt;         保存したり削除したパスワードを見直すには、オプションの自動入力タブを開いてください。</translation>
+        <translation type="vanished">&lt;b&gt;パスワードを保存しますか?&lt;/b&gt;&lt;br&gt;         保存したり削除したパスワードを見直すには、オプションの自動入力タブを開いてください。</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -654,7 +674,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Web インスペクタを有効化(&amp;I)</translation>
+        <translation type="vanished">Web インスペクタを有効化(&amp;I)</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -731,12 +751,12 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Web インスペクタ</translation>
+        <translation type="vanished">Web インスペクタ</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Web インスペクタは、ページを読み込む前から有効になっていなければ正しく動作しません.
+        <translation type="vanished">Web インスペクタは、ページを読み込む前から有効になっていなければ正しく動作しません.
 全てのページを再読込しますか?</translation>
     </message>
     <message>
@@ -744,8 +764,16 @@ Do you want to reload all pages?</source>
         <translation>現在のページの読込を中止します</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">停止</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>現在のページを再読込</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -791,6 +819,10 @@ Do you want to reload all pages?</source>
     <message>
         <source>Add Folder...</source>
         <translation>フォルダの追加...</translation>
+    </message>
+    <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>About &amp;%1</source>
@@ -839,8 +871,16 @@ Do you want to reload all pages?</source>
         <translation>検索エンジンのカスタマイズ...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
         <translation>広告ブロック(AdBlock)(&amp;A)...</translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1107,16 +1147,24 @@ Do you want to reload all pages?</source>
         <translation>%1 のダウンロードは中止しました</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>保存ファイルの作成中にエラー:%1</translation>
+        <translation type="vanished">保存ファイルの作成中にエラー:%1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>保存中にエラー:%1</translation>
+        <translation type="vanished">保存中にエラー:%1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>ネットワーク エラー:%1</translation>
+        <translation type="vanished">ネットワーク エラー:%1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1144,7 +1192,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 / %2 - 停止しました</translation>
+        <translation type="vanished">%1 / %2 - 停止しました</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1181,6 +1229,14 @@ Do you want to quit anyway?</source>
         <translation>%1 件の項目がダウンロード中です
 本当に終了しますか?</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">ダウンロード</translation>
+    </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation>
@@ -1211,26 +1267,41 @@ Do you want to quit anyway?</source>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>エラーはありません</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>ディレクトリ( %1 )読込中にエラー:ディレクトリがありません</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>ディレクトリ( %1 )の内容を読み込めません</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>%1 の中身</translation>
+        <translation type="unfinished">%1 の中身</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">エラーはありません</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">ディレクトリ( %1 )読込中にエラー:ディレクトリがありません</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">ディレクトリ( %1 )の内容を読み込めません</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">%1 の中身</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -1727,6 +1798,22 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>アプリケーション終了時</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Open links from applications:</source>
         <translation>リンクを開く時の動作:</translation>
     </message>
@@ -2019,15 +2106,19 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>再起動が必要</translation>
+        <translation type="vanished">再起動が必要</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>ネットワーク キャッシュの構成を変更しました。設定を有効にするにはブラウザの再起動が必要です。</translation>
+        <translation type="vanished">ネットワーク キャッシュの構成を変更しました。設定を有効にするにはブラウザの再起動が必要です。</translation>
     </message>
     <message>
         <source>Choose Directory</source>
         <translation>ディレクトリを選択</translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -2115,6 +2206,10 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>次のタブ</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show Previous Tab</source>
         <translation>前のタブ</translation>
     </message>
@@ -2128,13 +2223,13 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>本当にこのページを閉じますか?</translation>
+        <translation type="vanished">本当にこのページを閉じますか?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>このページは変更されていますが、ページを閉じると変更は失われてしまいます.
+        <translation type="vanished">このページは変更されていますが、ページを閉じると変更は失われてしまいます.
 本当にこのページを閉じますか?</translation>
     </message>
     <message>
@@ -2155,7 +2250,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>読み込み中 %1% (%2 %3)...</translation>
+        <translation type="vanished">読み込み中 %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2194,7 +2289,26 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">検索エンジンのカスタマイズ...</translation>
+        <translation type="unfinished">検索エンジンのカスタマイズ...</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">デフォルト</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2225,11 +2339,11 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>POST リクエストを再送します</translation>
+        <translation type="vanished">POST リクエストを再送します</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>サイトを表示する為に、全てのデータを再送する必要がありますが、予期しない動作を引き起こす(例えば、注文やコメント投稿等の操作が再度行われる)可能性があります。それでも続行しますか?</translation>
+        <translation type="vanished">サイトを表示する為に、全てのデータを再送する必要がありますが、予期しない動作を引き起こす(例えば、注文やコメント投稿等の操作が再度行われる)可能性があります。それでも続行しますか?</translation>
     </message>
 </context>
 <context>
@@ -2275,40 +2389,44 @@ Do you really want to close this page?
         <translation>画像のURLをコピー(&amp;O)</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Loading...</source>
         <translation>読み込み中...</translation>
     </message>
     <message>
         <source>Search with...</source>
-        <translation>検索エンジンを指定して検索...</translation>
+        <translation type="vanished">検索エンジンを指定して検索...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>ツールバーの検索エンジンに追加する</translation>
+        <translation type="vanished">ツールバーの検索エンジンに追加する</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>サポートされていないメソッド</translation>
+        <translation type="vanished">サポートされていないメソッド</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>メソッド( %1 )はサポートされていません。</translation>
+        <translation type="vanished">メソッド( %1 )はサポートされていません。</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>検索エンジン</translation>
+        <translation type="vanished">検索エンジン</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>使用したい検索エンジンを選んでください</translation>
+        <translation type="vanished">使用したい検索エンジンを選んでください</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>検索エンジン名の入力</translation>
+        <translation type="vanished">検索エンジン名の入力</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>検索エンジンの名前を入力してください</translation>
+        <translation type="vanished">検索エンジンの名前を入力してください</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2320,6 +2438,17 @@ Do you really want to close this page?
     <message>
         <source>Not Found</source>
         <translation>見つかりません</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

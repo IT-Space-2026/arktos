@@ -1,11 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="zh_TW">
+<TS version="2.1" language="zh_TW">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About %1</source>
         <translation>關於 %1</translation>
+    </message>
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,15 +33,15 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>基於 WebKit 的輕量級瀏覽器</translation>
+        <translation type="vanished">基於 WebKit 的輕量級瀏覽器</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -38,10 +54,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Close</source>
         <translation>關閉</translation>
-    </message>
-    <message>
-        <source>WebKit version: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -69,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>加入...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -180,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -622,7 +627,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>啟用網頁檢閱器(&amp;I)</translation>
+        <translation type="vanished">啟用網頁檢閱器(&amp;I)</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -700,12 +705,12 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>網頁檢閱器</translation>
+        <translation type="vanished">網頁檢閱器</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>網頁檢閱器只會在啟用後載入的網頁才會生效。
+        <translation type="vanished">網頁檢閱器只會在啟用後載入的網頁才會生效。
 您要重新載入全部網頁嗎？</translation>
     </message>
     <message>
@@ -713,8 +718,16 @@ Do you want to reload all pages?</source>
         <translation>停止載入目前的網頁</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">停止</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>重新載入目前的網頁</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -734,6 +747,10 @@ Do you want to reload all pages?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -742,7 +759,15 @@ Do you want to reload all pages?</source>
         <translation type="unfinished">設定搜索引擎</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1002,16 +1027,24 @@ Do you want to reload all pages?</source>
         <translation>下載已取消：%1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>開啟輸出檔案時發生錯誤：%1</translation>
+        <translation type="vanished">開啟輸出檔案時發生錯誤：%1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>儲存時發生錯誤：%1</translation>
+        <translation type="vanished">儲存時發生錯誤：%1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>網路錯誤：%1</translation>
+        <translation type="vanished">網路錯誤：%1</translation>
     </message>
     <message>
         <source>%1 of %2 (%3/sec) - %4</source>
@@ -1023,7 +1056,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>已下載%1，共有 %2 - 已停止</translation>
+        <translation type="vanished">已下載%1，共有 %2 - 已停止</translation>
     </message>
     <message>
         <source>Download directory (%1) couldn&apos;t be created.</source>
@@ -1037,6 +1070,14 @@ Do you want to reload all pages?</source>
 Do you want to quit anyway?</source>
         <translation>還在 %1 個下載正在進行中
 您還是要離開嗎？</translation>
+    </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">下載</translation>
     </message>
     <message numerus="yes">
         <source>%n Download(s)</source>
@@ -1074,26 +1115,41 @@ Do you want to quit anyway?</source>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>沒有錯誤</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>開啟錯誤：%1：沒有該檔案或目錄</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>無法讀取 %1</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>%1 的內容</translation>
+        <translation type="unfinished">%1 的內容</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">沒有錯誤</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">開啟錯誤：%1：沒有該檔案或目錄</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">無法讀取 %1</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">%1 的內容</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -1489,6 +1545,14 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>使用此目的地</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Appearance</source>
         <translation>顯示</translation>
     </message>
@@ -1507,6 +1571,10 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>在網頁中偏好使用的語言：</translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -1531,6 +1599,10 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <message>
         <source>View Images</source>
         <translation>顯示圖片</translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -1745,14 +1817,18 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>須要重新啟動</translation>
+        <translation type="vanished">須要重新啟動</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>網路快取設定已經修改。瀏覽器需要重新啟動才能使其生效。</translation>
+        <translation type="vanished">網路快取設定已經修改。瀏覽器需要重新啟動才能使其生效。</translation>
     </message>
     <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1830,13 +1906,13 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>您真的要關閉此網頁嗎？</translation>
+        <translation type="vanished">您真的要關閉此網頁嗎？</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>您已經修改此網頁及如果關閉它將會失去所有已作的修改。
+        <translation type="vanished">您已經修改此網頁及如果關閉它將會失去所有已作的修改。
 您真的要關閉此網頁？</translation>
     </message>
     <message>
@@ -1845,7 +1921,11 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>正在載入  %1% (%2 %3)...</translation>
+        <translation type="vanished">正在載入  %1% (%2 %3)...</translation>
+    </message>
+    <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -1900,7 +1980,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">設定搜索引擎</translation>
+        <translation type="unfinished">設定搜索引擎</translation>
     </message>
     <message>
         <source>Clear Recent Searches</source>
@@ -1916,14 +1996,33 @@ Do you really want to close this page?
     </message>
 </context>
 <context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">預設</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>WebPage</name>
     <message>
         <source>Resending POST request</source>
-        <translation>再送出 POST 要求</translation>
+        <translation type="vanished">再送出 POST 要求</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>要顯示此網站，所有的請求都要重新送出，這可能會導致一些無法預料的行為，例如某些會再做一次。您要繼續嗎？</translation>
+        <translation type="vanished">要顯示此網站，所有的請求都要重新送出，這可能會導致一些無法預料的行為，例如某些會再做一次。您要繼續嗎？</translation>
     </message>
     <message>
         <source>Error loading page: %1</source>
@@ -1989,36 +2088,40 @@ Do you really want to close this page?
         <translation>複製圖片位置(&amp;O)</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Search with...</source>
-        <translation>搜尋於...</translation>
+        <translation type="vanished">搜尋於...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>加入至工具列搜尋</translation>
+        <translation type="vanished">加入至工具列搜尋</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>方法不支援</translation>
+        <translation type="vanished">方法不支援</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>% 的方法不支援。</translation>
+        <translation type="vanished">% 的方法不支援。</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>搜索引擎</translation>
+        <translation type="vanished">搜索引擎</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>選擇搜索引擎</translation>
+        <translation type="vanished">選擇搜索引擎</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>引擎名稱</translation>
+        <translation type="vanished">引擎名稱</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>輸入搜索引擎的名稱</translation>
+        <translation type="vanished">輸入搜索引擎的名稱</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -2034,6 +2137,17 @@ Do you really want to close this page?
     <message>
         <source>Not Found</source>
         <translation>找不到</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

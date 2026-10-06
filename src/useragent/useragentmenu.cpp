@@ -29,6 +29,7 @@
 
 #include "useragentmenu.h"
 
+#include "browserapplication.h"
 #include "webpage.h"
 
 #include <qactiongroup.h>
@@ -58,8 +59,15 @@ void UserAgentMenu::populateMenu()
     defaultUserAgent->setChecked(settings.value(QLatin1String("userAgent")).toString().isEmpty());
     addAction(defaultUserAgent);
 
-    // Add default extra user agents
-    addActionsFromFile(QLatin1String(":/useragents/useragents.xml"));
+    // Add default extra user agents.  A copy installed into the package
+    // data directory (make install ships one) overrides the bundled
+    // resource so distros and admins can adjust the list.
+    const QString installedFile =
+            BrowserApplication::installedDataDirectory() + QLatin1String("/useragents.xml");
+    if (QFile::exists(installedFile))
+        addActionsFromFile(installedFile);
+    else
+        addActionsFromFile(QLatin1String(":/useragents/useragents.xml"));
 
     // Add other action
     addSeparator();

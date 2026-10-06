@@ -1,11 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0">
+<TS version="2.1" language="ca">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About %1</source>
         <translation>Quant a %1</translation>
+    </message>
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,15 +33,15 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Navegador web lleuger basat en WebKit</translation>
+        <translation type="vanished">Navegador web lleuger basat en WebKit</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -38,10 +54,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Close</source>
         <translation>Tanca</translation>
-    </message>
-    <message>
-        <source>WebKit version: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -69,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>Afegeix...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -180,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -642,7 +647,7 @@ Voleu sortir igualment?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Hab&amp;ilita l&apos;inspector web</translation>
+        <translation type="vanished">Hab&amp;ilita l&apos;inspector web</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -720,12 +725,12 @@ Voleu sortir igualment?</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Inspector web</translation>
+        <translation type="vanished">Inspector web</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>L&apos;inspector web només funciona correctament per pagines carregades després d&apos;habilitar-lo. 
+        <translation type="vanished">L&apos;inspector web només funciona correctament per pagines carregades després d&apos;habilitar-lo. 
 Voleu recarregar totes les pàgines?</translation>
     </message>
     <message>
@@ -733,8 +738,16 @@ Voleu recarregar totes les pàgines?</translation>
         <translation>Atura la càrrega de la pàgina actual</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Atura</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Recarrega la pàgina actual</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -763,6 +776,10 @@ Download Manager
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -771,7 +788,15 @@ Download Manager
         <translation type="unfinished">Configura els motors de cerca...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1031,16 +1056,24 @@ Download Manager
         <translation>S&apos;ha cancel·lat la baixada: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Error en obrir el fitxer  de sortida: %1</translation>
+        <translation type="vanished">Error en obrir el fitxer  de sortida: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Error en desar: %1</translation>
+        <translation type="vanished">Error en desar: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Error de xarxa: %1</translation>
+        <translation type="vanished">Error de xarxa: %1</translation>
     </message>
     <message>
         <source>%1 of %2 (%3/sec) - %4</source>
@@ -1052,7 +1085,7 @@ Download Manager
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 de %2 - aturat</translation>
+        <translation type="vanished">%1 de %2 - aturat</translation>
     </message>
     <message>
         <source>Download directory (%1) couldn&apos;t be created.</source>
@@ -1067,22 +1100,33 @@ Do you want to quit anyway?</source>
         <translation>Hi ha %1 baixades en curs 
 Voleu abandonar igualment?</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Baixades</translation>
+    </message>
     <message numerus="yes">
         <source>%n Download(s)</source>
         <translation type="unfinished">
             <numerusform>%n baixada(es)</numerusform>
+            <numerusform></numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation type="unfinished">
             <numerusform>%n minuts restants</numerusform>
+            <numerusform></numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n seconds remaining</source>
         <translation type="unfinished">
             <numerusform>%n segons restants</numerusform>
+            <numerusform></numerusform>
         </translation>
     </message>
     <message>
@@ -1103,25 +1147,17 @@ Voleu abandonar igualment?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation type="unfinished"></translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1192,6 +1228,7 @@ Voleu abandonar igualment?</translation>
         <source>%n item(s)</source>
         <translation type="unfinished">
             <numerusform>%n ítem(s)</numerusform>
+            <numerusform></numerusform>
         </translation>
     </message>
 </context>
@@ -1583,6 +1620,14 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
         <translation>Usa aquesta destí:</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Appearance</source>
         <translation>Aparença</translation>
     </message>
@@ -1601,6 +1646,10 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Idiomes preferits per mostrar les pàgines web:</translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -1625,6 +1674,10 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
     <message>
         <source>View Images</source>
         <translation>Mostra les imatges</translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -1843,14 +1896,18 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>S&apos;ha de reiniciar</translation>
+        <translation type="vanished">S&apos;ha de reiniciar</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>La configuració de la memòria cau de xarxa ha canviat. S&apos;ha de reiniciar el navegador per tenir-ho en compte.</translation>
+        <translation type="vanished">La configuració de la memòria cau de xarxa ha canviat. S&apos;ha de reiniciar el navegador per tenir-ho en compte.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1928,13 +1985,13 @@ Voleu ignorar aquests errors?&lt;/qt&gt;</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Realment voleu tancar aquesta pàgina?</translation>
+        <translation type="vanished">Realment voleu tancar aquesta pàgina?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Heu modificat aquesta pàgina i les modificacions es perdran en tancar-la. 
+        <translation type="vanished">Heu modificat aquesta pàgina i les modificacions es perdran en tancar-la. 
 Realment voleu tancar aquesta pàgina? </translation>
     </message>
     <message>
@@ -1943,7 +2000,11 @@ Realment voleu tancar aquesta pàgina? </translation>
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>S&apos;està carregant %1% (%2 %3)...</translation>
+        <translation type="vanished">S&apos;està carregant %1% (%2 %3)...</translation>
+    </message>
+    <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -1998,7 +2059,7 @@ Realment voleu tancar aquesta pàgina? </translation>
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Configura els motors de cerca...</translation>
+        <translation type="unfinished">Configura els motors de cerca...</translation>
     </message>
     <message>
         <source>Clear Recent Searches</source>
@@ -2014,14 +2075,33 @@ Realment voleu tancar aquesta pàgina? </translation>
     </message>
 </context>
 <context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Predeterminat</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>WebPage</name>
     <message>
         <source>Resending POST request</source>
-        <translation>S&apos;està tornant a enviar la petició POST</translation>
+        <translation type="vanished">S&apos;està tornant a enviar la petició POST</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Per tal de mostrar el lloc, s&apos;han d&apos;enviar novament la sol licitud junt amb totes les dades, això pot donar lloc a comportaments inesperats del lloc web, p.ex. la mateixa acció podria ser realitzada una vegada més. Voleu continuar igualment?</translation>
+        <translation type="vanished">Per tal de mostrar el lloc, s&apos;han d&apos;enviar novament la sol licitud junt amb totes les dades, això pot donar lloc a comportaments inesperats del lloc web, p.ex. la mateixa acció podria ser realitzada una vegada més. Voleu continuar igualment?</translation>
     </message>
     <message>
         <source>Error loading page: %1</source>
@@ -2087,36 +2167,40 @@ Realment voleu tancar aquesta pàgina? </translation>
         <translation>C&amp;opia la ubicació de la Imatge</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Search with...</source>
-        <translation>Cerca amb...</translation>
+        <translation type="vanished">Cerca amb...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Afegeix a la barra de cerques</translation>
+        <translation type="vanished">Afegeix a la barra de cerques</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Mètode no acceptat</translation>
+        <translation type="vanished">Mètode no acceptat</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>%1 mètode no està acceptat.</translation>
+        <translation type="vanished">%1 mètode no està acceptat.</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Motor de cerca</translation>
+        <translation type="vanished">Motor de cerca</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Seleccioneu el motor de cerca</translation>
+        <translation type="vanished">Seleccioneu el motor de cerca</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Nom del motor</translation>
+        <translation type="vanished">Nom del motor</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>Introduïu un nom pel motor</translation>
+        <translation type="vanished">Introduïu un nom pel motor</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -2132,6 +2216,17 @@ Realment voleu tancar aquesta pàgina? </translation>
     <message>
         <source>Not Found</source>
         <translation>No s&apos;ha trobat</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

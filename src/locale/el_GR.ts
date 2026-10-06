@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="el_GR">
+<TS version="2.1" language="el_GR">
 <context>
     <name>AboutDialog</name>
     <message>
@@ -9,6 +9,22 @@
     </message>
     <message>
         <source>About %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -21,23 +37,15 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Ένας ελαφρύς περιηγητής ιστοσελίδων βασισμένος στο WebKit</translation>
+        <translation type="vanished">Ένας ελαφρύς περιηγητής ιστοσελίδων βασισμένος στο WebKit</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2008 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="obsolete">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;p, li { white-space: pre-wrap; }&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2008 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
-    </message>
-    <message utf8="true">
-        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
@@ -46,10 +54,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Close</source>
         <translation>Κλείσιμο</translation>
-    </message>
-    <message>
-        <source>WebKit version: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -77,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>Προσθήκη...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -188,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -644,7 +641,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Ενε&amp;ργοποίηση του Επόπτη Ιστοσελίδων</translation>
+        <translation type="vanished">Ενε&amp;ργοποίηση του Επόπτη Ιστοσελίδων</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -725,12 +722,12 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Επόπτης Ιστοσελίδων</translation>
+        <translation type="vanished">Επόπτης Ιστοσελίδων</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Ο επόπτης ιστοσελίδων θα δουλέψει σωστά μόνο για τις σελίδες μετά την ενεργοποίηση του.
+        <translation type="vanished">Ο επόπτης ιστοσελίδων θα δουλέψει σωστά μόνο για τις σελίδες μετά την ενεργοποίηση του.
 Θέλετε να επαναφορτώσετε όλες τις σελίδες;</translation>
     </message>
     <message>
@@ -738,8 +735,16 @@ Do you want to reload all pages?</source>
         <translation>Διακοπή φόρτωσης αυτής της σελίδας</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Διακοπή</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Επαναφόρτωση της τρέχουσας σελίδας</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -809,6 +814,10 @@ Do you want to reload all pages?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -817,7 +826,15 @@ Do you want to reload all pages?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1085,16 +1102,24 @@ Do you want to reload all pages?</source>
         <translation>Η μεταφόρτωση ακυρώθηκε: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Σφάλμα κατά το άνοιγμα του αρχείου εξόδου: %1</translation>
+        <translation type="vanished">Σφάλμα κατά το άνοιγμα του αρχείου εξόδου: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Σφάλμα αποθήκευσης: %1</translation>
+        <translation type="vanished">Σφάλμα αποθήκευσης: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Σφάλμα Δικτύου: %1</translation>
+        <translation type="vanished">Σφάλμα Δικτύου: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1124,7 +1149,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 από %2 - Διακόπηκε</translation>
+        <translation type="vanished">%1 από %2 - Διακόπηκε</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1162,6 +1187,14 @@ Do you want to quit anyway?</source>
         <translation>Είναι %1 λήψεις σε εξέλιξη
 Είστε σίγουροι ότι θέλετε να κλείσετε;</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Λήψεις Αρχείων</translation>
+    </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation>
@@ -1194,25 +1227,17 @@ Do you want to quit anyway?</source>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation type="unfinished"></translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1711,6 +1736,22 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>Κατά την έξοδο από την εφαρμογή</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Confirm when closing multiple tabs or windows</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2006,15 +2047,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
 <context>
     <name>SettingsDialog</name>
     <message>
-        <source>Restart required</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2103,6 +2140,10 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>Προβολή Επόμενης Καρτέλας</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Ctrl-]</source>
         <translation>Ctrl-]</translation>
     </message>
@@ -2124,13 +2165,13 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Θέλετε σίγουρα να κλείσετε αυτή τη σελίδα;</translation>
+        <translation type="vanished">Θέλετε σίγουρα να κλείσετε αυτή τη σελίδα;</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Έχετε τροποποιήσει τη σελίδα και μόλις την κλείσετε θα χάσετε τις αλλαγές.
+        <translation type="vanished">Έχετε τροποποιήσει τη σελίδα και μόλις την κλείσετε θα χάσετε τις αλλαγές.
 Θέλετε σίγουρα να κλείσετε αυτή τη σελίδα;
 </translation>
     </message>
@@ -2140,7 +2181,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Φορτώνει %1% (%2 %3)...</translation>
+        <translation type="vanished">Φορτώνει %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2162,6 +2203,10 @@ Do you really want to close this page?
 <context>
     <name>ToolbarSearch</name>
     <message>
+        <source>Configure Search Engines...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add &apos;%1&apos;</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2180,6 +2225,25 @@ Do you really want to close this page?
     <message>
         <source>Suggestions</source>
         <translation>Προτάσεις</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Προεπιλογή</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2207,14 +2271,6 @@ Do you really want to close this page?
     <message>
         <source>If the address is correct, try checking the network connection.</source>
         <translation>Εάν η διεύθυνση είναι σωστή, ελέγξτε την σύνδεση σας.</translation>
-    </message>
-    <message>
-        <source>Resending POST request</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2260,40 +2316,12 @@ Do you really want to close this page?
         <translation>Αντιγραφή &amp;Τοποθεσίας Εικόνας</translation>
     </message>
     <message>
-        <source>Search with...</source>
+        <source>Search with</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Loading...</source>
         <translation>Φορτώνει...</translation>
-    </message>
-    <message>
-        <source>Add to the toolbar search</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Method not supported</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>%1 method is not supported.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Search engine</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Choose the desired search engine</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Engine name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Type in a name for the engine</source>
-        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2305,6 +2333,17 @@ Do you really want to close this page?
     <message>
         <source>Not Found</source>
         <translation>Δεν Βρέθηκε</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

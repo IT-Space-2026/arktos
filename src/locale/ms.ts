@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="en_US">
+<TS version="2.1" language="en_US">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About</source>
         <translation type="obsolete">Perihal</translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,7 +29,7 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Pelayan web ringan berasaskan WebKit</translation>
+        <translation type="vanished">Pelayan web ringan berasaskan WebKit</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -39,16 +51,8 @@ p, li { white-space: pre-wrap; }
         <source>About %1</source>
         <translation type="unfinished"></translation>
     </message>
-    <message utf8="true">
-        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation type="unfinished"></translation>
-    </message>
     <message>
-        <source>WebKit version: %1</source>
+        <source>Qt version: %1</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -77,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>Tambah...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -188,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -640,7 +637,7 @@ Teruskan untuk keluar?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Benarkan Peny&amp;iasat Web</translation>
+        <translation type="vanished">Benarkan Peny&amp;iasat Web</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -716,17 +713,17 @@ Teruskan untuk keluar?</translation>
         <translation type="obsolete">&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;&lt;br&gt;Apabila lungsuran secara privasi sedang dibuka, Aksi yang melibatkan privasi anda dilumpuhkan:&lt;ul&gt;&lt;li&gt; Laman yang dilawati tidak ditambah ke sejarah.&lt;/li&gt;&lt;li&gt; Senarai muaturun dibersihkan.&lt;/li&gt;&lt;li&gt; Cookies baru tidak disimpan, cookies semasa tidak boleh dicapai.&lt;/li&gt;&lt;li&gt; Ikon laman web dan sessi tidak disimpan.&lt;/li&gt;&lt;li&gt; Carian tidak disimpan di menu popup kotak carian.&lt;/li&gt;&lt;/ul&gt;Selagi tetingkap tidak ditutup, anda masih boleh klik pada butang Undur dan Maju untuk kembalik ke laman yang pernah dibuka.</translation>
     </message>
     <message>
-        <source>Are you sure you want to close the window?  There are %1 tabs open</source>
+        <source>Are you sure you want to close the window? &#xa0;There are %1 tabs open</source>
         <translation type="obsolete">Anda pasti ingin menutup tetingkap ini? Masih ada %1 tab terbuka</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Penyiasat Web</translation>
+        <translation type="vanished">Penyiasat Web</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Penyiasat Web cuma akan berfungsi dengan baik di laman yang dibuka selepas ia dibenarkan berfungsi. 
+        <translation type="vanished">Penyiasat Web cuma akan berfungsi dengan baik di laman yang dibuka selepas ia dibenarkan berfungsi. 
 Anda mahu memuatsemula kesemua laman?</translation>
     </message>
     <message>
@@ -734,8 +731,16 @@ Anda mahu memuatsemula kesemua laman?</translation>
         <translation>Henti memuat laman semasa</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Henti</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Muatsemula laman semasa</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -815,6 +820,10 @@ Anda mahu memuatsemula kesemua laman?</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -823,7 +832,15 @@ Anda mahu memuatsemula kesemua laman?</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1091,16 +1108,24 @@ Anda mahu memuatsemula kesemua laman?</translation>
         <translation>Muaturun dibatalkan: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Ralat membuka fail keluaran: %1</translation>
+        <translation type="vanished">Ralat membuka fail keluaran: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Ralat menyimpan: %1</translation>
+        <translation type="vanished">Ralat menyimpan: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Ralat Rangkaian: %1</translation>
+        <translation type="vanished">Ralat Rangkaian: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1130,7 +1155,7 @@ Anda mahu memuatsemula kesemua laman?</translation>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 of %2 - Berhenti</translation>
+        <translation type="vanished">%1 of %2 - Berhenti</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1168,6 +1193,14 @@ Do you want to quit anyway?</source>
         <translation>Masih ada %1 proses muaturun berjalan
 Anda masih ingin keluar?</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Muaturun</translation>
+    </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation>
@@ -1200,25 +1233,17 @@ Anda masih ingin keluar?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation type="unfinished"></translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1721,6 +1746,22 @@ Anda ingin abaikan ralat ini?&lt;/qt&gt;</translation>
         <translation>Bila aplikasi keluar</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Open links from applications:</source>
         <translation>Buka pautan dari aplikasi:</translation>
     </message>
@@ -2012,15 +2053,11 @@ Anda ingin abaikan ralat ini?&lt;/qt&gt;</translation>
 <context>
     <name>SettingsDialog</name>
     <message>
-        <source>Restart required</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2109,6 +2146,10 @@ Anda ingin abaikan ralat ini?&lt;/qt&gt;</translation>
         <translation>Tunjuk Tab Seterusnya</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show Previous Tab</source>
         <translation>Tunjuk Tab Sebelumnya</translation>
     </message>
@@ -2122,13 +2163,13 @@ Anda ingin abaikan ralat ini?&lt;/qt&gt;</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Anda benar-benar mahu menutup laman ini?</translation>
+        <translation type="vanished">Anda benar-benar mahu menutup laman ini?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Anda sudah mengubah laman ini dan jika menutupnya akan menyebabkan kehilangan perubahan ini.
+        <translation type="vanished">Anda sudah mengubah laman ini dan jika menutupnya akan menyebabkan kehilangan perubahan ini.
 Anda benar-benar mahu teruskan dengan menutup laman ini?
 </translation>
     </message>
@@ -2150,7 +2191,7 @@ Anda benar-benar mahu teruskan dengan menutup laman ini?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Memuat %1% (%2 %3)...</translation>
+        <translation type="vanished">Memuat %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2184,7 +2225,30 @@ Anda benar-benar mahu teruskan dengan menutup laman ini?
         <translation>Cadangan</translation>
     </message>
     <message>
+        <source>Configure Search Engines...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Lalai</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -2213,14 +2277,6 @@ Anda benar-benar mahu teruskan dengan menutup laman ini?
     <message>
         <source>If the address is correct, try checking the network connection.</source>
         <translation>Jika alamat betul, cuba periksa sambungan rangkaian.</translation>
-    </message>
-    <message>
-        <source>Resending POST request</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2266,40 +2322,12 @@ Anda benar-benar mahu teruskan dengan menutup laman ini?
         <translation>S&amp;alin Lokasi Imej</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Loading...</source>
         <translation>Memuat...</translation>
-    </message>
-    <message>
-        <source>Search with...</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Add to the toolbar search</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Method not supported</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>%1 method is not supported.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Search engine</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Choose the desired search engine</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Engine name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Type in a name for the engine</source>
-        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2311,6 +2339,17 @@ Anda benar-benar mahu teruskan dengan menutup laman ini?
     <message>
         <source>Not Found</source>
         <translation>Tidak Jumpa</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

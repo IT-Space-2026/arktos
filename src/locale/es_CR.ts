@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="es_CR">
+<TS version="2.1" language="es_CR">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About</source>
         <translation type="obsolete">Acerca de</translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,7 +29,7 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Navegador web ligero, basado en WebKit</translation>
+        <translation type="vanished">Navegador web ligero, basado en WebKit</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -39,16 +51,8 @@ p, li { white-space: pre-wrap; }
         <source>About %1</source>
         <translation>Acerca %1</translation>
     </message>
-    <message utf8="true">
-        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
-&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
-p, li { white-space: pre-wrap; }
-&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation></translation>
-    </message>
     <message>
-        <source>WebKit version: %1</source>
+        <source>Qt version: %1</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -77,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>Agregar...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -188,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -631,7 +628,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Habilitar &amp;Inspección Web</translation>
+        <translation type="vanished">Habilitar &amp;Inspección Web</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -712,12 +709,12 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Inspector web</translation>
+        <translation type="vanished">Inspector web</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>El Inspector web solo funcionará correctamente para páginas que fueron cargadas después de haber sido habilitado.
+        <translation type="vanished">El Inspector web solo funcionará correctamente para páginas que fueron cargadas después de haber sido habilitado.
 ¿Desea recargar las páginas?</translation>
     </message>
     <message>
@@ -775,6 +772,14 @@ Do you want to reload all pages?</source>
         <translation>Acerca &amp;%1</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Detener</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Ctrl+Y</source>
         <comment>Download Manager</comment>
         <translation>Ctrl+Y</translation>
@@ -800,6 +805,10 @@ Do you want to reload all pages?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -808,7 +817,15 @@ Do you want to reload all pages?</source>
         <translation type="unfinished">Configurar motores de búsqueda...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1076,16 +1093,24 @@ Do you want to reload all pages?</source>
         <translation>Descarga cancelada: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Error abriendo el archivo de salida: %1</translation>
+        <translation type="vanished">Error abriendo el archivo de salida: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Error guardando: %1</translation>
+        <translation type="vanished">Error guardando: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Error de red: %1</translation>
+        <translation type="vanished">Error de red: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1115,7 +1140,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 de %2 - Detenido</translation>
+        <translation type="vanished">%1 de %2 - Detenido</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1153,6 +1178,14 @@ Do you want to quit anyway?</source>
         <translation>Hay %1 descarga(s) en progreso
 ¿Desea quitarlo de todos modos?</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Descargas</translation>
+    </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation>
@@ -1185,26 +1218,41 @@ Do you want to quit anyway?</source>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>Sin Error</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>Error abriendo %1: No s pudo encontrar el archivo o directorio</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>No se puede leer %1</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>Contenidos de %1</translation>
+        <translation type="unfinished">Contenidos de %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">Sin Error</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">Error abriendo %1: No s pudo encontrar el archivo o directorio</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">No se puede leer %1</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">Contenidos de %1</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -1644,6 +1692,22 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>Al salir de la aplicación</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Open links from applications:</source>
         <translation>Abrir enlaces desde aplicaciones:</translation>
     </message>
@@ -1936,14 +2000,18 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>Reinicio requerido</translation>
+        <translation type="vanished">Reinicio requerido</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>La configuración del cache de red ha cambiado. Con el fin de que sea tomado en su cuenta, el navegador debe ser reiniciado.</translation>
+        <translation type="vanished">La configuración del cache de red ha cambiado. Con el fin de que sea tomado en su cuenta, el navegador debe ser reiniciado.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2028,6 +2096,10 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
         <translation>Mostrar la siguiente pestaña</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show Previous Tab</source>
         <translation>Mostrar la  pestaña anterior</translation>
     </message>
@@ -2041,13 +2113,13 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>¿Desea relamente cerrar esta página?</translation>
+        <translation type="vanished">¿Desea relamente cerrar esta página?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Usted ha modificado esta página y una vez que la haya cerrado los cambios se perderán
+        <translation type="vanished">Usted ha modificado esta página y una vez que la haya cerrado los cambios se perderán
 ¿Desea realmente cerrrar esta página?
 </translation>
     </message>
@@ -2069,7 +2141,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Cargando %1% (%2 %3)...</translation>
+        <translation type="vanished">Cargando %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2108,7 +2180,26 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Configurar motores de búsqueda...</translation>
+        <translation type="unfinished">Configurar motores de búsqueda...</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Predeterminado</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2135,11 +2226,11 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>Reenviando petición POST</translation>
+        <translation type="vanished">Reenviando petición POST</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Con el fin de mostrar el sitio, la solicitud con toda la información debe ser enviada una vez más, lo cual puede generar un comportamiento inesperado en el sitio p.e. la misma acción debe ser desempeñada una vez más. ¿Quieres continuar de todos modos?</translation>
+        <translation type="vanished">Con el fin de mostrar el sitio, la solicitud con toda la información debe ser enviada una vez más, lo cual puede generar un comportamiento inesperado en el sitio p.e. la misma acción debe ser desempeñada una vez más. ¿Quieres continuar de todos modos?</translation>
     </message>
 </context>
 <context>
@@ -2185,40 +2276,40 @@ Do you really want to close this page?
         <translation>C&amp;opiar la ubicación de la imagen</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Loading...</source>
         <translation>Cargando...</translation>
     </message>
     <message>
         <source>Search with...</source>
-        <translation>Buscar con...</translation>
+        <translation type="vanished">Buscar con...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Agregar a la barra de búsqueda</translation>
+        <translation type="vanished">Agregar a la barra de búsqueda</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Método no soportado</translation>
+        <translation type="vanished">Método no soportado</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>%1 método no es soportado.</translation>
+        <translation type="vanished">%1 método no es soportado.</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Motor de búsqueda</translation>
+        <translation type="vanished">Motor de búsqueda</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Elija el nombre deseado para el motor de búsqueda</translation>
+        <translation type="vanished">Elija el nombre deseado para el motor de búsqueda</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Nombre de motor</translation>
-    </message>
-    <message>
-        <source>Type in a name for the engine</source>
-        <translation></translation>
+        <translation type="vanished">Nombre de motor</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2230,6 +2321,17 @@ Do you really want to close this page?
     <message>
         <source>Not Found</source>
         <translation>No encontrado</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

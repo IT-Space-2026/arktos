@@ -74,6 +74,11 @@ App entry (MIG15):
     Restored behavior that waited on the application object: clicking the private-browsing indicator exits private mode; Ctrl/Shift/Alt/middle-click in history and bookmark menus/toolbars opens entries in new or background tabs again; non-http navigations (mailto:, ftp:, ...) go through the recursion-guarded desktop handler; auth, proxy and SSL dialogs parent on the main window when one exists; language changes retranslate bookmarks and network settings.
     Settings and application data moved to the "Arora" application scope (the Qt 6 skeleton used lowercase "arora").
 
+Translations, desktop integration and install rules (MIG16):
+    All translation files are regenerated against the Qt 6 sources with lupdate-pro (the .pro-driven lupdate variant); five .ts files missing a `language` attribute (ast, ca, es, gl, pt_PT) are fixed so they update again. The Asturian translation keeps its correct `ast` tag — Qt 6 lupdate does not recognize it, so the file is updated under a temporary `es` tag and restored.
+    `make install` now also installs the user-agent preset list (useragents.xml) into the package data directory — a file placed there overrides the compiled-in copy — and the 512x512 application icon. The .desktop file drops the deprecated "Application" category and registers x-scheme-handler/http(s) MIME types so desktops can offer Arora as a URL handler.
+    The man page and desktop metadata are updated for the Qt 6 / WebEngine port (WebKit references and the dead Google Code bug URL are gone).
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

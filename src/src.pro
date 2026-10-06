@@ -22,7 +22,7 @@ include(locale/locale.pri)
 
 !mac {
 unix {
-    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 man man-compress
+    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata
 
     translations.path = $$PKGDATADIR
     translations.files += .qm/locale
@@ -44,6 +44,14 @@ unix {
 
     icon128.path = $$DATADIR/icons/hicolor/128x128/apps
     icon128.files += data/128x128/arora.png
+
+    icon512.path = $$DATADIR/icons/hicolor/512x512/apps
+    icon512.files += data/512x512/arora.png
+
+    # Distros/users can drop a customized useragents.xml into PKGDATADIR;
+    # UserAgentMenu prefers it over the compiled-in resource.
+    useragentdata.path = $$PKGDATADIR
+    useragentdata.files += useragent/useragents.xml
 
     man.path = $$DATADIR/man/man1
     man.files += data/arora.1

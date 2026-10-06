@@ -82,7 +82,7 @@ void WebViewSearch::find(QWebEnginePage::FindFlags flags)
         if (guard) {
             guard->ui.searchInfo->setText(
                 result.numberOfMatches() > 0 ? QString()
-                                             : guard->tr("Not Found"));
+                                             : WebViewSearch::tr("Not Found"));
         }
     });
 }

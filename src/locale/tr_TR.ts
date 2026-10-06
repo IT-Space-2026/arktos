@@ -1,19 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="tr_TR">
+<TS version="2.1" language="tr_TR">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Webkit tabanlı hafif bir web tarayıcı</translation>
+        <translation type="vanished">Webkit tabanlı hafif bir web tarayıcı</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;DejaVu Sans&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2008 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
         <translation type="obsolete">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;￼&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;￼p, li { white-space: pre-wrap; }￼&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;DejaVu Sans&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;￼&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2008 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
@@ -47,13 +59,17 @@ p, li { white-space: pre-wrap; }
         <source>About %1</source>
         <translation>%1 Hakkında</translation>
     </message>
-    <message utf8="true">
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -61,7 +77,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>WebKit version: %1</source>
-        <translation>WebKit sürümü: %1</translation>
+        <translation type="vanished">WebKit sürümü: %1</translation>
     </message>
 </context>
 <context>
@@ -95,7 +111,7 @@ p, li { white-space: pre-wrap; }
     <name>AdBlockBlockedNetworkReply</name>
     <message>
         <source>Blocked by AdBlockRule: %1</source>
-        <translation>AdBlockRule: %1 tarafından engellendi</translation>
+        <translation type="vanished">AdBlockRule: %1 tarafından engellendi</translation>
     </message>
 </context>
 <context>
@@ -202,7 +218,11 @@ p, li { white-space: pre-wrap; }
     <name>AutoFillManager</name>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
-        <translation>&lt;b&gt;Bu parolayı saklamak ister misiniz?&lt;/b&gt;&lt;br&gt;         Kayıtlı parolalarınızı düzenlemek için Otomatik Doldur seçeneklerinne gidin.</translation>
+        <translation type="vanished">&lt;b&gt;Bu parolayı saklamak ister misiniz?&lt;/b&gt;&lt;br&gt;         Kayıtlı parolalarınızı düzenlemek için Otomatik Doldur seçeneklerinne gidin.</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -654,7 +674,7 @@ Yinede çıkmak istiyor musunuz?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Ağ Denet&amp;çisini Aktif Et</translation>
+        <translation type="vanished">Ağ Denet&amp;çisini Aktif Et</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -735,12 +755,12 @@ Yinede çıkmak istiyor musunuz?</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Ağ Denetçisi</translation>
+        <translation type="vanished">Ağ Denetçisi</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Ağ Denetçisi sadece aktif edildikten sonra yüklenen sayfalarda düzgün çalışacaktır.
+        <translation type="vanished">Ağ Denetçisi sadece aktif edildikten sonra yüklenen sayfalarda düzgün çalışacaktır.
 Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
     </message>
     <message>
@@ -748,8 +768,16 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
         <translation>Mevcut sayfayı yüklemeyi durdur</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Dur</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Mevcut sayfayı yenile</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -839,6 +867,10 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
         <translation>Alt+Ctrl+B</translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation>Tercihler...</translation>
     </message>
@@ -847,8 +879,16 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
         <translation>Arama Motorlarını Yapılandır...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
         <translation>&amp;Ad Block...</translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1115,16 +1155,24 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
         <translation>İndirme iptal edildi: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Çıktı dosyası açılırken hata oluştu: %1</translation>
+        <translation type="vanished">Çıktı dosyası açılırken hata oluştu: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Kaydederken hata oluştu: %1</translation>
+        <translation type="vanished">Kaydederken hata oluştu: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Ağ Hatası: %1</translation>
+        <translation type="vanished">Ağ Hatası: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1140,7 +1188,7 @@ Tüm sayfaları yenilemeyi istiyor musunuz?</translation>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%2&apos;nin %1&apos;i - Durdu</translation>
+        <translation type="vanished">%2&apos;nin %1&apos;i - Durdu</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1189,6 +1237,14 @@ Do you want to quit anyway?</source>
         <translation>%1 indirme işlemi var
 Yine de çıkmak istiyor musunuz?</translation>
     </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">İndirilenler</translation>
+    </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
         <translation>
@@ -1219,26 +1275,41 @@ Yine de çıkmak istiyor musunuz?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>Hata Yok</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>Hata ! Böyle bir dosya ya da dizin bulunamadı: %1</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>%1 Okunamıyor</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>%1 İçeriği</translation>
+        <translation type="unfinished">%1 İçeriği</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">Hata Yok</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">Hata ! Böyle bir dosya ya da dizin bulunamadı: %1</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">%1 Okunamıyor</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">%1 İçeriği</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -1735,6 +1806,22 @@ Bu hataları görmezden gelmek istiyor musunuz?&lt;/qt&gt;</translation>
         <translation>Uygulama kapanırken</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Open links from applications:</source>
         <translation>Uygulamalardaki bağlantıları aç:</translation>
     </message>
@@ -2027,15 +2114,19 @@ Bu hataları görmezden gelmek istiyor musunuz?&lt;/qt&gt;</translation>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>Yeniden başlatmak gerekiyor</translation>
+        <translation type="vanished">Yeniden başlatmak gerekiyor</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>Ağ önbelleği yapılandırması değişti. İşleme alınması için tarayıcının yeniden başlatılması gerekiyor.</translation>
+        <translation type="vanished">Ağ önbelleği yapılandırması değişti. İşleme alınması için tarayıcının yeniden başlatılması gerekiyor.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
         <translation>Dizin Seç</translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -2123,6 +2214,10 @@ Bu hataları görmezden gelmek istiyor musunuz?&lt;/qt&gt;</translation>
         <translation>Sonraki Sekmeyi Göster</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show Previous Tab</source>
         <translation>Önceki Sekmeyi Göster</translation>
     </message>
@@ -2136,13 +2231,13 @@ Bu hataları görmezden gelmek istiyor musunuz?&lt;/qt&gt;</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Bu sayfayı gerçekten kapatmayı istiyor musunuz?</translation>
+        <translation type="vanished">Bu sayfayı gerçekten kapatmayı istiyor musunuz?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Bu sayfada düzenleme yaptınız ve eğer kapatırsanız tüm düzenlemelerinizi kaybedeceksiniz.
+        <translation type="vanished">Bu sayfada düzenleme yaptınız ve eğer kapatırsanız tüm düzenlemelerinizi kaybedeceksiniz.
 Bu sayfayı gerçekten kapatmayı istiyor musunuz?
 </translation>
     </message>
@@ -2168,7 +2263,7 @@ Bu sayfayı gerçekten kapatmayı istiyor musunuz?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Yükleniyor %1% (%2 %3)...</translation>
+        <translation type="vanished">Yükleniyor %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2207,7 +2302,26 @@ Bu sayfayı gerçekten kapatmayı istiyor musunuz?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Arama Motorlarını Yapılandır...</translation>
+        <translation type="unfinished">Arama Motorlarını Yapılandır...</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Varsayılan</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2234,11 +2348,11 @@ Bu sayfayı gerçekten kapatmayı istiyor musunuz?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>POST isteği yeniden gönderiliyor</translation>
+        <translation type="vanished">POST isteği yeniden gönderiliyor</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Bu sayfayı göstermek için daha önce gerçekleştirilen eylemler (ör. arama emri ) tekrarlanacak ve bilgiler yeniden gönderilecek. Devam etmek istiyor musunuz ?</translation>
+        <translation type="vanished">Bu sayfayı göstermek için daha önce gerçekleştirilen eylemler (ör. arama emri ) tekrarlanacak ve bilgiler yeniden gönderilecek. Devam etmek istiyor musunuz ?</translation>
     </message>
 </context>
 <context>
@@ -2284,40 +2398,44 @@ Bu sayfayı gerçekten kapatmayı istiyor musunuz?
         <translation>Gö&amp;rüntünün Konumunu Kopyala</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Loading...</source>
         <translation>Yükleniyor...</translation>
     </message>
     <message>
         <source>Search with...</source>
-        <translation>Şununla ara...</translation>
+        <translation type="vanished">Şununla ara...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Araç çubuğu aramasına ekle</translation>
+        <translation type="vanished">Araç çubuğu aramasına ekle</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Metod desteklenmiyor</translation>
+        <translation type="vanished">Metod desteklenmiyor</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>method desteklenmiyor: %1 .</translation>
+        <translation type="vanished">method desteklenmiyor: %1 .</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Arama motoru</translation>
+        <translation type="vanished">Arama motoru</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Kullanmak istediğiniz arama motorunu seçin</translation>
+        <translation type="vanished">Kullanmak istediğiniz arama motorunu seçin</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Arama motoru adı</translation>
+        <translation type="vanished">Arama motoru adı</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>Arama motoru için bir ad belirtin</translation>
+        <translation type="vanished">Arama motoru için bir ad belirtin</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2329,6 +2447,17 @@ Bu sayfayı gerçekten kapatmayı istiyor musunuz?
     <message>
         <source>Not Found</source>
         <translation>Bulunamadı</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

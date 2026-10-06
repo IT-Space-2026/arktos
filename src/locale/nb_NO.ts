@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="nb_NO">
+<TS version="2.1" language="nb_NO">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About</source>
         <translation type="obsolete">Om</translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,9 +29,9 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Lettvekts WebKit-basert nettleser</translation>
+        <translation type="vanished">Lettvekts WebKit-basert nettleser</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
@@ -56,13 +68,17 @@ p, li { white-space: pre-wrap; }
         <source>About %1</source>
         <translation>Om %1</translation>
     </message>
-    <message utf8="true">
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -70,7 +86,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>WebKit version: %1</source>
-        <translation>WebKit versjon: %1</translation>
+        <translation type="vanished">WebKit versjon: %1</translation>
     </message>
 </context>
 <context>
@@ -104,7 +120,7 @@ p, li { white-space: pre-wrap; }
     <name>AdBlockBlockedNetworkReply</name>
     <message>
         <source>Blocked by AdBlockRule: %1</source>
-        <translation>Blokkert av AdBlockRule:%1</translation>
+        <translation type="vanished">Blokkert av AdBlockRule:%1</translation>
     </message>
 </context>
 <context>
@@ -210,7 +226,11 @@ p, li { white-space: pre-wrap; }
     <name>AutoFillManager</name>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
-        <translation>&lt;b&gt;Vil du lagre dette passordet?&lt;/b&gt;&lt;br&gt;         Du kan se hvilke passord du har lagret og eventuelt slette dem under Egenskaper.</translation>
+        <translation type="vanished">&lt;b&gt;Vil du lagre dette passordet?&lt;/b&gt;&lt;br&gt;         Du kan se hvilke passord du har lagret og eventuelt slette dem under Egenskaper.</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -529,6 +549,10 @@ Er du sikker på at du vil avslutte Arora?</translation>
         <translation>&amp;Finn</translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Ctrl+,</source>
         <translation>Ctrl+,</translation>
     </message>
@@ -615,7 +639,7 @@ Er du sikker på at du vil avslutte Arora?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>&amp;Aktiver nettinspektøren</translation>
+        <translation type="vanished">&amp;Aktiver nettinspektøren</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -684,12 +708,12 @@ Er du sikker på at du vil avslutte Arora?</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Nettinspektør</translation>
+        <translation type="vanished">Nettinspektør</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Nettinspektøren virker kun som den skal for sider som blir lastet etter at den ble aktivert.
+        <translation type="vanished">Nettinspektøren virker kun som den skal for sider som blir lastet etter at den ble aktivert.
 Vil du laste alle sider på nytt?</translation>
     </message>
     <message>
@@ -697,8 +721,16 @@ Vil du laste alle sider på nytt?</translation>
         <translation>Avbryt lasting av denne siden</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Stopp</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Oppdater denne siden</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -849,8 +881,16 @@ Vil du laste alle sider på nytt?</translation>
         <translation>Konfigurer søkemotorer...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
         <translation>&amp;AdBlock...</translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1101,16 +1141,24 @@ Vil du laste alle sider på nytt?</translation>
         <translation>Nedlasting avbrutt: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening save file: %1</source>
         <translation type="obsolete">Feil ved åpning av lagret fil: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Feil ved lagring: %1</translation>
+        <translation type="vanished">Feil ved lagring: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Nettverksfeil: %1</translation>
+        <translation type="vanished">Nettverksfeil: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1126,7 +1174,7 @@ Vil du laste alle sider på nytt?</translation>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 av %2 - Stoppet</translation>
+        <translation type="vanished">%1 av %2 - Stoppet</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1180,7 +1228,7 @@ Vil du laste alle sider på nytt?</translation>
     </message>
     <message>
         <source>Error opening output file: %1</source>
-        <translation>Feil ved skriving til fil: %1</translation>
+        <translation type="vanished">Feil ved skriving til fil: %1</translation>
     </message>
     <message>
         <source>%1 of %2 (%3/sec) - %4</source>
@@ -1205,6 +1253,14 @@ Vil du laste alle sider på nytt?</translation>
 Do you want to quit anyway?</source>
         <translation>Det er %1 aktive nedlastinger
 Er du sikker på at du vil avslutte?</translation>
+    </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Nedlastinger</translation>
     </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
@@ -1238,26 +1294,41 @@ Er du sikker på at du vil avslutte?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>Ingen feil</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>Feil ved åpning av: %1: Filen eller banen finnes ikke</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>Kan ikke lese %1</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>Innhold i %1</translation>
+        <translation type="unfinished">Innhold i %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">Ingen feil</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">Feil ved åpning av: %1: Filen eller banen finnes ikke</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">Kan ikke lese %1</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">Innhold i %1</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -2005,6 +2076,22 @@ Vil du ignorere disse feilene?&lt;qt&gt;</translation>
         <translation>Velg katalog...</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A cookie session ends:</source>
         <translation>En informasjonskapselsesjon slutter:</translation>
     </message>
@@ -2057,15 +2144,19 @@ Vil du ignorere disse feilene?&lt;qt&gt;</translation>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>Omstart påkrevd</translation>
+        <translation type="vanished">Omstart påkrevd</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>Nettverkshurtiglagerkonfigurasjonen har blitt endret. Nettleseren må startes på nytt for å kunne bruke endringene.</translation>
+        <translation type="vanished">Nettverkshurtiglagerkonfigurasjonen har blitt endret. Nettleseren må startes på nytt for å kunne bruke endringene.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
         <translation>Velg katalog</translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -2153,6 +2244,10 @@ Vil du ignorere disse feilene?&lt;qt&gt;</translation>
         <translation>Vis neste fane</translation>
     </message>
     <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Show Previous Tab</source>
         <translation>Vis forrige fane</translation>
     </message>
@@ -2166,13 +2261,13 @@ Vil du ignorere disse feilene?&lt;qt&gt;</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Vil du virkelig lukke denne siden?</translation>
+        <translation type="vanished">Vil du virkelig lukke denne siden?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Du har gjort endringer til denne siden og når du lukker den vil du bli tapt.
+        <translation type="vanished">Du har gjort endringer til denne siden og når du lukker den vil du bli tapt.
 Vil du virkelig lukke denne siden?
 </translation>
     </message>
@@ -2198,7 +2293,7 @@ Vil du virkelig lukke denne siden?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Laster %1% (%2 %3)...</translation>
+        <translation type="vanished">Laster %1% (%2 %3)...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2241,7 +2336,26 @@ Vil du virkelig lukke denne siden?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Konfigurer søkemotorer...</translation>
+        <translation type="unfinished">Konfigurer søkemotorer...</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2276,11 +2390,11 @@ Vil du virkelig lukke denne siden?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>Sender POST forespørsel på nytt</translation>
+        <translation type="vanished">Sender POST forespørsel på nytt</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Forespørselen, sammen med all dataen, må sendes på nytt for å kunne vise siden. Dette kan føre til uforutsette konsekvenser. F.eks., kan den samme handlingen bli utført flere ganger. Vil du fortsette?</translation>
+        <translation type="vanished">Forespørselen, sammen med all dataen, må sendes på nytt for å kunne vise siden. Dette kan føre til uforutsette konsekvenser. F.eks., kan den samme handlingen bli utført flere ganger. Vil du fortsette?</translation>
     </message>
 </context>
 <context>
@@ -2326,40 +2440,44 @@ Vil du virkelig lukke denne siden?
         <translation>&amp;Kopier bildeets sti</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Loading...</source>
         <translation>Laster...</translation>
     </message>
     <message>
         <source>Search with...</source>
-        <translation>Søk med...</translation>
+        <translation type="vanished">Søk med...</translation>
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Legg til i søkeverktøylinja</translation>
+        <translation type="vanished">Legg til i søkeverktøylinja</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Metoden er ikke støttet</translation>
+        <translation type="vanished">Metoden er ikke støttet</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>%1 metoden er ikke støttet.</translation>
+        <translation type="vanished">%1 metoden er ikke støttet.</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Søkemotor</translation>
+        <translation type="vanished">Søkemotor</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Velg den ønskede søkemotoren</translation>
+        <translation type="vanished">Velg den ønskede søkemotoren</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Søkemotorens navn</translation>
+        <translation type="vanished">Søkemotorens navn</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>Gi søkemotoren et navn</translation>
+        <translation type="vanished">Gi søkemotoren et navn</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2371,6 +2489,17 @@ Vil du virkelig lukke denne siden?
     <message>
         <source>Not Found</source>
         <translation>Ikke funnet</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

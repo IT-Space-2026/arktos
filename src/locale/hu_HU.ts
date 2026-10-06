@@ -1,11 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="hu_HU">
+<TS version="2.1" language="hu_HU">
 <context>
     <name>AboutDialog</name>
     <message>
         <source>About %1</source>
         <translation>Névjegy: %1</translation>
+    </message>
+    <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Authors</source>
@@ -17,15 +33,15 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>WebKit-alapú böngésző</translation>
+        <translation type="vanished">WebKit-alapú böngésző</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -38,10 +54,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Close</source>
         <translation>Bezárás</translation>
-    </message>
-    <message>
-        <source>WebKit version: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -69,13 +81,6 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Add...</source>
         <translation>Hozzáadás...</translation>
-    </message>
-</context>
-<context>
-    <name>AdBlockBlockedNetworkReply</name>
-    <message>
-        <source>Blocked by AdBlockRule: %1</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -180,7 +185,7 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>AutoFillManager</name>
     <message>
-        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -641,7 +646,7 @@ Biztosan ki akar lépni?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Webfelügyelő &amp;engedélyezése</translation>
+        <translation type="vanished">Webfelügyelő &amp;engedélyezése</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -719,12 +724,12 @@ Biztosan ki akar lépni?</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Webfelügyelő</translation>
+        <translation type="vanished">Webfelügyelő</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>A webfelügyelő csak azokkal az oldalakkal fog rendeltetésszerűen működni, amelyek az aktiválása előtt kerültek megnyitásra.
+        <translation type="vanished">A webfelügyelő csak azokkal az oldalakkal fog rendeltetésszerűen működni, amelyek az aktiválása előtt kerültek megnyitásra.
 Újra akar tölteni minden oldalt?</translation>
     </message>
     <message>
@@ -732,8 +737,16 @@ Do you want to reload all pages?</source>
         <translation>Oldal letöltésének megszakítása</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Állj</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Oldal újratöltése</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -761,6 +774,10 @@ Do you want to reload all pages?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Options...</source>
         <translation type="unfinished"></translation>
     </message>
@@ -769,7 +786,15 @@ Do you want to reload all pages?</source>
         <translation type="unfinished">Keresőmotorok beállítása...</translation>
     </message>
     <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&amp;Ad Block...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1033,16 +1058,24 @@ Do you want to reload all pages?</source>
         <translation>Letöltés megszakítva: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Error opening output file: %1</source>
-        <translation>Hiba a kimeneti fájl megnyitásánál: %1</translation>
+        <translation type="vanished">Hiba a kimeneti fájl megnyitásánál: %1</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Hiba a mentésnél: %1</translation>
+        <translation type="vanished">Hiba a mentésnél: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Hálózati hiba: %1</translation>
+        <translation type="vanished">Hálózati hiba: %1</translation>
     </message>
     <message>
         <source>%1 of %2 (%3/sec) - %4</source>
@@ -1054,7 +1087,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 / %2 - Megállítva</translation>
+        <translation type="vanished">%1 / %2 - Megállítva</translation>
     </message>
     <message>
         <source>Download directory (%1) couldn&apos;t be created.</source>
@@ -1068,6 +1101,14 @@ Do you want to reload all pages?</source>
 Do you want to quit anyway?</source>
         <translation>Jelenleg %1 letöltés van folyamatban.
 Biztosan ki akar lépni?</translation>
+    </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Letöltések</translation>
     </message>
     <message numerus="yes">
         <source>%n Download(s)</source>
@@ -1105,25 +1146,17 @@ Biztosan ki akar lépni?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation type="unfinished"></translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1593,6 +1626,14 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
         <translation>Letöltések helyének megadása:</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Appearance</source>
         <translation>Megjelenés</translation>
     </message>
@@ -1611,6 +1652,10 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
     <message>
         <source>Preferred languages for viewing webpages in:</source>
         <translation>Oldalak megtekintésekor előnyben részesített nyelvek:</translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -1635,6 +1680,10 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
     <message>
         <source>View Images</source>
         <translation>Képek megjelenítése</translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -1853,14 +1902,18 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>Újraindítás szükséges</translation>
+        <translation type="vanished">Újraindítás szükséges</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>A hálózati gyorstárazás beállításai megváltoztak. A módosítások használatához a böngésző újraindítása szükséges.</translation>
+        <translation type="vanished">A hálózati gyorstárazás beállításai megváltoztak. A módosítások használatához a böngésző újraindítása szükséges.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1942,13 +1995,13 @@ Figyelmen kívül akarja hagyni ezeket a hibákat?&lt;/qt&gt;</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Biztosan be akarja zárni ezt az oldalt?</translation>
+        <translation type="vanished">Biztosan be akarja zárni ezt az oldalt?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Az oldalon elvégzett módosítások bezáráskor elveszhetnek.
+        <translation type="vanished">Az oldalon elvégzett módosítások bezáráskor elveszhetnek.
 Biztosan be akarja zárni ezt az oldalt?
 </translation>
     </message>
@@ -1958,7 +2011,11 @@ Biztosan be akarja zárni ezt az oldalt?
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Töltés %1% (%2 %3)...</translation>
+        <translation type="vanished">Töltés %1% (%2 %3)...</translation>
+    </message>
+    <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2013,7 +2070,7 @@ Biztosan be akarja zárni ezt az oldalt?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Keresőmotorok beállítása...</translation>
+        <translation type="unfinished">Keresőmotorok beállítása...</translation>
     </message>
     <message>
         <source>Clear Recent Searches</source>
@@ -2026,6 +2083,25 @@ Biztosan be akarja zárni ezt az oldalt?
     <message>
         <source>Recent Searches</source>
         <translation>Keresési előzmények</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Alapértelmezett</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2052,11 +2128,11 @@ Biztosan be akarja zárni ezt az oldalt?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>POST kérés újraküldése</translation>
+        <translation type="vanished">POST kérés újraküldése</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Az oldal megjelenítéséhez az űrlapot minden adattal együtt újra el kell küldeni. A kétszer végrehajtott megegyező művelet az oldalon nem várt komplikációkkal járhat. Biztosan folytatni szeretné?</translation>
+        <translation type="vanished">Az oldal megjelenítéséhez az űrlapot minden adattal együtt újra el kell küldeni. A kétszer végrehajtott megegyező művelet az oldalon nem várt komplikációkkal járhat. Biztosan folytatni szeretné?</translation>
     </message>
 </context>
 <context>
@@ -2102,8 +2178,12 @@ Biztosan be akarja zárni ezt az oldalt?
         <translation>Kép &amp;hivatkozásának másolása</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Search with...</source>
-        <translation>Keresés mással...</translation>
+        <translation type="vanished">Keresés mással...</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -2111,31 +2191,31 @@ Biztosan be akarja zárni ezt az oldalt?
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Hozzáadás az eszköztár keresőmezőjéhez</translation>
+        <translation type="vanished">Hozzáadás az eszköztár keresőmezőjéhez</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Az eljárás nem támogatott</translation>
+        <translation type="vanished">Az eljárás nem támogatott</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>%1 eljárás nem támogatott.</translation>
+        <translation type="vanished">%1 eljárás nem támogatott.</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Keresőmotor</translation>
+        <translation type="vanished">Keresőmotor</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Válassza ki a kívánt keresőmotort</translation>
+        <translation type="vanished">Válassza ki a kívánt keresőmotort</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Motor neve</translation>
+        <translation type="vanished">Motor neve</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>Adjon meg egy nevet a motornak</translation>
+        <translation type="vanished">Adjon meg egy nevet a motornak</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2147,6 +2227,17 @@ Biztosan be akarja zárni ezt az oldalt?
     <message>
         <source>Not Found</source>
         <translation>Nincs találat</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

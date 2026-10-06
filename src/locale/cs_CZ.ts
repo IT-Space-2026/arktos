@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="cs">
+<TS version="2.1" language="cs">
 <context>
     <name>AboutDialog</name>
     <message>
@@ -12,6 +12,22 @@
         <translation>O %1</translation>
     </message>
     <message>
+        <source>Qt version: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lightweight WebEngine-based web browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Authors</source>
         <translation>Autoři</translation>
     </message>
@@ -21,15 +37,15 @@
     </message>
     <message>
         <source>Lightweight WebKit-based web browser</source>
-        <translation>Lehký webový prohlížeč založený na WebKitu</translation>
+        <translation type="vanished">Lehký webový prohlížeč založený na WebKitu</translation>
     </message>
-    <message utf8="true">
+    <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2009 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
@@ -45,7 +61,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>WebKit version: %1</source>
-        <translation>Verze WebKitu: %1</translation>
+        <translation type="vanished">Verze WebKitu: %1</translation>
     </message>
 </context>
 <context>
@@ -79,7 +95,7 @@ p, li { white-space: pre-wrap; }
     <name>AdBlockBlockedNetworkReply</name>
     <message>
         <source>Blocked by AdBlockRule: %1</source>
-        <translation>Blokováno AdBlock pravidlem: %1</translation>
+        <translation type="vanished">Blokováno AdBlock pravidlem: %1</translation>
     </message>
 </context>
 <context>
@@ -186,7 +202,11 @@ p, li { white-space: pre-wrap; }
     <name>AutoFillManager</name>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;         To review passwords you have saved and remove them, open the AutoFill pane of preferences.</source>
-        <translation>&lt;b&gt;Chcete uložit toto heslo?&lt;/b&gt;&lt;br&gt;         Pro prohlížení uložených hesel a jejich odstranění otevřete kartu Automatické doplňování v dialogu nastavení.</translation>
+        <translation type="vanished">&lt;b&gt;Chcete uložit toto heslo?&lt;/b&gt;&lt;br&gt;         Pro prohlížení uložených hesel a jejich odstranění otevřete kartu Automatické doplňování v dialogu nastavení.</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -514,6 +534,14 @@ Přesto ukončit?</translation>
         <translation>Na&amp;jít</translation>
     </message>
     <message>
+        <source>Web &amp;Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User Agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>About &amp;%1</source>
         <comment>About Browser</comment>
         <translation>O &amp;%1</translation>
@@ -650,7 +678,7 @@ Přesto ukončit?</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
-        <translation>Povolit Web &amp;Inspector</translation>
+        <translation type="vanished">Povolit Web &amp;Inspector</translation>
     </message>
     <message>
         <source>&amp;Help</source>
@@ -739,12 +767,12 @@ Přesto ukončit?</translation>
     </message>
     <message>
         <source>Web Inspector</source>
-        <translation>Web Inspector</translation>
+        <translation type="vanished">Web Inspector</translation>
     </message>
     <message>
         <source>The web inspector will only work correctly for pages that were loaded after enabling.
 Do you want to reload all pages?</source>
-        <translation>Webový inspektor bude fungovat pouze pro stránky načtené po jeho povolení.
+        <translation type="vanished">Webový inspektor bude fungovat pouze pro stránky načtené po jeho povolení.
 Chcete znovu načíst všechny stránky?</translation>
     </message>
     <message>
@@ -752,8 +780,16 @@ Chcete znovu načíst všechny stránky?</translation>
         <translation>Zastaví načítání aktuální stránky</translation>
     </message>
     <message>
+        <source>Stop</source>
+        <translation type="unfinished">Zastavit</translation>
+    </message>
+    <message>
         <source>Reload the current page</source>
         <translation>Znovu načte aktuální stránku</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -880,6 +916,10 @@ Chcete znovu načíst všechny stránky?</translation>
     <message>
         <source>&amp;Ad Block...</source>
         <translation>&amp;AdBlock...</translation>
+    </message>
+    <message>
+        <source>Reload / Stop</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1146,8 +1186,16 @@ Chcete znovu načíst všechny stránky?</translation>
         <translation>Stahování zrušeno: %1</translation>
     </message>
     <message>
+        <source>Download interrupted: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 of %2 (%3/sec) - %4</source>
         <translation>%1 z %2 (%3/sek) - %4</translation>
+    </message>
+    <message>
+        <source>%1 of %2 - Download Complete</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Error opening save file: %1</source>
@@ -1155,11 +1203,11 @@ Chcete znovu načíst všechny stránky?</translation>
     </message>
     <message>
         <source>Error saving: %1</source>
-        <translation>Chyba při ukládání: %1</translation>
+        <translation type="vanished">Chyba při ukládání: %1</translation>
     </message>
     <message>
         <source>Network Error: %1</source>
-        <translation>Chyba sítě: %1</translation>
+        <translation type="vanished">Chyba sítě: %1</translation>
     </message>
     <message>
         <source>seconds</source>
@@ -1183,7 +1231,7 @@ Chcete znovu načíst všechny stránky?</translation>
     </message>
     <message>
         <source>%1 of %2 - Stopped</source>
-        <translation>%1 z %2 - Zastaveno</translation>
+        <translation type="vanished">%1 z %2 - Zastaveno</translation>
     </message>
     <message>
         <source>bytes</source>
@@ -1207,7 +1255,7 @@ Chcete znovu načíst všechny stránky?</translation>
     </message>
     <message>
         <source>Error opening output file: %1</source>
-        <translation>Chyba při otevírání výstupního souboru: %1</translation>
+        <translation type="vanished">Chyba při otevírání výstupního souboru: %1</translation>
     </message>
     <message>
         <source>Download directory (%1) couldn&apos;t be created.</source>
@@ -1221,6 +1269,14 @@ Chcete znovu načíst všechny stránky?</translation>
 Do you want to quit anyway?</source>
         <translation>Právě probíhá %1 stahování
 Přesto ukončit?</translation>
+    </message>
+    <message>
+        <source>Downloading %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Downloads</source>
+        <translation type="unfinished">Stahování</translation>
     </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
@@ -1272,26 +1328,41 @@ Přesto ukončit?</translation>
     </message>
 </context>
 <context>
-    <name>FileAccessReply</name>
-    <message>
-        <source>No Error</source>
-        <translation>Žádná chyba</translation>
-    </message>
-    <message>
-        <source>Error opening: %1: No such file or directory</source>
-        <translation>Chyba při otevírání %1: Soubor nebo složka neexistuje</translation>
-    </message>
-    <message>
-        <source>Unable to read %1</source>
-        <translation>Chyba při čtení %1</translation>
-    </message>
+    <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation>Obsah %1</translation>
+        <translation type="unfinished">Obsah %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation>%1 KB</translation>
+        <translation type="unfinished">%1 KB</translation>
+    </message>
+    <message>
+        <source>Show Hidden Files</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileAccessReply</name>
+    <message>
+        <source>No Error</source>
+        <translation type="vanished">Žádná chyba</translation>
+    </message>
+    <message>
+        <source>Error opening: %1: No such file or directory</source>
+        <translation type="vanished">Chyba při otevírání %1: Soubor nebo složka neexistuje</translation>
+    </message>
+    <message>
+        <source>Unable to read %1</source>
+        <translation type="vanished">Chyba při čtení %1</translation>
+    </message>
+    <message>
+        <source>Contents of %1</source>
+        <translation type="vanished">Obsah %1</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation type="vanished">%1 KB</translation>
     </message>
 </context>
 <context>
@@ -1962,8 +2033,24 @@ Chceš ignorovat tyto chyby?</translation>
         <translation>Domovská stránka:</translation>
     </message>
     <message>
+        <source>Use this external download program:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose Program...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimum Font size:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>View Images</source>
         <translation>Zobrazovat obrázky</translation>
+    </message>
+    <message>
+        <source>Persistent Data Storage</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Keep Cookies Until:</source>
@@ -2094,15 +2181,19 @@ Chceš ignorovat tyto chyby?</translation>
     <name>SettingsDialog</name>
     <message>
         <source>Restart required</source>
-        <translation>Vyžadován restart aplikace</translation>
+        <translation type="vanished">Vyžadován restart aplikace</translation>
     </message>
     <message>
         <source>The network cache configuration has changed. So that it can be taken into account, the browser has to be restarted.</source>
-        <translation>Byla změněna nastavení síťové cache. Aby se změny projevily, prohlížeč musí být restartován.</translation>
+        <translation type="vanished">Byla změněna nastavení síťové cache. Aby se změny projevily, prohlížeč musí být restartován.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
         <translation>Vybrat adresář</translation>
+    </message>
+    <message>
+        <source>Choose Program</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -2199,7 +2290,11 @@ Chceš ignorovat tyto chyby?</translation>
     </message>
     <message>
         <source>Loading %1% (%2 %3)...</source>
-        <translation>Načítání %1% (%2 %3)...</translation>
+        <translation type="vanished">Načítání %1% (%2 %3)...</translation>
+    </message>
+    <message>
+        <source>Loading %1%...</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -2235,13 +2330,13 @@ Chceš ignorovat tyto chyby?</translation>
     </message>
     <message>
         <source>Do you really want to close this page?</source>
-        <translation>Opravdu chcete zavřít tuto stránku?</translation>
+        <translation type="vanished">Opravdu chcete zavřít tuto stránku?</translation>
     </message>
     <message>
         <source>You have modified this page and when closing it you would lose the modification.
 Do you really want to close this page?
 </source>
-        <translation>Změnili jste tuto stránku, pokud ji zavřete, změny budou ztraceny.
+        <translation type="vanished">Změnili jste tuto stránku, pokud ji zavřete, změny budou ztraceny.
 Opravdu chcete zavřít tuto stránku?
 </translation>
     </message>
@@ -2262,7 +2357,7 @@ Opravdu chcete zavřít tuto stránku?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="obsolete">Nastavit vyhledávací enginy...</translation>
+        <translation type="unfinished">Nastavit vyhledávací enginy...</translation>
     </message>
     <message>
         <source>No Recent Searches</source>
@@ -2275,6 +2370,25 @@ Opravdu chcete zavřít tuto stránku?
     <message>
         <source>Clear Recent Searches</source>
         <translation>Vyčistit nedávná vyhledávání</translation>
+    </message>
+</context>
+<context>
+    <name>UserAgentMenu</name>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">Výchozí</translation>
+    </message>
+    <message>
+        <source>Other...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom user agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>User agent:</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2309,11 +2423,11 @@ Opravdu chcete zavřít tuto stránku?
     </message>
     <message>
         <source>Resending POST request</source>
-        <translation>Opětovné posílání POST požadavku</translation>
+        <translation type="vanished">Opětovné posílání POST požadavku</translation>
     </message>
     <message>
         <source>In order to display the site, the request along with all the data must be sent once again, which may lead to some unexpected behaviour of the site e.g. the same action might be performed once again. Do you want to continue anyway?</source>
-        <translation>Pro zobrazení stránky musí být požadavek spolu se všemi daty poslán znovu, což může způsobit neočekávané chování stránky, například ta samá akce může být vykonána znovu. Přesto pokračovat?</translation>
+        <translation type="vanished">Pro zobrazení stránky musí být požadavek spolu se všemi daty poslán znovu, což může způsobit neočekávané chování stránky, například ta samá akce může být vykonána znovu. Přesto pokračovat?</translation>
     </message>
 </context>
 <context>
@@ -2363,8 +2477,12 @@ Opravdu chcete zavřít tuto stránku?
         <translation>Kopírovat adresu ob&amp;rázku</translation>
     </message>
     <message>
+        <source>Search with</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Search with...</source>
-        <translation>Vyhledat pomocí...</translation>
+        <translation type="vanished">Vyhledat pomocí...</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -2372,31 +2490,31 @@ Opravdu chcete zavřít tuto stránku?
     </message>
     <message>
         <source>Add to the toolbar search</source>
-        <translation>Přidat do políčka vyhledávání</translation>
+        <translation type="vanished">Přidat do políčka vyhledávání</translation>
     </message>
     <message>
         <source>Method not supported</source>
-        <translation>Metoda není podporována</translation>
+        <translation type="vanished">Metoda není podporována</translation>
     </message>
     <message>
         <source>%1 method is not supported.</source>
-        <translation>Metoda %1 není podporována.</translation>
+        <translation type="vanished">Metoda %1 není podporována.</translation>
     </message>
     <message>
         <source>Search engine</source>
-        <translation>Vyhledávač</translation>
+        <translation type="vanished">Vyhledávač</translation>
     </message>
     <message>
         <source>Choose the desired search engine</source>
-        <translation>Vyber požadovaný vyhledávač</translation>
+        <translation type="vanished">Vyber požadovaný vyhledávač</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation>Název vyhledávače</translation>
+        <translation type="vanished">Název vyhledávače</translation>
     </message>
     <message>
         <source>Type in a name for the engine</source>
-        <translation>Napište jméno pro vyhledávač</translation>
+        <translation type="vanished">Napište jméno pro vyhledávač</translation>
     </message>
     <message>
         <source>Block Image</source>
@@ -2408,6 +2526,17 @@ Opravdu chcete zavřít tuto stránku?
     <message>
         <source>Not Found</source>
         <translation>Nenalezeno</translation>
+    </message>
+</context>
+<context>
+    <name>main</name>
+    <message>
+        <source>Arora — a lightweight cross-platform web browser.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Url to open on startup.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

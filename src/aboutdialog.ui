@@ -114,7 +114,7 @@
    <item>
     <widget class="QLabel" name="description">
      <property name="text">
-      <string>Lightweight WebKit-based web browser</string>
+      <string>Lightweight WebEngine-based web browser</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>
