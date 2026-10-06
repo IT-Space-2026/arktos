@@ -30,6 +30,7 @@
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "cookiejar.h"
@@ -44,6 +45,7 @@
 #include "opensearchwriter.h"
 #include "plaintexteditsearch.h"
 #include "schemeaccesshandler.h"
+#include "securestore.h"
 #include "settings.h"
 #include "sourcehighlighter.h"
 #include "sourceviewer.h"
@@ -821,10 +823,54 @@ int main(int argc, char **argv)
                         qInfo() << "autofill-smoke: persistence"
                                 << (stored ? "PASS" : "FAIL")
                                 << "forms:" << probe.forms().count();
+
+                        // SEC03 at-rest checks: autofill.dat must be a
+                        // sealed SecureStore blob — magic header, no
+                        // plaintext credential bytes — and the seal
+                        // must round-trip and reject tampering.
+                        bool sealed = false;
+                        {
+                            QFile storeFile(BrowserPaths::dataFilePath(
+                                QLatin1String("autofill.dat")));
+                            if (storeFile.open(QIODevice::ReadOnly)) {
+                                const QByteArray raw =
+                                    storeFile.readAll();
+                                sealed = SecureStore::isSealed(raw)
+                                    && !raw.contains("newpass")
+                                    && !raw.contains("newuser");
+                            }
+                        }
+                        qInfo() << "autofill-smoke: sealed-at-rest"
+                                << (sealed ? "PASS" : "FAIL");
+
+                        bool crypto = sealed;
+                        if (sealed) {
+                            const QByteArray blob =
+                                SecureStore::seal("round-trip");
+                            bool ok = false;
+                            crypto = !blob.isEmpty()
+                                && SecureStore::open(blob, &ok)
+                                    == "round-trip" && ok;
+                            QByteArray tampered = blob;
+                            tampered[tampered.size() - 1] =
+                                tampered[tampered.size() - 1] ^ 0xff;
+                            bool tamperOk = true;
+                            SecureStore::open(tampered, &tamperOk);
+                            bool strOk = false;
+                            const QString str = SecureStore::openString(
+                                SecureStore::sealString(
+                                    QStringLiteral("p@ss")), &strOk);
+                            crypto = crypto && !tamperOk
+                                && strOk && str == QLatin1String("p@ss");
+                            qInfo() << "autofill-smoke: securestore"
+                                    << (crypto ? "PASS" : "FAIL");
+                        }
+
                         // Delete the OTR view before exit — its page
                         // must die before the OTR profile is released.
                         delete otrView;
-                        application.exit(stored ? 0 : 1);
+                        application.exit(stored && sealed && crypto
+                                         ? 0 : 1);
                     });
                 });
             });

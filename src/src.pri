@@ -76,6 +76,7 @@ HEADERS += \
     $$PWD/searchbar.h \
     $$PWD/searchbutton.h \
     $$PWD/searchlineedit.h \
+    $$PWD/securestore.h \
     $$PWD/settings.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
@@ -112,6 +113,7 @@ SOURCES += \
     $$PWD/searchbar.cpp \
     $$PWD/searchbutton.cpp \
     $$PWD/searchlineedit.cpp \
+    $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \

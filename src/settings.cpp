@@ -72,6 +72,7 @@
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
+#include "securestore.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -292,7 +293,7 @@ void SettingsDialog::loadFromSettings()
     proxyHostName->setText(settings.value(QLatin1String("hostName")).toString());
     proxyPort->setValue(settings.value(QLatin1String("port"), 1080).toInt());
     proxyUserName->setText(settings.value(QLatin1String("userName")).toString());
-    proxyPassword->setText(settings.value(QLatin1String("password")).toString());
+    proxyPassword->setText(SecureStore::openString(settings.value(QLatin1String("password")).toString()));
     settings.endGroup();
 
     // Tabs
@@ -432,7 +433,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("hostName"), proxyHostName->text());
     settings.setValue(QLatin1String("port"), proxyPort->text());
     settings.setValue(QLatin1String("userName"), proxyUserName->text());
-    settings.setValue(QLatin1String("password"), proxyPassword->text());
+    settings.setValue(QLatin1String("password"), SecureStore::sealString(proxyPassword->text()));
     settings.endGroup();
 
     // Tabs

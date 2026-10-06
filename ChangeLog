@@ -122,6 +122,9 @@ URL scheme & external protocol hardening (SEC02):
     The internal "arora-file" directory-listing scheme is locked down: it is no longer registered as a secure context or CORS-enabled, and the handler refuses requests whose initiator is a remote page — a web site cannot read local directory listings through an iframe, subresource, or poked navigation. The "arora-resource" stub scheme likewise lost its unneeded local-file access.
     javascript: urls are no longer honored when they arrive through drag & drop, middle-click selection paste, or the single-instance IPC socket — those paths could have turned untrusted clipboard/peer content into script execution inside the current page. Typed and bookmarklet javascript: still works.
 
+Credential storage (SEC03):
+    Saved passwords are no longer written to disk in plaintext. The autofill.dat store (form data including passwords) is now sealed with AES-256-GCM and the proxy password in the application settings is stored as a sealed value; legacy plaintext files and settings are read back transparently and migrated on the next save. The encryption key lives in securestore.key in the application data directory with owner-only permissions — the same guarantee Chromium provides on Linux without a desktop keyring. When the crypto backend is unavailable Arora refuses to write password forms back to disk instead of silently downgrading to plaintext. The full storage audit is in .devin/SEC03-report.md.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

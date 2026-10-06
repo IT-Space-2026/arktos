@@ -68,6 +68,7 @@
 #include "networkcookiejar.h"
 #include "networkdiskcache.h"
 #include "networkproxyfactory.h"
+#include "securestore.h"
 #include "ui_passworddialog.h"
 #include "ui_proxy.h"
 
@@ -143,7 +144,7 @@ void NetworkAccessManager::loadSettings()
         proxy.setHostName(settings.value(QLatin1String("hostName")).toString());
         proxy.setPort(settings.value(QLatin1String("port"), 1080).toInt());
         proxy.setUser(settings.value(QLatin1String("userName")).toString());
-        proxy.setPassword(settings.value(QLatin1String("password")).toString());
+        proxy.setPassword(SecureStore::openString(settings.value(QLatin1String("password")).toString()));
     }
     NetworkProxyFactory *proxyFactory = new NetworkProxyFactory;
     if (proxy.type() == QNetworkProxy::HttpCachingProxy) {

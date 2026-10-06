@@ -30,8 +30,11 @@
 
 #include "autosaver.h"
 #include "browserpaths.h"
+#include "securestore.h"
 
+#include <qdatastream.h>
 #include <qfile.h>
+#include <qsavefile.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
@@ -134,14 +137,51 @@ QString AutoFillManager::autoFillDataFile()
 void AutoFillManager::saveFormData() const
 {
     QString fileName = autoFillDataFile();
-    QFile file(fileName);
-    if (!file.open(QFile::WriteOnly)) {
-        qWarning() << "Unable to open" << fileName << "to store autofill data";
+
+    // Stored forms can carry passwords: the file is sealed with
+    // AES-256-GCM (SecureStore) instead of the Qt4-era plaintext
+    // QDataStream.  The blob keeps the same stream payload inside, so
+    // Form::save/load is unchanged.
+    QByteArray payload;
+    {
+        QDataStream stream(&payload, QIODevice::WriteOnly);
+        stream << m_forms;
+    }
+
+    const QByteArray sealed = SecureStore::seal(payload);
+    if (sealed.isEmpty()) {
+        // No crypto backend on this box: never re-serialize password
+        // forms as plaintext — keep them in memory for this session
+        // and leave whatever file was there untouched.  Password-free
+        // forms hold no credentials and still get the legacy store.
+        bool hasPassword = false;
+        for (const Form &form : m_forms)
+            hasPassword |= form.hasAPassword;
+        if (hasPassword) {
+            qWarning() << "AutoFillManager: secure store unavailable;"
+                       << "not persisting autofill data to" << fileName;
+            return;
+        }
+        QFile file(fileName);
+        if (!file.open(QFile::WriteOnly)) {
+            qWarning() << "Unable to open" << fileName
+                       << "to store autofill data";
+            return;
+        }
+        file.write(payload);
         return;
     }
 
-    QDataStream stream(&file);
-    stream << m_forms;
+    QSaveFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "Unable to open" << fileName
+                   << "to store autofill data";
+        return;
+    }
+    file.write(sealed);
+    if (!file.commit())
+        qWarning() << "Unable to commit" << fileName;
+    QFile::setPermissions(fileName, QFile::ReadUser | QFile::WriteUser);
 }
 
 void AutoFillManager::loadFormData()
@@ -151,7 +191,23 @@ void AutoFillManager::loadFormData()
     if (!file.open(QFile::ReadOnly))
         return;
 
-    QDataStream stream(&file);
+    const QByteArray raw = file.readAll();
+    if (SecureStore::isSealed(raw)) {
+        bool ok = false;
+        const QByteArray payload = SecureStore::open(raw, &ok);
+        if (!ok) {
+            qWarning() << "AutoFillManager: cannot decrypt" << fileName
+                       << "(key missing or file tampered)";
+            return;
+        }
+        QDataStream stream(payload);
+        stream >> m_forms;
+        return;
+    }
+
+    // Legacy plaintext store from the Qt4 era — it is migrated to the
+    // sealed format on the next save.
+    QDataStream stream(raw);
     stream >> m_forms;
 }
 
