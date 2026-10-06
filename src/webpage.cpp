@@ -27,6 +27,7 @@
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "schemeaccesshandler.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
@@ -34,18 +35,25 @@
 
 #include <qapplication.h>
 #include <qbuffer.h>
+#include <qcryptographichash.h>
 #include <qdesktopservices.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qhash.h>
 #include <qmessagebox.h>
+#include <qmetaobject.h>
 #include <qpixmap.h>
 #include <qpointer.h>
 #include <qsettings.h>
 #include <qset.h>
+#include <qsslcertificate.h>
 #include <qstyle.h>
 #include <qtimer.h>
+#include <qurlquery.h>
+#include <quuid.h>
 #include <qvariant.h>
 #include <qwebchannel.h>
+#include <qwebenginehistory.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -107,6 +115,7 @@ WebPage::WebPage(QObject *parent)
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
+    , m_certErrorPending(false)
 {
     init();
 }
@@ -118,6 +127,7 @@ WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
     , m_javaScriptAroraObject(new JavaScriptAroraObject(this))
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
+    , m_certErrorPending(false)
 {
     init();
 }
@@ -162,6 +172,16 @@ void WebPage::init()
             profile()->isOffTheRecord());
     });
 
+    // SEC06: certificate failures surface here instead of as a generic
+    // load error.  The handler rejects the failed request and shows an
+    // interstitial page; its action links resolve the decision —
+    // "proceed" whitelists the (host, certificate) pair for this
+    // session and profile, never a trust store.
+    connect(this, &QWebEnginePage::certificateError,
+            this, [this](const QWebEngineCertificateError &error) {
+        handleCertificateError(error);
+    });
+
     // MIG06: feed the app-side history store.  QtWebKit pushed visited
     // urls into QWebHistoryInterface itself; WebEngine keeps Chromium's
     // own internal history, so the application records visits from page
@@ -171,7 +191,9 @@ void WebPage::init()
         HistoryManager *history = HistoryManager::instance();
         connect(this, &QWebEnginePage::loadFinished, this,
                 [this, history](bool ok) {
-            if (ok)
+            // The certificate-error interstitial is chrome, not a
+            // visited page — keep it out of history.
+            if (ok && url().scheme() != QLatin1String("arora-cert-error"))
                 history->addHistoryEntry(url().toString());
         });
         connect(this, &QWebEnginePage::titleChanged, this,
@@ -337,6 +359,25 @@ void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
 bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)
 {
     const QString scheme = url.scheme();
+
+    // SEC06: the certificate-error interstitial and its action links
+    // live on this private scheme — a link click surfaces as an
+    // ordinary navigation that resolves the pending decision.  Only
+    // the rendered page knows the nonce, so web content cannot forge a
+    // "proceed" for a certificate it did not trigger; forged or stale
+    // links are dropped silently.
+    if (scheme == QLatin1String("arora-cert-error")) {
+        if (!isMainFrame)
+            return false;
+        const QString nonce = QUrlQuery(url)
+                .queryItemValue(QLatin1String("n"));
+        if (url.path() == QLatin1String("interstitial"))
+            return SchemeAccessHandler::hasCertErrorPage(nonce);
+        if (m_certErrorPending && nonce == m_certErrorNonce)
+            resolveCertificateErrorLink(url);
+        return false;
+    }
+
     if (!scheme.isEmpty() && !isBrowserHandledScheme(scheme)) {
         // Subframe requests are dropped without prompting — an iframe
         // must not raise dialogs on the user's behalf.
@@ -377,6 +418,9 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         }
     }
     if (accepted && isMainFrame) {
+        // A real navigation supersedes any pending cert decision — the
+        // deferred request is dead by the time the new load commits.
+        m_certErrorPending = false;
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
     }
@@ -404,6 +448,13 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
 void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
 {
     if (loadingInfo.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+        return;
+
+    // Certificate failures are presented by the interstitial page
+    // (handleCertificateError), not by the generic notfound page — and
+    // a deferred error that the user rejected via "back to safety"
+    // must not stomp the page the user is navigating to.
+    if (loadingInfo.errorDomain() == QWebEngineLoadingInfo::CertificateErrorDomain)
         return;
 
     QUrl errorUrl = loadingInfo.url();
@@ -443,6 +494,178 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString)
     // feeds the manager), but a page that loaded and then errored —
     // e.g. a navigation interrupted mid-way — may have gotten in.
     HistoryManager::instance()->removeHistoryEntry(errorUrl, this->title());
+}
+
+// SEC06: session-scoped whitelist of (host, certificate) pairs the
+// user chose to proceed past, keyed per profile.  This backs the
+// interstitial's "proceed" path (the re-issued load re-fires
+// certificateError and is answered from here) and additionally lets a
+// second WebPage on the same profile go straight through — matching
+// the in-memory policy Chromium records on acceptCertificate().
+// Nothing is ever persisted; the whitelist dies with the process.
+static QSet<QString> &certErrorWhitelistFor(QWebEngineProfile *profile)
+{
+    static QHash<QWebEngineProfile *, QSet<QString> > whitelist;
+    if (!whitelist.contains(profile)) {
+        whitelist.insert(profile, QSet<QString>());
+        QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
+            whitelist.remove(profile);
+        });
+    }
+    return whitelist[profile];
+}
+
+static QString certErrorKey(const QWebEngineCertificateError &error)
+{
+    // Host plus the SHA-256 fingerprint of the leaf certificate — a
+    // changed certificate prompts again.
+    QString fingerprint;
+    const QList<QSslCertificate> chain = error.certificateChain();
+    if (!chain.isEmpty())
+        fingerprint = QString::fromLatin1(
+                chain.first().digest(QCryptographicHash::Sha256).toHex());
+    return error.url().host() + QLatin1Char('|') + fingerprint;
+}
+
+// SEC06: certificate failures arrive here instead of becoming a
+// generic load failure.  The request is rejected outright — a deferred
+// QWebEngineCertificateError does not survive the interstitial's own
+// navigation commit, so there is nothing to resolve later — and the
+// interstitial's "proceed" link re-issues the load, which re-fires
+// this signal and is answered from the session whitelist.  Errors
+// Chromium refuses to override (isOverridable() == false, e.g.
+// HSTS-pinned hosts) render without a proceed link.
+void WebPage::handleCertificateError(QWebEngineCertificateError error)
+{
+    // Subframe/subresource certificate failures cannot show an
+    // interstitial page — deny them outright, like Chromium does when
+    // the signal is left unhandled.  A second main-frame error while a
+    // decision is pending is denied too.
+    if (!error.isMainFrame() || m_certErrorPending) {
+        error.rejectCertificate();
+        return;
+    }
+
+    const QString key = certErrorKey(error);
+    if (certErrorWhitelistFor(profile()).contains(key)) {
+        error.acceptCertificate();
+        return;
+    }
+
+    m_certErrorPending = true;
+    m_pendingCertError = error;
+    // The nonce is embedded in the page's action links and published
+    // alongside the markup — only the rendered interstitial knows it.
+    m_certErrorNonce = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    SchemeAccessHandler::publishCertErrorPage(m_certErrorNonce,
+            certificateErrorHtml(error));
+    error.rejectCertificate();
+
+    // The interstitial is a real navigation served by the scheme
+    // handler — not setHtml(): a data: document committed over a
+    // failed navigation is sandboxed and its custom-scheme links never
+    // reach acceptNavigationRequest (about:blank#blocked).
+    SchemeAccessHandler::installCertErrorHandler(profile());
+    load(QUrl(QLatin1String("arora-cert-error:interstitial?n=")
+              + m_certErrorNonce));
+    emit certificateErrorInterstitial(error.url());
+}
+
+QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
+{
+    QFile certErrorFile(QLatin1String(":/certerror.html"));
+    if (!certErrorFile.open(QIODevice::ReadOnly))
+        return QString();
+    const QUrl errorUrl = error.url();
+    QString title = tr("Certificate error: %1")
+            .arg(QString::fromUtf8(errorUrl.toEncoded()));
+    QString html = QLatin1String(certErrorFile.readAll());
+    QWidget *view = QWebEngineView::forPage(this);
+    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, 0, view).pixmap(QSize(32, 32));
+    QBuffer imageBuffer;
+    imageBuffer.open(QBuffer::ReadWrite);
+    if (pixmap.save(&imageBuffer, "PNG")) {
+        html.replace(QLatin1String("IMAGE_BINARY_DATA_HERE"),
+                     QLatin1String(imageBuffer.buffer().toBase64()));
+    }
+
+    // The error type's symbolic name ("CertificateAuthorityInvalid" …)
+    // is more useful than the raw net error code.
+    const QMetaEnum typeEnum = QMetaEnum::fromType<QWebEngineCertificateError::Type>();
+    const char *typeName = typeEnum.valueToKey(static_cast<int>(error.type()));
+    QString errorInfo = tr("Error: %1 (%2)")
+            .arg(error.description().toHtmlEscaped(),
+                 QString::fromLatin1(typeName ? typeName : "unknown").toHtmlEscaped());
+
+    // Certificate chain detail — subject, issuer, validity window and
+    // fingerprint so the user can judge what they are connecting to.
+    // Everything interpolated here is attacker-influenced; escape it.
+    QString certInfo;
+    const QList<QSslCertificate> chain = error.certificateChain();
+    if (!chain.isEmpty()) {
+        const QSslCertificate cert = chain.first();
+        certInfo += tr("<li>Subject: %1</li>").arg(cert.subjectDisplayName().toHtmlEscaped());
+        certInfo += tr("<li>Issuer: %1</li>").arg(cert.issuerDisplayName().toHtmlEscaped());
+        certInfo += tr("<li>Valid from %1 to %2</li>")
+                .arg(cert.effectiveDate().toString(Qt::ISODate).toHtmlEscaped(),
+                     cert.expiryDate().toString(Qt::ISODate).toHtmlEscaped());
+        certInfo += tr("<li>Serial: %1</li>")
+                .arg(QString::fromLatin1(cert.serialNumber()).toHtmlEscaped());
+        certInfo += tr("<li>SHA-256 fingerprint: %1</li>")
+                .arg(QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex()).toHtmlEscaped());
+    }
+
+    QString buttons = tr("<a id=\"back\" href=\"arora-cert-error:back?n=%1\">Back to safety</a>")
+            .arg(m_certErrorNonce);
+    if (error.isOverridable()) {
+        buttons += tr("<a id=\"proceed\" href=\"arora-cert-error:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+                .arg(m_certErrorNonce);
+    }
+
+    html = html.arg(title,
+                    tr("This site's certificate is not trusted"),
+                    tr("Arora cannot verify the identity of %1. The certificate presented by the server "
+                       "is invalid — continuing could expose the connection to an attacker.")
+                        .arg(QString::fromUtf8(errorUrl.host().toUtf8()).toHtmlEscaped()),
+                    QLatin1String("<li>") + errorInfo + QLatin1String("</li>"),
+                    certInfo,
+                    buttons);
+    return html;
+}
+
+void WebPage::resolveCertificateErrorLink(const QUrl &command)
+{
+    const QWebEngineCertificateError error = m_pendingCertError;
+    m_certErrorPending = false;
+    QPointer<WebPage> page(this);
+    if (command.path() == QLatin1String("proceed") && error.isOverridable()) {
+        // Session-scoped override only: the (host, certificate) pair is
+        // whitelisted for this profile and the original URL reloaded —
+        // the re-fired certificateError is then accepted automatically.
+        // Nothing is persisted to a trust store and a new session (or a
+        // different profile) prompts again.
+        const QString key = certErrorKey(error);
+        const QUrl url = error.url();
+        certErrorWhitelistFor(profile()).insert(key);
+        // Queued: navigating from inside acceptNavigationRequest would
+        // re-enter Chromium's navigation machinery (CHECK failure).
+        QTimer::singleShot(0, this, [page, url]() {
+            if (page)
+                page->load(url);
+        });
+        return;
+    }
+    // "back to safety" (or anything unrecognised): leave the
+    // interstitial — back in history when there is one, otherwise the
+    // start page.  Queued for the same re-entrancy reason.
+    QTimer::singleShot(0, this, [page]() {
+        if (!page)
+            return;
+        if (page->history()->canGoBack())
+            page->history()->back();
+        else
+            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+    });
 }
 
 void WebPage::loadSettings()

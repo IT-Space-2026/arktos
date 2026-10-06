@@ -22,6 +22,10 @@
 
 #include <qwebengineurlschemehandler.h>
 
+#include <qhash.h>
+#include <qmutex.h>
+#include <qstringlist.h>
+
 class QWebEngineProfile;
 class SchemeAccessHandler : public QWebEngineUrlSchemeHandler
 {
@@ -39,6 +43,22 @@ public:
     // main) and installed by AdBlockManager::installOnProfile().
     static void registerUrlSchemes();
     static void installAll(QWebEngineProfile *profile, QObject *parent = 0);
+
+    // SEC06: certificate-error interstitial plumbing.  WebPage renders
+    // the per-error markup and publishes it under a random nonce; the
+    // CertErrorSchemeHandler serves it on the IO thread for
+    // arora-cert-error:interstitial?n=<nonce>.  The nonce is also what
+    // WebPage checks on the proceed/back action links, so web content
+    // cannot forge either half of the flow.
+    static void publishCertErrorPage(const QString &nonce, const QString &html);
+    static bool hasCertErrorPage(const QString &nonce);
+    static void installCertErrorHandler(QWebEngineProfile *profile);
+
+    // Internals for CertErrorSchemeHandler — call certErrorMutex()
+    // before touching certErrorPages()/certErrorOrder() (IO thread).
+    static QMutex &certErrorMutex();
+    static QHash<QString, QString> &certErrorPages();
+    static QStringList &certErrorOrder();
 };
 
 #endif // SCHEMEACCESSHANDLER_H

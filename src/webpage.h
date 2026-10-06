@@ -23,6 +23,7 @@
 #include "tabwidget.h"
 
 #include <qlist.h>
+#include <qwebenginecertificateerror.h>
 #include <qwebenginepage.h>
 
 #include <functional>
@@ -73,6 +74,10 @@ class WebPage : public QWebEnginePage
 
 signals:
     void aboutToLoadUrl(const QUrl &url);
+    // SEC06: emitted when a certificate error is deferred and the
+    // interstitial page has been shown; the decision is resolved via
+    // the interstitial's action links.
+    void certificateErrorInterstitial(const QUrl &url);
 
 public:
     WebPage(QObject *parent = 0);
@@ -100,6 +105,9 @@ private:
     void init();
     void showErrorPage(const QUrl &url, const QString &errorString);
     void confirmAndOpenExternalUrl(const QUrl &url);
+    void handleCertificateError(QWebEngineCertificateError error);
+    QString certificateErrorHtml(const QWebEngineCertificateError &error);
+    void resolveCertificateErrorLink(const QUrl &url);
 
 protected:
     static QString s_userAgent;
@@ -109,6 +117,9 @@ protected:
     JavaScriptAroraObject *m_javaScriptAroraObject;
     AutoFillBridge *m_autoFillBridge;
     QWebChannel *m_webChannel;
+    QWebEngineCertificateError m_pendingCertError;
+    QString m_certErrorNonce;
+    bool m_certErrorPending;
 };
 
 #endif // WEBPAGE_H

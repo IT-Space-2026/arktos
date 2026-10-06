@@ -136,6 +136,11 @@ Web permission broker (SEC05):
     Remembered decisions are stored per security origin and per feature in the application settings, and a new "Site Permissions" list in the Privacy settings tab shows every remembered grant/deny with Remove and Clear All controls. Answers are always remembered for the session so a page cannot spam prompts; only checked "remember" answers are written to disk, and off-the-record pages never persist anything.
     The WebEngine profile is now pinned to AskEveryTime: previously Chromium persisted every granted/denied permission to permissions.json on disk on its own, bypassing both the consent prompt and the audit list. The surface-widening settings are pinned off as well: JavaScript clipboard access and paste, screen capture, local-content access to remote URLs, insecure content on secure pages and geolocation on insecure origins, and WebRTC is restricted to public interfaces.
 
+Certificate-error interstitial (SEC06):
+    A failed TLS certificate check now shows a proper warning page instead of a generic load failure. The interstitial names the failing site, explains the error and lists the certificate's subject, issuer, validity window, serial number and SHA-256 fingerprint so the user can judge what they are connecting to.
+    "Back to safety" is the prominent action and returns to the previous page (or the start page when there is no history). "Proceed anyway (unsafe)" only appears for errors Chromium allows overriding — never for unoverridable failures such as HSTS-pinned hosts — and trusts just that host-and-certificate pair for the rest of the session. Nothing is written to a trust store: a new session, or a different profile, asks again.
+    Certificate errors inside sub-frames are denied without disturbing the host page, and the interstitial itself is kept out of the browsing history.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

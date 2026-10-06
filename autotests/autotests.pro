@@ -8,6 +8,7 @@ SUBDIRS  = \
     bookmarksmodel \
     browserapp \
     browsermainwindow \
+    certerror \
     cookiejar \
     cookiemodel \
     dialogs \

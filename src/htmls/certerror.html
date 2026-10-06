@@ -1,0 +1,78 @@
+<html>
+<head>
+<title>%1</title>
+<style>
+body {
+  padding: 3em 0em;
+  background: #eeeeee;
+}
+hr {
+  color: lightgray;
+  width: 100%;
+}
+img {
+  float: left;
+  opacity: .8;
+}
+#box {
+  background: white;
+  border: 1px solid lightgray;
+  width: 600px;
+  padding: 60px;
+  margin: auto;
+}
+h1 {
+  font-size: 130%;
+  font-weight: bold;
+  border-bottom: 1px solid lightgray;
+  margin-left: 48px;
+}
+h2 {
+  font-size: 100%;
+  font-weight: normal;
+  border-bottom: 1px solid lightgray;
+  margin-left: 48px;
+}
+ul {
+  font-size: 80%;
+  padding-left: 48px;
+  margin: 5px 0;
+}
+#buttons {
+  padding-left: 48px;
+  margin-top: 2em;
+}
+#buttons a {
+  border: 1px solid gray;
+  border-radius: 3px;
+  padding: 4px 12px;
+  margin-right: 1em;
+  text-decoration: none;
+  color: black;
+  background: #f8f8f8;
+}
+#buttons a#back {
+  font-weight: bold;
+}
+#buttons a#proceed {
+  color: #8a0d0d;
+}
+</style>
+</head>
+<body>
+  <div id="box">
+    <img src="data:image/png;base64,IMAGE_BINARY_DATA_HERE" width="32" height="32"/>
+    <h1>%2</h1>
+    <h2>%3</h2>
+    <ul>
+      %4
+    </ul>
+    <ul>
+      %5
+    </ul>
+    <div id="buttons">
+      %6
+    </div>
+  </div>
+</body>
+</html>

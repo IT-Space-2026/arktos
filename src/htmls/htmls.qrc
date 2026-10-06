@@ -1,5 +1,6 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource>
+    <file>certerror.html</file>
     <file>dirlist.html</file>
     <file>notfound.html</file>
     <file>startpage.html</file>
