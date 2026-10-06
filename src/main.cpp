@@ -361,22 +361,32 @@ int main(int argc, char **argv)
             cookieJar->setCookiesFromUrl(QList<QNetworkCookie>() << blocked,
                                          QUrl(QLatin1String("http://blocked.example/")));
         });
-        QTimer::singleShot(3000, &application, [&application, cookieJar]() {
+        // The cookie store mirror updates asynchronously via
+        // cookieAdded — poll for the allowed cookie instead of
+        // checking once at a fixed delay (marginal on slow builds).
+        QTimer *cookiePoll = new QTimer(&application);
+        int *cookiePollTicks = new int(0);
+        QObject::connect(cookiePoll, &QTimer::timeout, &application,
+                         [&application, cookieJar, cookiePoll,
+                          cookiePollTicks]() {
             const QList<QNetworkCookie> allowed =
                 cookieJar->cookiesForUrl(QUrl(QLatin1String("http://example.com/")));
             const QList<QNetworkCookie> blocked =
                 cookieJar->cookiesForUrl(QUrl(QLatin1String("http://blocked.example/")));
-            bool ok = blocked.isEmpty();
             bool found = false;
             for (const QNetworkCookie &cookie : allowed)
                 found |= (cookie.name() == "arora_smoke");
-            ok = ok && found;
-            qInfo() << "cookie-smoke:" << (ok ? "PASS" : "FAIL")
+            const bool pass = blocked.isEmpty() && found;
+            if (!pass && ++*cookiePollTicks <= 20)
+                return; // retry for ~10s
+            qInfo() << "cookie-smoke:" << (pass ? "PASS" : "FAIL")
                     << "(allowed:" << allowed.count() << "blocked:" << blocked.count() << ")";
+            cookiePoll->stop();
             // leave no test residue in the saved exception list
             cookieJar->setBlockedCookies(QStringList());
-            application.exit(ok ? 0 : 1);
+            application.exit(pass ? 0 : 1);
         });
+        cookiePoll->start(500);
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks
@@ -536,6 +546,10 @@ int main(int argc, char **argv)
     // Exits 0 on
     // PASS for all three stages.  App-data writes are isolated by the
     // QStandardPaths test mode enabled earlier in main().
+    // Lives at function scope: the loadFinished/loadingChanged lambdas
+    // below capture it by reference and fire inside exec(), after the
+    // smoke's if-block has already closed.
+    int adblockSmokeStage = 0;
     if (args.contains(QLatin1String("--adblock-smoke"))) {
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
@@ -554,26 +568,25 @@ int main(int argc, char **argv)
         if (!matcherOk)
             return 1;
 
-        int stage = 0;
         QObject::connect(view->webPage(), &QWebEnginePage::loadingChanged,
                          &application,
-                         [view, &application, &stage](const QWebEngineLoadingInfo &info) {
+                         [view, &application, &adblockSmokeStage](const QWebEngineLoadingInfo &info) {
             if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
                 return;
             const QString host = info.url().host();
             const bool blockedByInterceptor =
                 info.errorString().contains(QLatin1String("ERR_BLOCKED_BY_CLIENT"))
                 || info.errorString().contains(QLatin1String("ERR_ACCESS_DENIED"));
-            if (stage == 0 && host == QLatin1String("adblock-smoke.invalid")) {
+            if (adblockSmokeStage == 0 && host == QLatin1String("adblock-smoke.invalid")) {
                 qInfo() << "adblock-smoke: blocked navigation"
                         << (blockedByInterceptor ? "PASS" : "FAIL") << info.errorString();
                 if (!blockedByInterceptor) {
                     application.exit(1);
                     return;
                 }
-                stage = 1;
+                adblockSmokeStage = 1;
                 view->loadUrl(QUrl(QLatin1String("http://allowed-smoke.invalid/")));
-            } else if (stage == 1 && host == QLatin1String("allowed-smoke.invalid")) {
+            } else if (adblockSmokeStage == 1 && host == QLatin1String("allowed-smoke.invalid")) {
                 const bool pass = !blockedByInterceptor;
                 qInfo() << "adblock-smoke: exception navigation"
                         << (pass ? "PASS" : "FAIL") << info.errorString();
@@ -581,16 +594,16 @@ int main(int argc, char **argv)
                     application.exit(1);
                     return;
                 }
-                stage = 2;
+                adblockSmokeStage = 2;
                 view->loadUrl(QUrl(QLatin1String("about:blank")));
             }
         });
         QObject::connect(view, &QWebEngineView::loadFinished, &application,
-                         [view, &application, &stage](bool ok) {
-            if (stage != 2 || !ok
+                         [view, &application, &adblockSmokeStage](bool ok) {
+            if (adblockSmokeStage != 2 || !ok
                 || view->url() != QUrl(QLatin1String("about:blank")))
                 return;
-            stage = 3;
+            adblockSmokeStage = 3;
             // WebView::loadFinished -> AdBlockPage::applyRulesToPage
             // queued its style-injection runJavaScript before this
             // check runs, so the element must already exist.
@@ -707,6 +720,9 @@ int main(int argc, char **argv)
     // store; an off-the-record page is still filled (old private-mode
     // parity) but must never be captured; and the store round-trips
     // through autofill.dat.  Exits 0 on PASS for all stages.
+    // Same lifetime reason as adblockSmokeStage above — the lambdas
+    // fire inside exec() after this if-block has closed.
+    int autofillSmokeStage = 0;
     if (args.contains(QLatin1String("--autofill-smoke"))) {
         AutoFillManager *autoFill = AutoFillManager::instance();
 
@@ -747,15 +763,15 @@ int main(int argc, char **argv)
             return false;
         };
 
-        int stage = 0;
         // Capture on the main (persistent) profile: a requestSubmit()
         // fires the submit event, the injected listener serializes the
         // form and reports it through the aroraAutofill bridge, which
         // replaces the seeded entry via autoFillChanged.
         QObject::connect(autoFill, &AutoFillManager::autoFillChanged,
                          &application,
-                         [&application, autoFill, hasElement, &stage]() {
-            if (stage != 1)
+                         [&application, autoFill, hasElement,
+                          &autofillSmokeStage]() {
+            if (autofillSmokeStage != 1)
                 return;
             const bool pass = autoFill->forms().count() == 1
                 && hasElement(QLatin1String("user"), QLatin1String("newuser"))
@@ -766,7 +782,7 @@ int main(int argc, char **argv)
                 application.exit(1);
                 return;
             }
-            stage = 2;
+            autofillSmokeStage = 2;
 
             // Off-the-record profile: fill still applies (parity with
             // the old global private mode) but the bridge must drop
@@ -884,10 +900,11 @@ int main(int argc, char **argv)
         });
 
         QObject::connect(view, &QWebEngineView::loadFinished, &application,
-                         [view, &application, fixtureUrl, &stage](bool ok) {
-            if (stage != 0 || !ok || view->url() != fixtureUrl)
+                         [view, &application, fixtureUrl,
+                          &autofillSmokeStage](bool ok) {
+            if (autofillSmokeStage != 0 || !ok || view->url() != fixtureUrl)
                 return;
-            stage = 1;
+            autofillSmokeStage = 1;
             // Fill check, then rewrite the fields and submit once the
             // channel handshake has had time to install the listener.
             view->webPage()->runJavaScript(
@@ -1357,7 +1374,7 @@ int main(int argc, char **argv)
             int *ticks = new int(0);
             QTimer *poll = new QTimer(viewer);
             QObject::connect(poll, &QTimer::timeout, viewer,
-                [viewer, edit, search, searchEdit, expected, what,
+                [edit, search, searchEdit, expected, what,
                  ticks, poll, finish]() {
                 if (edit->toPlainText() == QLatin1String("Loading...")) {
                     if (++*ticks > 100) {
@@ -1541,25 +1558,33 @@ int main(int argc, char **argv)
     // into the profile's installPath, uninstall — while the manifest
     // inspector and the user-scripts QWebEngineScriptCollection path
     // are checked synchronously.  Exits 0 on PASS.
+    // Function scope on purpose: the async lifecycle connects inside
+    // the smoke capture [&] and run in exec() after its if-block has
+    // closed — block-local state would dangle (ASan use-after-scope).
+    ExtensionManager *extensions = nullptr;
+    int failures = 0;
+    const auto check = [&failures](bool ok, const char *what) {
+        qInfo() << "extension-smoke:" << what << (ok ? "PASS" : "FAIL");
+        if (!ok)
+            ++failures;
+    };
+    const auto die = [&application](const QString &why) {
+        qInfo() << "extension-smoke: FAIL" << why;
+        application.exit(1);
+    };
+    QString extensionId;
+    QString extDir;
+    QTimer *enablePoll = 0;
+    int *pollTicks = 0;
     if (args.contains(QLatin1String("--extension-smoke"))) {
-        ExtensionManager *extensions = ExtensionManager::instance();
-        int failures = 0;
-        const auto check = [&failures](bool ok, const char *what) {
-            qInfo() << "extension-smoke:" << what << (ok ? "PASS" : "FAIL");
-            if (!ok)
-                ++failures;
-        };
-        const auto die = [&application](const QString &why) {
-            qInfo() << "extension-smoke: FAIL" << why;
-            application.exit(1);
-        };
+        extensions = ExtensionManager::instance();
 
         check(ExtensionManager::isSupported(), "webengine_extensions feature");
         check(!extensions->extensions().isEmpty(),
               "built-in components listed");
 
         // Manifest-V3 fixture on disk.
-        const QString extDir = QDir::temp().filePath(
+        extDir = QDir::temp().filePath(
             QLatin1String("arora-ext-smoke"));
         QDir().mkpath(extDir);
         {
@@ -1629,9 +1654,9 @@ int main(int argc, char **argv)
         extensions->reloadUserScripts();
 
         // Async lifecycle driven by the manager's finished signals.
-        QString extensionId;
-        QTimer *enablePoll = new QTimer(&application);
-        int *pollTicks = new int(0);
+        extensionId.clear();
+        enablePoll = new QTimer(&application);
+        pollTicks = new int(0);
 
         QObject::connect(extensions, &ExtensionManager::extensionLoaded,
             &application, [&](const ExtensionManager::ExtensionInfo &info) {

@@ -65,18 +65,33 @@ QString defaultHttpUserAgent();
 void applySettings(QWebEngineProfile *profile);
 
 // SEC12: QWebEngineProfile exposes no API for DOM storage —
-// clearHttpCache() only reaches the HTTP cache.  This removes the
-// per-site storage trees Chromium persists under the profile's
-// persistentStoragePath(): localStorage/sessionStorage leveldb,
-// IndexedDB, service workers, WebSQL, File System/OPFS, blobs, quota
-// bookkeeping, trust tokens, shared dictionaries and the persisted
-// network state (HSTS).  Chromium recreates them on demand.
+// clearHttpCache() only reaches the HTTP cache.  This schedules
+// removal of the per-site storage trees Chromium persists under the
+// profile's persistentStoragePath(): localStorage/sessionStorage
+// leveldb, IndexedDB, service workers, WebSQL, File System/OPFS,
+// blobs, quota bookkeeping, trust tokens, shared dictionaries and
+// the persisted network state (HSTS).  Chromium recreates them on
+// demand.
+// HARD01: deleting any of these trees under a running browser can
+// wedge Chromium's storage services and hang the very next
+// navigation (bisected: Local Storage, IndexedDB, Service Worker and
+// WebStorage each break on their own), so nothing is removed here —
+// a sentinel file is left behind and clearDeferredSiteStorage()
+// finishes the job at the next profile startup, before any page
+// exists.
 // Callers should also clear live origins through a page-side script
-// sweep (ClearPrivateData does) — Chromium caches recently used
-// storage areas in the browser process and could otherwise re-flush
-// stale data back to disk.  Returns false if a listed entry could
-// not be removed; off-the-record profiles are a no-op.
+// sweep (ClearPrivateData does) — in-session reads then return
+// empty.  Honest limitation: storage belonging to origins with no
+// open page stays on disk (and can be re-read if the site is
+// revisited) until the deferred wipe at the next start.
 bool clearSiteStorage(QWebEngineProfile *profile);
+
+// HARD01: removes the deferred site-data trees when the sentinel
+// from clearSiteStorage() is present.  Runs from normalProfile()
+// immediately after profile construction — i.e. only at process
+// start, while no WebContents holds the storage services open.
+// A no-op without the sentinel.
+bool clearDeferredSiteStorage(const QString &storagePath);
 
 // SEC12: force a profile data tree owner-only — 0700 directories,
 // 0600 files.  Chromium already creates them that way; this repairs

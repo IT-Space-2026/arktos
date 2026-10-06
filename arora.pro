@@ -33,3 +33,10 @@ QMAKE_EXTRA_TARGETS += check-coverage
 check-fuzz.target = check-fuzz
 check-fuzz.commands = ./.devin/run-fuzz.sh
 QMAKE_EXTRA_TARGETS += check-fuzz
+
+# `make check-sanitize` runs the HARD01 ASan+UBSan sweep — builds its
+# own instrumented copy of the tree in /tmp (sanitize.pri), runs the
+# autotests + smokes, and gates on zero sanitizer reports.
+check-sanitize.target = check-sanitize
+check-sanitize.commands = ./.devin/check-sanitize.sh
+QMAKE_EXTRA_TARGETS += check-sanitize

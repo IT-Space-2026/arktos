@@ -167,8 +167,9 @@ void ClearPrivateData::accept()
             if (view && view->page() && view->page()->profile() == profile)
                 view->page()->runJavaScript(wipeScript);
         }
-        // Then remove the on-disk storage trees for every origin,
-        // open or not — Qt exposes no DOM-storage clear API.
+        // Then schedule the on-disk storage trees for removal at the
+        // next profile start — deleting them under the live browser
+        // wedges Chromium's storage services (see browserprofile.cpp).
         BrowserProfile::clearSiteStorage(profile);
     }
 

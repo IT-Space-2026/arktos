@@ -3,6 +3,7 @@ CONFIG += qt warn_on
 win32:Debug:CONFIG += console
 
 include($$PWD/../coverage.pri)
+include($$PWD/../sanitize.pri)
 
 INCLUDEPATH += $$PWD $$PWD/utils
 DEPENDPATH += $$PWD $$PWD/utils

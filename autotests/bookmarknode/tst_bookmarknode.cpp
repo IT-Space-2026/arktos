@@ -229,8 +229,10 @@ void tst_BookmarkNode::deleteNode()
 
     delete child;
 
+    // The destructor removed itself from the parent.  (The old
+    // child->parent() == 0 assertion ran on freed memory — kept
+    // passing only because the slot still held 0.)
     QCOMPARE(node.children().count(), 0);
-    QCOMPARE(child->parent(), (BookmarkNode*)0);
 }
 
 void tst_BookmarkNode::deleteChildren()

@@ -127,7 +127,10 @@ void BookmarkNode::add(BookmarkNode *child, int offset)
     if (child->m_parent)
         child->m_parent->remove(child);
     child->m_parent = this;
-    if (-1 == offset)
+    // Qt6 QList::insert(i > size()) extends the list with
+    // uninitialized slots instead of clamping — out-of-range offsets
+    // must not reach it.
+    if (offset < 0 || offset > m_children.size())
         offset = m_children.size();
     m_children.insert(offset, child);
 }

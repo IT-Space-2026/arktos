@@ -40,8 +40,15 @@ QWebEngineProfile *normalProfile()
     // every user (main.cpp, CookieJar::instance(), the settings dialog)
     // gets the same named "arora" profile.
     static QWebEngineProfile *profile = 0;
-    if (!profile)
+    if (!profile) {
         profile = new QWebEngineProfile(QLatin1String("arora"), qApp);
+        // HARD01: a previous session's site-data clear may have
+        // deferred its service-coupled storage trees to this moment —
+        // the profile exists but no page has ever used it, so the
+        // directories can be removed without wedging the storage
+        // services (see clearSiteStorage).
+        clearDeferredSiteStorage(profile->persistentStoragePath());
+    }
     return profile;
 }
 
@@ -268,6 +275,42 @@ bool ensureUserOnlyPermissions(const QString &path)
     return ok;
 }
 
+// The whole site-data storage class is service-lifecycle-coupled:
+// HARD01 bisected "Local Storage", "IndexedDB", "Service Worker" and
+// "WebStorage" removals each wedging the profile outright — the next
+// navigation hangs because Chromium opens and holds these trees
+// inside its storage services.  Nothing in this class is ever
+// removed under a running browser; clearDeferredSiteStorage() wipes
+// them at the next profile startup, before any WebContents exists.
+static const char *const deferredSiteDirs[] = {
+    "Local Storage",        // localStorage leveldb
+    "Session Storage",      // sessionStorage leveldb
+    "IndexedDB",
+    "Service Worker",       // registrations + script cache
+    "databases",            // WebSQL
+    "File System",          // FileSystem API / OPFS buckets
+    "blob_storage",         // blob registry
+    "WebStorage",           // QuotaManager bookkeeping
+    "Shared Dictionary",
+    "Platform Notifications",
+    "InterestGroups",
+    "PrivateAggregation",
+    "AttributionReporting",
+};
+
+static const char *const deferredSiteFiles[] = {
+    "Trust Tokens",
+    "Trust Tokens-journal",
+    "DIPS",
+    "DIPS-journal",
+    "Network Persistent State",     // persisted HSTS state
+};
+
+static QString deferredWipeSentinel(const QString &storagePath)
+{
+    return storagePath + QLatin1String("/arora-site-wipe.pending");
+}
+
 bool clearSiteStorage(QWebEngineProfile *profile)
 {
     // Off-the-record profiles keep everything in memory — nothing to
@@ -279,46 +322,43 @@ bool clearSiteStorage(QWebEngineProfile *profile)
     if (storagePath.isEmpty())
         return true;
 
-    // Per-origin DOM storage trees Chromium keeps under the profile
-    // dir.  There is no Qt removal API (clearHttpCache() does not
-    // reach these), so the entries are removed outright.
-    static const char *const siteDataDirs[] = {
-        "Local Storage",        // localStorage leveldb
-        "Session Storage",      // sessionStorage leveldb
-        "IndexedDB",
-        "Service Worker",       // registrations + script cache
-        "databases",            // WebSQL
-        "File System",          // FileSystem API / OPFS buckets
-        "blob_storage",
-        "WebStorage",           // QuotaManager bookkeeping
-        "Shared Dictionary",
-        "Platform Notifications",
-        "InterestGroups",
-        "PrivateAggregation",
-        "AttributionReporting",
-    };
-    static const char *const siteDataFiles[] = {
-        "Trust Tokens",
-        "Trust Tokens-journal",
-        "DIPS",
-        "DIPS-journal",
-        "Network Persistent State",     // persisted HSTS state
-    };
+    // HARD01: nothing is deleted under the running browser (see
+    // above) — the page-side script sweep in ClearPrivateData empties
+    // open origins in memory, and the on-disk trees go away at the
+    // next profile start.  Drop the sentinel that schedules it.
+    bool ok = true;
+    QFile sentinel(deferredWipeSentinel(storagePath));
+    if (!sentinel.open(QIODevice::WriteOnly))
+        ok = false;
+    else
+        sentinel.close();
+
+    // Whatever survived or was recreated still sits inside the
+    // private-data tree — keep it owner-only.
+    ensureUserOnlyPermissions(storagePath);
+    return ok;
+}
+
+bool clearDeferredSiteStorage(const QString &storagePath)
+{
+    if (storagePath.isEmpty())
+        return true;
+    const QString sentinelPath = deferredWipeSentinel(storagePath);
+    if (!QFile::exists(sentinelPath))
+        return true;
 
     bool ok = true;
-    for (const char *name : siteDataDirs) {
+    for (const char *name : deferredSiteDirs) {
         QDir dir(storagePath + QLatin1Char('/') + QLatin1String(name));
         if (dir.exists())
             ok &= dir.removeRecursively();
     }
-    for (const char *name : siteDataFiles) {
+    for (const char *name : deferredSiteFiles) {
         QFile file(storagePath + QLatin1Char('/') + QLatin1String(name));
         if (file.exists())
             ok &= file.remove();
     }
-
-    // Whatever survived or was recreated still sits inside the
-    // private-data tree — keep it owner-only.
+    ok &= QFile::remove(sentinelPath);
     ensureUserOnlyPermissions(storagePath);
     return ok;
 }
