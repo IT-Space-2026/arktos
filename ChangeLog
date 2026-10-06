@@ -98,6 +98,9 @@ Test suite (TST01):
 Coverage (COV01):
     `make check-coverage` measures test coverage for src/ using clang source-based instrumentation (lcov is not available): it builds an instrumented copy of the tree with `qmake -spec linux-clang CONFIG+=coverage`, runs the whole autotest suite and every --*-smoke check headless, and writes the totals plus a per-file table to .devin/COVERAGE.md. Runs are fully isolated from the user's real profile data. The first baseline stands at 62% of source lines; setting ARORA_COVERAGE_MIN=NN turns the target into a hard gate.
 
+Coverage (COV02):
+    Three new test programs raise coverage of the highest-value untested logic: tst_networkcookiejar exercises the application network cookie jar (domain matching including the two-level-domain blacklist, path/secure/expiry filtering, state save/restore), tst_cookiemodel covers the cookie and cookie-exception table models, and tst_bookmarksmodel covers the bookmarks tree model including drag-and-drop mime data and undo-stack edits. Overall src/ line coverage is now 65.8% — the cookie exception model is at 96%, the network cookie jar at 93%, the bookmarks model at 84%.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

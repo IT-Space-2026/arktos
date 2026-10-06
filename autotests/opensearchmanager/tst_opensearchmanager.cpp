@@ -67,6 +67,11 @@ void tst_OpenSearchManager::initTestCase()
 {
     QCoreApplication::setApplicationName("opensearchtest");
 
+    // Persisted keywords from an earlier run would leak into the
+    // assertions below; start from a clean settings slate.
+    QSettings settings;
+    settings.clear();
+
     SubOpenSearchManager manager;
     for (const QString &name : manager.allEnginesNames())
         manager.removeEngine(name);

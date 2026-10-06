@@ -1,6 +1,6 @@
 # Coverage baseline (COV01)
 
-Generated: 2026-10-06 04:44 UTC on commit 50bc9bc
+Generated: 2026-10-06 05:01 UTC on commit 68441e9
 Toolchain: Ubuntu clang version 18.1.3 (1ubuntu1) + /usr/bin/llvm-cov-18
 
 ## Reproduce
@@ -17,9 +17,9 @@ excluded). `ARORA_COVERAGE_MIN=NN` turns it into a gate.
 
 | Metric | Coverage |
 |--------|----------|
-| Lines | 62.00% |
-| Regions | 55.31% |
-| Functions | 62.91% |
+| Lines | 65.82% |
+| Regions | 59.72% |
+| Functions | 66.46% |
 
 ## Per-file
 
@@ -45,14 +45,14 @@ src/autosaver.cpp                                                               
 src/bookmarks/addbookmarkdialog.cpp                                                42                14    66.67%          14                 5    64.29%          99                31    68.69%          20                11    45.00%
 src/bookmarks/bookmarknode.cpp                                                     54                 3    94.44%           9                 1    88.89%          59                 4    93.22%          34                 4    88.24%
 src/bookmarks/bookmarksdialog.cpp                                                  56                56     0.00%          12                12     0.00%         143               143     0.00%          36                36     0.00%
-src/bookmarks/bookmarksmanager.cpp                                                191                65    65.97%          25                 5    80.00%         255                92    63.92%          96                52    45.83%
-src/bookmarks/bookmarksmanager.h                                                    3                 2    33.33%           3                 2    33.33%           9                 6    33.33%           0                 0         -
+src/bookmarks/bookmarksmanager.cpp                                                191                55    71.20%          25                 3    88.00%         255                75    70.59%          96                48    50.00%
+src/bookmarks/bookmarksmanager.h                                                    3                 1    66.67%           3                 1    66.67%           9                 3    66.67%           0                 0         -
 src/bookmarks/bookmarksmenu.cpp                                                    45                36    20.00%           8                 5    37.50%          76                60    21.05%          24                22     8.33%
-src/bookmarks/bookmarksmodel.cpp                                                  192               114    40.62%          20                 6    70.00%         260               155    40.38%         154               107    30.52%
-src/bookmarks/bookmarksmodel.h                                                      1                 1     0.00%           1                 1     0.00%           3                 3     0.00%           0                 0         -
+src/bookmarks/bookmarksmodel.cpp                                                  192                31    83.85%          20                 0   100.00%         260                47    81.92%         154                44    71.43%
+src/bookmarks/bookmarksmodel.h                                                      1                 0   100.00%           1                 0   100.00%           3                 0   100.00%           0                 0         -
 src/bookmarks/bookmarkstoolbar.cpp                                                 22                19    13.64%          10                 9    10.00%          88                75    14.77%           8                 8     0.00%
 src/bookmarks/xbel/xbelreader.cpp                                                 115                44    61.74%          10                 2    80.00%         115                29    74.78%          84                44    47.62%
-src/bookmarks/xbel/xbelwriter.cpp                                                  29                 3    89.66%           4                 0   100.00%          50                 5    90.00%          24                 5    79.17%
+src/bookmarks/xbel/xbelwriter.cpp                                                  29                 2    93.10%           4                 0   100.00%          50                 3    94.00%          24                 4    83.33%
 src/browserapplication.cpp                                                        179               116    35.20%          41                15    63.41%         375               199    46.93%         108                82    24.07%
 src/browsermainwindow.cpp                                                         323               240    25.70%          74                53    28.38%        1158               478    58.72%         190               157    17.37%
 src/browsermainwindow.h                                                             1                 1     0.00%           1                 1     0.00%           1                 1     0.00%           0                 0         -
@@ -60,7 +60,7 @@ src/browserpaths.h                                                              
 src/browserprofile.cpp                                                             39                12    69.23%           6                 1    83.33%         112                14    87.50%          26                13    50.00%
 src/clearbutton.cpp                                                                18                 4    77.78%           3                 0   100.00%          44                 6    86.36%          10                 5    50.00%
 src/clearprivatedata.cpp                                                           21                 2    90.48%           2                 0   100.00%          77                 2    97.40%          18                 8    55.56%
-src/downloadmanager.cpp                                                           367                88    76.02%          51                 6    88.24%         655               160    75.57%         262               105    59.92%
+src/downloadmanager.cpp                                                           367                88    76.02%          51                 6    88.24%         655               160    75.57%         262               104    60.31%
 src/extensions/extensionmanager.cpp                                               251                24    90.44%          24                 1    95.83%         342                41    88.01%          94                37    60.64%
 src/history/history.cpp                                                           469               158    66.31%          68                21    69.12%         730               220    69.86%         330               149    54.85%
 src/history/history.h                                                              13                 1    92.31%           5                 0   100.00%          12                 0   100.00%           8                 4    50.00%
@@ -75,12 +75,12 @@ src/modelmenu.cpp                                                               
 src/modeltoolbar.cpp                                                              101                53    47.52%          15                 5    66.67%         177                90    49.15%          64                46    28.12%
 src/network/cookiejar/cookiedialog.cpp                                             15                15     0.00%           2                 2     0.00%          57                57     0.00%          12                12     0.00%
 src/network/cookiejar/cookieexceptionsdialog.cpp                                   15                15     0.00%           7                 7     0.00%          71                71     0.00%           8                 8     0.00%
-src/network/cookiejar/cookieexceptionsmodel.cpp                                    80                80     0.00%           8                 8     0.00%         134               134     0.00%          82                82     0.00%
-src/network/cookiejar/cookiejar.cpp                                               214                61    71.50%          33                 5    84.85%         348                72    79.31%         190                91    52.11%
-src/network/cookiejar/cookiemodel.cpp                                              76                76     0.00%           7                 7     0.00%         119               119     0.00%          80                80     0.00%
-src/network/cookiejar/networkcookiejar/networkcookiejar.cpp                       138               113    18.12%          16                11    31.25%         200               162    19.00%         110                95    13.64%
-src/network/cookiejar/networkcookiejar/networkcookiejar_p.h                         6                 4    33.33%           3                 2    33.33%          14                12    14.29%           2                 2     0.00%
-src/network/cookiejar/networkcookiejar/trie_p.h                                    70                59    15.71%          11                 7    36.36%         112                90    19.64%          44                41     6.82%
+src/network/cookiejar/cookieexceptionsmodel.cpp                                    80                 3    96.25%           8                 0   100.00%         134                 2    98.51%          82                14    82.93%
+src/network/cookiejar/cookiejar.cpp                                               214                58    72.90%          33                 5    84.85%         348                69    80.17%         190                87    54.21%
+src/network/cookiejar/cookiemodel.cpp                                              76                10    86.84%           7                 0   100.00%         119                10    91.60%          80                12    85.00%
+src/network/cookiejar/networkcookiejar/networkcookiejar.cpp                       138                 9    93.48%          16                 0   100.00%         200                10    95.00%         110                20    81.82%
+src/network/cookiejar/networkcookiejar/networkcookiejar_p.h                         6                 0   100.00%           3                 0   100.00%          14                 0   100.00%           2                 1    50.00%
+src/network/cookiejar/networkcookiejar/trie_p.h                                    70                12    82.86%          11                 0   100.00%         112                 3    97.32%          44                21    52.27%
 src/network/fileaccesshandler.cpp                                                  50                45    10.00%           8                 5    37.50%         112               103     8.04%          32                32     0.00%
 src/network/networkaccessmanager.cpp                                               77                58    24.68%          10                 5    50.00%         206               140    32.04%          54                46    14.81%
 src/network/networkdiskcache.cpp                                                    9                 2    77.78%           4                 1    75.00%          22                 4    81.82%           2                 1    50.00%
@@ -118,5 +118,5 @@ src/webpage.cpp                                                                 
 src/webview.cpp                                                                   195               159    18.46%          37                24    35.14%         339               261    23.01%         136               127     6.62%
 src/webview.h                                                                       2                 0   100.00%           2                 0   100.00%           2                 0   100.00%           0                 0         -
 src/webviewsearch.cpp                                                              27                 2    92.59%           8                 0   100.00%          59                 2    96.61%          12                 4    66.67%
-TOTAL regions 55.31% (4975/8995)  functions 62.91% (799/1270)  lines 62.00% (10195/16444)
+TOTAL regions 59.72% (5372/8995)  functions 66.46% (844/1270)  lines 65.82% (10823/16444)
 ```

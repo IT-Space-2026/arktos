@@ -5,11 +5,14 @@ SUBDIRS  = \
     addbookmarkdialog \
     autosaver \
     bookmarknode \
+    bookmarksmodel \
     cookiejar \
+    cookiemodel \
     downloadmanager \
     historyfiltermodel \
     historymanager \
     modeltoolbar \
+    networkcookiejar \
     opensearchengine \
     opensearchmanager \
     opensearchreader \
