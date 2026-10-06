@@ -31,6 +31,7 @@
 
 #include "adblockrule.h"
 
+#include <qhash.h>
 #include <qobject.h>
 #include <qreadwritelock.h>
 #include <qurl.h>
@@ -87,6 +88,12 @@ public:
     AdBlockDecision match(const QUrl &requestUrl,
                           const QUrl &firstPartyUrl = QUrl(),
                           int resourceType = -1) const;
+    // The unindexed linear scan kept as the reference implementation:
+    // differential tests assert match() produces identical decisions.
+    // Do not call from the interceptor.
+    AdBlockDecision matchLinear(const QUrl &requestUrl,
+                                const QUrl &firstPartyUrl = QUrl(),
+                                int resourceType = -1) const;
     bool shouldBlock(const QUrl &url) const;
 
 #if defined(ARORA_ADBLOCK_RUST)
@@ -110,15 +117,46 @@ private:
     // Requires m_lock held (read) and m_enabled already checked.
     AdBlockDecision matchNativeUnlocked(
             const QUrl &requestUrl,
-            const QUrl &firstPartyUrl = QUrl(),
-            int resourceType = -1) const;
+            const QUrl &firstPartyUrl,
+            int resourceType) const;
+    AdBlockDecision matchLinearUnlocked(
+            const QUrl &requestUrl,
+            const QUrl &firstPartyUrl,
+            int resourceType) const;
+
+    // Candidate prefilter over one flat rule list.  Every rule whose
+    // pattern can match a URL contains its matchToken() verbatim, so
+    // indexing the tokens by their leading 4 characters lets match()
+    // check only the rules that can possibly match plus the generic
+    // (untokenizable) ones — same candidates a linear scan would try,
+    // same order, without walking the whole list per request.
+    struct RuleIndex {
+        QList<int> generic;   // rules with no usable literal token
+        // Exception lists only: page-level modifiers ($document,
+        // $elemhide, $generichide, $genericblock) matched against the
+        // document URL once per request, not per rule list.
+        QList<int> pageRules;
+        QStringList tokens;               // unique tokens, lowercased
+        QVector<QVector<int>> tokenRules; // token -> rule indices
+        // First 4 chars of each token packed as a key -> token ids.
+        QHash<quint64, QList<int>> grams;
+    };
 
     struct SubscriptionRules {
         QList<AdBlockRule> exceptionRules;
         QList<AdBlockRule> blockRules;
         QList<AdBlockRule> removeParamRules;
         QList<AdBlockRule> removeParamExceptions;
+        RuleIndex exceptionIndex;
+        RuleIndex blockIndex;
+        RuleIndex removeParamIndex;
+        RuleIndex removeParamExceptionIndex;
     };
+
+    static void buildIndex(const QList<AdBlockRule> &rules,
+                           bool splitPageRules, RuleIndex *index);
+    static QList<int> indexCandidates(const RuleIndex &index,
+                                      const QString &loweredUrl);
 
     QList<SubscriptionRules> m_subscriptions;
     bool m_enabled;

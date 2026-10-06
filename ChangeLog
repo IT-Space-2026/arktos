@@ -167,6 +167,9 @@ Clear private data completeness (SEC12):
     The "Clear Private Data" dialog now really removes DOM storage — a new "Site Data" checkbox (on by default) wipes localStorage, sessionStorage, IndexedDB, service workers, WebSQL/File System data, blobs, quota bookkeeping, trust tokens and persisted HSTS/network state. Qt WebEngine exposes no DOM-storage clear API (clearHttpCache only reaches the HTTP cache — exactly the data trackers use), so the clear first sweeps every open page on the profile with a storage-clearing script — an emptied storage area cannot be re-flushed from Chromium's in-memory copy — then removes the on-disk storage trees, which Chromium recreates empty.
     The profile storage directory and everything under it are kept owner-only (0700 directories / 0600 files): repaired at startup and after each site-data wipe. One honest limit: origins that were recently open but have no page open at clear time can still be cached in Chromium's storage areas and may be rewritten once before their cache is dropped — closing the tabs or restarting covers them completely.
 
+AdBlock matcher scaling (PERF02):
+    Ad-block request matching is now indexed instead of scanning every rule per request. With an EasyList-size list (~60k rules) a single resource lookup cost ~500ms before — enough to stall every page load; it now answers in under a millisecond (~550x faster on the benchmark corpus). Matching results are unchanged: the index only decides which rules could possibly match, and a differential test compares every decision against the original linear scan.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

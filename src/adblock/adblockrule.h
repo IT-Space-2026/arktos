@@ -119,6 +119,14 @@ public:
     QString regExpPattern() const;
     void setPattern(const QString &pattern, bool isRegExp);
 
+    // The longest run of ASCII characters in the pattern that lies
+    // between the *^| metacharacters.  Every character of the run is a
+    // literal atom in the compiled regexp, so any URL the rule can
+    // match contains the run verbatim apart from ASCII case folding.
+    // Empty for /regexp/ rules and for patterns with no literal run —
+    // those rules can match any URL and are not indexable.
+    QString matchToken() const { return m_matchToken; }
+
 private:
     void parseOptions(const QStringList &options);
 
@@ -149,6 +157,7 @@ private:
     QStringList m_denyAllow;
     QString m_redirect;
     QString m_removeParam;
+    QString m_matchToken;
 
     QRegularExpression m_regExp;
 };

@@ -275,6 +275,7 @@ void AdBlockRule::setFilter(const QString &filter)
     m_denyAllow.clear();
     m_redirect.clear();
     m_removeParam.clear();
+    m_matchToken.clear();
     bool regExpRule = false;
 
     if (filter.size() > MaximumFilterLength) {
@@ -630,6 +631,33 @@ static QString convertPatternToRegExp(const QString &wildcardPattern) {
 
 void AdBlockRule::setPattern(const QString &pattern, bool isRegExp)
 {
+    m_matchToken.clear();
+    if (!isRegExp) {
+        // Every character outside the *^| metacharacters becomes a
+        // literal atom in the converted regexp, so the longest run of
+        // ASCII between them is a substring any matching URL must
+        // contain.  Non-ASCII characters split runs: the request URL
+        // is matched in percent-encoded form, where such bytes never
+        // appear verbatim the way the regexp expects them anyway.
+        int bestStart = 0;
+        int bestLength = 0;
+        int runStart = 0;
+        for (int i = 0; i <= pattern.size(); ++i) {
+            const bool separator = i == pattern.size()
+                || pattern.at(i).unicode() >= 0x80
+                || pattern.at(i) == QLatin1Char('*')
+                || pattern.at(i) == QLatin1Char('^')
+                || pattern.at(i) == QLatin1Char('|');
+            if (!separator)
+                continue;
+            if (i - runStart > bestLength) {
+                bestStart = runStart;
+                bestLength = i - runStart;
+            }
+            runStart = i + 1;
+        }
+        m_matchToken = pattern.mid(bestStart, bestLength);
+    }
     m_regExp = QRegularExpression(isRegExp ? pattern : convertPatternToRegExp(pattern),
                                   QRegularExpression::CaseInsensitiveOption);
 }
