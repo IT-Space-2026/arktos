@@ -72,6 +72,7 @@
 #include <qmimedata.h>
 #include <qprocess.h>
 #include <qregularexpression.h>
+#include <qset.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qwebenginepage.h>
@@ -96,7 +97,7 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     , m_bytesReceived(0)
     , m_finishedDownloading(false)
     , m_gettingFileName(false)
-    , m_canceledFileSelect(false)
+    , m_canceledByUser(false)
     , m_awaitingRetry(false)
     , m_offTheRecord(false)
 {
@@ -162,6 +163,13 @@ void DownloadItem::init()
 
 void DownloadItem::attach(QWebEngineDownloadRequest *download)
 {
+    // A retry restarts the transfer from scratch — drop the previous
+    // attempt's partial file so it neither litters the directory nor
+    // pushes the retry onto a "-N" dedup name.  Only a live request's
+    // file is removed: a restored item may point at a complete file.
+    if (m_download && !downloadedSuccessfully()
+        && m_download->state() != QWebEngineDownloadRequest::DownloadInProgress)
+        removePartialFile();
     m_download = download;
     init();
     emit statusChanged();
@@ -183,7 +191,7 @@ void DownloadItem::getFileName()
         m_gettingFileName = false;
         if (fileName.isEmpty()) {
             progressBar->setVisible(false);
-            m_canceledFileSelect = true;
+            m_canceledByUser = true;
             stop();
             fileNameLabel->setText(tr("Download canceled: %1").arg(QFileInfo(defaultFileName).fileName()));
             return;
@@ -192,6 +200,18 @@ void DownloadItem::getFileName()
         manager->setDownloadDirectory(fileInfo.absoluteDir().absolutePath());
     }
     m_outputFileName = fileName;
+
+    // SEC01: the name may describe a file the OS will run or install
+    // when opened — warn before any bytes or directories are created.
+    // The prompt spins a nested event loop, so the request can die
+    // underneath us; m_download is a QPointer.
+    if (!m_download || !confirmSafeToSave(fileName)) {
+        progressBar->setVisible(false);
+        m_canceledByUser = true;
+        stop();
+        fileNameLabel->setText(tr("Download canceled: %1").arg(QFileInfo(fileName).fileName()));
+        return;
+    }
 
     // Check file path for saving.
     QDir saveDirPath = QFileInfo(m_outputFileName).dir();
@@ -214,18 +234,173 @@ void DownloadItem::getFileName()
     fileNameLabel->setText(info.fileName());
 }
 
+QString DownloadItem::sanitizeFileName(const QString &suggestedName)
+{
+    // The suggested name arrives from an untrusted server or URL —
+    // keep only the last path component, checking both separators so
+    // a Windows-style "..\name" cannot traverse either.
+    QString name = suggestedName;
+    const int slash = qMax(name.lastIndexOf(QLatin1Char('/')),
+                           name.lastIndexOf(QLatin1Char('\\')));
+    if (slash != -1)
+        name = name.mid(slash + 1);
+
+    // Control characters corrupt the label display and the filesystem.
+    QString cleaned;
+    cleaned.reserve(name.size());
+    for (const QChar &c : name) {
+        if (c.unicode() >= 0x20 && c.unicode() != 0x7f)
+            cleaned += c;
+    }
+    name = cleaned.trimmed();
+    while (name.endsWith(QLatin1Char('.')))
+        name.chop(1);
+    // "." and ".." resolve outside the download directory.
+    if (name.isEmpty() || name == QLatin1String(".")
+        || name == QLatin1String(".."))
+        return QString();
+
+    // NAME_MAX is 255 bytes on common filesystems; leave headroom for
+    // the "-NN" dedup suffix while keeping the extension readable.
+    const int maxLength = 200;
+    if (name.size() > maxLength) {
+        const int dot = name.lastIndexOf(QLatin1Char('.'));
+        const QString suffix = (dot > 0 && name.size() - dot <= 16)
+            ? name.mid(dot) : QString();
+        name = name.left(maxLength - suffix.size()) + suffix;
+    }
+    return name;
+}
+
+bool DownloadItem::isDangerousExtension(const QString &fileName)
+{
+    // Suffixes that run commands, install software, or auto-execute
+    // when the file is opened — covering Linux, Windows and macOS
+    // since the port targets all three.
+    static const QSet<QString> dangerousSuffixes = {
+        QStringLiteral("appimage"), QStringLiteral("apk"),
+        QStringLiteral("bash"), QStringLiteral("bat"),
+        QStringLiteral("cmd"), QStringLiteral("com"),
+        QStringLiteral("csh"), QStringLiteral("deb"),
+        QStringLiteral("desktop"), QStringLiteral("dll"),
+        QStringLiteral("dmg"), QStringLiteral("exe"),
+        QStringLiteral("hta"), QStringLiteral("jar"),
+        QStringLiteral("js"), QStringLiteral("jse"),
+        QStringLiteral("ksh"), QStringLiteral("lnk"),
+        QStringLiteral("msc"), QStringLiteral("msi"),
+        QStringLiteral("pif"), QStringLiteral("pkg"),
+        QStringLiteral("ps1"), QStringLiteral("reg"),
+        QStringLiteral("rpm"), QStringLiteral("run"),
+        QStringLiteral("scr"), QStringLiteral("sh"),
+        QStringLiteral("vb"), QStringLiteral("vbe"),
+        QStringLiteral("vbs"), QStringLiteral("wsf"),
+        QStringLiteral("wsh")
+    };
+    return dangerousSuffixes.contains(QFileInfo(fileName).suffix().toLower());
+}
+
+bool DownloadItem::isExecutableMimeType(const QString &mimeType)
+{
+    // Content types that describe a program or installer even when
+    // the file name pretends to be something innocuous.  Generic
+    // application/octet-stream is deliberately absent — it labels
+    // ordinary downloads and would warn on everything.
+    static const QSet<QString> executableMimes = {
+        QStringLiteral("application/java-archive"),
+        QStringLiteral("application/vnd.android.package-archive"),
+        QStringLiteral("application/vnd.debian.binary-package"),
+        QStringLiteral("application/vnd.microsoft.portable-executable"),
+        QStringLiteral("application/x-apple-diskimage"),
+        QStringLiteral("application/x-deb"),
+        QStringLiteral("application/x-desktop"),
+        QStringLiteral("application/x-executable"),
+        QStringLiteral("application/x-msdownload"),
+        QStringLiteral("application/x-msdos-program"),
+        QStringLiteral("application/x-ms-dos-executable"),
+        QStringLiteral("application/x-msi"),
+        QStringLiteral("application/x-ms-installer"),
+        QStringLiteral("application/x-ms-shortcut"),
+        QStringLiteral("application/x-rpm"),
+        QStringLiteral("application/x-shellscript")
+    };
+    const QString mime = mimeType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
+    return executableMimes.contains(mime);
+}
+
+bool DownloadItem::confirmSafeToSave(const QString &fileName)
+{
+    const QString name = QFileInfo(fileName).fileName();
+    const bool dangerousName = isDangerousExtension(name);
+    const QString mime = m_download ? m_download->mimeType() : QString();
+    if (!dangerousName && !isExecutableMimeType(mime))
+        return true;
+
+    QString text;
+    if (dangerousName) {
+        text = tr("\"%1\" is a type of file that can harm your computer.\n"
+                  "It may run commands or install software when opened.")
+            .arg(name);
+    } else {
+        // Executable MIME behind an innocent name — a disguised program.
+        text = tr("The server reports that \"%1\" is a \"%2\" file, "
+                  "which does not match its file name.\n"
+                  "It may be disguised software that can harm your computer.")
+            .arg(name, mime.section(QLatin1Char(';'), 0, 0).trimmed());
+    }
+    const QString source = m_url.host().isEmpty() ? m_url.toString() : m_url.host();
+    text += QLatin1Char('\n') + tr("Keep this file only if you trust %1.").arg(source);
+
+    return QMessageBox::warning(this, tr("Download Security Warning"), text,
+                                QMessageBox::Save | QMessageBox::Discard,
+                                QMessageBox::Discard)
+           == QMessageBox::Save;
+}
+
+void DownloadItem::removeExecutableBit(const QString &path)
+{
+    // Chromium writes downloads without the exec bit already; strip it
+    // anyway so a downloaded script or .desktop file cannot execute
+    // when the user opens it from a file manager.
+    if (path.isEmpty())
+        return;
+    QFile file(path);
+    const QFileDevice::Permissions execBits =
+        QFileDevice::ExeOwner | QFileDevice::ExeUser
+        | QFileDevice::ExeGroup | QFileDevice::ExeOther;
+    const QFileDevice::Permissions permissions = file.permissions();
+    if (permissions & execBits)
+        file.setPermissions(permissions & ~execBits);
+}
+
+void DownloadItem::removePartialFile()
+{
+    if (m_outputFileName.isEmpty())
+        return;
+    // Only ever remove a regular file Chromium left half-written —
+    // never a directory, symlink, or anything a crafted name points at.
+    const QString path = QFileInfo(m_outputFileName).absoluteFilePath();
+    const QFileInfo info(path);
+    if (info.isFile() && !info.isSymLink())
+        QFile::remove(path);
+    // QtWebEngine streams to "<name>.download" and renames on completion.
+    QFile::remove(path + QLatin1String(".download"));
+    QFile::remove(path + QLatin1String(".crdownload"));
+}
+
 QString DownloadItem::saveFileName(const QString &directory) const
 {
     // Chromium already folds the Content-Disposition filename into
-    // suggestedFileName; strip residual path components anyway, the
-    // suggestion is untrusted input (SEC01 audits deeper).
-    QString path;
+    // suggestedFileName; both it and the URL path are untrusted input,
+    // so everything goes through sanitizeFileName (SEC01).
+    QString name;
     if (m_download)
-        path = m_download->suggestedFileName();
-    if (path.isEmpty())
-        path = m_url.path();
+        name = sanitizeFileName(m_download->suggestedFileName());
+    if (name.isEmpty())
+        name = sanitizeFileName(m_url.path());
+    if (name.isEmpty())
+        name = QLatin1String("unnamed_download");
 
-    QFileInfo info(QFileInfo(path).fileName());
+    QFileInfo info(name);
     QString baseName = info.completeBaseName();
     QString endName = info.suffix();
 
@@ -240,7 +415,7 @@ QString DownloadItem::saveFileName(const QString &directory) const
     if (!endName.isEmpty())
         endName = QLatin1Char('.') + endName;
 
-    QString name = directory + baseName + endName;
+    QString fileName = directory + baseName + endName;
     // A name is taken when the file exists on disk or when another
     // in-flight download has already claimed it (files land later, so
     // QFile::exists alone does not cover parallel downloads).
@@ -256,14 +431,14 @@ QString DownloadItem::saveFileName(const QString &directory) const
         }
         return false;
     };
-    if (!m_requestFileName && nameInUse(name)) {
+    if (!m_requestFileName && nameInUse(fileName)) {
         // already exists, don't overwrite
         int i = 1;
         do {
-            name = directory + baseName + QLatin1Char('-') + QString::number(i++) + endName;
-        } while (nameInUse(name));
+            fileName = directory + baseName + QLatin1Char('-') + QString::number(i++) + endName;
+        } while (nameInUse(fileName));
     }
-    return name;
+    return fileName;
 }
 
 void DownloadItem::stop()
@@ -452,8 +627,11 @@ void DownloadItem::finished()
     if (m_finishedDownloading)
         return;
     m_finishedDownloading = true;
-    if (m_download)
+    if (m_download) {
         m_bytesReceived = m_download->receivedBytes();
+        // A completed download should never arrive user-executable.
+        removeExecutableBit(m_outputFileName);
+    }
     progressBar->hide();
     stopButton->setEnabled(false);
     stopButton->hide();
@@ -641,7 +819,7 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
     m_requestFileNameNext = false;
     addItem(item);
 
-    if (item->m_canceledFileSelect)
+    if (item->m_canceledByUser)
         return;
 
     if (!isVisible())
@@ -897,8 +1075,13 @@ bool DownloadModel::removeRows(int row, int count, const QModelIndex &parent)
 
     int lastRow = row + count - 1;
     for (int i = lastRow; i >= row; --i) {
-        if (m_downloadManager->m_downloads.at(i)->downloadedSuccessfully()
-            || m_downloadManager->m_downloads.at(i)->tryAgainButton->isEnabled()) {
+        DownloadItem *item = m_downloadManager->m_downloads.at(i);
+        if (item->downloadedSuccessfully()
+            || item->tryAgainButton->isEnabled()) {
+            // Removing the row also deletes the half-written file an
+            // interrupted or cancelled download left behind (SEC01).
+            if (!item->downloadedSuccessfully())
+                item->removePartialFile();
             beginRemoveRows(parent, i, i);
             m_downloadManager->m_downloads.takeAt(i)->deleteLater();
             endRemoveRows();

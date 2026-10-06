@@ -112,6 +112,11 @@ Coverage (COV04):
     Nine new test programs push src/ line coverage to 80.5% (was 69.4%) and `make check-coverage` now enforces 80% by default (ARORA_COVERAGE_MIN). The suite now exercises the assembled application end to end offscreen: BrowserApplication services and session save/restore, full BrowserMainWindow chrome (menus, dialog slots, state serialization, the close-multiple-tabs confirmation), the history/bookmark model-driven menus and toolbars, the settings dialog, the network access manager's auth/proxy/SSL dialogs against a local server, single-instance plumbing, and the toolbar search widget.
     Testing the dialogs surfaced two real fixes: OpenSearchEngineModel::flags() answered non-zero for invalid indexes (Qt 6's model tester aborts on that), and BrowserApplication::saveSession() never refreshed its in-memory copy of the saved session so "restore session" could report nothing to restore until the next launch.
 
+Downloads hardening (SEC01):
+    Server-suggested download file names are now fully sanitized before use: path components are stripped against both '/' and '\', "." and ".." names are rejected, control characters are removed, and overlong names are truncated while keeping the extension — a hostile Content-Disposition can no longer write outside the download directory.
+    Files whose extension runs commands or installs software (.exe, .sh, .desktop, .msi, .jar, packages and friends) now raise a "may harm your computer" Keep/Discard prompt before anything is saved, and so do downloads whose declared content type is an executable or installer while the file name looks innocent (MIME/extension mismatch). Completed downloads are always written without the executable bit, so a kept script or .desktop file cannot execute when opened from a file manager.
+    Removing a cancelled or interrupted download from the list now also deletes its partial file (QtWebEngine streams to "<name>.download" until completion); retrying a download drops the previous attempt's partial first, and existing files are still never silently overwritten.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -92,6 +92,13 @@ public:
     // download through the page, which produces a new request object.
     void attach(QWebEngineDownloadRequest *download);
 
+    // SEC01 hardening helpers — static so autotests can drive them
+    // without a live download.
+    static QString sanitizeFileName(const QString &suggestedName);
+    static bool isDangerousExtension(const QString &fileName);
+    static bool isExecutableMimeType(const QString &mimeType);
+    static void removeExecutableBit(const QString &path);
+
     QUrl m_url;
     QString m_outputFileName;
 
@@ -108,6 +115,8 @@ private:
     void getFileName();
     void init();
     void updateInfoLabel();
+    bool confirmSafeToSave(const QString &fileName);
+    void removePartialFile();
 
     QString saveFileName(const QString &directory) const;
 
@@ -117,12 +126,13 @@ private:
     QElapsedTimer m_downloadTime;
     bool m_finishedDownloading;
     bool m_gettingFileName;
-    bool m_canceledFileSelect;
+    bool m_canceledByUser;
     bool m_awaitingRetry;
     bool m_offTheRecord;
     QElapsedTimer m_lastProgressTime;
 
     friend class DownloadManager;
+    friend class DownloadModel;
 };
 
 class AutoSaver;
