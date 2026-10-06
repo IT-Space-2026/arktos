@@ -94,6 +94,7 @@ public:
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
+    void statusBarMessage(const QString &string);
 
 public slots:
     void zoomIn();
@@ -113,6 +114,7 @@ protected:
 private:
     int levelForZoom(int zoom);
     void init();
+    void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
 
 private slots:
     void setProgress(int progress);

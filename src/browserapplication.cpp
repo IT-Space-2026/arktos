@@ -87,7 +87,7 @@
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qwebengineprofile.h>
-#include <qwebsettings.h>
+#include <qwebenginesettings.h>
 
 #include <qdebug.h>
 
@@ -108,8 +108,6 @@ AutoFillManager *BrowserApplication::s_autoFillManager = 0;
 // while enabled, new windows/pages are created on an off-the-record
 // profile instead of the default one.
 static bool s_isPrivate = false;
-static QWebEngineProfile *s_privateProfile = 0;
-static QWebEngineProfile *s_defaultProfile = 0;
 
 BrowserApplication::BrowserApplication(int &argc, char **argv)
     : SingleApplication(argc, argv)
@@ -124,8 +122,8 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     ));
 
 #ifndef AUTOTESTS
-    connect(this, SIGNAL(messageReceived(QLocalSocket *)),
-            this, SLOT(messageReceived(QLocalSocket *)));
+    connect(this, &SingleApplication::messageReceived,
+            this, &BrowserApplication::messageReceived);
 
     QStringList args = QCoreApplication::arguments();
     if (args.count() > 1) {
@@ -146,7 +144,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         return;
 #endif
 
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);
 #else
     QApplication::setQuitOnLastWindowClosed(true);
@@ -154,18 +152,19 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
     QDesktopServices::setUrlHandler(QLatin1String("http"), this, "openUrl");
 
-    // Until QtWebkit defaults to 16
-    QWebSettings::globalSettings()->setFontSize(QWebSettings::DefaultFontSize, 16);
-    QWebSettings::globalSettings()->setFontSize(QWebSettings::DefaultFixedFontSize, 16);
+    // Chromium defaults to 16 too, but keep the explicit value the
+    // WebKit port forced.
+    QWebEngineProfile::defaultProfile()->settings()->setFontSize(QWebEngineSettings::DefaultFontSize, 16);
+    QWebEngineProfile::defaultProfile()->settings()->setFontSize(QWebEngineSettings::DefaultFixedFontSize, 16);
 
     QSettings settings;
     settings.beginGroup(QLatin1String("sessions"));
     m_lastSession = settings.value(QLatin1String("lastSession")).toByteArray();
     settings.endGroup();
 
-#if defined(Q_WS_MAC)
-    connect(this, SIGNAL(lastWindowClosed()),
-            this, SLOT(lastWindowClosed()));
+#if defined(Q_OS_MACOS)
+    connect(this, &QApplication::lastWindowClosed,
+            this, &BrowserApplication::lastWindowClosed);
 #endif
 
     // setting this in the postLaunch actually takes a lot more time
@@ -173,7 +172,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     setWindowIcon(QIcon(QLatin1String(":128x128/arora.png")));
 
 #ifndef AUTOTESTS
-    QTimer::singleShot(0, this, SLOT(postLaunch()));
+    QTimer::singleShot(0, this, &BrowserApplication::postLaunch);
 #endif
     languageManager();
 }
@@ -190,7 +189,7 @@ BrowserApplication::~BrowserApplication()
     delete s_autoFillManager;
 }
 
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
 void BrowserApplication::lastWindowClosed()
 {
     clean();
@@ -202,7 +201,9 @@ void BrowserApplication::lastWindowClosed()
 
 BrowserApplication *BrowserApplication::instance()
 {
-    return (static_cast<BrowserApplication*>(QCoreApplication::instance()));
+    // dynamic_cast so callers get nullptr (not a bad pointer) when qApp
+    // is a plain QApplication, e.g. in autotests.
+    return dynamic_cast<BrowserApplication*>(QCoreApplication::instance());
 }
 
 void BrowserApplication::retranslate()
@@ -315,12 +316,9 @@ void BrowserApplication::quitBrowser()
  */
 void BrowserApplication::postLaunch()
 {
-    QDesktopServices::StandardLocation location;
-    location = QDesktopServices::CacheLocation;
-    QString directory = QDesktopServices::storageLocation(location);
-    if (directory.isEmpty())
-        directory = QDir::homePath() + QLatin1String("/.") + QCoreApplication::applicationName();
-    QWebSettings::setIconDatabasePath(directory);
+    // The WebKit icon database is gone in Qt WebEngine — icons are
+    // delivered per-page via QWebEnginePage::iconChanged and cached by
+    // HistoryManager, so there is nothing to configure here.
 
     loadSettings();
 
@@ -487,7 +485,7 @@ bool BrowserApplication::restoreLastSession()
     return true;
 }
 
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
 bool BrowserApplication::event(QEvent *event)
 {
     switch (event->type()) {
@@ -534,8 +532,8 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
         mainWindow()->m_autoSaver->saveIfNeccessary();
     BrowserMainWindow *browser = new BrowserMainWindow();
     m_mainWindows.prepend(browser);
-    connect(this, SIGNAL(privacyChanged(bool)),
-            browser, SLOT(privacyChanged(bool)));
+    connect(this, &BrowserApplication::privacyChanged,
+            browser, &BrowserMainWindow::privacyChanged);
     browser->show();
     return browser;
 }
@@ -630,7 +628,7 @@ QIcon BrowserApplication::icon(const QUrl &url)
 
 QString BrowserApplication::installedDataDirectory()
 {
-#if defined(Q_WS_X11)
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS) && defined(PKGDATADIR)
     return QLatin1String(PKGDATADIR);
 #else
     return qApp->applicationDirPath();
@@ -644,15 +642,21 @@ QString BrowserApplication::dataFilePath(const QString &fileName)
     return BrowserPaths::dataFilePath(fileName);
 }
 
+// Qt WebEngine has no text-only zoom attribute — Chromium zoom applies
+// to the whole page.  Keep the preference stored anyway so the menu
+// action stays in sync and the value survives the migration.
+static bool s_zoomTextOnly = false;
+
 bool BrowserApplication::zoomTextOnly()
 {
-    return QWebSettings::globalSettings()->testAttribute(QWebSettings::ZoomTextOnly);
+    return s_zoomTextOnly;
 }
 
 void BrowserApplication::setZoomTextOnly(bool textOnly)
 {
-    QWebSettings::globalSettings()->setAttribute(QWebSettings::ZoomTextOnly, textOnly);
-    emit instance()->zoomTextOnlyChanged(textOnly);
+    s_zoomTextOnly = textOnly;
+    if (BrowserApplication *app = instance())
+        emit app->zoomTextOnlyChanged(textOnly);
 }
 
 bool BrowserApplication::isPrivate()
@@ -667,7 +671,8 @@ void BrowserApplication::setPrivate(bool isPrivate)
     if (s_isPrivate == isPrivate)
         return;
     s_isPrivate = isPrivate;
-    emit instance()->privacyChanged(isPrivate);
+    if (BrowserApplication *app = instance())
+        emit app->privacyChanged(isPrivate);
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const

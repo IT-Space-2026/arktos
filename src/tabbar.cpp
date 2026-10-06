@@ -67,8 +67,10 @@
 #include <qaction.h>
 #include <qapplication.h>
 #include <qclipboard.h>
+#include <qdrag.h>
 #include <qevent.h>
 #include <qmenu.h>
+#include <qmimedata.h>
 #include <qstyle.h>
 #include <qurl.h>
 
@@ -94,20 +96,20 @@ TabBar::TabBar(QWidget *parent)
     setAcceptDrops(true);
     setElideMode(Qt::ElideRight);
     setUsesScrollButtons(true);
-    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(contextMenuRequested(const QPoint &)));
+    connect(this, &QTabBar::customContextMenuRequested,
+            this, &TabBar::contextMenuRequested);
 
     QString alt = QLatin1String("Ctrl+%1");
     for (int i = 0; i < 9; ++i) {
         int key = i + 1;
         TabShortcut *tabShortCut = new TabShortcut(i, alt.arg(key), this);
-        connect(tabShortCut, SIGNAL(activated()), this, SLOT(selectTabAction()));
+        connect(tabShortCut, &QShortcut::activated, this, &TabBar::selectTabAction);
     }
 
     m_viewTabBarAction = new QAction(this);
     updateViewToolBarAction();
-    connect(m_viewTabBarAction, SIGNAL(triggered()),
-            this, SLOT(viewTabBar()));
+    connect(m_viewTabBarAction, &QAction::triggered,
+            this, &TabBar::viewTabBar);
 
     setMovable(true);
 }
@@ -166,28 +168,28 @@ void TabBar::contextMenuRequested(const QPoint &position)
     int index = tabAt(position);
     if (-1 != index) {
         QAction *action = menu.addAction(tr("Duplicate Tab"),
-                                         this, SLOT(cloneTab()));
+                                         this, QOverload<>::of(&TabBar::cloneTab));
         action->setData(index);
 
         menu.addSeparator();
 
-        action = menu.addAction(tr("&Close Tab"),
-                                this, SLOT(closeTab()), QKeySequence::Close);
+        action = menu.addAction(tr("&Close Tab"), QKeySequence::Close,
+                                this, QOverload<>::of(&TabBar::closeTab));
         action->setData(index);
 
         action = menu.addAction(tr("Close &Other Tabs"),
-                                this, SLOT(closeOtherTabs()));
+                                this, QOverload<>::of(&TabBar::closeOtherTabs));
         action->setData(index);
 
         menu.addSeparator();
 
-        action = menu.addAction(tr("Reload Tab"),
-                                this, SLOT(reloadTab()), QKeySequence::Refresh);
+        action = menu.addAction(tr("Reload Tab"), QKeySequence::Refresh,
+                                this, QOverload<>::of(&TabBar::reloadTab));
         action->setData(index);
     } else {
         menu.addSeparator();
     }
-    menu.addAction(tr("Reload All Tabs"), this, SIGNAL(reloadAllTabs()));
+    menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
     menu.addSeparator();
     menu.addAction(tabWidget->bookmarkTabsAction());
     menu.exec(QCursor::pos());
@@ -229,7 +231,7 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TabBar::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MidButton) {
+    if (event->button() == Qt::MiddleButton) {
         int index = tabAt(event->pos());
         if (index != -1) {
             emit closeTab(index);
@@ -295,7 +297,7 @@ void TabBar::dropEvent(QDropEvent *event)
 
     if (!url.isEmpty() && url.isValid()) {
         event->acceptProposedAction();
-        int index = tabAt(event->pos());
+        int index = tabAt(event->position().toPoint());
         if (-1 != index) {
             setCurrentIndex(index);
             emit loadUrl(url, TabWidget::CurrentTab);
@@ -311,7 +313,7 @@ QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
     QFontMetrics fm = fontMetrics();
-    return sizeHint.boundedTo(QSize(fm.width(QLatin1Char('M')) * 18, sizeHint.height()));
+    return sizeHint.boundedTo(QSize(fm.horizontalAdvance(QLatin1Char('M')) * 18, sizeHint.height()));
 }
 
 void TabBar::reloadTab()

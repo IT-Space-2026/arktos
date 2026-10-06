@@ -122,14 +122,14 @@ public:
     static bool isPrivate();
     static void setPrivate(bool isPrivate);
 
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
     bool event(QEvent *event);
 #endif
 
 public slots:
     BrowserMainWindow *newMainWindow();
     bool restoreLastSession();
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
     void lastWindowClosed();
 #endif
     void quitBrowser();

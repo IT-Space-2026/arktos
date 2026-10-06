@@ -31,6 +31,7 @@
 
 #include "webpage.h"
 
+#include <qactiongroup.h>
 #include <qfile.h>
 #include <qinputdialog.h>
 #include <qsettings.h>
@@ -41,18 +42,18 @@
 UserAgentMenu::UserAgentMenu(QWidget *parent)
     : QMenu(parent)
 {
-    connect(this, SIGNAL(aboutToShow()), this, SLOT(populateMenu()));
+    connect(this, &UserAgentMenu::aboutToShow, this, &UserAgentMenu::populateMenu);
 }
 
 void UserAgentMenu::populateMenu()
 {
-    disconnect(this, SIGNAL(aboutToShow()), this, SLOT(populateMenu()));
+    disconnect(this, &UserAgentMenu::aboutToShow, this, &UserAgentMenu::populateMenu);
 
     // Add default action
     QAction *defaultUserAgent = new QAction(this);
     defaultUserAgent->setText(tr("Default"));
     defaultUserAgent->setCheckable(true);
-    connect(defaultUserAgent, SIGNAL(triggered()), this, SLOT(switchToDefaultUserAgent()));
+    connect(defaultUserAgent, &QAction::triggered, this, &UserAgentMenu::switchToDefaultUserAgent);
     QSettings settings;
     defaultUserAgent->setChecked(settings.value(QLatin1String("userAgent")).toString().isEmpty());
     addAction(defaultUserAgent);
@@ -65,12 +66,13 @@ void UserAgentMenu::populateMenu()
     QAction *otherUserAgent = new QAction(this);
     otherUserAgent->setCheckable(true);
     otherUserAgent->setText(tr("Other..."));
-    connect(otherUserAgent, SIGNAL(triggered()), this, SLOT(switchToOtherUserAgent()));
+    connect(otherUserAgent, &QAction::triggered, this, &UserAgentMenu::switchToOtherUserAgent);
     addAction(otherUserAgent);
 
     bool usingCustomUserAgent = true;
     QActionGroup *actionGroup = new QActionGroup(this);
-    foreach (QAction *action, actions()) {
+    const QList<QAction *> menuActions = actions();
+    for (QAction *action : menuActions) {
         actionGroup->addAction(action);
         if (action->isChecked()) {
             usingCustomUserAgent = false;
@@ -104,7 +106,7 @@ void UserAgentMenu::addActionsFromFile(const QString &fileName)
             action->setToolTip(userAgent);
             action->setCheckable(true);
             action->setChecked(userAgent == currentUserAgentString);
-            connect(action, SIGNAL(triggered()), this, SLOT(changeUserAgent()));
+            connect(action, &QAction::triggered, this, &UserAgentMenu::changeUserAgent);
             addAction(action);
         }
     }

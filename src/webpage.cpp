@@ -25,6 +25,7 @@
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 
@@ -261,12 +262,25 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 
     // Qt WebEngine asks the user about resubmitting POST data itself; the old
     // NavigationTypeFormResubmitted prompt has no equivalent here.
-    //
-    // TODO(MIG14): the TabWidget::modifyWithUserBehavior() routing that let
-    // main-frame navigations be diverted into new tabs/windows needs
-    // TabWidget, which is still unported.
 
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
+
+    // Divert main-frame link clicks the user modifier-mapped to a new
+    // tab/window (e.g. ctrl+click); WebView::mousePressEvent stashes the
+    // modifiers modifyWithUserBehavior reads.
+    if (accepted && isMainFrame
+        && type == QWebEnginePage::NavigationTypeLinkClicked) {
+        WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+        if (webView) {
+            TabWidget::OpenUrlIn target =
+                TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab);
+            if (target != TabWidget::CurrentTab) {
+                if (TabWidget *tabs = webView->tabWidget())
+                    tabs->loadUrl(url, target);
+                return false;
+            }
+        }
+    }
     if (accepted && isMainFrame) {
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
@@ -278,10 +292,15 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
 {
     Q_UNUSED(type);
-    // TODO(MIG14): return tabWidget()->getView(m_openTargetBlankLinksIn,
-    // webView)->page() so new windows respect the open-in preference.
-    // Interim: an independent top-level WebView.
-    WebView *webView = new WebView;
+    WebView *sourceView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    if (sourceView && sourceView->tabWidget()) {
+        if (WebView *webView = sourceView->tabWidget()->getView(
+                    m_openTargetBlankLinksIn, sourceView))
+            return webView->webPage();
+    }
+    // Detached page (no TabWidget above the view): open a standalone
+    // window on the same profile so private browsing propagates.
+    WebView *webView = new WebView(profile());
     webView->setAttribute(Qt::WA_DeleteOnClose);
     webView->show();
     return webView->webPage();

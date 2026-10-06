@@ -63,6 +63,11 @@ View source + page search (MIG12):
     Port the source viewer, source syntax highlighter, plain-text search helper and the page find bar to Qt 6 / WebEngine. Page find now drives the asynchronous QWebEnginePage::findText and reports match counts and the active match from QWebEngineFindTextResult; "highlight all occurrences" is emulated by re-running the search since WebEngine has no such flag.
     View Source re-fetches the page through the application network access manager and shows the raw wire bytes when they match the DOM serialization (a probe WebEngine page performs the comparison asynchronously), otherwise the live DOM dump; the syntax highlighter now runs on QRegularExpression.
 
+Browser chrome (MIG14):
+    Port the assembled browser window, tab widget, tab bar and the user-agent menu to Qt 6 / WebEngine. Menus, toolbars and shortcuts drive the page through QWebEnginePage::WebAction; history navigation uses QWebEngineHistory; printing goes through QWebEngineView::print(QPrinter*); View Source uses the asynchronous page::toHtml.
+    The application class (BrowserApplication) is now compiled in and supplies the profile-aware new window/tab plumbing: target=_blank links and Ctrl/Shift-modified link clicks open background or foreground tabs through WebPage::createWindow, and private-browsing windows run on the off-the-record WebEngine profile.
+    Feature deltas vs the WebKit version: "zoom text only" is kept as a preference but WebEngine always zooms the whole page; the WebKit page inspector shortcut and global icon database are gone; the text-encoding menu still applies per page via QWebEngineSettings; session save/restore serializes each tab's WebEngine history items explicitly since they have no stream operators.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

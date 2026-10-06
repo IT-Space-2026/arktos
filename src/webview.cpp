@@ -67,12 +67,19 @@
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "adblockpage.h"
+#include "addbookmarkdialog.h"
 #include "autofillmanager.h"
+#include "browserapplication.h"
+#include "browsermainwindow.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
+#include "toolbarsearch.h"
 #include "webpage.h"
 
 #include <qapplication.h>
 #include <qclipboard.h>
 #include <qdebug.h>
+#include <qmenubar.h>
 #include <qevent.h>
 #include <qmenu.h>
 #include <qmimedata.h>
@@ -129,12 +136,10 @@ void WebView::loadSettings()
 
 TabWidget *WebView::tabWidget() const
 {
-    // inherits() instead of qobject_cast: TabWidget's meta object lives in
-    // tabwidget.cpp which is not linked until MIG14 lands.
     QObject *widget = this->parent();
     while (widget) {
-        if (widget->inherits("TabWidget"))
-            return static_cast<TabWidget*>(widget);
+        if (TabWidget *tabWidget = qobject_cast<TabWidget*>(widget))
+            return tabWidget;
         widget = widget->parent();
     }
     return 0;
@@ -190,9 +195,13 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         } else {
             menu->addSeparator();
         }
-        // TODO(MIG08): "Search with..." submenu from
-        // ToolbarSearch::openSearchManager()->allEnginesNames()
-        // feeding searchRequested(QAction *).
+        QMenu *searchMenu = menu->addMenu(tr("Search with"));
+        const QStringList engineNames = ToolbarSearch::openSearchManager()->allEnginesNames();
+        for (const QString &name : engineNames) {
+            QAction *action = searchMenu->addAction(name);
+            connect(action, &QAction::triggered,
+                    this, [this, action]() { searchRequested(action); });
+        }
     }
 
     if (request->isContentEditable()) {
@@ -209,8 +218,10 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
 
     if (!menu->isEmpty()) {
-        // TODO(MIG14): re-add "Show Menu Bar" when the menubar is hidden
-        // (BrowserMainWindow::parentWindow(tabWidget())->showMenuBarAction()).
+        if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
+            if (!window->menuBar()->isVisible())
+                menu->addAction(window->showMenuBarAction());
+        }
 
         menu->exec(event->globalPos());
         delete menu;
@@ -251,29 +262,31 @@ void WebView::copyLinkToClipboard()
 
 void WebView::openActionUrlInNewTab()
 {
-    if (QAction *action = qobject_cast<QAction*>(sender())) {
-        // TODO(MIG14): load into tabWidget()->getView(TabWidget::NewNotSelectedTab, this)
-        // Interim: an independent top-level WebView.
-        WebView *newView = new WebView;
-        newView->setAttribute(Qt::WA_DeleteOnClose);
-        newView->show();
-        QWebEngineHttpRequest request(action->data().toUrl());
-        request.setHeader("Referer", url().toEncoded());
-        newView->load(request);
-    }
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openUrlInTarget(action->data().toUrl(), TabWidget::NewNotSelectedTab);
 }
 
 void WebView::openActionUrlInNewWindow()
 {
-    if (QAction *action = qobject_cast<QAction*>(sender())) {
-        // TODO(MIG14): load into tabWidget()->getView(TabWidget::NewWindow, this)
-        WebView *newView = new WebView;
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openUrlInTarget(action->data().toUrl(), TabWidget::NewWindow);
+}
+
+void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
+{
+    WebView *newView = 0;
+    if (TabWidget *tabs = tabWidget())
+        newView = tabs->getView(target, this);
+    if (!newView) {
+        // Detached view (no TabWidget above us): fall back to a
+        // standalone window on the same profile.
+        newView = new WebView(m_page->profile());
         newView->setAttribute(Qt::WA_DeleteOnClose);
         newView->show();
-        QWebEngineHttpRequest request(action->data().toUrl());
-        request.setHeader("Referer", url().toEncoded());
-        newView->load(request);
     }
+    QWebEngineHttpRequest request(linkUrl);
+    request.setHeader("Referer", url().toEncoded());
+    newView->load(request);
 }
 
 void WebView::downloadImageToDisk()
@@ -307,14 +320,22 @@ void WebView::blockImage()
 
 void WebView::bookmarkLink()
 {
-    // TODO(MIG07): AddBookmarkDialog dialog; dialog.setUrl(...); dialog.exec();
+    if (QAction *action = qobject_cast<QAction*>(sender())) {
+        AddBookmarkDialog dialog(this);
+        dialog.setUrl(action->data().toUrl().toString());
+        dialog.exec();
+    }
 }
 
 void WebView::searchRequested(QAction *action)
 {
-    Q_UNUSED(action);
-    // TODO(MIG08): look the engine up in ToolbarSearch::openSearchManager()
-    // and emit search(engine->searchUrl(selectedText), NewSelectedTab).
+    if (!action)
+        return;
+    OpenSearchEngine *engine =
+        ToolbarSearch::openSearchManager()->engine(action->text());
+    if (!engine || selectedText().isEmpty())
+        return;
+    emit search(engine->searchUrl(selectedText()), TabWidget::NewSelectedTab);
 }
 
 void WebView::setProgress(int progress)
@@ -416,8 +437,13 @@ QUrl WebView::url() const
 
 void WebView::mousePressEvent(QMouseEvent *event)
 {
-    // TODO(MIG15): BrowserApplication's eventMouseButtons/KeyboardModifiers
-    // tracking for open-in-tab modifier behavior.
+    // Stash the current modifiers so WebPage::acceptNavigationRequest
+    // can map the click through modifyWithUserBehavior (ctrl/middle
+    // click -> new tab etc.).
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        application->setEventMouseButtons(event->buttons());
+        application->setEventKeyboardModifiers(event->modifiers());
+    }
     switch (event->button()) {
     case Qt::XButton1:
         triggerPageAction(QWebEnginePage::Back);
@@ -490,4 +516,5 @@ void WebView::mouseReleaseEvent(QMouseEvent *event)
 void WebView::setStatusBarText(const QString &string)
 {
     m_statusBarText = string;
+    emit statusBarMessage(string);
 }

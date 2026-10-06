@@ -27,10 +27,6 @@
 #include <qtextedit.h>
 #include <qtextstream.h>
 
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-#include <qwebkitversion.h>
-#endif
-
 AboutDialog::AboutDialog(QWidget *parent)
     : QDialog(parent)
 {
@@ -39,15 +35,12 @@ AboutDialog::AboutDialog(QWidget *parent)
     logo->setPixmap(qApp->windowIcon().pixmap(128, 128));
     name->setText(qApp->applicationName());
     version->setText(qApp->applicationVersion());
-#if QT_VERSION >= 0x040600 || defined(WEBKIT_TRUNK)
-    webkitVersion->setText(tr("WebKit version: %1").arg(qWebKitVersion()));
-#else
-    webkitVersion->hide();
-#endif
-    connect(authorsButton, SIGNAL(clicked()),
-            this, SLOT(authorsButtonClicked()));
-    connect(licenseButton, SIGNAL(clicked()),
-            this, SLOT(licenseButtonClicked()));
+    // QtWebKit is gone — report the Qt (QtWebEngine/Chromium) version.
+    webkitVersion->setText(tr("Qt version: %1").arg(QLatin1String(qVersion())));
+    connect(authorsButton, &QPushButton::clicked,
+            this, &AboutDialog::authorsButtonClicked);
+    connect(licenseButton, &QPushButton::clicked,
+            this, &AboutDialog::licenseButtonClicked);
 }
 
 void AboutDialog::displayFile(const QString &fileName, const QString &title)
@@ -64,17 +57,17 @@ void AboutDialog::displayFile(const QString &fileName, const QString &title)
         return;
 
     QTextStream stream(&file);
-    stream.setCodec("UTF-8");
+    stream.setEncoding(QStringConverter::Utf8);
     QString text = stream.readAll();
     // this is done to force the content of the text editor to be LTR, and monospaced.
     textEdit.setHtml(QString(QLatin1String("<pre>%1</pre>")).arg(text));
 
     textEdit.setReadOnly(true);
-    connect(&buttonBox, SIGNAL(rejected()), &dialog, SLOT(close()));
+    connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QWidget::close);
     buttonBox.setCenterButtons(true);
     layout.addWidget(&textEdit);
     layout.addWidget(&buttonBox);
-    layout.setMargin(6);
+    layout.setContentsMargins(6, 6, 6, 6);
 
     dialog.setLayout(&layout);
     dialog.setWindowTitle(title);

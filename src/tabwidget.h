@@ -103,10 +103,6 @@ signals:
     void showStatusBarMessage(const QString &message);
     void linkHovered(const QString &link);
     void loadProgress(int progress);
-    void geometryChangeRequested(const QRect &geometry);
-    void menuBarVisibilityChangeRequested(bool visible);
-    void statusBarVisibilityChangeRequested(bool visible);
-    void toolBarVisibilityChangeRequested(bool visible);
     void printRequested(QWebEnginePage *page);
 
 public:
@@ -180,10 +176,6 @@ private slots:
     void lineEditReturnPressed();
     void windowCloseRequested();
     void moveTab(int fromIndex, int toIndex);
-    void geometryChangeRequestedCheck(const QRect &geometry);
-    void menuBarVisibilityChangeRequestedCheck(bool visible);
-    void statusBarVisibilityChangeRequestedCheck(bool visible);
-    void toolBarVisibilityChangeRequestedCheck(bool visible);
     void historyCleared();
 
 private:

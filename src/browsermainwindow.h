@@ -67,7 +67,7 @@
 
 class AutoSaver;
 class BookmarksToolBar;
-class QWebFrame;
+class QWebEnginePage;
 class TabWidget;
 class ToolbarSearch;
 class WebView;
@@ -87,7 +87,7 @@ class BrowserMainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    BrowserMainWindow(QWidget *parent = 0, Qt::WindowFlags flags = 0);
+    BrowserMainWindow(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
     ~BrowserMainWindow();
     QSize sizeHint() const;
 
@@ -149,7 +149,6 @@ private slots:
 
     void webSearch();
     void clearPrivateData();
-    void toggleInspector(bool enable);
     void aboutApplication();
     void downloadManager();
     void selectLineEdit();
@@ -164,8 +163,7 @@ private slots:
     void showWindow();
     void swapFocus();
 
-    void printRequested(QWebFrame *frame);
-    void geometryChangeRequested(const QRect &geometry);
+    void printRequested(QWebEnginePage *page);
 
 private:
     void retranslate();
@@ -251,7 +249,7 @@ private:
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
     ToolbarSearch *m_toolbarSearch;
-#if defined(Q_WS_MAC)
+#if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
 #endif
     BookmarksToolBar *m_bookmarksToolbar;

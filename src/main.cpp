@@ -28,6 +28,7 @@
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
+#include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "cookiejar.h"
@@ -44,6 +45,7 @@
 #include "settings.h"
 #include "sourcehighlighter.h"
 #include "sourceviewer.h"
+#include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
@@ -60,8 +62,11 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QPixmap>
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
@@ -136,7 +141,8 @@ int main(int argc, char **argv)
         || args.contains(QLatin1String("--autofill-smoke"))
         || args.contains(QLatin1String("--settings-smoke"))
         || args.contains(QLatin1String("--find-smoke"))
-        || args.contains(QLatin1String("--source-smoke")))
+        || args.contains(QLatin1String("--source-smoke"))
+        || args.contains(QLatin1String("--browser-smoke")))
         QStandardPaths::setTestModeEnabled(true);
 
     // MIG03: app-wide profile wiring. BrowserApplication will own this in
@@ -1288,6 +1294,117 @@ int main(int argc, char **argv)
             application.exit(1);
         });
         view->loadUrl(fixtureUrl);
+    }
+
+    // Headless verification for MIG14: a real BrowserMainWindow must
+    // construct with one tab, gain a second through the window-level
+    // new-tab action, load a file:// page and propagate its title to
+    // the window title, and route a script-driven window.open()
+    // through WebPage::createWindow -> TabWidget::getView into a third
+    // tab.  The harness runs a plain QApplication, so
+    // BrowserApplication::instance() is null and the chrome must
+    // degrade gracefully.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--browser-smoke"))) {
+        // A leftover ##body cosmetic rule from earlier test-mode runs
+        // would restyle the page; suspend adblock for determinism.
+        AdBlockManager::instance()->setEnabled(false);
+
+        BrowserMainWindow *browserWindow = new BrowserMainWindow();
+        browserWindow->show();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+
+        bool ok = tabWidget && tabWidget->count() == 1
+            && tabWidget->currentWebView()
+            && browserWindow->toolbarSearch()
+            && browserWindow->menuBar();
+        if (!ok) {
+            qInfo() << "browser-smoke: FAIL (window construction)";
+            return 1;
+        }
+        qInfo() << "browser-smoke: window PASS (1 tab)";
+
+        tabWidget->newTabAction()->trigger();
+        if (tabWidget->count() != 2) {
+            qInfo() << "browser-smoke: FAIL (newTabAction)"
+                    << "tabs:" << tabWidget->count();
+            return 1;
+        }
+        qInfo() << "browser-smoke: new-tab action PASS (2 tabs)";
+
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-browser-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "browser-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><head><title>browser-smoke-page</title>"
+                          "</head><body>chrome"
+                          "<a id=\"l\" href=\"about:blank\" target=\"_blank\">x</a>"
+                          "</body></html>");
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+        WebView *firstTab = tabWidget->webView(0);
+        tabWidget->setCurrentIndex(0);
+
+        QObject::connect(firstTab, &QWebEngineView::loadFinished,
+                         &application,
+                         [&application, browserWindow, tabWidget, firstTab,
+                          fixtureUrl, fixturePath](bool ok) {
+            if (!ok || firstTab->url() != fixtureUrl)
+                return;
+            const bool titleOk = browserWindow->windowTitle()
+                .contains(QLatin1String("browser-smoke-page"));
+            qInfo() << "browser-smoke: load+title"
+                    << (titleOk ? "PASS" : "FAIL")
+                    << "title:" << browserWindow->windowTitle();
+            if (!titleOk) {
+                QFile::remove(fixturePath);
+                application.exit(1);
+                return;
+            }
+            // A real click on the target=_blank link routes through
+            // WebPage::createWindow -> TabWidget::getView and must grow
+            // the tab strip to three tabs.  (Synthesized JS has no user
+            // activation, so Chromium would block it as a popup.)
+            firstTab->webPage()->runJavaScript(
+                QLatin1String("JSON.stringify("
+                              "document.getElementById('l').getBoundingClientRect())"),
+                [tabWidget](const QVariant &rectVar) {
+                const QJsonObject rect =
+                    QJsonDocument::fromJson(rectVar.toString().toUtf8()).object();
+                const QPointF pos(rect[QLatin1String("x")].toDouble()
+                                      + rect[QLatin1String("width")].toDouble() / 2,
+                                  rect[QLatin1String("y")].toDouble()
+                                      + rect[QLatin1String("height")].toDouble() / 2);
+                WebView *view = tabWidget->currentWebView();
+                QWidget *proxy = view->focusProxy() ? view->focusProxy() : view;
+                QMouseEvent press(QEvent::MouseButtonPress, pos,
+                                  proxy->mapToGlobal(pos.toPoint()),
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, pos,
+                                    proxy->mapToGlobal(pos.toPoint()),
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(proxy, &press);
+                QCoreApplication::sendEvent(proxy, &release);
+            });
+            QTimer::singleShot(3000, &application,
+                               [&application, tabWidget, fixturePath]() {
+                const bool pass = tabWidget->count() == 3;
+                qInfo() << "browser-smoke: target=_blank tab"
+                        << (pass ? "PASS" : "FAIL")
+                        << "tabs:" << tabWidget->count();
+                qInfo() << "browser-smoke:" << (pass ? "PASS" : "FAIL");
+                QFile::remove(fixturePath);
+                application.exit(pass ? 0 : 1);
+            });
+        });
+        QTimer::singleShot(20000, &application, [&application]() {
+            qInfo() << "browser-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
     }
 
     return application.exec();
