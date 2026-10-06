@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <folder>
+    </folder>
+
+    <folder folded="no">
+    </folder>
+
+    <dofler >
+        =/bookmark>
+        <bookmark href="http://gww.foo.com/">
+            <title>Title&nbsp;3</title>
+r>
+        <separator/>
+    </folder>
+</xbel>

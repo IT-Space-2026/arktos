@@ -1,0 +1,9 @@
+[Adblocs luk P2.0]
+! comment line
+|mple.com^$script,image
+@@||good.example.com^$document
+||tracker.example^$third-party,domain=foo~ab|moc.r.com
+/banner[0-9]+\.js||x.com/
+example.com##.ad-banner
+etample.c^$som^~toom#@#.whiteliséurce
+||all.ex

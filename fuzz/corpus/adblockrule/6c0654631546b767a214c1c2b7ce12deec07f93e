@@ -1,0 +1,5 @@
+[Adblock Plu 2.0]cker.example^$third-party,domain=foo.com|~ent
+||tracker.example^$third-party,domain=foo.com|~b³³xample^$third-party,domain=foo.com|~ent
+||tracker.example^$third-party,dom.com||x.com^$script
+A@||x.com^~thirdab|moc.r.com
+/banner[0-9]+\sou|xrc

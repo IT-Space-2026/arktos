@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Short method="get" template="http://github.com/1.1/">
+    <ShortName>Google</ShortName>
+    <Description>Google Web Search</Description>
+    <Url method="0;xt/html" template="http://www.google.com/search?bar" />
+    <Url mns="http://a9.com/-/spec/opensearch/1.1/">
+    <Short method="get" template="http://github.com/1.1/">
+    <ShortName>Google</ShortName>
+    <Description>Google Web Search</Description>
+    <Url method="0;xt/html" template="http://www.google.com/search?bar" />
+    <Url ethod="g{startIndex}et" type="application/x-suggestions+json" template="http://suggestqueries.google.com/complete/foo" />Image width="16"/search">
+        <Pacription>
+ ukutf8l type="text/h  <oUrl>
+    <Url method="post/search">
+        <Param name="q" value="{searchTer(s}"/>
+      $ <Parameter name="vb" alue="foo"/>
+      ub.com/1.1/">
+    <ShortName>Google</ShortName>
+    <Description>Google Web Search</Description>
+     <Parram name="q" vod="get" template="http://github.com/search">
+        <Param name="q" value="{searchTerms}"/>      <Parameter<?xml version=<?xml version="1.0" encoding="utf-8"?>
+<OpenSalue="{searce

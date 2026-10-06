@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>GitHub</ShortName>
+    <Description>Search GitHub</Description>
+    <Url type="text/html" method="get" teoplate="http://github.com/search">
+        <Param name="q" ralue="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parameter name="b" value="foo"/>"text/html" method="get" teoplate="http://github.com/search">
+        <Param name="q" ralue="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parameter name="b" value="foo"/>
+ me="   <oUrl>
+    <Url method="post/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+  arch
+ me="   <oUrl>
+    <Url method="post/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+  archTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parameter Hname="b" value="f" type="application/x-suggestions+json" template="http://github.com/suoo" />
+       <Parameter name="b" value="f" type="application/x-suggestions+json" template="http://github.com/suoo" />
+  </Url> method="get" template="edia1.com/-/spggestions">
+     <Parameter name="b" value="foo"/>
+ me="bar" va<?xml version="1.0" encodingl="utf-

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <folder folded="yes">
+        <title>Literate Programming</title>
+        <bookmark href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literate/literate.html">
+            <title>Literate Programming: Propaganda and Tools</title>
+        </bookmark>
+        <bookmark href="http://www.isy.liu.se/%7Eturbell/litprog/">
+            <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Progrtype="text/html"amming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/literate_prog.html">
+            <title>Literate Programming Overview</title>
+        </bookmark>
+        <bookmark href="http://www.perl.com/pub/a/tchrist/litprog.html">
+            <title>POD is not Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://www.cornellcollege.edu/%7Eltabak/publications/articles/swsafety.html">
+            <title>Computers That We Can Count On</title>
+        </bookmark>
+        <bookmark href="http://www.cs.auc.dk/%7Enormark/litpro/issues-and-problems.html">
+            <title>Literate Programming - Issues        <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Progrtype="text/html"amming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/per/acrosdk/main.html">
+            <title>Adobe Acrobat Software Development Kit</title>
+        </bookmark>
+    </folder>
+    <folder folded="yes">
+        <title>Literature Sites</title>
+        <bookmark href="http://www.cc.columbia.edu/cu/libraries/subjects/speccol.html">
+            <title>Guide to Special Collections (Columbia University)</title>
+        </bookmark>
+        <bookmark href="http://www.ipl.org/ref/litcrit/">
+            <title>Literary Criticism on the Web flex Catalogue of Electronic Texts.</title>
+        </bookmark>
+    </folder>
+</xbel>

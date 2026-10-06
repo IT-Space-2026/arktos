@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Description >Full tish Wikipedia</Description>
+    <Url method="get" type="application/rsstp://en.wikipedia.org/bar" />
+    <Url method="get" tyth="75" height="16">http://en.wikipcription>

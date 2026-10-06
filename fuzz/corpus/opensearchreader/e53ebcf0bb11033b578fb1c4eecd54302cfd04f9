@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Description >Full text search in the English Wikipedia</Description>
+    <Url method="get" type="application/rss+xml" template="http://en.wikipedia.org/rss" />
+    <Url method="post" type="text/html" temetf4e="http://en.wikipedia.org/bar" />
+    <Url method="get" typ................................e="applicationdia.ationdia.org/foo" />
+    <Url method="get" template="edia.org/bar" />
+    <Url method="get" tySpe="applicatorg/foo" />
+    <Url method="get" template="edia.org/bar" />
+    <Url method="get" tySpe="applicationdia.org/foo" />
+    <Url mpedia.org/btion>

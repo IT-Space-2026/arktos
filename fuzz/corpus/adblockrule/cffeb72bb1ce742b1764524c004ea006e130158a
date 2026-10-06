@@ -1,0 +1,17 @@
+[Adblock Plus 2.0]
+! comment line
+|mple.com^$script,image
+@@/
+||bad.example.com^$script$badfilter
+example.com#
+/bann#+js(seu-constant||good.example.com¤Ñš‡ample.com^$removeparam=ent line
+|mple.com^$script,image
+@@/
+||bad.example.com^$script$badfilter
+example.com#
+/bann#+js(seu-constant||good.example.com¤Ñš‡ample.com^$removep*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$script$badfilter
+example.com#
+/bann#+js(seu-constant, ads, false)
+||example.com^$match-case

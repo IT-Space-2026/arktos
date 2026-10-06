@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <foldeLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLr folded="yes">
+        <title>Literate Programming</title>
+        <bookmark href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literate/literate.html">
+            <title>Literate Programming: Propaganda and Tools</title>
+        </bookmark>
+        <bookmark href="http://www.isy.liu.se/%7Eturbell/litprog/">
+            <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Programming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/literate_prog.html">
+            <title>Literate Programming Overview</title>
+        </bookmark>
+        <bookmark href="http://www.perl.com/pub/a/tchrist/litprog.html">
+            <title>POD is not Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://www.cornellcollege.edu/%3Eltabak/publications/articles/swsafety.html">
+            <title>Computers That We Can Count On</title>
+        </bookmark>
+        <bookmark href="http://www.ccs.princeton.edu/~benjasik/gdb/gdbtut.html">
+                <title>GDB Tutorial</title>
+            </bookmark>
+            <bookmark href="http://www.gnu.org/manual/gdb-4.17/html_mono/gdb.html">
+                <title>Debng</title>
+        <bookmark href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literate/literate.html">
+            <title>Literate Programming: Propaganda and Tools</title>
+        </bookmark>
+        <bookmark href="http://www.isy.liu.se/%7Eturbell/litprog/">
+            <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Programming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/liteugging with GDB</title>
+            </bookmark>
+            <bookmark href="http://www.cs.washington.edu/orgs/acm/tutorials/dev-in-unix/gdb-refcard.pdf">
+                <title>GDB Quick Reference Page (PDF) (Handy)</title>
+            </bookmark>
+        </folder>
+        <folder folded="yes">
+            <title>Classes and Constructors</title>
+            <bookmark href="http://www.parashift.com/c++-faq-lite/ctors.html">
+                <title>Constructor FAQ</title>
+            </bookmark>
+            <bookmark href="http://www.juicystudio.com/tutorial/cpp/index.html">
+                <title>Organizing Classes</title>
+            </bookmark>
+        </folder>
+    </folder>
+    <folder folded="yes">
+        <title>Software Documentation or System Documentation</title>
+        <bookmark href="http://www.martinfowler.com/distributedComputing/thud.html">
+            <title>The Almighty Thud</title>
+        </bookmark>
+        <bookmark href="http://msdn.microsoft.com/library/techart/cfr.htm">
+            <title>Microsoft Coding Techniques and Programming Practices</title>
+        </bookmark>
+        <bookmark href="http://www.bearcave.com/software/prog_docs.html">
+            <title>Software and Documentation</title>
+        </bookmark>
+        <bookmark href="http://c2.com/cgi/wiki?TheSourceCodeIsTheDesign">
+            <title>The Source Code is the Design</title>
+        </bookmark>
+        <bookmark href="http://www.bleading-edge.com/Publications/C++Journal/Cpjour2.htm">
+            <title>What is Software Design?</title>
+        </bookmark>
+        <bookmark href="http://www.mindprod.com/unmain.html">
+            <title>How To Write Unmaintainable Code</title>
+        </bookmark>
+   rk href="http://www.miktex.org/">
+            <title>MikTeX website</title>
+        </bookmark>
+        <bookmark href="http://cm.bell-labs.com/who/hobby/MetaPost.html">
+            <title>MetaPost website</title>
+        </bookmark>
+        <bookmark href="http://pauilies/subjects/speccol.html">
+            <title>Guide to Special Collections (Columbia University)</title>
+        </bookmark>
+        <bookmark href="http://www.ipl.org/ref/litcrit/">
+            <title>Literary Criticism on the Web flex Catalogue of Electronic Texts.</title>
+        </bookmark>
+    </folder>
+</xbel>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Utr lype="text/ht,l" method="get" template="http://github.com/se{startIjdex}arch">
+        <Param name="q" value="{searchTerms}"/>
+        <Parameter name="b" value="s">
+        <Parameter name="bar" vaue="baz"/>
+ e="http://github.com/se{startIjdex}a<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1se{startIjdex}arch">
+        <Param name="q" value="{searchTerms}"/>
+        <Parameter name="b" value="s">
+        <Parameter name="bar" vaue="baz"/>
+ e="http://github.com/se{sta"q" value="{searchTerms}"/>
+        <Parameter name="b" value="s">
+        <Parameter name="bar" vaue="baz"/>
+ e="http://github    r&#080;       <Param name="q" value="{searchTerms}"/>
+        <Parameter name="b" value="s">
+        rms}"/>
+        <Parameter nAme="b" value="s">
+        <Parameter name="bar" vaue="baz"/>
+ e="http://github    rch">
+        <Param name="q" value="{searchTerms}"/>
+        <Parameter name1="b" value="s">
+        <Parameter name="bar" vmeter name="b" vadue="foo"/>
+ me="   Url>
+</OpenSearchDescription>

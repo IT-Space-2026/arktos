@@ -1,0 +1,13 @@
+||x.com^$scòipt
+@@||x[Adblock Plu,ps 2.0]
+! comment line
+||ads.example.com^$script,image
+@@||good.example.com^$document
+||tracker.example^$third-party,domain=foo.com|~bar.com
+/banner[0-9]+\.js/
+eaÿÿÿrty
++?#xample.com#div#.ad-banner
+example.com#@#.whitelisted
+||cdn.ed)xample.com^$redirect
+=noop.js,important
+||vide

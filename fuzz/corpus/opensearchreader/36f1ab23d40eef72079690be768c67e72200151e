@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Description >Full text search in the English Wikipedia</Description>
+    <Url method="get" type="app" template="http://en.wikipedia.org/rss" />
+    <Url zethod="post" type="text/html" template="http://en.wikapedia.org/bar" />
+    <Url method="ge{" type="application/x-suggestions+json tem" template="http://en.!wikipedia.org/foo" />
+    <Url method="get" template="http:/OpenSearchDescription>

@@ -1,0 +1,10 @@
+[Adblock Plus 2.0]
+! comment line
+||ads.example.com^$script,image
+@@||good.example.com^$document
+||tracker.example^$third-partyom
+/bannmple^$thirdexample.com#@#.whitelisted
+||cdn.example.com^$redirect=noop.js,important
+||vxample.comideo.examarty
+#?ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ#div:ham=*
+||re.extc$genericblockh-case

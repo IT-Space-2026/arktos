@@ -1,0 +1,12 @@
+[Adblock Plus 2.0]
+! comment l*ne
+|mple.com^$script,image
+@@||good.example.com^$pt,image
+@@||good.example.com^ker.example^$t$xmlbam^$script,image
+@@\|good.example.com^$pt,image
+@@ample.com^ker.example^$third-partomain=foo.com|~bar.com
+/banner[1-9]+\.js||x.com/
+example.com##.ad-banner
+etample.c^^$cmeo.$document
+||omaindpartomain=foo.com|~baur
+||vid||##ÿÿÿÿÿÿÿeo

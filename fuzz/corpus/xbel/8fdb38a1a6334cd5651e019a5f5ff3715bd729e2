@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <folder folded="yes">
+        <title>Literate Programming</title>
+        <bookmark href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literate/literate.html">
+            <title>Literate Programming: Propaganda and Tools</title>
+        </bookmark>
+        <bookmark href="http://www.isy.liu.se/%7Eturbell/litprog/">
+            <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Programming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/literate_prog.html">
+            <title>Literate Programming Overview</title>
+        </bookmark>
+        <bookmark href="http://www.perl.com/pub/a/tchrist/litprog.html">
+            <title>POD is not Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://www.cornellcollege.edu/%7Eltabak/publications/articles/swsafety.html">
+            <title>Computers That We Can Count On</title>
+        </bookmark>
+        <bookmark href="http://www.cs.auc.ookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/literate_prog.html">
+            <title>Literate Programming Overview</title>
+        </bookmark>
+        <bookmark href="http://www.perl.com/pub/a/tchrist/litprog.html">
+            <title>POD is not Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://www.cornellcollege.edu/%7Eltabak/publications/articles/swsafety.html">
+            <title>Computers That We Can Count On</title>
+        </bookmark>
+        <bookmark </folder>
+        <folder folded="yes">
+            <title>gdb</title>
+            <bookmark href="http://www.cs.princeton.edumark href="http://www.adobe.com/">
+            <title>Adobe - The postscript and PDF standards</title>
+        </bookmark>
+        <bookmark href="http://partners.adobe.com/asn/developer/technotes/acrobatpdf.html">
+            <title>Reference Manual Portable Document Format</title>
+        </bookmark>
+        <bookmark href="http://partners.adobe.com/asn/developer/acrosdk/main.html">
+            <tftware Development Kit</title>
+        </bookmark>
+    </folder>
+    <folder folded="yes">
+        <title>Literature Sites</title>
+        <bookmark href="http://www.cc.columbia.edu/cu/libraries/subjects/speccol.html">
+            <title>Guide to Special Collections (Columbia University)</title>
+        </bookmark>
+        <bookmark href="http://www.ipl.org/ref/litcrit/">
+            <title>Literary Criticism on the Web from the Internet Public Library</title>
+        </bookmark>
+        <bookmark href="http://www.victorianweb.org/">
+            <title>Victorian Web.</title>
+        </bookmark>
+        <bookmark href="http://vos.ucsb.edu/">
+            <title>Voice of the Shuttle.</title>
+        </bookmark>
+        <bookmark href="http://www.modjourn.brown.edu/">
+            <title>Modernist Journals Project</title>
+        </bookmark>
+        <bookmark href="http://www.poetspath.com">
+            <title>Museum of American Poetics</title>
+        </bookmark>
+        <bookmark href="http://www.english.uiuc.edu/maps/">
+            <title>Modern American Poetry</tixmlns="http://a9.com/-/spec/opensearch/1.1/"ref="http://www.findarticles.com/">
+            <titleex Catalogue of Electronic Texts.</title>
+        </bookmark>
+    </folder>
+</xbel>

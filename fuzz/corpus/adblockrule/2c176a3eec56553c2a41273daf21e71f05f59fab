@@ -1,0 +1,15 @@
+[Adblock Plu$removeparam5ent line
+$third-partycript,im,ge
+@@||good.example.com^$pt,image
+D@||good.example.com^$document
+||m^$document
+||tracker.example^$third-tracker.example^$third-party,de
+@@||good.example.com^$pt,image
+@@||x.com^$sco#$##?#dle^$third-0artomain=tfoo.com|~bar.com
+/banner[0-9]+\.js||x.com/
+example.com##.ad-banner
+etample.c^$som^~toom#@#.whitelisted
+||cdn.eòample.com^$redireur
+@@||x,paant
+||video.example.com^$rdemoveparam=utm_séurce
+||all.ex

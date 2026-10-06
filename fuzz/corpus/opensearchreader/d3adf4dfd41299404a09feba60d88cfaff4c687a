@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>GitHub</ShortName>
+    <Description>Search GitHub</Description>
+    <Url ytpe="text/html" method="get" template="http://github.com/search">       archDescription>

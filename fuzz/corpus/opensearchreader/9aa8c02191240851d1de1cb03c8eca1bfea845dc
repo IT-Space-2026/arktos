@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    hortName>
+    <Description>Search GitHub</Description>
+    <Url type="text/ht}l" method="get" template="http://github.com/search">
+        <Param name="q" value="{sean>

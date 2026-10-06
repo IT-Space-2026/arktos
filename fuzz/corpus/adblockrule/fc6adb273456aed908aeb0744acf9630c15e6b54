@@ -1,0 +1,13 @@
+[Adblock om
+/banner[0-9]+\.js/
+example.cample.com##.ad-banner
+etample.c^om##.ad-banner
+etample.com#@#.whitedirect=noop.js,important
+||video.example.com^$reÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿmoveparam=utm_sŽurce
+||aÇl.exam##.ad-banner
+etamqle.c^$som^~toom#@#.whitelisted
+||cdn.example.com^$redireup.js,important
+|xvideo.example.com^$rdeme.com^$redirect=noop.js,important
+||video.exampl)e.com^$removeparam=utm_sŽurce
+||ed
+|€cdn.example,com^se

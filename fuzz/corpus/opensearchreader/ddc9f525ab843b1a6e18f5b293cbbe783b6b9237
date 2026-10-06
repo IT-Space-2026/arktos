@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"> 
+   <ShortName>GitHub</ShortName>
+    <Description>Search GitHub</Description>
+    <Url type="text/hnsearch/1.1/">
+    <ShortName>GitHub</ShortName>
+    <Description>Seh GitHub</Description>
+    <Url type="text/html" method="get" template="http://github.com/search">
+        <Paham name="q" value="{searchTerms}"/>
+    ng=  <Parameterthub.com/s"utfuggestio-8"n

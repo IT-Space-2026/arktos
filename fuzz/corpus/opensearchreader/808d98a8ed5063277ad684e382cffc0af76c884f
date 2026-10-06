@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+   "http://en.wikipedia.org/rss" />
+    <Url method="post" type="text/html" template="http://en.wikipedia.org/bar" />
+    <Url method="get" type="applicationdia.org/foo" />
+    <Url method="get" template="edia.org/bar" />
+    <Url method="get" tySpe="applicationoo" />
+    <Url method="get" template="http://en.wikipedia.org/btion>

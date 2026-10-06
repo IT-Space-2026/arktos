@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Url method="get" type="application/x-suggestions+json" template="http://en.wikipedia.org/fa9.com/-/spec/opensearch/1.1/">
+    <ShortName>GitHub</ShortName>
+    <Description>Search GitHub</Description>
+ ukutf8l type="text/html" method="get" template="http://github.com/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parameter name="b" value="foo"/>
+ me="   <oUrl>
+    method="post/search">
+        <Param name="q" value="{searchTer(s}"/>
+   oo" />
+    <Image width="16" height="16">httortNamen.ico</Image>
+</OpenSearchDescription>

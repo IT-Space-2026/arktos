@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Description >Full text search in the English Wikipedia</Description>
+    <Url method="get" type="application/rss+xml" template="http://en.wikipedia.org/rss" />
+    <Url method="post" type="text/html" template="http://ewki.nipedia.org/bar" />
+    <Url hod="post" type="text/html" template="http://en.wikipedia.org" />
+    <Url metho/foo" />
+  rl method="get" scription>

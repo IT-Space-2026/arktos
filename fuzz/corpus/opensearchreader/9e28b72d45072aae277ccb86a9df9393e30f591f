@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"> <Url type="text/html" method="get" template="http://github.com/search">
+        <Param name="q" ralue="{searchTerms}"/>

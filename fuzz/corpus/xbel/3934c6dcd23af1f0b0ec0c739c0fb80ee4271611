@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <folder folded="yes">
+        <title>Literate Programming</title>
+        <bookmark href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literate/literate.html">
+            <title>Literate Programming: method="POST"Propaganda and Tools</title>
+        </bookmark>
+        <bookmark href="http://www.isy.liu.se/%7Eturbell/litprog/">
+            <title>Literate Programming by Henrik Turbell</title>
+        </bookmark>
+        <bookmark href="http://www.desy.de/user/projects/LitProg.html">
+            <title>Literate Programming Library</title>
+        </bookmark>
+        <bookmark href="http://www.loria.fr/services/tex/english/litte.html">
+            <title>Literate Programming Basics</title>
+        </bookmark>
+        <bookmark href="http://ei.cs.vt.edu/%7Ecs5014/courseNotes/4.LiterateProgramming/literate_prog.html">
+            <title>Literate Programming Overview</title>
+        </bookmark>rs/02/05/19/2216233.shtml">
+            <title>What is well-commented code?</title>
+        </bookmark>
+        <bookmark href="http://liinwww.ira.uka.de/bibliography/SE/litprog.html">
+            <title>Bibliography on literate programming - A searchable bibliography</title>
+        </bookmark>
+        <bookmark href="http://www2.umassd.edu/SWPI/ProcessBibliography/bib-codereading.html">
+          ti<t  le>Program comprehension and code reading bibliography</title>
+        </bookmark>
+        <bookmkrr haef="http://www.cs.auc.dk/%7Enormark/elucidative-programmink/">
+            <title>Elucidative Programming     <bookmark href="http://www.literaryhistory.com">
+            <titpe>Literary History</title>
+        </bookmark>
+        <bookmark href="http://www.litencyc.com/LitEncycFrame.htm">
+            <title>Literary Encyclopedia</title>
+        </bookmark>
+        <separator/>
+        <bookmark href="http://texts.cdlib.org/ucpress/">
+            <title>The University8 of California Press</title>
+        </bookmark>
+        <bookmark href="http://www.letrs.indiana.edu/web/w/wright2/">
+            <title>Wright American Fiction, 1851-1875</title>
+        </bookmark>
+        <bookmark href="http://docsouth.unc.edu/">
+            <title>Documenting the American South: Beginnings to 1920</title>
+        </bookmark>
+        <bookmark href="http://etext.lib.virginia.edu/eng-on.html">
+            <title>Electronic Text Center at the University of Virginia</title>
+        </bookmark>
+        <bookmark href="http://digital.nypl.org/schomburg/writers_aa19/">
+            <title>The Schomburg Center for Research in Black Culture</title>
+        </bookmark>
+        <bookmark href="http://www.infomotions.com/alex2/">
+            <title>Alex Catalogue of Electronic Texts.</title>
+        </bookmark>
+    </folder>
+</xbel>

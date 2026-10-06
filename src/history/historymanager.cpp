@@ -65,10 +65,10 @@
 #include "autosaver.h"
 #include "browserpaths.h"
 #include "history.h"
+#include "historyparser.h"
 
 #include <algorithm>
 
-#include <qbuffer.h>
 #include <qcoreapplication.h>
 #include <qdesktopservices.h>
 #include <qdir.h>
@@ -92,7 +92,7 @@ QString HistoryEntry::userTitle() const
     return title;
 }
 
-static const unsigned int HISTORY_VERSION = 23;
+static const unsigned int HISTORY_VERSION = HistoryParser::Version;
 
 HistoryManager::HistoryManager(QObject *parent)
     : QObject(parent)
@@ -324,58 +324,14 @@ void HistoryManager::load()
         return;
     }
 
-    QList<HistoryEntry> list;
     QDataStream in(&historyFile);
-    // Double check that the history file is sorted as it is read in
-    bool needToSort = false;
-    HistoryEntry lastInsertedItem;
-    QByteArray data;
-    QDataStream stream;
-    QBuffer buffer;
-    QString string;
-    stream.setDevice(&buffer);
-    while (!historyFile.atEnd()) {
-        in >> data;
-        // A corrupt file can carry a bogus block length; stop rather
-        // than rescanning the rest of the stream as pseudo-entries.
-        if (in.status() != QDataStream::Ok)
-            break;
-        buffer.close();
-        buffer.setBuffer(&data);
-        buffer.open(QIODevice::ReadOnly);
-        quint32 ver;
-        stream >> ver;
-        if (ver != HISTORY_VERSION)
-            continue;
-        HistoryEntry item;
-        stream >> string;
-        item.url = atomicString(string);
-        stream >> item.dateTime;
-        stream >> string;
-        item.title = atomicString(string);
+    const HistoryParser::Result parsed =
+            HistoryParser::readEntries(in, m_atomicStringHash);
 
-        if (!item.dateTime.isValid())
-            continue;
-
-        if (item == lastInsertedItem) {
-            if (lastInsertedItem.title.isEmpty() && !list.isEmpty())
-                list[0].title = item.title;
-            continue;
-        }
-
-        if (!needToSort && !list.isEmpty() && lastInsertedItem < item)
-            needToSort = true;
-
-        list.prepend(item);
-        lastInsertedItem = item;
-    }
-    if (needToSort)
-        std::sort(list.begin(), list.end());
-
-    setHistory(list, true);
+    setHistory(parsed.entries, true);
 
     // If we had to sort re-write the whole history sorted
-    if (needToSort) {
+    if (parsed.needToSort) {
         m_lastSavedUrl.clear();
         m_saveTimer->changeOccurred();
     }

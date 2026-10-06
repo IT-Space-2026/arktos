@@ -29,3 +29,9 @@ autotests/**/tst_*
 !autotests/**/*.h
 *.moc
 moc_predefs.h
+
+# fuzz binaries (in-tree clang builds only; run-fuzz.sh builds in /tmp)
+fuzz/*/fuzz_*
+!fuzz/**/*.cpp
+!fuzz/**/*.h
+fuzz/seedgen/seedgen

@@ -1,0 +1,10 @@
+[Adblock e.com^$document
+||tracker.example^$third-party,domain=foo.cparty,domain=foo.com|~bar.com
+/banner[0-om|~bar.com/bannmple^$third-party,domain=foo.com|~bar.com
+/banner[0-9]+\.js/
+example.com##.ad-banner
+example.com#@#.whitelisted
+||cdx.com^$script
+@@||x,ctm~o^hirdÿÿÿty
+#|||.com^$script
+@@div:has(.ad)?#di||x.co.cm

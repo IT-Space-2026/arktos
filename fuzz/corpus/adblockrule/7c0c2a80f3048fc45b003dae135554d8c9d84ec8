@@ -1,0 +1,12 @@
+[Adblock om
+/ban/
+example.com##.ad-banner
+etample.com#@#.whitelisted
+||cdn.example.com^$redirect=noop.js,imer
+example.com#
+/bann#+js(seu-e.com^$redirect=noexampleop.js,important
+||video.example.com^$removeparam=utm_sŽurceconstant, ad*y
+ÿÿs(.aÿimage
+@@||good.ex||all.example||min^removeparam=*
+||re..aepxmels, false)
+||example.com^$match-case

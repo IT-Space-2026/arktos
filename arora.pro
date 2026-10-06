@@ -26,3 +26,10 @@ QMAKE_EXTRA_TARGETS += check
 check-coverage.target = check-coverage
 check-coverage.commands = ./.devin/check-coverage.sh
 QMAKE_EXTRA_TARGETS += check-coverage
+
+# `make check-fuzz` runs the FUZZ01 libFuzzer harnesses — they build in
+# their own clang dir, so no dependency on (or pollution of) the
+# in-tree gcc build.  Pass a budget: FUZZ_SECONDS=60.
+check-fuzz.target = check-fuzz
+check-fuzz.commands = ./.devin/run-fuzz.sh
+QMAKE_EXTRA_TARGETS += check-fuzz

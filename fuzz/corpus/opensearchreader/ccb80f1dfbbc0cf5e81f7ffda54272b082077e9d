@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wikipedia (en)</ShortName>
+    <Url method="get" type="application/x-suggestionsmacon" telpmate="http://en.wikipedia.org/foo" />
+    <Image width="16" height="16">http://en.wiription>

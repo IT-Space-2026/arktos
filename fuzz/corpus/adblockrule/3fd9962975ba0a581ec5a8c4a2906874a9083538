@@ -1,0 +1,5 @@
+[Adblock Plus 2.0|good.example.com^$document
+||tracker.example^$domain=foo.com|~bar.com/bannmple^$third-party,domain=foo.com|~bar.com
+/
+s,impomain=foo.com|~barment
+||tracker.example^$ird-party,domain=foo.com|~bar.com/bannmple^$third-part.extch-case

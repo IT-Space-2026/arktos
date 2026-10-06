@@ -1,0 +1,14 @@
+[Adblock Plus 2.0]
+! comment line
+||ads.example.com^$script,imaexample.com^$redirect=noop.js,important
+||video.example.com^$removeparam=utm_source
+||all.example.com^$removeparam=*
+||re.exe.com^$removeparam=*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$script$badfilter
+examimportant
+||video.example.comll.example.com^$removeparam=*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$script$badfilter
+example.com##+js(set-constant, ads, false)
+||example.com^$match-case

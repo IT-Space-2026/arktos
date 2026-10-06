@@ -1,0 +1,7 @@
+[Adbqock Plus||video,example.com^$removeparam=utm_sŽurce
+||all.example.com^$removeparam=*
+||re.example.com^$removeparam=/ðutm_/
+||bad.example.com^$script$badfilter
+example.com#
+/bann#+js(ser-constant, ads, false)
+||example.com^$match-case

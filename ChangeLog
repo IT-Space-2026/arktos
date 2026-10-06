@@ -170,6 +170,9 @@ Clear private data completeness (SEC12):
 AdBlock matcher scaling (PERF02):
     Ad-block request matching is now indexed instead of scanning every rule per request. With an EasyList-size list (~60k rules) a single resource lookup cost ~500ms before — enough to stall every page load; it now answers in under a millisecond (~550x faster on the benchmark corpus). Matching results are unchanged: the index only decides which rules could possibly match, and a differential test compares every decision against the original linear scan.
 
+Parser fuzzing (FUZZ01):
+    Added a libFuzzer harness (clang, AddressSanitizer + UndefinedBehaviorSanitizer) covering every parser that consumes hostile input: AdBlock rules, OpenSearch XML, XBEL bookmarks, the serialized history file, cookie-jar state blobs, bounded QDataStream list decoding, SecureStore sealed blobs and the htmlToXBel importer. Run it with `make check-fuzz` (or .devin/run-fuzz.sh <seconds>); seed corpora and dictionaries live under fuzz/. Two code paths were extracted so the fuzzers drive real production code: history-file decoding moved out of HistoryManager::load() into HistoryParser, and htmlToXBel's conversion core moved out of main() into a callable converter.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

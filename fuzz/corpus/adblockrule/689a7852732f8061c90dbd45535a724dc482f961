@@ -1,0 +1,11 @@
+[Adblock Plus ads.example.com^$$xmlhtt0prequest||good.example.com^$document
+||tracker.exa+ple^$$objecttmple.com^$document
+||tracker.exa+ple^$$omplee^$$objectthird-party,domainÃoo.com|~bar.cothird-p-9]+\.js/
+example.com##.ad-banner
+example.com#@#.whitelisted
+||cdn.eÿÿÿÿÿÿÿÿÿÿÿ-party,domain=foo.com|~bar.com
+/banner[0-9]#@?#t=noop.js,important
+||video.ex[marty
+#?#div:ham=*
+||re.extchoveparam=utm_s…urce
+||all.ex

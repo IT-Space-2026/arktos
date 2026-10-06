@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Short method="get" template="http:h">
+        <Pacription>
+ ukutf8l type="text/html" method="get" template="http://github.com/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parameter name="b" value="foo"/>
+ me="   <oUrl>
+    <Url method="post/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Parameter name="vb" alue="foo"/>
+       <Parram name="q" vod="get" template="http://github.com/search">
+        <Param name="q" value="{searchTerms}"/>      <Parameter<?xml version=<?xml version="1.0" encoding="utf-8"?>
+<OpenSalue="{searce

@@ -1,0 +1,6 @@
+[Adblock Plus 2.,image
+@@||good.example.com^.example.com^$removeparam=*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$script$badfilter
+example.com#
+/ba||x.conn#+js(seu-constant, ads, falsm^e$s

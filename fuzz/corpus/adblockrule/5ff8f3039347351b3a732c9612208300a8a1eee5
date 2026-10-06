@@ -1,0 +1,17 @@
+[Adbqock Plus 2.0]
+! comment line
+|mple.com^$script,image
+@@||good.example.com^$do
+cte|unm|trac||x.com[Adblock Plus 2.^$script,image
+@@||good.example.com^.example.com^$removeparam=*
+||re.ex0]
+! comment line
+|mple.com^$script,image
+@@||good.example.com^.example.com^$removeparam=*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$scrppt$badfilter
+example.ocm#
+/bann#+js(seu-constant, ads, false)
+||example.com^$match-case
+oveparam=/^utm_/
+||batch-case

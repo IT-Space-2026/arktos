@@ -1,0 +1,4 @@
+[Adblock Plu 2.0]cker.example^$third-party,domain=foo.com|~ent
+||tracker.example^$third-party,domain=foo.commple^$third-party,domain=foo.com|~ent
+||tracker.example^$third-party,domain=foo.com|~bar³³³³³³³³³³³³³³³³³³³³³³³³³³³³³bar³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³.com||x.com^$script
+A@||x.com^~third-ple.com^$removeparam=|utm_sou|xrc

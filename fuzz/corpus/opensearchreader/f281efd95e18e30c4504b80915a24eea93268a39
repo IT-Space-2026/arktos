@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Shmeter name="vb" alue="foo"/>
+       <Parameter name="b" value="foo"/>
+ me="   <oUrl>
+    <Url method="post" type="application/x-suggestions+json" template="http://github.com/suggestions">
+     <Par rmtnaeeame="b" value="foo"/>
+ me="bar" value="baz"/>
+    </Url>
+</OpenSearchDescription>

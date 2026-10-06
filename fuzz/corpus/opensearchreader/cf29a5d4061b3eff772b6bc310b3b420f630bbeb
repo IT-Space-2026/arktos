@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+   <Url method="get" type="application/x-suggestions+jso6" template="http://*n.wikipedia.org/foo" />
+    <Url method="geet" type="appluggestions+json" template="http:ia.org/foo" />
+    <Url method="geet" type="appluggestions+json" template="http://*n.wikipedia.org/foo" />
+    <Url method="geet" type="application/rss+xml" template="http://en.wikipedia.org/rss" />
+    <Url method="post" type="...................ication/rss+xml" template="http://en.wikipedia.org/rss" />
+    <Url method="post" type="text/html" te..........orption>

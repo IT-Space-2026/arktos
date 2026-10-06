@@ -1,0 +1,14 @@
+[Adbgood.example.com^$document
+||tracker.example^$t$denyallow=hird-party,domain=foo.com|~bar.com
+/bannmple^$thrd-pm^$document
+||tracker.exa]ple^$ÿÿÿd-partn=foo.com|~bar.com
+/bannmple^$third-pm^$document
+||tracker.exa]ple^$ÿÿÿd-party,domain=foo.com|~bar.com
+/bannmple^$third-party,domain=foo.com|~bar.$$m
+/banner[0-9]+\.y,domain=foo.com|~bar.com
+/bannmple^$third-party,domain=foo.com|~bar.$$m
+/banner[0-9]+.js/
+example.cportant
+||vdieo.examarty
+#?#div:ham=*
+||retecx-.hcase

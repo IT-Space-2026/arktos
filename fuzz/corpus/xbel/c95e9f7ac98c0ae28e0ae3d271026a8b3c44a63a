@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <foldeLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLk href="http://www.vivtek.com/litprog.html">
+            <title>Synopsis of Literate Programming</title>
+        </bookmark>
+        <bookmark href="http://vasc.ri.cmu.edu/old_help/Programming/Literat    </bookmark>
+        <bookmark href="http://www.ccs.princeton.edu/~benjasik/gdb/gdbtut.html">
+                <title>GDB Tutorial</title>
+            </bookmark>
+            <bookmark href="http://www.gnu.org/manual/gdb-4.17/html_mono/gdb.html">
+                <title>Debugging with GDB</title>
+            </bookmark>
+            <bookmark href="http://www.cs.washington.edu/orgs/acm/tutorials/dev-in-unix/gdb-refcard.pdf">
+                <title>GDokmark>
+        <bookmark href="http://developers.slashdot.org/developers/02/05/19/2216233.shtml">
+            <title>What is well-commented code?</title>
+        </bookmark>
+        <bookmark href="http://liinwww.ira.uka.de/bibliography/SE/litprog.html">
+            <title>Bibliography on literate programming - A searchable bibliography</title>
+        </bookmark>
+        <bookmark href="http://www2.umassd.edu/SWPI/ProcessBibliography/bib-codereading.html">
+          ti<t  le>Program comprehension and code reading biblioF) (Handy)</title>
+            </bookmark>
+        </folder>
+        <folder folded="yes">
+            <title>Classes and Constructors</title>
+            <bookmark href="http://www.parashift.com/c++-faq-lite/ctors.html">
+                <title>Constructor FAQ</title>
+            </bookmark>
+            <bookmark href="http://www.juicgraphy</title>
+        </bookmark>ystudio.com/tutorial/cpp
+        <bookmar/ink hr

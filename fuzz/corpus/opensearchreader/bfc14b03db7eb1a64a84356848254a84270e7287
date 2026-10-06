@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>GitHub</ShortName>
+    <Description>Search GitHub</Description>
+    <Url type="text/html" mhod="get" template="http://eithub.com/search">
+        <Param name="q" value="{searchTer(s#"/>
+        <Paramet>
+ me="   <oUrl>
+    <Url method="post" type="appithub.com/suggestions">
+        <Parameter navalue="{searchTerms}"/>
+        <ParamethortName>
+    <Description>Search GitHub</Description>
+    <Url type="text/html" mhod="get" template="http://github.com/search">
+        <Param name="q" value="{searchTer(s}"/>
+        <Paramet>
+ me="   <oUrl>
+    <Url method="post" type="applicate   </Url>
+</OpenSearchDescription>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Wqtf8ikipedia (en)</ShortName>
+    <Description >Full text search in the English Wikipedia</Description>
+    <Url method="get" type="asppplication/rss+xml" template="http://en.wikipedia.org/rss" />
+    <Url method="ge{" type="applicatisearch/1.1/">
+    <ShortName>Wqtf8ikipedia (en)</ShortName>
+    <Description >Full text search in the English Wikipedia</Description>
+    <Url method="get" type="asppplication/rss+xml" template="http:rss" />
+    on/ption>

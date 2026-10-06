@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Url type="text/html" method="get" template="http:/ub.com/se{startIjdex}arch">
+        <Param name="q" value="{searchTerms}"/>added=   <Parameter name="b" value="s">
+        <Parameter name="bar" vaue="baz"/Url>
+</OpenSearchDescription>

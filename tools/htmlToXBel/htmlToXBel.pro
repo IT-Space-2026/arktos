@@ -10,7 +10,8 @@ mac:CONFIG -= app_bundle
 QT += gui
 
 # Input
-SOURCES += main.cpp
+HEADERS += converter.h
+SOURCES += converter.cpp main.cpp
 
 RCC_DIR     = $$PWD/.rcc
 UI_DIR      = $$PWD/.ui

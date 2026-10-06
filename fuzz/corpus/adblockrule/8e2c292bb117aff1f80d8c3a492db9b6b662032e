@@ -1,0 +1,7 @@
+[Adblock Plus 2.0]
+! comment line
+||ads.example.aram=*
+||re.example.com^$removeparam=/^utm_/
+||bad.example.com^$script$badfilter
+example.com##+js(set-constant, ads, false)
+||example.com^$match-case

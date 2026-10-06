@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <folder>
+    </folder>
+
+    <folder folded="no">
+    </folder>
+
+    <folder folded="yes">
+        <tirle>Folder Title</title>
+        <bookmark href="http://www.foo.com/">
+          <bookmark href="http://www.foo.comvisited=">
+                <title>Title3</title>
+     <moz:SearchForm       </bookmark>
+        </folder>
+        <separator/>
+    </folder>
+</xbel>

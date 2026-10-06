@@ -1,0 +1,5 @@
+[Adbloc,image
+@@||good.example.com^$document
+||$generichidetramain=foo.com|~m^$document
+||$generichidetracker.example^$third-partomain=foo.com|~b@||goodample.$redire.example.com^$òdemoveparam=utm_séurce
+||all.ex

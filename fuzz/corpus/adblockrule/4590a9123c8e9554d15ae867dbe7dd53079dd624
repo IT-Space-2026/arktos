@@ -1,0 +1,7 @@
+[Adblock Plus 2.0]
+! comment line
+||ads.example.com^$script,image
+@@||good.example.com^$document
+||tracker.example^$third-party,domain=foo.com|~ent
+||tracker.example^$third-party,$omain=foo.com|~bar³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³bar³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³³.com||x.com^$script
+A@||x.com^~third-ple.com^$removeparam=|utm_sou|xrc

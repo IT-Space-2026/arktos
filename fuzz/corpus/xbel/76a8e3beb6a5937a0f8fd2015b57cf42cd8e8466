@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+    <f
+        <bookmark href="http://www.foo.com/">
+            <title>Title
+            <title>SubFolder</title>
+            <bookmark href=               <title>Title3</title>
+            </bookmark>
+        </folder>
+ </folder>
+        <separator/>
+    </folder>
+</xbel>
