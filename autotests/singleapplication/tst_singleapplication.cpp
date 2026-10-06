@@ -22,6 +22,7 @@
 // class under test IS the QApplication.
 
 #include <QtTest/QtTest>
+#include <qfileinfo.h>
 #include <qlocalsocket.h>
 
 #include "singleapplication.h"
@@ -36,6 +37,7 @@ private slots:
 
     void notRunningUntilServerStarts();
     void messageRoundTrip();
+    void socketIsUserOnly();
 };
 
 void tst_SingleApplication::initTestCase()
@@ -66,6 +68,28 @@ void tst_SingleApplication::messageRoundTrip()
 
     // Starting a second server on the same name is refused.
     QVERIFY(!app->startSingleServer() || app->isRunning());
+}
+
+// SEC09: a connected client can push urls into the running browser —
+// the socket file and the directory holding it must be user-only.
+void tst_SingleApplication::socketIsUserOnly()
+{
+#ifdef Q_OS_UNIX
+    SingleApplication *app = qobject_cast<SingleApplication *>(qApp);
+    QVERIFY(app);
+    QVERIFY(app->isRunning() || app->startSingleServer());
+
+    const QFileInfo socket(app->serverAddress());
+    QVERIFY2(socket.exists(), qPrintable(socket.absoluteFilePath()));
+    const QFileDevice::Permissions groupOther =
+        QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+    QVERIFY2(int(socket.permissions() & groupOther) == 0,
+             qPrintable(socket.absoluteFilePath()));
+    const QFileInfo dir(socket.absolutePath());
+    QVERIFY2(int(dir.permissions() & groupOther) == 0,
+             qPrintable(dir.absoluteFilePath()));
+#endif
 }
 
 int main(int argc, char *argv[])

@@ -63,6 +63,7 @@
 #include "tabbar.h"
 
 #include "tabwidget.h"
+#include "webview.h"
 
 #include <qaction.h>
 #include <qapplication.h>
@@ -241,7 +242,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
             // execution in the new tab.
             QUrl url(QApplication::clipboard()->text(QClipboard::Selection));
             if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty()
-                && url.scheme() != QLatin1String("javascript"))
+                && WebView::isUrlAllowedOnUntrustedInput(url))
                 emit loadUrl(url, TabWidget::NewTab);
         }
     }

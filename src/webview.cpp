@@ -410,6 +410,11 @@ void WebView::loadFinished()
     AutoFillManager::instance()->attachToPage(m_page);
 }
 
+bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)
+{
+    return url.scheme() != QLatin1String("javascript");
+}
+
 void WebView::loadUrl(const QUrl &url, const QString &title)
 {
     if (url.scheme() == QLatin1String("javascript")) {
@@ -499,8 +504,7 @@ void WebView::dropEvent(QDropEvent *event)
         // origin — a drop must never become script injection (SEC02).
         // javascript: is honored only when typed or invoked as a
         // bookmarklet.
-        if (url.isValid()
-            && url.scheme() != QLatin1String("javascript")) {
+        if (url.isValid() && isUrlAllowedOnUntrustedInput(url)) {
             loadUrl(url);
             event->acceptProposedAction();
         }
@@ -518,7 +522,7 @@ void WebView::mouseReleaseEvent(QMouseEvent *event)
         // and must not run as script in the current page.
         QUrl url(QApplication::clipboard()->text(QClipboard::Selection));
         if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty()
-            && url.scheme() != QLatin1String("javascript")) {
+            && isUrlAllowedOnUntrustedInput(url)) {
             loadUrl(url);
         }
     }

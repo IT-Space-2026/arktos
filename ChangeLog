@@ -150,6 +150,11 @@ WebChannel bridge hardening (SEC08):
     Installing a search engine from a page (window.external.AddSearchProvider) now shows a consent dialog naming the calling site and only fetches the OpenSearch description after the user agrees — over http/https only; file: and other schemes are ignored — with the existing engine-confirmation dialog still guarding what gets installed. Only one prompt can be open at a time so a page cannot stack modals.
     The "arora" bridge object (translate/searchUrl) is now registered only while the page displays internal qrc: content such as the start page and is deregistered on navigation away. It no longer hands a live OpenSearchEngine object to JavaScript — pages see a plain currentEngineName string — and the start page finally loads qwebchannel.js again, making its search box and engine display work for the first time since the WebEngine port.
 
+URL input perimeter (SEC09):
+    Command-line url arguments are now treated as untrusted input like drops, pastes and forwarded second-instance messages: `arora javascript:...` is refused instead of executing the payload in the new window, and the check runs on the resolved url so padding tricks cannot slip a script through. Unknown schemes continue to reach the consent-gated external-protocol prompt introduced earlier.
+    The external download program option (Settings > Downloads) now only hands http/https/ftp urls to the configured command — file:, data:, blob:, javascript: and Arora's internal schemes are refused and fall back to the internal downloader. The url travels as exactly one percent-encoded argv element, so it cannot smuggle extra arguments into the handler.
+    The single-instance socket moved out of the shared temp dir into a user-only location (the runtime dir, or a 0700 per-user directory as fallback) and is created with user-only access bits at bind time — other local accounts can no longer connect to it and push urls into the running browser.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

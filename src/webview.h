@@ -86,6 +86,13 @@ public:
     void loadSettings();
 
     void loadUrl(const QUrl &url, const QString &title = QString());
+    // Whether a url that arrived from outside the browser chrome — the
+    // command line, a forwarded second-instance message, a drop, a
+    // pasted selection — may be handed to loadUrl().  javascript: is
+    // refused on those paths: it would run script in the current
+    // page's origin.  Typed input and bookmarklets reach loadUrl()
+    // through the trusted path (SEC02/SEC09).
+    static bool isUrlAllowedOnUntrustedInput(const QUrl &url);
     QUrl url() const;
 
     QString lastStatusBarText() const;

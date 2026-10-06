@@ -297,13 +297,11 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 
     // Got a normal url
     if (!message.startsWith(QLatin1String("aroramessage://"))) {
-        // SEC02: a forwarded url must never become script execution —
-        // the single-instance socket is reachable by anything running
-        // as this user.
-        if (QUrl(message).scheme() == QLatin1String("javascript")) {
-            qWarning() << "Ignoring javascript: url received from a second instance";
-            return;
-        }
+        // SEC02/SEC09: a forwarded url must never become script
+        // execution — the single-instance socket is reachable by
+        // anything running as this user.  The javascript: check moved
+        // into loadStringFromUntrustedSource, which gates the
+        // *resolved* url so normalization tricks are still caught.
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         TabWidget::OpenUrlIn tab = TabWidget::OpenUrlIn(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
@@ -313,7 +311,7 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
             qWarning() << "Possible recursive openUrl called, ignoring url:" << m_lastAskedUrl;
             return;
         }
-        mainWindow()->tabWidget()->loadString(message, tab);
+        mainWindow()->tabWidget()->loadStringFromUntrustedSource(message, tab);
         return;
     }
 
@@ -398,14 +396,18 @@ void BrowserApplication::postLaunch()
         const QString url = argumentUrl();
 
         if (!url.isEmpty()) {
+            // SEC09: argv urls are untrusted input, same as a
+            // forwarded second-instance message — an external program
+            // invoking `arora javascript:...` must not get script
+            // execution in the new window.
             switch (startup) {
             case 2: {
                 restoreLastSession();
-                mainWindow()->tabWidget()->loadString(url, TabWidget::NewSelectedTab);
+                mainWindow()->tabWidget()->loadStringFromUntrustedSource(url, TabWidget::NewSelectedTab);
                 break;
             }
             default:
-                mainWindow()->tabWidget()->loadString(url);
+                mainWindow()->tabWidget()->loadStringFromUntrustedSource(url);
                 break;
             }
         } else {

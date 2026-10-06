@@ -759,6 +759,20 @@ bool DownloadManager::externalDownload(const QUrl &url)
     if (program.isEmpty())
         return false;
 
+    // The url leaves the process as a raw argv argument to the
+    // configured handler — restrict it to real remote-download
+    // schemes.  file: would leak local paths, data:/blob: carry page
+    // content the handler cannot resolve anyway, and javascript: must
+    // never reach an argv (SEC09).
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http")
+        && scheme != QLatin1String("https")
+        && scheme != QLatin1String("ftp")) {
+        qWarning() << "DownloadManager: refusing to hand a" << scheme
+                   << "url to the external download handler";
+        return false;
+    }
+
     // Split program at every space not inside double quotes
     static const QRegularExpression regex(QLatin1String("\"([^\"]+)\"|([^ ]+)"));
     QStringList args;
@@ -770,6 +784,9 @@ bool DownloadManager::externalDownload(const QUrl &url)
     if (args.isEmpty())
         return false;
 
+    // startDetached takes an argv list — no shell is involved and the
+    // url travels as exactly one argument, so a crafted url cannot
+    // inject extra arguments or shell metacharacters.
     return QProcess::startDetached(args.takeFirst(), args << QString::fromUtf8(url.toEncoded()));
 }
 

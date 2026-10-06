@@ -183,6 +183,15 @@ public:
     // already gone (retry of an interrupted or restored download).
     QWebEnginePage *retryPage(bool offTheRecord);
 
+    // SEC09: hands the url to the user-configured external download
+    // handler (Settings > downloadmanager/externalPath).  The url
+    // becomes a raw argv argument to another program, so only real
+    // remote-download schemes are passed — file:, data:, blob:,
+    // javascript: and the arora-* schemes are refused and fall back to
+    // the internal download path.  Static so autotests can drive it
+    // without a live download.
+    static bool externalDownload(const QUrl &url);
+
 public slots:
     // WebEngine downloads can only be initiated from a page; there is no
     // profile-level download() entry point.
@@ -200,7 +209,6 @@ private:
     void addItem(DownloadItem *item);
     void updateItemCount();
     void load();
-    bool externalDownload(const QUrl &url);
     void updateActiveItemCount();
 
     AutoSaver *m_autoSaver;

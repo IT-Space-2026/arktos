@@ -149,6 +149,12 @@ protected:
 
 public slots:
     void loadString(const QString &string, OpenUrlIn tab = CurrentTab);
+    // The gate for urls that arrive from outside the browser chrome —
+    // the command line, a forwarded second-instance message.  The
+    // string is resolved through guessUrlFromString() first so a
+    // payload that only parses to javascript: after normalization is
+    // still refused (SEC09).  Typed input uses loadString().
+    void loadStringFromUntrustedSource(const QString &string, OpenUrlIn tab = CurrentTab);
     void loadUrlFromUser(const QUrl &url, const QString &title = QString());
     void loadUrl(const QUrl &url, TabWidget::OpenUrlIn tab = CurrentTab, const QString &title = QString());
     void createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab = CurrentTab);

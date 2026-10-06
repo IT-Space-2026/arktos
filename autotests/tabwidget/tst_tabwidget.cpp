@@ -72,6 +72,7 @@ private slots:
 
     void saveState();
     void restoreStateCorrupt();
+    void loadStringFromUntrustedSource();
 };
 
 // Subclass that exposes the protected functions.
@@ -727,6 +728,54 @@ void tst_TabWidget::restoreStateCorrupt()
         QVERIFY(!widget.restoreState(blob));
         QCOMPARE(widget.count(), before);
     }
+
+    widget.closeTab();
+}
+
+// SEC09: argv/IPC urls are untrusted input — a javascript: payload
+// must be refused even when it only parses to javascript: after
+// normalization, while ordinary urls still resolve and load.
+void tst_TabWidget::loadStringFromUntrustedSource()
+{
+    QVERIFY(WebView::isUrlAllowedOnUntrustedInput(
+        QUrl(QLatin1String("https://example.com/"))));
+    QVERIFY(WebView::isUrlAllowedOnUntrustedInput(
+        QUrl(QLatin1String("data:text/plain,x"))));
+    QVERIFY(!WebView::isUrlAllowedOnUntrustedInput(
+        QUrl(QLatin1String("javascript:alert(1)"))));
+    // QUrl normalizes the scheme to lowercase — no case bypass.
+    QVERIFY(!WebView::isUrlAllowedOnUntrustedInput(
+        QUrl(QLatin1String("JAVASCRIPT:alert(1)"))));
+
+    SubTabWidget widget;
+    widget.newTab();
+    WebView *view = widget.currentWebView();
+    QVERIFY(view);
+
+    // A real page first so an injected script would have a document to
+    // run against — a changed title is the observable side effect.
+    widget.loadStringFromUntrustedSource(
+        QLatin1String("data:text/html,<title>safe</title>"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->title() == QLatin1String("safe"), 15000);
+
+    widget.loadStringFromUntrustedSource(
+        QLatin1String("javascript:document.title='PWNED'"));
+    QTest::qWait(500);
+    QCOMPARE(view->title(), QLatin1String("safe"));
+
+    // A payload padded with whitespace would slip through a raw
+    // string-scheme check — it is refused after resolution too.
+    widget.loadStringFromUntrustedSource(
+        QLatin1String("  javascript:document.title='PWNED'"));
+    QTest::qWait(500);
+    QCOMPARE(view->title(), QLatin1String("safe"));
+
+    // Ordinary untrusted urls still load.
+    widget.loadStringFromUntrustedSource(
+        QLatin1String("data:text/plain,ok"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->url() == QUrl(QLatin1String("data:text/plain,ok")), 15000);
 
     widget.closeTab();
 }

@@ -51,6 +51,11 @@ public:
     bool startSingleServer();
     bool isRunning() const;
 
+    // The address the server listens on and clients connect to.
+    // Unix: an absolute socket path inside a user-only directory;
+    // Windows: the plain pipe name.
+    QString serverAddress() const;
+
 private slots:
     void newConnection();
 

@@ -802,6 +802,19 @@ void TabWidget::loadString(const QString &string, OpenUrlIn tab)
     loadUrl(url, tab);
 }
 
+void TabWidget::loadStringFromUntrustedSource(const QString &string, OpenUrlIn tab)
+{
+    if (string.isEmpty())
+        return;
+
+    const QUrl url = guessUrlFromString(string);
+    if (!WebView::isUrlAllowedOnUntrustedInput(url)) {
+        qWarning() << "TabWidget: refusing url from an untrusted source:" << url;
+        return;
+    }
+    loadUrl(url, tab);
+}
+
 QUrl TabWidget::guessUrlFromString(const QString &string)
 {
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();

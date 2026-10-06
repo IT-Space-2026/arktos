@@ -201,9 +201,15 @@ int main(int argc, char **argv)
     WebView *view = new WebView(profile, &window);
     window.setCentralWidget(view);
 
-    const QString firstUrl = parser.positionalArguments()
-        .value(0, QStringLiteral("about:blank"));
-    view->loadUrl(QUrl(firstUrl));
+    QUrl firstUrl(parser.positionalArguments()
+        .value(0, QStringLiteral("about:blank")));
+    // SEC09: argv urls are untrusted input — a javascript: operand
+    // must not reach loadUrl()'s script execution path.
+    if (!WebView::isUrlAllowedOnUntrustedInput(firstUrl)) {
+        qWarning() << "Ignoring untrusted argv url:" << firstUrl;
+        firstUrl = QUrl(QStringLiteral("about:blank"));
+    }
+    view->loadUrl(firstUrl);
 
     // Headless verification for MIG15: exercise the real application
     // path — BrowserApplication brings up the profile and services,

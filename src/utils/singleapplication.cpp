@@ -31,6 +31,7 @@
 #include <qdir.h>
 #include <qlocalserver.h>
 #include <qlocalsocket.h>
+#include <qstandardpaths.h>
 #include <qtextstream.h>
 #include <qfile.h>
 
@@ -54,7 +55,7 @@ bool SingleApplication::sendMessage(const QByteArray &message, int waitMsecsForR
     qDebug() << "SingleApplication::" << __FUNCTION__ << message << waitMsecsForReply;
 #endif
     QLocalSocket socket;
-    socket.connectToServer(serverName());
+    socket.connectToServer(serverAddress());
     if (!socket.waitForConnected(500))
         return false;
     socket.write(message);
@@ -81,18 +82,23 @@ bool SingleApplication::startSingleServer()
         return false;
 
     m_localServer = new QLocalServer(this);
+    // SEC09: the socket must be reachable by this user only — anything
+    // that connects can push urls into the running browser.  This sets
+    // the access bits at bind time, closing the create-then-chmod race
+    // the manual setPermissions() below still covers for paranoia.
+    m_localServer->setSocketOptions(QLocalServer::UserAccessOption);
     connect(m_localServer, &QLocalServer::newConnection,
             this, &SingleApplication::newConnection);
     bool success = false;
-    if (!m_localServer->listen(serverName())) {
+    const QString address = serverAddress();
+    if (!m_localServer->listen(address)) {
         if (QAbstractSocket::AddressInUseError == m_localServer->serverError()) {
             // cleanup from a segfaulted server
 #ifdef Q_OS_UNIX
-            QString fullServerName = QDir::tempPath() + QLatin1String("/") + serverName();
-            if (QFile::exists(fullServerName))
-                QFile::remove(fullServerName);
+            if (QFile::exists(address))
+                QFile::remove(address);
 #endif
-            if (m_localServer->listen(serverName())) {
+            if (m_localServer->listen(address)) {
                 success = true;
             }
         }
@@ -132,6 +138,32 @@ void SingleApplication::newConnection()
     socket->waitForReadyRead();
     emit messageReceived(socket);
     delete socket;
+}
+
+QString SingleApplication::serverAddress() const
+{
+#ifdef Q_OS_WIN
+    return serverName();
+#else
+    // Bind inside a user-only directory: a socket file in the shared
+    // temp dir can be watched and replaced by any other local account,
+    // and a connected client can push urls into the running browser
+    // (SEC09).  XDG_RUNTIME_DIR is user-private (0700) by definition;
+    // otherwise use a per-user subdirectory of the temp dir.
+    QString dirPath =
+        QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (dirPath.isEmpty())
+        dirPath = QDir::tempPath() + QLatin1String("/arora-")
+            + QString::number(getuid());
+    if (!QDir().mkpath(dirPath)) {
+        qWarning() << "SingleApplication: cannot create socket dir:"
+                   << dirPath;
+        return serverName();
+    }
+    QFile::setPermissions(dirPath,
+        QFile::ReadUser | QFile::WriteUser | QFile::ExeUser);
+    return QDir(dirPath).filePath(serverName());
+#endif
 }
 
 QString SingleApplication::serverName() const

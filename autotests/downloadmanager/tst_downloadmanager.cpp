@@ -63,6 +63,7 @@ private slots:
     void overwriteKeepsExisting();
     void partialCleanup();
     void execBitStripped();
+    void externalHandler();
 };
 
 // Clicks the requested button on any modal QMessageBox that pops while
@@ -698,6 +699,80 @@ void tst_DownloadManager::execBitStripped()
     QVERIFY(QFile::permissions(path) & QFileDevice::ReadOwner);
     DownloadItem::removeExecutableBit(dir.path() + QLatin1String("/missing"));
     DownloadItem::removeExecutableBit(QString());
+}
+
+// SEC09: the external handler is an explicit user choice (the Settings
+// dialog is the only writer of downloadmanager/external +
+// externalPath) and the url must reach it as a single percent-encoded
+// argv element — never a local/internal scheme, never extra args.
+void tst_DownloadManager::externalHandler()
+{
+#ifdef Q_OS_WIN
+    QSKIP("the recorder helper is a POSIX shell script");
+#else
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recordPath = dir.filePath(QLatin1String("argv.txt"));
+    const QString scriptPath = dir.filePath(QLatin1String("handler.sh"));
+    {
+        QFile script(scriptPath);
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        // Record argv, one argument per line.
+        script.write("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""
+                     + QFile::encodeName(recordPath) + "\"\n");
+    }
+    QVERIFY(QFile::setPermissions(scriptPath, QFileDevice::ReadOwner
+            | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+
+    QSettings settings;
+    // A quoted path plus a user-defined flag exercises the argv split.
+    settings.setValue(QLatin1String("downloadmanager/external"), true);
+    settings.setValue(QLatin1String("downloadmanager/externalPath"),
+        QStringLiteral("\"%1\" --record-flag").arg(scriptPath));
+
+    // An allowed scheme launches only the configured program; the url
+    // arrives percent-encoded as exactly one trailing argv element.
+    QVERIFY(DownloadManager::externalDownload(
+        QUrl(QLatin1String("https://example.com/a b.zip"))));
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(recordPath), 10000);
+    {
+        QFile record(recordPath);
+        QVERIFY(record.open(QIODevice::ReadOnly));
+        const QStringList argv = QString::fromUtf8(record.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        QCOMPARE(argv.count(), 2);
+        QCOMPARE(argv.at(0), QLatin1String("--record-flag"));
+        QCOMPARE(argv.at(1),
+                 QLatin1String("https://example.com/a%20b.zip"));
+    }
+
+    // Browser-internal and non-download schemes are refused outright —
+    // the url falls back to the internal download path instead.
+    QFile::remove(recordPath);
+    const char *rejected[] = {
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "data:text/plain;base64,aGk=",
+        "blob:https://example.com/id",
+        "arora-resource:noop.js",
+        "arora-file:///tmp",
+        "smb://evil.example/share",
+        "mailto:a@b.c",
+    };
+    for (const char *raw : rejected) {
+        QVERIFY2(!DownloadManager::externalDownload(
+                     QUrl(QLatin1String(raw))), raw);
+    }
+    QTest::qWait(500);
+    QVERIFY(!QFile::exists(recordPath));
+
+    // A disabled handler never launches, whatever the scheme.
+    settings.setValue(QLatin1String("downloadmanager/external"), false);
+    QVERIFY(!DownloadManager::externalDownload(
+        QUrl(QLatin1String("https://example.com/file.zip"))));
+    QTest::qWait(300);
+    QVERIFY(!QFile::exists(recordPath));
+#endif
 }
 
 QTEST_MAIN(tst_DownloadManager)
