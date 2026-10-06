@@ -117,6 +117,11 @@ Downloads hardening (SEC01):
     Files whose extension runs commands or installs software (.exe, .sh, .desktop, .msi, .jar, packages and friends) now raise a "may harm your computer" Keep/Discard prompt before anything is saved, and so do downloads whose declared content type is an executable or installer while the file name looks innocent (MIME/extension mismatch). Completed downloads are always written without the executable bit, so a kept script or .desktop file cannot execute when opened from a file manager.
     Removing a cancelled or interrupted download from the list now also deletes its partial file (QtWebEngine streams to "<name>.download" until completion); retrying a download drops the previous attempt's partial first, and existing files are still never silently overwritten.
 
+URL scheme & external protocol hardening (SEC02):
+    External protocol links (mailto:, ftp:, tel:, magnet:, and every other scheme the browser does not render itself) now raise a consent dialog before being handed to the desktop — a web page can no longer launch helper applications silently. Sub-frame requests for external protocols are dropped without prompting, and only one consent dialog can be open at a time so a redirect loop cannot stack modals.
+    The internal "arora-file" directory-listing scheme is locked down: it is no longer registered as a secure context or CORS-enabled, and the handler refuses requests whose initiator is a remote page — a web site cannot read local directory listings through an iframe, subresource, or poked navigation. The "arora-resource" stub scheme likewise lost its unneeded local-file access.
+    javascript: urls are no longer honored when they arrive through drag & drop, middle-click selection paste, or the single-instance IPC socket — those paths could have turned untrusted clipboard/peer content into script execution inside the current page. Typed and bookmarklet javascript: still works.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -40,6 +40,8 @@ private slots:
 
     void tabSizeHint_data();
     void tabSizeHint();
+
+    void middleClickPaste();
 };
 
 // Subclass that exposes the protected functions.
@@ -66,6 +68,9 @@ public:
 
     void call_mousePressEvent(QMouseEvent *event)
         { return SubTabBar::mousePressEvent(event); }
+
+    void call_mouseReleaseEvent(QMouseEvent *event)
+        { return SubTabBar::mouseReleaseEvent(event); }
 
     void call_newTab()
         { return SubTabBar::newTab(); }
@@ -169,6 +174,40 @@ void tst_TabBar::tabSizeHint()
     SubTabBar bar;
 
     QVERIFY(bar.call_tabSizeHint(index).width() <= 250);
+}
+
+// SEC02: middle-click paste loads the PRIMARY selection as a url in a
+// new tab — except javascript:, which must never become script
+// execution.
+void tst_TabBar::middleClickPaste()
+{
+    SubTabBar bar;
+    bar.show();
+
+    QClipboard *clipboard = QApplication::clipboard();
+    const QString scriptUrl = QLatin1String("javascript:void(0)");
+    clipboard->setText(scriptUrl, QClipboard::Selection);
+    if (clipboard->text(QClipboard::Selection) != scriptUrl)
+        QSKIP("the offscreen clipboard has no Selection mode");
+
+    QList<QUrl> opened;
+    QObject::connect(&bar, &TabBar::loadUrl, &bar,
+                     [&opened](const QUrl &url, TabWidget::OpenUrlIn) {
+        opened.append(url);
+    });
+
+    // Middle-click on the empty bar area (tabAt == -1) takes the
+    // paste-as-url path.
+    QMouseEvent event(QEvent::MouseButtonRelease, QPointF(1, 1),
+                      QPointF(1, 1), Qt::MiddleButton, Qt::NoButton,
+                      Qt::NoModifier);
+    bar.call_mouseReleaseEvent(&event);
+    QVERIFY(opened.isEmpty());
+
+    clipboard->setText(QLatin1String("http://example.com/"),
+                       QClipboard::Selection);
+    bar.call_mouseReleaseEvent(&event);
+    QCOMPARE(opened, QList<QUrl>() << QUrl("http://example.com/"));
 }
 
 QTEST_MAIN(tst_TabBar)

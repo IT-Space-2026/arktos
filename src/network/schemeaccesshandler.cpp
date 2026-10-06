@@ -36,11 +36,14 @@ void SchemeAccessHandler::registerUrlSchemes()
     // redirects file:// directory navigations there).
     QWebEngineUrlScheme scheme(FileAccessHandler::schemeName());
     scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
-    scheme.setFlags(QWebEngineUrlScheme::SecureScheme
-                    | QWebEngineUrlScheme::LocalScheme
+    // Deliberately NOT SecureScheme or CorsEnabled (SEC02): a
+    // directory listing has no business being a secure context or a
+    // CORS target.  LocalScheme/LocalAccessAllowed keep the file-like
+    // treatment the listing needs for its file:// entry links;
+    // FileAccessHandler additionally rejects remote initiators.
+    scheme.setFlags(QWebEngineUrlScheme::LocalScheme
                     | QWebEngineUrlScheme::LocalAccessAllowed
-                    | QWebEngineUrlScheme::ViewSourceAllowed
-                    | QWebEngineUrlScheme::CorsEnabled);
+                    | QWebEngineUrlScheme::ViewSourceAllowed);
     QWebEngineUrlScheme::registerScheme(scheme);
 }
 

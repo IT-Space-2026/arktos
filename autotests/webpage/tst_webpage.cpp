@@ -53,6 +53,7 @@ private slots:
     void webPluginFactory();
     void acceptNavigationRequest_data();
     void acceptNavigationRequest();
+    void externalProtocolPrompt();
     void createPlugin();
     void createWindow();
     void handleUnsupportedContent();
@@ -155,24 +156,31 @@ void tst_WebPage::acceptNavigationRequest_data()
     QTest::addColumn<QWebEnginePage::NavigationType>("type");
     QTest::addColumn<bool>("acceptNavigationRequest");
     QTest::addColumn<int>("spyCount");
+    QTest::addColumn<bool>("externalPrompt");
 
-    QTest::newRow("null-noframe") << Qt::NoButton << Qt::NoModifier << false << QUrl() << QWebEnginePage::NavigationTypeLinkClicked << true << 0;
-    QTest::newRow("null-frame")   << Qt::NoButton << Qt::NoModifier << true << QUrl() << QWebEnginePage::NavigationTypeLinkClicked << true << 1;
+    QTest::newRow("null-noframe") << Qt::NoButton << Qt::NoModifier << false << QUrl() << QWebEnginePage::NavigationTypeLinkClicked << true << 0 << false;
+    QTest::newRow("null-frame")   << Qt::NoButton << Qt::NoModifier << true << QUrl() << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 
-    QTest::newRow("mailto-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("mailto:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0;
-    QTest::newRow("mailto-1") << Qt::NoButton << Qt::NoModifier << false << QUrl("mailto:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0;
-    QTest::newRow("ftp-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("ftp:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0;
-    QTest::newRow("ftp-1") << Qt::NoButton << Qt::NoModifier << false << QUrl("ftp:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0;
+    // SEC02: external protocols are denied in-page and handed to the
+    // desktop only after a consent dialog — main frame prompts, a
+    // subframe request is dropped silently.
+    QTest::newRow("mailto-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("mailto:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
+    QTest::newRow("mailto-1") << Qt::NoButton << Qt::NoModifier << false << QUrl("mailto:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << false;
+    QTest::newRow("ftp-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("ftp:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
+    QTest::newRow("ftp-1") << Qt::NoButton << Qt::NoModifier << false << QUrl("ftp:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << false;
+    QTest::newRow("tel-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("tel:+15551234") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
 
+    QTest::newRow("normal-0") << Qt::NoButton << Qt::NoModifier << false << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 0 << false;
+    QTest::newRow("normal-1") << Qt::NoButton << Qt::NoModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 
-    QTest::newRow("normal-0") << Qt::NoButton << Qt::NoModifier << false << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 0;
-    QTest::newRow("normal-1") << Qt::NoButton << Qt::NoModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1;
+    // data: is a browser-handled scheme — navigations proceed.
+    QTest::newRow("data-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("data:text/html,<p>x</p>") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 
     // Without a WebView/TabWidget the page cannot divert modified clicks
     // to a new tab, so these are accepted like normal clicks now.
-    QTest::newRow("midclick-0") << Qt::MiddleButton << Qt::NoModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1;
-    QTest::newRow("midclick-1") << Qt::MiddleButton << Qt::ShiftModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1;
-    QTest::newRow("midclick-2") << Qt::MiddleButton << Qt::AltModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1;
+    QTest::newRow("midclick-0") << Qt::MiddleButton << Qt::NoModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+    QTest::newRow("midclick-1") << Qt::MiddleButton << Qt::ShiftModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+    QTest::newRow("midclick-2") << Qt::MiddleButton << Qt::AltModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 }
 
 // protected bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)
@@ -185,6 +193,7 @@ void tst_WebPage::acceptNavigationRequest()
     QFETCH(QWebEnginePage::NavigationType, type);
     QFETCH(bool, acceptNavigationRequest);
     QFETCH(int, spyCount);
+    QFETCH(bool, externalPrompt);
 
     BrowserApplication::instance()->setEventMouseButtons(pressedButton);
     BrowserApplication::instance()->setEventKeyboardModifiers(pressedKeys);
@@ -194,8 +203,50 @@ void tst_WebPage::acceptNavigationRequest()
     QCOMPARE(page.call_acceptNavigationRequest(url, type, isMainFrame), acceptNavigationRequest);
 
     QCOMPARE(spy0.count(), spyCount);
+
+    const int openedBefore = m_openedUrls.count();
+    if (externalPrompt) {
+        // The consent prompt is queued so the navigation call is never
+        // blocked on a modal loop; decline it here — the accept path is
+        // covered by externalProtocolPrompt().
+        QVERIFY(answerModal(QMessageBox::Cancel));
+        QCOMPARE(m_openedUrls.count(), openedBefore);
+    }
+
     BrowserApplication::instance()->setEventMouseButtons(Qt::NoButton);
     BrowserApplication::instance()->setEventKeyboardModifiers(Qt::NoModifier);
+}
+
+// SEC02: external-protocol navigations are consented hand-offs, never
+// silent shell-outs.
+void tst_WebPage::externalProtocolPrompt()
+{
+    SubWebPage page;
+    const QUrl mailto(QStringLiteral("mailto:foo@bar.com"));
+
+    // Accept: the url reaches the desktop url handler (trapped by the
+    // setUrlHandler in initTestCase).
+    m_openedUrls.clear();
+    QVERIFY(!page.call_acceptNavigationRequest(mailto,
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(answerModal(QMessageBox::Open));
+    QCOMPARE(m_openedUrls, QList<QUrl>() << mailto);
+
+    // Decline: nothing leaves the browser.  tel: deliberately has no
+    // registered handler — a leak would hit the real xdg-open.
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl(QStringLiteral("tel:+15559876")),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(answerModal(QMessageBox::Cancel));
+    QTest::qWait(200);
+    QVERIFY(m_openedUrls.count() == 1);
+
+    // Subframe navigations are denied without raising a prompt.
+    QVERIFY(!page.call_acceptNavigationRequest(mailto,
+        QWebEnginePage::NavigationTypeLinkClicked, false));
+    QTest::qWait(300);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(m_openedUrls.count() == 1);
 }
 
 // The QtWebKit createPlugin() extension point (NPAPI) has no WebEngine

@@ -25,7 +25,9 @@
 #include <browserapplication.h>
 
 #include <qapplication.h>
+#include <qabstractbutton.h>
 #include <qdialog.h>
+#include <qmessagebox.h>
 #include <qtimer.h>
 
 #include "qtry.h"
@@ -55,6 +57,36 @@ inline void rejectModal(int msec = 100)
         else if (widget)
             widget->close();
     });
+}
+
+// SEC02: clicks a specific standard button on the next modal
+// QMessageBox (QDialog::accept() does not map back to one).  A
+// repeating timer does the clicking because a modal exec() swallows
+// the caller's event pumps — polling between QTest::qWait() calls
+// would never run while the dialog is open.
+inline bool answerModal(QMessageBox::StandardButton button,
+                        int timeoutMs = 5000)
+{
+    bool clicked = false;
+    QTimer timer;
+    timer.setInterval(50);
+    QObject::connect(&timer, &QTimer::timeout, qApp,
+                     [button, &clicked]() {
+        QMessageBox *box = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (!box)
+            return;
+        QAbstractButton *b = box->button(button);
+        if (b)
+            b->click();
+        else
+            box->reject();
+        clicked = true;
+    });
+    timer.start();
+    for (int waited = 0; !clicked && waited < timeoutMs; waited += 50)
+        QTest::qWait(50);
+    return clicked;
 }
 
 #undef QTEST_MAIN

@@ -64,6 +64,20 @@ void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
         job->fail(QWebEngineUrlRequestJob::UrlInvalid);
         return;
     }
+
+    // SEC02: this handler enumerates the local filesystem, so only the
+    // browser itself (empty initiator) and other local pages may use
+    // it — a remote http/https initiator could otherwise read directory
+    // listings through an iframe or a poked navigation.
+    const QString initiatorScheme = job->initiator().scheme();
+    if (!initiatorScheme.isEmpty()
+        && initiatorScheme != QLatin1String("file")
+        && initiatorScheme != QLatin1String("arora-file")
+        && initiatorScheme != QLatin1String("qrc")) {
+        job->fail(QWebEngineUrlRequestJob::RequestDenied);
+        return;
+    }
+
     // This handler only lists directories; a regular file URL should
     // never reach it because WebPage only redirects directories.
     const QString path = job->requestUrl().path();

@@ -237,8 +237,11 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
             emit closeTab(index);
             return;
         } else {
+            // SEC02: a javascript: selection must not turn into script
+            // execution in the new tab.
             QUrl url(QApplication::clipboard()->text(QClipboard::Selection));
-            if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty())
+            if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty()
+                && url.scheme() != QLatin1String("javascript"))
                 emit loadUrl(url, TabWidget::NewTab);
         }
     }

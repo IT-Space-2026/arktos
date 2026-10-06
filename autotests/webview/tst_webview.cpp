@@ -117,6 +117,8 @@ private slots:
     void statusBarText();
     void mouseButtons();
     void dropUrl();
+    void dropJavascriptUrl();
+    void middleClickPaste();
     void findText();
     void webViewWithSearch();
 };
@@ -251,6 +253,69 @@ void tst_WebView::dropUrl()
     view.sendDrop(&opaqueMime);
     QTest::qWait(250);
     QCOMPARE(view.url(), before);
+}
+
+// SEC02: a dropped javascript: url must not run its script in the
+// page's origin — drops that are urls navigate, scripts do not run.
+void tst_WebView::dropJavascriptUrl()
+{
+    TestWebView view;
+    view.loadUrl(QUrl(QStringLiteral("data:text/html,<p>x</p>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!view.url().isEmpty(), 15000);
+    const QUrl before = view.url();
+
+    QMimeData mime;
+    mime.setUrls(QList<QUrl>() << QUrl(
+        QLatin1String("javascript:window.__dropped=42;void(0)")));
+    view.sendDrop(&mime);
+    QTest::qWait(300);
+    QCOMPARE(view.url(), before);
+
+    // The text fallback path is guarded too.
+    QMimeData textMime;
+    textMime.setText(QLatin1String("javascript:window.__dropped=43"));
+    view.sendDrop(&textMime);
+    QTest::qWait(300);
+    QCOMPARE(view.url(), before);
+
+    // Prove no script ran in this page.
+    std::shared_ptr<bool> probed(new bool(false));
+    std::shared_ptr<QVariant> marker(new QVariant);
+    view.page()->runJavaScript(QLatin1String("window.__dropped"),
+        [probed, marker](const QVariant &result) {
+            *marker = result;
+            *probed = true;
+        });
+    for (int waited = 0; !*probed && waited < 15000; waited += 50)
+        QTest::qWait(50);
+    QVERIFY(*probed);
+    QVERIFY(!marker->isValid());
+}
+
+// X11 middle-click paste loads the PRIMARY selection as a url —
+// except javascript:, which would execute in the current page.
+void tst_WebView::middleClickPaste()
+{
+    TestWebView view;
+    view.loadUrl(QUrl(QStringLiteral("data:text/html,<p>x</p>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!view.url().isEmpty(), 15000);
+    const QUrl before = view.url();
+
+    QClipboard *clipboard = QApplication::clipboard();
+    const QString scriptUrl = QLatin1String("javascript:void(0)");
+    clipboard->setText(scriptUrl, QClipboard::Selection);
+    if (clipboard->text(QClipboard::Selection) != scriptUrl)
+        QSKIP("the offscreen clipboard has no Selection mode");
+
+    view.sendMouseRelease(Qt::MiddleButton);
+    QTest::qWait(300);
+    QCOMPARE(view.url(), before);
+
+    // A plain url in the selection still loads.
+    const QString httpUrl = QStringLiteral("data:text/html,<p>pasted</p>");
+    clipboard->setText(httpUrl, QClipboard::Selection);
+    view.sendMouseRelease(Qt::MiddleButton);
+    QTRY_VERIFY_WITH_TIMEOUT(view.url().toString() == httpUrl, 15000);
 }
 
 // In-page find through WebViewSearch — QWebEnginePage::findText is

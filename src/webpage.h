@@ -99,6 +99,7 @@ private slots:
 private:
     void init();
     void showErrorPage(const QUrl &url, const QString &errorString);
+    void confirmAndOpenExternalUrl(const QUrl &url);
 
 protected:
     static QString s_userAgent;

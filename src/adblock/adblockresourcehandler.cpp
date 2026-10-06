@@ -225,12 +225,13 @@ void AdBlockResourceHandler::registerUrlScheme()
     scheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     // Redirect targets must load from any page origin: secure so https
     // pages accept them, CSP-ignored so strict sites cannot defeat the
-    // redirect, fetch-allowed so XHR/fetch stubs work.
+    // redirect, fetch-allowed so XHR/fetch stubs work.  LocalAccessAllowed
+    // is deliberately absent (SEC02) — the inert stubs never need to
+    // reach local files.
     scheme.setFlags(QWebEngineUrlScheme::SecureScheme
                     | QWebEngineUrlScheme::CorsEnabled
                     | QWebEngineUrlScheme::ContentSecurityPolicyIgnored
-                    | QWebEngineUrlScheme::FetchApiAllowed
-                    | QWebEngineUrlScheme::LocalAccessAllowed);
+                    | QWebEngineUrlScheme::FetchApiAllowed);
     QWebEngineUrlScheme::registerScheme(scheme);
 }
 

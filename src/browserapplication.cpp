@@ -297,6 +297,13 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 
     // Got a normal url
     if (!message.startsWith(QLatin1String("aroramessage://"))) {
+        // SEC02: a forwarded url must never become script execution —
+        // the single-instance socket is reachable by anything running
+        // as this user.
+        if (QUrl(message).scheme() == QLatin1String("javascript")) {
+            qWarning() << "Ignoring javascript: url received from a second instance";
+            return;
+        }
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         TabWidget::OpenUrlIn tab = TabWidget::OpenUrlIn(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());

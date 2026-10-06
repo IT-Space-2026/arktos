@@ -84,7 +84,8 @@ void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJo
     QMessageBox::StandardButton result = QMessageBox::question(0
             , tr("Subscribe?")
             , tr("Subscribe to this AdBlock subscription?\n%1").arg(subscription->title())
-            , QMessageBox::Yes | QMessageBox::No);
+            , QMessageBox::Yes | QMessageBox::No
+            , QMessageBox::No);
     if (result == QMessageBox::No) {
         delete subscription;
     } else {

@@ -495,7 +495,12 @@ void WebView::dropEvent(QDropEvent *event)
             url = event->mimeData()->urls().first();
         if (!url.isValid())
             url = event->mimeData()->text();
-        if (url.isValid()) {
+        // A dropped javascript: url would run its script in this page's
+        // origin — a drop must never become script injection (SEC02).
+        // javascript: is honored only when typed or invoked as a
+        // bookmarklet.
+        if (url.isValid()
+            && url.scheme() != QLatin1String("javascript")) {
             loadUrl(url);
             event->acceptProposedAction();
         }
@@ -508,9 +513,12 @@ void WebView::mouseReleaseEvent(QMouseEvent *event)
     m_page->event(event);
     if (!event->isAccepted()
         && event->button() == Qt::MiddleButton) {
-        // X11 style: load the PRIMARY selection as a URL
+        // X11 style: load the PRIMARY selection as a URL.  javascript:
+        // is excluded (SEC02) — clipboard contents come from anywhere
+        // and must not run as script in the current page.
         QUrl url(QApplication::clipboard()->text(QClipboard::Selection));
-        if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty()) {
+        if (!url.isEmpty() && url.isValid() && !url.scheme().isEmpty()
+            && url.scheme() != QLatin1String("javascript")) {
             loadUrl(url);
         }
     }

@@ -38,7 +38,9 @@
 #include <qfileinfo.h>
 #include <qmessagebox.h>
 #include <qpixmap.h>
+#include <qpointer.h>
 #include <qsettings.h>
+#include <qset.h>
 #include <qstyle.h>
 #include <qtimer.h>
 #include <qvariant.h>
@@ -251,17 +253,82 @@ void WebPage::setUserAgent(const QString &userAgent)
         otrProfile->setHttpUserAgent(effectiveAgent);
 }
 
-bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)
+// Schemes Chromium renders itself plus the ones this application
+// serves through registered QWebEngineUrlSchemeHandlers (main.cpp).
+// A navigation to anything else — mailto:, tel:, magnet:, ftp: and
+// friends — can only be serviced by handing the url to the desktop,
+// which launches an external program.  That is a shell-out and needs
+// explicit consent; a web page must never trigger it silently (SEC02).
+static bool isBrowserHandledScheme(const QString &scheme)
 {
-    QString scheme = url.scheme();
-    if (scheme == QLatin1String("mailto")
-        || scheme == QLatin1String("ftp")) {
+    static const QSet<QString> schemes = {
+        QStringLiteral("about"),
+        QStringLiteral("abp"),
+        QStringLiteral("arora-file"),
+        QStringLiteral("arora-resource"),
+        QStringLiteral("blob"),
+        QStringLiteral("chrome"),
+        QStringLiteral("chrome-extension"),
+        QStringLiteral("data"),
+        QStringLiteral("devtools"),
+        QStringLiteral("file"),
+        QStringLiteral("filesystem"),
+        QStringLiteral("http"),
+        QStringLiteral("https"),
+        QStringLiteral("javascript"),
+        QStringLiteral("qrc"),
+        QStringLiteral("view-source"),
+    };
+    return schemes.contains(scheme.toLower());
+}
+
+// While one consent dialog is open, further external navigations are
+// denied outright — a redirect loop must not stack modal prompts.
+static bool s_externalPromptActive = false;
+
+void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
+{
+    if (s_externalPromptActive)
+        return;
+    s_externalPromptActive = true;
+    // Queued: a modal exec() inside acceptNavigationRequest would
+    // re-enter Chromium's navigation machinery while it waits for an
+    // answer.
+    const QString source = this->url().toString();
+    QPointer<QWidget> parent = QWebEngineView::forPage(this);
+    QMetaObject::invokeMethod(qApp, [parent, url, source]() {
+        // The percent-encoded form keeps control characters and
+        // embedded newlines from spoofing the dialog text.
+        QString shown = QString::fromUtf8(url.toEncoded());
+        if (shown.size() > 256)
+            shown = shown.left(256) + QLatin1String("…");
+        const QMessageBox::StandardButton choice = QMessageBox::question(
+            parent, WebPage::tr("Open External Application"),
+            WebPage::tr("The page at %1 wants to open an external "
+                        "application to handle this link:\n\n%2\n\n"
+                        "Allow it?").arg(source, shown),
+            QMessageBox::Open | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        s_externalPromptActive = false;
+        if (choice != QMessageBox::Open)
+            return;
         // askDesktopToOpenUrl records the url so a scheme handler that
         // loops back into the browser is detected and dropped.
         if (BrowserApplication *application = BrowserApplication::instance())
             application->askDesktopToOpenUrl(url);
         else
             QDesktopServices::openUrl(url);
+    }, Qt::QueuedConnection);
+}
+
+bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)
+{
+    const QString scheme = url.scheme();
+    if (!scheme.isEmpty() && !isBrowserHandledScheme(scheme)) {
+        // Subframe requests are dropped without prompting — an iframe
+        // must not raise dialogs on the user's behalf.
+        if (isMainFrame)
+            confirmAndOpenExternalUrl(url);
         return false;
     }
 

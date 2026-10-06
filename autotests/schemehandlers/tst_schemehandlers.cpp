@@ -153,6 +153,7 @@ private slots:
     void fileSchemeListing();
     void fileSchemeRedirect();
     void fileSchemeErrors();
+    void fileSchemeRemoteInitiator();
     void resourceScheme();
     void abpSchemeInvalid();
     void abpSchemeSubscribeDeclined();
@@ -284,6 +285,16 @@ void tst_SchemeHandlers::fileSchemeListing()
     QVERIFY(html.contains(QLatin1String("cov03dir")));
     QVERIFY(html.contains(QLatin1String(".."))); // parent directory row
     QVERIFY(html.contains(QLatin1String("Show Hidden Files")));
+
+    // SEC02: a listing page may still navigate into a child directory —
+    // an arora-file initiator is local and allowed.
+    std::shared_ptr<bool> navDone(new bool(false));
+    QObject::connect(&page, &QWebEnginePage::loadFinished, &page,
+                     [navDone](bool) { *navDone = true; });
+    page.runJavaScript(QStringLiteral(
+        "location.href='arora-file:%1/cov03dir'").arg(dir.path()));
+    QVERIFY(waitFor(navDone));
+    QVERIFY(pageHtml(&page).contains(QLatin1String("Contents of")));
 }
 
 // Navigating to a file:// directory bounces to arora-file:// inside
@@ -343,6 +354,42 @@ void tst_SchemeHandlers::fileSchemeErrors()
     QVERIFY(loadAndFail(&page, FileAccessHandler::urlForLocalPath(locked)));
     QVERIFY(QFile::setPermissions(locked, QFile::ReadOwner
                                 | QFile::WriteOwner | QFile::ExeOwner));
+}
+
+// SEC02: a remote page must never reach the local directory listing —
+// requests whose initiator is a remote origin are denied in the
+// handler, whether they arrive as an iframe, a subresource, or a
+// script-poked top-level navigation like the one exercised here.
+void tst_SchemeHandlers::fileSchemeRemoteInitiator()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.filePath(QLatin1String("secret.txt")));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("x");
+    }
+
+    WebPage page(m_profile);
+    const QString target =
+        FileAccessHandler::urlForLocalPath(dir.path()).toString();
+
+    // An http-origin page poking location= at the internal scheme must
+    // be refused — the listing content may never reach it.
+    std::shared_ptr<bool> settled(new bool(false));
+    QObject::connect(&page, &QWebEnginePage::loadFinished, &page,
+                     [settled](bool) { *settled = true; });
+    page.setHtml(QStringLiteral(
+        "<html><body><script>location='%1';</script></body></html>")
+            .arg(target),
+        QUrl(QLatin1String("http://remote-sec02.example/")));
+    waitFor(settled);
+    // Give the denied navigation (or a Chromium-level refusal) time to
+    // settle into whatever page survives.
+    QTest::qWait(1000);
+    const QString html = pageHtml(&page);
+    QVERIFY(!html.contains(QLatin1String("secret.txt")));
+    QVERIFY(!html.contains(QLatin1String("Contents of")));
 }
 
 void tst_SchemeHandlers::resourceScheme()
