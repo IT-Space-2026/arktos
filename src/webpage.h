@@ -57,14 +57,22 @@ class JavaScriptAroraObject : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(QObject *currentEngine READ currentEngine)
+    // SEC08: a plain string, never a QObject* — a live engine object
+    // handed to JS would expose every writable property and public
+    // slot of OpenSearchEngine to the page.
+    Q_PROPERTY(QString currentEngineName READ currentEngineName
+               NOTIFY currentEngineNameChanged)
 
 public:
     JavaScriptAroraObject(QObject *parent = 0);
 
+    QString currentEngineName() const;
+
+signals:
+    void currentEngineNameChanged();
+
 public slots:
     QString translate(const QString &string);
-    QObject *currentEngine() const;
     QString searchUrl(const QString &string) const;
 };
 

@@ -43,6 +43,7 @@
 #include <qpointer.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <quuid.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
@@ -67,16 +68,22 @@ AutoFillBridge::AutoFillBridge(QObject *parent)
 {
 }
 
-void AutoFillBridge::setPageInfo(const QUrl &pageUrl, bool captureEnabled)
+void AutoFillBridge::setPageInfo(const QUrl &pageUrl, bool captureEnabled,
+        const QString &reportToken)
 {
     m_pageUrl = pageUrl;
     m_captureEnabled = captureEnabled;
+    m_reportToken = reportToken;
 }
 
-void AutoFillBridge::submitForm(const QString &reportedUrl,
-        const QVariantMap &formData)
+void AutoFillBridge::submitForm(const QString &reportToken,
+        const QString &reportedUrl, const QVariantMap &formData)
 {
-    if (!m_captureEnabled)
+    // A token the injected script does not carry is proof the call did
+    // not come from it — the object is reachable from arbitrary page
+    // script via the shared channel transport.
+    if (!m_captureEnabled || m_reportToken.isEmpty()
+        || reportToken != m_reportToken)
         return;
     AutoFillManager::instance()->formSubmitted(m_pageUrl, reportedUrl, formData);
 }
@@ -222,15 +229,22 @@ void AutoFillManager::attachToPage(QWebEnginePage *page)
     // profile get the fill pass (parity with the old global private
     // mode) but no submit capture, and their bridge drops reports.
     AutoFillBridge *bridge = page->findChild<AutoFillBridge *>();
-    const bool capture = !page->profile()->isOffTheRecord();
+    const bool capture = !page->profile()->isOffTheRecord() && bridge;
+    // SEC08: a fresh token per load — the injected script passes it
+    // back inside its closure, and the bridge rejects reports without
+    // it so page script cannot mint submits of its own.
+    const QString token = capture
+            ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+            : QString();
     if (bridge)
-        bridge->setPageInfo(page->url(), capture);
+        bridge->setPageInfo(page->url(), capture, token);
 
     const QList<Form> forms = fetchForms(stripUrl(page->url()));
-    page->runJavaScript(autoFillScript(forms, capture && bridge));
+    page->runJavaScript(autoFillScript(forms, capture, token));
 }
 
-QString AutoFillManager::autoFillScript(const QList<Form> &forms, bool capture) const
+QString AutoFillManager::autoFillScript(const QList<Form> &forms,
+        bool capture, const QString &reportToken) const
 {
     static const QString script = [] {
         QString source;
@@ -269,6 +283,7 @@ QString AutoFillManager::autoFillScript(const QList<Form> &forms, bool capture) 
                      QString::fromUtf8(QJsonDocument(formsJson).toJson(QJsonDocument::Compact)));
     injected.replace(QLatin1String("CAPTURE_FLAG"),
                      capture ? QLatin1String("true") : QLatin1String("false"));
+    injected.replace(QLatin1String("REPORT_TOKEN"), reportToken);
     return injected;
 }
 

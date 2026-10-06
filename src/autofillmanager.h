@@ -43,6 +43,10 @@ class AutoSaver;
 // autofill.js reports submitted forms through submitForm(); the bridge
 // tags each report with the url the page had when the hook was
 // installed so a page cannot forge form data for a different origin.
+// SEC08: the channel object is reachable from any page script that
+// loads qwebchannel.js, so reports additionally carry a per-load token
+// that lives only inside the injected script's closure — calls without
+// it (the page's own channel client has no way to learn it) are dropped.
 class AutoFillBridge : public QObject
 {
     Q_OBJECT
@@ -50,13 +54,16 @@ class AutoFillBridge : public QObject
 public:
     AutoFillBridge(QObject *parent = 0);
 
-    void setPageInfo(const QUrl &pageUrl, bool captureEnabled);
+    void setPageInfo(const QUrl &pageUrl, bool captureEnabled,
+                     const QString &reportToken);
 
 public slots:
-    void submitForm(const QString &reportedUrl, const QVariantMap &formData);
+    void submitForm(const QString &reportToken, const QString &reportedUrl,
+                    const QVariantMap &formData);
 
 private:
     QUrl m_pageUrl;
+    QString m_reportToken;
     bool m_captureEnabled;
 };
 
@@ -114,7 +121,8 @@ private:
     static QString autoFillDataFile();
     bool allowedToAutoFill(bool password) const;
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
-    QString autoFillScript(const QList<Form> &forms, bool capture) const;
+    QString autoFillScript(const QList<Form> &forms, bool capture,
+                           const QString &reportToken) const;
     bool promptToSave(const QUrl &url);
 
     void saveFormData() const;

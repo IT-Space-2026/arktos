@@ -66,9 +66,52 @@ JavaScriptExternalObject::JavaScriptExternalObject(QObject *parent)
 {
 }
 
+// SEC08: while one search-engine consent prompt is open, further
+// AddSearchProvider calls are dropped — a page must not stack modals.
+static bool s_searchProviderPromptActive = false;
+
 void JavaScriptExternalObject::AddSearchProvider(const QString &url)
 {
-    ToolbarSearch::openSearchManager()->addEngine(QUrl(url));
+    // The descriptor url arrives over the page's QWebChannel and is
+    // untrusted input: fetching it blindly would let any web page
+    // drive GETs through the application-side QNetworkAccessManager
+    // (unlike Chromium's renderer-side fetches, those carry app-side
+    // cookies).  Only web schemes may be fetched, and only after the
+    // user consents; the downloaded engine still passes through
+    // OpenSearchManager's install confirmation, which names what was
+    // actually fetched.
+    const QUrl descriptorUrl(
+        QString::fromUtf8(url.toUtf8().left(2048)));
+    const QString scheme = descriptorUrl.scheme();
+    if (!descriptorUrl.isValid()
+        || (scheme != QLatin1String("http") && scheme != QLatin1String("https")))
+        return;
+    if (s_searchProviderPromptActive)
+        return;
+    s_searchProviderPromptActive = true;
+
+    QWebEnginePage *page = qobject_cast<QWebEnginePage*>(parent());
+    const QString source = page
+            ? QString::fromUtf8(page->url().toEncoded()) : QString();
+    QPointer<QWidget> view = page ? QWebEngineView::forPage(page) : 0;
+
+    // Queued: a modal exec() inside the channel dispatch stack is
+    // asking for re-entrancy trouble — same pattern as the
+    // external-url consent prompt in WebPage::confirmAndOpenExternalUrl.
+    QMetaObject::invokeMethod(qApp, [view, descriptorUrl, source]() {
+        QString shown = QString::fromUtf8(descriptorUrl.toEncoded());
+        if (shown.size() > 256)
+            shown = shown.left(256) + QLatin1String("…");
+        const QMessageBox::StandardButton choice = QMessageBox::question(
+            view, WebPage::tr("Add Search Engine"),
+            WebPage::tr("The page at %1 wants to add a search engine "
+                        "described by:\n\n%2\n\nDownload and inspect "
+                        "it?").arg(source, shown),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        s_searchProviderPromptActive = false;
+        if (choice == QMessageBox::Yes)
+            ToolbarSearch::openSearchManager()->addEngine(descriptorUrl);
+    }, Qt::QueuedConnection);
 }
 
 JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
@@ -82,6 +125,12 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
         QT_TR_NOOP("About Arora")
     };
     Q_UNUSED(translations);
+
+    // Live-update currentEngineName on internal pages when the user
+    // switches search engines.
+    connect(ToolbarSearch::openSearchManager(),
+            &OpenSearchManager::currentEngineChanged,
+            this, &JavaScriptAroraObject::currentEngineNameChanged);
 }
 
 QString JavaScriptAroraObject::translate(const QString &string)
@@ -97,9 +146,10 @@ QString JavaScriptAroraObject::translate(const QString &string)
         return qApp->tr(string.toUtf8().constData());
 }
 
-QObject *JavaScriptAroraObject::currentEngine() const
+QString JavaScriptAroraObject::currentEngineName() const
 {
-    return ToolbarSearch::openSearchManager()->currentEngine();
+    OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine();
+    return engine ? engine->name() : QString();
 }
 
 QString JavaScriptAroraObject::searchUrl(const QString &string) const
@@ -138,16 +188,31 @@ void WebPage::init()
     // go through Chromium's network stack and the profile's cookie store.
     //
     // The old per-frame addToJavaScriptWindowObject() binding is replaced by
-    // a QWebChannel.  Objects are only visible to pages that explicitly load
-    // qwebchannel.js, so registering them unconditionally is safe.
-    // TODO(MIG16): make startpage.html pull in qrc:///qtwebchannel/qwebchannel.js.
+    // a QWebChannel.  qwebchannel.js is a public file and the transport is
+    // injected into every page, so ANY web content can reach the registered
+    // objects (SEC08) — everything exposed here is hardened accordingly:
+    //
+    //  * aroraAutofill.submitForm requires the per-load token that only
+    //    the C++-injected autofill.js holds in a closure; forged calls
+    //    are dropped (autofillmanager.cpp).
+    //  * external.AddSearchProvider validates the descriptor url and
+    //    asks for consent before any fetch happens.
     m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
-    m_webChannel->registerObject(QLatin1String("arora"), m_javaScriptAroraObject);
-    // MIG10: form-submit reports from the injected autofill.js arrive
-    // through this object; the manager enables/disables capture per
-    // page (off-the-record pages never capture).
     m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
     setWebChannel(m_webChannel);
+
+    // The "arora" object serves only internal qrc pages (the start
+    // page).  It is registered when the main frame commits to a qrc
+    // url — before the page's channel handshake — and removed again
+    // when the frame navigates away, so web content never sees it.
+    connect(this, &QWebEnginePage::urlChanged, this,
+            [this](const QUrl &url) {
+        if (url.scheme() == QLatin1String("qrc"))
+            m_webChannel->registerObject(QLatin1String("arora"),
+                                         m_javaScriptAroraObject);
+        else
+            m_webChannel->deregisterObject(m_javaScriptAroraObject);
+    });
 
     // Chromium's built-in error pages are disabled so the Arora
     // notfound.html page can be injected from handleLoadingChanged().

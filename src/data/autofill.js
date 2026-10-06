@@ -3,10 +3,14 @@
 // synchronous evaluateJavaScript, so fill + capture share one script).
 // Fills stored form data, then — when CAPTURE_FLAG is true — reports
 // submitted forms back through the "aroraAutofill" QWebChannel object.
-// FORMS_JSON and CAPTURE_FLAG are substituted C++-side.
+// FORMS_JSON, CAPTURE_FLAG and REPORT_TOKEN are substituted C++-side.
+// The token lives only in this closure — it authenticates reports to
+// the aroraAutofill bridge, which page script can otherwise reach
+// through the shared channel transport but cannot forge calls on.
 (function () {
     var savedForms = FORMS_JSON;
     var capture = CAPTURE_FLAG;
+    var reportToken = "REPORT_TOKEN";
 
     function fillForms() {
         for (var i = 0; i < savedForms.length; ++i) {
@@ -64,7 +68,7 @@
                 return;
             var data = serializeForm(form);
             if (data)
-                bridge.submitForm(String(location.href), data);
+                bridge.submitForm(reportToken, String(location.href), data);
         };
         document.addEventListener('submit', function (event) {
             report(event.target);
