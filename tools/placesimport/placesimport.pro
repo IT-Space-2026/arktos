@@ -17,7 +17,7 @@ DEFINES += \
 # Input
 SOURCES += main_placesimport.cpp
 
-include(../../install.pri)
+include(../../BuildProcess/install.pri)
 # Reuses the whole ported tree (shared src/.obj objects) for the history
 # store, single-instance guard and serialization code — same approach the
 # Qt4 tool took.

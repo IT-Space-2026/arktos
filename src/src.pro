@@ -10,7 +10,7 @@ DEFINES += \
     QT_NO_CAST_TO_ASCII \
     QT_STRICT_ITERATORS \
 
-include(../install.pri)
+include(../BuildProcess/install.pri)
 
 include(src.pri)
 
@@ -28,7 +28,7 @@ unix {
     translations.files += .qm/locale
 
     desktop.path = $$DATADIR/applications
-    desktop.files += arora.desktop
+    desktop.files += ../BuildProcess/arora.desktop
 
     iconxpm.path = $$DATADIR/pixmaps
     iconxpm.files += data/arora.xpm
@@ -66,7 +66,7 @@ unix {
         INSTALLS += gnome-default-app
 
         gnome-default-app.path = $$GNOME_DEFAULT_APPS_PATH
-        gnome-default-app.files = data/arora.xml
+        gnome-default-app.files = ../BuildProcess/arora.xml
     }
 }
 }

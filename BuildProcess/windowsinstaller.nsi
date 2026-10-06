@@ -12,8 +12,8 @@ SetCompressor /SOLID /FINAL lzma
 
 !include "MUI.nsh"
 !define MUI_ABORTWARNING
-!define MUI_ICON ".\src\browser.ico"
-!define MUI_UNICON ".\src\browser.ico"
+!define MUI_ICON ".\BuildProcess\browser.ico"
+!define MUI_UNICON ".\BuildProcess\browser.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY

@@ -147,13 +147,13 @@ DISTFILES += $$PWD/../AUTHORS \
     $$PWD/../README
 
 win32 {
-    RC_FILE = $$PWD/browser.rc
+    RC_FILE = $$PWD/../BuildProcess/browser.rc
     LIBS += -luser32 -ladvapi32
 }
 
 mac {
-    ICON = $$PWD/browser.icns
-    QMAKE_INFO_PLIST = $$PWD/Info_mac.plist
+    ICON = $$PWD/../BuildProcess/browser.icns
+    QMAKE_INFO_PLIST = $$PWD/../BuildProcess/Info_mac.plist
 }
 
 unix {
