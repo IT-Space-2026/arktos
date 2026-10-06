@@ -79,6 +79,9 @@ Translations, desktop integration and install rules (MIG16):
     `make install` now also installs the user-agent preset list (useragents.xml) into the package data directory — a file placed there overrides the compiled-in copy — and the 512x512 application icon. The .desktop file drops the deprecated "Application" category and registers x-scheme-handler/http(s) MIME types so desktops can offer Arora as a URL handler.
     The man page and desktop metadata are updated for the Qt 6 / WebEngine port (WebKit references and the dead Google Code bug URL are gone).
 
+Qt 6 API sweep (MIG17):
+    Last deprecated-API stragglers are gone: the View menu's Text Encoding submenu is populated from QStringConverter::availableCodecs() instead of Qt5Compat's QTextCodec, the network access manager's auth/proxy/SSL signal hookups use typed function-pointer connects, and remaining foreach loops, QMouseEvent::pos(), QAction::activate() and the Qt::CTRL shortcut modifier are converted to their Qt 6 forms. The whole tree now builds with zero compiler warnings under -Wall -Wextra.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

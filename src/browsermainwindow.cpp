@@ -96,7 +96,7 @@
 #include <qprinter.h>
 #include <qscreen.h>
 #include <qsettings.h>
-#include <qtextcodec.h>
+#include <qstringconverter.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qstatusbar.h>
@@ -895,12 +895,7 @@ void BrowserMainWindow::aboutToShowTextEncodingMenu()
     m_viewTextEncodingMenu->clear();
 
     int currentCodec = -1;
-    QStringList codecs;
-    QList<int> mibs = QTextCodec::availableMibs();
-    for (int i = 0; i < mibs.count(); ++i) {
-        QString codec = QLatin1String(QTextCodec::codecForMib(mibs.at(i))->name());
-        codecs.append(codec);
-    }
+    QStringList codecs = QStringConverter::availableCodecs();
     codecs.sort();
 
     QString defaultTextEncoding = BrowserApplication::webEngineProfile()->settings()->defaultTextEncoding();
@@ -1344,10 +1339,10 @@ void BrowserMainWindow::mousePressEvent(QMouseEvent *event)
 {
     switch (event->button()) {
     case Qt::XButton1:
-        m_historyBackAction->activate(QAction::Trigger);
+        m_historyBackAction->trigger();
         break;
     case Qt::XButton2:
-        m_historyForwardAction->activate(QAction::Trigger);
+        m_historyForwardAction->trigger();
         break;
     default:
         QMainWindow::mousePressEvent(event);

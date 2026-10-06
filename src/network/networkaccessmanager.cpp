@@ -97,13 +97,13 @@ NetworkAccessManager *NetworkAccessManager::instance()
 NetworkAccessManager::NetworkAccessManager(QObject *parent)
     : QNetworkAccessManager(parent)
 {
-    connect(this, SIGNAL(authenticationRequired(QNetworkReply*, QAuthenticator*)),
-            SLOT(authenticationRequired(QNetworkReply*, QAuthenticator*)));
-    connect(this, SIGNAL(proxyAuthenticationRequired(const QNetworkProxy&, QAuthenticator*)),
-            SLOT(proxyAuthenticationRequired(const QNetworkProxy&, QAuthenticator*)));
+    connect(this, &QNetworkAccessManager::authenticationRequired,
+            this, &NetworkAccessManager::authenticationRequired);
+    connect(this, &QNetworkAccessManager::proxyAuthenticationRequired,
+            this, &NetworkAccessManager::proxyAuthenticationRequired);
 #ifndef QT_NO_OPENSSL
-    connect(this, SIGNAL(sslErrors(QNetworkReply*, const QList<QSslError>&)),
-            SLOT(sslErrors(QNetworkReply*, const QList<QSslError>&)));
+    connect(this, &QNetworkAccessManager::sslErrors,
+            this, &NetworkAccessManager::sslErrors);
 #endif
     // BrowserApplication's constructor connects its privacyChanged
     // signal to the privacyChanged() slot of this singleton.

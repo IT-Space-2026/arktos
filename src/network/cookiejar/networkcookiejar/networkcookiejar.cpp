@@ -220,7 +220,7 @@ bool NetworkCookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList
         defaultPath = QLatin1Char('/');
 
     QString urlPath = d->urlPath(url);
-    foreach (QNetworkCookie cookie, cookieList) {
+    for (QNetworkCookie cookie : cookieList) {
         if (cookie.path().length() > maxCookiePathLength)
             continue;
 
@@ -295,7 +295,7 @@ void NetworkCookieJar::setAllCookies(const QList<QNetworkCookie> &cookieList)
     qDebug() << "NetworkCookieJar::" << __FUNCTION__ << cookieList.count();
 #endif
     d->tree.clear();
-    foreach (const QNetworkCookie &cookie, cookieList) {
+    for (const QNetworkCookie &cookie : cookieList) {
         QString domain = cookie.domain();
         d->tree.insert(splitHost(domain), cookie);
     }

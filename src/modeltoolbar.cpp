@@ -241,7 +241,7 @@ void ModelToolBar::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    int manhattanLength = (event->pos() - m_dragStartPos).manhattanLength();
+    int manhattanLength = (event->position().toPoint() - m_dragStartPos).manhattanLength();
     if (manhattanLength <= QApplication::startDragDistance()) {
         QToolBar::mouseMoveEvent(event);
         return;

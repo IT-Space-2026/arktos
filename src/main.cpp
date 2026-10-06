@@ -358,7 +358,7 @@ int main(int argc, char **argv)
                 cookieJar->cookiesForUrl(QUrl(QLatin1String("http://blocked.example/")));
             bool ok = blocked.isEmpty();
             bool found = false;
-            foreach (const QNetworkCookie &cookie, allowed)
+            for (const QNetworkCookie &cookie : allowed)
                 found |= (cookie.name() == "arora_smoke");
             ok = ok && found;
             qInfo() << "cookie-smoke:" << (ok ? "PASS" : "FAIL")

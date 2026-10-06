@@ -305,7 +305,7 @@ void ModelMenu::dropEvent(QDropEvent *event)
 void ModelMenu::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
-        m_dragStartPos = event->pos();
+        m_dragStartPos = event->position().toPoint();
     QMenu::mousePressEvent(event);
 }
 
@@ -322,7 +322,7 @@ void ModelMenu::mouseReleaseEvent(QMouseEvent *event)
 
 void ModelMenu::mouseMoveEvent(QMouseEvent *event)
 {
-    int manhattanLength = (event->pos() - m_dragStartPos).manhattanLength();
+    int manhattanLength = (event->position().toPoint() - m_dragStartPos).manhattanLength();
 
     if (manhattanLength <= QApplication::startDragDistance()) {
         QMenu::mouseMoveEvent(event);

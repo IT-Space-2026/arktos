@@ -58,14 +58,14 @@ void LocationBarSiteIcon::webViewSiteIconChanged()
 void LocationBarSiteIcon::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
-        m_dragStartPos = event->pos();
+        m_dragStartPos = event->position().toPoint();
     QLabel::mousePressEvent(event);
 }
 
 void LocationBarSiteIcon::mouseMoveEvent(QMouseEvent *event)
 {
     if (event->buttons() == Qt::LeftButton
-        && (event->pos() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()
+        && (event->position().toPoint() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()
         && m_webView) {
         QDrag *drag = new QDrag(this);
         QMimeData *mimeData = new QMimeData;

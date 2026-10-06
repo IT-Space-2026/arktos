@@ -354,7 +354,7 @@ bool CookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const
 
     bool addedCookies = false;
     QDateTime soon = QDateTime::currentDateTime().addDays(90);
-    foreach (QNetworkCookie cookie, cookieList) {
+    for (QNetworkCookie cookie : cookieList) {
         if (cookie.isSessionCookie() && m_sessionLength != -1)
             cookie.setExpirationDate(QDateTime::currentDateTime().addDays(m_sessionLength));
         if (m_filterTrackingCookies && cookie.name().startsWith("__utm"))
@@ -384,11 +384,11 @@ void CookieJar::setCookies(const QList<QNetworkCookie> &cookies)
     // immediately and confirmed by the store's added/removed signals.
     const QList<QNetworkCookie> old = m_cookies;
     if (m_store) {
-        foreach (const QNetworkCookie &cookie, old) {
+        for (const QNetworkCookie &cookie : old) {
             if (!cookies.contains(cookie))
                 m_store->deleteCookie(cookie);
         }
-        foreach (const QNetworkCookie &cookie, cookies) {
+        for (const QNetworkCookie &cookie : cookies) {
             if (!old.contains(cookie))
                 m_store->setCookie(cookie);
         }
@@ -402,7 +402,7 @@ bool CookieJar::isOnDomainList(const QStringList &rules, const QString &domain)
 {
     // Either the rule matches the domain exactly
     // or the domain ends with ".rule"
-    foreach (const QString &rule, rules) {
+    for (const QString &rule : rules) {
         if (rule.startsWith(QLatin1String("."))) {
             if (domain.endsWith(rule))
                 return true;
@@ -496,7 +496,7 @@ void CookieJar::applyRules()
 {
     if (!m_store)
         return;
-    foreach (const QNetworkCookie &cookie, m_cookies) {
+    for (const QNetworkCookie &cookie : m_cookies) {
         if (isOnDomainList(m_exceptions_block, cookie.domain())) {
             m_store->deleteCookie(cookie);
         } else if (!cookie.isSessionCookie()

@@ -372,7 +372,7 @@ void HistoryMenu::postPopulated()
 
     QAction *showAllAction = new QAction(tr("Show All History"), this);
 #if !defined(Q_OS_MACOS)
-    showAllAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_H));
+    showAllAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_H));
 #endif
     connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryDialog);
     addAction(showAllAction);

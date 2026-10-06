@@ -222,7 +222,7 @@ void TabBar::closeOtherTabs()
 void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton
-        && tabAt(event->pos()) == -1) {
+        && tabAt(event->position().toPoint()) == -1) {
         emit newTab();
         return;
     }
@@ -232,7 +232,7 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 void TabBar::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::MiddleButton) {
-        int index = tabAt(event->pos());
+        int index = tabAt(event->position().toPoint());
         if (index != -1) {
             emit closeTab(index);
             return;
@@ -249,22 +249,22 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
 void TabBar::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
-        m_dragStartPos = event->pos();
+        m_dragStartPos = event->position().toPoint();
     QTabBar::mousePressEvent(event);
 }
 
 void TabBar::mouseMoveEvent(QMouseEvent *event)
 {
     if (event->buttons() == Qt::LeftButton) {
-        int diffX = event->pos().x() - m_dragStartPos.x();
-        int diffY = event->pos().y() - m_dragStartPos.y();
-        if ((event->pos() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()
+        int diffX = event->position().toPoint().x() - m_dragStartPos.x();
+        int diffY = event->position().toPoint().y() - m_dragStartPos.y();
+        if ((event->position().toPoint() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()
             && diffX < 3 && diffX > -3
             && diffY < -10) {
             QDrag *drag = new QDrag(this);
             QMimeData *mimeData = new QMimeData;
             QList<QUrl> urls;
-            int index = tabAt(event->pos());
+            int index = tabAt(event->position().toPoint());
             QUrl url = tabData(index).toUrl();
             urls.append(url);
             mimeData->setUrls(urls);
