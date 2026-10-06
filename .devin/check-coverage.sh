@@ -15,7 +15,8 @@
 #
 # Env:
 #   ARORA_COVERAGE_MIN=N   exit non-zero when src/ line coverage < N
-#                          (default 0 = report only; COV04 raises this)
+#                          (default 80 — the COV04 gate; set 0 for
+#                          report-only)
 #   ARORA_COVERAGE_JOBS=N  parallel make jobs (default: nproc, max 4)
 #   ARORA_COVERAGE_KEEP=1  keep the instrumented build tree for
 #                          inspection instead of deleting it
@@ -27,7 +28,7 @@ REPORT_MD="$ROOT/.devin/COVERAGE.md"
 
 JOBS=${ARORA_COVERAGE_JOBS:-$(nproc 2>/dev/null || echo 2)}
 [ "$JOBS" -gt 4 ] && JOBS=4
-MIN=${ARORA_COVERAGE_MIN:-0}
+MIN=${ARORA_COVERAGE_MIN:-80}
 KEEP=${ARORA_COVERAGE_KEEP:-0}
 
 die() { echo "check-coverage: $*" >&2; exit 1; }

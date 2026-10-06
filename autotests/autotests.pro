@@ -6,13 +6,19 @@ SUBDIRS  = \
     autosaver \
     bookmarknode \
     bookmarksmodel \
+    browserapp \
+    browsermainwindow \
     cookiejar \
     cookiemodel \
+    dialogs \
     downloadmanager \
     historyfiltermodel \
     historymanager \
+    historyui \
     locationbar \
+    modelmenu \
     modeltoolbar \
+    networkaccessmanager \
     networkcookiejar \
     opensearchengine \
     opensearchmanager \
@@ -20,8 +26,11 @@ SUBDIRS  = \
     opensearchwriter \
     schemehandlers \
     searchlineedit \
+    settingsdialog \
+    singleapplication \
     tabbar \
     tabwidget \
+    toolbarsearch \
     utils \
     webactionmapper \
     webpage \

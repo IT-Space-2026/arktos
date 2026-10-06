@@ -75,6 +75,9 @@ int OpenSearchEngineModel::columnCount(const QModelIndex &parent) const
 
 Qt::ItemFlags OpenSearchEngineModel::flags(const QModelIndex &index) const
 {
+    if (!index.isValid())
+        return Qt::ItemFlags();
+
     switch (index.column()) {
     case 1:
         return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;

@@ -108,6 +108,10 @@ User agent (UA01):
     Arora no longer sends the QtWebEngine-badged user agent. Qt's factory string carries a "QtWebEngine/<version>" product token that bot detection fingerprints as automation — Google's /sorry/ interstitial fired on an ordinary google.com search. The default UA is now a vanilla Chrome string (Qt's own default minus that token, so the bundled Chromium version and platform stay accurate), applied to both the normal and the private browsing profile.
     The Tools > User Agent presets were a 2009 time capsule (IE 6-8, Opera 10/Presto, Safari 4, dead crawlers) and are refreshed to current Chrome/Edge/Firefox/Safari desktop and Android/iOS mobile entries plus current Googlebot/Bingbot. Custom override strings still work from the menu and now reach the off-the-record private profile too — the port previously wrote them to an unused WebEngine profile and cleared overrides by writing an empty user agent.
 
+Coverage (COV04):
+    Nine new test programs push src/ line coverage to 80.5% (was 69.4%) and `make check-coverage` now enforces 80% by default (ARORA_COVERAGE_MIN). The suite now exercises the assembled application end to end offscreen: BrowserApplication services and session save/restore, full BrowserMainWindow chrome (menus, dialog slots, state serialization, the close-multiple-tabs confirmation), the history/bookmark model-driven menus and toolbars, the settings dialog, the network access manager's auth/proxy/SSL dialogs against a local server, single-instance plumbing, and the toolbar search widget.
+    Testing the dialogs surfaced two real fixes: OpenSearchEngineModel::flags() answered non-zero for invalid indexes (Qt 6's model tester aborts on that), and BrowserApplication::saveSession() never refreshed its in-memory copy of the saved session so "restore session" could report nothing to restore until the next launch.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
