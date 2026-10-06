@@ -60,19 +60,23 @@ void tst_HistoryUi::initTestCase()
     HistoryManager *manager = HistoryManager::instance();
     manager->clear();
     QList<HistoryEntry> entries;
+    // Anchor to noon today: entries relative to "now" can cross the
+    // day boundary (the test once ran at 00:01 and its 4-minute-old
+    // entry landed in yesterday's group).
+    const QDateTime todayNoon(QDate::currentDate(), QTime(12, 0));
     for (int i = 0; i < 5; ++i) {
         HistoryEntry entry;
         entry.url = QString::fromLatin1("http://ui%1.example.com/page%2")
                         .arg(i).arg(i);
         entry.title = QString::fromLatin1("UI Entry %1").arg(i);
-        entry.dateTime = QDateTime::currentDateTime().addSecs(-60 * i);
+        entry.dateTime = todayNoon.addSecs(-60 * i);
         entries << entry;
     }
     // And one from yesterday so the tree model has two date groups.
     HistoryEntry old;
     old.url = QLatin1String("http://old.example.com/");
     old.title = QLatin1String("Yesterday");
-    old.dateTime = QDateTime::currentDateTime().addDays(-1);
+    old.dateTime = todayNoon.addDays(-1);
     entries << old;
     manager->setHistory(entries);
 }
@@ -170,7 +174,9 @@ void tst_HistoryUi::completionModel()
 void tst_HistoryUi::completer()
 {
     HistoryManager *manager = HistoryManager::instance();
-    HistoryCompletionModel *model = new HistoryCompletionModel;
+    // QCompleter does not take ownership of the model — parent it so it
+    // does not leak past the test.
+    HistoryCompletionModel *model = new HistoryCompletionModel(this);
     model->setSourceModel(manager->historyFilterModel());
 
     HistoryCompleter completer(model, this);

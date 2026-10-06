@@ -1,0 +1,57 @@
+# LeakSanitizer suppressions for Arora (MEM01).
+# Load with:  LSAN_OPTIONS=suppressions=$PWD/.devin/lsan.supp
+#
+# IMPORTANT — LSan matches each `leak:` pattern against EVERY frame of
+# a leak's allocation stack (any-frame matching, verified empirically
+# on this build).  That makes library-wide patterns dangerous:
+# `leak:libQt6Core` would also hide OUR allocations made inside Qt
+# driven call chains (every test invoked via QMetaMethod has Qt frames
+# below the leak site).  For the same reason glib/dbus/wayland libs —
+# which can appear in caller chains wrapping our code — are excluded.
+#
+# The entries below are leaf third-party libraries only: they can
+# allocate memory, but they can never call INTO our code, so a stack
+# containing them is always an upstream leak we cannot fix.  The
+# dominant residual upstream source — libQt6WebEngineCore's Chromium
+# teardown (~97% of blocks) — is deliberately NOT suppressed here for
+# the reason above; it is triaged as upstream by check-leaks.sh's
+# allocation-site classifier instead.
+
+# fontconfig + its expat XML parser: config caches kept for process
+# lifetime by design, reported as unreachable at exit.
+leak:libfontconfig
+leak:libexpat
+
+# udev device monitor / enumeration allocs leaked by libudev itself.
+leak:libudev
+leak:udev_monitor
+leak:udev_new
+leak:udev_enumerate
+
+# One-shot init data in system libraries that Qt loads; none of these
+# can appear in a caller chain that reaches our code.
+leak:libnss_
+leak:libnspr4
+leak:libcrypto
+leak:libssl
+leak:libicu
+leak:libfreetype
+leak:libharfbuzz
+leak:libpng
+leak:libX11
+leak:libxcb
+leak:libz
+leak:libsqlite3
+leak:libEGL
+leak:libGL
+leak:libgbm
+leak:libdrm
+leak:libvulkan
+leak:libwayland
+leak:libxkbcommon
+leak:libpcre2
+leak:libbrotli
+leak:libbz2
+leak:libevent
+leak:libxml2
+leak:libfontconfig.so

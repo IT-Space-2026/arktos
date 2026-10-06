@@ -92,6 +92,8 @@
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QToolButton>
 
+#include <memory>
+
 #if defined(ARORA_ADBLOCK_RUST)
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
@@ -365,7 +367,7 @@ int main(int argc, char **argv)
         // cookieAdded — poll for the allowed cookie instead of
         // checking once at a fixed delay (marginal on slow builds).
         QTimer *cookiePoll = new QTimer(&application);
-        int *cookiePollTicks = new int(0);
+        auto cookiePollTicks = std::make_shared<int>(0);
         QObject::connect(cookiePoll, &QTimer::timeout, &application,
                          [&application, cookieJar, cookiePoll,
                           cookiePollTicks]() {
@@ -1160,9 +1162,9 @@ int main(int argc, char **argv)
         // findText answers asynchronously; every reply lands here.
         // (The find highlight is renderer-internal — window.getSelection()
         // does not observe it — so the result object is the readback.)
-        int *resultsSeen = new int(0);
-        int *lastMatches = new int(-1);
-        int *lastActive = new int(-1);
+        auto resultsSeen = std::make_shared<int>(0);
+        auto lastMatches = std::make_shared<int>(-1);
+        auto lastActive = std::make_shared<int>(-1);
         QObject::connect(view->webPage(), &QWebEnginePage::findTextFinished,
                          &application,
                          [resultsSeen, lastMatches, lastActive]
@@ -1176,7 +1178,7 @@ int main(int argc, char **argv)
         // arrived (or after ~5s — the check then fails on stale data).
         auto awaitResult = [resultsSeen](int before,
                                          std::function<void()> ready) {
-            int *ticks = new int(0);
+            auto ticks = std::make_shared<int>(0);
             QTimer *poll = new QTimer(qApp);
             QObject::connect(poll, &QTimer::timeout, qApp,
                 [resultsSeen, before, ready, ticks, poll]() {
@@ -1343,8 +1345,8 @@ int main(int argc, char **argv)
         }
         qInfo() << "source-smoke: highlighter PASS";
 
-        int *pending = new int(0);
-        int *failures = new int(0);
+        auto pending = std::make_shared<int>(0);
+        auto failures = std::make_shared<int>(0);
         auto finish = [&application, pending, failures,
                        fixturePath](bool ok) {
             *failures += ok ? 0 : 1;
@@ -1371,7 +1373,7 @@ int main(int argc, char **argv)
                 finish(false);
                 return;
             }
-            int *ticks = new int(0);
+            auto ticks = std::make_shared<int>(0);
             QTimer *poll = new QTimer(viewer);
             QObject::connect(poll, &QTimer::timeout, viewer,
                 [edit, search, searchEdit, expected, what,
@@ -1575,7 +1577,7 @@ int main(int argc, char **argv)
     QString extensionId;
     QString extDir;
     QTimer *enablePoll = 0;
-    int *pollTicks = 0;
+    std::shared_ptr<int> pollTicks;
     if (args.contains(QLatin1String("--extension-smoke"))) {
         extensions = ExtensionManager::instance();
 
@@ -1656,7 +1658,7 @@ int main(int argc, char **argv)
         // Async lifecycle driven by the manager's finished signals.
         extensionId.clear();
         enablePoll = new QTimer(&application);
-        pollTicks = new int(0);
+        pollTicks = std::make_shared<int>(0);
 
         QObject::connect(extensions, &ExtensionManager::extensionLoaded,
             &application, [&](const ExtensionManager::ExtensionInfo &info) {

@@ -1,0 +1,28 @@
+# Memcheck suppressions for Arora (MEM01).
+# Load with:  --suppressions=.devin/valgrind.supp
+#
+# Unlike LSan, valgrind suppressions match an ordered top-of-stack
+# pattern, so these can be made tight.  Only upstream Qt/system noise
+# lives here — a leak or invalid access allocated in Arora's own code
+# must NEVER be suppressed; fix it instead.
+#
+# QT_ENABLE_REGEXP_JIT=0 is set by check-leaks.sh for this pass:
+# pcre2's JIT emits self-modifying code that memcheck cannot model
+# (thousands of Addr16/Cond false positives inside compiled regexes).
+
+# Qt 6.11.3 application init: an SSE-16 compare inside
+# QObject::connect reads up to 3 bytes past the end of a heap
+# QByteArray during QGuiApplicationPrivate::init (upstream Qt issue,
+# seen on every GUI test at startup — one context per binary).
+# NOTE: fun: lines must use MANGLED symbols — this Qt build ships
+# without .debug_frame for these paths, so memcheck matches raw
+# symbol names (demangled patterns do not fire; verified 3.26.0).
+{
+   qt6-init-connect-addr16
+   Memcheck:Addr16
+   obj:*/libQt6Core.so*
+   ...
+   fun:_ZN7QObject7connectEPKS_PKcS1_S3_N2Qt14ConnectionTypeE
+   fun:_ZN22QGuiApplicationPrivate4initEv
+   ...
+}

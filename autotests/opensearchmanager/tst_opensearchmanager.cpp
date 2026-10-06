@@ -128,11 +128,16 @@ void tst_OpenSearchManager::addRemoveEngine()
     engine->setName(name);
     engine->setDescription(description);
     engine->setSearchUrlTemplate(searchUrlTemplate);
+    // The manager only takes ownership of engines it accepts; keep a
+    // guard for the invalid row so the test does not leak it.
+    QScopedPointer<OpenSearchEngine> engineGuard(engine);
 
     QCOMPARE(manager.enginesCount(), 1);
     QVERIFY(!manager.engineExists(name));
 
     bool result = manager.addEngine(engine);
+    if (result)
+        engineGuard.take();
 
     QCOMPARE(result, valid);
     QCOMPARE(manager.enginesCount(), (valid ? 2 : 1));
@@ -177,8 +182,11 @@ void tst_OpenSearchManager::setCurrentEngine()
     engine->setName(name);
     engine->setDescription(description);
     engine->setSearchUrlTemplate(searchUrlTemplate);
+    QScopedPointer<OpenSearchEngine> engineGuard(engine);
 
     bool result = manager.addEngine(engine);
+    if (result)
+        engineGuard.take();
     QCOMPARE(result, valid);
 
     manager.setCurrentEngineName(name);

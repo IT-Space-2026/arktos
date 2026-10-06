@@ -317,7 +317,7 @@ void AdBlockResourceHandler::requestStarted(QWebEngineUrlRequestJob *job)
     }
 
     // The job takes ownership of the buffer.
-    QBuffer *buffer = new QBuffer;
+    QBuffer *buffer = new QBuffer(job);
     buffer->setData(body);
     buffer->open(QIODevice::ReadOnly);
     job->reply(mimeType, buffer);

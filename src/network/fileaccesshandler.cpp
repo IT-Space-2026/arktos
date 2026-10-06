@@ -195,7 +195,7 @@ void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
     html = html.arg(classes).arg(dirlist).arg(tr("Show Hidden Files"));
 
     // The job takes ownership of the buffer.
-    QBuffer *buffer = new QBuffer;
+    QBuffer *buffer = new QBuffer(job);
     buffer->setData(html.toUtf8());
     buffer->open(QIODevice::ReadOnly);
     job->reply("text/html", buffer);

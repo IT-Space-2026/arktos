@@ -48,3 +48,12 @@ QMAKE_EXTRA_TARGETS += check-sanitize
 check-static.target = check-static
 check-static.commands = ./.devin/check-static.sh
 QMAKE_EXTRA_TARGETS += check-static
+
+# `make check-leaks` runs the MEM01 memory-leak sweep — LeakSanitizer
+# over an instrumented copy of the tree, then valgrind memcheck over
+# the in-tree build.  Gates on zero leaks allocated in Arora code;
+# writes .devin/LEAKS.md.  Needs an in-tree build for the valgrind
+# phase (or ARORA_LEAKS_VALGRIND=0 to skip it).
+check-leaks.target = check-leaks
+check-leaks.commands = ./.devin/check-leaks.sh
+QMAKE_EXTRA_TARGETS += check-leaks

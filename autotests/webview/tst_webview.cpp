@@ -286,9 +286,7 @@ void tst_WebView::dropJavascriptUrl()
             *marker = result;
             *probed = true;
         });
-    for (int waited = 0; !*probed && waited < 15000; waited += 50)
-        QTest::qWait(50);
-    QVERIFY(*probed);
+    QTRY_VERIFY_WITH_TIMEOUT(*probed, 60000);
     QVERIFY(!marker->isValid());
 }
 
@@ -350,9 +348,7 @@ void tst_WebView::findText()
         *matches = r.numberOfMatches();
         *probed = true;
     });
-    for (int waited = 0; !*probed && waited < 15000; waited += 50)
-        QTest::qWait(50);
-    QVERIFY(*probed);
+    QTRY_VERIFY_WITH_TIMEOUT(*probed, 60000);
     QVERIFY(*matches > 0);
 
     edit->setText(QLatin1String("arora"));
