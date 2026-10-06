@@ -4,6 +4,7 @@ win32:Debug:CONFIG += console
 
 include($$PWD/../coverage.pri)
 include($$PWD/../sanitize.pri)
+include($$PWD/../analyzer.pri)
 
 INCLUDEPATH += $$PWD $$PWD/utils
 DEPENDPATH += $$PWD $$PWD/utils

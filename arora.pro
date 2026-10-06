@@ -40,3 +40,11 @@ QMAKE_EXTRA_TARGETS += check-fuzz
 check-sanitize.target = check-sanitize
 check-sanitize.commands = ./.devin/check-sanitize.sh
 QMAKE_EXTRA_TARGETS += check-sanitize
+
+# `make check-static` runs the STAT01 analyzer sweep — builds its own
+# copy of the tree with gcc -fanalyzer (analyzer.pri), then replays
+# every compile line through clang++ --analyze, and writes the deduped
+# findings to .devin/STAT01-report.md (report-only, not a gate).
+check-static.target = check-static
+check-static.commands = ./.devin/check-static.sh
+QMAKE_EXTRA_TARGETS += check-static
