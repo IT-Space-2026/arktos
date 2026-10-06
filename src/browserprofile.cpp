@@ -23,6 +23,7 @@
 
 #include <qapplication.h>
 #include <qfile.h>
+#include <qregularexpression.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
@@ -55,6 +56,25 @@ QWebEngineProfile *privateProfile()
 QWebEngineProfile *privateProfileIfCreated()
 {
     return s_privateProfile;
+}
+
+QString defaultHttpUserAgent()
+{
+    // UA01: Qt's factory UA carries a "QtWebEngine/<ver>" product
+    // token that bot-detection fingerprints as automation — Google's
+    // /sorry/ interstitial fired on a plain google.com search.  Vanilla
+    // Chrome strings do not trip it, so Arora ships Qt's own default
+    // minus that token; the platform and bundled-Chromium version
+    // tokens stay accurate.  A throwaway anonymous profile is asked
+    // because the browsing profiles cannot be — applySettings() may
+    // already have overridden their UA by the time this runs.
+    static const QString userAgent = [] {
+        QWebEngineProfile probe;
+        QString ua = probe.httpUserAgent();
+        ua.remove(QRegularExpression(QLatin1String("\\s*QtWebEngine/\\S+")));
+        return ua;
+    }();
+    return userAgent;
 }
 
 // QWebEngineScript has no "replace" — remove a previously installed
@@ -169,6 +189,14 @@ void applySettings(QWebEngineProfile *profile)
     profile->setHttpAcceptLanguage(
         QString::fromUtf8(AcceptLanguageDialog::httpString(AcceptLanguageDialog::acceptLanguages())));
     settings.endGroup();
+
+    // UA01: the UserAgentMenu override lives in a top-level key.  When
+    // unset, send the de-badged vanilla UA rather than Qt's factory
+    // default — the "QtWebEngine/<ver>" token trips Google's bot check.
+    const QString userAgent =
+        settings.value(QLatin1String("userAgent")).toString();
+    profile->setHttpUserAgent(
+        userAgent.isEmpty() ? defaultHttpUserAgent() : userAgent);
 }
 
 } // namespace BrowserProfile

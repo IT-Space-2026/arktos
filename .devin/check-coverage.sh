@@ -84,7 +84,7 @@ TESTS_RC=$?
 SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --settings-smoke --autofill-smoke --find-smoke --source-smoke
---adblock-smoke --adblock-list-smoke --extension-smoke"
+--adblock-smoke --adblock-list-smoke --extension-smoke --ua-smoke"
 for flag in $SMOKE_FLAGS; do
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"

@@ -104,6 +104,10 @@ Coverage (COV02):
 Coverage (COV03):
     Four new test programs plus a DownloadModel extension cover the WebEngine-adjacent logic end to end offscreen: tst_schemehandlers drives the arora-file, arora-resource and abp:subscribe custom scheme handlers through real page loads (directory listings, stub-resource canonicalization, the subscribe confirmation dialog), tst_adblockrequestinterceptor runs the profile's request interceptor against an in-process HTTP server (subresource block, @@ exception, $redirect to bundled stubs, $removeparam rewriting, main-frame refusal), tst_locationbar exercises the location bar's modifier suffixes, url tracking, Escape/focus-out restore, drag & drop, site icon and privacy indicator, and tst_webview covers zoom, javascript: urls, Ctrl+wheel zoom, navigation mouse buttons, url drops and asynchronous in-page find. src/ line coverage is now 69.4% — the adblock interceptor is at 96%, the arora-resource handler at 100%, the file-access handler at 90% and the location bar at 91%.
 
+User agent (UA01):
+    Arora no longer sends the QtWebEngine-badged user agent. Qt's factory string carries a "QtWebEngine/<version>" product token that bot detection fingerprints as automation — Google's /sorry/ interstitial fired on an ordinary google.com search. The default UA is now a vanilla Chrome string (Qt's own default minus that token, so the bundled Chromium version and platform stay accurate), applied to both the normal and the private browsing profile.
+    The Tools > User Agent presets were a 2009 time capsule (IE 6-8, Opera 10/Presto, Safari 4, dead crawlers) and are refreshed to current Chrome/Edge/Firefox/Safari desktop and Android/iOS mobile entries plus current Googlebot/Bingbot. Custom override strings still work from the menu and now reach the off-the-record private profile too — the port previously wrote them to an unused WebEngine profile and cleared overrides by writing an empty user agent.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -20,6 +20,8 @@
 #ifndef BROWSERPROFILE_H
 #define BROWSERPROFILE_H
 
+#include <qstring.h>
+
 class QWebEngineProfile;
 
 // Application-wide QWebEngineProfile accessors and the code that
@@ -43,6 +45,11 @@ QWebEngineProfile *privateProfile();
 // private session without forcing one into existence (settings
 // re-application).
 QWebEngineProfile *privateProfileIfCreated();
+
+// The user agent Arora sends when no override is configured (UA01):
+// Qt's factory UA minus the "QtWebEngine/<ver>" product token, which
+// bot-detection fingerprints as automation (Google /sorry/ blocks).
+QString defaultHttpUserAgent();
 
 // Applies the persisted preferences to the profile's
 // QWebEngineSettings (was BrowserApplication::loadSettings() writing

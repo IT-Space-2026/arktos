@@ -22,6 +22,7 @@
 
 #include "autofillmanager.h"
 #include "browserapplication.h"
+#include "browserprofile.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
@@ -236,9 +237,18 @@ void WebPage::setUserAgent(const QString &userAgent)
 
     s_userAgent = userAgent;
 
-    // Applied to the default profile here; WebPage::init() applies it to
-    // whatever profile each new page is created on.
-    QWebEngineProfile::defaultProfile()->setHttpUserAgent(userAgent);
+    // Apply to every profile the app browses on: the named browsing
+    // profile and the off-the-record private profile when it exists.
+    // (QWebEngineProfile::defaultProfile() is itself off-the-record in
+    // Qt6 and Arora never browses on it — setting the UA there had no
+    // effect.)  An empty override restores the vanilla UA, not Qt's
+    // QtWebEngine-badged default.
+    const QString effectiveAgent = userAgent.isEmpty()
+        ? BrowserProfile::defaultHttpUserAgent()
+        : userAgent;
+    BrowserProfile::normalProfile()->setHttpUserAgent(effectiveAgent);
+    if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
+        otrProfile->setHttpUserAgent(effectiveAgent);
 }
 
 bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)

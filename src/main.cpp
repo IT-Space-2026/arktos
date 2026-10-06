@@ -65,6 +65,7 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
+#include <QtCore/QXmlStreamReader>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtGui/QAbstractTextDocumentLayout>
@@ -168,7 +169,7 @@ int main(int argc, char **argv)
         "bookmarks-smoke", "search-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
-        "app-smoke", "extension-smoke",
+        "app-smoke", "extension-smoke", "ua-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1667,6 +1668,114 @@ int main(int argc, char **argv)
 
         // exec() must run while this block's locals are still alive:
         // the finished-signal lambdas above capture them by reference.
+        return application.exec();
+    }
+
+    // Headless verification for UA01: the browsing profile must send a
+    // vanilla Chrome UA — Qt's factory default minus the
+    // "QtWebEngine/<ver>" product token Google's /sorry/ bot check
+    // fingerprints — while the UserAgentMenu override still wins and
+    // clearing it restores the vanilla UA on both the named and the
+    // off-the-record private profile.  The refreshed useragents.xml
+    // presets are sanity-checked too.  The live Google search at the
+    // end is report-only: offline runs SKIP it and a /sorry/ landing
+    // page means IP reputation, not the UA, tripped bot detection.
+    // Exits 0 when all local checks PASS.
+    if (args.contains(QLatin1String("--ua-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "ua-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        const QString vanilla = BrowserProfile::defaultHttpUserAgent();
+        check(!vanilla.isEmpty(), "default UA non-empty");
+        check(!vanilla.contains(QLatin1String("QtWebEngine")),
+              "no QtWebEngine token");
+        check(vanilla.contains(QLatin1String("Chrome/"))
+              && vanilla.contains(QLatin1String("Safari/")),
+              "vanilla UA is Chrome-shaped");
+        check(profile->httpUserAgent() == vanilla,
+              "browsing profile sends vanilla UA");
+
+        // The UserAgentMenu override wins; clearing it must restore
+        // the vanilla UA (an empty string used to be written back).
+        WebPage::setUserAgent(QLatin1String("smoke-ua/1.0"));
+        check(profile->httpUserAgent() == QLatin1String("smoke-ua/1.0"),
+              "override reaches browsing profile");
+        WebPage::setUserAgent(QString());
+        check(profile->httpUserAgent() == vanilla,
+              "clearing override restores vanilla UA");
+
+        // The off-the-record private profile gets the same treatment.
+        QWebEngineProfile *otr = BrowserProfile::privateProfile();
+        BrowserProfile::applySettings(otr);
+        check(otr->httpUserAgent() == vanilla,
+              "private profile sends vanilla UA");
+        WebPage::setUserAgent(QLatin1String("smoke-ua/1.0"));
+        check(otr->httpUserAgent() == QLatin1String("smoke-ua/1.0"),
+              "override reaches private profile");
+        WebPage::setUserAgent(QString());
+        check(otr->httpUserAgent() == vanilla,
+              "private profile restores vanilla UA");
+
+        // Preset file: parses, has entries, carries no dead-engine
+        // (MSIE/Presto/WebKit-era) or self-badged strings.
+        int presetCount = 0;
+        bool stalePreset = false;
+        {
+            QFile presets(QLatin1String(":/useragents/useragents.xml"));
+            check(presets.open(QIODevice::ReadOnly),
+                  "useragents.xml opens");
+            QXmlStreamReader xml(&presets);
+            while (!xml.atEnd()) {
+                xml.readNext();
+                if (!xml.isStartElement()
+                    || xml.name() != QLatin1String("useragent"))
+                    continue;
+                ++presetCount;
+                const QString preset = xml.attributes()
+                    .value(QLatin1String("useragent")).toString();
+                stalePreset |= preset.contains(QLatin1String("MSIE"))
+                    || preset.contains(QLatin1String("Presto"))
+                    || preset.contains(QLatin1String("QtWebKit"))
+                    || preset.contains(QLatin1String("QtWebEngine"));
+            }
+            check(xml.error() == QXmlStreamReader::NoError,
+                  "useragents.xml parses");
+            check(presetCount >= 8, "preset count");
+            check(!stalePreset, "no stale presets");
+        }
+
+        // Live check (report-only): a real Google search must not be
+        // diverted to the /sorry/ interstitial.
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [&application, view, failures](bool ok) {
+            if (!ok) {
+                qInfo() << "ua-smoke: live google SKIP"
+                           " (load failed — offline?)";
+                application.exit(failures ? 1 : 0);
+                return;
+            }
+            const QString url = view->url().toString();
+            const bool sorry = url.contains(QLatin1String("/sorry/"));
+            qInfo() << "ua-smoke: live google"
+                    << (sorry ? "WARN /sorry/ redirect (IP reputation,"
+                               " not the UA)" : "PASS")
+                    << url;
+            application.exit(failures ? 1 : 0);
+        });
+        QTimer::singleShot(30000, &application,
+            [&application, failures]() {
+            qInfo() << "ua-smoke: live google SKIP (timeout — offline?)";
+            application.exit(failures ? 1 : 0);
+        });
+        view->loadUrl(QUrl(QLatin1String(
+            "https://www.google.com/search?q=arora+browser")));
+
+        // exec() must run while 'failures' is still alive: the lambdas
+        // above capture it by reference.
         return application.exec();
     }
 
