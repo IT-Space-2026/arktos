@@ -68,7 +68,7 @@ void tst_OpenSearchManager::initTestCase()
     QCoreApplication::setApplicationName("opensearchtest");
 
     SubOpenSearchManager manager;
-    foreach (const QString &name, manager.allEnginesNames())
+    for (const QString &name : manager.allEnginesNames())
         manager.removeEngine(name);
     QCOMPARE(manager.enginesCount(), 1);
 }
@@ -92,7 +92,7 @@ void tst_OpenSearchManager::init()
 void tst_OpenSearchManager::cleanup()
 {
     SubOpenSearchManager manager;
-    foreach (const QString &name, manager.allEnginesNames())
+    for (const QString &name : manager.allEnginesNames())
         manager.removeEngine(name);
     QCOMPARE(manager.enginesCount(), 1);
 }
@@ -214,7 +214,7 @@ void tst_OpenSearchManager::restoreDefaults()
     manager.restoreDefaults();
     QCOMPARE(manager.enginesCount(), manager.defaultCount());
 
-    foreach (const QString &name, manager.allEnginesNames())
+    for (const QString &name : manager.allEnginesNames())
         manager.removeEngine(name);
 
     // Never let the manager have no engines.
@@ -250,8 +250,15 @@ void tst_OpenSearchManager::keywords()
 
         manager.restoreDefaults();
 
-        OpenSearchEngine *engine1 = manager.engine(manager.allEnginesNames().at(0));
-        OpenSearchEngine *engine2 = manager.engine(manager.allEnginesNames().at(1));
+        // m_engines is a QHash: keys() order depends on insertion
+        // order (directory listing order vs resource order), which is
+        // not stable between manager instances.  Pick deterministic
+        // engines by sorted name instead.
+        QStringList names = manager.allEnginesNames();
+        names.sort();
+        QVERIFY(names.count() >= 2);
+        OpenSearchEngine *engine1 = manager.engine(names.at(0));
+        OpenSearchEngine *engine2 = manager.engine(names.at(1));
 
         QCOMPARE(manager.keywordsForEngine(engine1), QStringList());
         QCOMPARE(manager.keywordsForEngine(engine2), QStringList());
@@ -264,7 +271,10 @@ void tst_OpenSearchManager::keywords()
         QCOMPARE(manager.engineForKeyword("bar"), engine1);
         QCOMPARE(manager.engineForKeyword("baz"), engine2);
 
-        QCOMPARE(manager.keywordsForEngine(engine1), QStringList() << "foo" << "bar");
+        // QHash::keys() order is unspecified; compare as sorted lists.
+        QStringList keys1 = manager.keywordsForEngine(engine1);
+        keys1.sort();
+        QCOMPARE(keys1, QStringList() << "bar" << "foo");
         QCOMPARE(manager.keywordsForEngine(engine2), QStringList() << "baz");
 
         manager.setKeywordsForEngine(engine1, QStringList() << "baz");
@@ -274,7 +284,9 @@ void tst_OpenSearchManager::keywords()
         QCOMPARE(manager.engineForKeyword("bar"), engine2);
         QCOMPARE(manager.engineForKeyword("baz"), engine1);
 
-        QCOMPARE(manager.keywordsForEngine(engine2), QStringList() << "foo" << "bar");
+        keys1 = manager.keywordsForEngine(engine2);
+        keys1.sort();
+        QCOMPARE(keys1, QStringList() << "bar" << "foo");
         QCOMPARE(manager.keywordsForEngine(engine1), QStringList() << "baz");
     }
 
@@ -283,14 +295,19 @@ void tst_OpenSearchManager::keywords()
 
         manager.restoreDefaults();
 
-        OpenSearchEngine *engine1 = manager.engine(manager.allEnginesNames().at(0));
-        OpenSearchEngine *engine2 = manager.engine(manager.allEnginesNames().at(1));
+        QStringList names = manager.allEnginesNames();
+        names.sort();
+        QVERIFY(names.count() >= 2);
+        OpenSearchEngine *engine1 = manager.engine(names.at(0));
+        OpenSearchEngine *engine2 = manager.engine(names.at(1));
 
         QCOMPARE(*manager.engineForKeyword("foo"), *engine2);
         QCOMPARE(*manager.engineForKeyword("bar"), *engine2);
         QCOMPARE(*manager.engineForKeyword("baz"), *engine1);
 
-        QCOMPARE(manager.keywordsForEngine(engine2), QStringList() << "foo" << "bar");
+        QStringList keys2 = manager.keywordsForEngine(engine2);
+        keys2.sort();
+        QCOMPARE(keys2, QStringList() << "bar" << "foo");
         QCOMPARE(manager.keywordsForEngine(engine1), QStringList() << "baz");
 
         manager.setEngineForKeyword("foo", 0);
@@ -328,10 +345,13 @@ void tst_OpenSearchManager::convertKeywordSearchToUrl()
 
     SubOpenSearchManager manager;
     manager.restoreDefaults();
-    OpenSearchEngine *engine1 = manager.engine(manager.allEnginesNames().at(0));
+    QStringList names = manager.allEnginesNames();
+    names.sort();
+    QVERIFY(names.count() >= 2);
+    OpenSearchEngine *engine1 = manager.engine(names.at(0));
     manager.setEngineForKeyword("foo", engine1);
     manager.setEngineForKeyword("bar", engine1);
-    OpenSearchEngine *engine2 = manager.engine(manager.allEnginesNames().at(1));
+    OpenSearchEngine *engine2 = manager.engine(names.at(1));
     manager.setEngineForKeyword("baz", engine2);
 
     QCOMPARE(manager.convertKeywordSearchToUrl(string).isValid(), valid);

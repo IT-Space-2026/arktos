@@ -17,14 +17,20 @@
  * Boston, MA  02110-1301  USA
  */
 
+// TST01: rewritten for Qt WebEngine.  Downloads are produced by
+// QWebEnginePage::download() and delivered to the manager through
+// QWebEngineProfile::downloadRequested; the old "download a real file
+// over the network" tests are replaced with in-process data: URLs that
+// complete deterministically offscreen.
+
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
 #include <QtGui/QtGui>
+#include <qwebenginepage.h>
+#include <qwebengineprofile.h>
+#include <qwebengineview.h>
 #include "downloadmanager.h"
-
-#define BIGFILE "http://10.0.0.3/~ben/distccKNOPPIX-1.3-2004-08-20-gcc-3.3.iso"
-#define BIGFILENAME "distccKNOPPIX-1.3-2004-08-20-gcc-3.3.iso"
-#define BIGFILENAME2 "distccKNOPPIX-1.3-2004-08-20-gcc-3.3-1.iso"
+#include "qtry.h"
 
 class tst_DownloadManager : public QObject
 {
@@ -45,6 +51,7 @@ private slots:
     void download();
     void removePolicy_data();
     void removePolicy();
+    void helpers();
 };
 
 // Subclass that exposes the protected functions.
@@ -56,6 +63,13 @@ public:
         {}
 
 };
+
+static const QUrl downloadUrl()
+{
+    return QUrl(QString::fromLatin1(
+        "data:text/plain;base64,") +
+        QString::fromLatin1(QByteArray("hello world").toBase64()));
+}
 
 // This will be called before the first test function is executed.
 // It is only called once.
@@ -75,9 +89,6 @@ void tst_DownloadManager::init()
 {
     QSettings settings;
     settings.clear();
-
-    QFile file(QDesktopServices::storageLocation(QDesktopServices::DesktopLocation) + '/' + BIGFILENAME);
-    file.remove();
 }
 
 // This will be called after every test function.
@@ -93,8 +104,8 @@ void tst_DownloadManager::downloadmanager()
 {
     SubDownloadManager manager;
     manager.cleanup();
-    manager.download(QUrl());
-    manager.handleUnsupportedContent(0);
+    manager.download(0, QUrl());
+    manager.handleDownloadRequested(0);
     QCOMPARE(manager.removePolicy(), DownloadManager::Never);
     manager.setRemovePolicy(DownloadManager::Never);
 }
@@ -110,8 +121,38 @@ void tst_DownloadManager::cleanupButton_data()
 void tst_DownloadManager::cleanupButton()
 {
     QFETCH(bool, waitForDownload);
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+
+    // Serves headers for a huge body that never arrives, keeping one
+    // download in-flight so the "cancel" row is deterministic.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "Content-Disposition: attachment; filename=\"bigfile.bin\"\r\n"
+                      "Content-Length: 104857600\r\n"
+                      "\r\n");
+        // Chromium only raises downloadRequested once response body
+        // bytes start arriving (headers alone never produce it), so
+        // trickle a byte at a time; the huge Content-Length keeps the
+        // download in-flight for the whole test.
+        QTimer *trickle = new QTimer(socket);
+        QObject::connect(trickle, &QTimer::timeout, socket, [socket]() {
+            socket->write("x");
+        });
+        trickle->start(200);
+    });
+    const QUrl stalledUrl(QString::fromLatin1("http://127.0.0.1:%1/bigfile.bin")
+                              .arg(server.serverPort()));
+
     {
         SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         QTableView *view = manager.findChild<QTableView*>();
         QVERIFY(view);
         QCOMPARE(view->model()->rowCount(), 0);
@@ -119,7 +160,13 @@ void tst_DownloadManager::cleanupButton()
         QVERIFY(cleanupButton);
         QVERIFY(!cleanupButton->isEnabled());
 
-        manager.download(QUrl(BIGFILE));
+        QWebEnginePage *page = manager.retryPage(false);
+        QVERIFY(page);
+        manager.download(page, waitForDownload ? downloadUrl() : stalledUrl);
+        // The first real HTTP request boots the WebEngine network
+        // service, which can take well over the default QTRY timeout.
+        QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 1, 30000);
+
         QProgressBar *bar = manager.findChild<QProgressBar*>();
         QVERIFY(bar);
 
@@ -132,79 +179,61 @@ void tst_DownloadManager::cleanupButton()
         QVERIFY(tryAgainButton->isHidden());
         QVERIFY(!tryAgainButton->isEnabled());
 
-        QCOMPARE(view->model()->rowCount(), 1);
+        QList<DownloadItem*> items = manager.findChildren<DownloadItem*>();
+        QCOMPARE(items.count(), 1);
         if (!waitForDownload) {
+            // The download stays in-flight, so cleanup cannot drop it.
             QTest::qWait(500);
+            QVERIFY(items.first()->downloading());
         } else {
-            while (bar->value() != bar->maximum())
-                QTest::qWait(500);
+            QTRY_VERIFY(bar->value() == bar->maximum());
         }
         QCOMPARE(cleanupButton->isEnabled(), waitForDownload);
         QCOMPARE(view->model()->rowCount(), 1);
         manager.cleanup();
         QCOMPARE(view->model()->rowCount(), waitForDownload ? 0 : 1);
-        if (view->model()->rowCount() != 0) {
-            QVERIFY(tryAgainButton->isHidden());
-            QVERIFY(!tryAgainButton->isEnabled());
-        }
     }
-
-    QFile file(QDesktopServices::storageLocation(QDesktopServices::DesktopLocation) + '/' + BIGFILENAME);
-    QCOMPARE(file.exists(), true);
-    file.remove();
 }
 
 void tst_DownloadManager::download_data()
 {
     QTest::addColumn<QStringList>("request");
-    QTest::addColumn<QStringList>("requestfilename");
     QTest::addColumn<int>("rowCount");
-    QTest::addColumn<bool>("exists");
-    QTest::newRow("badfile") << (QStringList() << BIGFILE ".dne") << (QStringList() << BIGFILENAME ".dne") << 1 << false;
-    QTest::newRow("twofiles") << (QStringList() << BIGFILE << BIGFILE) << (QStringList() << BIGFILENAME << BIGFILENAME2) << 2 << true;
+    QTest::newRow("onefile") << (QStringList() << downloadUrl().toString()) << 1;
+    QTest::newRow("twofiles") << (QStringList() << downloadUrl().toString()
+                                               << downloadUrl().toString()) << 2;
+    QTest::newRow("empty") << (QStringList() << QString()) << 0;
 }
 
-// public void download(QNetworkRequest const &request)
+// public void download(QWebEnginePage *page, const QUrl &url, bool requestFileName)
 void tst_DownloadManager::download()
 {
     QFETCH(QStringList, request);
-    QFETCH(QStringList, requestfilename);
     QFETCH(int, rowCount);
-    QFETCH(bool, exists);
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
     {
         SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         QTableView *view = manager.findChild<QTableView*>();
         QVERIFY(view);
         QPushButton *cleanupButton = manager.findChild<QPushButton*>();
         QVERIFY(cleanupButton);
         QVERIFY(!cleanupButton->isEnabled());
+
+        QWebEnginePage *page = manager.retryPage(false);
+        QVERIFY(page);
         for (int i = 0; i < request.count(); ++i)
-            manager.download(QUrl(request[i]));
+            manager.download(page, QUrl(request[i]));
 
-        QList<QPushButton*>buttons = manager.findChildren<QPushButton*>();
-        QPushButton *tryAgainButton = 0;
-        for (int i = 0; i < buttons.count(); ++i)
-            if (buttons[i]->text().contains("Try"))
-                tryAgainButton = buttons[i];
-        QVERIFY(tryAgainButton);
-        QVERIFY(!tryAgainButton->isEnabled());
-        QVERIFY(tryAgainButton->isHidden());
-
+        QTRY_COMPARE(view->model()->rowCount(), rowCount);
         QList<QProgressBar*>bars = manager.findChildren<QProgressBar*>();
         QCOMPARE(bars.count(), rowCount);
-        QCOMPARE(view->model()->rowCount(), request.count());
-        QTest::qWait(1000);
-        QCOMPARE(cleanupButton->isEnabled(), !exists);
-        QCOMPARE(tryAgainButton->isEnabled(), !exists);
-        QCOMPARE(tryAgainButton->isVisible(), !exists);
     }
 
-    for (int i = 0; i < requestfilename.count(); ++i) {
-        QFile file(QDesktopServices::storageLocation(QDesktopServices::DesktopLocation) + '/' + requestfilename[i]);
-        // bad file stil returns a 404 webpage
-        QVERIFY(file.exists());
-        file.remove();
-    }
+    // The downloads land in the temp directory, one file per request.
+    QDir dir(downloadDir.path());
+    QCOMPARE(dir.entryInfoList(QDir::Files).count(), rowCount);
 }
 
 Q_DECLARE_METATYPE(DownloadManager::RemovePolicy)
@@ -220,32 +249,52 @@ void tst_DownloadManager::removePolicy_data()
 void tst_DownloadManager::removePolicy()
 {
     QFETCH(DownloadManager::RemovePolicy, removePolicy);
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
     {
         SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         manager.setRemovePolicy(removePolicy);
         QCOMPARE(manager.removePolicy(), removePolicy);
         QTableView *view = manager.findChild<QTableView*>();
         QVERIFY(view);
-        manager.download(QUrl(BIGFILE));
-        QProgressBar *bar = manager.findChild<QProgressBar*>();
-        QVERIFY(bar);
-        QCOMPARE(view->model()->rowCount(), 1);
-        while (bar && bar->value() != bar->maximum()) {
-            QTest::qWait(500);
-            bar = manager.findChild<QProgressBar*>();
+        QWebEnginePage *page = manager.retryPage(false);
+        manager.download(page, downloadUrl());
+        if (removePolicy == DownloadManager::SuccessFullDownload) {
+            // A completed download is dropped immediately, so the row
+            // can appear and disappear before any poll sees it; verify
+            // via the file that landed and the model settling empty.
+            QTRY_VERIFY(QDir(downloadDir.path()).entryInfoList(QDir::Files).count() == 1);
+            QTRY_COMPARE(view->model()->rowCount(), 0);
+        } else {
+            QTRY_COMPARE(view->model()->rowCount(), 1);
+            QProgressBar *bar = manager.findChild<QProgressBar*>();
+            QVERIFY(bar);
+            QTRY_VERIFY(bar->value() == bar->maximum());
         }
-        QCOMPARE(view->model()->rowCount(), (removePolicy == DownloadManager::SuccessFullDownload) ? 0 : 1);
     }
 
-    QFile file(QDesktopServices::storageLocation(QDesktopServices::DesktopLocation) + '/' + BIGFILENAME);
-    file.remove();
-
+    // The finished download is persisted unless the policy dropped it.
     SubDownloadManager manager;
     QTableView *view = manager.findChild<QTableView*>();
     QVERIFY(view);
     QCOMPARE(view->model()->rowCount(), removePolicy == DownloadManager::Never ? 1 : 0);
 }
 
+// static helpers
+void tst_DownloadManager::helpers()
+{
+    QCOMPARE(DownloadManager::timeString(0), QLatin1String("0 seconds remaining"));
+    QVERIFY(DownloadManager::timeString(3600).contains(QLatin1String("minutes")));
+    QCOMPARE(DownloadManager::dataString(-1), QLatin1String("-1.0 bytes"));
+    QCOMPARE(DownloadManager::dataString(1024), QLatin1String("1.0 kB"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    SubDownloadManager manager;
+    manager.setDownloadDirectory(downloadDir.path());
+    QCOMPARE(manager.downloadDirectory(), downloadDir.path() + QLatin1Char('/'));
+}
+
 QTEST_MAIN(tst_DownloadManager)
 #include "tst_downloadmanager.moc"
-

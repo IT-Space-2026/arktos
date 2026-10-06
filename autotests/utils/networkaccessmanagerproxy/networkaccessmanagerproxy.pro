@@ -1,12 +1,12 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_networkaccessmanagerproxy
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../../autotests.pri)
 
 # Input
-SOURCES = tst_networkaccessmanagerproxy.cpp networkaccessmanagerproxy.cpp webpageproxy.cpp
-HEADERS = networkaccessmanagerproxy.h networkaccessmanagerproxy_p.h webpageproxy.h
+SOURCES += tst_networkaccessmanagerproxy.cpp networkaccessmanagerproxy.cpp webpageproxy.cpp
+HEADERS += networkaccessmanagerproxy.h networkaccessmanagerproxy_p.h webpageproxy.h
 FORMS =
 RESOURCES =

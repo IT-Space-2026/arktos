@@ -1,10 +1,9 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_autosaver
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../autotests.pri)
 
 # Input
-SOURCES = tst_autosaver.cpp autosaver.cpp
-HEADERS = autosaver.h
+SOURCES += tst_autosaver.cpp

@@ -1,21 +1,10 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_opensearchreader
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../autotests.pri)
 
-SOURCES = \
-    opensearchengine.cpp \
-    opensearchreader.cpp \
-    tst_opensearchreader.cpp
+SOURCES += tst_opensearchreader.cpp
 
-HEADERS = \
-    opensearchengine.h \
-    opensearchreader.h
-
-FORMS =
-
-RESOURCES = \
-    opensearchreader.qrc
-
+RESOURCES += opensearchreader.qrc

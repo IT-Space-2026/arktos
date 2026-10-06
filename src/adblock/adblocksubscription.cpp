@@ -88,7 +88,7 @@ void AdBlockSubscription::parseUrl(const QUrl &url)
     m_title = query.queryItemValue(QLatin1String("title"), QUrl::PrettyDecoded);
     m_enabled = query.queryItemValue(QLatin1String("enabled"), QUrl::PrettyDecoded) != QLatin1String("false");
     m_location = query.queryItemValue(QLatin1String("location"), QUrl::FullyDecoded).toUtf8();
-    const QString lastUpdateString = query.queryItemValue(QLatin1String("lastUpdate"), QUrl::PrettyDecoded);
+    const QString lastUpdateString = query.queryItemValue(QLatin1String("lastUpdate"), QUrl::FullyDecoded);
     m_lastUpdate = QDateTime::fromString(lastUpdateString, Qt::ISODate);
     loadRules();
 }

@@ -1,12 +1,9 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_lineedit
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../../autotests.pri)
 
 # Input
-SOURCES = tst_lineedit.cpp lineedit.cpp
-HEADERS = lineedit.h lineedit_p.h
-FORMS =
-RESOURCES =
+SOURCES += tst_lineedit.cpp

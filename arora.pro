@@ -3,8 +3,7 @@ lessThan(QT_MAJOR_VERSION, 6) {
 }
 
 TEMPLATE = subdirs
-SUBDIRS  = src tools
-# TODO(TST01): re-enable autotests once the suite is ported to Qt6.
+SUBDIRS  = src tools autotests
 CONFIG += ordered
 
 unix {
@@ -14,3 +13,9 @@ unix {
     doxygen.depends = Doxyfile
     QMAKE_EXTRA_TARGETS += doxygen
 }
+
+# `make check` builds and runs the QtTest suite headless.
+check.target = check
+check.commands = cd autotests && ./runTests.sh
+check.depends = sub-src sub-autotests
+QMAKE_EXTRA_TARGETS += check

@@ -282,6 +282,18 @@ void AdBlockManager::load()
     for (const QString &subscription : subscriptions) {
         QUrl url = QUrl::fromEncoded(subscription.toUtf8());
         AdBlockSubscription *adBlockSubscription = new AdBlockSubscription(url, this);
+        // Skip a stored entry that duplicates an already-loaded
+        // subscription: the custom-rules subscription can be created
+        // on demand before load() runs.
+        for (const AdBlockSubscription *existing : m_subscriptions) {
+            if (existing->location() == adBlockSubscription->location()) {
+                delete adBlockSubscription;
+                adBlockSubscription = 0;
+                break;
+            }
+        }
+        if (!adBlockSubscription)
+            continue;
         connect(adBlockSubscription, &AdBlockSubscription::rulesChanged, this, &AdBlockManager::rulesChanged);
         connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
         m_subscriptions.append(adBlockSubscription);

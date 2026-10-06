@@ -1,5 +1,5 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_addbookmarkdialog
 DEPENDPATH += .
 INCLUDEPATH += .
 

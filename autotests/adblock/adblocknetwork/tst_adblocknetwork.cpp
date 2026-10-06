@@ -87,7 +87,7 @@ void tst_AdBlockNetwork::cleanup()
 {
     AdBlockManager *manager = AdBlockManager::instance();
     QList<AdBlockSubscription*> list = manager->subscriptions();
-    foreach (AdBlockSubscription *s, list)
+    for (AdBlockSubscription *s : list)
         manager->removeSubscription(s);
 }
 
@@ -205,7 +205,7 @@ void tst_AdBlockNetwork::block()
     manager->addSubscription(subscription);
 
     QStringList rules = ruleList.split(",");
-    foreach (const QString &rule, rules)
+    for (const QString &rule : rules)
         subscription->addRule(AdBlockRule(rule));
 
     network.rebuildRules();

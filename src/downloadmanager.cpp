@@ -241,12 +241,27 @@ QString DownloadItem::saveFileName(const QString &directory) const
         endName = QLatin1Char('.') + endName;
 
     QString name = directory + baseName + endName;
-    if (!m_requestFileName && QFile::exists(name)) {
+    // A name is taken when the file exists on disk or when another
+    // in-flight download has already claimed it (files land later, so
+    // QFile::exists alone does not cover parallel downloads).
+    const auto nameInUse = [this](const QString &path) {
+        if (QFile::exists(path))
+            return true;
+        const DownloadManager *manager = qobject_cast<const DownloadManager*>(parent());
+        if (!manager)
+            return false;
+        for (const DownloadItem *item : manager->m_downloads) {
+            if (item != this && item->m_outputFileName == path)
+                return true;
+        }
+        return false;
+    };
+    if (!m_requestFileName && nameInUse(name)) {
         // already exists, don't overwrite
         int i = 1;
         do {
             name = directory + baseName + QLatin1Char('-') + QString::number(i++) + endName;
-        } while (QFile::exists(name));
+        } while (nameInUse(name));
     }
     return name;
 }

@@ -6,6 +6,7 @@ SUBDIRS  = \
     autosaver \
     bookmarknode \
     cookiejar \
+    downloadmanager \
     historyfiltermodel \
     historymanager \
     modeltoolbar \

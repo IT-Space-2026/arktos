@@ -26,6 +26,10 @@
  * SUCH DAMAGE.
  */
 
+// TST01: ported to QtWebEngine.  Cosmetic rules now inject a <style>
+// element asynchronously through runJavaScript, so the test counts
+// visible elements via computed style instead of scanning the HTML.
+
 #include <qtest.h>
 #include <qsignalspy.h>
 #include <qtry.h>
@@ -36,8 +40,9 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
-#include <qwebview.h>
-#include <qwebframe.h>
+#include <qwebengineview.h>
+#include <qwebenginepage.h>
+#include <qelapsedtimer.h>
 #include <qdebug.h>
 #include <qdir.h>
 
@@ -66,6 +71,16 @@ public:
 
 };
 
+// Counts the tofu-bearing elements that are still visible; all seven
+// elements in test.html match this selector set.
+static const char *visibleCountScript =
+    "(function(){"
+    "var els=document.querySelectorAll('div,textad,table');"
+    "var n=0;"
+    "for(var i=0;i<els.length;i++)"
+    "  if(getComputedStyle(els[i]).display!=='none')n++;"
+    "return n;})()";
+
 // This will be called before the first test function is executed.
 // It is only called once.
 void tst_AdBlockPage::initTestCase()
@@ -88,7 +103,7 @@ void tst_AdBlockPage::cleanup()
 {
     AdBlockManager *manager = AdBlockManager::instance();
     QList<AdBlockSubscription*> list = manager->subscriptions();
-    foreach (AdBlockSubscription *s, list)
+    for (AdBlockSubscription *s : list)
         manager->removeSubscription(s);
 }
 
@@ -99,7 +114,7 @@ void tst_AdBlockPage::adblockpage_data()
 void tst_AdBlockPage::adblockpage()
 {
     SubAdBlockPage page;
-    page.applyRulesToPage((QWebPage*)0);
+    page.applyRulesToPage((QWebEnginePage*)0);
 }
 
 void tst_AdBlockPage::applyRulesToPage_data()
@@ -126,7 +141,7 @@ void tst_AdBlockPage::applyRulesToPage_data()
     // Advanced selectors
 }
 
-// public void applyRulesToPage(QWebPage *page)
+// public void applyRulesToPage(QWebEnginePage *page)
 void tst_AdBlockPage::applyRulesToPage()
 {
     QFETCH(QString, ruleList);
@@ -140,21 +155,35 @@ void tst_AdBlockPage::applyRulesToPage()
     manager->addSubscription(subscription);
 
     QStringList rules = ruleList.split(",");
-    foreach (const QString &rule, rules)
+    for (const QString &rule : rules)
         subscription->addRule(AdBlockRule(rule));
 
-    QWebView view;
+    QWebEngineView view;
     QSignalSpy spy1(view.page(), SIGNAL(loadFinished(bool)));
     view.load(QUrl::fromLocalFile(QDir::currentPath() + "/test.html"));
-    QTRY_COMPARE(spy1.count(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(spy1.count() >= 1, 15000);
 
     SubAdBlockPage page;
     page.applyRulesToPage(view.page());
-    if (view.page()->mainFrame()->toHtml().count("tofu") != count)
-        qDebug() << view.page()->mainFrame()->toHtml();
-    QCOMPARE(view.page()->mainFrame()->toHtml().count("tofu"), count);
+
+    // The <style> injection is asynchronous; keep evaluating until the
+    // visible-element count settles or the deadline passes.
+    int visible = -1;
+    QElapsedTimer deadline;
+    deadline.start();
+    do {
+        bool jsDone = false;
+        int result = -1;
+        view.page()->runJavaScript(QString::fromLatin1(visibleCountScript),
+                [&](const QVariant &v) { result = v.toInt(); jsDone = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(jsDone, 15000);
+        visible = result;
+        if (visible == count)
+            break;
+        QTest::qWait(100);
+    } while (deadline.elapsed() < 10000);
+    QCOMPARE(visible, count);
 }
 
 QTEST_MAIN(tst_AdBlockPage)
 #include "tst_adblockpage.moc"
-

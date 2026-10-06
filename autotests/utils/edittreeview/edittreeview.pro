@@ -1,12 +1,9 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_edittreeview
 DEPENDPATH += .
-INCLUDEPATH += . ../
+INCLUDEPATH += .
 
 include(../../autotests.pri)
 
 # Input
-SOURCES = tst_edittreeview.cpp edittreeview.cpp
-HEADERS = edittreeview.h
-FORMS =
-RESOURCES =
+SOURCES += tst_edittreeview.cpp

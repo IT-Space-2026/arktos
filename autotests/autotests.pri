@@ -1,12 +1,12 @@
 win32: CONFIG += console
 mac:CONFIG -= app_bundle
 
-CONFIG += qtestlib
+QT += testlib
 
 include($$PWD/../src/src.pri)
 include($$PWD/modeltest/modeltest.pri)
 
-HEADERS += qtest_arora.h
+HEADERS += $$PWD/qtest_arora.h
 
 DEFINES += AUTOTESTS
 

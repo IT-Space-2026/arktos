@@ -33,6 +33,7 @@
 #include <adblocksubscription.h>
 
 #include <qdir.h>
+#include <qurlquery.h>
 
 class tst_AdBlockSubscription : public QObject
 {
@@ -246,7 +247,12 @@ void tst_AdBlockSubscription::location()
     bool changed = location != subscription.location();
     subscription.setLocation(location);
     QCOMPARE(subscription.location(), location);
-    QCOMPARE(subscription.url(), QUrl(QString("abp:subscribe?location=%1&title=").arg(location.toString())));
+    QUrl expectedUrl(QStringLiteral("abp:subscribe"));
+    QUrlQuery expectedQuery;
+    expectedQuery.addQueryItem(QLatin1String("location"), location.toString());
+    expectedQuery.addQueryItem(QLatin1String("title"), QString());
+    expectedUrl.setQuery(expectedQuery);
+    QCOMPARE(subscription.url(), expectedUrl);
 
     QCOMPARE(spy0.count(), 0);
     QCOMPARE(spy1.count(), changed ? 1 : 0);

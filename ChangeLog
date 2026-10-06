@@ -91,6 +91,10 @@ Extensions (EXT01):
 Tools (TOOL01):
     Port the bundled command-line tools to Qt 6 and build them again with the browser. htmlToXBel no longer needs a web engine — Netscape bookmark HTML is scanned by a small forgiving parser and written out as XBEL, and bookmark folders marked FOLDED now export folded="true". arora-cacheinfo inspects Arora's application-level network disk cache under the standard cache location (QtWebEngine's own Chromium cache stays opaque). arora-placesimport imports Firefox places.sqlite visits into the current history store.
 
+Test suite (TST01):
+    The qtest suite builds and runs against Qt 6 again: `make check` (or autotests/runTests.sh) runs 27 test programs headless and reports failure honestly. The vendored ModelTest class was replaced by QtTest's QAbstractItemModelTester, tests that only exercised QtWebKit APIs are skipped (webPluginFactory/createPlugin), and the WebKit-only proxy tests (webpageproxy, networkaccessmanagerproxy) are dropped from the build since their modules no longer exist.
+    Porting the tests surfaced three real fixes in the application: AdBlockManager::load() now skips stored subscriptions that duplicate an already-loaded one (the custom-rules subscription can exist before load runs), AdBlockSubscription correctly parses percent-encoded lastUpdate timestamps, and DownloadItem no longer lets two simultaneous downloads claim the same file name (previously they could overwrite each other — only on-disk files were deduplicated).
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

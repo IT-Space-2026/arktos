@@ -1,12 +1,12 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_webpageproxy
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../../autotests.pri)
 
 # Input
-SOURCES = tst_webpageproxy.cpp webpageproxy.cpp
-HEADERS = webpageproxy.h
+SOURCES += tst_webpageproxy.cpp webpageproxy.cpp
+HEADERS += webpageproxy.h
 FORMS =
 RESOURCES =

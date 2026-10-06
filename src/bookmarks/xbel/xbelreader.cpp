@@ -87,7 +87,8 @@ BookmarkNode *XbelReader::read(QIODevice *device)
     // Qt6 removed QXmlStreamEntityResolver: expand the entities the old
     // XmlEntityResolver resolved (just &nbsp;) before parsing.
     QByteArray data = device->readAll();
-    data.replace("&nbsp;", "&#160;");
+    data.replace("&nbsp;", " ");
+    clear();
     addData(data);
     while (!atEnd()) {
         readNext();

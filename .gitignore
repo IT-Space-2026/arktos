@@ -22,3 +22,10 @@ doc/
 .qmake.stash
 
 src/adblock/rust/target/
+
+# autotest binaries and in-tree moc artifacts
+autotests/**/tst_*
+!autotests/**/*.cpp
+!autotests/**/*.h
+*.moc
+moc_predefs.h

@@ -19,7 +19,7 @@
 
 #include <QtTest/QtTest>
 #include <modeltoolbar.h>
-#include "qtry.h"
+#include "qtest_arora.h"
 
 #include "browserapplication.h"
 #include "modelmenu.h"
@@ -268,14 +268,14 @@ void tst_ModelToolBar::activated()
             widget = &bar;
 
         QTest::mouseClick(widget, Qt::LeftButton, Qt::NoModifier, bar.mapToGlobal(point));
-        QTest::mouseClick(widget, Qt::MidButton, Qt::ShiftModifier, bar.mapToGlobal(point));
+        QTest::mouseClick(widget, Qt::MiddleButton, Qt::ShiftModifier, bar.mapToGlobal(point));
         QTRY_COMPARE(spy.count(), (bool)action * 2);
 
         if (spy.count())
             QCOMPARE(spy.at(0).at(0).value<QModelIndex>(), bar.index(action));
 
         if (action) {
-            QCOMPARE(BrowserApplication::instance()->eventMouseButtons(), Qt::MidButton);
+            QCOMPARE(BrowserApplication::instance()->eventMouseButtons(), Qt::MiddleButton);
             QCOMPARE(BrowserApplication::instance()->eventKeyboardModifiers(), Qt::ShiftModifier);
         }
 

@@ -17,7 +17,13 @@
  * Boston, MA  02110-1301  USA
  */
 
+// TST01: rewritten for the Qt WebEngine CookieJar.  The jar now wraps
+// QWebEngineCookieStore; writes to the store are asynchronous, so
+// assertions about the cookie mirror use QTRY_VERIFY.
+
 #include <QtTest/QtTest>
+#include <QtTest/QSignalSpy>
+#include <QNetworkCookie>
 #include <cookiejar.h>
 
 class tst_CookieJar : public QObject
@@ -31,7 +37,6 @@ public slots:
     void cleanup();
 
 private slots:
-    void cookiejar_data();
     void cookiejar();
 
     void acceptPolicy_data();
@@ -42,13 +47,10 @@ private slots:
     void allowForSessionCookies();
     void blockedCookies_data();
     void blockedCookies();
-    void clear_data();
     void clear();
-    void cookiesForUrl_data();
     void cookiesForUrl();
     void keepPolicy_data();
     void keepPolicy();
-    void loadSettings_data();
     void loadSettings();
     void setAcceptPolicy_data();
     void setAcceptPolicy();
@@ -62,7 +64,6 @@ private slots:
     void setCookiesFromUrl();
     void setKeepPolicy_data();
     void setKeepPolicy();
-    void cookiesChanged_data();
     void cookiesChanged();
     void isOnDomainList_data();
     void isOnDomainList();
@@ -79,10 +80,21 @@ public:
         { return SubCookieJar::isOnDomainList(list, domain); }
 };
 
+static QNetworkCookie makeCookie(const QString &domain, const QByteArray &name = "a",
+                                 const QByteArray &value = "b")
+{
+    QNetworkCookie cookie(name, value);
+    cookie.setDomain(domain);
+    return cookie;
+}
+
 // This will be called before the first test function is executed.
 // It is only called once.
 void tst_CookieJar::initTestCase()
 {
+    QCoreApplication::setApplicationName("tst_cookiejar");
+    QSettings settings;
+    settings.clear();
 }
 
 // This will be called after the last test function is executed.
@@ -94,6 +106,10 @@ void tst_CookieJar::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_CookieJar::init()
 {
+    // Prior tests may have persisted policy/exception settings via the
+    // AutoSaver in ~CookieJar; start each test from a clean slate.
+    QSettings settings;
+    settings.clear();
 }
 
 // This will be called after every test function.
@@ -101,412 +117,295 @@ void tst_CookieJar::cleanup()
 {
 }
 
-void tst_CookieJar::cookiejar_data()
-{
-}
-
 void tst_CookieJar::cookiejar()
 {
     SubCookieJar jar;
-#if 0
-    QCOMPARE(jar.acceptPolicy(), CookieJar::AcceptPolicy);
-    QCOMPARE(jar.allowedCookies(), QStringList);
-    QCOMPARE(jar.allowForSessionCookies(), QStringList);
-    QCOMPARE(jar.blockedCookies(), QStringList);
-    jar.clear();
-    QCOMPARE(jar.cookiesForUrl(QUrl()), QList<QNetworkCookie>());
-    QCOMPARE(jar.keepPolicy(), CookieJar::KeepPolicy);
+    QCOMPARE(jar.acceptPolicy(), CookieJar::AcceptOnlyFromSitesNavigatedTo);
+    QCOMPARE(jar.allowedCookies(), QStringList());
+    QCOMPARE(jar.allowForSessionCookies(), QStringList());
+    QCOMPARE(jar.blockedCookies(), QStringList());
+    QCOMPARE(jar.keepPolicy(), CookieJar::KeepUntilExpire);
     jar.loadSettings();
-    jar.setAcceptPolicy(CookieJar::AcceptPolicy);
-    jar.setAllowedCookies(QStringList());
-    jar.setAllowForSessionCookies(QStringList());
-    jar.setBlockedCookies(QStringList());
     QCOMPARE(jar.setCookiesFromUrl(QList<QNetworkCookie>(), QUrl()), false);
-    jar.setKeepPolicy(CookieJar::KeepPolicy);
-    jar.call_cookiesChanged();
     QCOMPARE(jar.call_isOnDomainList(QStringList(), QString()), false);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
 }
 
 Q_DECLARE_METATYPE(CookieJar::AcceptPolicy)
 void tst_CookieJar::acceptPolicy_data()
 {
-#if 0
     QTest::addColumn<CookieJar::AcceptPolicy>("acceptPolicy");
-    QTest::newRow("null") << CookieJar::AcceptPolicy();
-#endif
+    QTest::newRow("default") << CookieJar::AcceptOnlyFromSitesNavigatedTo;
 }
 
 // public CookieJar::AcceptPolicy acceptPolicy() const
 void tst_CookieJar::acceptPolicy()
 {
-#if 0
     QFETCH(CookieJar::AcceptPolicy, acceptPolicy);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     QCOMPARE(jar.acceptPolicy(), acceptPolicy);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
 }
 
 void tst_CookieJar::allowedCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("allowedCookies");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public QStringList allowedCookies() const
 void tst_CookieJar::allowedCookies()
 {
-#if 0
     QFETCH(QStringList, allowedCookies);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
+    jar.setAllowedCookies(allowedCookies);
     QCOMPARE(jar.allowedCookies(), allowedCookies);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
 }
 
 void tst_CookieJar::allowForSessionCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("allowForSessionCookies");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public QStringList allowForSessionCookies() const
 void tst_CookieJar::allowForSessionCookies()
 {
-#if 0
     QFETCH(QStringList, allowForSessionCookies);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
+    jar.setAllowForSessionCookies(allowForSessionCookies);
     QCOMPARE(jar.allowForSessionCookies(), allowForSessionCookies);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
 }
 
 void tst_CookieJar::blockedCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("blockedCookies");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public QStringList blockedCookies() const
 void tst_CookieJar::blockedCookies()
 {
-#if 0
     QFETCH(QStringList, blockedCookies);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
+    jar.setBlockedCookies(blockedCookies);
     QCOMPARE(jar.blockedCookies(), blockedCookies);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
-}
-
-void tst_CookieJar::clear_data()
-{
-    QTest::addColumn<int>("foo");
-    QTest::newRow("0") << 0;
-    QTest::newRow("-1") << -1;
 }
 
 // public void clear()
 void tst_CookieJar::clear()
 {
-#if 0
-    QFETCH(int, foo);
-
     SubCookieJar jar;
+    jar.setCookies(QList<QNetworkCookie>() << makeCookie("foo.com"));
+    QCOMPARE(jar.cookies().count(), 1);
 
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
+    QSignalSpy spy(&jar, SIGNAL(cookiesChanged()));
     jar.clear();
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
-}
-
-void tst_CookieJar::cookiesForUrl_data()
-{
-#if 0
-    QTest::addColumn<QUrl>("url");
-    QTest::addColumn<QList<QNetworkCookie>>("cookiesForUrl");
-    QTest::newRow("null") << QUrl() << QList<QNetworkCookie>();
-#endif
+    QCOMPARE(jar.cookies().count(), 0);
+    QCOMPARE(spy.count(), 1);
 }
 
 // public QList<QNetworkCookie> cookiesForUrl(QUrl const &url) const
 void tst_CookieJar::cookiesForUrl()
 {
-#if 0
-    QFETCH(QUrl, url);
-    QFETCH(QList<QNetworkCookie>, cookiesForUrl);
-
     SubCookieJar jar;
+    QCOMPARE(jar.cookiesForUrl(QUrl()), QList<QNetworkCookie>());
 
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
+    QNetworkCookie foo = makeCookie("foo.com");
+    QNetworkCookie bar = makeCookie("bar.com", "c", "d");
+    jar.setCookies(QList<QNetworkCookie>() << foo << bar);
 
-    QCOMPARE(jar.cookiesForUrl(url), cookiesForUrl);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.cookiesForUrl(QUrl("http://foo.com/")),
+             QList<QNetworkCookie>() << foo);
+    QCOMPARE(jar.cookiesForUrl(QUrl("http://bar.com/")),
+             QList<QNetworkCookie>() << bar);
+    QCOMPARE(jar.cookiesForUrl(QUrl("http://baz.com/")),
+             QList<QNetworkCookie>());
 }
 
 Q_DECLARE_METATYPE(CookieJar::KeepPolicy)
 void tst_CookieJar::keepPolicy_data()
 {
-#if 0
     QTest::addColumn<CookieJar::KeepPolicy>("keepPolicy");
-    QTest::newRow("null") << CookieJar::KeepPolicy();
-#endif
+    QTest::newRow("default") << CookieJar::KeepUntilExpire;
 }
 
 // public CookieJar::KeepPolicy keepPolicy() const
 void tst_CookieJar::keepPolicy()
 {
-#if 0
     QFETCH(CookieJar::KeepPolicy, keepPolicy);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     QCOMPARE(jar.keepPolicy(), keepPolicy);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
-}
-
-void tst_CookieJar::loadSettings_data()
-{
-    QTest::addColumn<int>("foo");
-    QTest::newRow("0") << 0;
-    QTest::newRow("-1") << -1;
 }
 
 // public void loadSettings()
 void tst_CookieJar::loadSettings()
 {
-#if 0
-    QFETCH(int, foo);
+    QSettings settings;
+    settings.beginGroup(QLatin1String("cookies"));
+    settings.setValue(QLatin1String("acceptCookies"), QLatin1String("AcceptAlways"));
+    settings.setValue(QLatin1String("keepCookiesUntil"), QLatin1String("KeepUntilExit"));
+    settings.endGroup();
 
     SubCookieJar jar;
+    QCOMPARE(jar.acceptPolicy(), CookieJar::AcceptAlways);
+    QCOMPARE(jar.keepPolicy(), CookieJar::KeepUntilExit);
 
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
-    jar.loadSettings();
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    settings.beginGroup(QLatin1String("cookies"));
+    settings.remove(QLatin1String("acceptCookies"));
+    settings.remove(QLatin1String("keepCookiesUntil"));
+    settings.endGroup();
 }
 
 void tst_CookieJar::setAcceptPolicy_data()
 {
-#if 0
     QTest::addColumn<CookieJar::AcceptPolicy>("policy");
-    QTest::newRow("null") << CookieJar::AcceptPolicy();
-#endif
+    QTest::newRow("always") << CookieJar::AcceptAlways;
+    QTest::newRow("never") << CookieJar::AcceptNever;
+    QTest::newRow("navigated") << CookieJar::AcceptOnlyFromSitesNavigatedTo;
 }
 
 // public void setAcceptPolicy(CookieJar::AcceptPolicy policy)
 void tst_CookieJar::setAcceptPolicy()
 {
-#if 0
     QFETCH(CookieJar::AcceptPolicy, policy);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     jar.setAcceptPolicy(policy);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.acceptPolicy(), policy);
 }
 
 void tst_CookieJar::setAllowedCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("list");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public void setAllowedCookies(QStringList const &list)
 void tst_CookieJar::setAllowedCookies()
 {
-#if 0
     QFETCH(QStringList, list);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     jar.setAllowedCookies(list);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.allowedCookies(), list);
 }
 
 void tst_CookieJar::setAllowForSessionCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("list");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public void setAllowForSessionCookies(QStringList const &list)
 void tst_CookieJar::setAllowForSessionCookies()
 {
-#if 0
     QFETCH(QStringList, list);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     jar.setAllowForSessionCookies(list);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.allowForSessionCookies(), list);
 }
 
 void tst_CookieJar::setBlockedCookies_data()
 {
-#if 0
     QTest::addColumn<QStringList>("list");
     QTest::newRow("null") << QStringList();
-#endif
+    QTest::newRow("one") << (QStringList() << "foo.com");
 }
 
 // public void setBlockedCookies(QStringList const &list)
 void tst_CookieJar::setBlockedCookies()
 {
-#if 0
     QFETCH(QStringList, list);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     jar.setBlockedCookies(list);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.blockedCookies(), list);
 }
 
 void tst_CookieJar::setCookiesFromUrl_data()
 {
-#if 0
     QTest::addColumn<QList<QNetworkCookie>>("cookieList");
     QTest::addColumn<QUrl>("url");
-    QTest::addColumn<bool>("setCookiesFromUrl");
-    QTest::newRow("null") << QList<QNetworkCookie>() << QUrl() << false;
-#endif
+    QTest::addColumn<CookieJar::AcceptPolicy>("policy");
+    QTest::addColumn<QStringList>("blocked");
+    QTest::addColumn<QStringList>("allowed");
+    QTest::addColumn<bool>("result");
+
+    QList<QNetworkCookie> oneCookie = QList<QNetworkCookie>() << makeCookie("foo.com");
+
+    QTest::newRow("null") << QList<QNetworkCookie>() << QUrl()
+                          << CookieJar::AcceptAlways << QStringList() << QStringList() << false;
+    QTest::newRow("always") << oneCookie << QUrl("http://foo.com/")
+                            << CookieJar::AcceptAlways << QStringList() << QStringList() << true;
+    QTest::newRow("never") << oneCookie << QUrl("http://foo.com/")
+                           << CookieJar::AcceptNever << QStringList() << QStringList() << false;
+    QTest::newRow("never-but-allowed") << oneCookie << QUrl("http://foo.com/")
+                           << CookieJar::AcceptNever << QStringList() << (QStringList() << "foo.com") << true;
+    QTest::newRow("blocked") << oneCookie << QUrl("http://foo.com/")
+                             << CookieJar::AcceptAlways << (QStringList() << "foo.com") << QStringList() << false;
+    QTest::newRow("blocked-wins-over-allow")
+            << oneCookie << QUrl("http://foo.com/")
+            << CookieJar::AcceptAlways << (QStringList() << "foo.com") << (QStringList() << "foo.com") << false;
 }
 
 // public bool setCookiesFromUrl(QList<QNetworkCookie> const &cookieList, QUrl const &url)
 void tst_CookieJar::setCookiesFromUrl()
 {
-#if 0
     QFETCH(QList<QNetworkCookie>, cookieList);
     QFETCH(QUrl, url);
-    QFETCH(bool, setCookiesFromUrl);
+    QFETCH(CookieJar::AcceptPolicy, policy);
+    QFETCH(QStringList, blocked);
+    QFETCH(QStringList, allowed);
+    QFETCH(bool, result);
 
     SubCookieJar jar;
+    jar.setAcceptPolicy(policy);
+    jar.setBlockedCookies(blocked);
+    jar.setAllowedCookies(allowed);
 
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
-    QCOMPARE(jar.setCookiesFromUrl(cookieList, url), setCookiesFromUrl);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    QCOMPARE(jar.setCookiesFromUrl(cookieList, url), result);
 }
 
 void tst_CookieJar::setKeepPolicy_data()
 {
-#if 0
     QTest::addColumn<CookieJar::KeepPolicy>("policy");
-    QTest::newRow("null") << CookieJar::KeepPolicy();
-#endif
+    QTest::newRow("expire") << CookieJar::KeepUntilExpire;
+    QTest::newRow("exit") << CookieJar::KeepUntilExit;
+    QTest::newRow("timelimit") << CookieJar::KeepUntilTimeLimit;
 }
 
 // public void setKeepPolicy(CookieJar::KeepPolicy policy)
 void tst_CookieJar::setKeepPolicy()
 {
-#if 0
     QFETCH(CookieJar::KeepPolicy, policy);
 
     SubCookieJar jar;
-
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
     jar.setKeepPolicy(policy);
-
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
-}
-
-void tst_CookieJar::cookiesChanged_data()
-{
-    QTest::addColumn<int>("foo");
-    QTest::newRow("0") << 0;
-    QTest::newRow("-1") << -1;
+    QCOMPARE(jar.keepPolicy(), policy);
 }
 
 // protected void cookiesChanged()
 void tst_CookieJar::cookiesChanged()
 {
-#if 0
-    QFETCH(int, foo);
-
     SubCookieJar jar;
 
-    QSignalSpy spy0(&jar, SIGNAL(cookiesChanged()));
-
+    QSignalSpy spy(&jar, SIGNAL(cookiesChanged()));
     jar.call_cookiesChanged();
+    QCOMPARE(spy.count(), 1);
 
-    QCOMPARE(spy0.count(), 0);
-#endif
-    QSKIP("Test is not implemented.", SkipAll);
+    // setCookies() touches the mirror synchronously and notifies.
+    jar.setCookies(QList<QNetworkCookie>() << makeCookie("foo.com"));
+    QCOMPARE(spy.count(), 2);
 }
 
 void tst_CookieJar::isOnDomainList_data()
@@ -527,8 +426,8 @@ void tst_CookieJar::isOnDomainList_data()
     QTest::newRow("check-6") << (QStringList() << ".foo.com") << "abcfoo.com" << false;
     QTest::newRow("check-7") << (QStringList() << ".foo.com") << "abc.foo.com" << true;
 
-    QTest::newRow("check-4") << (QStringList() << "abc.foo.com") << "foo.com" << false;
-    QTest::newRow("check-5") << (QStringList() << "abc.foo.com") << ".foo.com" << false;
+    QTest::newRow("check-8") << (QStringList() << "abc.foo.com") << "foo.com" << false;
+    QTest::newRow("check-9") << (QStringList() << "abc.foo.com") << ".foo.com" << false;
 
 
     QTest::newRow("edgecheck-0") << (QStringList() << "") << ".foo.com" << false;
@@ -546,11 +445,8 @@ void tst_CookieJar::isOnDomainList()
     QFETCH(QString, domain);
     QFETCH(bool, isOnDomainList);
 
-    SubCookieJar jar;
-
-    QCOMPARE(jar.call_isOnDomainList(list, domain), isOnDomainList);
+    QCOMPARE(SubCookieJar::call_isOnDomainList(list, domain), isOnDomainList);
 }
 
 QTEST_MAIN(tst_CookieJar)
 #include "tst_cookiejar.moc"
-

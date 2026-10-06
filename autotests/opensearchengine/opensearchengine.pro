@@ -1,20 +1,10 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_opensearchengine
 DEPENDPATH += .
 INCLUDEPATH += .
 
 include(../autotests.pri)
 
-SOURCES = \
-    opensearchengine.cpp \
-    opensearchenginedelegate.cpp \
-    tst_opensearchengine.cpp
+SOURCES += tst_opensearchengine.cpp
 
-HEADERS = \
-    opensearchengine.h \
-    opensearchenginedelegate.h
-
-FORMS =
-
-RESOURCES = \
-    opensearchengine.qrc
+RESOURCES += opensearchengine.qrc

@@ -35,6 +35,7 @@
 #include "adblocksubscription.h"
 
 #include <qdebug.h>
+#include <qsettings.h>
 
 class tst_AdBlockManager : public QObject
 {
@@ -66,7 +67,7 @@ class SubAdBlockManager : public AdBlockManager
 public:
     ~SubAdBlockManager() {
         QList<AdBlockSubscription*> list = subscriptions();
-        foreach (AdBlockSubscription *s, list)
+        for (AdBlockSubscription *s : list)
             removeSubscription(s);
         setEnabled(false);
     }
@@ -90,6 +91,21 @@ void tst_AdBlockManager::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_AdBlockManager::init()
 {
+    // AdBlockManager::load() seeds several default subscriptions when no
+    // setting exists; persist a list containing just the custom-rules
+    // subscription so subscriptions() is deterministic.  The temporary
+    // manager's destructor persists enabled=false plus an emptied list,
+    // so the seed is written only after it is gone.
+    QSettings settings;
+    settings.clear();
+    QString customUrl;
+    {
+        SubAdBlockManager manager;
+        customUrl = QString::fromUtf8(manager.customRules()->url().toEncoded());
+    }
+    settings.beginGroup(QLatin1String("AdBlock"));
+    settings.setValue(QLatin1String("enabled"), true);
+    settings.setValue(QLatin1String("subscriptions"), QStringList() << customUrl);
 }
 
 // This will be called after every test function.

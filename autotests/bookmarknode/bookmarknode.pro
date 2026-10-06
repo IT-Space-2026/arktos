@@ -1,14 +1,9 @@
 TEMPLATE = app
-TARGET =
+TARGET = tst_bookmarknode
 DEPENDPATH += .
-INCLUDEPATH += . ../
+INCLUDEPATH += .
 
 include(../autotests.pri)
 
-QT = core
-
 # Input
-SOURCES = bookmarknode.cpp tst_bookmarknode.cpp
-HEADERS = bookmarknode.h
-FORMS =
-RESOURCE =
+SOURCES += tst_bookmarknode.cpp

@@ -9,4 +9,9 @@ QT += testlib widgets webenginewidgets
 
 mac:CONFIG -= app_bundle
 
-SOURCES = tst_smoke.cpp
+RCC_DIR     = ../.rcc
+UI_DIR      = ../.ui
+MOC_DIR     = ../.moc
+OBJECTS_DIR = ../.obj
+
+SOURCES += tst_smoke.cpp

@@ -24,8 +24,11 @@
 #include <history.h>
 #include <historycompleter.h>
 #include <modeltest.h>
+#include <webpage.h>
 
-#include <qwebsettings.h>
+#include <qwebengineprofile.h>
+
+#include <algorithm>
 
 class tst_HistoryManager : public QObject
 {
@@ -71,11 +74,8 @@ class SubHistory : public HistoryManager
 public:
     SubHistory() : HistoryManager()
     {
-        QWidget w;
-        setParent(&w);
-        if (QWebHistoryInterface::defaultInterface() == this)
-            QWebHistoryInterface::setDefaultInterface(0);
-        setParent(0);
+        // Qt6 has no QWebHistoryInterface to detach from; pages feed the
+        // manager through WebPage's loadFinished hook instead.
     }
 
     ~SubHistory() {
@@ -211,13 +211,37 @@ void tst_HistoryManager::addHistoryEntry()
 
 void tst_HistoryManager::addHistoryEntry_private()
 {
-    SubHistory history;
-    history.setHistory(HistoryList());
-    QWebSettings *globalSettings = QWebSettings::globalSettings();
-    globalSettings->setAttribute(QWebSettings::PrivateBrowsingEnabled, true);
-    history.prependHistoryEntry(HistoryEntry());
-    globalSettings->setAttribute(QWebSettings::PrivateBrowsingEnabled, false);
-    QVERIFY(history.history().isEmpty());
+    // Qt WebEngine has no private-browsing attribute; privacy is a
+    // property of the page's profile.  WebPage only feeds
+    // HistoryManager::instance() when the profile is not
+    // off-the-record, so this exercises the guarantee end to end.
+    HistoryManager *manager = HistoryManager::instance();
+    manager->setHistory(HistoryList());
+
+    const QUrl url(QStringLiteral("data:text/plain,private-page"));
+
+    // Control: a page on a persisted profile is recorded.
+    QWebEngineProfile normalProfile(QStringLiteral("arora-historytest"));
+    WebPage normalPage(&normalProfile);
+    QSignalSpy normalSpy(&normalPage, &QWebEnginePage::loadFinished);
+    normalPage.load(url);
+    QTRY_VERIFY_WITH_TIMEOUT(normalSpy.count() >= 1, 15000);
+    QTRY_VERIFY(manager->history().count() == 1);
+    QCOMPARE(manager->history().first().url, url.toString());
+
+    manager->setHistory(HistoryList());
+
+    // Off-the-record pages must never reach the manager.
+    QWebEngineProfile otrProfile;
+    WebPage privatePage(&otrProfile);
+    QVERIFY(otrProfile.isOffTheRecord());
+    QSignalSpy otrSpy(&privatePage, &QWebEnginePage::loadFinished);
+    privatePage.load(url);
+    QTRY_VERIFY_WITH_TIMEOUT(otrSpy.count() >= 1, 15000);
+    QTest::qWait(200);
+    QVERIFY(manager->history().isEmpty());
+
+    manager->setHistory(HistoryList());
 }
 
 void tst_HistoryManager::addHistoryEntry_url()
@@ -289,7 +313,7 @@ void tst_HistoryManager::daysToExpire()
     SubHistory history;
 
     history.setHistory(list);
-    qSort(list.begin(), list.end());
+    std::sort(list.begin(), list.end());
     QCOMPARE(history.history(), list);
 
     history.setDaysToExpire(daysToExpire);
