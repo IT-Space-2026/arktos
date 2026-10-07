@@ -112,6 +112,9 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     p.setColor(QPalette::Text, p.color(QPalette::PlaceholderText));
     downloadInfoLabel->setPalette(p);
     progressBar->setMaximum(0);
+    // UIP02: this row packs three compact buttons — exempt it from the
+    // dialog-wide minimum button width/height polish.
+    setProperty("aroraNoButtonPolish", true);
     tryAgainButton->hide();
     connect(stopButton, &QPushButton::clicked, this, &DownloadItem::stop);
     connect(openButton, &QPushButton::clicked, this, &DownloadItem::open);

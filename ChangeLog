@@ -245,6 +245,11 @@ User agent (UA02):
     When Google does divert a search to its /sorry/ "unusual traffic" bot check, the page now carries a readable banner explaining that the connection was rate-limited (not an Arora error) and pointing at the default-engine picker under Tools > Options > Search. Google's own recovery flow is left intact underneath — with JavaScript on, the challenge usually solves transparently and lands back on the search results.
     `./arora --sorry-smoke` is a diagnostic that reproduces the whole flow on a fresh profile: it dumps the wire request headers (client hints included), runs a control fetch through the application network manager for the same URL/UA/IP, and reports whether a /sorry/ landing is browser-side or IP reputation.
 
+Button chrome (UIP02):
+    Tab close buttons now behave like every modern browser: the ✕ lives on the tab itself but only appears on the current tab and the one under the cursor, instead of Qt's always-visible indicator on every tab. The single shared corner close button remains available through the existing "oneCloseButton" setting.
+    Toolbar buttons are consistent across platforms: the navigation bar pins its 18px icon size everywhere (it was macOS-only, so other platforms fell back to the style's larger default), and the bookmarks bar is pinned to 16px favicon size. Buttons keep their flat-with-hover look — nothing forces the raised Qt4-era frames.
+    Dialog buttons get uniform modern metrics: a minimum width so short captions like "OK" stop collapsing, and a taller minimum height, applied to every dialog's push buttons through size constraints — the native style keeps rendering them, so the look follows the active light/dark theme. Compact composite rows (the per-download controls) are exempt.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

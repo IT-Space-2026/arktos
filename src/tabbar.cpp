@@ -68,11 +68,13 @@
 #include <qaction.h>
 #include <qapplication.h>
 #include <qclipboard.h>
+#include <qcursor.h>
 #include <qdrag.h>
 #include <qevent.h>
 #include <qmenu.h>
 #include <qmimedata.h>
 #include <qstyle.h>
+#include <qtoolbutton.h>
 #include <qurl.h>
 
 #include <qdebug.h>
@@ -92,6 +94,8 @@ TabBar::TabBar(QWidget *parent)
     : QTabBar(parent)
     , m_viewTabBarAction(nullptr)
     , m_showTabBarWhenOneTab(true)
+    , m_perTabCloseButtons(false)
+    , m_hoveredTab(-1)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
@@ -113,6 +117,12 @@ TabBar::TabBar(QWidget *parent)
             this, &TabBar::viewTabBar);
 
     setMovable(true);
+
+    // Per-tab close buttons reveal on hover — without tracking, move
+    // events only arrive while a mouse button is held.
+    setMouseTracking(true);
+    connect(this, &QTabBar::currentChanged,
+            this, [this](int) { updateCloseButtonVisibility(); });
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -136,6 +146,104 @@ QTabBar::ButtonPosition TabBar::freeSide()
     QTabBar::ButtonPosition side = (QTabBar::ButtonPosition)style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, this);
     side = (side == QTabBar::LeftSide) ? QTabBar::RightSide : QTabBar::LeftSide;
     return side;
+}
+
+// The side the style reserves for the close control — the opposite of
+// freeSide(), which the loading-animation/favicon label occupies.
+QTabBar::ButtonPosition TabBar::closeButtonSide() const
+{
+    return static_cast<QTabBar::ButtonPosition>(
+        style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, this));
+}
+
+bool TabBar::perTabCloseButtons() const
+{
+    return m_perTabCloseButtons;
+}
+
+void TabBar::setPerTabCloseButtons(bool enabled)
+{
+    if (m_perTabCloseButtons == enabled)
+        return;
+    m_perTabCloseButtons = enabled;
+    // Qt's built-in indicator draws on every tab unconditionally; we
+    // manage real buttons instead so they can appear only where they
+    // should (current + hovered tab).
+    QTabBar::setTabsClosable(false);
+    for (int i = 0; i < count(); ++i) {
+        if (enabled)
+            installCloseButton(i);
+        else
+            setTabButton(i, closeButtonSide(), nullptr);
+    }
+    updateCloseButtonVisibility();
+}
+
+void TabBar::installCloseButton(int index)
+{
+    if (tabButton(index, closeButtonSide()))
+        return;
+    QToolButton *button = new QToolButton(this);
+    button->setAutoRaise(true);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    // The style's close glyph follows the palette (readable in dark
+    // mode); the bundled png is the fallback for styles without one.
+    QIcon icon = style()->standardIcon(QStyle::SP_TitleBarCloseButton,
+                                       nullptr, this);
+    if (icon.isNull())
+        icon = QIcon(QLatin1String(":graphics/closetab.png"));
+    button->setIcon(icon);
+    button->setIconSize(QSize(12, 12));
+    button->setAccessibleName(tr("Close tab"));
+    button->setToolTip(tr("Close Tab"));
+    connect(button, &QToolButton::clicked, this, [this, button]() {
+        // Resolve the index at click time — it shifts as tabs are
+        // added, removed and dragged around.
+        const QTabBar::ButtonPosition side = closeButtonSide();
+        for (int i = 0; i < count(); ++i) {
+            if (tabButton(i, side) == button) {
+                emit closeTab(i);
+                return;
+            }
+        }
+    });
+    setTabButton(index, closeButtonSide(), button);
+}
+
+// pos is a point in the bar's own coordinates (from the mouse event —
+// QCursor::pos() does not track synthetic moves and lags real ones).
+// A point sitting on a per-tab button (a child widget) still resolves
+// to the owning tab, so the button stays shown under the cursor.
+void TabBar::updateHoveredTab(const QPoint &pos)
+{
+    int hovered = -1;
+    if (isVisible() && rect().contains(pos))
+        hovered = tabAt(pos);
+    if (hovered == m_hoveredTab)
+        return;
+    m_hoveredTab = hovered;
+    updateCloseButtonVisibility();
+}
+
+void TabBar::updateCloseButtonVisibility()
+{
+    if (!m_perTabCloseButtons)
+        return;
+    const int current = currentIndex();
+    const QTabBar::ButtonPosition side = closeButtonSide();
+    for (int i = 0; i < count(); ++i) {
+        if (QWidget *button = tabButton(i, side))
+            button->setVisible(i == current || i == m_hoveredTab);
+    }
+}
+
+void TabBar::leaveEvent(QEvent *event)
+{
+    if (m_hoveredTab != -1) {
+        m_hoveredTab = -1;
+        updateCloseButtonVisibility();
+    }
+    QTabBar::leaveEvent(event);
 }
 
 void TabBar::updateViewToolBarAction()
@@ -274,6 +382,7 @@ static bool verticalTabShape(QTabBar::Shape shape)
 
 void TabBar::mouseMoveEvent(QMouseEvent *event)
 {
+    updateHoveredTab(event->position().toPoint());
     if (event->buttons() == Qt::LeftButton) {
         const QPoint diff = event->position().toPoint() - m_dragStartPos;
         // "Tear the tab off" = drag away from the bar, perpendicular
@@ -377,13 +486,20 @@ void TabBar::reloadTab()
 
 void TabBar::tabInserted(int position)
 {
-    Q_UNUSED(position);
+    if (m_perTabCloseButtons)
+        installCloseButton(position);
+    updateCloseButtonVisibility();
     updateVisibility();
 }
 
 void TabBar::tabRemoved(int position)
 {
     Q_UNUSED(position);
+    // Indices shifted — recompute what (if anything) the cursor is
+    // over now that the tab under it may be a different one.
+    m_hoveredTab = -1;
+    updateHoveredTab(mapFromGlobal(QCursor::pos()));
+    updateCloseButtonVisibility();
     updateVisibility();
 }
 

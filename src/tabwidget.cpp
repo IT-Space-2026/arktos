@@ -979,7 +979,9 @@ void TabWidget::loadSettings()
         if (closeTabButton)
             closeTabButton->setVisible(false);
     }
-    m_tabBar->setTabsClosable(!oneCloseButton);
+    // UIP02: per-tab close buttons appear on the current + hovered
+    // tab; the single corner close button remains the opt-out.
+    m_tabBar->setPerTabCloseButtons(!oneCloseButton);
 }
 
 /*

@@ -19,6 +19,7 @@
 
 #include <QtGui/QtGui>
 #include <QtTest/QtTest>
+#include <qabstractbutton.h>
 #include <tabbar.h>
 
 class tst_TabBar : public QObject
@@ -40,6 +41,8 @@ private slots:
 
     void tabSizeHint_data();
     void tabSizeHint();
+
+    void perTabCloseButtons();
 
     void middleClickPaste();
 };
@@ -174,6 +177,71 @@ void tst_TabBar::tabSizeHint()
     SubTabBar bar;
 
     QVERIFY(bar.call_tabSizeHint(index).width() <= 250);
+}
+
+// UIP02: per-tab close buttons live on the style's close-button side
+// and reveal only on the current or hovered tab — not on every tab
+// like Qt's native always-visible close indicator.
+void tst_TabBar::perTabCloseButtons()
+{
+    SubTabBar bar;
+    bar.setPerTabCloseButtons(true);
+    QVERIFY(bar.perTabCloseButtons());
+    QVERIFY(!bar.tabsClosable());
+    bar.show();
+    // The offscreen QPA sends no expose events; process once so the
+    // bar lays out its tabs before we poke at their rects.
+    QApplication::processEvents();
+
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    bar.addTab(QLatin1String("three"));
+    QCOMPARE(bar.count(), 3);
+    // The bare bar keeps its tiny default geometry under offscreen —
+    // give it a real strip so tab rects sit inside the widget.
+    bar.resize(400, bar.sizeHint().height());
+    QApplication::processEvents();
+
+    const QTabBar::ButtonPosition side =
+        (bar.freeSide() == QTabBar::RightSide)
+            ? QTabBar::LeftSide : QTabBar::RightSide;
+
+    // A button was installed on the close side of every tab.
+    for (int i = 0; i < bar.count(); ++i)
+        QVERIFY(bar.tabButton(i, side));
+
+    // Only the current tab's button is visible while unhovered.
+    bar.setCurrentIndex(0);
+    QVERIFY(bar.tabButton(0, side)->isVisible());
+    QVERIFY(!bar.tabButton(1, side)->isVisible());
+    QVERIFY(!bar.tabButton(2, side)->isVisible());
+
+    // Hovering a background tab reveals its button.  Synthetic
+    // QTest::mouseMove does not reach the widget under the offscreen
+    // QPA, so drive the handler directly like the other tests do.
+    QMouseEvent moveEvent(QEvent::MouseMove,
+                          QPointF(bar.tabRect(1).center()),
+                          QPointF(bar.tabRect(1).center()),
+                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    bar.call_mouseMoveEvent(&moveEvent);
+    QVERIFY(bar.tabButton(1, side)->isVisible());
+    QVERIFY(bar.tabButton(0, side)->isVisible());
+    QVERIFY(!bar.tabButton(2, side)->isVisible());
+
+    // Clicking the current tab's button emits closeTab(index), with
+    // the index resolved at click time.
+    QSignalSpy spy(&bar, QOverload<int>::of(&TabBar::closeTab));
+    static_cast<QAbstractButton *>(bar.tabButton(0, side))->click();
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 0);
+
+    // A new tab gets a button too; disabling removes them all.
+    bar.addTab(QLatin1String("four"));
+    QVERIFY(bar.tabButton(3, side));
+    bar.setPerTabCloseButtons(false);
+    QVERIFY(!bar.perTabCloseButtons());
+    for (int i = 0; i < bar.count(); ++i)
+        QVERIFY(!bar.tabButton(i, side));
 }
 
 // SEC02: middle-click paste loads the PRIMARY selection as a url in a

@@ -34,6 +34,7 @@
 #include <qmessagebox.h>
 #include <qpushbutton.h>
 #include <qtoolbar.h>
+#include <qtoolbutton.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
@@ -340,6 +341,21 @@ void tst_BrowserMainWindow::chromeMetrics()
     QVERIFY(margins.top() >= 4 && margins.bottom() >= 4);
     QVERIFY(margins.left() >= 4 && margins.right() >= 4);
     QVERIFY(navBar->layout() && navBar->layout()->spacing() >= 4);
+
+    // UIP02: consistent chrome metrics — the nav bar pins one icon
+    // size on every platform, the bookmarks bar follows at favicon
+    // size, and toolbar buttons stay flat-with-hover (autoRaise)
+    // rather than raised Qt4-era frames.
+    QCOMPARE(navBar->iconSize(), QSize(18, 18));
+    QToolBar *bookmarksBar = window->findChild<QToolBar *>(
+        QLatin1String("BookmarksToolbar"));
+    QVERIFY(bookmarksBar);
+    QCOMPARE(bookmarksBar->iconSize(), QSize(16, 16));
+    const QList<QToolButton *> navButtons =
+        navBar->findChildren<QToolButton *>();
+    QVERIFY(!navButtons.isEmpty());
+    for (QToolButton *button : navButtons)
+        QVERIFY2(button->autoRaise(), qPrintable(button->text()));
 
     const int fontHeight = window->fontMetrics().height();
     QLineEdit *locationBar = window->tabWidget()->currentLocationBar();

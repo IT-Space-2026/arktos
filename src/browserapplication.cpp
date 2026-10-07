@@ -224,6 +224,9 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
             this, [](Qt::ColorScheme) { BrowserTheme::applyColorScheme(); });
 
+    // UIP02: uniform modern button metrics in every dialog.
+    BrowserTheme::installDialogButtonPolish();
+
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);
 #else

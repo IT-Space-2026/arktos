@@ -22,6 +22,8 @@
 
 #include <qpalette.h>
 
+class QDialog;
+
 // UIP01: follow-the-desktop light/dark support.  Qt 6.5+ reports the
 // desktop preference through QStyleHints::colorScheme(); the platform
 // theme normally reacts by swapping the application palette itself
@@ -55,6 +57,23 @@ void applyColorScheme();
 // True when the current palette was installed by applyColorScheme()
 // rather than the platform theme.
 bool paletteIsForced();
+
+// UIP02: uniform, modern metrics for dialog push buttons — a minimum
+// width so OK/Cancel-style rows stop shrinking to their caption text,
+// and a taller minimum height so the buttons don't read as cramped
+// Qt4-era controls.  Applied through size constraints only, never a
+// stylesheet, so the active style (native, Fusion-forced dark, or
+// platform theme) keeps rendering the button itself.
+//
+// Buttons inside a widget carrying the dynamic property
+// "aroraNoButtonPolish"=true (e.g. the compact per-download row
+// widget) are left alone — composite list rows need compact buttons.
+void polishDialogButtons(QDialog *dialog);
+
+// Installs the application event filter that runs
+// polishDialogButtons() on each QDialog once, as it is polished
+// before its first show.  Called once by BrowserApplication.
+void installDialogButtonPolish();
 
 }
 

@@ -91,7 +91,14 @@ public:
     QAction *viewTabBarAction() const;
     QTabBar::ButtonPosition freeSide();
 
+    // UIP02: per-tab close buttons drawn by the bar itself — visible
+    // only on the current tab and the hovered tab, like every modern
+    // browser, instead of Qt's always-visible close indicator.
+    bool perTabCloseButtons() const;
+    void setPerTabCloseButtons(bool enabled);
+
 protected:
+    void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -114,11 +121,17 @@ private slots:
 
 private:
     void updateVisibility();
+    QTabBar::ButtonPosition closeButtonSide() const;
+    void installCloseButton(int index);
+    void updateHoveredTab(const QPoint &pos);
+    void updateCloseButtonVisibility();
     friend class TabWidget;
 
     QPoint m_dragStartPos;
     QAction *m_viewTabBarAction;
     bool m_showTabBarWhenOneTab;
+    bool m_perTabCloseButtons;
+    int m_hoveredTab;
 };
 
 

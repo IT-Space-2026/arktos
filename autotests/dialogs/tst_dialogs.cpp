@@ -25,6 +25,7 @@
 #include <QtGui/QtGui>
 #include <QtNetwork/QtNetwork>
 #include <qcheckbox.h>
+#include <qpushbutton.h>
 #include <qstandarditemmodel.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
@@ -137,6 +138,7 @@ private slots:
     void deferredSiteWipe();
     void colorSchemeApply();
     void dialogsRenderInBothSchemes();
+    void dialogButtonPolish();
 };
 
 void tst_Dialogs::initTestCase()
@@ -790,6 +792,37 @@ void tst_Dialogs::dialogsRenderInBothSchemes()
 
     QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1String("; "))));
     QVERIFY(darkLevel < lightLevel);
+}
+
+// UIP02: dialog push buttons get uniform modern metrics — a minimum
+// width so captions like "OK" don't collapse the button, and a taller
+// minimum height.  Applied via size constraints (no stylesheet), it
+// must never shrink an explicit larger minimum, and composite rows
+// flagged "aroraNoButtonPolish" keep their compact buttons.
+void tst_Dialogs::dialogButtonPolish()
+{
+    QDialog dialog;
+    QPushButton *button = new QPushButton(QLatin1String("OK"), &dialog);
+    const QFontMetrics fm = dialog.fontMetrics();
+    const int expectedWidth =
+        fm.horizontalAdvance(QLatin1String("MMMMMMMM"));
+
+    BrowserTheme::polishDialogButtons(&dialog);
+    QVERIFY(button->minimumWidth() >= expectedWidth);
+    QVERIFY(button->minimumHeight() >= fm.height() + 14);
+
+    // Idempotent + never shrinks a larger explicit minimum.
+    button->setMinimumWidth(400);
+    BrowserTheme::polishDialogButtons(&dialog);
+    QCOMPARE(button->minimumWidth(), 400);
+
+    // Exempt composite rows are left compact.
+    QWidget *row = new QWidget(&dialog);
+    row->setProperty("aroraNoButtonPolish", true);
+    QPushButton *rowButton =
+        new QPushButton(QLatin1String("Stop"), row);
+    BrowserTheme::polishDialogButtons(&dialog);
+    QCOMPARE(rowButton->minimumWidth(), 0);
 }
 
 QTEST_MAIN(tst_Dialogs)

@@ -20,6 +20,9 @@
 #include "browsertheme.h"
 
 #include <qapplication.h>
+#include <qdialog.h>
+#include <qevent.h>
+#include <qpushbutton.h>
 #include <qstyle.h>
 #include <qstylefactory.h>
 #include <qstylehints.h>
@@ -130,4 +133,61 @@ void BrowserTheme::applyColorScheme()
 bool BrowserTheme::paletteIsForced()
 {
     return s_forced;
+}
+
+void BrowserTheme::polishDialogButtons(QDialog *dialog)
+{
+    if (!dialog)
+        return;
+    const QFontMetrics fm = dialog->fontMetrics();
+    // ~8em minimum width keeps short captions ("OK", "Add") from
+    // collapsing to text size; fm.height() + 14 yields a modern
+    // ~30 px row instead of the Qt4-era ~22 px.
+    const int minimumWidth = fm.horizontalAdvance(QLatin1String("MMMMMMMM"));
+    const int minimumHeight = fm.height() + 14;
+    const QList<QPushButton *> buttons = dialog->findChildren<QPushButton *>();
+    for (QPushButton *button : buttons) {
+        bool exempt = button->property("aroraNoButtonPolish").toBool();
+        for (QWidget *parent = button->parentWidget();
+             !exempt && parent && parent != dialog;
+             parent = parent->parentWidget())
+            exempt = parent->property("aroraNoButtonPolish").toBool();
+        if (exempt)
+            continue;
+        if (button->minimumWidth() < minimumWidth)
+            button->setMinimumWidth(minimumWidth);
+        if (button->minimumHeight() < minimumHeight)
+            button->setMinimumHeight(minimumHeight);
+    }
+}
+
+void BrowserTheme::installDialogButtonPolish()
+{
+    // QEvent::Polish fires once before a widget's first show, after
+    // the style has had its say — the right moment to normalize
+    // dialog button metrics.
+    class Polisher : public QObject
+    {
+    public:
+        explicit Polisher(QObject *parent)
+            : QObject(parent)
+        {
+        }
+
+    protected:
+        bool eventFilter(QObject *object, QEvent *event) override
+        {
+            if (event->type() == QEvent::Polish) {
+                if (QDialog *dialog = qobject_cast<QDialog *>(object))
+                    BrowserTheme::polishDialogButtons(dialog);
+            }
+            return false;
+        }
+    };
+
+    // Heap-allocated and parented to qApp — a static object would be
+    // delete'd by the parent chain at teardown, which is undefined
+    // for non-heap storage.
+    static Polisher *polisher = new Polisher(qApp);
+    qApp->installEventFilter(polisher);
 }

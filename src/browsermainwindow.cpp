@@ -160,6 +160,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     BookmarksModel *boomarksModel = BrowserApplication::bookmarksManager()->bookmarksModel();
     m_bookmarksToolbar = new BookmarksToolBar(boomarksModel, this);
     m_bookmarksToolbar->setObjectName(QLatin1String("BookmarksToolbar"));
+    // UIP02: bookmark buttons are favicon-sized — pin the bar's icon
+    // size so it matches the navigation bar's consistent metrics.
+    m_bookmarksToolbar->setIconSize(QSize(16, 16));
     connect(m_bookmarksToolbar,
             QOverload<const QUrl &, const QString &>::of(&BookmarksToolBar::openUrl),
             m_tabWidget, &TabWidget::loadUrlFromUser);
@@ -228,9 +231,6 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     loadDefaultState();
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
-#if defined(Q_OS_MACOS)
-    m_navigationBar->setIconSize(QSize(18, 18));
-#endif
 
     // Add each item in the menu bar to the main window so
     // if the menu bar is hidden the shortcuts still work.
@@ -1065,6 +1065,10 @@ void BrowserMainWindow::setupToolBar()
     // contents margins forward to the toolbar's internal layout.
     m_navigationBar->setContentsMargins(6, 4, 6, 4);
     m_navigationBar->layout()->setSpacing(6);
+    // UIP02: one icon size for the nav buttons on every platform —
+    // was macOS-only, so Linux/Windows fell back to the style's
+    // larger default and the row looked uneven.
+    m_navigationBar->setIconSize(QSize(18, 18));
     addToolBar(m_navigationBar);
 
     m_historyBackAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack, nullptr, this));
