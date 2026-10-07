@@ -211,6 +211,10 @@ License audit (LIC01):
 Post-migration sweep (AUD01):
     Removed the last Qt4-era leftovers: the orphan autotest dirs for the deleted WebPageProxy/NetworkAccessManagerProxy modules, the Qt-4.5-era buildosx.sh packaging script, builddeb.sh (its debian-upstream/ directory is gone), the dead `#if QT_VERSION` guard in ClearButton, the OS/2 qmake scopes in the tool projects, and the WebKit-era -webkit-gradient/-webkit-border-radius CSS in the start page (now standard linear-gradient/border-radius). The About dialog's version label is renamed off its old "webkitVersion" widget name, and the last headers used but never listed in project files (streamingutils.h, autotests/qtry.h) are listed now.
 
+Session restore (SESS01):
+    Closing and relaunching with "Restore windows and tabs from last time" selected restores the saved session end to end again. The saved current tab is now applied after the restored tabs exist — it used to be set before them, which was a no-op against the single placeholder tab and left every restored session on the first tab. A tab whose serialized page history fails to parse now falls back to its flat saved url instead of being silently dropped, which also lets sessions written by the QtWebKit build restore their tabs (old per-tab history blobs have a different layout; WebEngine cannot inject a back/forward stack either way). The crash-loop guard ("Arora crashed while trying to restore this session") now arms only after the session blob validates, so a corrupt or stale blob no longer replays the prompt on every launch.
+    New headless `./arora --session-smoke` and `./arora --restore-smoke` options script the real close -> relaunch cycle — three tabs with the middle one current — and verify url order, the restored current index, that the pages actually load, and that private-window tabs never reach the saved session blob.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

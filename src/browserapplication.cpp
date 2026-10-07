@@ -518,9 +518,6 @@ bool BrowserApplication::restoreLastSession()
             if (result == QMessageBox::No)
                 return false;
         }
-        // saveSession will be called by an AutoSaver timer from the set tabs
-        // and in saveSession we will reset this flag back to false
-        settings.setValue(QLatin1String("restoring"), true);
     }
     int version = 2;
     QList<QByteArray> windows;
@@ -551,6 +548,15 @@ bool BrowserApplication::restoreLastSession()
         if (stream.status() != QDataStream::Ok)
             return false;
         windows.append(windowState);
+    }
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("MainWindow"));
+        // saveSession will be called by an AutoSaver timer from the set
+        // tabs and in saveSession we will reset this flag back to false —
+        // it is only set once the blob has validated, so a corrupt or
+        // stale session does not loop the crash prompt on every launch.
+        settings.setValue(QLatin1String("restoring"), true);
     }
     for (int i = 0; i < windows.count(); ++i) {
         BrowserMainWindow *newWindow = nullptr;

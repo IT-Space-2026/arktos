@@ -97,6 +97,8 @@
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QToolButton>
 
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 
 #if defined(ARORA_ADBLOCK_RUST)
@@ -184,6 +186,7 @@ int main(int argc, char **argv)
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
+        "session-smoke", "restore-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1866,6 +1869,203 @@ int main(int argc, char **argv)
         // exec() must run while 'failures' is still alive: the lambdas
         // above capture it by reference.
         return application.exec();
+    }
+
+    // Headless verification for SESS01 — the real session save/restore
+    // cycle across two process runs.
+    //
+    // `--session-smoke` (save phase): three tabs on fixture urls with
+    // the middle tab current, then a private window whose tabs must
+    // never reach the session blob, then a real window close — the
+    // AutoSaver in ~BrowserMainWindow is what saves the session on a
+    // user-close before quitOnLastWindowClosed ends the run.  The
+    // persisted blob is parsed in aboutToQuit.
+    //
+    // `--restore-smoke` (restore phase): startupBehavior=2 so the
+    // postLaunch() queued by the BrowserApplication ctor runs
+    // restoreLastSession() on the window created here; a poll then
+    // verifies every tab url in order and the restored current index.
+    const bool sessionSaveSmoke = args.contains(QLatin1String("--session-smoke"));
+    const bool sessionRestoreSmoke = args.contains(QLatin1String("--restore-smoke"));
+    if (sessionSaveSmoke || sessionRestoreSmoke) {
+        int sessionFailures = 0;
+        const auto sessionCheck =
+            [&sessionFailures](bool ok, const char *what) {
+            qInfo() << "session-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++sessionFailures;
+        };
+
+        // The stub window above only hosts the WebView smokes — hide it
+        // so closing the real browser window still counts as the last
+        // window and ends the run.
+        window.hide();
+        QSettings().setValue(
+            QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+        // A leftover crash-loop flag would open a modal prompt.
+        QSettings().setValue(QLatin1String("MainWindow/restoring"), false);
+
+        QStringList fixtureUrls;
+        for (int i = 1; i <= 3; ++i) {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("arora-session-%1.html").arg(i));
+            QFile fixture(path);
+            if (fixture.open(QIODevice::WriteOnly)) {
+                fixture.write(QStringLiteral(
+                    "<html><head><title>arora-session-%1</title>"
+                    "</head><body>%1</body></html>").arg(i).toUtf8());
+            }
+            fixtureUrls << QUrl::fromLocalFile(path).toString();
+        }
+
+        if (sessionSaveSmoke) {
+            // postLaunch runs inside exec() — pin the startup behavior
+            // to "blank" so it does not navigate the window away.
+            QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 1);
+            QSettings().remove(QLatin1String("sessions"));
+
+            BrowserMainWindow *browserWindow = application.newMainWindow();
+            TabWidget *tabWidget = browserWindow->tabWidget();
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(0)), TabWidget::CurrentTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(1)), TabWidget::NewNotSelectedTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(2)), TabWidget::NewNotSelectedTab);
+            tabWidget->setCurrentIndex(1);
+
+            // A private window's tabs live on the off-the-record
+            // profile: serializing its tab widget must produce an
+            // empty tab list, and saveSession() while private must not
+            // touch the blob at all.
+            BrowserApplication::setPrivate(true);
+            BrowserMainWindow *privateWindow = application.newMainWindow();
+            const QUrl privateUrl = QUrl::fromLocalFile(
+                QDir::temp().filePath(
+                    QLatin1String("arora-session-private.html")));
+            privateWindow->tabWidget()->loadUrl(privateUrl,
+                                                TabWidget::CurrentTab);
+            {
+                QByteArray privateState =
+                    privateWindow->tabWidget()->saveState();
+                QDataStream privateStream(privateState);
+                qint32 marker = 0, version = 0;
+                QStringList privateTabs;
+                privateStream >> marker >> version >> privateTabs;
+                sessionCheck(privateTabs.isEmpty(),
+                             "private window serializes zero tabs");
+            }
+            application.saveSession();
+            sessionCheck(
+                QSettings().value(QLatin1String("sessions/lastSession"))
+                    .isNull(),
+                "saveSession while private writes nothing");
+            privateWindow->close();
+            BrowserApplication::setPrivate(false);
+
+            QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                             &application,
+                             [sessionCheck, fixtureUrls,
+                              &sessionFailures]() {
+                // Parse the blob the user's window-close just wrote:
+                // magic, version, window count, then per-window states
+                // carrying a tab state of url list + current index.
+                const QByteArray blob =
+                    QSettings()
+                        .value(QLatin1String("sessions/lastSession"))
+                        .toByteArray();
+                QDataStream stream(blob);
+                qint32 marker = 0, version = 0, windowCount = 0;
+                stream >> marker >> version >> windowCount;
+                sessionCheck(marker == 0xec && version == 2
+                                 && windowCount == 1,
+                             "session blob header");
+                QStringList restoredUrls;
+                qint32 restoredCurrent = -1;
+                for (qint32 i = 0; i < windowCount; ++i) {
+                    QByteArray windowState;
+                    stream >> windowState;
+                    QDataStream windowStream(windowState);
+                    qint32 wmarker = 0, wversion = 0;
+                    QSize size;
+                    bool b1 = false, b2 = false, b3 = false;
+                    QByteArray tabState;
+                    windowStream >> wmarker >> wversion >> size
+                        >> b1 >> b2 >> b3 >> tabState;
+                    QDataStream tabStream(tabState);
+                    qint32 tmarker = 0, tversion = 0;
+                    tabStream >> tmarker >> tversion
+                        >> restoredUrls >> restoredCurrent;
+                    sessionCheck(tmarker == 0xaa && tversion == 1,
+                                 "tab-state blob header");
+                }
+                sessionCheck(restoredUrls == fixtureUrls,
+                             "session blob tab urls in order");
+                sessionCheck(restoredCurrent == 1,
+                             "session blob current index");
+                if (sessionFailures)
+                    qInfo() << "session-smoke: FAIL";
+            });
+
+            // Close the real window once the loads have settled; the
+            // quit path saves the session, then lastWindowClosed quits.
+            QTimer::singleShot(2500, &application, [browserWindow]() {
+                browserWindow->close();
+            });
+            QTimer::singleShot(30000, &application, [&application]() {
+                qInfo() << "session-smoke: FAIL (save phase timeout)";
+                fflush(nullptr);
+                std::quick_exit(1);
+            });
+            const int rc = application.exec();
+            fflush(nullptr);
+            std::quick_exit(sessionFailures ? 1 : rc);
+        }
+
+        if (sessionRestoreSmoke) {
+            QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 2);
+            BrowserMainWindow *browserWindow = application.newMainWindow();
+
+            QTimer *poll = new QTimer(&application);
+            auto ticks = std::make_shared<int>(0);
+            QObject::connect(poll, &QTimer::timeout, &application,
+                             [sessionCheck, &sessionFailures,
+                              browserWindow, fixtureUrls, ticks, poll]() {
+                TabWidget *tabWidget = browserWindow->tabWidget();
+                QStringList got;
+                bool titlesOk = true;
+                for (int i = 0; i < tabWidget->count(); ++i) {
+                    WebView *tab = tabWidget->webView(i);
+                    if (!tab)
+                        continue;
+                    got << tab->url().toString();
+                    // A fixture title proves the tab actually loaded,
+                    // not just that its url was scheduled.
+                    titlesOk &= tab->title().contains(
+                        QStringLiteral("arora-session-%1").arg(i + 1));
+                }
+                if (got == fixtureUrls && tabWidget->currentIndex() == 1
+                    && titlesOk) {
+                    poll->stop();
+                    sessionCheck(true, "restored tab urls in order");
+                    sessionCheck(true, "restored current index");
+                    sessionCheck(true, "restored tabs loaded");
+                    qInfo() << "session-smoke: restore"
+                            << (sessionFailures ? "FAIL" : "PASS");
+                    fflush(nullptr);
+                    std::quick_exit(sessionFailures ? 1 : 0);
+                }
+                if (++*ticks > 100) {
+                    poll->stop();
+                    sessionCheck(false, "restore completed");
+                    qInfo() << "  got urls:" << got
+                            << "index:" << tabWidget->currentIndex()
+                            << "urlsMatch:" << (got == fixtureUrls)
+                            << "titlesOk:" << titlesOk;
+                    fflush(nullptr);
+                    std::quick_exit(1);
+                }
+            });
+            poll->start(200);
+            return application.exec();
+        }
     }
 
     // Headless measurement for PERF01 — report-only timings for the

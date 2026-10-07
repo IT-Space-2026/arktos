@@ -1088,7 +1088,6 @@ bool TabWidget::restoreState(const QByteArray &state)
 
     int currentTab = -1;
     stream >> currentTab;
-    setCurrentIndex(currentTab);
     QList<QByteArray> tabHistory;
     StreamingUtils::readBoundedList(stream, tabHistory);
     if (stream.status() != QDataStream::Ok)
@@ -1096,15 +1095,27 @@ bool TabWidget::restoreState(const QByteArray &state)
 
     for (int i = 0; i < openTabs.count(); ++i) {
         QUrl url = QUrl::fromEncoded(openTabs.at(i).toUtf8());
-        TabWidget::OpenUrlIn tab = i == 0 && currentWebView()->url() == QUrl() ? CurrentTab : NewTab;
-        QByteArray historyState = tabHistory.value(i);
+        const QByteArray historyState = tabHistory.value(i);
         if (!historyState.isEmpty()) {
-            createTab(historyState, tab);
-        } else {
-            if (WebView *webView = getView(tab, currentWebView()))
-                webView->loadUrl(url);
+            // The saved history's current entry wins when it parses;
+            // an unreadable blob (such as a Qt4-era QWebHistory stream,
+            // which has a different layout) falls back to the flat tab
+            // url instead of silently dropping the tab.
+            const QUrl historyUrl = currentSerializedHistoryUrl(historyState);
+            if (historyUrl.isValid())
+                url = historyUrl;
         }
+        const TabWidget::OpenUrlIn tab = i == 0
+            && (!currentWebView() || currentWebView()->url() == QUrl())
+            ? CurrentTab : NewTab;
+        if (WebView *webView = getView(tab, currentWebView()))
+            webView->loadUrl(url);
     }
+    // The saved index is only selectable once the restored tabs exist —
+    // setting it before creating them is a no-op against the single
+    // placeholder tab.
+    if (currentTab >= 0 && currentTab < count())
+        setCurrentIndex(currentTab);
     return true;
 }
 
