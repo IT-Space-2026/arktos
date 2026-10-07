@@ -36,7 +36,7 @@ AboutDialog::AboutDialog(QWidget *parent)
     name->setText(qApp->applicationName());
     version->setText(qApp->applicationVersion());
     // QtWebKit is gone — report the Qt (QtWebEngine/Chromium) version.
-    webkitVersion->setText(tr("Qt version: %1").arg(QLatin1String(qVersion())));
+    qtVersion->setText(tr("Qt version: %1").arg(QLatin1String(qVersion())));
     connect(authorsButton, &QPushButton::clicked,
             this, &AboutDialog::authorsButtonClicked);
     connect(licenseButton, &QPushButton::clicked,

@@ -208,6 +208,9 @@ Self-contained Linux bundle (PACK01):
 License audit (LIC01):
     Added THIRD-PARTY-NOTICES at the repository root documenting every bundled or linked component and its license: the Trolltech Qt-demo code base Arora started from (GPL-2/3 + GPL Exception 1.2), the BSD-licensed src/utils/ classes, the MPL/GPL/LGPL tri-licensed network cookie jar, the GPL-2.0 Arora icon by Jens Bache-Wiig, the optional Rust adblock engine's crate dependencies (adblock 0.13.3 MPL-2.0; the rest MIT/Apache-2.0/Unicode-3.0/Unlicense), the runtime-fetched EasyList/uBlock subscription licenses, Qt 6/QtWebEngine/OpenSSL as non-vendored runtime dependencies, and the community translations. `make bundle` now ships the notices file alongside the GPL texts in dist/.
 
+Post-migration sweep (AUD01):
+    Removed the last Qt4-era leftovers: the orphan autotest dirs for the deleted WebPageProxy/NetworkAccessManagerProxy modules, the Qt-4.5-era buildosx.sh packaging script, builddeb.sh (its debian-upstream/ directory is gone), the dead `#if QT_VERSION` guard in ClearButton, the OS/2 qmake scopes in the tool projects, and the WebKit-era -webkit-gradient/-webkit-border-radius CSS in the start page (now standard linear-gradient/border-radius). The About dialog's version label is renamed off its old "webkitVersion" widget name, and the last headers used but never listed in project files (streamingutils.h, autotests/qtry.h) are listed now.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

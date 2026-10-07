@@ -3,8 +3,7 @@
 #
 # A directory is part of the suite when its .pro is a non-subdirs
 # project that its parent project actually lists in SUBDIRS — orphan
-# trees (e.g. utils/webpageproxy, which has no Qt6 counterpart) are
-# reported but not treated as failures.
+# trees are reported but not treated as failures.
 cd "$(dirname "$0")" || exit 1
 
 listed() {
