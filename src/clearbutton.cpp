@@ -36,6 +36,8 @@ ClearButton::ClearButton(QWidget *parent)
     setCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::NoFocus);
     setToolTip(tr("Clear"));
+    setAccessibleName(tr("Clear"));
+    setAccessibleDescription(tr("Clear the text"));
     setMinimumSize(22, 22);
     setVisible(false);
 

@@ -130,6 +130,7 @@ TabWidget::TabWidget(QWidget *parent)
     connect(m_tabBar, QOverload<int>::of(&TabBar::reloadTab), this, &TabWidget::reloadTab);
     connect(m_tabBar, &TabBar::reloadAllTabs, this, &TabWidget::reloadAllTabs);
     setTabBar(m_tabBar);
+    m_tabBar->setAccessibleName(tr("Tabs"));
     setDocumentMode(true);
     connect(m_tabBar, &QTabBar::tabMoved,
             this, &TabWidget::moveTab);
@@ -612,6 +613,9 @@ QLabel *TabWidget::animationLabel(int index, bool addMovie)
     QLabel *loadingAnimation = qobject_cast<QLabel*>(m_tabBar->tabButton(index, side));
     if (!loadingAnimation) {
         loadingAnimation = new QLabel(this);
+        // The label alternates between the loading spinner and the
+        // page favicon inside a tab; give assistive tools a name for it.
+        loadingAnimation->setAccessibleName(tr("Page Icon"));
     }
     if (addMovie && !loadingAnimation->movie()) {
         QMovie *movie = new QMovie(QLatin1String(":graphics/loading.gif"), QByteArray(), loadingAnimation);

@@ -198,6 +198,7 @@ void DownloadItem::getFileName()
             m_canceledByUser = true;
             stop();
             fileNameLabel->setText(tr("Download canceled: %1").arg(QFileInfo(defaultFileName).fileName()));
+            setAccessibleName(fileNameLabel->text());
             return;
         }
         QFileInfo fileInfo = QFileInfo(fileName);
@@ -214,6 +215,7 @@ void DownloadItem::getFileName()
         m_canceledByUser = true;
         stop();
         fileNameLabel->setText(tr("Download canceled: %1").arg(QFileInfo(fileName).fileName()));
+        setAccessibleName(fileNameLabel->text());
         return;
     }
 
@@ -236,6 +238,7 @@ void DownloadItem::getFileName()
     m_download->accept();
 
     fileNameLabel->setText(info.fileName());
+    setAccessibleName(info.fileName());
 }
 
 QString DownloadItem::sanitizeFileName(const QString &suggestedName)
@@ -990,6 +993,7 @@ void DownloadManager::load()
             DownloadItem *item = new DownloadItem(nullptr, false, this);
             item->m_outputFileName = fileName;
             item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
+            item->setAccessibleName(item->fileNameLabel->text());
             item->m_url = url;
             item->stopButton->setVisible(false);
             item->stopButton->setEnabled(false);
@@ -1086,6 +1090,19 @@ QVariant DownloadModel::data(const QModelIndex &index, int role) const
     if (role == Qt::ToolTipRole)
         if (!m_downloadManager->m_downloads.at(index.row())->downloadedSuccessfully())
             return m_downloadManager->m_downloads.at(index.row())->downloadInfoLabel->text();
+    // The row is rendered by an index widget, so DisplayRole stays
+    // empty; assistive tools still get the file name and status.
+    if (role == Qt::AccessibleTextRole) {
+        DownloadItem *item = m_downloadManager->m_downloads.at(index.row());
+        const QString info = item->downloadInfoLabel->text();
+        return info.isEmpty() ? item->fileNameLabel->text()
+                              : QString(item->fileNameLabel->text() + QLatin1String(", ") + info);
+    }
+    if (role == Qt::AccessibleDescriptionRole) {
+        DownloadItem *item = m_downloadManager->m_downloads.at(index.row());
+        return tr("Download %1 to %2").arg(item->m_url.toString(),
+                                           item->m_outputFileName);
+    }
     return QVariant();
 }
 

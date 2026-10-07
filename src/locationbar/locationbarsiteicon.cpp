@@ -35,6 +35,10 @@ LocationBarSiteIcon::LocationBarSiteIcon(QWidget *parent)
     resize(QSize(16, 16));
     webViewSiteIconChanged();
     setCursor(Qt::ArrowCursor);
+    setToolTip(tr("Site icon — drag to copy this page's address"));
+    setAccessibleName(tr("Site Icon"));
+    setAccessibleDescription(
+        tr("Drag to copy this page's address into another application or tab."));
     show();
 }
 

@@ -193,6 +193,9 @@ Zero-warning gate (WRN01):
 Event-loop blocking audit (FRZ01):
     Removed every GUI-thread blocking wait found by the sweep. The single-instance server no longer freezes: a client that connects but never writes used to stall the whole browser inside waitForReadyRead() — connections are now serviced asynchronously off readyRead and idle sockets are reaped. The IPC write waits are bounded (2s). Importing Netscape-format bookmark HTML no longer spawns the htmlToXBel tool and blocks on waitForFinished — the same parser now runs in-process, which also fixes the feature in installed builds (the tool's binary was never installed, only its man page).
 
+Accessibility audit (A11Y01):
+    Screen readers now have a name for every chrome control that used to be silent: the private-browsing indicator is a real button (focusable, named, keyboard-activatable to leave private mode) instead of a mouse-only label, and the site icon, clear/search buttons, address and search fields, tab strip, and download rows all expose names and descriptions. Dialog labels were wired to their inputs as buddies so fields announce as "User name", "Password", "Home Page", and so on, with mnemonics added where missing. A new autotests/accessibility suite pins the contract, and the AT-SPI bridge is verified attaching on Linux (QAccessible::isActive() reports true once a widget is shown under an a11y bus).
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

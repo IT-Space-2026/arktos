@@ -1,6 +1,7 @@
 TEMPLATE = subdirs
 SUBDIRS  = \
     smoke \
+    accessibility \
     adblock \
     addbookmarkdialog \
     autosaver \

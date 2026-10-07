@@ -42,6 +42,9 @@
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
          </property>
+         <property name="buddy">
+          <cstring>startupBehavior</cstring>
+         </property>
         </widget>
        </item>
        <item row="0" column="1" colspan="2">
@@ -70,6 +73,9 @@
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+         <property name="buddy">
+          <cstring>homeLineEdit</cstring>
          </property>
         </widget>
        </item>
@@ -107,6 +113,9 @@
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+         <property name="buddy">
+          <cstring>expireHistory</cstring>
          </property>
         </widget>
        </item>
@@ -189,6 +198,9 @@
               <property name="layoutDirection">
                <enum>Qt::LeftToRight</enum>
               </property>
+              <property name="accessibleName">
+               <string>Download directory</string>
+              </property>
              </widget>
             </item>
             <item>
@@ -210,7 +222,11 @@
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="externalDownloadPath"/>
+             <widget class="QLineEdit" name="externalDownloadPath">
+              <property name="accessibleName">
+               <string>External download program</string>
+              </property>
+             </widget>
             </item>
             <item>
              <widget class="QPushButton" name="externalDownloadBrowse">
@@ -252,6 +268,9 @@
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
          </property>
+         <property name="buddy">
+          <cstring>standardFontButton</cstring>
+         </property>
         </widget>
        </item>
        <item row="0" column="1" colspan="2">
@@ -288,6 +307,9 @@
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
          </property>
+         <property name="buddy">
+          <cstring>fixedFontButton</cstring>
+         </property>
         </widget>
        </item>
        <item row="1" column="1" colspan="2">
@@ -314,6 +336,9 @@
         <widget class="QLabel" name="label_8">
          <property name="text">
           <string>Preferred languages for viewing webpages in:</string>
+         </property>
+         <property name="buddy">
+          <cstring>languageButton</cstring>
          </property>
         </widget>
        </item>
@@ -348,6 +373,9 @@
         <widget class="QSpinBox" name="minimumFontSizeSpinBox">
          <property name="enabled">
           <bool>false</bool>
+         </property>
+         <property name="accessibleName">
+          <string>Minimum font size</string>
          </property>
          <property name="minimum">
           <number>1</number>
@@ -437,6 +465,9 @@
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="buddy">
+             <cstring>acceptCombo</cstring>
+            </property>
            </widget>
           </item>
           <item row="0" column="1">
@@ -472,6 +503,9 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>keepUntilCombo</cstring>
             </property>
            </widget>
           </item>
@@ -528,6 +562,9 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>cookieSessionCombo</cstring>
             </property>
            </widget>
           </item>
@@ -586,6 +623,9 @@
           </item>
           <item row="1" column="0" colspan="2">
            <widget class="QTreeWidget" name="permissionsTree">
+            <property name="accessibleName">
+             <string>Site permissions</string>
+            </property>
             <property name="rootIsDecorated">
              <bool>false</bool>
             </property>
@@ -729,6 +769,9 @@
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="buddy">
+             <cstring>openTargetBlankLinksIn</cstring>
+            </property>
            </widget>
           </item>
           <item row="1" column="1" colspan="2">
@@ -762,6 +805,9 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>openLinksFromAppsIn</cstring>
             </property>
            </widget>
           </item>
@@ -829,6 +875,9 @@
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="buddy">
+             <cstring>proxyType</cstring>
+            </property>
            </widget>
           </item>
           <item row="0" column="1" colspan="2">
@@ -858,6 +907,9 @@
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="buddy">
+             <cstring>proxyHostName</cstring>
+            </property>
            </widget>
           </item>
           <item row="1" column="1" colspan="2">
@@ -874,6 +926,9 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>proxyPort</cstring>
             </property>
            </widget>
           </item>
@@ -908,6 +963,9 @@
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="buddy">
+             <cstring>proxyUserName</cstring>
+            </property>
            </widget>
           </item>
           <item row="3" column="1" colspan="2">
@@ -924,6 +982,9 @@
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>proxyPassword</cstring>
             </property>
            </widget>
           </item>
@@ -964,6 +1025,9 @@
         <widget class="QLabel" name="label_16">
          <property name="text">
           <string>AutoFill web forms:</string>
+         </property>
+         <property name="buddy">
+          <cstring>autoFillPasswordFormsCheckBox</cstring>
          </property>
         </widget>
        </item>
@@ -1025,6 +1089,9 @@
          <property name="text">
           <string>Style Sheet:</string>
          </property>
+         <property name="buddy">
+          <cstring>userStyleSheet</cstring>
+         </property>
         </widget>
        </item>
        <item row="0" column="2">
@@ -1057,6 +1124,9 @@
            <widget class="QLabel" name="label_15">
             <property name="text">
              <string>Maximum Size:</string>
+            </property>
+            <property name="buddy">
+             <cstring>networkCacheMaximumSizeSpinBox</cstring>
             </property>
            </widget>
           </item>
@@ -1121,6 +1191,9 @@
        </item>
        <item>
         <widget class="QTreeWidget" name="extensionsTree">
+         <property name="accessibleName">
+          <string>Extensions</string>
+         </property>
          <property name="rootIsDecorated">
           <bool>false</bool>
          </property>
@@ -1213,6 +1286,9 @@
           </item>
           <item>
            <widget class="QListWidget" name="userScriptsList">
+            <property name="accessibleName">
+             <string>User scripts</string>
+            </property>
             <property name="maximumSize">
              <size>
               <width>16777215</width>

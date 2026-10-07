@@ -28,10 +28,17 @@
     </spacer>
    </item>
    <item row="0" column="3" colspan="2">
-    <widget class="SearchLineEdit" name="search"/>
+    <widget class="SearchLineEdit" name="search">
+     <property name="accessibleName">
+      <string>Search saved form data</string>
+     </property>
+    </widget>
    </item>
    <item row="1" column="0" colspan="5">
     <widget class="EditTableView" name="tableView">
+     <property name="accessibleName">
+      <string>Saved form data</string>
+     </property>
      <attribute name="verticalHeaderVisible">
       <bool>false</bool>
      </attribute>

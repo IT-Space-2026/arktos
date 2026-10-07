@@ -54,6 +54,7 @@ void SearchLineEdit::init()
 
     updateTextMargins();
     setInactiveText(tr("Search"));
+    setAccessibleName(tr("Search"));
 }
 
 ClearButton *SearchLineEdit::clearButton() const

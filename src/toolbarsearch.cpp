@@ -115,6 +115,10 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
     setCompleter(m_completer);
 
     searchButton()->setShowMenuTriangle(true);
+    // The button opens the search-engine menu in this context — a
+    // generic "Search" name would describe the line edit, not the menu.
+    searchButton()->setAccessibleName(tr("Search Engines"));
+    searchButton()->setToolTip(tr("Search Engines"));
 
     connect(searchButton(), &SearchButton::clicked,
             this, &ToolbarSearch::showEnginesMenu);

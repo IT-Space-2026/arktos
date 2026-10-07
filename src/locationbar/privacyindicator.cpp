@@ -22,15 +22,28 @@
 #include "browserapplication.h"
 #include "webview.h"
 
-#include <qpixmap.h>
+#include <qicon.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
 PrivacyIndicator::PrivacyIndicator(QWidget *parent)
-    : QLabel(parent)
+    : QToolButton(parent)
 {
-    setPixmap(QPixmap(QLatin1String(":graphics/private.png")));
+    setIcon(QIcon(QLatin1String(":graphics/private.png")));
+    setAutoRaise(true);
     setCursor(Qt::ArrowCursor);
+    setFocusPolicy(Qt::ClickFocus);
+    setToolTip(tr("Private browsing is on. Activate to leave private mode."));
+    setAccessibleName(tr("Private Browsing"));
+    setAccessibleDescription(
+        tr("Private browsing is on. Activate to leave private mode."));
+    connect(this, &QToolButton::clicked, this, [this]() {
+        // Leaving private mode: setPrivate(false) emits privacyChanged
+        // and each BrowserMainWindow::privacyChanged clears its tabs —
+        // a page's profile cannot be switched in place, so the
+        // off-the-record pages have to go.
+        BrowserApplication::setPrivate(false);
+    });
     hide();
 }
 
@@ -41,14 +54,4 @@ void PrivacyIndicator::setWebView(WebView *webView)
     // off-the-record profile rather than a global QWebSettings flag.
     QWebEnginePage *page = webView ? webView->page() : nullptr;
     setVisible(page && page->profile()->isOffTheRecord());
-}
-
-void PrivacyIndicator::mousePressEvent(QMouseEvent *event)
-{
-    Q_UNUSED(event)
-    // Leaving private mode: setPrivate(false) emits privacyChanged and
-    // each BrowserMainWindow::privacyChanged clears its tabs — a page's
-    // profile cannot be switched in place, so the off-the-record pages
-    // have to go.
-    BrowserApplication::setPrivate(false);
 }

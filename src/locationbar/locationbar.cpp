@@ -42,6 +42,7 @@ LocationBar::LocationBar(QWidget *parent)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);
+    setAccessibleName(tr("Address Bar"));
 
     setUpdatesEnabled(false);
     // site icon on the left

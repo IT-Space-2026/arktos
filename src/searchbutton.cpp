@@ -31,6 +31,7 @@ SearchButton::SearchButton(QWidget *parent)
 {
     setFocusPolicy(Qt::NoFocus);
     setCursor(Qt::ArrowCursor);
+    setAccessibleName(tr("Search"));
     setMinimumSize(sizeHint());
 }
 

@@ -60,6 +60,9 @@
    </item>
    <item>
     <widget class="QToolButton" name="previousButton">
+     <property name="accessibleName">
+      <string>Find previous</string>
+     </property>
      <property name="text">
       <string notr="true">&lt;</string>
      </property>
@@ -67,13 +70,20 @@
    </item>
    <item>
     <widget class="QToolButton" name="nextButton">
+     <property name="accessibleName">
+      <string>Find next</string>
+     </property>
      <property name="text">
       <string notr="true">&gt;</string>
      </property>
     </widget>
    </item>
    <item>
-    <widget class="SearchLineEdit" name="searchLineEdit"/>
+    <widget class="SearchLineEdit" name="searchLineEdit">
+     <property name="accessibleName">
+      <string>Find in page</string>
+     </property>
+    </widget>
    </item>
    <item>
     <widget class="QPushButton" name="doneButton">

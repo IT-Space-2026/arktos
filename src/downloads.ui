@@ -22,6 +22,9 @@
    </property>
    <item row="0" column="0" colspan="3">
     <widget class="EditTableView" name="downloadsView">
+     <property name="accessibleName">
+      <string>Downloads</string>
+     </property>
      <property name="frameShape">
       <enum>QFrame::NoFrame</enum>
      </property>

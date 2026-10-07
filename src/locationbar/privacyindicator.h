@@ -20,10 +20,10 @@
 #ifndef PRIVACYINDICATOR_H
 #define PRIVACYINDICATOR_H
 
-#include <qlabel.h>
+#include <qtoolbutton.h>
 
 class WebView;
-class PrivacyIndicator : public QLabel
+class PrivacyIndicator : public QToolButton
 {
     Q_OBJECT
 
@@ -31,10 +31,6 @@ public:
     PrivacyIndicator(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
 
-protected:
-    void mousePressEvent(QMouseEvent *event) override;
-
 };
 
 #endif // PRIVACYINDICATOR_H
-

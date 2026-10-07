@@ -28,13 +28,25 @@
     </widget>
    </item>
    <item>
-    <widget class="LineEdit" name="name"/>
+    <widget class="LineEdit" name="name">
+     <property name="accessibleName">
+      <string>Bookmark name</string>
+     </property>
+    </widget>
    </item>
    <item>
-    <widget class="LineEdit" name="address"/>
+    <widget class="LineEdit" name="address">
+     <property name="accessibleName">
+      <string>Bookmark address</string>
+     </property>
+    </widget>
    </item>
    <item>
-    <widget class="QComboBox" name="location"/>
+    <widget class="QComboBox" name="location">
+     <property name="accessibleName">
+      <string>Bookmark folder</string>
+     </property>
+    </widget>
    </item>
    <item>
     <spacer name="verticalSpacer">
