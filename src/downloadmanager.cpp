@@ -106,8 +106,10 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     // the labels must always render it literally.
     fileNameLabel->setTextFormat(Qt::PlainText);
     downloadInfoLabel->setTextFormat(Qt::PlainText);
+    // UIP01: secondary text — a hardcoded darkGray is unreadable under
+    // a dark palette; PlaceholderText adapts to the active scheme.
     QPalette p = downloadInfoLabel->palette();
-    p.setColor(QPalette::Text, Qt::darkGray);
+    p.setColor(QPalette::Text, p.color(QPalette::PlaceholderText));
     downloadInfoLabel->setPalette(p);
     progressBar->setMaximum(0);
     tryAgainButton->hide();

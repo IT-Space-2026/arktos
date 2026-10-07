@@ -29,9 +29,11 @@
 #include <QtGui/QtGui>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qlineedit.h>
 #include <qmenu.h>
 #include <qmessagebox.h>
 #include <qpushbutton.h>
+#include <qtoolbar.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
@@ -87,6 +89,7 @@ private slots:
     void stateSerialization();
     void events();
     void closeConfirm();
+    void chromeMetrics();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -321,6 +324,33 @@ void tst_BrowserMainWindow::closeConfirm()
     QVERIFY(window.isNull());
 
     QSettings().setValue(QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+}
+
+// UIP01: the modernized chrome metrics — padded navigation toolbar,
+// shared omnibox height on the location bar + toolbar search, and the
+// tab strip's minimum thickness.
+void tst_BrowserMainWindow::chromeMetrics()
+{
+    SubWindow *window = new SubWindow;
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    const QMargins margins = navBar->contentsMargins();
+    QVERIFY(margins.top() >= 4 && margins.bottom() >= 4);
+    QVERIFY(margins.left() >= 4 && margins.right() >= 4);
+    QVERIFY(navBar->layout() && navBar->layout()->spacing() >= 4);
+
+    const int fontHeight = window->fontMetrics().height();
+    QLineEdit *locationBar = window->tabWidget()->currentLocationBar();
+    QVERIFY(locationBar);
+    QVERIFY(locationBar->minimumHeight() >= fontHeight + 12);
+    QVERIFY(window->toolbarSearch()->minimumHeight() >= fontHeight + 12);
+
+    // TabBar::tabSizeHint() is protected — the bar's aggregate
+    // sizeHint height is >= the floored per-tab thickness.
+    TabBar *bar = window->tabWidget()->tabBar();
+    QVERIFY(bar->sizeHint().height() >= bar->fontMetrics().height() + 10);
+    closeWindow(window);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

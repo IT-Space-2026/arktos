@@ -106,6 +106,10 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
     connect(openSearchManager(), &OpenSearchManager::suggestionsEnabledChanged,
             this, &ToolbarSearch::updateSuggestionsEnabled);
 
+    // UIP01: match the location bar's omnibox height so the two halves
+    // of the navigation splitter sit flush.
+    setMinimumHeight(fontMetrics().height() + 12);
+
     m_completer = new QCompleter(m_model, this);
     m_completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
     // Suggestion strings come straight from the engine's network

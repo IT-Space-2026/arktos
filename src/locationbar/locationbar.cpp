@@ -44,6 +44,10 @@ LocationBar::LocationBar(QWidget *parent)
     setLayoutDirection(Qt::LeftToRight);
     setAccessibleName(tr("Address Bar"));
 
+    // UIP01: modern omnibox height — the Qt4 default single-line
+    // height reads cramped next to the padded navigation toolbar.
+    setMinimumHeight(fontMetrics().height() + 12);
+
     setUpdatesEnabled(false);
     // site icon on the left
     m_siteIcon = new LocationBarSiteIcon(this);

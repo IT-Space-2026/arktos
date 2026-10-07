@@ -18,6 +18,10 @@ Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
 tab-open, large-history-load and profile permission-sweep timings.
 
+Appearance: Arora follows the desktop light/dark preference (Qt 6.5+
+color-scheme reporting).  On desktops that do not report a scheme —
+or to force a look — set ARORA_COLOR_SCHEME=dark or light.
+
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
 the preferences dialog loads unpacked folders or installs .zip packages,

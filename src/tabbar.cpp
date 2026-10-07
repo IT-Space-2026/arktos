@@ -357,10 +357,14 @@ QSize TabBar::tabSizeHint(int index) const
     const int extent = fm.horizontalAdvance(QLatin1Char('M')) * 18;
     // QTabBar::tabSizeHint returns a transposed size for vertical
     // shapes — bound the tab's long axis either way so a long title
-    // can't stretch the whole strip.
+    // can't stretch the whole strip, and floor the strip's thickness so
+    // tabs keep modern breathing room (UIP01).
+    const int thickness = fm.height() + 10;
     if (verticalTabShape(shape()))
-        return sizeHint.boundedTo(QSize(sizeHint.width(), extent));
-    return sizeHint.boundedTo(QSize(extent, sizeHint.height()));
+        return QSize(qMax(sizeHint.width(), thickness),
+                     qMin(sizeHint.height(), extent));
+    return QSize(qMin(sizeHint.width(), extent),
+                 qMax(sizeHint.height(), thickness));
 }
 
 void TabBar::reloadTab()

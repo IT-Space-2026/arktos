@@ -35,6 +35,7 @@
 
 #include "aboutdialog.h"
 #include "browserprofile.h"
+#include "browsertheme.h"
 #include "clearprivatedata.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
@@ -55,6 +56,7 @@
 #include "opensearchengineaction.h"
 #include "opensearchmanager.h"
 #include "opensearchengine.h"
+#include "settings.h"
 #include "toolbarsearch.h"
 #include "edittableview.h"
 #include "useragentmenu.h"
@@ -133,6 +135,8 @@ private slots:
     void clearSiteData();
     void storagePermissions();
     void deferredSiteWipe();
+    void colorSchemeApply();
+    void dialogsRenderInBothSchemes();
 };
 
 void tst_Dialogs::initTestCase()
@@ -693,6 +697,99 @@ void tst_Dialogs::deferredSiteWipe()
     QVERIFY(QFileInfo::exists(tree.filePath(QLatin1String("Keep Me"))));
     QVERIFY(!QFileInfo::exists(tree.filePath(
                 QLatin1String("arora-site-wipe.pending"))));
+}
+
+// UIP01: ARORA_COLOR_SCHEME drives preferredColorScheme() so the whole
+// install/restore path is deterministic under the offscreen QPA (which
+// reports Qt::ColorScheme::Unknown).
+void tst_Dialogs::colorSchemeApply()
+{
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    const QColor platformWindow =
+        QApplication::palette().color(QPalette::Window);
+
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    BrowserTheme::applyColorScheme();
+    QVERIFY(BrowserTheme::paletteIsForced());
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    QVERIFY(QApplication::palette().color(QPalette::Text).lightness() > 128);
+
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window), platformWindow);
+    qunsetenv("ARORA_COLOR_SCHEME");
+}
+
+// UIP01: dialogs render in both schemes — every visible direct child
+// must fit inside the dialog's client area, and the rendered pixels
+// must actually follow the palette (a dark grab reads darker than a
+// light one).  Returns the mean rendered lightness; out-of-bounds
+// children are reported through failures (QVERIFY cannot run inside a
+// value-returning helper).
+static int renderDialogs(QStringList *failures)
+{
+    int lightnessSum = 0;
+    int count = 0;
+    SettingsDialog settings;
+    AboutDialog about;
+    ClearPrivateData clear;
+    QWidget *dialogs[] = { &settings, &about, &clear };
+    for (QWidget *dialog : dialogs) {
+        dialog->show();
+        if (dialog->layout())
+            dialog->layout()->activate();
+        const QList<QWidget *> children = dialog->findChildren<QWidget *>(
+            QString(), Qt::FindDirectChildrenOnly);
+        for (QWidget *child : children) {
+            if (!child->isVisibleTo(dialog))
+                continue;
+            if (!dialog->rect().contains(child->geometry()))
+                failures->append(QStringLiteral("%1 child %2 out of bounds")
+                                 .arg(QLatin1String(dialog->metaObject()->className()),
+                                      QLatin1String(child->metaObject()->className())));
+        }
+        const QImage image = dialog->grab().toImage()
+            .scaled(64, 64)
+            .convertToFormat(QImage::Format_RGB32);
+        if (image.isNull()) {
+            failures->append(QStringLiteral("%1 grab returned a null image")
+                             .arg(QLatin1String(dialog->metaObject()->className())));
+            dialog->hide();
+            continue;
+        }
+        qint64 sum = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            const QRgb *row = reinterpret_cast<const QRgb *>(image.scanLine(y));
+            for (int x = 0; x < image.width(); ++x)
+                sum += QColor::fromRgba(row[x]).lightness();
+        }
+        lightnessSum += int(sum / (image.width() * image.height()));
+        ++count;
+        dialog->hide();
+    }
+    return count ? lightnessSum / count : 0;
+}
+
+void tst_Dialogs::dialogsRenderInBothSchemes()
+{
+    QStringList failures;
+
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    const int lightLevel = renderDialogs(&failures);
+
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    BrowserTheme::applyColorScheme();
+    const int darkLevel = renderDialogs(&failures);
+
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    qunsetenv("ARORA_COLOR_SCHEME");
+
+    QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1String("; "))));
+    QVERIFY(darkLevel < lightLevel);
 }
 
 QTEST_MAIN(tst_Dialogs)

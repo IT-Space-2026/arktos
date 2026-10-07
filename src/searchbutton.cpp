@@ -38,7 +38,7 @@ SearchButton::SearchButton(QWidget *parent)
 QSize SearchButton::sizeHint() const
 {
     if (!m_cache.isNull())
-        return m_cache.size();
+        return (QSizeF(m_cache.size()) / m_cache.devicePixelRatio()).toSize();
     if (m_showMenuTriangle)
         return QSize(16, 16);
     return QSize(12, 16);
@@ -46,12 +46,21 @@ QSize SearchButton::sizeHint() const
 
 QImage SearchButton::generateSearchImage(bool dropDown)
 {
-    QImage image(dropDown ? 16 : 12, 16, QImage::Format_ARGB32);
+    // UIP01: render at the device pixel ratio so the glyph stays crisp
+    // under fractional scaling — a fixed 12x16 image blurs on 1.25x/1.5x
+    // screens.  Painter runs in logical coordinates (pen widths scale
+    // with the transform).
+    const qreal dpr = devicePixelRatioF();
+    const int logicalWidth = dropDown ? 16 : 12;
+    const int logicalHeight = 16;
+    QImage image(qRound(logicalWidth * dpr), qRound(logicalHeight * dpr),
+                 QImage::Format_ARGB32);
+    image.setDevicePixelRatio(dpr);
     image.fill(qRgba(0, 0, 0, 0));
     QPainterPath path;
 
     // draw magnify glass circle
-    int radius = image.height() / 2;
+    int radius = logicalHeight / 2;
     QRect circle(1, 1, radius, radius);
     path.addEllipse(circle);
 
@@ -60,13 +69,18 @@ QImage SearchButton::generateSearchImage(bool dropDown)
     QPointF currentPosition = path.currentPosition();
     path.moveTo(currentPosition.x() + 1, currentPosition.y() + 1);
     if (dropDown)
-        path.lineTo(image.width()-6, image.height()-4);
+        path.lineTo(logicalWidth-6, logicalHeight-4);
     else
-        path.lineTo(image.width()-2, image.height()-4);
+        path.lineTo(logicalWidth-2, logicalHeight-4);
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(Qt::darkGray, 2));
+    painter.scale(dpr, dpr);
+    // Track the palette instead of a fixed darkGray so the glyph stays
+    // legible under a dark application theme.
+    const QColor glyphColor =
+        palette().color(QPalette::Disabled, QPalette::Text);
+    painter.setPen(QPen(glyphColor, 2));
     painter.drawPath(path);
 
     if (dropDown) {
@@ -79,12 +93,13 @@ QImage SearchButton::generateSearchImage(bool dropDown)
         dropPath.lineTo(currentPosition.x() + 4, currentPosition.y());
         dropPath.lineTo(currentPosition.x() + 2, currentPosition.y() + 2);
         dropPath.closeSubpath();
-        painter.setPen(Qt::darkGray);
-        painter.setBrush(Qt::darkGray);
+        painter.setPen(glyphColor);
+        painter.setBrush(glyphColor);
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.drawPath(dropPath);
     }
     painter.end();
+    m_cacheColor = glyphColor;
     return image;
 }
 
@@ -106,10 +121,22 @@ bool SearchButton::showMenuTriangle() const
     return m_showMenuTriangle;
 }
 
+void SearchButton::changeEvent(QEvent *event)
+{
+    // Palette swaps (light/dark theme change) must regenerate the
+    // glyph — the cache stores the color it was rendered with.
+    if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::ApplicationPaletteChange)
+        m_cache = QImage();
+    QAbstractButton::changeEvent(event);
+}
+
 void SearchButton::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
-    if (m_cache.isNull())
+    if (m_cache.isNull()
+            || m_cache.devicePixelRatio() != devicePixelRatioF()
+            || m_cacheColor != palette().color(QPalette::Disabled, QPalette::Text))
         m_cache = generateSearchImage(m_showMenuTriangle);
     QPainter painter(this);
     painter.drawImage(QPoint(0, 0), m_cache);

@@ -47,24 +47,30 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     QVBoxLayout *layout = new QVBoxLayout();
     layout->addWidget(new QLabel(tr("Clear the following items:")));
 
+    // UIP01: indent the item list under the heading and pin the button
+    // box to the bottom edge.
+    QVBoxLayout *itemLayout = new QVBoxLayout();
+    itemLayout->setContentsMargins(16, 0, 0, 0);
+    layout->addLayout(itemLayout);
+
     QSettings settings;
     settings.beginGroup(QLatin1String("clearprivatedata"));
 
     m_browsingHistory = new QCheckBox(tr("&Browsing History"));
     m_browsingHistory->setChecked(settings.value(QLatin1String("browsingHistory"), true).toBool());
-    layout->addWidget(m_browsingHistory);
+    itemLayout->addWidget(m_browsingHistory);
 
     m_downloadHistory = new QCheckBox(tr("&Download History"));
     m_downloadHistory->setChecked(settings.value(QLatin1String("downloadHistory"), true).toBool());
-    layout->addWidget(m_downloadHistory);
+    itemLayout->addWidget(m_downloadHistory);
 
     m_searchHistory = new QCheckBox(tr("&Search History"));
     m_searchHistory->setChecked(settings.value(QLatin1String("searchHistory"), true).toBool());
-    layout->addWidget(m_searchHistory);
+    itemLayout->addWidget(m_searchHistory);
 
     m_cookies = new QCheckBox(tr("&Cookies"));
     m_cookies->setChecked(settings.value(QLatin1String("cookies"), true).toBool());
-    layout->addWidget(m_cookies);
+    itemLayout->addWidget(m_cookies);
 
     // DOM storage — the data trackers actually use.  The web cache
     // checkbox cannot cover it: clearHttpCache() never touches
@@ -72,18 +78,18 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     m_siteData = new QCheckBox(tr("Site &Data"));
     m_siteData->setToolTip(tr("localStorage, IndexedDB, service workers and other site databases"));
     m_siteData->setChecked(settings.value(QLatin1String("siteData"), true).toBool());
-    layout->addWidget(m_siteData);
+    itemLayout->addWidget(m_siteData);
 
     // The web cache lives inside the profile now (Chromium's http
     // cache), so this stays enabled even when the app-side NAM disk
     // cache is off.
     m_cache = new QCheckBox(tr("C&ached Web Pages"));
     m_cache->setChecked(settings.value(QLatin1String("cache"), true).toBool());
-    layout->addWidget(m_cache);
+    itemLayout->addWidget(m_cache);
 
     m_favIcons = new QCheckBox(tr("Website &Icons"));
     m_favIcons->setChecked(settings.value(QLatin1String("favIcons"), true).toBool());
-    layout->addWidget(m_favIcons);
+    itemLayout->addWidget(m_favIcons);
 
     settings.endGroup();
 
@@ -95,6 +101,7 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     buttonBox->addButton(rejectButton, QDialogButtonBox::RejectRole);
     connect(buttonBox, &QDialogButtonBox::accepted, this, &ClearPrivateData::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &ClearPrivateData::reject);
+    layout->addStretch(1);
     layout->addWidget(buttonBox);
 
     setLayout(layout);

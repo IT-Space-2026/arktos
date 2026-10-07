@@ -199,6 +199,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     w->setMaximumHeight(0);
     layout->addWidget(w); // <- OS X tab widget style bug
 #else
+    // UIP01: modest padding around the bookmarks row (skipped on macOS
+    // where the toolbar is hard-capped to 19px for the unified look).
+    m_bookmarksToolbar->setContentsMargins(4, 2, 4, 2);
     addToolBarBreak();
     addToolBar(m_bookmarksToolbar);
 #endif
@@ -1057,6 +1060,11 @@ void BrowserMainWindow::setupToolBar()
     setUnifiedTitleAndToolBarOnMac(true);
     m_navigationBar = new QToolBar(this);
     m_navigationBar->setObjectName(QLatin1String("NavigationToolBar"));
+    // UIP01: breathing room on the navigation row — the Qt4-era
+    // default item density reads cramped on modern displays.  Widget
+    // contents margins forward to the toolbar's internal layout.
+    m_navigationBar->setContentsMargins(6, 4, 6, 4);
+    m_navigationBar->layout()->setSpacing(6);
     addToolBar(m_navigationBar);
 
     m_historyBackAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack, nullptr, this));

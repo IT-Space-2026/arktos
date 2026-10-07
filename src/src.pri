@@ -82,6 +82,7 @@ HEADERS += \
     $$PWD/browsermainwindow.h \
     $$PWD/browserpaths.h \
     $$PWD/browserprofile.h \
+    $$PWD/browsertheme.h \
     $$PWD/clearbutton.h \
     $$PWD/clearprivatedata.h \
     $$PWD/downloadmanager.h \
@@ -122,6 +123,7 @@ SOURCES += \
     $$PWD/browserapplication.cpp \
     $$PWD/browsermainwindow.cpp \
     $$PWD/browserprofile.cpp \
+    $$PWD/browsertheme.cpp \
     $$PWD/clearbutton.cpp \
     $$PWD/clearprivatedata.cpp \
     $$PWD/downloadmanager.cpp \

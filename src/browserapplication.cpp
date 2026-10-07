@@ -69,6 +69,7 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "browsermainwindow.h"
+#include "browsertheme.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
@@ -95,6 +96,7 @@
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qstatusbar.h>
+#include <qstylehints.h>
 #include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -212,6 +214,14 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             return;
     }
 #endif
+
+    // UIP01: follow the desktop light/dark preference.  Platform
+    // themes that react to the scheme swap the palette themselves —
+    // applyColorScheme() only steps in when the palette disagrees with
+    // the reported scheme, and re-applies on live scheme changes.
+    BrowserTheme::applyColorScheme();
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+            this, [](Qt::ColorScheme) { BrowserTheme::applyColorScheme(); });
 
 #if defined(Q_OS_MACOS)
     QApplication::setQuitOnLastWindowClosed(false);

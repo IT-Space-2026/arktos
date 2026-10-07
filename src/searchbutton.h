@@ -33,11 +33,13 @@ public:
     void setShowMenuTriangle(bool show);
     bool showMenuTriangle() const;
     void paintEvent(QPaintEvent *event) override;
+    void changeEvent(QEvent *event) override;
     QSize sizeHint() const override;
 
 private:
     QImage generateSearchImage(bool dropDown);
     QImage m_cache;
+    QColor m_cacheColor;
     bool m_showMenuTriangle;
 };
 
