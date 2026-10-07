@@ -75,6 +75,7 @@ FORMS += \
 HEADERS += \
     $$PWD/aboutdialog.h \
     $$PWD/acceptlanguagedialog.h \
+    $$PWD/argon2id.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
     $$PWD/autosaver.h \
@@ -118,6 +119,7 @@ HEADERS += \
 SOURCES += \
     $$PWD/aboutdialog.cpp \
     $$PWD/acceptlanguagedialog.cpp \
+    $$PWD/argon2id.c \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
     $$PWD/autosaver.cpp \

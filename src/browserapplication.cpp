@@ -78,6 +78,7 @@
 #include "networkaccessmanager.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
+#include "securestore.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
@@ -334,6 +335,8 @@ BrowserApplication::~BrowserApplication()
 {
     quitting = true;
     clearPrivateDataOnExit();
+    // SEC13: drop the passphrase-derived key and any cached file key.
+    SecureStore::lock();
     qDeleteAll(m_mainWindows);
     if (m_torManager) {
         // SHUTDOWN over the control channel, bounded escalate inside;

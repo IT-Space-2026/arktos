@@ -87,9 +87,13 @@
 #include <qapplication.h>
 #include <qcombobox.h>
 #include <qdesktopservices.h>
+#include <qdialogbuttonbox.h>
 #include <qdir.h>
 #include <qfile.h>
 #include <qfontdialog.h>
+#include <qformlayout.h>
+#include <qlabel.h>
+#include <qlineedit.h>
 #include <qlistwidget.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
@@ -97,6 +101,7 @@
 #include <qstandardpaths.h>
 #include <qfiledialog.h>
 #include <qtreewidget.h>
+#include <qboxlayout.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
@@ -164,6 +169,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(permissions, &WebPermissionManager::changed,
             this, &SettingsDialog::refreshPermissions);
     refreshPermissions();
+
+    // SEC13: master-passphrase controls for the credential store.
+    connect(credentialPassphraseButton, &QPushButton::clicked,
+            this, &SettingsDialog::credentialPassphraseChange);
+    connect(credentialRemoveButton, &QPushButton::clicked,
+            this, &SettingsDialog::credentialPassphraseRemove);
+    connect(credentialLockButton, &QPushButton::clicked,
+            this, &SettingsDialog::credentialStoreLock);
+    refreshCredentialUi();
 
     // SRCH02: the Search tab mirrors the shared OpenSearchManager —
     // engine add/remove (the Manage dialog edits the same manager) and
@@ -1023,4 +1037,150 @@ void SettingsDialog::clearPermissions()
             != QMessageBox::Yes)
         return;
     WebPermissionManager::instance()->clearEntries();
+}
+
+// Prompts for a new master passphrase — entered twice — and returns
+// Accepted with *passphrase filled only for matching input of at
+// least 8 characters.  The dialog keeps the field values out of
+// tooltips/accessibility text; SecureStore wipes its own copies.
+static int promptNewPassphrase(QWidget *parent, bool change,
+                               QString *passphrase)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(change
+        ? SettingsDialog::tr("Change Master Passphrase")
+        : SettingsDialog::tr("Set Master Passphrase"));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+
+    QLabel *info = new QLabel(change
+        ? SettingsDialog::tr("Choose a new master passphrase (at least 8 characters).\n"
+            "Everything sealed under the old one is re-encrypted.")
+        : SettingsDialog::tr("Choose a master passphrase (at least 8 characters).\n"
+            "Saved passwords will then be decryptable only with it — the\n"
+            "key is derived in memory and never written to disk."));
+    info->setWordWrap(true);
+    layout->addWidget(info);
+
+    QLineEdit *first = new QLineEdit;
+    first->setEchoMode(QLineEdit::Password);
+    QLineEdit *second = new QLineEdit;
+    second->setEchoMode(QLineEdit::Password);
+    QFormLayout *form = new QFormLayout;
+    form->addRow(SettingsDialog::tr("Passphrase:"), first);
+    form->addRow(SettingsDialog::tr("Repeat:"), second);
+    layout->addLayout(form);
+
+    QLabel *hint = new QLabel;
+    hint->setStyleSheet(QLatin1String("color: #b00000"));
+    layout->addWidget(hint);
+
+    QDialogButtonBox *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted,
+                     &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected,
+                     &dialog, &QDialog::reject);
+
+    for (;;) {
+        if (dialog.exec() != QDialog::Accepted)
+            return QDialog::Rejected;
+        if (first->text().length() < 8) {
+            hint->setText(SettingsDialog::tr(
+                "The passphrase must be at least 8 characters."));
+            continue;
+        }
+        if (first->text() != second->text()) {
+            hint->setText(SettingsDialog::tr(
+                "The passphrases do not match."));
+            second->clear();
+            continue;
+        }
+        *passphrase = first->text();
+        return QDialog::Accepted;
+    }
+}
+
+void SettingsDialog::refreshCredentialUi()
+{
+    const bool crypto = SecureStore::isAvailable();
+    const bool enabled =
+        crypto && SecureStore::passphraseProtectionEnabled();
+    const bool unlocked = SecureStore::isUnlocked();
+
+    if (!crypto) {
+        credentialStatusLabel->setText(tr(
+            "The crypto backend is unavailable — saved passwords"
+            " cannot be stored on this system."));
+    } else if (enabled && unlocked) {
+        credentialStatusLabel->setText(tr(
+            "Master passphrase set — the saved-password key is"
+            " derived in memory and never written to disk."
+            " The store is currently unlocked."));
+    } else if (enabled) {
+        credentialStatusLabel->setText(tr(
+            "Master passphrase set — the store is locked and needs"
+            " the passphrase before saved passwords can be read"
+            " or written."));
+    } else {
+        credentialStatusLabel->setText(tr(
+            "Saved passwords are encrypted with a key stored next"
+            " to the data — that protects them from other users and"
+            " offline reads, but not from malware running as you."
+            " Set a master passphrase to protect the key itself."));
+    }
+
+    credentialPassphraseButton->setEnabled(crypto);
+    credentialPassphraseButton->setText(enabled
+        ? tr("Change Master Passphrase...")
+        : tr("Set Master Passphrase..."));
+    credentialRemoveButton->setEnabled(enabled);
+    credentialLockButton->setEnabled(enabled && unlocked);
+}
+
+void SettingsDialog::credentialPassphraseChange()
+{
+    const bool enabled = SecureStore::passphraseProtectionEnabled();
+    if (enabled && !SecureStore::isUnlocked()
+        && !SecureStore::ensureUnlocked(this))
+        return;
+
+    QString passphrase;
+    if (promptNewPassphrase(this, enabled, &passphrase)
+        != QDialog::Accepted)
+        return;
+
+    QString error;
+    const bool ok = enabled
+        ? SecureStore::changePassphrase(passphrase, &error)
+        : SecureStore::enablePassphraseProtection(passphrase, &error);
+    if (!ok)
+        QMessageBox::warning(this, tr("Credential Store"), error);
+    refreshCredentialUi();
+}
+
+void SettingsDialog::credentialPassphraseRemove()
+{
+    if (!SecureStore::passphraseProtectionEnabled())
+        return;
+    if (!SecureStore::isUnlocked() && !SecureStore::ensureUnlocked(this))
+        return;
+    if (QMessageBox::question(this, tr("Remove Master Passphrase"),
+            tr("Saved passwords will go back to being protected by a"
+               " key file stored next to the data. Remove the"
+               " passphrase?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            != QMessageBox::Yes)
+        return;
+
+    QString error;
+    if (!SecureStore::disablePassphraseProtection(&error))
+        QMessageBox::warning(this, tr("Credential Store"), error);
+    refreshCredentialUi();
+}
+
+void SettingsDialog::credentialStoreLock()
+{
+    SecureStore::lock();
+    refreshCredentialUi();
 }

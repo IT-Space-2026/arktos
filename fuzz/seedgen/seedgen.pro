@@ -12,9 +12,11 @@ INCLUDEPATH += $$PWD/../../src $$PWD/../../src/history \
 
 HEADERS += \
     $$PWD/../../src/history/historyparser.h \
-    $$PWD/../../src/network/cookiejar/networkcookiejar/networkcookiejar.h
+    $$PWD/../../src/network/cookiejar/networkcookiejar/networkcookiejar.h \
+    $$PWD/../../src/argon2id.h
 
 SOURCES += seedgen.cpp \
     $$PWD/../../src/history/historyparser.cpp \
     $$PWD/../../src/network/cookiejar/networkcookiejar/networkcookiejar.cpp \
-    $$PWD/../../src/securestore.cpp
+    $$PWD/../../src/securestore.cpp \
+    $$PWD/../../src/argon2id.c

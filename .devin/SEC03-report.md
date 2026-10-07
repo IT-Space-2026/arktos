@@ -56,6 +56,32 @@ this task changed. Date: 2026-10-06. Tree: Qt 6.11.3 / QtWebEngine port.
 - The NAM suggestion cache can hold typed query text; covered by
   SEC11's suggestion-privacy review rather than at-rest encryption.
 
+## SEC13 follow-up — optional master-passphrase custody
+
+SEC13 removed the "key beside the data" weakness as an *option*, still
+built-in only (no libsecret/DPAPI/Keychain):
+
+- Settings → Privacy → Saved Passwords → "Set Master Passphrase..."
+  switches custody: `securestore.kdf` (magic `ARKDF1` + Argon2id
+  params m=64 MiB/t=3/p=4 + 16-byte salt + a sealed `ARORA-KDF-VERIFY`
+  verifier blob) replaces `securestore.key`, which is deleted. The
+  AES-256-GCM key is Argon2id-derived from the passphrase in RAM by the
+  vendored pure-C implementation in `src/argon2id.{h,c}` (RFC 9106
+  vectors + libargon2 differential-tested) — no key material on disk.
+- Wrong passphrase → GCM tag on the verifier fails → clean "unlock
+  failed", no oracle. `SecureStore::lock()` (Tools → Lock Credential
+  Store) and process exit zeroize the derived key and any cached file
+  key.
+- seal()/open() try one interactive unlock on first credential access;
+  non-interactive contexts fail closed.
+- Enable/change/disable transitions re-seal the consumer stores
+  (`autofill.dat`, `proxy/password`) under the new key before custody
+  flips; a crash-safe ordering plus an open() fallback over a stray
+  `securestore.key` keeps interrupted transitions readable.
+- Default mode is unchanged: random `securestore.key` 0600 — it still
+  only protects the ciphertext, not the key file itself, against
+  same-uid malware; the passphrase mode is the answer for that threat.
+
 ## Verification
 
 - `--autofill-smoke` extended: asserts `autofill.dat` carries the

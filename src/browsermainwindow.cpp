@@ -82,6 +82,7 @@
 #include "networkaccessmanager.h"
 #include "opensearchdialog.h"
 #include "safetext.h"
+#include "securestore.h"
 #include "settings.h"
 #include "sourceviewer.h"
 #include "tabbar.h"
@@ -868,6 +869,21 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::clearPrivateData);
     m_toolsMenu->addAction(m_toolsClearPrivateDataAction);
 
+    // SEC13: drops the passphrase-derived key so the saved-password
+    // store needs the master passphrase again.  Only meaningful while
+    // a passphrase-protected store is unlocked.
+    m_toolsLockStoreAction = new QAction(m_toolsMenu);
+    connect(m_toolsLockStoreAction, &QAction::triggered, this, [this]() {
+        SecureStore::lock();
+        statusBar()->showMessage(tr("Credential store locked"), 5000);
+    });
+    connect(m_toolsMenu, &QMenu::aboutToShow, this, [this]() {
+        m_toolsLockStoreAction->setEnabled(
+            SecureStore::passphraseProtectionEnabled()
+            && SecureStore::isUnlocked());
+    });
+    m_toolsMenu->addAction(m_toolsLockStoreAction);
+
     // Qt WebEngine has no DeveloperExtrasEnabled toggle — Chromium
     // DevTools are always available, so the menu entry opens the
     // inspector on the current page directly.
@@ -1036,6 +1052,7 @@ void BrowserMainWindow::retranslate()
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
     m_toolsClearPrivateDataAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Delete", "Clear Private Data")));
+    m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
     m_toolsEnableInspectorAction->setText(tr("Web &Inspector"));
     m_toolsPreferencesAction->setText(tr("Options..."));
     m_toolsPreferencesAction->setShortcut(tr("Ctrl+,"));

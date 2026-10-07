@@ -114,6 +114,11 @@ private slots:
     void removePermission();
     void clearPermissions();
 
+    void refreshCredentialUi();
+    void credentialPassphraseChange();
+    void credentialPassphraseRemove();
+    void credentialStoreLock();
+
 private:
     void stashSearchSuggestions();
 

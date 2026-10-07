@@ -36,6 +36,14 @@
 // (where OSCrypt falls back to a hardcoded password): it defeats
 // offline and other-user reads of the store, not malware already
 // running as the same uid.  See .devin/SEC03-report.md.
+//
+// Optional master-passphrase mode (SEC13): when the user sets a
+// passphrase the key is Argon2id-derived in memory instead — the
+// params/salt file securestore.kdf replaces securestore.key and no
+// key material exists on disk; ciphertext then needs the passphrase.
+// The derived key lives in RAM only and is zeroized by lock().
+class QWidget;
+
 namespace SecureStore {
 
 // True when the OpenSSL EVP symbols resolved.  When false seal()
@@ -63,6 +71,52 @@ QByteArray open(const QByteArray &blob, bool *ok = nullptr);
 // legacy plaintext values through so existing settings keep working.
 QString sealString(const QString &plain);
 QString openString(const QString &stored, bool *ok = nullptr);
+
+// ---- master-passphrase key custody (SEC13) ----
+
+// True when securestore.kdf exists: the encryption key is derived
+// from a master passphrase and no securestore.key file is used.
+bool passphraseProtectionEnabled();
+
+// False only in passphrase mode while locked.  seal()/open() try an
+// interactive unlock prompt first (when a QApplication exists and
+// interactive unlock is enabled) and fail securely when it is denied.
+bool isUnlocked();
+
+// Derives the key from the passphrase and verifies it against the
+// verifier stored in securestore.kdf.  A wrong passphrase returns
+// false cleanly (the GCM tag on the verifier rejects it — no oracle).
+bool unlock(const QString &passphrase);
+
+// Drops the cached derived key and wipes it from RAM.  Also clears
+// any cached file key so lock() is safe to call unconditionally.
+void lock();
+
+// Interactive variant of unlock(): prompts up to three times via a
+// password-echo dialog.  Returns the resulting unlocked state.
+// Non-interactive contexts (no QApplication, or disabled via
+// setInteractiveUnlockEnabled) simply return isUnlocked().
+bool ensureUnlocked(QWidget *parent = nullptr);
+void setInteractiveUnlockEnabled(bool enabled);
+bool isInteractiveUnlockEnabled();
+
+// Mode transitions.  Each re-seals the known consumer stores
+// (autofill.dat, the proxy password setting) from the old key to the
+// new one before switching custody.  enable/change create a fresh
+// salt; disable writes a fresh random securestore.key.  All return
+// false with *error describing the failure; change and disable
+// require the store to already be unlocked.
+bool enablePassphraseProtection(const QString &passphrase,
+                                QString *error = nullptr);
+bool disablePassphraseProtection(QString *error = nullptr);
+bool changePassphrase(const QString &newPassphrase,
+                      QString *error = nullptr);
+
+#ifdef AUTOTESTS
+// Clears every cached key/param and deletes both store files — test
+// isolation helper, compiled only into autotest binaries.
+void resetForTests();
+#endif
 
 } // namespace SecureStore
 
