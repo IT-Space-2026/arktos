@@ -183,6 +183,7 @@ private:
     QAction *m_filePrintPreviewAction;
     QAction *m_filePrintAction;
     QAction *m_filePrivateBrowsingAction;
+    QAction *m_fileNewTorWindowAction;
     QAction *m_fileCloseWindow;
     QAction *m_fileQuit;
 

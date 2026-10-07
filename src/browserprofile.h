@@ -40,6 +40,13 @@ QWebEngineProfile *normalProfile();
 // nothing — cookies, cache, storage — persists to disk.
 QWebEngineProfile *privateProfile();
 
+// TOR02: dedicated off-the-record profile for `arora --tor`.  Also
+// unnamed (memory-only), but deliberately distinct from
+// privateProfile() so the two modes can never share state and the
+// tor profile can carry its own hardening (HTTPS-first interceptor,
+// normalized UA, no extensions, no WebChannel bridges).
+QWebEngineProfile *torProfile();
+
 // The private profile only if it has already been brought up —
 // nullptr otherwise.  For callers that want to adjust an existing
 // private session without forcing one into existence (settings

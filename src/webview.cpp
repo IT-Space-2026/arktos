@@ -413,7 +413,10 @@ void WebView::loadFinished()
     }
     m_progress = 0;
     AdBlockManager::instance()->page()->applyRulesToPage(page());
-    AutoFillManager::instance()->attachToPage(m_page);
+    // TOR02: no autofill fill/capture in a tor window — stored
+    // credentials are a cross-context identity leak.
+    if (!BrowserApplication::isTorMode())
+        AutoFillManager::instance()->attachToPage(m_page);
 }
 
 bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)

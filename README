@@ -25,6 +25,18 @@ with a warning for chrome.* APIs Qt does not serve.  Plain user scripts
 (any *.js file in the "userscripts" data directory) are injected into
 every page at document-ready.
 
+Tor: File → "New Tor Window" (or `arora --tor`) opens a separate Arora
+process whose tabs all route through a managed Tor daemon — the web
+engine's proxy is process-global, so Tor cannot be a per-tab feature.
+Tor windows run a dedicated off-the-record profile (nothing persisted),
+arm a fail-closed proxy until bootstrap completes, harden the surface
+(no extensions, WebChannel bridges, autofill or search suggestions) and
+carry a violet accent, "Tor" badge and "(Tor)" title marker.  Needs a
+`tor` binary: system tor, the ARORA_TOR_BINARY env var, or the bundled
+Expert Bundle via BuildProcess/fetch-tor.sh.  `./arora --tor-smoke` and
+`./arora --tor-window-smoke` verify the daemon layer and the end-to-end
+window routing headlessly.
+
 Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
 packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
 QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the

@@ -22,6 +22,7 @@
 #include "opensearchmanager.h"
 
 #include "autosaver.h"
+#include "browserapplication.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -298,6 +299,10 @@ void OpenSearchManager::load()
 
 bool OpenSearchManager::suggestionsEnabledForEngine(const QString &engineName) const
 {
+    // TOR02: suggestions stream keystrokes to the engine endpoint —
+    // never enabled in a tor window regardless of the opt-in list.
+    if (BrowserApplication::isTorMode())
+        return false;
     return m_suggestionsEnabled.contains(engineName);
 }
 

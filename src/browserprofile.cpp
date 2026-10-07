@@ -68,6 +68,18 @@ QWebEngineProfile *privateProfileIfCreated()
     return s_privateProfile;
 }
 
+static QWebEngineProfile *s_torProfile = nullptr;
+
+QWebEngineProfile *torProfile()
+{
+    // An unnamed profile is off-the-record: nothing hits disk.
+    if (!s_torProfile) {
+        s_torProfile = new QWebEngineProfile(qApp);
+        s_torProfile->setHttpCacheType(QWebEngineProfile::MemoryHttpCache);
+    }
+    return s_torProfile;
+}
+
 QString defaultHttpUserAgent()
 {
     // UA01: Qt's factory UA carries a "QtWebEngine/<ver>" product

@@ -160,7 +160,11 @@ QNetworkProxy TorManager::socksProxy() const
                         m_socksHost.toString(), m_socksPort);
     // DNS goes to the resolver at the exit, not to the local resolver —
     // SOCKS5 host-name forwarding is what keeps lookups off the ISP.
-    proxy.setCapabilities(QNetworkProxy::HostNameLookupCapability);
+    // OR into (never replace) the type defaults — setCapabilities()
+    // wholesale-overwrites TunnelingCapability, which QNAM requires to
+    // even attempt a CONNECT through the proxy.
+    proxy.setCapabilities(proxy.capabilities()
+                          | QNetworkProxy::HostNameLookupCapability);
     return proxy;
 }
 

@@ -66,6 +66,7 @@
 #include "singleapplication.h"
 
 #include <qpointer.h>
+#include <qscopedpointer.h>
 #include <qurl.h>
 #include <qdatetime.h>
 
@@ -78,6 +79,8 @@ class HistoryManager;
 class NetworkAccessManager;
 class LanguageManager;
 class QLocalSocket;
+class QTemporaryDir;
+class TorManager;
 class QWebEngineProfile;
 class BrowserApplication : public SingleApplication
 {
@@ -126,6 +129,19 @@ public:
     static bool isPrivate();
     static void setPrivate(bool isPrivate);
 
+    // TOR02: `arora --tor` runs the whole process on a dedicated
+    // off-the-record profile behind a managed tor daemon.  The
+    // application proxy is process-global — that is why Tor is a
+    // separate process rather than a window mode in this one.
+    static bool isTorMode();
+    // Only meaningful before the constructor brings the profile up;
+    // exists for AUTOTESTS builds where the argv scan is compiled out.
+    static void setTorMode(bool torMode);
+    // The managed daemon — nullptr unless tor mode is on.
+    TorManager *torManager() const;
+    // Spawns an independent `arora --tor` process.
+    static void openTorWindow();
+
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);
 #endif
@@ -156,11 +172,18 @@ private:
     QString parseArgumentUrl(const QString &string) const;
     QString argumentUrl() const;
     void clean();
+    void torStartup(const QString &url);
 
     QList<QPointer<BrowserMainWindow> > m_mainWindows;
     QByteArray m_lastSession;
     bool m_standalone;
     bool quitting;
+
+    // TOR02: owned daemon + scratch DataDirectory (auto-removed); both
+    // null outside tor mode.  Declared before anything that could run
+    // a page so teardown stops the daemon before the dir vanishes.
+    TorManager *m_torManager;
+    QScopedPointer<QTemporaryDir> m_torDataDir;
 
     Qt::MouseButtons m_eventMouseButtons;
     Qt::KeyboardModifiers m_eventKeyboardModifiers;

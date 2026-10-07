@@ -77,6 +77,8 @@
 #include "networkaccessmanager.h"
 #include "schemeaccesshandler.h"
 #include "tabwidget.h"
+#include "tormanager.h"
+#include "torrequestinterceptor.h"
 #include "webview.h"
 
 #include <qbuffer.h>
@@ -87,9 +89,13 @@
 #include <qlibraryinfo.h>
 #include <qlocalsocket.h>
 #include <qmessagebox.h>
+#include <qnetworkproxy.h>
+#include <qprocess.h>
 #include <qset.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
+#include <qstatusbar.h>
+#include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
@@ -105,6 +111,13 @@
 // while enabled, new windows/pages are created on an off-the-record
 // profile instead of the default one.
 static bool s_isPrivate = false;
+
+// TOR02: set by the constructor's argv scan (or setTorMode() in
+// AUTOTESTS builds).  A tor process browses exclusively on
+// BrowserProfile::torProfile() — an unnamed, off-the-record profile —
+// and routes every request through the managed daemon's SOCKS5
+// listener via the process-global QNetworkProxy::setApplicationProxy.
+static bool s_torMode = false;
 
 // Profiles that already carry the application-level services — cookie
 // jar, custom scheme handlers, download manager, adblock interceptor —
@@ -122,18 +135,37 @@ static void prepareProfile(QWebEngineProfile *profile)
     CookieJar::instance(profile);
     SchemeAccessHandler::installAll(profile, qApp);
     BrowserProfile::applySettings(profile);
+    if (BrowserApplication::isTorMode()) {
+        // TOR02 hardening, applied on top of the user preferences:
+        // a configured UA or DNS prefetch would fingerprint or leak
+        // the tor session — the vanilla UA always applies, and no
+        // lookup may precede the proxied request.
+        profile->setHttpUserAgent(BrowserProfile::defaultHttpUserAgent());
+        profile->settings()->setAttribute(
+            QWebEngineSettings::DnsPrefetchEnabled, false);
+    }
     DownloadManager::instance()->installOnProfile(profile);
     AdBlockManager::instance()->installOnProfile(profile);
-    // QWebEngineExtensionManager wiring + user-scripts injection.
-    // The OTR profile is skipped for extensions upstream but still
-    // receives user scripts.
-    ExtensionManager::instance()->installOnProfile(profile);
+    if (BrowserApplication::isTorMode()) {
+        // A profile accepts exactly one request interceptor — the
+        // HTTPS-first upgrade wraps the adblock matcher inside
+        // TorRequestInterceptor.
+        profile->setUrlRequestInterceptor(new TorRequestInterceptor(
+            AdBlockManager::instance()->network(), profile));
+    } else {
+        // QWebEngineExtensionManager wiring + user-scripts injection.
+        // The OTR profile is skipped for extensions upstream but
+        // still receives user scripts.  The tor profile gets neither —
+        // extensions and injected scripts are fingerprintable surface.
+        ExtensionManager::instance()->installOnProfile(profile);
+    }
 }
 
 BrowserApplication::BrowserApplication(int &argc, char **argv)
     : SingleApplication(argc, argv)
     , m_standalone(false)
     , quitting(false)
+    , m_torManager(nullptr)
 {
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
@@ -155,6 +187,9 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
             break;
         }
     }
+    if (args.contains(QLatin1String("--tor"))
+            || args.contains(QLatin1String("--tor-window-smoke")))
+        s_torMode = true;
 
     if (!m_standalone) {
         connect(this, &SingleApplication::messageReceived,
@@ -186,11 +221,50 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
     QDesktopServices::setUrlHandler(QLatin1String("http"), this, "openUrl");
 
+    if (s_torMode) {
+        // TOR02: fail closed.  Until the daemon reports its SOCKS
+        // listener the application proxy points at a guaranteed-dead
+        // loopback port — a navigation that somehow races bootstrap
+        // errors out instead of leaking onto clearnet.
+        QNetworkProxy::setApplicationProxy(QNetworkProxy(
+            QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1));
+
+        m_torDataDir.reset(new QTemporaryDir(
+            QDir::temp().filePath(QLatin1String("arora-tor-XXXXXX"))));
+        m_torManager = new TorManager(this);
+        if (m_torDataDir->isValid())
+            m_torManager->setDataDirectory(m_torDataDir->path());
+        connect(m_torManager, &TorManager::ready,
+                this, [this](const QNetworkProxy &proxy) {
+            QNetworkProxy::setApplicationProxy(proxy);
+            const QList<BrowserMainWindow*> windows = mainWindows();
+            for (BrowserMainWindow *window : windows)
+                window->statusBar()->showMessage(
+                    tr("Connected to the Tor network"), 5000);
+        });
+        connect(m_torManager, &TorManager::bootstrapProgressChanged,
+                this, [this](int progress, const QString &) {
+            const QList<BrowserMainWindow*> windows = mainWindows();
+            for (BrowserMainWindow *window : windows)
+                window->statusBar()->showMessage(
+                    tr("Connecting to the Tor network — %1%").arg(progress));
+        });
+        connect(m_torManager, &TorManager::failed,
+                this, [this](const QString &reason) {
+            qWarning() << "tor:" << reason;
+            const QList<BrowserMainWindow*> windows = mainWindows();
+            for (BrowserMainWindow *window : windows)
+                window->statusBar()->showMessage(
+                    tr("Tor connection failed: %1").arg(reason));
+        });
+        m_torManager->start();
+    }
+
     // Chromium defaults to 16 too, but keep the explicit value the
-    // WebKit port forced.  Applied to the named browsing profile —
-    // QWebEngineProfile::defaultProfile() is off-the-record in Qt6, so
-    // it is the wrong target (MIG06).
-    QWebEngineSettings *engineSettings = BrowserProfile::normalProfile()->settings();
+    // WebKit port forced.  Applied to whichever browsing profile the
+    // process uses — QWebEngineProfile::defaultProfile() is itself
+    // off-the-record in Qt6, so it is the wrong target (MIG06).
+    QWebEngineSettings *engineSettings = webEngineProfile()->settings();
     engineSettings->setFontSize(QWebEngineSettings::DefaultFontSize, 16);
     engineSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, 16);
 
@@ -225,12 +299,23 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     // and marks its disk cache private while private browsing is on.
     connect(this, &BrowserApplication::privacyChanged,
             networkAccessManager(), &NetworkAccessManager::privacyChanged);
+    if (s_torMode) {
+        // setPrivate() is never toggled in a tor process, so the
+        // signal above never fires — flag the app-side fetch manager
+        // private directly: volatile cookie jar, disk cache disabled.
+        networkAccessManager()->privacyChanged(true);
+    }
 }
 
 BrowserApplication::~BrowserApplication()
 {
     quitting = true;
     qDeleteAll(m_mainWindows);
+    if (m_torManager) {
+        // SHUTDOWN over the control channel, bounded escalate inside;
+        // TAKEOWNERSHIP also kills tor if the process dies abruptly.
+        m_torManager->stop();
+    }
 }
 
 #if defined(Q_OS_MACOS)
@@ -395,7 +480,19 @@ void BrowserApplication::postLaunch()
         int startup = settings.value(QLatin1String("startupBehavior")).toInt();
         const QString url = argumentUrl();
 
-        if (!url.isEmpty()) {
+        if (isTorMode()) {
+            // TOR02: no navigation may leave this process before the
+            // daemon's SOCKS listener is live — the fail-closed proxy
+            // would just error the load, so the startup navigation is
+            // deferred until ready.  Sessions are never restored here:
+            // the blob is clearnet-profile state.
+            if (m_torManager && !m_torManager->isReady()) {
+                connect(m_torManager, &TorManager::ready, this,
+                        [this, url]() { torStartup(url); });
+            } else {
+                torStartup(url);
+            }
+        } else if (!url.isEmpty()) {
             // SEC09: argv urls are untrusted input, same as a
             // forwarded second-instance message — an external program
             // invoking `arora javascript:...` must not get script
@@ -426,6 +523,25 @@ void BrowserApplication::postLaunch()
     BrowserApplication::historyManager();
 }
 
+// TOR02: the tor window's first navigation — deferred by postLaunch()
+// until TorManager reports the SOCKS listener ready (or run at once
+// when it already is).  url is the sanitized argv operand, if any.
+void BrowserApplication::torStartup(const QString &url)
+{
+    if (m_mainWindows.isEmpty())
+        return;
+    BrowserMainWindow *window = mainWindow();
+    if (!url.isEmpty()) {
+        window->tabWidget()->loadStringFromUntrustedSource(url);
+        return;
+    }
+    // startupBehavior: homepage (0) still applies; restore-session (2)
+    // is meaningless — the blob belongs to the clearnet profile — and
+    // blank (1) is the fallback for it.
+    if (QSettings().value(QLatin1String("MainWindow/startupBehavior")).toInt() == 0)
+        window->goHome();
+}
+
 void BrowserApplication::loadSettings()
 {
     // MIG11: the QSettings->QWebEngineSettings mapping moved to
@@ -435,6 +551,17 @@ void BrowserApplication::loadSettings()
     // now injected as a QWebEngineScript, maximumPagesInCache (Chromium
     // manages its own cache).  Applied to every profile the app has
     // brought up — private browsing keeps user preferences too.
+    if (isTorMode()) {
+        // TOR02: only the tor profile exists; the hardening pins from
+        // prepareProfile must be re-applied — applySettings would
+        // otherwise restore a user-configured UA / DNS prefetch.
+        QWebEngineProfile *profile = BrowserProfile::torProfile();
+        BrowserProfile::applySettings(profile);
+        profile->setHttpUserAgent(BrowserProfile::defaultHttpUserAgent());
+        profile->settings()->setAttribute(
+            QWebEngineSettings::DnsPrefetchEnabled, false);
+        return;
+    }
     BrowserProfile::applySettings(BrowserProfile::normalProfile());
     if (QWebEngineProfile *otr = BrowserProfile::privateProfileIfCreated())
         BrowserProfile::applySettings(otr);
@@ -654,9 +781,11 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
     // profile is handed out — this is where the off-the-record profile
     // picks up its cookie jar, scheme handlers, download manager and
     // adblock interceptor when private browsing starts.
-    QWebEngineProfile *profile = isPrivate()
-        ? BrowserProfile::privateProfile()
-        : BrowserProfile::normalProfile();
+    QWebEngineProfile *profile = isTorMode()
+        ? BrowserProfile::torProfile()
+        : isPrivate()
+            ? BrowserProfile::privateProfile()
+            : BrowserProfile::normalProfile();
     prepareProfile(profile);
     return profile;
 }
@@ -750,8 +879,11 @@ void BrowserApplication::setZoomTextOnly(bool textOnly)
 bool BrowserApplication::isPrivate()
 {
     // There is no global private-browsing attribute in Qt WebEngine; the
-    // flag selects which profile webEngineProfile() hands out.
-    return s_isPrivate;
+    // flag selects which profile webEngineProfile() hands out.  Tor
+    // mode counts as private (TOR02): every persistence guard —
+    // session save, recent searches, download records — treats the
+    // process as off-the-record.
+    return s_isPrivate || s_torMode;
 }
 
 void BrowserApplication::setPrivate(bool isPrivate)
@@ -761,6 +893,32 @@ void BrowserApplication::setPrivate(bool isPrivate)
     s_isPrivate = isPrivate;
     if (BrowserApplication *app = instance())
         emit app->privacyChanged(isPrivate);
+}
+
+bool BrowserApplication::isTorMode()
+{
+    return s_torMode;
+}
+
+void BrowserApplication::setTorMode(bool torMode)
+{
+    s_torMode = torMode;
+}
+
+TorManager *BrowserApplication::torManager() const
+{
+    return m_torManager;
+}
+
+void BrowserApplication::openTorWindow()
+{
+    // TOR02: a separate process — the application proxy is
+    // process-global, so tor routing can never share this one.  Each
+    // tor process manages its own daemon (TAKEOWNERSHIP binds its
+    // lifetime to the process), so several tor windows coexist
+    // independently.
+    QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                          QStringList() << QStringLiteral("--tor"));
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const

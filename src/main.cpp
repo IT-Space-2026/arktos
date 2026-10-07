@@ -183,6 +183,12 @@ int main(int argc, char **argv)
         QLatin1String("url"),
         QCoreApplication::translate("main", "Url to open on startup."),
         QStringLiteral("[url...]"));
+    parser.addOption(QCommandLineOption(
+        QLatin1String("tor"),
+        QCoreApplication::translate("main",
+            "Open a Tor window: a separate process that routes all "
+            "traffic through a managed tor daemon's SOCKS5 listener "
+            "on a dedicated off-the-record profile.")));
     // Internal development/verification flags.
     const char *const internalOptions[] = {
         "quit-after-load",
@@ -192,6 +198,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke",
+        "tor-window-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -208,6 +215,18 @@ int main(int argc, char **argv)
     // Standalone development harness: a stub window hosting a WebView
     // on the browsing profile drives --quit-after-load and the smokes.
     const QStringList args = application.arguments();
+
+    // TOR02: `arora --tor` is a standalone process running the real
+    // browser UI — every request exits through the managed daemon's
+    // SOCKS5 listener (the application proxy is process-global, hence
+    // the separate process).  postLaunch() defers the first navigation
+    // until the listener is live; --tor-window-smoke takes the headless
+    // verification path below instead.
+    if (BrowserApplication::isTorMode()
+            && !args.contains(QLatin1String("--tor-window-smoke"))) {
+        application.newMainWindow();
+        return application.exec();
+    }
 
     QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
     CookieJar *cookieJar = CookieJar::instance(profile);
@@ -2284,6 +2303,156 @@ int main(int argc, char **argv)
             torFail(QLatin1String("timeout waiting for bootstrap"));
         });
         torManager->start();
+    }
+
+    // Headless verification for TOR02: the tor-window process model —
+    // fail-closed proxy until bootstrap, process-global SOCKS5 routing
+    // once ready, dedicated off-the-record profile, and real traffic
+    // provably exiting a tor relay.  Exits 0 on PASS.  Requires the
+    // real daemon (bootstrap) and outbound connectivity
+    // (check.torproject.org/api/ip answers IsTor only for exit
+    // relays).
+    if (args.contains(QLatin1String("--tor-window-smoke"))) {
+        auto torWinFail = [&application](const QString &why) {
+            qInfo() << "tor-window-smoke: FAIL" << why;
+            application.exit(1);
+        };
+
+        TorManager *torManager = application.torManager();
+        if (!torManager) {
+            torWinFail(QLatin1String("no TorManager — tor mode not armed"));
+            return application.exec();
+        }
+
+        // Fail-closed: before the daemon reports its listener the
+        // application proxy must be the dead loopback SOCKS port.
+        const QNetworkProxy early = QNetworkProxy::applicationProxy();
+        if (early.type() != QNetworkProxy::Socks5Proxy
+                || early.hostName() != QLatin1String("127.0.0.1")
+                || early.port() != 1) {
+            torWinFail(QLatin1String("application proxy not fail-closed at start"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: fail-closed proxy armed";
+
+        // The browsing profile must be the dedicated OTR tor profile,
+        // not the named persistent one.
+        if (!BrowserApplication::webEngineProfile()->isOffTheRecord()) {
+            torWinFail(QLatin1String("tor profile is not off-the-record"));
+            return application.exec();
+        }
+        if (!BrowserApplication::isPrivate()) {
+            torWinFail(QLatin1String("tor mode does not imply private"));
+            return application.exec();
+        }
+
+        // The daemon was already started in the application
+        // constructor — a missing binary or early failure may have
+        // fired failed() before these connects.
+        if (torManager->state() == TorManager::Failed) {
+            torWinFail(torManager->errorString());
+            return application.exec();
+        }
+
+        const QUrl probeUrl(QStringLiteral("https://check.torproject.org/api/ip"));
+        QObject::connect(torManager, &TorManager::failed,
+                         &application, torWinFail);
+        QObject::connect(torManager, &TorManager::logLine,
+                         &application, [](const QString &line) {
+            qInfo() << "tor:" << line;
+        });
+        auto onReady = [torManager, &application, networkAccessManager,
+                        view, probeUrl, torWinFail](const QNetworkProxy &) {
+            const QNetworkProxy applied = QNetworkProxy::applicationProxy();
+            if (applied.type() != QNetworkProxy::Socks5Proxy
+                    || applied.port() != torManager->socksPort()) {
+                torWinFail(QLatin1String("application proxy not the tor socks listener"));
+                return;
+            }
+            qInfo() << "tor-window-smoke: routed via socks"
+                    << applied.hostName() << applied.port();
+
+            // Proof 1 — the app-side fetch manager exits a tor relay.
+            QNetworkReply *reply = networkAccessManager->get(
+                QNetworkRequest(probeUrl));
+            QObject::connect(reply, &QNetworkReply::finished, &application,
+                             [&application, reply, view, probeUrl,
+                              torWinFail]() {
+                const QByteArray body = reply->readAll();
+                qInfo() << "tor-window-smoke: api/ip via NAM:"
+                        << reply->error() << body.left(120);
+                if (reply->error() != QNetworkReply::NoError
+                        || !body.contains("\"IsTor\":true")) {
+                    torWinFail(QLatin1String(
+                        "NAM request did not exit via tor"));
+                    return;
+                }
+
+                // Proof 2 — the same through the WebEngine stack.
+                // api/ip replies application/json, which Chromium
+                // renders into a shadow-DOM viewer (empty toPlainText),
+                // so navigate the ordinary HTML page and read the API
+                // via same-origin fetch — this still exercises the
+                // profile's network stack for both document and XHR.
+                const QUrl pageUrl(QStringLiteral(
+                    "https://check.torproject.org/"));
+                QObject::connect(view, &QWebEngineView::loadFinished,
+                                 &application,
+                                 [&application, view, pageUrl, probeUrl,
+                                  torWinFail](bool ok) {
+                    if (!ok || view->url() != pageUrl)
+                        return;
+                    view->page()->runJavaScript(
+                        QStringLiteral(
+                            "(function(){"
+                            "var x=new XMLHttpRequest();"
+                            "x.open('GET','/api/ip',false);"
+                            "try{x.send(null);return x.responseText;}"
+                            "catch(e){return 'XHRERR:'+e+' :: '"
+                            "+document.documentElement.innerText"
+                            ".slice(0,300);}})()"),
+                        [&application, pageUrl, probeUrl, torWinFail](
+                            const QVariant &result) {
+                        const QString body = result.toString();
+                        qInfo() << "tor-window-smoke: api/ip via WebEngine:"
+                                << body.left(300);
+                        // The api/ip JSON is the proof; the page's own
+                        // verdict text is acceptable corroboration.
+                        const bool isTor =
+                            body.contains(QLatin1String("\"IsTor\":true"))
+                            || body.contains(QLatin1String(
+                                "configured to use Tor"));
+                        const bool historyLeaked =
+                            HistoryManager::instance()->historyContains(
+                                pageUrl.toString())
+                            || HistoryManager::instance()->historyContains(
+                                probeUrl.toString());
+                        if (!isTor) {
+                            torWinFail(QLatin1String(
+                                "page load did not exit via tor"));
+                            return;
+                        }
+                        if (historyLeaked) {
+                            torWinFail(QLatin1String(
+                                "tor page recorded in history"));
+                            return;
+                        }
+                        qInfo() << "tor-window-smoke: PASS"
+                                << "(IsTor:true, OTR profile, fail-closed arm)";
+                        application.exit(0);
+                    });
+                });
+                view->loadUrl(pageUrl);
+            });
+        };
+        QObject::connect(torManager, &TorManager::ready,
+                         &application, onReady);
+        if (torManager->isReady())
+            onReady(QNetworkProxy());
+        // Bootstrap + two tor round-trips can take a while.
+        QTimer::singleShot(240000, &application, [torWinFail]() {
+            torWinFail(QLatin1String("timeout waiting for bootstrap/probe"));
+        });
     }
 
     return application.exec();

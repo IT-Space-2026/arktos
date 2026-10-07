@@ -131,7 +131,12 @@ void NetworkAccessManager::loadSettings()
     QSettings settings;
     settings.beginGroup(QLatin1String("proxy"));
     QNetworkProxy proxy;
-    if (settings.value(QLatin1String("enabled"), false).toBool()) {
+    // TOR02: a tor process must not honor a configured clearnet proxy —
+    // the application proxy IS the tor SOCKS listener.  Leaving the
+    // factory's DefaultProxy in place makes every request re-resolve
+    // the (currently fail-closed, later real) application proxy.
+    if (!BrowserApplication::isTorMode()
+            && settings.value(QLatin1String("enabled"), false).toBool()) {
         int proxyType = settings.value(QLatin1String("type"), 0).toInt();
         if (proxyType == 0)
             proxy = QNetworkProxy::Socks5Proxy;

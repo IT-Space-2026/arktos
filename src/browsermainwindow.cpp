@@ -86,12 +86,14 @@
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "tormanager.h"
 #include "useragentmenu.h"
 #include "webview.h"
 #include "webviewsearch.h"
 
 #include <qevent.h>
 #include <qfiledialog.h>
+#include <qlabel.h>
 #include <qprintdialog.h>
 #include <qprintpreviewdialog.h>
 #include <qprinter.h>
@@ -133,6 +135,26 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     setupToolBar();
 
     m_filePrivateBrowsingAction->setChecked(BrowserApplication::isPrivate());
+    if (BrowserApplication::isTorMode()) {
+        // TOR02: a tor window is private by construction (dedicated
+        // OTR profile) — the toggle is meaningless and hidden.
+        m_filePrivateBrowsingAction->setVisible(false);
+
+        // Unmistakable chrome accent — violet navigation bar + badge,
+        // and a "(Tor)" marker in the window title — so a tor window
+        // is never mistaken for a normal one at a glance.
+        m_navigationBar->setStyleSheet(QLatin1String(
+            "QToolBar { background: #4a3372; border: none; }"
+            "QToolButton { color: #eee; background: transparent; }"
+            "QToolButton:hover { background: #5d4491; }"
+            "QToolButton:pressed { background: #3a2a5c; }"));
+        QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
+        badge->setStyleSheet(QLatin1String(
+            "QLabel { color: white; background: #6b4fa3;"
+            " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
+        badge->setToolTip(tr("This window browses through the Tor network"));
+        m_navigationBar->addWidget(badge);
+    }
 
     QWidget *centralWidget = new QWidget(this);
     BookmarksModel *boomarksModel = BrowserApplication::bookmarksManager()->bookmarksModel();
@@ -525,6 +547,20 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::privateBrowsing);
     m_filePrivateBrowsingAction->setCheckable(true);
     m_fileMenu->addAction(m_filePrivateBrowsingAction);
+
+    // TOR02: a Tor window is a separate `arora --tor` process — the
+    // application proxy is process-global, so routing cannot be a
+    // mode of this window.  Disabled when no tor binary resolves.
+    m_fileNewTorWindowAction = new QAction(m_fileMenu);
+    connect(m_fileNewTorWindowAction, &QAction::triggered,
+            this, []() { BrowserApplication::openTorWindow(); });
+    if (TorManager::resolveBinary().isEmpty()) {
+        m_fileNewTorWindowAction->setEnabled(false);
+        m_fileNewTorWindowAction->setToolTip(
+            tr("No tor binary found — install tor or run "
+               "BuildProcess/fetch-tor.sh"));
+    }
+    m_fileMenu->addAction(m_fileNewTorWindowAction);
     m_fileMenu->addSeparator();
 
     m_fileCloseWindow = new QAction(m_fileMenu);
@@ -947,6 +983,7 @@ void BrowserMainWindow::retranslate()
     m_filePrintPreviewAction->setText(tr("P&rint Preview..."));
     m_filePrintAction->setText(tr("&Print..."));
     m_filePrivateBrowsingAction->setText(tr("Private &Browsing..."));
+    m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
     m_fileCloseWindow->setText(tr("Close Window"));
     m_fileQuit->setText(tr("&Quit"));
 
@@ -1186,13 +1223,17 @@ void BrowserMainWindow::updateStatusbar(const QString &string)
 
 void BrowserMainWindow::updateWindowTitle(const QString &title)
 {
+    // TOR02: tor windows are marked in the title — a window whose
+    // traffic exits through tor must never look like a normal one.
+    const QString marker = BrowserApplication::isTorMode()
+        ? QStringLiteral(" (Tor)") : QString();
     if (title.isEmpty()) {
-        setWindowTitle(QApplication::applicationName());
+        setWindowTitle(QApplication::applicationName() + marker);
     } else {
 #if defined(Q_OS_MACOS)
-        setWindowTitle(title);
+        setWindowTitle(title + marker);
 #else
-        setWindowTitle(tr("%1 - Arora", "Page title and Browser name").arg(title));
+        setWindowTitle(tr("%1 - Arora", "Page title and Browser name").arg(title) + marker);
 #endif
     }
 }

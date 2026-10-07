@@ -202,22 +202,27 @@ void WebPage::init()
     //    are dropped (autofillmanager.cpp).
     //  * external.AddSearchProvider validates the descriptor url and
     //    asks for consent before any fetch happens.
-    m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
-    m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
-    setWebChannel(m_webChannel);
+    // TOR02: tor-mode pages get no channel at all — the bridge objects
+    // (autofill capture, search-provider install) are surface a tor
+    // session does not need and must not offer.
+    if (!BrowserApplication::isTorMode()) {
+        m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
+        m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
+        setWebChannel(m_webChannel);
 
-    // The "arora" object serves only internal qrc pages (the start
-    // page).  It is registered when the main frame commits to a qrc
-    // url — before the page's channel handshake — and removed again
-    // when the frame navigates away, so web content never sees it.
-    connect(this, &QWebEnginePage::urlChanged, this,
-            [this](const QUrl &url) {
-        if (url.scheme() == QLatin1String("qrc"))
-            m_webChannel->registerObject(QLatin1String("arora"),
-                                         m_javaScriptAroraObject);
-        else
-            m_webChannel->deregisterObject(m_javaScriptAroraObject);
-    });
+        // The "arora" object serves only internal qrc pages (the start
+        // page).  It is registered when the main frame commits to a qrc
+        // url — before the page's channel handshake — and removed again
+        // when the frame navigates away, so web content never sees it.
+        connect(this, &QWebEnginePage::urlChanged, this,
+                [this](const QUrl &url) {
+            if (url.scheme() == QLatin1String("qrc"))
+                m_webChannel->registerObject(QLatin1String("arora"),
+                                             m_javaScriptAroraObject);
+            else
+                m_webChannel->deregisterObject(m_javaScriptAroraObject);
+        });
+    }
 
     // Chromium's built-in error pages are disabled so the Arora
     // notfound.html page can be injected from handleLoadingChanged().
