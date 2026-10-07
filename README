@@ -26,8 +26,9 @@ Search: the address bar doubles as a search box (omnibox) — text that
 is not an address goes to the default search engine, while urls,
 localhost/host:port and dotted names navigate directly.  Its dropdown
 can show live suggestions above history matches, but only for engines
-explicitly opted in (search button menu or Settings); nothing is sent
-to a suggest endpoint otherwise.
+explicitly opted in (search button menu or the dedicated Search page
+in Settings, which also picks the default engine); nothing is sent to
+a suggest endpoint otherwise.
 
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in

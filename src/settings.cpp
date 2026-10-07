@@ -72,6 +72,7 @@
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
+#include "opensearchdialog.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "safetext.h"
@@ -82,6 +83,7 @@
 #include "webview.h"
 
 #include <qapplication.h>
+#include <qcombobox.h>
 #include <qdesktopservices.h>
 #include <qdir.h>
 #include <qfile.h>
@@ -151,6 +153,24 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(permissions, &WebPermissionManager::changed,
             this, &SettingsDialog::refreshPermissions);
     refreshPermissions();
+
+    // SRCH02: the Search tab mirrors the shared OpenSearchManager —
+    // engine add/remove (the Manage dialog edits the same manager) and
+    // external default-engine switches refresh the combo.  The
+    // suggestions checkbox rebinds to whichever engine the combo
+    // shows; QComboBox::activated marks user picks so a manager change
+    // does not clobber an unsaved selection.
+    OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
+    connect(manageEnginesButton, &QPushButton::clicked,
+            this, &SettingsDialog::manageEngines);
+    connect(defaultEngineCombo, &QComboBox::currentTextChanged,
+            this, &SettingsDialog::refreshSearchSuggestions);
+    connect(defaultEngineCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { m_engineComboDirty = true; });
+    connect(searchManager, &OpenSearchManager::changed,
+            this, &SettingsDialog::refreshSearchEngines);
+    connect(searchManager, &OpenSearchManager::currentEngineChanged,
+            this, &SettingsDialog::refreshSearchEngines);
 
     loadDefaults();
     loadFromSettings();
@@ -304,23 +324,10 @@ void SettingsDialog::loadFromSettings()
     filterTrackingCookiesCheckbox->setChecked(settings.value(QLatin1String("filterTrackingCookies"), false).toBool());
     settings.endGroup();
 
-    // Search suggestions are a per-engine opt-in (SEC11): the checkbox
-    // controls the currently selected engine, and the hint names it so
-    // it is clear which endpoint the keystrokes would go to.
-    {
-        OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
-        OpenSearchEngine *currentEngine = searchManager->currentEngine();
-        const bool capable = currentEngine && currentEngine->providesSuggestions();
-        searchSuggestionsCheckBox->setEnabled(capable);
-        searchSuggestionsCheckBox->setChecked(capable &&
-            searchManager->suggestionsEnabledForEngine(currentEngine->name()));
-        if (currentEngine) {
-            searchSuggestionsHint->setText(
-                tr("Suggestions send each keystroke to %1 before you press "
-                   "Enter. Off by default; the choice is stored per engine.")
-                    .arg(currentEngine->name()));
-        }
-    }
+    // The Search tab mirrors OpenSearchManager: engine combo (default
+    // engine selection) plus the per-engine suggestions opt-in (SEC11)
+    // bound to whichever engine the combo shows.
+    refreshSearchEngines();
 
     // Network — also drives the profile's http cache through
     // BrowserProfile::applySettings().
@@ -465,12 +472,22 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("filterTrackingCookies"), filterTrackingCookiesCheckbox->isChecked());
     settings.endGroup();
 
-    // Per-engine opt-in — a disabled checkbox means the current engine
-    // has no suggest endpoint; leave its stored choice alone.
-    if (searchSuggestionsCheckBox->isEnabled()) {
-        if (OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine())
-            ToolbarSearch::openSearchManager()->setSuggestionsEnabledForEngine(
-                engine->name(), searchSuggestionsCheckBox->isChecked());
+    // Search engines: flush the per-engine suggestion opt-ins the user
+    // edited in the combo session (skipped for engines that vanished
+    // meanwhile), then the displayed engine becomes the default.
+    {
+        OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
+        stashSearchSuggestions();
+        for (auto it = m_pendingSuggestions.cbegin();
+             it != m_pendingSuggestions.cend(); ++it) {
+            if (searchManager->engineExists(it.key()))
+                searchManager->setSuggestionsEnabledForEngine(it.key(), it.value());
+        }
+        m_pendingSuggestions.clear();
+        const QString engineName = defaultEngineCombo->currentText();
+        if (searchManager->engineExists(engineName))
+            searchManager->setCurrentEngineName(engineName);
+        m_engineComboDirty = false;
     }
 
     // Network
@@ -618,6 +635,78 @@ void SettingsDialog::editAutoFillUser()
 {
     AutoFillDialog dialog(this);
     dialog.exec();
+}
+
+void SettingsDialog::manageEngines()
+{
+    OpenSearchDialog dialog(this);
+    dialog.exec();
+    // The manager emits changed() for every add/remove; refresh once
+    // more so an untouched list still resyncs the combo.
+    refreshSearchEngines();
+}
+
+// The combo mirrors OpenSearchManager's engine list.  A name the user
+// picked in the combo but has not saved yet survives external manager
+// changes; otherwise the combo tracks the manager's current engine.
+void SettingsDialog::refreshSearchEngines()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    QString wanted = defaultEngineCombo->currentText();
+    if (!m_engineComboDirty || !manager->engineExists(wanted))
+        wanted = manager->currentEngineName();
+
+    defaultEngineCombo->clear();
+    QStringList names = manager->allEnginesNames();
+    names.sort(Qt::CaseInsensitive);
+    defaultEngineCombo->addItems(names);
+    const int index = defaultEngineCombo->findText(wanted);
+    if (index != -1)
+        defaultEngineCombo->setCurrentIndex(index);
+
+    refreshSearchSuggestions();
+}
+
+// The Search Suggestions checkbox describes the engine currently shown
+// in the combo.  Rebinding stashes the visible edit into
+// m_pendingSuggestions so saveToSettings applies every engine the user
+// touched (apply-on-OK, not on combo change).
+void SettingsDialog::refreshSearchSuggestions()
+{
+    stashSearchSuggestions();
+    m_suggestionsEngine = defaultEngineCombo->currentText();
+
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = manager->engine(m_suggestionsEngine);
+    const bool capable = engine && engine->providesSuggestions();
+    searchSuggestionsCheckBox->setEnabled(capable);
+
+    bool enabled = capable && manager->suggestionsEnabledForEngine(m_suggestionsEngine);
+    if (m_pendingSuggestions.contains(m_suggestionsEngine))
+        enabled = capable && m_pendingSuggestions.value(m_suggestionsEngine);
+    searchSuggestionsCheckBox->setChecked(enabled);
+
+    if (engine) {
+        // The engine name comes from (possibly remote) OpenSearch XML —
+        // escaped so a markup-looking name stays literal.
+        searchSuggestionsHint->setText(
+            tr("Suggestions send each keystroke to %1 before you press "
+               "Enter. Off by default; the choice is stored per engine.")
+                .arg(SafeText::escaped(engine->name())));
+    } else {
+        searchSuggestionsHint->setText(
+            tr("Suggestions send each keystroke to the selected engine "
+               "before you press Enter. Off by default."));
+    }
+}
+
+// Record the checkbox state for the engine it currently describes — a
+// disabled checkbox means that engine has no suggest endpoint, in
+// which case its stored choice is left alone.
+void SettingsDialog::stashSearchSuggestions()
+{
+    if (!m_suggestionsEngine.isEmpty() && searchSuggestionsCheckBox->isEnabled())
+        m_pendingSuggestions[m_suggestionsEngine] = searchSuggestionsCheckBox->isChecked();
 }
 
 // Shared manifest pre-check for load/install: warns about MV2

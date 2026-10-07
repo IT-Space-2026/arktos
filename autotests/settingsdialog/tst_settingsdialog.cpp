@@ -47,6 +47,7 @@ private slots:
 
     void constructDefaults();
     void saveAndReload();
+    void searchTab();
     void suggestionsCheckbox();
     void subDialogButtons();
     void setHomeToCurrentPage();
@@ -141,8 +142,47 @@ void tst_SettingsDialog::saveAndReload()
     }
 }
 
-// SEC11: the Privacy tab's Search Suggestions checkbox is bound to the
-// current engine's per-engine opt-in on the OpenSearchManager.
+// SRCH02: the Search tab's engine combo mirrors the OpenSearchManager
+// list; the displayed engine becomes the default on accept().
+void tst_SettingsDialog::searchTab()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+    const QString original = manager->currentEngineName();
+    const QStringList engines = manager->allEnginesNames();
+    QVERIFY(engines.count() >= 2);
+
+    // The combo holds exactly the manager's engine list and starts on
+    // the current engine.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.defaultEngineCombo->count(), engines.count());
+        QSet<QString> comboNames;
+        for (int i = 0; i < dialog.defaultEngineCombo->count(); ++i)
+            comboNames.insert(dialog.defaultEngineCombo->itemText(i));
+        QCOMPARE(comboNames, QSet<QString>(engines.begin(), engines.end()));
+        QCOMPARE(dialog.defaultEngineCombo->currentText(), original);
+    }
+
+    // Picking a different engine applies on accept() and a reopened
+    // dialog shows it.
+    const QString other = engines.first() == original
+        ? engines.at(1) : engines.first();
+    {
+        SettingsDialog dialog;
+        dialog.defaultEngineCombo->setCurrentText(other);
+        dialog.accept();
+        QCOMPARE(manager->currentEngineName(), other);
+    }
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.defaultEngineCombo->currentText(), other);
+    }
+    manager->setCurrentEngineName(original);
+}
+
+// SEC11/SRCH02: the Search tab's Search Suggestions checkbox is bound
+// to the per-engine opt-in of whichever engine the combo shows.
 void tst_SettingsDialog::suggestionsCheckbox()
 {
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
@@ -180,6 +220,30 @@ void tst_SettingsDialog::suggestionsCheckbox()
         dialog.accept();
     }
     QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
+
+    // The checkbox follows the combo: toggling while a different
+    // capable engine is displayed writes THAT engine's opt-in on
+    // accept, not the current engine's.
+    QString otherCapable;
+    for (const QString &name : manager->allEnginesNames()) {
+        if (name != engine->name()
+            && manager->engine(name)->providesSuggestions()) {
+            otherCapable = name;
+            break;
+        }
+    }
+    if (!otherCapable.isEmpty()) {
+        SettingsDialog dialog;
+        dialog.defaultEngineCombo->setCurrentText(otherCapable);
+        QVERIFY(dialog.searchSuggestionsCheckBox->isEnabled());
+        QVERIFY(!dialog.searchSuggestionsCheckBox->isChecked());
+        dialog.searchSuggestionsCheckBox->setChecked(true);
+        dialog.accept();
+        QVERIFY(manager->suggestionsEnabledForEngine(otherCapable));
+        QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
+        manager->setSuggestionsEnabledForEngine(otherCapable, false);
+        manager->setCurrentEngineName(engine->name());
+    }
 }
 
 // Each button that pops a nested dialog runs it under a timer that

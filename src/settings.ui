@@ -158,16 +158,6 @@
          </item>
         </widget>
        </item>
-       <item row="4" column="0" colspan="3">
-        <widget class="QCheckBox" name="searchEngineFallback">
-         <property name="text">
-          <string>Use the default search engine as fallback when the URL given by the user is invalid</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
        <item row="6" column="0" colspan="3">
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">
@@ -252,6 +242,121 @@
           </item>
          </layout>
         </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_search">
+      <attribute name="title">
+       <string>Search</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="searchTabLayout">
+       <item>
+        <widget class="QGroupBox" name="enginesGroupBox">
+         <property name="title">
+          <string>Search Engines</string>
+         </property>
+         <layout class="QGridLayout" name="enginesGridLayout">
+          <item row="0" column="0">
+           <widget class="QLabel" name="defaultEngineLabel">
+            <property name="text">
+             <string>Default engine:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>defaultEngineCombo</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="defaultEngineCombo">
+            <property name="accessibleName">
+             <string>Default search engine</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QPushButton" name="manageEnginesButton">
+            <property name="text">
+             <string>Manage...</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="3">
+           <spacer name="enginesRowSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="1" column="0" colspan="4">
+           <widget class="QLabel" name="enginesHintLabel">
+            <property name="text">
+             <string>The default engine is used by the location bar and the dedicated search box. Type &quot;keyword text&quot; in the location bar to query a specific engine.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="searchEngineFallback">
+         <property name="text">
+          <string>Use the default search engine as fallback when the URL given by the user is invalid</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="searchSuggestionsGroupBox">
+         <property name="title">
+          <string>Search Suggestions</string>
+         </property>
+         <layout class="QGridLayout">
+          <item row="0" column="0">
+           <widget class="QCheckBox" name="searchSuggestionsCheckBox">
+            <property name="text">
+             <string>Show suggestions while typing in the search box</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="searchSuggestionsHint">
+            <property name="text">
+             <string>Suggestions send each keystroke to the search engine before you press Enter. Off by default; the choice is stored per engine.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="searchVerticalSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
        </item>
       </layout>
      </widget>
@@ -666,32 +771,6 @@
            <widget class="QPushButton" name="permissionClearAllButton">
             <property name="text">
              <string>Clear All</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="searchSuggestionsGroupBox">
-         <property name="title">
-          <string>Search Suggestions</string>
-         </property>
-         <layout class="QGridLayout">
-          <item row="0" column="0">
-           <widget class="QCheckBox" name="searchSuggestionsCheckBox">
-            <property name="text">
-             <string>Show suggestions while typing in the search box</string>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="searchSuggestionsHint">
-            <property name="text">
-             <string>Suggestions send each keystroke to the search engine before you press Enter. Off by default; the choice is stored per engine.</string>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -1393,10 +1472,13 @@
   <tabstop>homeLineEdit</tabstop>
   <tabstop>setHomeToCurrentPageButton</tabstop>
   <tabstop>expireHistory</tabstop>
-  <tabstop>searchEngineFallback</tabstop>
   <tabstop>downloadAsk</tabstop>
   <tabstop>downloadDestination</tabstop>
   <tabstop>downloadDirectoryButton</tabstop>
+  <tabstop>defaultEngineCombo</tabstop>
+  <tabstop>manageEnginesButton</tabstop>
+  <tabstop>searchEngineFallback</tabstop>
+  <tabstop>searchSuggestionsCheckBox</tabstop>
   <tabstop>standardFontButton</tabstop>
   <tabstop>fixedFontButton</tabstop>
   <tabstop>languageButton</tabstop>

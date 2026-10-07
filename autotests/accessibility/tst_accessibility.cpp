@@ -179,8 +179,11 @@ void tst_Accessibility::settingsDialogBuddies()
              static_cast<QWidget*>(dialog.networkCacheMaximumSizeSpinBox));
     QCOMPARE(dialog.label_16->buddy(),
              static_cast<QWidget*>(dialog.autoFillPasswordFormsCheckBox));
+    QCOMPARE(dialog.defaultEngineLabel->buddy(),
+             static_cast<QWidget*>(dialog.defaultEngineCombo));
 
     // Label-less inputs carry their own names.
+    QVERIFY(!dialog.defaultEngineCombo->accessibleName().isEmpty());
     QVERIFY(!dialog.downloadsLocation->accessibleName().isEmpty());
     QVERIFY(!dialog.externalDownloadPath->accessibleName().isEmpty());
     QVERIFY(!dialog.minimumFontSizeSpinBox->accessibleName().isEmpty());

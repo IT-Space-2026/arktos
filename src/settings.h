@@ -64,6 +64,7 @@
 #define SETTINGS_H
 
 #include <qdialog.h>
+#include <qhash.h>
 #include "ui_settings.h"
 
 class QTreeWidgetItem;
@@ -93,6 +94,10 @@ private slots:
     void chooseStyleSheet();
     void editAutoFillUser();
 
+    void manageEngines();
+    void refreshSearchEngines();
+    void refreshSearchSuggestions();
+
     void loadExtension();
     void installExtension();
     void removeExtension();
@@ -110,8 +115,13 @@ private slots:
     void clearPermissions();
 
 private:
+    void stashSearchSuggestions();
+
     QFont m_standardFont;
     QFont m_fixedFont;
+    QString m_suggestionsEngine;
+    QHash<QString, bool> m_pendingSuggestions;
+    bool m_engineComboDirty = false;
 };
 
 #endif // SETTINGS_H
