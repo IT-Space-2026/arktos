@@ -76,8 +76,10 @@
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torrequestinterceptor.h"
 #include "webview.h"
@@ -156,6 +158,13 @@ static void prepareProfile(QWebEngineProfile *profile)
         profile->setUrlRequestInterceptor(new TorRequestInterceptor(
             AdBlockManager::instance()->network(), profile));
     } else {
+        // PRIV01: the adblock-only interceptor installOnProfile set is
+        // replaced by the composite that also runs the privacy stages
+        // (HTTPS-first navigation upgrade + cross-site referrer trim).
+        profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
+            AdBlockManager::instance()->network(), profile));
+    }
+    if (!BrowserApplication::isTorMode()) {
         // QWebEngineExtensionManager wiring + user-scripts injection.
         // The OTR profile is skipped for extensions upstream but
         // still receives user scripts.  The tor profile gets neither —
@@ -324,6 +333,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 BrowserApplication::~BrowserApplication()
 {
     quitting = true;
+    clearPrivateDataOnExit();
     qDeleteAll(m_mainWindows);
     if (m_torManager) {
         // SHUTDOWN over the control channel, bounded escalate inside;
@@ -473,6 +483,7 @@ void BrowserApplication::quitBrowser()
     }
 
     saveSession();
+    clearPrivateDataOnExit();
     exit(0);
 }
 
@@ -647,6 +658,43 @@ void BrowserApplication::saveSession()
 bool BrowserApplication::canRestoreSession() const
 {
     return !m_lastSession.isEmpty();
+}
+
+void BrowserApplication::clearPrivateDataOnExit()
+{
+    // Opt-in wipe (privacy/clearOnExit, default off).  The tor profile
+    // is off-the-record — nothing to remove.
+    if (isTorMode())
+        return;
+    if (!QSettings().value(QLatin1String("privacy/clearOnExit"), false).toBool())
+        return;
+
+    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+    HistoryManager *history = HistoryManager::instance();
+    history->clear();
+    history->clearIcons();
+    profile->clearAllVisitedLinks();
+    CookieJar::instance(profile)->clear();
+    profile->clearHttpCache();
+    DownloadManager::instance()->cleanup();
+    // The search-history lists live in every ToolbarSearch; windows
+    // still exist on both call paths, so clear them while they can.
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        if (ToolbarSearch *search = qobject_cast<ToolbarSearch*>(widget))
+            search->clear();
+    }
+    // Sentinel-driven disk wipe at next start — covers the DOM
+    // storage trees AND the cookie/cache network state that async
+    // profile deletes may not flush before this process exits.
+    BrowserProfile::clearAllStorageOnNextStart(profile);
+
+    // The saved session blob is itself browsing history — leaving it
+    // behind would undo the wipe.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("sessions"));
+    settings.remove(QLatin1String("lastSession"));
+    settings.endGroup();
 }
 
 bool BrowserApplication::restoreLastSession()

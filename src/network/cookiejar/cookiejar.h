@@ -157,6 +157,12 @@ public:
     bool filterTrackingCookies() const;
     void setFilterTrackingCookies(bool filterTrackingCookies);
 
+    // PRIV01: reject cookies set by third-party contexts even under
+    // AcceptAlways.  Per-site allow/allowForSession exceptions still
+    // win.  On by default.
+    bool blockThirdPartyCookies() const;
+    void setBlockThirdPartyCookies(bool blockThirdPartyCookies);
+
 public slots:
     void clear();
     void loadSettings();
@@ -168,9 +174,9 @@ private slots:
 
 protected:
     static bool isOnDomainList(const QStringList &rules, const QString &domain);
+    bool isAllowedForHost(const QString &host, bool thirdParty) const;
 
 private:
-    bool isAllowedForHost(const QString &host, bool thirdParty) const;
     void updatePolicySnapshot();
     void applyRules();
     void applyKeepPolicy();
@@ -187,6 +193,7 @@ private:
     struct PolicySnapshot {
         AcceptPolicy acceptCookies;
         bool filterTrackingCookies;
+        bool blockThirdPartyCookies;
         QStringList block;
         QStringList allow;
         QStringList allowForSession;
@@ -196,6 +203,7 @@ private:
     QList<QNetworkCookie> m_cookies;  // mirror of the cookie store
     AutoSaver *m_saveTimer;
     bool m_filterTrackingCookies;
+    bool m_blockThirdPartyCookies;
 
     AcceptPolicy m_acceptCookies;
     KeepPolicy m_keepCookies;

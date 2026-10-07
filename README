@@ -58,6 +58,27 @@ Expert Bundle via BuildProcess/fetch-tor.sh.  `./arora --tor-smoke` and
 `./arora --tor-window-smoke` verify the daemon layer and the end-to-end
 window routing headlessly.
 
+Privacy: the "Connections & Storage" group on the Privacy preferences
+page carries the hardening toggles, all defaulting to the private
+choice.  Plain-http page loads are upgraded to https where a secure
+endpoint plausibly exists (loopback, LAN addresses and .onion are
+skipped; a site whose https fails is allowed over http for the rest
+of the session — the error page says so).  Cross-site navigations
+send the destination's own origin as Referer instead of the page you
+came from.  WebRTC traffic is confined to proxied/public interfaces
+so voice/video sites cannot discover local or real IP addresses.
+Third-party cookies are rejected (per-site exceptions still apply),
+and an opt-in "Clear browsing data when Arora exits" wipes history,
+cookies, caches and site storage at quit — Chromium's on-disk trees
+are removed at the next start, never under a running browser.  An
+opt-in secure-DNS toggle asks Chromium to upgrade lookups to
+DNS-over-HTTPS when the system resolver supports it (a custom DoH
+endpoint cannot be configured).  Honest bounds: an observer can still
+see destination IPs, connection timing and the usual browser
+fingerprinting surface — the Tor window is the answer for hiding
+traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
+fingerprint resistance.
+
 Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
 packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
 QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the

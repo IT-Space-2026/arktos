@@ -103,12 +103,39 @@ void applySettings(QWebEngineProfile *profile);
 // revisited) until the deferred wipe at the next start.
 bool clearSiteStorage(QWebEngineProfile *profile);
 
+// PRIV01: stronger variant of the sentinel for the clear-on-exit
+// option — additionally schedules the Network/ tree (Chromium's
+// cookie database, HSTS, reporting state) and the http cache dirs
+// for removal at next start, because the async profile deletes
+// (deleteAllCookies/clearHttpCache) are not guaranteed to flush
+// before process exit.  Call at quit; nothing is removed in-session.
+bool clearAllStorageOnNextStart(QWebEngineProfile *profile);
+
 // HARD01: removes the deferred site-data trees when the sentinel
 // from clearSiteStorage() is present.  Runs from normalProfile()
 // immediately after profile construction — i.e. only at process
 // start, while no WebContents holds the storage services open.
 // A no-op without the sentinel.
+// PRIV01: also honors the clear-all sentinel from
+// clearAllStorageOnNextStart().
 bool clearDeferredSiteStorage(const QString &storagePath);
+
+// PRIV01: appends privacy-motivated Chromium switches to
+// QTWEBENGINE_CHROMIUM_FLAGS for QtWebEngineProcess.  Must run before
+// the first page spawns the process — main() calls it right after the
+// application object exists (profiles are created in its ctor but the
+// engine process only starts on the first page).
+//   privacy/webrtcIpProtection (default on) ->
+//     --force-webrtc-ip-handling-policy=disable_non_proxied_udp
+//     WebRTC then only ever runs through the configured proxy — no
+//     local, LAN or real WAN address can leak via ICE candidates.
+//   privacy/secureDns (default off) ->
+//     --enable-features=DnsOverHttps
+//     Honest bound: Chromium's feature only auto-upgrades to DoH when
+//     the system resolver is on its known DoH-provider list (Google/
+//     Cloudflare DNS etc.); a custom DoH endpoint is not exposed.
+// Flags are process-lifetime — toggling the settings needs a restart.
+void applyChromiumFlags();
 
 // SEC12: force a profile data tree owner-only — 0700 directories,
 // 0600 files.  Chromium already creates them that way; this repairs

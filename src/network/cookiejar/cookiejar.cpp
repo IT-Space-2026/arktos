@@ -86,6 +86,7 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
     , m_store(m_profile->cookieStore())
     , m_saveTimer(new AutoSaver(this))
     , m_filterTrackingCookies(false)
+    , m_blockThirdPartyCookies(true)
     , m_acceptCookies(AcceptOnlyFromSitesNavigatedTo)
     , m_keepCookies(KeepUntilExpire)
     , m_sessionLength(-1)
@@ -103,6 +104,12 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
         bool allow = !block && isOnDomainList(m_policy.allow, host);
         bool allowForSession = !block && !allow && isOnDomainList(m_policy.allowForSession, host);
         if (block)
+            return false;
+        // PRIV01: third-party rejection sits between the exception
+        // lists and the accept policy — an allow-listed third party
+        // still gets its cookies, a blocked one is already gone.
+        if (request.thirdParty && m_policy.blockThirdPartyCookies
+            && !allow && !allowForSession)
             return false;
         switch (m_policy.acceptCookies) {
         case AcceptAlways:
@@ -186,6 +193,7 @@ void CookieJar::loadSettings()
                     static_cast<KeepPolicy>(keepPolicyEnum.keyToValue(value));
 
     m_filterTrackingCookies = settings.value(QLatin1String("filterTrackingCookies"), m_filterTrackingCookies).toBool();
+    m_blockThirdPartyCookies = settings.value(QLatin1String("blockThirdPartyCookies"), m_blockThirdPartyCookies).toBool();
     m_sessionLength = settings.value(QLatin1String("sessionLength"), -1).toInt();
 
     settings.beginGroup(QLatin1String("exceptions"));
@@ -219,6 +227,7 @@ void CookieJar::save()
     settings.setValue(QLatin1String("keepCookiesUntil"), QLatin1String(keepPolicyEnum.valueToKey(m_keepCookies)));
 
     settings.setValue(QLatin1String("filterTrackingCookies"), m_filterTrackingCookies);
+    settings.setValue(QLatin1String("blockThirdPartyCookies"), m_blockThirdPartyCookies);
     settings.setValue(QLatin1String("sessionLength"), m_sessionLength);
 
     settings.beginGroup(QLatin1String("exceptions"));
@@ -232,6 +241,7 @@ void CookieJar::updatePolicySnapshot()
     QWriteLocker lock(&m_policyLock);
     m_policy.acceptCookies = m_acceptCookies;
     m_policy.filterTrackingCookies = m_filterTrackingCookies;
+    m_policy.blockThirdPartyCookies = m_blockThirdPartyCookies;
     m_policy.block = m_exceptions_block;
     m_policy.allow = m_exceptions_allow;
     m_policy.allowForSession = m_exceptions_allowForSession;
@@ -331,6 +341,10 @@ bool CookieJar::isAllowedForHost(const QString &host, bool thirdParty) const
     bool allow = !block && isOnDomainList(m_exceptions_allow, host);
     bool allowForSession = !block && !allow && isOnDomainList(m_exceptions_allowForSession, host);
     if (block)
+        return false;
+    // Mirror of the store filter's PRIV01 rule.
+    if (thirdParty && m_blockThirdPartyCookies
+        && !allow && !allowForSession)
         return false;
     switch (m_acceptCookies) {
     case AcceptAlways:
@@ -516,5 +530,16 @@ bool CookieJar::filterTrackingCookies() const
 void CookieJar::setFilterTrackingCookies(bool filterTrackingCookies)
 {
     this->m_filterTrackingCookies = filterTrackingCookies;
+    updatePolicySnapshot();
+}
+
+bool CookieJar::blockThirdPartyCookies() const
+{
+    return m_blockThirdPartyCookies;
+}
+
+void CookieJar::setBlockThirdPartyCookies(bool blockThirdPartyCookies)
+{
+    m_blockThirdPartyCookies = blockThirdPartyCookies;
     updatePolicySnapshot();
 }

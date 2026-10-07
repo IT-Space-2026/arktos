@@ -693,6 +693,19 @@
             </property>
            </widget>
           </item>
+          <item row="4" column="0" colspan="3">
+           <widget class="QCheckBox" name="blockThirdPartyCookies">
+            <property name="toolTip">
+             <string>Reject cookies set by embedded third-party content even when cookies are accepted generally. Per-site exceptions above still apply.</string>
+            </property>
+            <property name="text">
+             <string>Block third-party cookies</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
           <item row="2" column="0">
            <widget class="QLabel" name="cookieSessionLabel">
             <property name="text">
@@ -738,6 +751,80 @@
               <string>30 days</string>
              </property>
             </item>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="hardeningGroupBox">
+         <property name="title">
+          <string>Connections &amp; Storage</string>
+         </property>
+         <layout class="QVBoxLayout">
+          <item>
+           <widget class="QCheckBox" name="httpsFirst">
+            <property name="toolTip">
+             <string>Upgrade plain HTTP page loads to HTTPS when possible. Sites that fail the secure connection are allowed over HTTP again for the rest of the session — the error page says so.</string>
+            </property>
+            <property name="text">
+             <string>Upgrade connections to HTTPS when possible</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="trimReferer">
+            <property name="toolTip">
+             <string>Navigations to a different site send only the destination's own address as Referer — the page you came from is never leaked. Embedded subresources fall back to Chromium's built-in origin-only referrer policy.</string>
+            </property>
+            <property name="text">
+             <string>Trim cross-site referrers</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="webrtcProtection">
+            <property name="toolTip">
+             <string>Route WebRTC traffic through the configured proxy only, so voice/video sites cannot discover your local or real IP address. Takes effect after a restart; may break WebRTC apps.</string>
+            </property>
+            <property name="text">
+             <string>Prevent WebRTC from exposing IP addresses</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="secureDns">
+            <property name="toolTip">
+             <string>Upgrade DNS lookups to DNS-over-HTTPS when your network's resolver supports it (Chromium decides; a custom DoH server cannot be configured). Takes effect after a restart.</string>
+            </property>
+            <property name="text">
+             <string>Secure DNS lookups when available (DNS-over-HTTPS)</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="clearOnExit">
+            <property name="toolTip">
+             <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
+            </property>
+            <property name="text">
+             <string>Clear browsing data when Arora exits</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
            </widget>
           </item>
          </layout>
@@ -1524,6 +1611,12 @@
   <tabstop>keepUntilCombo</tabstop>
   <tabstop>cookiesButton</tabstop>
   <tabstop>filterTrackingCookiesCheckbox</tabstop>
+  <tabstop>blockThirdPartyCookies</tabstop>
+  <tabstop>httpsFirst</tabstop>
+  <tabstop>trimReferer</tabstop>
+  <tabstop>webrtcProtection</tabstop>
+  <tabstop>secureDns</tabstop>
+  <tabstop>clearOnExit</tabstop>
   <tabstop>tabBarPosition</tabstop>
   <tabstop>selectTabsWhenCreated</tabstop>
   <tabstop>confirmClosingMultipleTabs</tabstop>

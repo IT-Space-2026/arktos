@@ -27,6 +27,7 @@
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
@@ -555,16 +556,39 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         return;
 
     QUrl errorUrl = loadingInfo.url();
-    if (errorUrl.isEmpty() || errorUrl != m_requestedUrl)
+    if (errorUrl.isEmpty())
         return;
 
-    showErrorPage(errorUrl, loadingInfo.errorString());
+    if (errorUrl != m_requestedUrl) {
+        // PRIV01: the HTTPS-first interceptor upgrades http:
+        // navigations inside the network stack — acceptNavigationRequest
+        // recorded the http: form in m_requestedUrl, so an upgraded
+        // failure arrives under https: and must be matched back to it.
+        QUrl downgraded = errorUrl;
+        downgraded.setScheme(QLatin1String("http"));
+        if (errorUrl.scheme() != QLatin1String("https")
+            || downgraded != m_requestedUrl)
+            return;
+    }
+    // The secure connection failed: let the host be reached over plain
+    // http again for the rest of the session.  The downgrade set is
+    // global, so a direct https: navigation that fails relaxes the
+    // upgrade for that host too — harmless and less confusing than
+    // retrying a request that just refused TLS.
+    const bool downgraded = PrivacyRequestInterceptor::noteNavigationFailure(errorUrl);
+
+    showErrorPage(errorUrl, loadingInfo.errorString(),
+                  downgraded || PrivacyRequestInterceptor::isDowngraded(errorUrl.host()));
 }
 
+// PRIV01: the httpsUpgradeFailed flag appends the downgrade notice to
+// the suggestion list — the user sees why http: is allowed again and
+// that the allowance expires with the session.
 // The chromium guys have documented many examples of incompatibilities that
 // different browsers have when they mime sniff.
 // http://src.chromium.org/viewvc/chrome/trunk/src/net/base/mime_sniffer.cc
-void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString)
+void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
+                            bool httpsUpgradeFailed)
 {
     // Generate translated not found error page with an image
     QFile notFoundErrorFile(QLatin1String(":/notfound.html"));
@@ -586,6 +610,17 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString)
                     tr("Check the address for errors such as <b>ww</b>.arora-browser.org instead of <b>www</b>.arora-browser.org"),
                     tr("If the address is correct, try checking the network connection."),
                     tr("If your computer or network is protected by a firewall or proxy, make sure that the browser is permitted to access the network."));
+    if (httpsUpgradeFailed) {
+        // PRIV01: the visible downgrade-warning path — the host sits
+        // in the session downgrade set, so the suggestion explains
+        // both the failure and that plain http now works again.
+        html.replace(QLatin1String("</ul>"),
+            QLatin1String("<li>")
+            + tr("The secure (HTTPS) connection failed.  Plain HTTP "
+                 "requests to this site will be allowed for the rest "
+                 "of this session.")
+            + QLatin1String("</li></ul>"));
+    }
     setHtml(html, errorUrl);
     // A failed load is normally never recorded (only loadFinished(true)
     // feeds the manager), but a page that loaded and then errored —

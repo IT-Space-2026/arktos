@@ -205,6 +205,13 @@ int main(int argc, char **argv)
     BrowserApplication application(argc, argv);
     const qint64 appCtorMs = perfTimer.elapsed();
 
+    // PRIV01: privacy-driven Chromium switches (WebRTC IP handling,
+    // DNS-over-HTTPS auto-upgrade) must be appended to
+    // QTWEBENGINE_CHROMIUM_FLAGS before the first page spawns
+    // QtWebEngineProcess — the profiles created in the app ctor do
+    // not start it yet.
+    BrowserProfile::applyChromiumFlags();
+
     // A non-standalone run that could not take the single-instance
     // socket already forwarded its url to the running instance and is
     // done.  Standalone runs (any --option) never join the handshake.
@@ -235,7 +242,7 @@ int main(int argc, char **argv)
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
-        "session-smoke", "restore-smoke", "tor-smoke",
+        "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke",
     };
     for (const char *option : internalOptions)
@@ -464,6 +471,125 @@ int main(int argc, char **argv)
             application.exit(pass ? 0 : 1);
         });
         cookiePoll->start(500);
+    }
+
+    // Headless verification for PRIV01: a loopback e2e over two
+    // 127.0.0.x hosts (distinct sites to Chromium, both exempt from
+    // the https-first upgrade).  The first-party page on 127.0.0.1
+    // must load un-upgraded (a redirect to https would fail — nothing
+    // serves TLS), embeds an <img> on 127.0.0.2 whose request must
+    // arrive with its Referer trimmed to the *target's* origin, and
+    // its Set-Cookie must be rejected as third-party while the
+    // first-party Set-Cookie lands.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--privacy-smoke"))) {
+        QTcpServer *server = new QTcpServer(&application);
+        // AnyIPv4 so both 127.0.0.1 and 127.0.0.2 reach the listener.
+        if (!server->listen(QHostAddress::AnyIPv4)) {
+            qInfo() << "privacy-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto observed = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, observed, port]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, observed, port]() {
+                const QByteArray request = client->readAll();
+                const int splitAt = request.indexOf("\r\n\r\n");
+                const QByteArray head = splitAt == -1 ? request
+                    : request.left(splitAt);
+                const QList<QByteArray> lines = head.split('\n');
+                QString path;
+                for (const QByteArray &line : lines) {
+                    if (line.startsWith("GET ")) {
+                        path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4).trimmed());
+                    } else if (line.startsWith("Referer: ")) {
+                        (*observed)[QLatin1String("referer:") + path] =
+                            line.mid(9).trimmed();
+                    }
+                }
+                (*observed)[QLatin1String("path:") + path] = "1";
+                QByteArray body;
+                QByteArray extra;
+                if (path == QLatin1String("/page")) {
+                    extra = "Set-Cookie: arora_priv_first=1\r\n";
+                    body = "<html><body><img src=\"http://127.0.0.2:"
+                        + QByteArray::number(port) + "/img\"></body></html>";
+                } else {
+                    extra = "Set-Cookie: arora_priv_third=1\r\n";
+                    body = "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
+                           "\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00"
+                           "\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01"
+                           "\x00;";
+                }
+                QByteArray reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    + extra
+                    + "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body;
+                client->write(reply);
+                client->disconnectFromHost();
+            });
+        });
+
+        // Force permissive accept policy so the result isolates the
+        // PRIV01 third-party gate, not the navigation-domain policy.
+        cookieJar->setAcceptPolicy(CookieJar::AcceptAlways);
+        cookieJar->setBlockThirdPartyCookies(true);
+
+        QTimer *poll = new QTimer(&application);
+        auto ticks = std::make_shared<int>(0);
+        const QUrl pageUrl(QStringLiteral("http://127.0.0.1:%1/page").arg(port));
+        const QUrl thirdUrl(QStringLiteral("http://127.0.0.2:%1/").arg(port));
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, cookieJar, poll, ticks, observed,
+                          thirdUrl]() {
+            const QByteArray imgReferer =
+                observed->value(QLatin1String("referer:/img"));
+            const QByteArray navReferer =
+                observed->value(QLatin1String("referer:/nav"));
+            const bool sawImg =
+                observed->contains(QLatin1String("path:/img"));
+            bool first = false;
+            for (const QNetworkCookie &c :
+                 cookieJar->cookiesForUrl(QUrl(QLatin1String("http://127.0.0.1/"))))
+                first |= (c.name() == "arora_priv_first");
+            bool third = false;
+            for (const QNetworkCookie &c : cookieJar->cookiesForUrl(thirdUrl))
+                third |= (c.name() == "arora_priv_third");
+            const bool done = sawImg && !navReferer.isEmpty() && first;
+            if (!done && ++*ticks <= 40)
+                return; // retry for ~20s
+            // Navigation referer carries the *target* origin only —
+            // the referring host 127.0.0.1 must not appear in it.
+            // (Subresource referers are Chromium's own policy — the
+            // interceptor header write is ignored there; printed for
+            // transparency, not gated.)
+            const bool navTrimmed = navReferer.startsWith("http://127.0.0.2:")
+                && !navReferer.contains("127.0.0.1");
+            const bool pass = sawImg && navTrimmed && first && !third;
+            qInfo() << "privacy-smoke:" << (pass ? "PASS" : "FAIL")
+                    << "imgReferer:" << imgReferer
+                    << "navReferer:" << navReferer << "navTrimmed:" << navTrimmed
+                    << "firstPartyCookie:" << first
+                    << "thirdPartyCookie:" << third;
+            poll->stop();
+            application.exit(pass ? 0 : 1);
+        });
+        poll->start(500);
+        view->loadUrl(pageUrl);
+        // Second probe: a renderer-initiated cross-site navigation —
+        // does setHttpHeader("Referer") take effect there?
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, port](bool ok) {
+            if (!ok)
+                return;
+            if (view->url().path() == QLatin1String("/page"))
+                view->webPage()->runJavaScript(QStringLiteral(
+                    "location.href='http://127.0.0.2:%1/nav'").arg(port));
+        });
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks

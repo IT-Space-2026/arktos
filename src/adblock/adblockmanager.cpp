@@ -112,6 +112,9 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile)
     // GUI thread before the interceptor starts seeing requests on the
     // WebEngine IO thread.
     network()->rebuildRules();
+    // PRIV01: a profile accepts exactly one interceptor — callers that
+    // need the privacy composite (prepareProfile) replace this right
+    // after; standalone profiles (autotests) keep the adblock-only one.
     profile->setUrlRequestInterceptor(new AdBlockRequestInterceptor(network(), this));
     // abp:subscribe?... links are handled by a real url-scheme handler;
     // the scheme itself is registered in main() before QApplication.

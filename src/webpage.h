@@ -115,7 +115,8 @@ private slots:
 
 private:
     void init();
-    void showErrorPage(const QUrl &url, const QString &errorString);
+    void showErrorPage(const QUrl &url, const QString &errorString,
+                       bool httpsUpgradeFailed = false);
     void confirmAndOpenExternalUrl(const QUrl &url);
     void handleCertificateError(QWebEngineCertificateError error);
     QString certificateErrorHtml(const QWebEngineCertificateError &error);

@@ -20,6 +20,7 @@
 #include "browserprofile.h"
 
 #include "acceptlanguagedialog.h"
+#include "privacyrequestinterceptor.h"
 
 #include <qapplication.h>
 #include <qdir.h>
@@ -238,7 +239,16 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
     engineSettings->setAttribute(QWebEngineSettings::AllowRunningInsecureContent, false);
     engineSettings->setAttribute(QWebEngineSettings::AllowGeolocationOnInsecureOrigins, false);
-    engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly, true);
+    // PRIV01: the WebRTC leak protection is a user toggle (default
+    // on); applyChromiumFlags() couples the same setting to the
+    // stronger Chromium IP-handling policy at process level.
+    engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly,
+        QSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
+
+    // PRIV01: refresh the request interceptor's IO-thread snapshot
+    // (https-first upgrade, referrer trim) alongside the profile
+    // settings — the privacy group lives outside websettings/network.
+    PrivacyRequestInterceptor::loadSettings();
 
     // Named profiles default to StoreOnDisk: Chromium would write every
     // grant()/deny() to permissions.json on disk and silently apply it
@@ -363,9 +373,26 @@ static const char *const deferredSiteFiles[] = {
     "Network Persistent State",     // persisted HSTS state
 };
 
+// Directories additionally removed by the exit-wipe sentinel
+// (clearAllStorageOnNextStart): Chromium's cookie database, HSTS and
+// reporting state live under Network/, the http cache under Cache/
+// and Code Cache/.  Dropped wholesale rather than file-by-file
+// because an exiting process cannot wait for the network service's
+// async deletes to flush.
+static const char *const exitWipeDirs[] = {
+    "Network",
+    "Cache",
+    "Code Cache",
+};
+
 static QString deferredWipeSentinel(const QString &storagePath)
 {
     return storagePath + QLatin1String("/arora-site-wipe.pending");
+}
+
+static QString exitWipeSentinel(const QString &storagePath)
+{
+    return storagePath + QLatin1String("/arora-exit-wipe.pending");
 }
 
 bool clearSiteStorage(QWebEngineProfile *profile)
@@ -396,12 +423,35 @@ bool clearSiteStorage(QWebEngineProfile *profile)
     return ok;
 }
 
+bool clearAllStorageOnNextStart(QWebEngineProfile *profile)
+{
+    // Same discipline as clearSiteStorage: nothing is removed while
+    // the browser runs — both sentinels are dropped and the next
+    // profile start does the deleting.
+    if (!profile || profile->isOffTheRecord())
+        return true;
+    const QString storagePath = profile->persistentStoragePath();
+    if (storagePath.isEmpty())
+        return true;
+
+    bool ok = clearSiteStorage(profile);
+    QFile sentinel(exitWipeSentinel(storagePath));
+    if (!sentinel.open(QIODevice::WriteOnly))
+        ok = false;
+    else
+        sentinel.close();
+    return ok;
+}
+
 bool clearDeferredSiteStorage(const QString &storagePath)
 {
     if (storagePath.isEmpty())
         return true;
     const QString sentinelPath = deferredWipeSentinel(storagePath);
-    if (!QFile::exists(sentinelPath))
+    const QString exitSentinelPath = exitWipeSentinel(storagePath);
+    const bool siteWipe = QFile::exists(sentinelPath);
+    const bool exitWipe = QFile::exists(exitSentinelPath);
+    if (!siteWipe && !exitWipe)
         return true;
 
     bool ok = true;
@@ -415,9 +465,56 @@ bool clearDeferredSiteStorage(const QString &storagePath)
         if (file.exists())
             ok &= file.remove();
     }
-    ok &= QFile::remove(sentinelPath);
+    if (exitWipe) {
+        for (const char *name : exitWipeDirs) {
+            QDir dir(storagePath + QLatin1Char('/') + QLatin1String(name));
+            if (dir.exists())
+                ok &= dir.removeRecursively();
+        }
+    }
+    if (siteWipe)
+        ok &= QFile::remove(sentinelPath);
+    if (exitWipe)
+        ok &= QFile::remove(exitSentinelPath);
     ensureUserOnlyPermissions(storagePath);
     return ok;
+}
+
+void applyChromiumFlags()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    const bool webrtcProtection =
+        settings.value(QLatin1String("webrtcIpProtection"), true).toBool();
+    const bool secureDns =
+        settings.value(QLatin1String("secureDns"), false).toBool();
+    settings.endGroup();
+    if (!webrtcProtection && !secureDns)
+        return;
+
+    QStringList flags = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+        .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    const auto addFlag = [&flags](const QString &flag) {
+        if (!flags.contains(flag))
+            flags.append(flag);
+    };
+    if (webrtcProtection) {
+        // Strongest WebRTC IP policy Chromium exposes: every ICE
+        // transport goes through the configured proxy (SOCKS5 cannot
+        // forward UDP, so under Tor this simply disables WebRTC —
+        // capture devices are already hard-denied by the SEC05
+        // broker, so nothing usable is lost).
+        addFlag(QLatin1String(
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"));
+    }
+    if (secureDns) {
+        // Auto-upgrade mode only — a custom DoH endpoint cannot be
+        // expressed through flags (that needs the SecureDnsMode pref,
+        // which QtWebEngine does not expose).
+        addFlag(QLatin1String("--enable-features=DnsOverHttps"));
+    }
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
 }
 
 } // namespace BrowserProfile

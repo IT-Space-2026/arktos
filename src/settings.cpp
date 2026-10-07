@@ -339,6 +339,19 @@ void SettingsDialog::loadFromSettings()
     case 0: cookieSessionCombo->setCurrentIndex(0); break;
     }
     filterTrackingCookiesCheckbox->setChecked(settings.value(QLatin1String("filterTrackingCookies"), false).toBool());
+    blockThirdPartyCookies->setChecked(settings.value(QLatin1String("blockThirdPartyCookies"), true).toBool());
+    settings.endGroup();
+
+    // Connections & Storage hardening (PRIV01).  The interceptor
+    // toggles are applied live through applySettings() ->
+    // PrivacyRequestInterceptor::loadSettings() below; the WebRTC/DoH
+    // Chromium flags and the clear-on-exit hook read these keys too.
+    settings.beginGroup(QLatin1String("privacy"));
+    httpsFirst->setChecked(settings.value(QLatin1String("httpsFirst"), true).toBool());
+    trimReferer->setChecked(settings.value(QLatin1String("trimReferer"), true).toBool());
+    webrtcProtection->setChecked(settings.value(QLatin1String("webrtcIpProtection"), true).toBool());
+    secureDns->setChecked(settings.value(QLatin1String("secureDns"), false).toBool());
+    clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
     settings.endGroup();
 
     // The Search tab mirrors OpenSearchManager: engine combo (default
@@ -493,6 +506,16 @@ void SettingsDialog::saveToSettings()
     }
     settings.setValue(QLatin1String("sessionLength"), sessionLength);
     settings.setValue(QLatin1String("filterTrackingCookies"), filterTrackingCookiesCheckbox->isChecked());
+    settings.setValue(QLatin1String("blockThirdPartyCookies"), blockThirdPartyCookies->isChecked());
+    settings.endGroup();
+
+    // Connections & Storage hardening (PRIV01).
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("httpsFirst"), httpsFirst->isChecked());
+    settings.setValue(QLatin1String("trimReferer"), trimReferer->isChecked());
+    settings.setValue(QLatin1String("webrtcIpProtection"), webrtcProtection->isChecked());
+    settings.setValue(QLatin1String("secureDns"), secureDns->isChecked());
+    settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.endGroup();
 
     // Search engines: flush the per-engine suggestion opt-ins the user

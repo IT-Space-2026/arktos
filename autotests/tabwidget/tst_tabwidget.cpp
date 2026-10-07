@@ -27,6 +27,7 @@
 
 #include <opensearchmanager.h>
 #include <opensearchengine.h>
+#include <privacyrequestinterceptor.h>
 #include <toolbarsearch.h>
 
 #include <qwebenginehistory.h>
@@ -838,6 +839,14 @@ void tst_TabWidget::omnibox()
     QSettings settings;
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
 
+    // PRIV01: the profile interceptor upgrades http: navigations to
+    // https: — this test asserts the URL the address bar resolved to,
+    // not the transport, so the upgrade is switched off for it.
+    const QVariant savedHttpsFirst =
+        settings.value(QLatin1String("privacy/httpsFirst"));
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
     OpenSearchEngine *engine = new OpenSearchEngine;
     engine->setName(QLatin1String("omnibox-test"));
@@ -903,6 +912,12 @@ void tst_TabWidget::omnibox()
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());
     widget.closeTab();
+
+    if (savedHttpsFirst.isValid())
+        settings.setValue(QLatin1String("privacy/httpsFirst"), savedHttpsFirst);
+    else
+        settings.remove(QLatin1String("privacy/httpsFirst"));
+    PrivacyRequestInterceptor::loadSettings();
 }
 
 QTEST_MAIN(tst_TabWidget)

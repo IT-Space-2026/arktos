@@ -173,6 +173,12 @@ private:
     QString argumentUrl() const;
     void clean();
     void torStartup(const QString &url);
+    // PRIV01: opt-in full private-data wipe at quit — runs SEC12's
+    // categories (history, cookies, site data, caches) and drops the
+    // deferred sentinels so Chromium's on-disk state goes away at the
+    // next start even when async deletes don't flush before exit.
+    // Idempotent; called from quitBrowser() and ~BrowserApplication().
+    void clearPrivateDataOnExit();
 
     QList<QPointer<BrowserMainWindow> > m_mainWindows;
     QByteArray m_lastSession;
