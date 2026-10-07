@@ -403,7 +403,7 @@ fi
     echo "# Memory-leak sweep (MEM01)"
     echo
     echo "Generated: $(date -u '+%Y-%m-%d %H:%M UTC') on commit $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    echo "Toolchain: $(clang++ --version | head -1), $("$VALGRIND" --version 2>/dev/null | head -1 || echo 'no valgrind')"
+    echo "Toolchain: $(clang++ --version | head -1), $(${VALGRIND:-valgrind} --version 2>/dev/null | head -1 || echo 'no valgrind')"
     echo
     echo "## Reproduce"
     echo

@@ -23,6 +23,9 @@ doc/
 
 src/adblock/rust/target/
 
+# check-leaks.sh raw gate output — the curated report is .devin/MEM02-report.md
+.devin/LEAKS.md
+
 # autotest binaries and in-tree moc artifacts
 autotests/**/tst_*
 !autotests/**/*.cpp

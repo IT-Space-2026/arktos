@@ -10,7 +10,7 @@
 # pcre2's JIT emits self-modifying code that memcheck cannot model
 # (thousands of Addr16/Cond false positives inside compiled regexes).
 
-# Qt 6.11.3 application init: an SSE-16 compare inside
+# Qt 6.11.3/6.12.0 application init: an SSE-16 compare inside
 # QObject::connect reads up to 3 bytes past the end of a heap
 # QByteArray during QGuiApplicationPrivate::init (upstream Qt issue,
 # seen on every GUI test at startup — one context per binary).
