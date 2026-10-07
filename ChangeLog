@@ -323,6 +323,10 @@ Web Inspector (DVT01):
 Settings navigation (UIP03):
     The Preferences dialog now uses Vivaldi-style vertical navigation: a fixed-width sidebar on the left lists the nine sections (with icons) and drives a stacked page area, replacing the horizontal tab row. Every page's contents are unchanged, sections are reachable by mouse and keyboard, and the remembered "last open page" preference carries over with the same ordering.
 
+Tools menu (MENU01):
+    The Tools menu drops two redundant entries: "Web Search" (searching is done from the omnibox address bar — or the dedicated search box if you enabled it) and "Configure Search Engines..." (engine management lives on the Settings > Search page). The Ctrl+K shortcut is unaffected: it still focuses the search box when the box is shown, or the address bar otherwise.
+    The search box's own engine menu now opens the Settings > Search page directly instead of a separate dialog; the standalone engine manager dialog remains reachable through that page's "Manage..." button.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

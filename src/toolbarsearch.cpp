@@ -65,6 +65,7 @@
 
 #include "autosaver.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchengineaction.h"
@@ -72,6 +73,7 @@
 #include "opensearchmanager.h"
 #include "safetext.h"
 #include "searchbutton.h"
+#include "settings.h"
 #include "webpage.h"
 #include "webview.h"
 
@@ -387,8 +389,8 @@ void ToolbarSearch::showEnginesMenu()
         menu.addAction(suggestionsAction);
     }
 
-    // TODO(MIG14): use the BrowserMainWindow's searchManagerAction()
-    // once it exists again so the entry also lives in the Tools menu.
+    // MENU01: engine management lives on the Settings > Search page —
+    // this entry deep-links there rather than duplicating the dialog.
     menu.addAction(tr("Configure Search Engines..."), this, &ToolbarSearch::showEnginesDialog);
 
     if (!m_recentSearches.isEmpty())
@@ -435,6 +437,16 @@ void ToolbarSearch::showEnginesMenu()
 
 void ToolbarSearch::showEnginesDialog()
 {
+    // MENU01: the Settings > Search page is the canonical engine
+    // manager now (its Manage button still reaches the standalone
+    // OpenSearchDialog).  The dialog stays as the fallback for a
+    // ToolbarSearch with no BrowserMainWindow ancestor.
+    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
+        SettingsDialog dialog(window);
+        dialog.openAtPage(SettingsDialog::SearchPage);
+        dialog.exec();
+        return;
+    }
     OpenSearchDialog dialog(this);
     dialog.exec();
 }

@@ -249,6 +249,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     loadFromSettings();
 }
 
+void SettingsDialog::openAtPage(Page page)
+{
+    tabWidget->setCurrentIndex(int(page));
+}
+
 void SettingsDialog::loadDefaults()
 {
     // The profile's QWebEngineSettings replaces QWebSettings::

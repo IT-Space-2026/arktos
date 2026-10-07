@@ -73,8 +73,23 @@ class SettingsDialog : public QDialog, public Ui_Settings
     Q_OBJECT
 
 public:
+    // Sidebar/stack page order — callers can deep-link a page (the
+    // toolbar search menu opens the Search page directly).
+    enum Page {
+        GeneralPage = 0,
+        SearchPage,
+        AppearancePage,
+        PrivacyPage,
+        TabSettingsPage,
+        ProxyPage,
+        AutoFillPage,
+        AdvancedPage,
+        ExtensionsPage
+    };
+
     SettingsDialog(QWidget *parent = nullptr);
     void accept() override;
+    void openAtPage(Page page);
 
 private slots:
     void loadDefaults();

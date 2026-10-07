@@ -81,7 +81,6 @@
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
-#include "opensearchdialog.h"
 #include "safetext.h"
 #include "securestore.h"
 #include "settings.h"
@@ -860,10 +859,13 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu = new QMenu(menuBar());
     menuBar()->addMenu(m_toolsMenu);
 
-    m_toolsWebSearchAction = new QAction(m_toolsMenu);
+    // MENU01: no Tools-menu entry — the action lives on the window
+    // itself so the Ctrl+K shortcut keeps reaching webSearch()
+    // without a menu item to show.
+    m_toolsWebSearchAction = new QAction(this);
     connect(m_toolsWebSearchAction, &QAction::triggered,
             this, &BrowserMainWindow::webSearch);
-    m_toolsMenu->addAction(m_toolsWebSearchAction);
+    addAction(m_toolsWebSearchAction);
 
     m_toolsClearPrivateDataAction = new QAction(m_toolsMenu);
     connect(m_toolsClearPrivateDataAction, &QAction::triggered,
@@ -897,12 +899,6 @@ void BrowserMainWindow::setupMenu()
             DevToolsWindow::inspectElement(currentTab()->page());
     });
     m_toolsMenu->addAction(m_toolsEnableInspectorAction);
-
-    m_toolsSearchManagerAction = new QAction(m_toolsMenu);
-    m_toolsSearchManagerAction->setMenuRole(QAction::NoRole);
-    connect(m_toolsSearchManagerAction, &QAction::triggered,
-            this, &BrowserMainWindow::showSearchDialog);
-    m_toolsMenu->addAction(m_toolsSearchManagerAction);
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
@@ -1059,7 +1055,6 @@ void BrowserMainWindow::retranslate()
     m_toolsEnableInspectorAction->setText(tr("Web &Inspector"));
     m_toolsPreferencesAction->setText(tr("Options..."));
     m_toolsPreferencesAction->setShortcut(tr("Ctrl+,"));
-    m_toolsSearchManagerAction->setText(tr("Configure Search Engines..."));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
     m_adBlockDialogAction->setText(tr("&Ad Block..."));
 
@@ -1607,12 +1602,6 @@ void BrowserMainWindow::loadProgress(int progress)
         connect(m_stopReloadAction, &QAction::triggered, m_viewReloadAction, &QAction::trigger);
         updateStopReloadActionText(false);
     }
-}
-
-void BrowserMainWindow::showSearchDialog()
-{
-    OpenSearchDialog dialog(this);
-    dialog.exec();
 }
 
 void BrowserMainWindow::aboutToShowBackMenu()

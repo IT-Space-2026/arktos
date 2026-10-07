@@ -31,6 +31,7 @@
 #include <qwebenginepage.h>
 #include <qlineedit.h>
 #include <qmenu.h>
+#include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qpushbutton.h>
 #include <qtoolbar.h>
@@ -87,6 +88,7 @@ private slots:
     void viewToggles();
     void menuPopulation();
     void dialogSlots();
+    void toolsMenuDedup();
     void stateSerialization();
     void events();
     void closeConfirm();
@@ -114,7 +116,6 @@ void tst_BrowserMainWindow::chromeBasics()
     QVERIFY(window->currentTab());
     QVERIFY(window->toolbarSearch());
     QVERIFY(window->showMenuBarAction());
-    QVERIFY(window->searchManagerAction());
     QVERIFY(window->tabWidget()->count() >= 1);
     QVERIFY(!window->sizeHint().isEmpty());
     closeWindow(window);
@@ -227,8 +228,8 @@ void tst_BrowserMainWindow::dialogSlots()
     acceptModal(); // ClearPrivateData
     QVERIFY(QMetaObject::invokeMethod(window, "clearPrivateData"));
 
-    acceptModal(); // OpenSearchDialog
-    QVERIFY(QMetaObject::invokeMethod(window, "showSearchDialog"));
+    acceptModal(); // SettingsDialog
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
 
     // Private-browsing prompt answered Cancel — mode stays off.
     QVERIFY(!BrowserApplication::isPrivate());
@@ -250,6 +251,46 @@ void tst_BrowserMainWindow::dialogSlots()
             BrowserApplication::downloadManager()))
         downloads->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    closeWindow(window);
+}
+
+// MENU01: the Tools menu dropped the redundant "Web Search" and
+// "Configure Search Engines" entries — engine management lives on the
+// Settings > Search page — but the Ctrl+K shortcut survives as a
+// window-level action that still routes to webSearch().
+void tst_BrowserMainWindow::toolsMenuDedup()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *toolsMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+    }
+    QVERIFY(toolsMenu);
+    for (QAction *action : toolsMenu->actions()) {
+        QVERIFY2(!action->text().contains(QLatin1String("Search")),
+                 qPrintable(action->text()));
+    }
+
+    // The Ctrl+K carrier detached from the menu onto the window.
+    QAction *webSearch = nullptr;
+    for (QAction *action : window->actions()) {
+        if (action->shortcut() == QKeySequence(QStringLiteral("Ctrl+K"))) {
+            webSearch = action;
+            break;
+        }
+    }
+    QVERIFY(webSearch);
+    QVERIFY(!toolsMenu->actions().contains(webSearch));
+
+    // Triggering it still runs webSearch() — with the dedicated box
+    // hidden (fresh profile) the omnibox location bar gets selected.
+    window->tabWidget()->currentLocationBar()->setText(QLatin1String("arora"));
+    webSearch->trigger();
+    QVERIFY(window->tabWidget()->currentLocationBar()->hasSelectedText());
     closeWindow(window);
 }
 
