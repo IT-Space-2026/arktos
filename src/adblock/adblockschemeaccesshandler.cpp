@@ -101,8 +101,7 @@ void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJo
         AdBlockManager::instance()->addSubscription(subscription);
         subscription->updateNow();
         AdBlockDialog *dialog = AdBlockManager::instance()->showDialog();
-        QAbstractItemModel *model = dialog->treeView->model();
-        dialog->treeView->setCurrentIndex(model->index(model->rowCount() -1, 0));
+        dialog->selectSubscription(subscription);
         dialog->setFocus();
     }
     // Nothing is ever served for abp: urls — they only carry the

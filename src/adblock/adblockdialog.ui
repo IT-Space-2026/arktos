@@ -6,15 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>483</width>
-    <height>487</height>
+    <width>560</width>
+    <height>640</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>AdBlock Configuration</string>
   </property>
-  <layout class="QGridLayout" name="gridLayout_2">
-   <item row="0" column="0">
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
     <widget class="QCheckBox" name="adblockCheckBox">
      <property name="text">
       <string>Enable AdBlock</string>
@@ -24,7 +24,161 @@
      </property>
     </widget>
    </item>
-   <item row="2" column="0">
+   <item>
+    <widget class="QWidget" name="adblockWidget" native="true">
+     <property name="enabled">
+      <bool>true</bool>
+     </property>
+     <layout class="QVBoxLayout" name="adblockLayout">
+      <property name="margin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QGroupBox" name="subscriptionsGroup">
+        <property name="title">
+         <string>Filter Subscriptions</string>
+        </property>
+        <layout class="QVBoxLayout" name="subscriptionsLayout">
+         <item>
+          <widget class="QTreeWidget" name="subscriptionsTree">
+           <property name="accessibleName">
+            <string>Filter list subscriptions</string>
+           </property>
+           <property name="alternatingRowColors">
+            <bool>true</bool>
+           </property>
+           <property name="rootIsDecorated">
+            <bool>false</bool>
+           </property>
+           <property name="uniformRowHeights">
+            <bool>true</bool>
+           </property>
+           <property name="selectionMode">
+            <enum>QAbstractItemView::SingleSelection</enum>
+           </property>
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <column>
+            <property name="text">
+             <string>Subscription</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>Rules</string>
+            </property>
+           </column>
+           <column>
+            <property name="text">
+             <string>Last Update</string>
+            </property>
+           </column>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="subscriptionButtonsLayout">
+           <item>
+            <widget class="QPushButton" name="updateSubscriptionButton">
+             <property name="text">
+              <string>Update Now</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="removeSubscriptionButton">
+             <property name="text">
+              <string>Remove</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="subscriptionButtonsSpacer">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QToolButton" name="actionToolButton">
+             <property name="text">
+              <string>Action</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="rulesGroup">
+        <property name="title">
+         <string>Show rules in the selected list</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+        <property name="checked">
+         <bool>false</bool>
+        </property>
+        <layout class="QVBoxLayout" name="rulesLayout">
+         <item>
+          <widget class="SearchLineEdit" name="search">
+           <property name="accessibleName">
+            <string>Filter displayed rules</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="rulesView">
+           <property name="accessibleName">
+            <string>Rules in the selected subscription</string>
+           </property>
+           <property name="readOnly">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="customRulesGroup">
+        <property name="title">
+         <string>Custom Rules</string>
+        </property>
+        <layout class="QVBoxLayout" name="customRulesLayout">
+         <item>
+          <widget class="QLabel" name="customRulesHint">
+           <property name="text">
+            <string>One rule per line. Lines starting with ! are comments.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="customRulesEdit">
+           <property name="accessibleName">
+            <string>Custom ad blocking rules</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
@@ -34,65 +188,6 @@
      </property>
     </widget>
    </item>
-   <item row="1" column="0">
-    <widget class="QWidget" name="adblockWidget" native="true">
-     <property name="enabled">
-      <bool>true</bool>
-     </property>
-     <layout class="QGridLayout" name="gridLayout">
-      <property name="margin">
-       <number>0</number>
-      </property>
-      <item row="0" column="0" colspan="3">
-       <spacer name="horizontalSpacer">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>398</width>
-          <height>23</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      <item row="0" column="3">
-       <widget class="SearchLineEdit" name="search">
-        <property name="accessibleName">
-         <string>Search ad blocking rules</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="0" colspan="4">
-       <widget class="EditTreeView" name="treeView">
-        <property name="accessibleName">
-         <string>Ad blocking rules</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0">
-       <widget class="QToolButton" name="actionToolButton">
-        <property name="text">
-         <string>Action</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1" colspan="3">
-       <spacer name="horizontalSpacer_2">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-     </layout>
-    </widget>
-   </item>
   </layout>
  </widget>
  <customwidgets>
@@ -100,11 +195,6 @@
    <class>SearchLineEdit</class>
    <extends>QLineEdit</extends>
    <header>searchlineedit.h</header>
-  </customwidget>
-  <customwidget>
-   <class>EditTreeView</class>
-   <extends>QTreeView</extends>
-   <header>edittreeview.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

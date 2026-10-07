@@ -30,10 +30,12 @@
 #define ADBLOCKDIALOG_H
 
 #include <qdialog.h>
+#include <qpointer.h>
 #include "ui_adblockdialog.h"
 
-class AdBlockModel;
-class TreeSortFilterProxyModel;
+class AdBlockSubscription;
+class QTimer;
+class QTreeWidgetItem;
 class AdBlockDialog : public QDialog, public Ui_AdBlockDialog
 {
     Q_OBJECT
@@ -41,8 +43,13 @@ class AdBlockDialog : public QDialog, public Ui_AdBlockDialog
 public:
     AdBlockDialog(QWidget *parent = nullptr);
 
+    // Selects a subscription's row so a freshly added list is in view
+    // (used after an abp: subscribe prompt is accepted).
+    void selectSubscription(AdBlockSubscription *subscription);
+
 public slots:
     void addCustomRule(const QString &rule = QString());
+    void done(int result) override;
 
 private slots:
     void learnAboutWritingFilters();
@@ -51,10 +58,24 @@ private slots:
     void browseSubscriptions();
     void showPresets();
     void removeSubscription();
+    void repopulateSubscriptions();
+    void subscriptionItemChanged(QTreeWidgetItem *item, int column);
+    void subscriptionSelectionChanged();
+    void fillRulesView();
+    void customRulesTextChanged();
+    void commitCustomRules();
+    void customRulesChangedExternally();
 
 private:
-    AdBlockModel *m_adBlockModel;
-    TreeSortFilterProxyModel *m_proxyModel;
+    AdBlockSubscription *selectedSubscription() const;
+    AdBlockSubscription *customSubscription();
+    void loadCustomRulesText();
+    void focusCustomRules();
+
+    QPointer<AdBlockSubscription> m_customRules;
+    QTimer *m_customCommitTimer;
+    QString m_customCommittedText;
+    bool m_refreshing;
 
 };
 

@@ -27,6 +27,7 @@
 #include <qcheckbox.h>
 #include <qpushbutton.h>
 #include <qstandarditemmodel.h>
+#include <qtreewidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qtemporarydir.h>
@@ -407,7 +408,17 @@ void tst_Dialogs::acceptLanguageDialog()
 void tst_Dialogs::adBlockDialog()
 {
     AdBlockDialog dialog;
-    QVERIFY(dialog.treeView->model()->rowCount() >= 0);
+    AdBlockManager *manager = AdBlockManager::instance();
+
+    // ADB04: one checkable row per subscription — remote lists never
+    // expand into per-rule rows, so a 60k-rule list cannot stall the
+    // dialog or show untoggleable comment/metadata rows.
+    QCOMPARE(dialog.subscriptionsTree->topLevelItemCount(),
+             manager->subscriptions().count());
+    for (int i = 0; i < dialog.subscriptionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.subscriptionsTree->topLevelItem(i);
+        QVERIFY(item->flags() & Qt::ItemIsUserCheckable);
+    }
     dialog.adblockCheckBox->setChecked(true);
 
     // The InstantPopup action menu builds its contents on aboutToShow.
@@ -416,12 +427,68 @@ void tst_Dialogs::adBlockDialog()
     emit menu->aboutToShow();
     QVERIFY(menu->actions().count() >= 4);
 
-    // addCustomRule lands in the "Custom Rules" subscription.
-    AdBlockSubscription *custom = AdBlockManager::instance()->customRules();
+    // Toggling a subscription checkbox writes straight through to the
+    // subscription and round-trips through QSettings on save.
+    AdBlockSubscription *dead = manager->subscriptions().first();
+    QTreeWidgetItem *firstItem = dialog.subscriptionsTree->topLevelItem(0);
+    QVERIFY(firstItem);
+    const bool wasEnabled = dead->isEnabled();
+    firstItem->setCheckState(0, wasEnabled ? Qt::Unchecked : Qt::Checked);
+    QCOMPARE(dead->isEnabled(), !wasEnabled);
+    firstItem->setCheckState(0, wasEnabled ? Qt::Checked : Qt::Unchecked);
+    QCOMPARE(dead->isEnabled(), wasEnabled);
+
+    // The file-backed custom subscription is managed through the text
+    // pane — Update/Remove stay disabled for it, enabled for remotes.
+    AdBlockSubscription *custom = manager->customRules();
+    dialog.selectSubscription(custom);
+    QVERIFY(!dialog.updateSubscriptionButton->isEnabled());
+    QVERIFY(!dialog.removeSubscriptionButton->isEnabled());
+    dialog.selectSubscription(dead);
+    QVERIFY(dialog.updateSubscriptionButton->isEnabled());
+    QVERIFY(dialog.removeSubscriptionButton->isEnabled());
+
+    // addCustomRule lands in the "Custom Rules" subscription and is
+    // reflected in the text pane.
     const int rulesBefore = custom->allRules().count();
     dialog.addCustomRule(QLatin1String("||cov04-dialog.invalid^"));
     QCOMPARE(custom->allRules().count(), rulesBefore + 1);
-    custom->removeRule(rulesBefore); // customRules keeps insertion order
+    QVERIFY(dialog.customRulesEdit->toPlainText().contains(
+        QLatin1String("||cov04-dialog.invalid^")));
+
+    // The debounced edit path commits live without closing the dialog.
+    dialog.customRulesEdit->setPlainText(QLatin1String(
+        "||adb04.invalid^\n! a comment\n@@||adb04-ok.invalid^"));
+    QTRY_COMPARE(custom->allRules().count(), 3);
+    QCOMPARE(custom->allRules().at(0).filter(),
+             QLatin1String("||adb04.invalid^"));
+    QCOMPARE(custom->allRules().at(1).filter(),
+             QLatin1String("! a comment"));
+    QVERIFY(custom->allRules().at(2).isException());
+
+    // done() commits a pending edit that never hit the debounce.
+    dialog.customRulesEdit->setPlainText(QLatin1String("||adb04-done.invalid^"));
+    dialog.done(QDialog::Accepted);
+    QCOMPARE(custom->allRules().count(), 1);
+    QCOMPARE(custom->allRules().at(0).filter(),
+             QLatin1String("||adb04-done.invalid^"));
+
+    // The opt-in rules viewer lists the selected subscription's rules
+    // read-only; the search box narrows the displayed lines.
+    dialog.selectSubscription(custom);
+    QVERIFY(dialog.rulesView->toPlainText().isEmpty()); // opt-in, off by default
+    dialog.rulesGroup->setChecked(true);
+    QVERIFY(dialog.rulesView->isReadOnly());
+    QVERIFY(dialog.rulesView->toPlainText().contains(
+        QLatin1String("||adb04-done.invalid^")));
+    dialog.search->setText(QLatin1String("nomatch"));
+    QVERIFY(dialog.rulesView->toPlainText().isEmpty());
+    dialog.search->setText(QString());
+    QVERIFY(dialog.rulesView->toPlainText().contains(
+        QLatin1String("||adb04-done.invalid^")));
+
+    // Leave the shared singleton's custom list empty for later tests.
+    custom->setRules(QList<AdBlockRule>());
 }
 
 void tst_Dialogs::editTableView()

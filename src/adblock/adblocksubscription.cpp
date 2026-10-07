@@ -390,6 +390,27 @@ QList<AdBlockRule> AdBlockSubscription::allRules() const
     return m_rules;
 }
 
+int AdBlockSubscription::ruleCount() const
+{
+    return m_rules.count();
+}
+
+QStringList AdBlockSubscription::ruleFilters() const
+{
+    QStringList filters;
+    filters.reserve(m_rules.count());
+    for (const AdBlockRule &rule : m_rules)
+        filters.append(rule.filter());
+    return filters;
+}
+
+void AdBlockSubscription::setRules(const QList<AdBlockRule> &rules)
+{
+    m_rules = rules;
+    populateCache();
+    emit rulesChanged();
+}
+
 void AdBlockSubscription::addRule(const AdBlockRule &rule)
 {
 #if defined(ADBLOCKSUBSCRIPTION_DEBUG)

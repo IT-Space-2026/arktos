@@ -36,6 +36,7 @@
 #include <qlist.h>
 #include <qdatetime.h>
 #include <qpointer.h>
+#include <qstringlist.h>
 
 class QNetworkReply;
 class QUrl;
@@ -73,6 +74,14 @@ public:
     QList<const AdBlockRule*> networkBlockRules() const;
 
     QList<AdBlockRule> allRules() const;
+    // ruleCount/ruleFilters avoid deep-copying the rule list when the
+    // dialog only needs a count or the filter text of every rule.
+    int ruleCount() const;
+    QStringList ruleFilters() const;
+    // Replaces the whole rule set with one cache rebuild + signal —
+    // the custom-rules text pane commits through this rather than one
+    // remove/add pair per edited line.
+    void setRules(const QList<AdBlockRule> &rules);
     void addRule(const AdBlockRule &rule);
     void removeRule(int offset);
     void replaceRule(const AdBlockRule &rule, int offset);
