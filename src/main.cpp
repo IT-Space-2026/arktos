@@ -19,6 +19,7 @@
 
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
+#include "adblockpage.h"
 #include "adblockresourcehandler.h"
 #include "adblockrule.h"
 #include "adblockschemeaccesshandler.h"
@@ -109,9 +110,12 @@
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineUrlRequestInfo>
 #include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
+#include <QtWebEngineCore/QWebEngineScript>
 #include <QtWebEngineCore/QWebEngineScriptCollection>
 #include <QtWebEngineCore/QWebEngineSettings>
+#include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QFrame>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
@@ -372,6 +376,310 @@ static QSet<QString> processRemoteEndpoints()
 }
 #endif
 
+// SEC15: --browseraudit-smoke drives the full browseraudit.com suite
+// against the real browsing profile and writes every test's outcome
+// to a JSON file for the .devin/SEC15-browseraudit.md baseline report.
+// --browseraudit-bare swaps in a fresh unnamed off-the-record profile
+// and a plain QWebEngineView — no CookieJar filter, request
+// interceptor or WebPage navigation policy — so app-layer effects
+// surface as divergences between the two captures.
+//
+// The injected capture wraps browserAuditTestFramework.start(): the
+// suite's own runner (run.js) is fetched over the network only after
+// the framework script has executed, so a 5ms in-page poller is
+// guaranteed to install the wrapper first.  sendresults=false keeps
+// the results local — nothing is posted back to the site.  The flag
+// hits the live site and takes minutes, so it is deliberately absent
+// from check-coverage's SMOKE_FLAGS.
+static const char kBrowserAuditCaptureJs[] = R"JS(
+(function () {
+    var categoryPath = [];
+    var poll = setInterval(function () {
+        var framework = window.browserAuditTestFramework;
+        if (!framework || framework.__aroraWrapped)
+            return;
+        var realStart = framework.start;
+        framework.start = function (callbacks) {
+            var onStartCategory = callbacks.startCategory;
+            var onEndCategory = callbacks.endCategory;
+            var onEndTest = callbacks.endTest;
+            var onEndSuite = callbacks.endSuite;
+            callbacks.startCategory = function () {
+                categoryPath.push(this.id + "|" + String(this.title));
+                if (onStartCategory)
+                    return onStartCategory.apply(this, arguments);
+            };
+            callbacks.endCategory = function () {
+                categoryPath.pop();
+                if (onEndCategory)
+                    return onEndCategory.apply(this, arguments);
+            };
+            callbacks.endTest = function (duration, result) {
+                (window.__aroraResults = window.__aroraResults || [])
+                    .push({
+                        id: this.id,
+                        title: String(this.title),
+                        behaviour: String(this.behaviour),
+                        outcome: String(result[0]),
+                        reason: String(result[1] || ""),
+                        duration: duration,
+                        categories: categoryPath.slice()
+                    });
+                if (onEndTest)
+                    return onEndTest.apply(this, arguments);
+            };
+            callbacks.endSuite = function (result) {
+                window.__aroraSummary = result;
+                window.__aroraDone = true;
+                if (onEndSuite)
+                    return onEndSuite.apply(this, arguments);
+            };
+            return realStart.call(this, callbacks);
+        };
+        framework.__aroraWrapped = true;
+        clearInterval(poll);
+    }, 5);
+    // The suite scripts arrive via network fetch after
+    // DOMContentLoaded; ten minutes is generous, and the C++ watchdog
+    // ends the run regardless.
+    setTimeout(function () { clearInterval(poll); }, 600000);
+})();
+)JS";
+
+static int browserAuditSmoke(BrowserApplication &application,
+                             WebView *appView, bool bare)
+{
+    const QString mode = bare ? QStringLiteral("bare")
+                              : QStringLiteral("app");
+    const QString outPath = qEnvironmentVariable(
+        "ARORA_AUDIT_OUT",
+        QStringLiteral("/tmp/browseraudit-%1.json").arg(mode));
+
+    QWebEngineView *view = appView;
+    if (bare) {
+        // An unnamed profile is off-the-record — no persisted cookies,
+        // cache or storage — and prepareProfile() never sees it, so no
+        // app services reach this page: the bare-engine baseline.
+        QWebEngineProfile *profile = new QWebEngineProfile(&application);
+        QWebEngineView *bareView = new QWebEngineView;
+
+        // SEC15 bisection aid: ARORA_AUDIT_WIRE=<csv> applies selected
+        // pieces of prepareProfile()/WebPage wiring onto the OTR profile
+        // so a divergent result can be attributed to one component.
+        // Values: settings cookies interceptor extensions webpage webview
+        // Modifier: nofinish (with webview) disconnects
+        // WebView::loadFinished so applyRulesToPage()/attachToPage()
+        // never run.  Modifier: contained (without webview) puts the
+        // plain view inside a shown QMainWindow like the webview wire
+        // does, to separate widget-hierarchy effects from WebView
+        // wiring.  Modifier: bar (without webview) adds a hidden child
+        // widget like WebView's ScriptBlockInfoBar, to test whether a
+        // child widget alone affects paint-gated resource loads.
+        const QStringList wire = qEnvironmentVariable("ARORA_AUDIT_WIRE")
+            .split(QLatin1Char(','), Qt::SkipEmptyParts);
+        if (wire.contains(QLatin1String("settings")))
+            BrowserProfile::applySettings(profile);
+        if (wire.contains(QLatin1String("cookies")))
+            CookieJar::instance(profile);
+        if (wire.contains(QLatin1String("interceptor")))
+            profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
+                AdBlockManager::instance()->network(), profile));
+        if (wire.contains(QLatin1String("extensions")))
+            ExtensionManager::instance()->installOnProfile(profile);
+        // webview adds the WebView-level loadFinished handlers (adblock
+        // cosmetic injection + autofill attach) that a plain
+        // QWebEngineView+WebPage pairing never runs.
+        if (wire.contains(QLatin1String("webview"))) {
+            auto *container = new QMainWindow;
+            WebView *webView = new WebView(profile, container);
+            container->setCentralWidget(webView);
+            container->resize(1024, 768);
+            container->show();
+            if (wire.contains(QLatin1String("nofinish")))
+                // WebView::init connects loadFinished through a
+                // lambda, so a slot-name disconnect cannot reach it —
+                // drop every receiver of the view's signal instead.
+                QObject::disconnect(webView, &QWebEngineView::loadFinished,
+                                    nullptr, nullptr);
+            view = webView;
+        } else {
+            if (wire.contains(QLatin1String("webpage")))
+                bareView->setPage(new WebPage(profile, bareView));
+            else
+                bareView->setPage(new QWebEnginePage(profile, bareView));
+            if (wire.contains(QLatin1String("autofill"))) {
+                // Run WebView::loadFinished's autofill half alone on
+                // the plain view — attaches the injected
+                // qwebchannel.js+autofill.js bundle at loadFinished.
+                WebPage *wp = qobject_cast<WebPage*>(bareView->page());
+                if (wp)
+                    QObject::connect(bareView,
+                        &QWebEngineView::loadFinished, bareView,
+                        [wp]() {
+                            AutoFillManager::instance()->attachToPage(wp);
+                        });
+            }
+            if (wire.contains(QLatin1String("cosmetic"))) {
+                // Run WebView::loadFinished's adblock half alone on
+                // the plain view — manager construction plus the
+                // cosmetic rule pass at loadFinished.
+                WebPage *wp = qobject_cast<WebPage*>(bareView->page());
+                if (wp)
+                    QObject::connect(bareView,
+                        &QWebEngineView::loadFinished, bareView,
+                        [wp]() {
+                            AdBlockManager::instance()->page()
+                                ->applyRulesToPage(wp);
+                        });
+            }
+            if (wire.contains(QLatin1String("bar"))) {
+                // Stand-in for the ScriptBlockInfoBar child that
+                // WebView::init always creates — an extra child widget
+                // over the render surface, even hidden.
+                auto *standin = new QFrame(bareView);
+                standin->setObjectName(
+                    QLatin1String("scriptBlockInfoBar"));
+                standin->hide();
+            }
+            // An unshown page is treated as hidden and Chromium
+            // throttles its timers, which would stall the suite.
+            if (wire.contains(QLatin1String("contained"))) {
+                auto *container = new QMainWindow;
+                container->setCentralWidget(bareView);
+                container->resize(1024, 768);
+                container->show();
+            } else {
+                bareView->resize(1024, 768);
+                bareView->show();
+            }
+            view = bareView;
+        }
+    } else {
+        // The smoke dispatch returns before main()'s window.show() —
+        // show the stub window so the page is not treated as hidden.
+        view->window()->show();
+    }
+
+    QWebEngineScript capture;
+    capture.setName(QStringLiteral("arora-browseraudit-capture"));
+    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    capture.setWorldId(QWebEngineScript::MainWorld);
+    capture.setRunsOnSubFrames(false);
+    capture.setSourceCode(QString::fromUtf8(kBrowserAuditCaptureJs));
+    view->page()->scripts().insert(capture);
+
+    const QUrl suiteUrl(qEnvironmentVariable("ARORA_AUDIT_URL",
+        QStringLiteral("https://browseraudit.com/test"
+                       "?categories=*&sendresults=false")));
+    qInfo() << "browseraudit-smoke: mode" << mode << "loading"
+            << suiteUrl << "->" << outPath;
+    view->load(suiteUrl);
+
+    auto *progress = new int(-1);
+    auto *finished = new bool(false);
+    QTimer *poller = new QTimer(&application);
+    poller->setInterval(2000);
+    QObject::connect(poller, &QTimer::timeout, &application,
+                     [=, &application]() {
+        if (*finished)
+            return;
+        view->page()->runJavaScript(
+            QStringLiteral("JSON.stringify({"
+                           "done: window.__aroraDone === true,"
+                           " n: (window.__aroraResults || []).length,"
+                           " fw: typeof browserAuditTestFramework,"
+                           " wrapped: !!(window.browserAuditTestFramework"
+                           "            && browserAuditTestFramework"
+                           "                  .__aroraWrapped),"
+                           " ui: typeof browserAuditUI,"
+                           " rs: document.readyState})"),
+            [=, &application](const QVariant &status) {
+                const QJsonObject state = QJsonDocument::fromJson(
+                    status.toString().toUtf8()).object();
+                const int count =
+                    state.value(QLatin1String("n")).toInt(-1);
+                if (!state.value(QLatin1String("done")).toBool()) {
+                    static int heartbeat = 0;
+                    if (count != *progress || ++heartbeat % 15 == 0) {
+                        *progress = count;
+                        qInfo() << "browseraudit-smoke: progress" << count
+                                << "of 431 tests -" << status.toString();
+                    }
+                    return;
+                }
+                *finished = true;
+                view->page()->runJavaScript(
+                    QStringLiteral("JSON.stringify({"
+                                   "userAgent: navigator.userAgent,"
+                                   "summary: window.__aroraSummary || null,"
+                                   "results: window.__aroraResults || []})"),
+                    [=, &application](const QVariant &payload) {
+                        const QByteArray json =
+                            payload.toString().toUtf8();
+                        QJsonParseError parseError;
+                        const QJsonDocument doc =
+                            QJsonDocument::fromJson(json, &parseError);
+                        if (parseError.error != QJsonParseError::NoError) {
+                            qInfo() << "browseraudit-smoke: FAIL"
+                                    << "(capture parse:"
+                                    << parseError.errorString()
+                                    << ")";
+                            application.exit(3);
+                            return;
+                        }
+                        QJsonObject envelope = doc.object();
+                        envelope.insert(QStringLiteral("profile"), mode);
+                        envelope.insert(
+                            QStringLiteral("chromiumVersion"),
+                            QLatin1String(qWebEngineChromiumVersion()));
+                        QFile out(outPath);
+                        if (!out.open(QIODevice::WriteOnly)) {
+                            qInfo() << "browseraudit-smoke: FAIL (cannot"
+                                       " write" << outPath << ")";
+                            application.exit(3);
+                            return;
+                        }
+                        out.write(QJsonDocument(envelope).toJson());
+                        const QJsonArray results =
+                            envelope.value(QLatin1String("results"))
+                                .toArray();
+                        int pass = 0, warning = 0, critical = 0,
+                            skip = 0;
+                        for (const QJsonValue &value : results) {
+                            const QString outcome = value.toObject()
+                                .value(QLatin1String("outcome"))
+                                .toString();
+                            if (outcome == QLatin1String("pass"))
+                                ++pass;
+                            else if (outcome == QLatin1String("warning"))
+                                ++warning;
+                            else if (outcome == QLatin1String("critical"))
+                                ++critical;
+                            else
+                                ++skip;
+                        }
+                        qInfo() << "browseraudit-smoke: DONE" << mode
+                                << "-" << results.count() << "tests:"
+                                << pass << "pass" << warning
+                                << "warning" << critical << "critical"
+                                << skip << "skip ->" << outPath;
+                        application.exit(0);
+                    });
+            });
+    });
+    poller->start();
+
+    int timeoutMs = qEnvironmentVariableIntValue("ARORA_AUDIT_TIMEOUT_MS");
+    if (timeoutMs <= 0)
+        timeoutMs = 30 * 60 * 1000;
+    QTimer::singleShot(timeoutMs, &application, [&application]() {
+        qInfo() << "browseraudit-smoke: FAIL (timeout)";
+        application.exit(2);
+    });
+
+    return application.exec();
+}
+
 int main(int argc, char **argv)
 {
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
@@ -407,6 +715,10 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
+            smokeRun = true;
+        // Modifier for --browseraudit-smoke's bare-engine baseline run;
+        // on its own it still takes that path, so it is a smoke run too.
+        if (arg == "--browseraudit-bare")
             smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
@@ -524,6 +836,7 @@ int main(int argc, char **argv)
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "profile-startup",
+        "browseraudit-smoke", "browseraudit-bare",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -652,6 +965,15 @@ int main(int argc, char **argv)
         QTimer::singleShot(15000, &application,
                            [&application]() { application.exit(1); });
     }
+
+    // SEC15: live-site measurement — runs the complete browseraudit
+    // suite on the browsing profile and records per-test outcomes.
+    // --browseraudit-bare uses a clean off-the-record profile/plain
+    // view for the engine-only baseline the app run diffs against.
+    if (args.contains(QLatin1String("--browseraudit-smoke"))
+            || args.contains(QLatin1String("--browseraudit-bare")))
+        return browserAuditSmoke(application, view,
+            args.contains(QLatin1String("--browseraudit-bare")));
 
     window.show();
 

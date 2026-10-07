@@ -164,6 +164,10 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     case AdBlockDecision::Block:
         noteBlockedRequest(info.firstPartyUrl());
         info.block(true);
+        if (qEnvironmentVariableIsSet("ARORA_DEBUG_BLOCK"))
+            qDebug() << "ADBLOCK-BLOCK" << info.requestUrl()
+                     << "firstParty" << info.firstPartyUrl()
+                     << "rtype" << int(info.resourceType());
         return;
     }
 

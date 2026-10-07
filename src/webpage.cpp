@@ -237,9 +237,14 @@ void WebPage::init()
         });
     }
 
-    // Chromium's built-in error pages are disabled so the Arora
-    // notfound.html page can be injected from handleLoadingChanged().
-    settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, false);
+    // SEC15: keep Chromium's built-in error pages enabled.  With them
+    // disabled, failed SUBFRAME loads produce no error commit and no
+    // loadFinished signal for the frame — pages that gate on an
+    // iframe's .load() (including failed loads) hang.  The built-in
+    // page commits first and handleLoadingChanged() still replaces the
+    // main-frame failure with Arora's notfound.html, so the custom
+    // error page is preserved either way.
+    settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, true);
 
     // Downloads are handled application-wide: DownloadManager hooks
     // QWebEngineProfile::downloadRequested for each profile it is
