@@ -531,6 +531,47 @@
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_3">
        <item>
+        <widget class="QGroupBox" name="securityLevelGroupBox">
+         <property name="title">
+          <string>Security Level</string>
+         </property>
+         <layout class="QVBoxLayout">
+          <item>
+           <widget class="QComboBox" name="securityLevelCombo">
+            <property name="toolTip">
+             <string>Standard is the default browser behavior. Safer keeps JavaScript off pages loaded over plain HTTP and makes media click-to-play. Safest disables JavaScript everywhere.</string>
+            </property>
+            <item>
+             <property name="text">
+              <string>Standard</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Safer</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Safest</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="securityLevelHint">
+            <property name="text">
+             <string>Standard: JavaScript runs everywhere and sites may autoplay media. This is the default browser behavior.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="groupBox">
          <property name="title">
           <string>Web Content</string>
@@ -1642,6 +1683,7 @@
   <tabstop>standardFontButton</tabstop>
   <tabstop>fixedFontButton</tabstop>
   <tabstop>languageButton</tabstop>
+  <tabstop>securityLevelCombo</tabstop>
   <tabstop>blockPopupWindows</tabstop>
   <tabstop>enablePlugins</tabstop>
   <tabstop>enableJavascript</tabstop>

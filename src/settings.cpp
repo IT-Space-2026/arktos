@@ -77,6 +77,7 @@
 #include "opensearchdialog.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "privacyrequestinterceptor.h"
 #include "safetext.h"
 #include "securestore.h"
 #include "tabwidget.h"
@@ -169,6 +170,12 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(permissions, &WebPermissionManager::changed,
             this, &SettingsDialog::refreshPermissions);
     refreshPermissions();
+
+    // SECLVL: the tier combo's hint text (and the Enable Javascript
+    // checkbox's enabled state under Safest) follow the selection.
+    connect(securityLevelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateSecurityLevelHint(); });
+    updateSecurityLevelHint();
 
     // SEC13: master-passphrase controls for the credential store.
     connect(credentialPassphraseButton, &QPushButton::clicked,
@@ -366,7 +373,13 @@ void SettingsDialog::loadFromSettings()
     webrtcProtection->setChecked(settings.value(QLatin1String("webrtcIpProtection"), true).toBool());
     secureDns->setChecked(settings.value(QLatin1String("secureDns"), false).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
+    securityLevelCombo->setCurrentIndex(qBound(
+        int(PrivacyRequestInterceptor::Standard),
+        settings.value(QLatin1String("securityLevel"),
+                       int(PrivacyRequestInterceptor::Standard)).toInt(),
+        int(PrivacyRequestInterceptor::Safest)));
     settings.endGroup();
+    updateSecurityLevelHint();
 
     // The Search tab mirrors OpenSearchManager: engine combo (default
     // engine selection) plus the per-engine suggestions opt-in (SEC11)
@@ -530,6 +543,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("webrtcIpProtection"), webrtcProtection->isChecked());
     settings.setValue(QLatin1String("secureDns"), secureDns->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
+    settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
     settings.endGroup();
 
     // Search engines: flush the per-engine suggestion opt-ins the user
@@ -1037,6 +1051,38 @@ void SettingsDialog::clearPermissions()
             != QMessageBox::Yes)
         return;
     WebPermissionManager::instance()->clearEntries();
+}
+
+// SECLVL: explains the selected tier and greys the Enable Javascript
+// checkbox while Safest is picked — the tier overrides it profile-wide
+// (the stored value itself is preserved for when the tier comes back
+// down).
+void SettingsDialog::updateSecurityLevelHint()
+{
+    QString hint;
+    switch (securityLevelCombo->currentIndex()) {
+    default:
+    case PrivacyRequestInterceptor::Standard:
+        hint = tr("Standard: JavaScript runs everywhere and sites may "
+                  "autoplay media. This is the default browser behavior.");
+        break;
+    case PrivacyRequestInterceptor::Safer:
+        hint = tr("Safer: pages loaded over plain HTTP cannot load "
+                  "external JavaScript (scripts, workers) and media "
+                  "only plays after a click. Scripts inlined into the "
+                  "page itself can still run; pages on this machine "
+                  "(localhost) are exempt.");
+        break;
+    case PrivacyRequestInterceptor::Safest:
+        hint = tr("Safest: JavaScript is disabled on every site and "
+                  "media only plays after a click. Many websites will "
+                  "break. \"Enable Javascript\" above is ignored while "
+                  "this level is selected.");
+        break;
+    }
+    securityLevelHint->setText(hint);
+    enableJavascript->setEnabled(
+        securityLevelCombo->currentIndex() != PrivacyRequestInterceptor::Safest);
 }
 
 // Prompts for a new master passphrase — entered twice — and returns

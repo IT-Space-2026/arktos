@@ -20,6 +20,7 @@
 #include "torrequestinterceptor.h"
 
 #include "adblockrequestinterceptor.h"
+#include "privacyrequestinterceptor.h"
 
 #include <qwebengineurlrequestinfo.h>
 
@@ -38,6 +39,13 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         QUrl https = url;
         https.setScheme(QLatin1String("https"));
         info.redirect(https);
+        return;
+    }
+    // SECLVL: the only http: left here is .onion — Safer drops its
+    // script-execution fetches just like on the normal profile.
+    if (PrivacyRequestInterceptor::shouldBlockScript(
+            info.firstPartyUrl(), info.resourceType())) {
+        info.block(true);
         return;
     }
     m_adBlock->interceptRequest(info);

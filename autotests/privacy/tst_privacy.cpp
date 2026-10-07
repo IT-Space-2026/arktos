@@ -41,6 +41,8 @@
 #include <qsettings.h>
 #include <qtemporarydir.h>
 #include <qurl.h>
+#include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 
 class tst_Privacy : public QObject
 {
@@ -59,6 +61,11 @@ private slots:
     void downgradeBoundaries();
     void settingsRoundTrip();
 
+    void blockScriptStandard();
+    void blockScriptSafer_data();
+    void blockScriptSafer();
+    void securityLevelAttributes();
+
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
 
@@ -74,6 +81,8 @@ private:
     QVariant m_savedWebrtc;
     QVariant m_savedSecureDns;
     QVariant m_savedBlock3p;
+    QVariant m_savedSecurityLevel;
+    QVariant m_savedEnableJavascript;
 };
 
 class SubCookieJar : public CookieJar
@@ -95,6 +104,8 @@ void tst_Privacy::initTestCase()
     m_savedWebrtc = settings.value(QLatin1String("privacy/webrtcIpProtection"));
     m_savedSecureDns = settings.value(QLatin1String("privacy/secureDns"));
     m_savedBlock3p = settings.value(QLatin1String("cookies/blockThirdPartyCookies"));
+    m_savedSecurityLevel = settings.value(QLatin1String("privacy/securityLevel"));
+    m_savedEnableJavascript = settings.value(QLatin1String("websettings/enableJavascript"));
 }
 
 static void restoreSetting(QSettings &settings, const QString &key,
@@ -119,6 +130,8 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/webrtcIpProtection"), m_savedWebrtc);
     restoreSetting(settings, QLatin1String("privacy/secureDns"), m_savedSecureDns);
     restoreSetting(settings, QLatin1String("cookies/blockThirdPartyCookies"), m_savedBlock3p);
+    restoreSetting(settings, QLatin1String("privacy/securityLevel"), m_savedSecurityLevel);
+    restoreSetting(settings, QLatin1String("websettings/enableJavascript"), m_savedEnableJavascript);
     PrivacyRequestInterceptor::loadSettings();
 }
 
@@ -130,9 +143,20 @@ void tst_Privacy::init()
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), true);
     settings.setValue(QLatin1String("trimReferer"), true);
+    settings.setValue(QLatin1String("securityLevel"),
+                      int(PrivacyRequestInterceptor::Standard));
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
+}
+
+static void setSecurityLevel(PrivacyRequestInterceptor::SecurityLevel level)
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("securityLevel"), int(level));
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
 }
 
 void tst_Privacy::cleanup()
@@ -249,6 +273,131 @@ void tst_Privacy::settingsRoundTrip()
     init();
     QVERIFY(PrivacyRequestInterceptor::httpsFirstEnabled());
     QVERIFY(PrivacyRequestInterceptor::trimRefererEnabled());
+}
+
+void tst_Privacy::blockScriptStandard()
+{
+    // Standard blocks nothing, whatever the origin or resource type.
+    QCOMPARE(PrivacyRequestInterceptor::securityLevel(),
+             int(PrivacyRequestInterceptor::Standard));
+    QVERIFY(!PrivacyRequestInterceptor::shouldBlockScript(
+        QUrl("http://example.com/"),
+        QWebEngineUrlRequestInfo::ResourceTypeScript));
+}
+
+void tst_Privacy::blockScriptSafer_data()
+{
+    QTest::addColumn<QString>("firstParty");
+    QTest::addColumn<int>("type");
+    QTest::addColumn<bool>("block");
+
+    typedef QWebEngineUrlRequestInfo I;
+
+    QTest::newRow("http page, external script")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeScript) << true;
+    QTest::newRow("http page, worker")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeWorker) << true;
+    QTest::newRow("http page, shared worker")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeSharedWorker) << true;
+    QTest::newRow("http page, service worker")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeServiceWorker) << true;
+    QTest::newRow("http page, image passes")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeImage) << false;
+    QTest::newRow("http page, xhr passes")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeXhr) << false;
+    QTest::newRow("http page, main-frame nav passes")
+        << QString("http://example.com/")
+        << int(I::ResourceTypeMainFrame) << false;
+    QTest::newRow("https page keeps scripts")
+        << QString("https://example.com/")
+        << int(I::ResourceTypeScript) << false;
+    QTest::newRow("file page keeps scripts")
+        << QString("file:///tmp/x.html")
+        << int(I::ResourceTypeScript) << false;
+    // Secure-context exemption: http on loopback is trustworthy.
+    QTest::newRow("localhost keeps scripts")
+        << QString("http://localhost:8000/")
+        << int(I::ResourceTypeScript) << false;
+    QTest::newRow("*.localhost keeps scripts")
+        << QString("http://app.localhost/")
+        << int(I::ResourceTypeScript) << false;
+    QTest::newRow("loopback IPv4 keeps scripts")
+        << QString("http://127.0.0.1:9/")
+        << int(I::ResourceTypeScript) << false;
+    QTest::newRow("loopback IPv6 keeps scripts")
+        << QString("http://[::1]/")
+        << int(I::ResourceTypeScript) << false;
+    // ...but a plain http LAN or public host is not trustworthy.
+    QTest::newRow("http LAN host blocks scripts")
+        << QString("http://192.168.1.1/")
+        << int(I::ResourceTypeScript) << true;
+    QTest::newRow("http .local host blocks scripts")
+        << QString("http://printer.local/")
+        << int(I::ResourceTypeScript) << true;
+    QTest::newRow("empty first party passes")
+        << QString() << int(I::ResourceTypeScript) << false;
+}
+
+void tst_Privacy::blockScriptSafer()
+{
+    setSecurityLevel(PrivacyRequestInterceptor::Safer);
+    QCOMPARE(PrivacyRequestInterceptor::securityLevel(),
+             int(PrivacyRequestInterceptor::Safer));
+    QFETCH(QString, firstParty);
+    QFETCH(int, type);
+    QFETCH(bool, block);
+    QCOMPARE(PrivacyRequestInterceptor::shouldBlockScript(
+                 QUrl(firstParty),
+                 QWebEngineUrlRequestInfo::ResourceType(type)),
+             block);
+
+    // Safest keeps the same interceptor answer (its engine-side
+    // JavascriptEnabled-off is stronger anyway).
+    setSecurityLevel(PrivacyRequestInterceptor::Safest);
+    QVERIFY(PrivacyRequestInterceptor::shouldBlockScript(
+        QUrl("http://example.com/"),
+        QWebEngineUrlRequestInfo::ResourceTypeScript));
+}
+
+void tst_Privacy::securityLevelAttributes()
+{
+    // The engine half of the tiers is applied to the profile's
+    // QWebEngineSettings by BrowserProfile::applySettings().  A
+    // scratch off-the-record profile keeps the browser's real
+    // profile untouched.
+    QWebEngineProfile profile;
+    QWebEngineSettings *engineSettings = profile.settings();
+
+    QSettings settings;
+    settings.setValue(QLatin1String("websettings/enableJavascript"), true);
+
+    setSecurityLevel(PrivacyRequestInterceptor::Standard);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
+    QVERIFY(!engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
+
+    setSecurityLevel(PrivacyRequestInterceptor::Safer);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
+    QVERIFY(engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
+
+    // Safest's JS-off overrides an enabled websettings checkbox.
+    setSecurityLevel(PrivacyRequestInterceptor::Safest);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(!engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
+    QVERIFY(engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
+
+    // Toggling back down restores the stored preference.
+    setSecurityLevel(PrivacyRequestInterceptor::Standard);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
+    QVERIFY(!engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
 }
 
 void tst_Privacy::thirdPartyCookies()

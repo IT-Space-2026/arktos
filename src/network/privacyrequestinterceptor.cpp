@@ -40,6 +40,7 @@
 static QReadWriteLock s_policyLock;
 static bool s_httpsFirst = true;
 static bool s_trimReferer = true;
+static int s_securityLevel = PrivacyRequestInterceptor::Standard;
 
 // Session-scoped set of hosts whose https main-frame load failed —
 // their http: requests stop being upgraded.  Written from the GUI
@@ -55,10 +56,16 @@ void PrivacyRequestInterceptor::loadSettings()
     settings.beginGroup(QLatin1String("privacy"));
     const bool httpsFirst = settings.value(QLatin1String("httpsFirst"), true).toBool();
     const bool trimReferer = settings.value(QLatin1String("trimReferer"), true).toBool();
+    const int securityLevel = qBound(
+        int(PrivacyRequestInterceptor::Standard),
+        settings.value(QLatin1String("securityLevel"),
+                       int(PrivacyRequestInterceptor::Standard)).toInt(),
+        int(PrivacyRequestInterceptor::Safest));
     settings.endGroup();
     QWriteLocker lock(&s_policyLock);
     s_httpsFirst = httpsFirst;
     s_trimReferer = trimReferer;
+    s_securityLevel = securityLevel;
 }
 
 bool PrivacyRequestInterceptor::httpsFirstEnabled()
@@ -71,6 +78,12 @@ bool PrivacyRequestInterceptor::trimRefererEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_trimReferer;
+}
+
+int PrivacyRequestInterceptor::securityLevel()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_securityLevel;
 }
 
 // A host is upgraded only when TLS has a chance of existing: loopback
@@ -157,6 +170,42 @@ void PrivacyRequestInterceptor::clearDowngradedHosts()
     s_downgradedHosts.clear();
 }
 
+// Narrower than isPrivateOrLocalHost: only a real loopback page is a
+// "potentially trustworthy" secure context (Chromium treats
+// http://localhost and http://127.0.0.0/8 as secure).  LAN/private
+// hosts are still insecure http origins and keep the Safer block.
+static bool isLoopbackHost(const QString &host)
+{
+    QString lowered = host.toLower();
+    if (lowered.startsWith(QLatin1Char('[')) && lowered.endsWith(QLatin1Char(']')))
+        lowered = lowered.mid(1, lowered.size() - 2);
+    if (lowered == QLatin1String("localhost")
+        || lowered.endsWith(QLatin1String(".localhost")))
+        return true;
+    const QHostAddress address(lowered);
+    return !address.isNull() && address.isLoopback();
+}
+
+bool PrivacyRequestInterceptor::shouldBlockScript(
+        const QUrl &firstPartyUrl,
+        QWebEngineUrlRequestInfo::ResourceType type)
+{
+    if (securityLevel() < Safer)
+        return false;
+    switch (type) {
+    case QWebEngineUrlRequestInfo::ResourceTypeScript:
+    case QWebEngineUrlRequestInfo::ResourceTypeWorker:
+    case QWebEngineUrlRequestInfo::ResourceTypeSharedWorker:
+    case QWebEngineUrlRequestInfo::ResourceTypeServiceWorker:
+        break;
+    default:
+        return false;
+    }
+    if (firstPartyUrl.scheme() != QLatin1String("http"))
+        return false;
+    return !isLoopbackHost(firstPartyUrl.host());
+}
+
 // Same last-two-labels approximation AdBlockRule uses for its
 // first-party/third-party test — no public-suffix list, so unrelated
 // hosts under multi-level public suffixes read as same-party.
@@ -238,6 +287,18 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         qDebug() << "PrivacyRequestInterceptor: https-first" << url << "->" << https;
 #endif
         info.redirect(https);
+        return;
+    }
+
+    // SECLVL Safer+: drop script-execution fetches on insecure http
+    // pages before referrer trimming or adblock rules run — a dead
+    // request needs neither.
+    if (shouldBlockScript(info.firstPartyUrl(), info.resourceType())) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: safer-js block"
+                 << url << "on" << info.firstPartyUrl();
+#endif
+        info.block(true);
         return;
     }
 

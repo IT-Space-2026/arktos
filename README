@@ -86,6 +86,15 @@ toggle that whitelists the site (the icon greys while it is exempt),
 the remembered permission grants for the origin with revoke controls,
 and a clear-site-data action.
 
+A "Security Level" selector at the top of the Privacy settings page
+offers three Mullvad-style tiers.  Standard (the default) is the
+current behavior.  Safer blocks external scripts, workers and service
+workers on pages loaded over insecure http and makes media
+click-to-play — inline scripts on http pages can still run, and pages
+served from this machine (localhost) keep their scripts because
+Chromium treats them as secure contexts.  Safest disables JavaScript
+on every site, which many websites will not survive.
+
 Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
 packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
 QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the

@@ -221,6 +221,27 @@ void applySettings(QWebEngineProfile *profile)
                                  settings.value(QLatin1String("enableLocalStorage"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
 
+    // SECLVL: Mullvad-style security tiers (privacy/securityLevel).
+    // Safer and Safest force click-to-play media; Safest additionally
+    // disables JavaScript profile-wide — applied after the
+    // enableJavascript toggle above so the tier wins.  The tier's
+    // other half (dropping external script fetches on plain-http
+    // pages from Safer up) is the IO-thread snapshot refreshed by
+    // PrivacyRequestInterceptor::loadSettings() below.  Composition
+    // with the SEC05 broker needs nothing extra: capture/clipboard/
+    // screen stay hard-denied under every tier and AskEveryTime keeps
+    // Chromium's own store out of the loop.
+    const int securityLevel = qBound(
+        int(PrivacyRequestInterceptor::Standard),
+        QSettings().value(QLatin1String("privacy/securityLevel"),
+                          int(PrivacyRequestInterceptor::Standard)).toInt(),
+        int(PrivacyRequestInterceptor::Safest));
+    engineSettings->setAttribute(
+        QWebEngineSettings::PlaybackRequiresUserGesture,
+        securityLevel >= int(PrivacyRequestInterceptor::Safer));
+    if (securityLevel >= int(PrivacyRequestInterceptor::Safest))
+        engineSettings->setAttribute(QWebEngineSettings::JavascriptEnabled, false);
+
     // SEC05 surface audit: attributes that would let a page sidestep
     // the WebPermissionManager broker stay off.  Several are already
     // off by default in Qt 6.11 — they are pinned anyway so a future

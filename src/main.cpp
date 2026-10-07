@@ -48,6 +48,7 @@
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
 #include "plaintexteditsearch.h"
+#include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "settings.h"
@@ -71,6 +72,7 @@
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMutex>
+#include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
@@ -89,6 +91,7 @@
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkInterface>
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
@@ -243,7 +246,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
-        "tor-window-smoke", "sorry-smoke", "icons-smoke",
+        "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -590,6 +593,215 @@ int main(int argc, char **argv)
                 view->webPage()->runJavaScript(QStringLiteral(
                     "location.href='http://127.0.0.2:%1/nav'").arg(port));
         });
+    }
+
+    // SECLVL e2e: the Mullvad-style security tiers against a local
+    // http fixture.  A non-loopback LAN IPv4 literal is the insecure
+    // origin — private-net literals are not https-first upgrade
+    // candidates, so the script drop (not the upgrade) is what shows;
+    // loopback exercises the secure-context exemption.  Phases:
+    //   0 Standard  — external script on plain http fetches + runs
+    //   1 Safer     — the same fetch never reaches the server
+    //   2 Safer     — loopback http page keeps its (inline) JS
+    //   3 Safest    — JavascriptEnabled off: inline JS cannot run
+    //   4 Standard  — toggling back restores script execution
+    if (args.contains(QLatin1String("--seclvl-smoke"))) {
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::AnyIPv4)) {
+            qInfo() << "seclvl-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto observed = std::make_shared<QSet<QString>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, observed]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, observed]() {
+                const QByteArray request = client->readAll();
+                QString path;
+                for (const QByteArray &line : request.split('\n')) {
+                    if (line.startsWith("GET ")) {
+                        path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4).trimmed());
+                    }
+                }
+                if (path.isEmpty()) {
+                    client->disconnectFromHost();
+                    return;
+                }
+                observed->insert(path);
+                QByteArray body;
+                QByteArray type = "text/html";
+                if (path == QLatin1String("/page")) {
+                    body = "<html><head><title>p1-title</title>"
+                           "<script src=\"/s.js\"></script></head>"
+                           "<body>1</body></html>";
+                } else if (path == QLatin1String("/s.js")) {
+                    type = "text/javascript";
+                    body = "document.title='ext-ran';";
+                } else if (path == QLatin1String("/page2")) {
+                    body = "<html><head><title>p2-title</title>"
+                           "<script src=\"/s2.js\"></script></head>"
+                           "<body>2</body></html>";
+                } else if (path == QLatin1String("/s2.js")) {
+                    type = "text/javascript";
+                    body = "document.title='ext2-ran';";
+                } else if (path == QLatin1String("/inline")) {
+                    body = "<html><head><title>nojs</title></head><body>"
+                           "<script>document.title='inline-ran';</script>"
+                           "</body></html>";
+                }
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: " + type
+                    + "\r\nContent-Length: "
+                    + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        // An http origin that is NOT a secure context: any
+        // non-loopback IPv4 literal this machine owns.  Without one
+        // the Safer-drop phase cannot be exercised honestly.
+        QString lan;
+        for (const QHostAddress &address : QNetworkInterface::allAddresses()) {
+            if (address.protocol() == QAbstractSocket::IPv4Protocol
+                && !address.isLoopback() && !address.isMulticast()) {
+                lan = address.toString();
+                break;
+            }
+        }
+        if (lan.isEmpty()) {
+            qInfo() << "seclvl-smoke: FAIL (no non-loopback IPv4)";
+            return 1;
+        }
+
+        QSettings settings;
+        const QVariant savedLevel =
+            settings.value(QLatin1String("privacy/securityLevel"));
+        auto applyLevel = [profile](int level) {
+            QSettings().setValue(QLatin1String("privacy/securityLevel"), level);
+            PrivacyRequestInterceptor::loadSettings();
+            BrowserProfile::applySettings(profile);
+        };
+
+        auto phase = std::make_shared<int>(0);
+        auto loaded = std::make_shared<bool>(false);
+        auto settle = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        auto wantPath = std::make_shared<QString>(QStringLiteral("/page"));
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, loaded, wantPath](bool ok) {
+            if (ok && view->url().path() == *wantPath)
+                *loaded = true;
+        });
+
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, view, poll, profile, phase,
+                          loaded, settle, ticks, wantPath, observed,
+                          savedLevel, applyLevel, lan, port]() {
+            auto finish = [&](bool ok, const QString &why) {
+                if (savedLevel.isValid())
+                    QSettings().setValue(QLatin1String("privacy/securityLevel"),
+                                         savedLevel);
+                else
+                    QSettings().remove(QLatin1String("privacy/securityLevel"));
+                PrivacyRequestInterceptor::loadSettings();
+                BrowserProfile::applySettings(profile);
+                qInfo() << "seclvl-smoke:" << (ok ? "PASS" : "FAIL") << why;
+                poll->stop();
+                application.exit(ok ? 0 : 1);
+            };
+            if (++*ticks > 300) {
+                finish(false, QStringLiteral("timeout phase %1").arg(*phase));
+                return;
+            }
+            QWebEngineSettings *engineSettings = profile->settings();
+            switch (*phase) {
+            case 0:  // Standard baseline — script fetched and ran.
+                if (!*loaded || view->title() != QLatin1String("ext-ran"))
+                    return;
+                if (!observed->contains(QLatin1String("/s.js"))) {
+                    finish(false, QStringLiteral("standard: /s.js not fetched"));
+                    return;
+                }
+                *phase = 1;
+                *loaded = false;
+                *wantPath = QStringLiteral("/page2");
+                applyLevel(PrivacyRequestInterceptor::Safer);
+                view->loadUrl(QStringLiteral("http://%1:%2/page2")
+                              .arg(lan).arg(port));
+                return;
+            case 1:  // Safer — the script fetch must never arrive.
+                if (!*loaded)
+                    return;
+                if (++*settle < 4)   // give a would-be fetch ~800ms
+                    return;
+                if (observed->contains(QLatin1String("/s2.js"))
+                    || view->title() == QLatin1String("ext2-ran")) {
+                    finish(false, QStringLiteral("safer: http script ran"));
+                    return;
+                }
+                if (!engineSettings->testAttribute(
+                        QWebEngineSettings::PlaybackRequiresUserGesture)) {
+                    finish(false, QStringLiteral("safer: autoplay not gated"));
+                    return;
+                }
+                *phase = 2;
+                *loaded = false;
+                *settle = 0;
+                *wantPath = QStringLiteral("/inline");
+                view->loadUrl(QStringLiteral("http://127.0.0.1:%1/inline")
+                              .arg(port));
+                return;
+            case 2:  // Safer — loopback is a secure context: JS stays.
+                if (!*loaded || view->title() != QLatin1String("inline-ran"))
+                    return;
+                *phase = 3;
+                *loaded = false;
+                applyLevel(PrivacyRequestInterceptor::Safest);
+                if (engineSettings->testAttribute(
+                        QWebEngineSettings::JavascriptEnabled)) {
+                    finish(false, QStringLiteral("safest: JS still on"));
+                    return;
+                }
+                view->loadUrl(QStringLiteral("http://127.0.0.1:%1/inline")
+                              .arg(port));
+                return;
+            case 3:  // Safest — inline JS cannot run either.
+                if (!*loaded)
+                    return;
+                if (++*settle < 4)
+                    return;
+                if (view->title() != QLatin1String("nojs")) {
+                    finish(false, QStringLiteral("safest: inline JS ran"));
+                    return;
+                }
+                *phase = 4;
+                *loaded = false;
+                *settle = 0;
+                applyLevel(PrivacyRequestInterceptor::Standard);
+                view->loadUrl(QStringLiteral("http://127.0.0.1:%1/inline")
+                              .arg(port));
+                return;
+            case 4:  // Toggling back down restores scripts.
+                if (!*loaded || view->title() != QLatin1String("inline-ran"))
+                    return;
+                if (!engineSettings->testAttribute(
+                        QWebEngineSettings::JavascriptEnabled)) {
+                    finish(false, QStringLiteral("restore: JS still off"));
+                    return;
+                }
+                finish(true, QStringLiteral(
+                    "standard fetch ok, safer dropped http script, "
+                    "loopback exempt, safest scriptless, restored"));
+                return;
+            }
+        });
+        poll->start(200);
+        applyLevel(PrivacyRequestInterceptor::Standard);
+        view->loadUrl(QStringLiteral("http://%1:%2/page").arg(lan).arg(port));
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks

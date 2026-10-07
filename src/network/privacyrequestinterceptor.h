@@ -21,6 +21,7 @@
 #define PRIVACYREQUESTINTERCEPTOR_H
 
 #include <qwebengineurlrequestinterceptor.h>
+#include <qwebengineurlrequestinfo.h>
 
 class AdBlockNetwork;
 class AdBlockRequestInterceptor;
@@ -48,11 +49,31 @@ class QUrl;
 // instead carry the *target's* own origin — nothing about the page
 // the user came from leaks at all (same trick as uBlock Origin's
 // referrer spoof / Firefox's target-origin trimming).
+//
+// SECLVL: Mullvad-style security tiers (privacy/securityLevel).
+// From Safer up, script-execution subresource requests (external
+// scripts, workers, service workers) are dropped when the page's own
+// origin is insecure http — the interceptor cannot reach inline
+// <script> blocks or event handlers, which still run (that half of
+// the tier is documented in the Settings hint; full scriptless pages
+// are Safest's JavascriptEnabled-off job).  http on loopback is a
+// "potentially trustworthy" secure context in Chromium, so local dev
+// pages keep their scripts; plain http on LAN/public hosts does not.
 class PrivacyRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
     Q_OBJECT
 
 public:
+    // Persisted as privacy/securityLevel (int).  Standard is the
+    // default = current behavior; the engine-side halves live in
+    // BrowserProfile::applySettings().
+    enum SecurityLevel {
+        Standard = 0,
+        Safer = 1,
+        Safest = 2
+    };
+
+
     PrivacyRequestInterceptor(AdBlockNetwork *network, QObject *parent = nullptr);
 
     void interceptRequest(QWebEngineUrlRequestInfo &info) override;
@@ -78,6 +99,16 @@ public:
     static bool trimRefererEnabled();
     static bool isUpgradeCandidate(const QUrl &url);
     static void clearDowngradedHosts();  // test cleanup
+
+    // SECLVL: the tier currently loaded into the IO-thread snapshot
+    // and the pure decision the interceptor consults — block a
+    // script-execution request whose first-party page is insecure
+    // http (loopback exempt).  shouldBlockScript also answers for
+    // Safest: the engine-side JavascriptEnabled-off is stronger, but
+    // the rule still holds when a page-level JS override ever lands.
+    static int securityLevel();
+    static bool shouldBlockScript(const QUrl &firstPartyUrl,
+            QWebEngineUrlRequestInfo::ResourceType type);
 
 private:
     AdBlockRequestInterceptor *m_adBlock;

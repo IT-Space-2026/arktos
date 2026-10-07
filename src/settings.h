@@ -113,6 +113,7 @@ private slots:
     void permissionSelectionChanged();
     void removePermission();
     void clearPermissions();
+    void updateSecurityLevelHint();
 
     void refreshCredentialUi();
     void credentialPassphraseChange();
