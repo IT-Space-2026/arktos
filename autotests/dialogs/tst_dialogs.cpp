@@ -25,6 +25,7 @@
 #include <QtGui/QtGui>
 #include <QtNetwork/QtNetwork>
 #include <qcheckbox.h>
+#include <qlabel.h>
 #include <qpushbutton.h>
 #include <qstandarditemmodel.h>
 #include <qtreewidget.h>
@@ -168,6 +169,22 @@ void tst_Dialogs::cleanup()
 void tst_Dialogs::aboutDialog()
 {
     AboutDialog dialog;
+
+    // Copyright lines and the repo link live in the author label.
+    QLabel *author = dialog.findChild<QLabel *>(QLatin1String("author"));
+    QVERIFY(author);
+    QVERIFY(author->text().contains(QLatin1String("Benjamin C. Meyer")));
+    QVERIFY(author->text().contains(QLatin1String("Janos Szenfner")));
+    QVERIFY(author->text().contains(
+        QLatin1String("href=\"https://github.com/janos-szenfner/arora\"")));
+
+    // The Authors button shows :AUTHORS — the maintainer is listed first.
+    QFile authorsFile(QLatin1String(":AUTHORS"));
+    QVERIFY(authorsFile.open(QIODevice::ReadOnly));
+    QVERIFY(QString::fromUtf8(authorsFile.readLine())
+            .startsWith(QLatin1String("Janos Szenfner")));
+    authorsFile.close();
+
     acceptModal();
     QVERIFY(QMetaObject::invokeMethod(&dialog, "authorsButtonClicked"));
     acceptModal();

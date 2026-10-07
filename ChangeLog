@@ -314,6 +314,9 @@ Custom DNS-over-HTTPS (DOH01):
     The legacy privacy/secureDns boolean is migrated (enabled → Automatic) and kept in sync, and the mode applies live — no restart needed — through the QSettings -> applySecureDns() path. Honest bound documented in the README: CNAME-cloaked trackers are still not uncloaked, because that needs DNS-response inspection and QtWebEngine exposes no DNS-response hook to the adblock engine.
     `./arora --doh-smoke` verifies the wiring headlessly in three stages: strict mode with a dead loopback endpoint must fail every resolution (proves the setting gates DNS and does not fall back), strict mode against a live resolver must load a page (under SecureOnly the resolution could only have come from DoH), and switching back to Off must restore system-DNS loads at runtime.
 
+About dialog (ABOUT01):
+    The About dialog now credits the Qt 6 port maintainer alongside the original author: a second copyright line "Copyright © 2026-2027 Janos Szenfner" sits under Benjamin C. Meyer's 2007-2010 credit (left intact), followed by a clickable link to the current repository (https://github.com/janos-szenfner/arora). The AUTHORS file — shown by the dialog's Authors button — now lists Janos Szenfner first.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
