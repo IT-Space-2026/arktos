@@ -32,10 +32,18 @@
 
 #include "adblockdialog.h"
 #include "adblockmanager.h"
+#include "adblocknetwork.h"
+#include "adblockpresets.h"
+#include "adblockpresetsdialog.h"
 #include "adblocksubscription.h"
 
+#include <qcheckbox.h>
 #include <qdebug.h>
+#include <qset.h>
 #include <qsettings.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
+#include <qurlquery.h>
 
 class tst_AdBlockManager : public QObject
 {
@@ -59,6 +67,10 @@ private slots:
     void removeSubscription();
     void showDialog();
     void rulesChanged();
+
+    void presetCatalog();
+    void subscribeRemoteList();
+    void presetsDialog();
 };
 
 // Subclass that exposes the protected functions.
@@ -247,6 +259,182 @@ void tst_AdBlockManager::rulesChanged()
     subscription->addRule(AdBlockRule());
 
     QCOMPARE(spy0.count(), 3);
+}
+
+// ADB03: the preset catalog must be non-empty, deduplicated, and
+// https-only so ticking a box never silently fetches over plaintext.
+void tst_AdBlockManager::presetCatalog()
+{
+    const QList<AdBlockListPreset> presets = AdBlockPresets::all();
+    QVERIFY(presets.count() >= 10);
+
+    QSet<QString> locations;
+    QSet<QString> categories;
+    for (const AdBlockListPreset &preset : presets) {
+        QVERIFY(!preset.category.isEmpty());
+        QVERIFY(!preset.title.isEmpty());
+        QVERIFY(!preset.description.isEmpty());
+        const QUrl location(preset.location);
+        QVERIFY2(location.isValid(), qPrintable(preset.location));
+        QCOMPARE(location.scheme(), QLatin1String("https"));
+        QVERIFY2(!locations.contains(preset.location),
+                 qPrintable(preset.location));
+        locations.insert(preset.location);
+        categories.insert(preset.category);
+    }
+    // Security (phishing/malware) and anti-mining coverage are part of
+    // the task, not optional.
+    QVERIFY(presets.count() >= 5);
+    QVERIFY(categories.count() >= 4);
+}
+
+// ADB03: subscribeRemoteList adds the subscription, grants the TELEM01
+// remote-list consent, and kicks the fetch; the downloaded rules land
+// in the matcher snapshot — the same rebuildRules() path the Rust
+// engine serializes under CONFIG+=adblock_rust.
+void tst_AdBlockManager::subscribeRemoteList()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QUrl location(QStringLiteral("http://127.0.0.1:%1/preset.txt")
+                        .arg(server.serverPort()));
+    auto serveList = [&server]() {
+        QVERIFY(server.waitForNewConnection(8000));
+        QTcpSocket *client = server.nextPendingConnection();
+        QTRY_VERIFY(client->bytesAvailable() > 0);
+        QVERIFY(client->readAll().startsWith("GET /preset.txt"));
+        const QByteArray body =
+            "[Adblock Plus 0.7.1]\n||preset-smoke.invalid^\n";
+        client->write("HTTP/1.1 200 OK\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+    };
+
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsUndecided);
+
+    // The matcher (network()->rebuildRules) snapshots the singleton's
+    // subscription list, so this test drives the real instance() —
+    // cleaned up at the end.
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->load();
+    const int before = manager->subscriptions().count();
+
+    AdBlockSubscription *subscription =
+        manager->subscribeRemoteList(location, QLatin1String("Preset Test"));
+    QVERIFY(subscription);
+    QCOMPARE(subscription->location(), location);
+    QCOMPARE(subscription->title(), QLatin1String("Preset Test"));
+    QVERIFY(subscription->isEnabled());
+    QCOMPARE(manager->subscriptions().count(), before + 1);
+    QCOMPARE(manager->subscriptionForLocation(location), subscription);
+    QVERIFY(!manager->subscriptionForLocation(
+        QUrl(QLatin1String("http://127.0.0.1:1/none.txt"))));
+    QCOMPARE(AdBlockManager::remoteListsConsent(),
+             AdBlockManager::RemoteListsGranted);
+
+    serveList();
+    QTRY_VERIFY(subscription->lastUpdate().isValid());
+    QVERIFY(subscription->allRules().count() >= 1);
+
+    manager->network()->rebuildRules();
+    QVERIFY(manager->network()->shouldBlock(
+        QUrl(QLatin1String("http://preset-smoke.invalid/banner.js"))));
+    QVERIFY(!manager->network()->shouldBlock(
+        QUrl(QLatin1String("http://other.invalid/banner.js"))));
+
+    // rulesDownloaded() emits changed() when the fetch finishes —
+    // wait on it so the next updateNow() is not dropped as "already
+    // downloading".
+    QSignalSpy changedSpy(subscription, SIGNAL(changed()));
+
+    // Idempotent: re-subscribing an already-enabled location does not
+    // duplicate or refetch (the presets dialog ticks it on open).
+    QCOMPARE(manager->subscribeRemoteList(location,
+                                          QLatin1String("Preset Test")),
+             subscription);
+    QCOMPARE(manager->subscriptions().count(), before + 1);
+    QCOMPARE(manager->subscriptions().count(subscription), 1);
+    QVERIFY(!server.waitForNewConnection(500));
+
+    // Re-ticking a disabled preset re-enables it, still no duplicate —
+    // and that path does refetch (setEnabled itself emits changed(),
+    // so the fetch brings the spy to 3).
+    subscription->setEnabled(false);
+    manager->subscribeRemoteList(location, QLatin1String("Preset Test"));
+    QVERIFY(subscription->isEnabled());
+    QCOMPARE(manager->subscriptions().count(), before + 1);
+    serveList();
+    QTRY_VERIFY(changedSpy.count() >= 3);
+
+    // The subscription persists into the QSettings list.
+    QMetaObject::invokeMethod(manager, "save", Qt::DirectConnection);
+    const QStringList stored = QSettings()
+        .value(QLatin1String("AdBlock/subscriptions")).toStringList();
+    bool found = false;
+    for (const QString &entry : stored) {
+        const QUrlQuery query(QUrl::fromEncoded(entry.toUtf8()));
+        if (QUrl(query.queryItemValue(QLatin1String("location"),
+                                      QUrl::FullyDecoded)) == location)
+            found = true;
+    }
+    QVERIFY(found);
+
+    manager->removeSubscription(subscription);
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsUndecided);
+}
+
+// ADB03: the presets dialog shows one checkbox per catalog entry; a
+// subscription that already exists (here seeded declined-consent so
+// the constructor stays offline) shows ticked, and unticking disables
+// it without removing it.
+void tst_AdBlockManager::presetsDialog()
+{
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsDeclined);
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->load();
+
+    const QList<AdBlockListPreset> presets = AdBlockPresets::all();
+    const AdBlockListPreset preset = presets.at(0);
+    const QUrl location(preset.location);
+    QUrl url;
+    url.setScheme(QLatin1String("abp"));
+    url.setPath(QLatin1String("subscribe"));
+    QUrlQuery query;
+    query.addQueryItem(QLatin1String("location"),
+                     QString::fromUtf8(location.toEncoded()));
+    query.addQueryItem(QLatin1String("title"), preset.title);
+    url.setQuery(query);
+    AdBlockSubscription *subscription =
+        new AdBlockSubscription(url, manager);
+    manager->addSubscription(subscription);
+
+    AdBlockPresetsDialog dialog;
+    const QList<QCheckBox*> boxes = dialog.findChildren<QCheckBox*>();
+    QCOMPARE(boxes.count(), presets.count());
+
+    QCheckBox *box = nullptr;
+    for (QCheckBox *candidate : boxes) {
+        if (candidate->text() == preset.title)
+            box = candidate;
+    }
+    QVERIFY(box);
+    QVERIFY(box->isChecked());
+    // Merely showing an already-subscribed preset as ticked must not
+    // grant consent or start a fetch.
+    QCOMPARE(AdBlockManager::remoteListsConsent(),
+             AdBlockManager::RemoteListsDeclined);
+
+    box->setChecked(false);
+    QVERIFY(!subscription->isEnabled());
+    QCOMPARE(manager->subscriptionForLocation(location), subscription);
+
+    manager->removeSubscription(subscription);
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsUndecided);
 }
 
 QTEST_MAIN(tst_AdBlockManager)

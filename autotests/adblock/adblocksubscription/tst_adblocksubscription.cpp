@@ -72,6 +72,8 @@ private slots:
     void removeRule();
     void hostileList();
     void oversizedList();
+    void bangHeaderList();
+    void nonListRejected();
     void remoteFetchRequiresConsent();
 };
 
@@ -403,6 +405,44 @@ void tst_AdBlockSubscription::oversizedList()
     subscription.updateNow();
 
     QCOMPARE(subscription.allRules().count(), 0);
+}
+
+// ADB03: maintained lists may lead with "!" comment metadata instead
+// of the legacy "[Adblock" banner (uAssets, urlhaus/phishing lists) —
+// they must parse, while clearly-non-list content is still rejected.
+void tst_AdBlockSubscription::bangHeaderList()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    file.write("! Title: Test List\n! Expires: 1 day\n"
+               "||bang-header.invalid^\n");
+    file.flush();
+
+    SubAdBlockSubscription subscription;
+    subscription.setLocation(QUrl::fromLocalFile(file.fileName()));
+    subscription.setEnabled(true);
+    subscription.updateNow();
+
+    QCOMPARE(subscription.allRules().count(), 2);
+    QVERIFY(subscription.block(QString::fromUtf8(
+        QUrl("http://bang-header.invalid/x").toEncoded())));
+}
+
+void tst_AdBlockSubscription::nonListRejected()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    const QString name = file.fileName();
+    file.write("<html><body>not a filter list</body></html>\n");
+    file.flush();
+
+    SubAdBlockSubscription subscription;
+    subscription.setLocation(QUrl::fromLocalFile(name));
+    subscription.setEnabled(true);
+    subscription.updateNow();
+
+    QCOMPARE(subscription.allRules().count(), 0);
+    QVERIFY(!QFile::exists(name));
 }
 
 // TELEM01: the constructor's automatic staleness update must not

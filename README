@@ -100,7 +100,8 @@ fetches, component updater, domain-reliability reports, metrics,
 sync, first-run pings) are disabled at startup.  The seeded adblock
 filter lists (EasyList, EasyPrivacy, uBlock filters) stay dormant
 until consent: first launch asks once, and subscribing via an
-abp: link, pressing "Update Subscription", or enabling the blocker
+abp: link, ticking a list in the "Preset Filter Lists" catalog,
+pressing "Update Subscription", or enabling the blocker
 grants it.  There is no update checker or phone-home code.  Search
 suggestions stay opt-in per engine (SEC11).  `./arora
 --telemetry-smoke` watches a clean launch for 30s through a loopback

@@ -30,6 +30,7 @@
 
 #include "adblockmodel.h"
 #include "adblockmanager.h"
+#include "adblockpresetsdialog.h"
 #include "adblocksubscription.h"
 #include "aroraicon.h"
 #include "treesortfilterproxymodel.h"
@@ -88,6 +89,9 @@ void AdBlockDialog::aboutToShowActionMenu()
     if (!idx.isValid())
         updateSubscription->setEnabled(false);
 
+    QAction *presets = menu->addAction(tr("Preset Filter Lists..."));
+    connect(presets, &QAction::triggered, this, &AdBlockDialog::showPresets);
+
     QAction *addSubscription = menu->addAction(tr("Browse Subscriptions..."));
     connect(addSubscription, &QAction::triggered, this, &AdBlockDialog::browseSubscriptions);
 
@@ -133,6 +137,15 @@ void AdBlockDialog::browseSubscriptions()
 {
     QUrl url(QLatin1String("http://adblockplus.org/en/subscriptions"));
     QDesktopServices::openUrl(url);
+}
+
+// ADB03: the curated community-list catalog; ticking a preset
+// subscribes + enables it (with the user's consent to fetch remote
+// lists), unticking disables it.
+void AdBlockDialog::showPresets()
+{
+    AdBlockPresetsDialog dialog(this);
+    dialog.exec();
 }
 
 void AdBlockDialog::learnAboutWritingFilters()

@@ -196,7 +196,16 @@ void AdBlockSubscription::loadRules()
         } else {
             QTextStream textStream(&file);
             QString header = textStream.readLine(1024);
-            if (!header.startsWith(QLatin1String("[Adblock"))) {
+            if (header.startsWith(QChar(0xfeff)))
+                header = header.mid(1);
+            // ABP lists conventionally open with a "[Adblock Plus x.y]"
+            // banner, but many maintained lists (uAssets filters,
+            // urlhaus/phishing blocklists) lead with "!" comment
+            // metadata instead — accept either and reject the rest
+            // (HTML error pages, binaries, hostfile lists like
+            // phishing.army).
+            if (!header.startsWith(QLatin1String("[Adblock"))
+                && !header.startsWith(QLatin1Char('!'))) {
                 qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "adblock file does not start with [Adblock" << fileName << "Header:" << header;
                 file.close();
                 file.remove();

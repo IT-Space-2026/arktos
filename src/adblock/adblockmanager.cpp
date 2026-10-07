@@ -287,6 +287,52 @@ void AdBlockManager::addSubscription(AdBlockSubscription *subscription)
     emit rulesChanged();
 }
 
+AdBlockSubscription *AdBlockManager::subscriptionForLocation(
+        const QUrl &location) const
+{
+    const QList<AdBlockSubscription*> list = subscriptions();
+    for (AdBlockSubscription *subscription : list) {
+        if (subscription && subscription->location() == location)
+            return subscription;
+    }
+    return nullptr;
+}
+
+AdBlockSubscription *AdBlockManager::subscribeRemoteList(
+        const QUrl &location, const QString &title)
+{
+    if (location.isEmpty() || !location.isValid())
+        return nullptr;
+    AdBlockSubscription *subscription = subscriptionForLocation(location);
+    bool needsFetch = false;
+    if (!subscription) {
+        QUrl url;
+        url.setScheme(QLatin1String("abp"));
+        url.setPath(QLatin1String("subscribe"));
+        QUrlQuery query;
+        query.addQueryItem(QLatin1String("location"),
+                         QString::fromUtf8(location.toEncoded()));
+        query.addQueryItem(QLatin1String("title"), title);
+        url.setQuery(query);
+        subscription = new AdBlockSubscription(url, this);
+        addSubscription(subscription);
+        needsFetch = true;
+    } else if (!subscription->isEnabled()) {
+        subscription->setEnabled(true);
+        needsFetch = true;
+    }
+    if (!needsFetch)
+        return subscription; // already subscribed+enabled: a presets
+                             // dialog opening must not grant consent
+                             // or refetch — the box was already ticked
+    // Ticking the preset (or calling this) is explicit consent — grant
+    // and fetch now rather than waiting for the next staleness sweep.
+    if (remoteListsConsent() != RemoteListsGranted)
+        setRemoteListsConsent(RemoteListsGranted);
+    subscription->updateNow();
+    return subscription;
+}
+
 void AdBlockManager::save()
 {
 #if defined(ADBLOCKMANAGER_DEBUG)
@@ -334,11 +380,14 @@ void AdBlockManager::load()
 
     // Upgrade stored subscriptions pointing at dead list hosts; the
     // file name is preserved so an easyprivacy subscription keeps
-    // tracking EasyPrivacy.
+    // tracking EasyPrivacy.  easylist-downloads.adblockplus.org was
+    // once listed here but is live again — and the rewrite to
+    // easylist.to/easylist/<file> only exists for the core EasyList
+    // files, so migrating regional lists (liste_fr, advblock)
+    // produced dead URLs.
     static const QStringList deadListHosts = {
         QStringLiteral("adblockplus.mozdev.org"),
         QStringLiteral("easylist.adblockplus.org"),
-        QStringLiteral("easylist-downloads.adblockplus.org"),
     };
     for (QString &subscription : subscriptions) {
         const QUrl url = QUrl::fromEncoded(subscription.toUtf8());

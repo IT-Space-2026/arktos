@@ -86,6 +86,17 @@ public:
     void removeSubscription(AdBlockSubscription *subscription);
     void addSubscription(AdBlockSubscription *subscription);
 
+    // ADB03: preset-catalog helpers (adblockpresets.h lists what the
+    // presets dialog offers).  subscriptionForLocation matches a list
+    // by its real URL — not the abp:subscribe wrapper — so presets
+    // and hand-subscribed lists dedupe.  subscribeRemoteList adds the
+    // subscription when missing and re-enables a disabled one; ticking
+    // the preset box is the user's explicit consent to download remote
+    // lists (TELEM01), so consent is granted and a fetch is kicked.
+    AdBlockSubscription *subscriptionForLocation(const QUrl &location) const;
+    AdBlockSubscription *subscribeRemoteList(const QUrl &location,
+                                             const QString &title);
+
     AdBlockNetwork *network();
     AdBlockPage *page();
     AdBlockSubscription *customRules();

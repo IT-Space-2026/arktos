@@ -7,6 +7,8 @@ HEADERS += \
     $$PWD/adblockmodel.h \
     $$PWD/adblocknetwork.h \
     $$PWD/adblockpage.h \
+    $$PWD/adblockpresets.h \
+    $$PWD/adblockpresetsdialog.h \
     $$PWD/adblockrequestinterceptor.h \
     $$PWD/adblockresourcehandler.h \
     $$PWD/adblockrule.h \
@@ -19,6 +21,8 @@ SOURCES += \
     $$PWD/adblockmodel.cpp \
     $$PWD/adblocknetwork.cpp \
     $$PWD/adblockpage.cpp \
+    $$PWD/adblockpresets.cpp \
+    $$PWD/adblockpresetsdialog.cpp \
     $$PWD/adblockrequestinterceptor.cpp \
     $$PWD/adblockresourcehandler.cpp \
     $$PWD/adblockrule.cpp \

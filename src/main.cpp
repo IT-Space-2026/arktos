@@ -1448,11 +1448,16 @@ int main(int argc, char **argv)
 
         // Snapshot-level check of what the IO-thread matcher sees.
         AdBlockNetwork *network = manager->network();
-        const bool matcherOk =
-            network->shouldBlock(QUrl(QLatin1String("http://adblock-smoke.invalid/banner.js")))
-            && !network->shouldBlock(QUrl(QLatin1String("http://allowed-smoke.invalid/page.js")))
-            && !network->shouldBlock(QUrl(QLatin1String("http://example.com/page.js")));
-        qInfo() << "adblock-smoke: matcher" << (matcherOk ? "PASS" : "FAIL");
+        const bool blockOk =
+            network->shouldBlock(QUrl(QLatin1String("http://adblock-smoke.invalid/banner.js")));
+        const bool exceptionOk =
+            !network->shouldBlock(QUrl(QLatin1String("http://allowed-smoke.invalid/page.js")));
+        const bool cleanOk =
+            !network->shouldBlock(QUrl(QLatin1String("http://example.com/page.js")));
+        const bool matcherOk = blockOk && exceptionOk && cleanOk;
+        qInfo() << "adblock-smoke: matcher" << (matcherOk ? "PASS" : "FAIL")
+                << "block" << blockOk << "exception" << exceptionOk
+                << "clean" << cleanOk;
         if (!matcherOk)
             return 1;
 
@@ -2336,8 +2341,18 @@ int main(int argc, char **argv)
     // degrade gracefully.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--browser-smoke"))) {
         // A leftover ##body cosmetic rule from earlier test-mode runs
-        // would restyle the page; suspend adblock for determinism.
-        AdBlockManager::instance()->setEnabled(false);
+        // would restyle the page; suspend adblock for determinism and
+        // put the persisted flag back on the way out — the test-mode
+        // settings file is shared with the other smokes, and leaving
+        // enabled=false behind silently breaks --adblock-smoke's
+        // matcher check on the next run.
+        AdBlockManager *adblock = AdBlockManager::instance();
+        const bool adblockWasEnabled = adblock->isEnabled();
+        adblock->setEnabled(false);
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         &application, [adblock, adblockWasEnabled]() {
+            adblock->setEnabled(adblockWasEnabled);
+        });
 
         // The window is deleted before application.exit() below: an
         // unregistered window would otherwise outlive the profile at
