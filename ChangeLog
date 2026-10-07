@@ -317,6 +317,9 @@ Custom DNS-over-HTTPS (DOH01):
 About dialog (ABOUT01):
     The About dialog now credits the Qt 6 port maintainer alongside the original author: a second copyright line "Copyright © 2026-2027 Janos Szenfner" sits under Benjamin C. Meyer's 2007-2010 credit (left intact), followed by a clickable link to the current repository (https://github.com/janos-szenfner/arora). The AUTHORS file — shown by the dialog's Authors button — now lists Janos Szenfner first.
 
+Web Inspector (DVT01):
+    Tools > Web Inspector and the context menu's "Inspect Element" work again — they were silent no-ops because Qt WebEngine renders Chromium DevTools into a page bound via setDevToolsPage(), and nothing ever bound one (WebKit shipped its own inspector). A dedicated inspector window now hosts that page: one shared window that re-points to the current page on each invocation, creates its DevTools page on the inspected page's own profile (private windows included), keeps JavaScript enabled for itself even under the Safest security tier, and releases the binding when it closes or when the inspected page goes away.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

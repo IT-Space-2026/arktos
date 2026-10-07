@@ -76,6 +76,7 @@
 #include "bookmarkstoolbar.h"
 #include "browserapplication.h"
 #include "clearprivatedata.h"
+#include "devtoolswindow.h"
 #include "downloadmanager.h"
 #include "history.h"
 #include "languagemanager.h"
@@ -886,12 +887,14 @@ void BrowserMainWindow::setupMenu()
 
     // Qt WebEngine has no DeveloperExtrasEnabled toggle — Chromium
     // DevTools are always available, so the menu entry opens the
-    // inspector on the current page directly.
+    // inspector on the current page directly.  The bare page action is
+    // a no-op until a devToolsPage is bound, so it routes through the
+    // shared inspector host (DVT01).
     m_toolsEnableInspectorAction = new QAction(m_toolsMenu);
     connect(m_toolsEnableInspectorAction, &QAction::triggered,
             this, [this]() {
         if (currentTab())
-            currentTab()->triggerPageAction(QWebEnginePage::InspectElement);
+            DevToolsWindow::inspectElement(currentTab()->page());
     });
     m_toolsMenu->addAction(m_toolsEnableInspectorAction);
 

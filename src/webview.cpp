@@ -71,6 +71,7 @@
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "safetext.h"
@@ -240,10 +241,21 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     if (menu->isEmpty()) {
         delete menu;
         menu = createStandardContextMenu();
-    } else {
-        menu->addSeparator();
-        menu->addAction(pageAction(QWebEnginePage::InspectElement));
+        // The stock menu's own "Inspect element" is the same no-op
+        // bare page action — remove it; the hosted one is added below.
+        menu->removeAction(pageAction(QWebEnginePage::InspectElement));
     }
+    if (!menu->isEmpty())
+        menu->addSeparator();
+    // The bare page action is a no-op until a devToolsPage is bound —
+    // route it through the shared inspector host (DVT01).  Triggering
+    // InspectElement still uses the stored context-menu position, so
+    // the right-clicked element is the one inspected.
+    QAction *inspectPageAction = pageAction(QWebEnginePage::InspectElement);
+    QAction *inspectAction = menu->addAction(inspectPageAction->text());
+    inspectAction->setIcon(inspectPageAction->icon());
+    connect(inspectAction, &QAction::triggered,
+            this, [this]() { DevToolsWindow::inspectElement(m_page); });
 
     if (!menu->isEmpty()) {
         if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {

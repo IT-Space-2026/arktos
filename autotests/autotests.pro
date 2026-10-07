@@ -13,6 +13,7 @@ SUBDIRS  = \
     certerror \
     cookiejar \
     cookiemodel \
+    devtools \
     dialogs \
     downloadmanager \
     historyfiltermodel \
