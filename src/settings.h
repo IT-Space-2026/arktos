@@ -112,6 +112,8 @@ private slots:
 
     void refreshSearchEngines();
     void refreshSearchSuggestions();
+    // SRCH06: Search-page-owned settings back to compiled defaults.
+    void resetSearchSettings();
 
     // SRCH05: inline search-engine editor (replaces the Manage dialog).
     void refreshEngineList();

@@ -78,6 +78,7 @@
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
 #include "safetext.h"
+#include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
 #include "securestore.h"
 #include "tabwidget.h"
@@ -302,6 +303,18 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(enginePrivateCheck, &QCheckBox::toggled,
             this, &SettingsDialog::engineAssignmentChanged);
 
+    // SRCH06: scoped-completion nickname rows — the token field only
+    // edits while its scope is enabled; the reset button restores
+    // every Search-page-owned preference.
+    connect(shortcutBookmarksCheck, &QCheckBox::toggled,
+            shortcutBookmarksToken, &QWidget::setEnabled);
+    connect(shortcutHistoryCheck, &QCheckBox::toggled,
+            shortcutHistoryToken, &QWidget::setEnabled);
+    connect(shortcutTabsCheck, &QCheckBox::toggled,
+            shortcutTabsToken, &QWidget::setEnabled);
+    connect(resetSearchButton, &QPushButton::clicked,
+            this, &SettingsDialog::resetSearchSettings);
+
     loadDefaults();
     loadFromSettings();
 }
@@ -405,6 +418,25 @@ void SettingsDialog::loadFromSettings()
     keepTypedTextCheck->setChecked(
         settings.value(QLatin1String("keepTypedText"), true).toBool());
     settings.endGroup();
+
+    // SRCH06: scoped-completion shortcut nicknames.
+    shortcutBookmarksCheck->setChecked(
+        ScopeShortcuts::enabled(ScopeShortcuts::BookmarksScope));
+    shortcutHistoryCheck->setChecked(
+        ScopeShortcuts::enabled(ScopeShortcuts::HistoryScope));
+    shortcutTabsCheck->setChecked(
+        ScopeShortcuts::enabled(ScopeShortcuts::TabsScope));
+    shortcutBookmarksToken->setText(
+        ScopeShortcuts::token(ScopeShortcuts::BookmarksScope));
+    shortcutHistoryToken->setText(
+        ScopeShortcuts::token(ScopeShortcuts::HistoryScope));
+    shortcutTabsToken->setText(
+        ScopeShortcuts::token(ScopeShortcuts::TabsScope));
+    // setChecked only fires toggled on a change — sync the token
+    // fields for the already-matching case.
+    shortcutBookmarksToken->setEnabled(shortcutBookmarksCheck->isChecked());
+    shortcutHistoryToken->setEnabled(shortcutHistoryCheck->isChecked());
+    shortcutTabsToken->setEnabled(shortcutTabsCheck->isChecked());
 
     // SRCH04: engine assignments and per-context suggestion toggles
     // live on the OpenSearchManager (persisted in its openSearch
@@ -630,6 +662,24 @@ void SettingsDialog::saveToSettings()
                       keepTypedTextCheck->isChecked());
     settings.endGroup();
 
+    // SRCH06: scoped-completion shortcut nicknames — tokens cannot
+    // contain whitespace (the first space splits the token from the
+    // search term); an empty field restores the scope's default.
+    const auto saveShortcut = [](ScopeShortcuts::Scope scope,
+                                 QCheckBox *check, QLineEdit *edit) {
+        ScopeShortcuts::setEnabled(scope, check->isChecked());
+        QString token = ScopeShortcuts::sanitizeToken(edit->text());
+        if (token.isEmpty())
+            token = ScopeShortcuts::defaultToken(scope);
+        ScopeShortcuts::setToken(scope, token);
+    };
+    saveShortcut(ScopeShortcuts::BookmarksScope,
+                 shortcutBookmarksCheck, shortcutBookmarksToken);
+    saveShortcut(ScopeShortcuts::HistoryScope,
+                 shortcutHistoryCheck, shortcutHistoryToken);
+    saveShortcut(ScopeShortcuts::TabsScope,
+                 shortcutTabsCheck, shortcutTabsToken);
+
     // Appearance
     settings.beginGroup(QLatin1String("websettings"));
     settings.setValue(QLatin1String("fixedFont"), m_fixedFont);
@@ -830,6 +880,50 @@ void SettingsDialog::accept()
     commitEngineEdits();
     saveToSettings();
     QDialog::accept();
+}
+
+void SettingsDialog::resetSearchSettings()
+{
+    if (QMessageBox::question(this, tr("Reset Search Settings"),
+            tr("Reset the search engine choices, suggestion switches, "
+               "shortcut nicknames and search display options to their "
+               "defaults?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes)
+        return;
+
+    // SRCH06: clear every key the Search page owns — nothing on the
+    // other pages is touched.
+    commitEngineEdits();
+    m_pendingSuggestions.clear();
+    m_suggestionsEngine.clear();
+    m_engineComboDirty = false;
+    m_privateEngineComboDirty = false;
+    m_imageEngineComboDirty = false;
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("urlloading"));
+    settings.remove(QLatin1String("searchEngineFallback"));
+    settings.remove(QLatin1String("selectionSearchInBackground"));
+    settings.endGroup();
+    settings.beginGroup(QLatin1String("toolbarsearch"));
+    settings.remove(QLatin1String("showEngineNickname"));
+    settings.remove(QLatin1String("showEngineIcon"));
+    settings.remove(QLatin1String("alwaysNewTab"));
+    settings.remove(QLatin1String("keepTypedText"));
+    settings.endGroup();
+    settings.beginGroup(QLatin1String("MainWindow"));
+    settings.remove(QLatin1String("showSearchBox"));
+    settings.endGroup();
+
+    ScopeShortcuts::reset();
+    ToolbarSearch::openSearchManager()->resetSearchPreferences();
+
+    // Widgets re-read the (now absent) keys as their compiled
+    // defaults; saving immediately makes the reset take effect, like
+    // the engine editor's own Restore Defaults.
+    loadFromSettings();
+    saveToSettings();
 }
 
 void SettingsDialog::showCookies()

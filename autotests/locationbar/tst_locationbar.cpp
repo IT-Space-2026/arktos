@@ -34,6 +34,8 @@
 #include "privacyindicator.h"
 #include "clearbutton.h"
 #include "webview.h"
+#include "bookmarknode.h"
+#include "bookmarksmanager.h"
 #include "browserapplication.h"
 #include "historycompleter.h"
 #include "historymanager.h"
@@ -102,6 +104,7 @@ private slots:
     void siteIcon();
     void privacyIndicator();
     void omniboxSuggestions();
+    void omniboxScopedCompletions();
 };
 
 void tst_LocationBar::initTestCase()
@@ -421,6 +424,150 @@ void tst_LocationBar::omniboxSuggestions()
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());
     QFile::remove(fixturePath);
+}
+
+// SRCH06: a leading "@bookmarks"/"@history"/"@tabs " nickname scopes
+// the omnibox dropdown to that one provider — the history block is
+// fed the stripped term, engine suggestion rows never leak into the
+// scoped view, a disabled or edited token stays plain text and an
+// engine keyword keeps first priority.
+void tst_LocationBar::omniboxScopedCompletions()
+{
+    // Seed one history hit and one bookmark for the scoped providers,
+    // plus entries the filter term must exclude.
+    HistoryManager *historyManager = BrowserApplication::historyManager();
+    historyManager->clear();
+    historyManager->addHistoryEntry(
+        QLatin1String("http://scoped-history.example/arora"));
+    historyManager->updateHistoryEntry(
+        QUrl(QLatin1String("http://scoped-history.example/arora")),
+        QLatin1String("Scoped History Page"));
+    historyManager->addHistoryEntry(
+        QLatin1String("http://unrelated.example/"));
+    historyManager->updateHistoryEntry(
+        QUrl(QLatin1String("http://unrelated.example/")),
+        QLatin1String("Unrelated"));
+
+    BookmarksManager *bookmarks = BookmarksManager::instance();
+    BookmarkNode *bookmark = new BookmarkNode(BookmarkNode::Bookmark);
+    bookmark->title = QLatin1String("Scoped Bookmark");
+    bookmark->url = QLatin1String("http://scoped-bookmark.example/");
+    bookmarks->addBookmark(bookmarks->bookmarks(), bookmark);
+
+    HistoryCompletionModel *historyModel =
+        new HistoryCompletionModel(this);
+    historyModel->setSourceModel(historyManager->historyFilterModel());
+    OmniboxCompletionModel model(historyModel);
+    model.setTabEntryProvider([] {
+        QList<OmniboxCompletionModel::TabEntry> tabs;
+        OmniboxCompletionModel::TabEntry first;
+        first.index = 0;
+        first.title = QLatin1String("First Tab");
+        first.url = QLatin1String("http://tab-one.example/");
+        tabs.append(first);
+        OmniboxCompletionModel::TabEntry second;
+        second.index = 1;
+        second.title = QLatin1String("Second Tab");
+        second.url = QLatin1String("http://tab-two.example/");
+        tabs.append(second);
+        return tabs;
+    });
+
+    // Plain input stays in the merged scope.
+    model.setSearchText(QLatin1String("scoped"));
+    QCOMPARE(model.scope(), ScopeShortcuts::NoScope);
+    QVERIFY(model.historyVisible());
+
+    // @history scopes to history only — the stripped term filters
+    // the history block itself.
+    model.setSearchText(QLatin1String("@history scoped-history"));
+    QCOMPARE(model.scope(), ScopeShortcuts::HistoryScope);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.data(model.index(0, 0),
+                        HistoryModel::UrlStringRole).toString(),
+             QLatin1String("http://scoped-history.example/arora"));
+
+    // Stale suggestion rows must not leak into a scoped view.
+    model.setSearchText(QLatin1String("scoped"));
+    model.setSuggestions(QStringList()
+                         << QLatin1String("sug-one")
+                         << QLatin1String("sug-two"));
+    QCOMPARE(model.suggestions().count(), 2);
+    model.setSearchText(QLatin1String("@history scoped-history"));
+    QCOMPARE(model.suggestions(), QStringList());
+
+    // @bookmarks lists matching bookmarks — and nothing else.
+    model.setSearchText(QLatin1String("@bookmarks scoped-bookmark"));
+    QCOMPARE(model.scope(), ScopeShortcuts::BookmarksScope);
+    QVERIFY(!model.historyVisible());
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.data(model.index(0, 0),
+                        HistoryModel::UrlStringRole).toString(),
+             QLatin1String("http://scoped-bookmark.example/"));
+    QCOMPARE(model.data(model.index(0, 1)).toString(),
+             QLatin1String("Scoped Bookmark"));
+    QVERIFY(!model.data(model.index(0, 0),
+                        OmniboxCompletionModel::TabIndexRole).isValid());
+
+    // @tabs lists matching open tabs carrying their tab index.
+    model.setSearchText(QLatin1String("@tabs second"));
+    QCOMPARE(model.scope(), ScopeShortcuts::TabsScope);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.data(model.index(0, 0),
+                        OmniboxCompletionModel::TabIndexRole).toInt(), 1);
+    QCOMPARE(model.data(model.index(0, 0),
+                        HistoryModel::UrlStringRole).toString(),
+             QLatin1String("http://tab-two.example/"));
+
+    // Back to unscoped input the merged model returns.
+    model.setSearchText(QLatin1String("scoped"));
+    QCOMPARE(model.scope(), ScopeShortcuts::NoScope);
+    QVERIFY(model.historyVisible());
+
+    // A disabled nickname is ordinary search text — no scoping.
+    ScopeShortcuts::setEnabled(ScopeShortcuts::HistoryScope, false);
+    QString rest;
+    QCOMPARE(ScopeShortcuts::parse(QLatin1String("@history scoped"), &rest),
+             ScopeShortcuts::NoScope);
+    model.setSearchText(QLatin1String("@history scoped"));
+    QCOMPARE(model.scope(), ScopeShortcuts::NoScope);
+    ScopeShortcuts::setEnabled(ScopeShortcuts::HistoryScope, true);
+
+    // An edited token takes effect — the old spelling stops scoping.
+    ScopeShortcuts::setToken(ScopeShortcuts::HistoryScope,
+                             QLatin1String("@hist"));
+    QCOMPARE(ScopeShortcuts::parse(QLatin1String("@hist scoped"), &rest),
+             ScopeShortcuts::HistoryScope);
+    QCOMPARE(rest, QLatin1String("scoped"));
+    QCOMPARE(ScopeShortcuts::parse(QLatin1String("@history scoped")),
+             ScopeShortcuts::NoScope);
+    ScopeShortcuts::setToken(ScopeShortcuts::HistoryScope,
+                             QLatin1String("@history"));
+
+    // Engine keyword search keeps first priority: a token that is
+    // also a keyword must not scope.
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("scope-shortcut-test"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://scope-shortcut.invalid/q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    manager->setEngineForKeyword(QLatin1String("@history"), engine);
+    QCOMPARE(ScopeShortcuts::parse(QLatin1String("@history scoped")),
+             ScopeShortcuts::NoScope);
+    model.setSearchText(QLatin1String("@history scoped"));
+    QCOMPARE(model.scope(), ScopeShortcuts::NoScope);
+    manager->setEngineForKeyword(QLatin1String("@history"), nullptr);
+    manager->removeEngine(engine->name());
+
+    bookmarks->removeBookmark(bookmark);
+    historyManager->removeHistoryEntry(
+        QUrl(QLatin1String("http://scoped-history.example/arora")));
+    historyManager->removeHistoryEntry(
+        QUrl(QLatin1String("http://unrelated.example/")));
+    ScopeShortcuts::reset();
 }
 
 QTEST_MAIN(tst_LocationBar)

@@ -110,6 +110,12 @@ void OmniboxSuggestions::requestSuggestions()
     if (!enabled() || text.isEmpty())
         return;
 
+    // SRCH06: a shortcut-nickname prefix scopes the dropdown to an
+    // app-side provider — the raw scoped text must not reach the
+    // suggest endpoint.
+    if (ScopeShortcuts::parse(text) != ScopeShortcuts::NoScope)
+        return;
+
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
 
     // SRCH04: resolve the engine this input actually targets.  In the
@@ -154,7 +160,9 @@ void OmniboxSuggestions::requestSuggestions()
 
 void OmniboxSuggestions::newSuggestions(const QStringList &suggestions)
 {
-    if (!enabled())
+    // SRCH06: a late reply for pre-scope text must not insert engine
+    // rows into a now-scoped view.
+    if (!enabled() || !m_model->historyVisible())
         return;
 
     m_model->setSuggestions(suggestions);

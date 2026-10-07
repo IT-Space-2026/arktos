@@ -85,6 +85,7 @@
 #include "webview.h"
 #include "webviewsearch.h"
 
+#include <qabstractproxymodel.h>
 #include <qcompleter.h>
 #include <qdir.h>
 #include <qevent.h>
@@ -386,9 +387,51 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
         // hack in HistoryCompleter unaware of the extra rows.
         OmniboxCompletionModel *omniboxModel =
             new OmniboxCompletionModel(completionModel, this);
+        // SRCH06: the "@tabs" scope lists this widget's open tabs —
+        // supplied as a provider so the shared completion model never
+        // depends on TabWidget.
+        omniboxModel->setTabEntryProvider(
+            [this]() -> QList<OmniboxCompletionModel::TabEntry> {
+            QList<OmniboxCompletionModel::TabEntry> entries;
+            for (int i = 0; i < count(); ++i) {
+                OmniboxCompletionModel::TabEntry entry;
+                entry.index = i;
+                entry.title = tabText(i);
+                if (WebView *view = webView(i))
+                    entry.url = QString::fromUtf8(view->url().toEncoded());
+                entry.icon = tabIcon(i);
+                entries.append(entry);
+            }
+            return entries;
+        });
         m_lineEditCompleter = new HistoryCompleter(omniboxModel, this);
-        connect(m_lineEditCompleter, QOverload<const QString &>::of(&QCompleter::activated),
-                this, [this](const QString &string) { loadString(string); });
+        // activated(QModelIndex) carries an index into the completer's
+        // private completion proxy — map it back so @tabs rows can
+        // switch to their tab instead of navigating.
+        connect(m_lineEditCompleter,
+                QOverload<const QModelIndex &>::of(&QCompleter::activated),
+                this,
+                [this, omniboxModel](const QModelIndex &activatedIndex) {
+            QModelIndex index = activatedIndex;
+            if (index.model() != omniboxModel) {
+                if (QAbstractProxyModel *proxy =
+                        qobject_cast<QAbstractProxyModel *>(
+                            m_lineEditCompleter->completionModel()))
+                    index = proxy->mapToSource(index);
+            }
+            const QVariant tabIndex =
+                index.data(OmniboxCompletionModel::TabIndexRole);
+            if (tabIndex.isValid()) {
+                const int target = tabIndex.toInt();
+                if (target >= 0 && target < count()) {
+                    setCurrentIndex(target);
+                    if (WebView *view = currentWebView())
+                        view->setFocus();
+                }
+                return;
+            }
+            loadString(index.data(HistoryModel::UrlStringRole).toString());
+        });
         m_omniboxSuggestions = new OmniboxSuggestions(
             omniboxModel, m_lineEditCompleter, this);
         // Should this be in Qt by default?

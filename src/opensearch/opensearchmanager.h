@@ -122,6 +122,14 @@ public:
     void removeEngine(const QString &name);
     void restoreDefaults();
 
+    // SRCH06: the Search settings page's reset button returns every
+    // preference the page owns to its compiled default — engine picks
+    // (default/private/image/field), suggestion toggles and per-engine
+    // opt-ins.  The engine list itself (descriptors, keywords, order)
+    // is untouched; the inline editor's own Restore Defaults covers
+    // that.
+    void resetSearchPreferences();
+
     // SRCH05: the Settings page's inline editor needs the engine list
     // to keep a stable, user-arrangeable order — allEnginesNames()
     // returns it (m_engineOrder first, stragglers appended), and the

@@ -892,6 +892,94 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="shortcutNicknamesGroupBox">
+         <property name="title">
+          <string>Shortcuts Nickname</string>
+         </property>
+         <layout class="QGridLayout" name="shortcutNicknamesLayout">
+          <item row="0" column="0">
+           <widget class="QCheckBox" name="shortcutBookmarksCheck">
+            <property name="text">
+             <string>Bookmarks</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="shortcutBookmarksToken">
+            <property name="toolTip">
+             <string>Type this nickname followed by a space in the address field to complete only matching bookmarks.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Bookmarks shortcut nickname</string>
+            </property>
+            <property name="text">
+             <string>@bookmarks</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QCheckBox" name="shortcutHistoryCheck">
+            <property name="text">
+             <string>History</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="shortcutHistoryToken">
+            <property name="toolTip">
+             <string>Type this nickname followed by a space in the address field to complete only matching history entries.</string>
+            </property>
+            <property name="accessibleName">
+             <string>History shortcut nickname</string>
+            </property>
+            <property name="text">
+             <string>@history</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QCheckBox" name="shortcutTabsCheck">
+            <property name="text">
+             <string>Tabs</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLineEdit" name="shortcutTabsToken">
+            <property name="toolTip">
+             <string>Type this nickname followed by a space in the address field to complete only matching open tabs. Picking a tab switches to it.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Tabs shortcut nickname</string>
+            </property>
+            <property name="text">
+             <string>@tabs</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0" colspan="2">
+           <widget class="QLabel" name="shortcutNicknamesHint">
+            <property name="text">
+             <string>Type a nickname and a space at the start of the address field to scope the completion suggestions to that source. Search engine keywords take precedence over nicknames.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="searchVerticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -903,6 +991,30 @@
           </size>
          </property>
         </spacer>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="searchResetLayout">
+         <item>
+          <widget class="QPushButton" name="resetSearchButton">
+           <property name="text">
+            <string>Reset Search Settings to Default</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="searchResetSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
       </layout>
      </widget>
@@ -2270,6 +2382,13 @@
   <tabstop>enginePrivateCheck</tabstop>
   <tabstop>searchEngineFallback</tabstop>
   <tabstop>searchSuggestionsCheckBox</tabstop>
+  <tabstop>shortcutBookmarksCheck</tabstop>
+  <tabstop>shortcutBookmarksToken</tabstop>
+  <tabstop>shortcutHistoryCheck</tabstop>
+  <tabstop>shortcutHistoryToken</tabstop>
+  <tabstop>shortcutTabsCheck</tabstop>
+  <tabstop>shortcutTabsToken</tabstop>
+  <tabstop>resetSearchButton</tabstop>
   <tabstop>standardFontButton</tabstop>
   <tabstop>fixedFontButton</tabstop>
   <tabstop>languageButton</tabstop>

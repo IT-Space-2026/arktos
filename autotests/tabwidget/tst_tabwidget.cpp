@@ -25,11 +25,14 @@
 #include <tabbar.h>
 #include <webview.h>
 
+#include <historycompleter.h>
 #include <opensearchmanager.h>
 #include <opensearchengine.h>
 #include <privacyrequestinterceptor.h>
 #include <toolbarsearch.h>
 
+#include <qcompleter.h>
+#include <qlineedit.h>
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
@@ -82,6 +85,7 @@ private slots:
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
     void omnibox();
+    void omniboxTabScope();
 };
 
 // Subclass that exposes the protected functions.
@@ -918,6 +922,70 @@ void tst_TabWidget::omnibox()
     else
         settings.remove(QLatin1String("privacy/httpsFirst"));
     PrivacyRequestInterceptor::loadSettings();
+}
+
+// SRCH06: typing the "@tabs" nickname lists this widget's open tabs
+// in the completion model, and activating a row switches to that tab
+// instead of navigating to its url.
+void tst_TabWidget::omniboxTabScope()
+{
+    ScopeShortcuts::reset();
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.currentIndex(), 1);
+    widget.setTabText(0, QLatin1String("Scoped Tab One"));
+    widget.setTabText(1, QLatin1String("Scoped Tab Two"));
+
+    QLineEdit *bar = widget.currentLocationBar();
+    QVERIFY(bar);
+    QCompleter *completer = bar->completer();
+    QVERIFY(completer);
+    OmniboxCompletionModel *model =
+        qobject_cast<OmniboxCompletionModel*>(completer->model());
+    QVERIFY(model);
+
+    // Drive the completer the way typing does — keyClicks fires
+    // textEdited, the filter timer calls setSearchText.
+    widget.show();
+    bar->setFocus();
+    QTest::keyClicks(bar, QLatin1String("@tabs "));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        model->scope() == ScopeShortcuts::TabsScope, 3000);
+    QCOMPARE(model->rowCount(), 2);
+
+    // Rows carry the tab index and the tab's own title/url.
+    const QModelIndex first = model->index(0, 0);
+    QCOMPARE(first.data(OmniboxCompletionModel::TabIndexRole).toInt(), 0);
+    QCOMPARE(first.data(HistoryModel::UrlStringRole).toString(),
+             QString::fromUtf8(widget.webView(0)->url().toEncoded()));
+    QCOMPARE(model->index(0, 1).data().toString(),
+             QLatin1String("Scoped Tab One"));
+
+    // Emitting activated() the way Qt does — with an index from the
+    // completer's completion proxy — switches to the tab.
+    completer->complete();
+    QAbstractItemModel *proxy = completer->completionModel();
+    QVERIFY(proxy);
+    QCOMPARE(proxy->rowCount(), 2);
+    emit completer->activated(proxy->index(0, 0));
+    QCOMPARE(widget.currentIndex(), 0);
+
+    // A direct source-model index (the handler's other accepted form)
+    // switches back to the second tab.
+    emit completer->activated(model->index(1, 0));
+    QCOMPARE(widget.currentIndex(), 1);
+
+    // Disabled — the token is ordinary text again, no tab rows.
+    ScopeShortcuts::setEnabled(ScopeShortcuts::TabsScope, false);
+    QTest::keyClicks(bar, QLatin1String("x"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        model->scope() == ScopeShortcuts::NoScope, 3000);
+    ScopeShortcuts::setEnabled(ScopeShortcuts::TabsScope, true);
+
+    widget.closeTab();
+    widget.closeTab();
 }
 
 QTEST_MAIN(tst_TabWidget)

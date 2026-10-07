@@ -33,6 +33,7 @@
 #include "cookiejar.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "scopeshortcuts.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -51,6 +52,8 @@ private slots:
     void searchContextControls();
     void suggestionsCheckbox();
     void engineEditor();
+    void searchShortcutNicknames();
+    void resetSearchSettings();
     void sidebarNavigation();
     void subDialogButtons();
     void setHomeToCurrentPage();
@@ -498,6 +501,157 @@ void tst_SettingsDialog::engineEditor()
         QVERIFY(!manager->engineExists(QLatin1String("Renamed Engine")));
     }
     manager->restoreDefaults();
+}
+
+// SRCH06: the Shortcuts Nickname rows persist each scope's enabled
+// flag and token, the token field follows its checkbox, whitespace is
+// stripped on save and the values read back on reopen.
+void tst_SettingsDialog::searchShortcutNicknames()
+{
+    ScopeShortcuts::reset();
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.shortcutBookmarksCheck->isChecked());
+        QVERIFY(dialog.shortcutHistoryCheck->isChecked());
+        QVERIFY(dialog.shortcutTabsCheck->isChecked());
+        QCOMPARE(dialog.shortcutBookmarksToken->text(),
+                 QLatin1String("@bookmarks"));
+        QCOMPARE(dialog.shortcutHistoryToken->text(),
+                 QLatin1String("@history"));
+        QCOMPARE(dialog.shortcutTabsToken->text(),
+                 QLatin1String("@tabs"));
+
+        // The token field only edits while its scope is enabled.
+        QVERIFY(dialog.shortcutTabsToken->isEnabled());
+        dialog.shortcutTabsCheck->setChecked(false);
+        QVERIFY(!dialog.shortcutTabsToken->isEnabled());
+
+        dialog.shortcutHistoryToken->setText(QLatin1String("@hist"));
+        dialog.shortcutBookmarksToken->setText(
+            QLatin1String("@ bm")); // whitespace strips on save
+        dialog.accept();
+    }
+    QCOMPARE(ScopeShortcuts::token(ScopeShortcuts::HistoryScope),
+             QLatin1String("@hist"));
+    QCOMPARE(ScopeShortcuts::token(ScopeShortcuts::BookmarksScope),
+             QLatin1String("@bm"));
+    QVERIFY(!ScopeShortcuts::enabled(ScopeShortcuts::TabsScope));
+
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.shortcutHistoryToken->text(),
+                 QLatin1String("@hist"));
+        QCOMPARE(dialog.shortcutBookmarksToken->text(),
+                 QLatin1String("@bm"));
+        QVERIFY(!dialog.shortcutTabsCheck->isChecked());
+        QVERIFY(!dialog.shortcutTabsToken->isEnabled());
+    }
+    ScopeShortcuts::reset();
+}
+
+// SRCH06: Reset Search Settings asks for confirmation, restores every
+// Search-page-owned preference (engine picks, suggestion switches,
+// shortcut nicknames, display options) and leaves the other pages'
+// keys alone.
+void tst_SettingsDialog::resetSearchSettings()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+    const QStringList engines = manager->allEnginesNames();
+    QVERIFY(engines.count() >= 2);
+    const QString other = engines.first() == manager->currentEngineName()
+        ? engines.at(1) : engines.first();
+
+    // Search-owned non-defaults everywhere the page writes.
+    manager->setCurrentEngineName(other);
+    manager->setPrivateEngineName(other);
+    manager->setKeepFieldEngine(false);
+    manager->setSuggestionsInAddressField(false);
+    manager->setSuggestionsOnlyWithKeyword(true);
+    manager->setSuggestionsEnabledForEngine(other, true);
+    ScopeShortcuts::setToken(ScopeShortcuts::HistoryScope,
+                             QLatin1String("@hh"));
+    ScopeShortcuts::setEnabled(ScopeShortcuts::TabsScope, false);
+
+    QSettings settings;
+    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+    settings.setValue(QLatin1String("toolbarsearch/alwaysNewTab"), true);
+    settings.setValue(QLatin1String("MainWindow/showSearchBox"), true);
+
+    // Sentinels from other pages that must survive the reset.
+    const QString home = QLatin1String("http://kept-home.example/");
+    settings.setValue(QLatin1String("MainWindow/home"), home);
+    settings.setValue(QLatin1String("tabs/oneCloseButton"), true);
+
+    const auto clickMessageBoxButton = [](QMessageBox::StandardButton b) {
+        QTimer::singleShot(50, qApp, [b] {
+            if (QMessageBox *box = qobject_cast<QMessageBox *>(
+                    QApplication::activeModalWidget())) {
+                if (QAbstractButton *button = box->button(b))
+                    button->click();
+            }
+        });
+    };
+
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.defaultEngineCombo->currentText(), other);
+
+        // Rejecting the confirmation changes nothing.
+        clickMessageBoxButton(QMessageBox::No);
+        dialog.resetSearchButton->click();
+        QCOMPARE(manager->currentEngineName(), other);
+        QCOMPARE(ScopeShortcuts::token(ScopeShortcuts::HistoryScope),
+                 QLatin1String("@hh"));
+
+        // Confirming restores the Search page's defaults.
+        clickMessageBoxButton(QMessageBox::Yes);
+        dialog.resetSearchButton->click();
+
+        QCOMPARE(manager->currentEngineName(),
+                 QLatin1String("DuckDuckGo"));
+        QCOMPARE(manager->privateEngineName(), QString());
+        QVERIFY(manager->keepFieldEngine());
+        QVERIFY(manager->suggestionsInAddressField());
+        QVERIFY(!manager->suggestionsOnlyWithKeyword());
+        QVERIFY(!manager->suggestionsEnabledForEngine(other));
+        QCOMPARE(ScopeShortcuts::token(ScopeShortcuts::HistoryScope),
+                 QLatin1String("@history"));
+        QVERIFY(ScopeShortcuts::enabled(ScopeShortcuts::TabsScope));
+
+        // The dialog controls show the restored defaults and the
+        // persisted keys match.
+        QVERIFY(dialog.searchEngineFallback->isChecked());
+        QVERIFY(!dialog.alwaysNewTabCheck->isChecked());
+        QVERIFY(dialog.suggestInAddressFieldCheck->isChecked());
+        QVERIFY(!dialog.showSearchBox->isChecked());
+        QCOMPARE(dialog.shortcutHistoryToken->text(),
+                 QLatin1String("@history"));
+        QCOMPARE(settings.value(
+                     QLatin1String("urlloading/searchEngineFallback"))
+                     .toBool(),
+                 true);
+        QCOMPARE(settings.value(
+                     QLatin1String("toolbarsearch/alwaysNewTab")).toBool(),
+                 false);
+
+        // Sentinels from other pages are untouched.
+        QCOMPARE(settings.value(QLatin1String("MainWindow/home"))
+                     .toString(),
+                 home);
+        QCOMPARE(settings.value(QLatin1String("tabs/oneCloseButton"))
+                     .toBool(),
+                 true);
+        QCOMPARE(dialog.homeLineEdit->text(), home);
+    }
+
+    // Leave the store tidy for the rest of the suite.
+    manager->setCurrentEngineName(engines.first());
+    manager->setSuggestionsEnabledForEngine(other, false);
+    settings.remove(QLatin1String("MainWindow/home"));
+    settings.remove(QLatin1String("tabs/oneCloseButton"));
+    ScopeShortcuts::reset();
 }
 
 // UIP03: the sidebar list and the page stack stay in sync both ways,

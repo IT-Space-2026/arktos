@@ -19,6 +19,9 @@
 
 #include "historycompleter.h"
 
+#include "bookmarknode.h"
+#include "bookmarksmanager.h"
+#include "historymanager.h"
 #include "safetext.h"
 
 #include <qevent.h>
@@ -176,42 +179,63 @@ OmniboxCompletionModel::OmniboxCompletionModel(
 
     // The merged view is flat: every structural signal from the
     // history block is forwarded with the live suggestion count as the
-    // row offset.
+    // row offset — but only while the history rows are actually
+    // displayed.  In a bookmarks/tabs scope (SRCH06) the scoped rows
+    // own the whole model and forwarding would report phantom rows.
     connect(m_history, &QAbstractItemModel::rowsAboutToBeInserted,
             this, [this](const QModelIndex &, int first, int last) {
-        beginInsertRows(QModelIndex(), first + suggestionCount(),
-                        last + suggestionCount());
+        if (historyVisible())
+            beginInsertRows(QModelIndex(), first + suggestionCount(),
+                            last + suggestionCount());
     });
     connect(m_history, &QAbstractItemModel::rowsInserted,
-            this, [this]() { endInsertRows(); });
+            this, [this]() { if (historyVisible()) endInsertRows(); });
     connect(m_history, &QAbstractItemModel::rowsAboutToBeRemoved,
             this, [this](const QModelIndex &, int first, int last) {
-        beginRemoveRows(QModelIndex(), first + suggestionCount(),
-                        last + suggestionCount());
+        if (historyVisible())
+            beginRemoveRows(QModelIndex(), first + suggestionCount(),
+                            last + suggestionCount());
     });
     connect(m_history, &QAbstractItemModel::rowsRemoved,
-            this, [this]() { endRemoveRows(); });
+            this, [this]() { if (historyVisible()) endRemoveRows(); });
     connect(m_history, &QAbstractItemModel::rowsAboutToBeMoved,
             this, [this](const QModelIndex &, int start, int end,
                          const QModelIndex &, int destination) {
-        beginMoveRows(QModelIndex(), start + suggestionCount(),
-                      end + suggestionCount(), QModelIndex(),
-                      destination + suggestionCount());
+        if (historyVisible())
+            beginMoveRows(QModelIndex(), start + suggestionCount(),
+                          end + suggestionCount(), QModelIndex(),
+                          destination + suggestionCount());
     });
     connect(m_history, &QAbstractItemModel::rowsMoved,
-            this, [this]() { endMoveRows(); });
+            this, [this]() { if (historyVisible()) endMoveRows(); });
     connect(m_history, &QAbstractItemModel::modelAboutToBeReset,
-            this, [this]() { beginResetModel(); });
+            this, [this]() { if (historyVisible()) beginResetModel(); });
     connect(m_history, &QAbstractItemModel::modelReset,
-            this, [this]() { endResetModel(); });
+            this, [this]() { if (historyVisible()) endResetModel(); });
     connect(m_history, &QAbstractItemModel::layoutAboutToBeChanged,
-            this, [this]() { emit layoutAboutToBeChanged(); });
+            this, [this]() {
+        if (historyVisible())
+            emit layoutAboutToBeChanged();
+    });
     connect(m_history, &QAbstractItemModel::layoutChanged,
-            this, [this]() { emit layoutChanged(); });
+            this, [this]() {
+        if (historyVisible())
+            emit layoutChanged();
+    });
     connect(m_history, &QAbstractItemModel::dataChanged,
             this, [this](const QModelIndex &topLeft,
                          const QModelIndex &bottomRight,
                          const QList<int> &roles) {
+        if (!historyVisible()) {
+            // Scoped rows still read the inner model's validity flag
+            // for their HistoryCompletionRole — re-report them so the
+            // completer engine re-filters after setValid().
+            if (rowCount() > 0)
+                emit dataChanged(index(0, 0),
+                                 index(rowCount() - 1,
+                                       columnCount() - 1));
+            return;
+        }
         const int offset = suggestionCount();
         emit dataChanged(index(topLeft.row() + offset, topLeft.column()),
                          index(bottomRight.row() + offset,
@@ -279,6 +303,107 @@ int OmniboxCompletionModel::suggestionCount() const
     return m_suggestions.count();
 }
 
+ScopeShortcuts::Scope OmniboxCompletionModel::scope() const
+{
+    return m_scope;
+}
+
+void OmniboxCompletionModel::setTabEntryProvider(
+    std::function<QList<TabEntry>()> provider)
+{
+    m_tabEntryProvider = std::move(provider);
+}
+
+bool OmniboxCompletionModel::historyVisible() const
+{
+    return m_scope == ScopeShortcuts::NoScope
+        || m_scope == ScopeShortcuts::HistoryScope;
+}
+
+void OmniboxCompletionModel::setSearchText(const QString &text)
+{
+    QString rest;
+    const ScopeShortcuts::Scope scope = ScopeShortcuts::parse(text, &rest);
+
+    if (scope != m_scope) {
+        beginResetModel();
+        m_scope = scope;
+        // Scoped completions are app-side rows only — stale engine
+        // suggestions must not leak into the scoped view.
+        if (scope != ScopeShortcuts::NoScope)
+            m_suggestions.clear();
+        else
+            m_scopedRows.clear();
+        endResetModel();
+    }
+
+    switch (m_scope) {
+    case ScopeShortcuts::BookmarksScope:
+    case ScopeShortcuts::TabsScope:
+        rebuildScopedRows(rest);
+        break;
+    case ScopeShortcuts::HistoryScope:
+        m_history->setSearchString(rest);
+        break;
+    case ScopeShortcuts::NoScope:
+        m_history->setSearchString(text);
+        break;
+    }
+}
+
+static void collectBookmarkRows(BookmarkNode *node, const QString &term,
+                                QList<OmniboxCompletionModel::TabEntry> *rows)
+{
+    for (BookmarkNode *child : node->children()) {
+        if (rows->count() >= 100)
+            return;
+        switch (child->type()) {
+        case BookmarkNode::Folder:
+            collectBookmarkRows(child, term, rows);
+            break;
+        case BookmarkNode::Bookmark:
+            if (!term.isEmpty()
+                && !child->title.contains(term, Qt::CaseInsensitive)
+                && !child->url.contains(term, Qt::CaseInsensitive))
+                break;
+            {
+                OmniboxCompletionModel::TabEntry entry;
+                entry.title = child->title;
+                entry.url = child->url;
+                entry.icon = HistoryManager::instance()->icon(QUrl(child->url));
+                rows->append(entry);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void OmniboxCompletionModel::rebuildScopedRows(const QString &term)
+{
+    QList<TabEntry> rows;
+    if (m_scope == ScopeShortcuts::BookmarksScope) {
+        if (BookmarksManager *manager = BookmarksManager::instance())
+            collectBookmarkRows(manager->bookmarks(), term, &rows);
+    } else if (m_tabEntryProvider) {
+        const QList<TabEntry> entries = m_tabEntryProvider();
+        for (const TabEntry &entry : entries) {
+            if (rows.count() >= 100)
+                break;
+            if (!term.isEmpty()
+                && !entry.title.contains(term, Qt::CaseInsensitive)
+                && !entry.url.contains(term, Qt::CaseInsensitive))
+                continue;
+            rows.append(entry);
+        }
+    }
+
+    beginResetModel();
+    m_scopedRows = rows;
+    endResetModel();
+}
+
 QModelIndex OmniboxCompletionModel::historyIndex(int row, int column) const
 {
     return m_history->index(row - suggestionCount(), column);
@@ -299,7 +424,11 @@ QModelIndex OmniboxCompletionModel::parent(const QModelIndex &) const
 
 int OmniboxCompletionModel::rowCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : suggestionCount() + m_history->rowCount();
+    if (parent.isValid())
+        return 0;
+    if (!historyVisible())
+        return m_scopedRows.count();
+    return suggestionCount() + m_history->rowCount();
 }
 
 int OmniboxCompletionModel::columnCount(const QModelIndex &parent) const
@@ -311,6 +440,38 @@ QVariant OmniboxCompletionModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.parent().isValid())
         return QVariant();
+
+    if (!historyVisible()) {
+        if (index.row() >= m_scopedRows.count())
+            return QVariant();
+        const TabEntry &row = m_scopedRows.at(index.row());
+        switch (role) {
+        case HistoryCompletionModel::HistoryCompletionRole:
+            return m_history->isValid()
+                ? QLatin1String("a") : QLatin1String("b");
+        case TabIndexRole:
+            return row.index >= 0 ? QVariant(row.index) : QVariant();
+        case HistoryModel::UrlStringRole:
+        case Qt::ToolTipRole:
+            return row.url;
+        case HistoryModel::TitleRole:
+            return row.title;
+        case Qt::DisplayRole:
+            return index.column() == 0 ? QVariant(row.url)
+                                       : QVariant(row.title);
+        case Qt::DecorationRole:
+            return index.column() == 0 ? QVariant(row.icon) : QVariant();
+        case Qt::FontRole:
+            if (index.column() == 1) {
+                QFont font;
+                font.setWeight(QFont::Light);
+                return font;
+            }
+            return QVariant();
+        default:
+            return QVariant();
+        }
+    }
 
     if (index.row() < suggestionCount()) {
         const QString &suggestion = m_suggestions.at(index.row());
@@ -352,6 +513,8 @@ Qt::ItemFlags OmniboxCompletionModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid())
         return Qt::NoItemFlags;
+    if (!historyVisible())
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
     if (index.row() < suggestionCount())
         return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
     return m_history->flags(historyIndex(index.row(), index.column()));
@@ -465,11 +628,22 @@ void HistoryCompleter::updateFilter()
     HistoryCompletionModel *completionModel = historyCompletionModel();
     Q_ASSERT(completionModel);
 
-    // tell the HistoryCompletionModel about the new search string
-    completionModel->setSearchString(m_searchString);
+    // SRCH06: the omnibox layer parses shortcut-nickname prefixes
+    // ("@history foo") and may swap the completion provider — in a
+    // bookmarks/tabs scope the history block is not displayed at all,
+    // so filtering and sorting it is skipped.
+    bool sortHistory = true;
+    if (OmniboxCompletionModel *omnibox =
+            qobject_cast<OmniboxCompletionModel*>(model())) {
+        omnibox->setSearchText(m_searchString);
+        sortHistory = omnibox->historyVisible();
+    } else {
+        completionModel->setSearchString(m_searchString);
+    }
 
     // sort the model
-    completionModel->sort(0);
+    if (sortHistory)
+        completionModel->sort(0);
 
     // mark it valid
     completionModel->setValid(true);

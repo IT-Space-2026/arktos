@@ -22,12 +22,16 @@
 #define HISTORYCOMPLETER_H
 
 #include "history.h"
+#include "scopeshortcuts.h"
 
 #include <qcompleter.h>
+#include <qicon.h>
 #include <qregularexpression.h>
 #include <qsortfilterproxymodel.h>
 #include <qtableview.h>
 #include <qtimer.h>
+
+#include <functional>
 
 class QResizeEvent;
 class HistoryCompletionView : public QTableView
@@ -87,6 +91,13 @@ private:
 // for the url roles, so activating one routes it back through
 // TabWidget::guessUrlFromString — a url-shaped suggestion navigates,
 // anything else searches the current engine.
+//
+// SRCH06: the model also serves the "shortcut nickname" scopes — a
+// leading "@bookmarks"/"@history"/"@tabs " token swaps the completion
+// provider for that input.  In a bookmarks/tabs scope the history
+// block is replaced by rows from the matching provider (TabEntry
+// rows; bookmarks carry index -1, tab rows carry the tab index in
+// TabIndexRole so activation can switch to it instead of navigating).
 class OmniboxCompletionModel : public QAbstractItemModel
 {
     Q_OBJECT
@@ -95,6 +106,19 @@ public:
     OmniboxCompletionModel(HistoryCompletionModel *historyCompletionModel,
                            QObject *parent = nullptr);
 
+    enum ExtraRoles {
+        TabIndexRole = HistoryCompletionModel::HistoryCompletionRole + 1
+    };
+
+    // A scoped-completion row: index is the target tab for @tabs
+    // rows, -1 for bookmarks.
+    struct TabEntry {
+        int index = -1;
+        QString title;
+        QString url;
+        QIcon icon;
+    };
+
     HistoryCompletionModel *historyCompletionModel() const;
 
     void setEngineName(const QString &name);
@@ -102,6 +126,19 @@ public:
 
     void setSuggestions(const QStringList &suggestions);
     QStringList suggestions() const;
+
+    // Scope-aware entry point for the completer: parses a leading
+    // shortcut token off the raw input, swaps providers and feeds the
+    // stripped term (or the full text) to the history block.
+    void setSearchText(const QString &text);
+    ScopeShortcuts::Scope scope() const;
+    // True while the history block is exposed (unscoped input or the
+    // @history scope); false in the bookmarks/tabs scopes.
+    bool historyVisible() const;
+
+    // @tabs rows come from the owning TabWidget — supplied as a
+    // callback so this model never depends on tabwidget.h.
+    void setTabEntryProvider(std::function<QList<TabEntry>()> provider);
 
     QModelIndex index(int row, int column,
                       const QModelIndex &parent = QModelIndex()) const override;
@@ -115,10 +152,14 @@ public:
 private:
     int suggestionCount() const;
     QModelIndex historyIndex(int row, int column) const;
+    void rebuildScopedRows(const QString &term);
 
     HistoryCompletionModel *m_history;
     QStringList m_suggestions;
     QString m_engineName;
+    ScopeShortcuts::Scope m_scope = ScopeShortcuts::NoScope;
+    QList<TabEntry> m_scopedRows;
+    std::function<QList<TabEntry>()> m_tabEntryProvider;
 };
 
 class HistoryCompleter : public QCompleter

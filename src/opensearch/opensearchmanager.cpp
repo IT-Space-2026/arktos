@@ -704,6 +704,30 @@ void OpenSearchManager::restoreDefaults()
     }
 }
 
+void OpenSearchManager::resetSearchPreferences()
+{
+    // Compiled defaults mirroring load()'s fallbacks; a missing engine
+    // falls back to the first available exactly like load() does.
+    m_current = QLatin1String("DuckDuckGo");
+    if (!m_engines.contains(m_current) && m_engines.count() > 0)
+        m_current = m_engines.keys().at(0);
+    m_privateEngine.clear();
+    m_imageEngine.clear();
+    m_fieldEngine.clear();
+    m_keepFieldEngine = true;
+    m_suggestionsEnabled.clear();
+    m_suggestInAddressField = true;
+    m_suggestInSearchField = true;
+    m_suggestOnlyWithKeyword = false;
+
+    emit suggestionsEnabledChanged();
+    emit currentEngineChanged();
+    emit changed();
+    // The autosave defers — persist immediately so the reset cannot be
+    // lost to a crash before save() runs.
+    save();
+}
+
 QString OpenSearchManager::enginesDirectory() const
 {
     return BrowserPaths::dataFilePath(QLatin1String("searchengines"));
