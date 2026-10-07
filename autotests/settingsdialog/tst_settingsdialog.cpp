@@ -101,6 +101,7 @@ void tst_SettingsDialog::saveAndReload()
         dialog.proxyPort->setValue(8080);
         dialog.proxyUserName->setText(QLatin1String("u"));
         dialog.proxyPassword->setText(QLatin1String("p"));
+        dialog.tabBarPosition->setCurrentIndex(2);   // Left
         dialog.selectTabsWhenCreated->setChecked(true);
         dialog.confirmClosingMultipleTabs->setChecked(false);
         dialog.oneCloseButton->setChecked(true);
@@ -129,6 +130,12 @@ void tst_SettingsDialog::saveAndReload()
         QCOMPARE(reloaded.proxyHostName->text(), QLatin1String("localhost"));
         QCOMPARE(reloaded.acceptCombo->currentIndex(), 1);
         QCOMPARE(reloaded.keepUntilCombo->currentIndex(), 2);
+        QCOMPARE(reloaded.tabBarPosition->currentIndex(), 2);
+        QVERIFY(reloaded.selectTabsWhenCreated->isChecked());
+        QVERIFY(!reloaded.confirmClosingMultipleTabs->isChecked());
+        QVERIFY(!reloaded.quitAsLastTabClosed->isChecked());
+        QCOMPARE(reloaded.openTargetBlankLinksIn->currentIndex(), 0);
+        QCOMPARE(reloaded.openLinksFromAppsIn->currentIndex(), 0);
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }

@@ -22,9 +22,11 @@
 #include "qtest_arora.h"
 
 #include <tabwidget.h>
+#include <tabbar.h>
 #include <webview.h>
 
 #include <qwebenginehistory.h>
+#include <qsettings.h>
 
 class tst_TabWidget : public QObject
 {
@@ -73,6 +75,7 @@ private slots:
     void saveState();
     void restoreStateCorrupt();
     void loadStringFromUntrustedSource();
+    void tabBarPositionSetting();
 };
 
 // Subclass that exposes the protected functions.
@@ -778,6 +781,46 @@ void tst_TabWidget::loadStringFromUntrustedSource()
         view->url() == QUrl(QLatin1String("data:text/plain,ok")), 15000);
 
     widget.closeTab();
+}
+
+// TABS01: the tabs/tabBarPosition QSettings value maps to the
+// QTabWidget position (Top/Bottom/Left/Right -> North/South/West/
+// East), applies on construction and on live loadSettings() (the call
+// SettingsDialog::saveToSettings makes on every open window), and
+// keeps movable tabs/context-menu wiring intact in vertical mode.
+void tst_TabWidget::tabBarPositionSetting()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+
+    settings.remove(QLatin1String("tabBarPosition"));
+    {
+        SubTabWidget widget;
+        QCOMPARE(int(widget.tabPosition()), int(QTabWidget::North));
+    }
+
+    settings.setValue(QLatin1String("tabBarPosition"), 2);
+    {
+        SubTabWidget widget;
+        QCOMPARE(int(widget.tabPosition()), int(QTabWidget::West));
+        QVERIFY(widget.tabBar()->isMovable());
+
+        // Live re-apply, and an out-of-range value falls back to Top.
+        settings.setValue(QLatin1String("tabBarPosition"), 99);
+        widget.loadSettings();
+        QCOMPARE(int(widget.tabPosition()), int(QTabWidget::North));
+
+        settings.setValue(QLatin1String("tabBarPosition"), 3);
+        widget.loadSettings();
+        QCOMPARE(int(widget.tabPosition()), int(QTabWidget::East));
+
+        settings.setValue(QLatin1String("tabBarPosition"), 1);
+        widget.loadSettings();
+        QCOMPARE(int(widget.tabPosition()), int(QTabWidget::South));
+    }
+
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabWidget)

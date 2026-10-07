@@ -875,24 +875,44 @@ void TabWidget::loadSettings()
 
     QSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
+
+    // Tab bar position — the settings combo indexes North/South/
+    // West/East in order.  QTabWidget only lays corner widgets out for
+    // North/South (on a vertical bar they get zero-size geometry), so
+    // the corner buttons hide while the bar is vertical; New Tab stays
+    // reachable through the action's shortcut and menus.
+    QTabWidget::TabPosition position = North;
+    switch (settings.value(QLatin1String("tabBarPosition"), 0).toInt()) {
+    case 1: position = South; break;
+    case 2: position = West; break;
+    case 3: position = East; break;
+    default: break;
+    }
+    setTabPosition(position);
+    const bool horizontal = (position == North || position == South);
+
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS
-    setCornerWidget(addTabButton, newTabButtonInRightCorner ? Qt::TopRightCorner : Qt::TopLeftCorner);
-    addTabButton->show();
+    setCornerWidget(horizontal ? static_cast<QWidget*>(addTabButton) : nullptr,
+                    newTabButtonInRightCorner ? Qt::TopRightCorner : Qt::TopLeftCorner);
+    addTabButton->setVisible(horizontal);
 #endif
 
+    const Qt::Corner closeCorner = newTabButtonInRightCorner ? Qt::TopLeftCorner : Qt::TopRightCorner;
     bool oneCloseButton = settings.value(QLatin1String("oneCloseButton"), false).toBool();
-    if (oneCloseButton) {
+    if (oneCloseButton && horizontal) {
         if (!closeTabButton) {
             closeTabButton = new QToolButton(this);
             closeTabButton->setDefaultAction(m_closeTabAction);
             closeTabButton->setAutoRaise(true);
             closeTabButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
         }
-        setCornerWidget(closeTabButton, newTabButtonInRightCorner ? Qt::TopLeftCorner : Qt::TopRightCorner);
-        closeTabButton->setVisible(oneCloseButton);
+        setCornerWidget(closeTabButton, closeCorner);
+        closeTabButton->setVisible(true);
     } else {
-        setCornerWidget(nullptr, newTabButtonInRightCorner ? Qt::TopLeftCorner : Qt::TopRightCorner);
+        setCornerWidget(nullptr, closeCorner);
+        if (closeTabButton)
+            closeTabButton->setVisible(false);
     }
     m_tabBar->setTabsClosable(!oneCloseButton);
 }

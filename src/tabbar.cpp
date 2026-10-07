@@ -257,14 +257,51 @@ void TabBar::mousePressEvent(QMouseEvent *event)
     QTabBar::mousePressEvent(event);
 }
 
+// True when the tab bar's tabs run vertically (West/East tab
+// positions on the enclosing QTabWidget pick these shapes).
+static bool verticalTabShape(QTabBar::Shape shape)
+{
+    switch (shape) {
+    case QTabBar::RoundedWest:
+    case QTabBar::TriangularWest:
+    case QTabBar::RoundedEast:
+    case QTabBar::TriangularEast:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void TabBar::mouseMoveEvent(QMouseEvent *event)
 {
     if (event->buttons() == Qt::LeftButton) {
-        int diffX = event->position().toPoint().x() - m_dragStartPos.x();
-        int diffY = event->position().toPoint().y() - m_dragStartPos.y();
-        if ((event->position().toPoint() - m_dragStartPos).manhattanLength() > QApplication::startDragDistance()
-            && diffX < 3 && diffX > -3
-            && diffY < -10) {
+        const QPoint diff = event->position().toPoint() - m_dragStartPos;
+        // "Tear the tab off" = drag away from the bar, perpendicular
+        // to the tab strip; the direction depends on which edge the
+        // bar sits on (drag up for North, right for East, ...).
+        const bool vertical = verticalTabShape(shape());
+        const int along = vertical ? diff.y() : diff.x();
+        bool away;
+        switch (shape()) {
+        case QTabBar::RoundedSouth:
+        case QTabBar::TriangularSouth:
+            away = diff.y() > 10;
+            break;
+        case QTabBar::RoundedWest:
+        case QTabBar::TriangularWest:
+            away = diff.x() < -10;
+            break;
+        case QTabBar::RoundedEast:
+        case QTabBar::TriangularEast:
+            away = diff.x() > 10;
+            break;
+        default:
+            away = diff.y() < -10;
+            break;
+        }
+        if (diff.manhattanLength() > QApplication::startDragDistance()
+            && along < 3 && along > -3
+            && away) {
             QDrag *drag = new QDrag(this);
             QMimeData *mimeData = new QMimeData;
             QList<QUrl> urls;
@@ -317,7 +354,13 @@ QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
     QFontMetrics fm = fontMetrics();
-    return sizeHint.boundedTo(QSize(fm.horizontalAdvance(QLatin1Char('M')) * 18, sizeHint.height()));
+    const int extent = fm.horizontalAdvance(QLatin1Char('M')) * 18;
+    // QTabBar::tabSizeHint returns a transposed size for vertical
+    // shapes — bound the tab's long axis either way so a long title
+    // can't stretch the whole strip.
+    if (verticalTabShape(shape()))
+        return sizeHint.boundedTo(QSize(sizeHint.width(), extent));
+    return sizeHint.boundedTo(QSize(extent, sizeHint.height()));
 }
 
 void TabBar::reloadTab()

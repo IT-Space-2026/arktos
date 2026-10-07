@@ -339,6 +339,8 @@ void SettingsDialog::loadFromSettings()
 
     // Tabs
     settings.beginGroup(QLatin1String("tabs"));
+    const int tabBarPositionIndex = settings.value(QLatin1String("tabBarPosition"), 0).toInt();
+    tabBarPosition->setCurrentIndex(qBound(0, tabBarPositionIndex, tabBarPosition->count() - 1));
     selectTabsWhenCreated->setChecked(settings.value(QLatin1String("selectNewTabs"), false).toBool());
     confirmClosingMultipleTabs->setChecked(settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool());
     oneCloseButton->setChecked(settings.value(QLatin1String("oneCloseButton"),false).toBool());
@@ -487,6 +489,7 @@ void SettingsDialog::saveToSettings()
 
     // Tabs
     settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabBarPosition"), tabBarPosition->currentIndex());
     settings.setValue(QLatin1String("selectNewTabs"), selectTabsWhenCreated->isChecked());
     settings.setValue(QLatin1String("confirmClosingMultipleTabs"), confirmClosingMultipleTabs->isChecked());
     settings.setValue(QLatin1String("oneCloseButton"), oneCloseButton->isChecked());
@@ -515,10 +518,14 @@ void SettingsDialog::saveToSettings()
     // BrowserApplication::mainWindows() loop over each window's
     // TabWidget.  Every live WebView re-reads its page settings
     // instead; the widgets are reachable without BrowserMainWindow.
+    // Live TabWidgets also re-read the tabs group so the tab bar
+    // position and corner buttons change without a restart.
     const QWidgetList widgets = qApp->allWidgets();
     for (QWidget *widget : widgets) {
         if (WebView *view = qobject_cast<WebView*>(widget))
             view->loadSettings();
+        else if (TabWidget *tabs = qobject_cast<TabWidget*>(widget))
+            tabs->loadSettings();
     }
 }
 
