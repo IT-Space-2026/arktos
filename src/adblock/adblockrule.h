@@ -159,7 +159,12 @@ private:
     QString m_removeParam;
     QString m_matchToken;
 
-    QRegularExpression m_regExp;
+    // The compiled form of the pattern is deferred to first use (see
+    // compiledRegExp); only the source text and options live here.
+    QString m_regExpSource;
+    QRegularExpression::PatternOptions m_regExpOptions;
+
+    QRegularExpression compiledRegExp() const;
 };
 
 #endif // ADBLOCKRULE_H

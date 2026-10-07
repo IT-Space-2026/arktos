@@ -31,6 +31,8 @@
 #include "adblockrule.h"
 
 #include <qdebug.h>
+#include <qhash.h>
+#include <qmutex.h>
 #include <qurl.h>
 
 // #define ADBLOCKRULE_DEBUG
@@ -276,6 +278,8 @@ void AdBlockRule::setFilter(const QString &filter)
     m_redirect.clear();
     m_removeParam.clear();
     m_matchToken.clear();
+    m_regExpSource.clear();
+    m_regExpOptions = QRegularExpression::CaseInsensitiveOption;
     bool regExpRule = false;
 
     if (filter.size() > MaximumFilterLength) {
@@ -352,13 +356,15 @@ void AdBlockRule::setFilter(const QString &filter)
     }
 
     setPattern(parsedLine, regExpRule);
+    if (matchCase)
+        m_regExpOptions = QRegularExpression::NoPatternOption;
     // Raw /regex/ filters come straight from the list — invalid or
     // catastrophic patterns are kept inert (see hasNestedQuantifiers).
+    // Compiling once here also primes the shared pattern cache.
     if (regExpRule
-        && (!m_regExp.isValid() || hasNestedQuantifiers(parsedLine)))
+        && (!compiledRegExp().isValid()
+            || hasNestedQuantifiers(parsedLine)))
         m_supported = false;
-    if (matchCase)
-        m_regExp.setPatternOptions(QRegularExpression::NoPatternOption);
 }
 
 void AdBlockRule::parseOptions(const QStringList &options)
@@ -555,7 +561,7 @@ bool AdBlockRule::networkMatch(const QString &encodedUrl,
         }
     }
 
-    const bool matched = m_regExp.match(encodedUrl).hasMatch();
+    const bool matched = compiledRegExp().match(encodedUrl).hasMatch();
 #if defined(ADBLOCKRULE_DEBUG)
     //qDebug() << "AdBlockRule::" << __FUNCTION__ << encodedUrl << "MATCHED" << matched << filter();
 #endif
@@ -598,16 +604,48 @@ QString AdBlockRule::badFilterKey() const
 
 QString AdBlockRule::regExpPattern() const
 {
-    return m_regExp.pattern();
+    return m_regExpSource;
+}
+
+// Compiles (or fetches) the QRegularExpression for this rule's
+// pattern.  Compilation is deferred because parsing a large
+// subscription compiles tens of thousands of patterns that mostly
+// never fire — the token index pre-filters candidates before
+// networkMatch runs.  Matching happens on the WebEngine IO thread
+// while the GUI thread can linear-scan the same rule objects, so a
+// per-object lazy flag would race; each distinct pattern is compiled
+// once into this shared, lock-guarded cache instead.
+QRegularExpression AdBlockRule::compiledRegExp() const
+{
+    static QMutex mutex;
+    static QHash<QString, QRegularExpression> cache;
+    // $match-case is the only option variation; fold it into the key.
+    const QString key = m_regExpOptions == QRegularExpression::NoPatternOption
+        ? QLatin1Char('\x1') + m_regExpSource
+        : m_regExpSource;
+    QMutexLocker locker(&mutex);
+    auto it = cache.find(key);
+    if (it == cache.end())
+        it = cache.insert(key, QRegularExpression(m_regExpSource,
+                                                  m_regExpOptions));
+    return it.value();
 }
 
 static QString convertPatternToRegExp(const QString &wildcardPattern) {
+    // These expressions are immutable — keep them static so each of the
+    // tens of thousands of filters in a subscription does not recompile
+    // them (PERF01).
+    static const QRegularExpression multiWildcards(QLatin1String("\\*+"));
+    static const QRegularExpression trailingSepAnchor(QLatin1String("\\^\\|$"));
+    static const QRegularExpression leadingWildcard(QLatin1String("^(\\*)"));
+    static const QRegularExpression trailingWildcard(QLatin1String("(\\*)$"));
+    static const QRegularExpression nonWord(QLatin1String("(\\W)"));
     QString pattern = wildcardPattern;
-    pattern.replace(QRegularExpression(QLatin1String("\\*+")), QLatin1String("*"));    // remove multiple wildcards
-    pattern.replace(QRegularExpression(QLatin1String("\\^\\|$")), QLatin1String("^")); // remove anchors following separator placeholder
-    pattern.replace(QRegularExpression(QLatin1String("^(\\*)")), QString());           // remove leading wildcards
-    pattern.replace(QRegularExpression(QLatin1String("(\\*)$")), QString());           // remove trailing wildcards
-    pattern.replace(QRegularExpression(QLatin1String("(\\W)")), QLatin1String("\\\\1"));// escape special symbols
+    pattern.replace(multiWildcards, QLatin1String("*"));            // remove multiple wildcards
+    pattern.replace(trailingSepAnchor, QLatin1String("^"));         // remove anchors following separator placeholder
+    pattern.replace(leadingWildcard, QString());                    // remove leading wildcards
+    pattern.replace(trailingWildcard, QString());                   // remove trailing wildcards
+    pattern.replace(nonWord, QLatin1String("\\\\1"));               // escape special symbols
 
     // The steps below have literal before/after strings (the pattern text
     // is already escaped at this point), so plain QString::replace is
@@ -658,6 +696,6 @@ void AdBlockRule::setPattern(const QString &pattern, bool isRegExp)
         }
         m_matchToken = pattern.mid(bestStart, bestLength);
     }
-    m_regExp = QRegularExpression(isRegExp ? pattern : convertPatternToRegExp(pattern),
-                                  QRegularExpression::CaseInsensitiveOption);
+    m_regExpSource = isRegExp ? pattern : convertPatternToRegExp(pattern);
+    m_regExpOptions = QRegularExpression::CaseInsensitiveOption;
 }

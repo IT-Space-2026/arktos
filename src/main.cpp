@@ -36,7 +36,9 @@
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
+#include "history.h"
 #include "historymanager.h"
+#include "historyparser.h"
 #include "locationbar.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -59,11 +61,14 @@
 
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
+#include <QtCore/QDateTime>
 #include <QtCore/QDebug>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
@@ -120,6 +125,10 @@ static int adblockDecisionKind(const AdBlockDecision &decision)
 
 int main(int argc, char **argv)
 {
+    // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
+    QElapsedTimer perfTimer;
+    perfTimer.start();
+
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
 
@@ -149,6 +158,7 @@ int main(int argc, char **argv)
         QStandardPaths::setTestModeEnabled(true);
 
     BrowserApplication application(argc, argv);
+    const qint64 appCtorMs = perfTimer.elapsed();
 
     // A non-standalone run that could not take the single-instance
     // socket already forwarded its url to the running instance and is
@@ -173,7 +183,7 @@ int main(int argc, char **argv)
         "bookmarks-smoke", "search-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
-        "app-smoke", "extension-smoke", "ua-smoke",
+        "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1855,6 +1865,117 @@ int main(int argc, char **argv)
 
         // exec() must run while 'failures' is still alive: the lambdas
         // above capture it by reference.
+        return application.exec();
+    }
+
+    // Headless measurement for PERF01 — report-only timings for the
+    // three audited hot paths: cold start, tab-open latency and
+    // large-history model load, plus the profile-tree permission sweep
+    // (SEC12) that runs on the startup path.  Always exits 0; the
+    // numbers go into task notes rather than a pass/fail gate.
+    // Workload sizes are overridable through ARORA_PERF_HISTORY_N and
+    // ARORA_PERF_TREE_N.
+    if (args.contains(QLatin1String("--perf-smoke"))) {
+        qInfo() << "perf-smoke: app-ctor" << appCtorMs << "ms"
+                << "(single-instance, profile bring-up, services)";
+
+        // First window construction ends in the first tab; extra tabs
+        // measure the steady-state tab-open path.
+        const qint64 windowStart = perfTimer.elapsed();
+        BrowserMainWindow *perfWindow = application.newMainWindow();
+        const qint64 windowMs = perfTimer.elapsed() - windowStart;
+        qInfo() << "perf-smoke: first-window" << windowMs << "ms";
+
+        const int extraTabs = 8;
+        TabWidget *perfTabs = perfWindow->tabWidget();
+        const qint64 tabsStart = perfTimer.elapsed();
+        for (int i = 0; i < extraTabs; ++i)
+            perfTabs->makeNewTab(false);
+        const qint64 tabsMs = perfTimer.elapsed() - tabsStart;
+        qInfo() << "perf-smoke: new-tab avg"
+                << qRound(tabsMs / double(extraTabs) * 10) / 10.0
+                << "ms over" << extraTabs << "tabs";
+
+        // Large-history load: seed the on-disk format directly
+        // (oldest->newest QByteArray blocks, newest-first in memory),
+        // then measure a fresh manager's parse and its two lazy model
+        // warmups, plus the per-visit prepend cost at scale.
+        const int envHistoryN = qEnvironmentVariableIntValue("ARORA_PERF_HISTORY_N");
+        const int historyN = envHistoryN > 0 ? envHistoryN : 40000;
+        const QString historyPath =
+            BrowserPaths::dataFilePath(QLatin1String("history"));
+        {
+            QFile seed(historyPath);
+            if (!seed.open(QIODevice::WriteOnly)) {
+                qInfo() << "perf-smoke: FAIL (cannot write history seed)";
+                return 1;
+            }
+            QDataStream out(&seed);
+            const QDateTime base =
+                QDateTime::currentDateTime().addDays(-7);
+            for (int i = 0; i < historyN; ++i) {
+                QByteArray data;
+                QDataStream stream(&data, QIODevice::WriteOnly);
+                stream << quint32(HistoryParser::Version)
+                       << QStringLiteral("http://example.com/%1").arg(i)
+                       << base.addSecs(i)
+                       << QStringLiteral("page %1").arg(i);
+                out << data;
+            }
+        }
+        QElapsedTimer step;
+        step.start();
+        HistoryManager bench;
+        const qint64 historyCtorMs = step.elapsed();
+        step.restart();
+        bench.historyFilterModel()->rowCount();
+        const qint64 historyFilterMs = step.elapsed();
+        step.restart();
+        bench.historyTreeModel()->rowCount(QModelIndex());
+        const qint64 historyTreeMs = step.elapsed();
+        step.restart();
+        bench.addHistoryEntry(QStringLiteral("http://example.com/new"));
+        const qint64 historyAddMs = step.elapsed();
+        qInfo() << "perf-smoke: history" << historyN << "entries —"
+                << "load" << historyCtorMs << "ms,"
+                << "filter-model" << historyFilterMs << "ms,"
+                << "tree-model" << historyTreeMs << "ms,"
+                << "add-entry" << historyAddMs << "ms";
+
+        // SEC12 profile-tree sweep: recursive owner-only enforcement
+        // runs on the startup path (applySettings) — measure it on a
+        // synthetic tree.  Files are created with the default umask so
+        // the first pass repairs and the second verifies.
+        const int envTreeN = qEnvironmentVariableIntValue("ARORA_PERF_TREE_N");
+        const int treeN = envTreeN > 0 ? envTreeN : 5000;
+        QTemporaryDir tree(QDir::temp().filePath(
+            QLatin1String("arora-perf-XXXXXX")));
+        if (!tree.isValid()) {
+            qInfo() << "perf-smoke: FAIL (cannot create tree dir)";
+            return 1;
+        }
+        for (int i = 0; i < treeN; ++i) {
+            QDir().mkpath(tree.path() + QStringLiteral("/d%1")
+                          .arg(i % 25));
+            QFile file(tree.path() + QStringLiteral("/d%1/f%2")
+                       .arg(i % 25).arg(i));
+            if (file.open(QIODevice::WriteOnly))
+                file.close();
+        }
+        step.restart();
+        BrowserProfile::ensureUserOnlyPermissions(tree.path());
+        const qint64 treeFirstMs = step.elapsed();
+        step.restart();
+        BrowserProfile::ensureUserOnlyPermissions(tree.path());
+        const qint64 treeSecondMs = step.elapsed();
+        qInfo() << "perf-smoke: perm-sweep" << treeN << "files —"
+                << "first" << treeFirstMs << "ms,"
+                << "second" << treeSecondMs << "ms";
+
+        // Give the WebEngine child one event-loop spin so teardown
+        // follows the normal path.
+        QTimer::singleShot(0, &application,
+                           [&application]() { application.exit(0); });
         return application.exec();
     }
 

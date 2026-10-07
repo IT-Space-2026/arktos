@@ -72,18 +72,25 @@ Result readEntries(QDataStream &in, QHash<QString, int> &atomicHash)
 
         if (item == lastInsertedItem) {
             if (lastInsertedItem.title.isEmpty() && !result.entries.isEmpty())
-                result.entries[0].title = item.title;
+                result.entries.last().title = item.title;
             continue;
         }
 
         if (!result.needToSort && !result.entries.isEmpty() && lastInsertedItem < item)
             result.needToSort = true;
 
-        result.entries.prepend(item);
+        result.entries.append(item);
         lastInsertedItem = item;
     }
+    // The file is written oldest->newest while the list is kept
+    // newest-first.  Qt6's QList is contiguous storage where prepend()
+    // memmoves the whole array — per-entry prepending made parsing
+    // quadratic (Qt4's QList::prepend was amortized O(1)).  Appending
+    // and reversing once keeps the load linear.
     if (result.needToSort)
         std::sort(result.entries.begin(), result.entries.end());
+    else
+        std::reverse(result.entries.begin(), result.entries.end());
     return result;
 }
 

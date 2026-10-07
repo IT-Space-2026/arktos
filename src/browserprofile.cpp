@@ -26,6 +26,7 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qregularexpression.h>
+#include <qset.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
@@ -243,9 +244,21 @@ void applySettings(QWebEngineProfile *profile)
 
     // SEC12: the profile tree must stay owner-only.  This runs at
     // startup so a storage dir loosened by a umask quirk or a manual
-    // copy is repaired before Chromium writes more into it.
-    if (!profile->isOffTheRecord())
-        ensureUserOnlyPermissions(profile->persistentStoragePath());
+    // copy is repaired before Chromium writes more into it.  PERF01:
+    // the deep walk runs once per profile per process — applySettings
+    // is called again by postLaunch's loadSettings and by every
+    // settings-dialog apply, and the recursive stat+chmod pass over a
+    // warm Chromium cache tree is too expensive to repeat.  The
+    // post-wipe calls in clearSiteStorage/clearDeferredSiteStorage go
+    // through ensureUserOnlyPermissions directly and still run.
+    if (!profile->isOffTheRecord()) {
+        static QSet<QString> checkedPaths;
+        const QString storagePath = profile->persistentStoragePath();
+        if (!checkedPaths.contains(storagePath)) {
+            checkedPaths.insert(storagePath);
+            ensureUserOnlyPermissions(storagePath);
+        }
+    }
 }
 
 bool ensureUserOnlyPermissions(const QString &path)
@@ -259,7 +272,14 @@ bool ensureUserOnlyPermissions(const QString &path)
     if (!dir.exists())
         return true;
 
-    bool ok = QFile::setPermissions(dir.absolutePath(), dirPerms);
+    // entryInfoList already stats every entry — skip the chmod call
+    // unless the permissions actually differ, so a correctly-formed
+    // tree costs one read-only pass instead of a write syscall per
+    // file (PERF01: this walks the whole Chromium profile incl. the
+    // HTTP cache on the startup path).
+    bool ok = true;
+    if (QFileInfo(dir.absolutePath()).permissions() != dirPerms)
+        ok = QFile::setPermissions(dir.absolutePath(), dirPerms);
     const QFileInfoList entries = dir.entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const QFileInfo &entry : entries) {
@@ -269,7 +289,7 @@ bool ensureUserOnlyPermissions(const QString &path)
             continue;
         if (entry.isDir())
             ok &= ensureUserOnlyPermissions(entry.absoluteFilePath());
-        else
+        else if (entry.permissions() != filePerms)
             ok &= QFile::setPermissions(entry.absoluteFilePath(), filePerms);
     }
     return ok;

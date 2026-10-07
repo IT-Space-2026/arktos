@@ -14,6 +14,10 @@ FFI static library with `cargo build --release` in src/adblock/rust
 and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
 fixed probe set.
 
+Performance: `./arora --perf-smoke` runs headless (with
+QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
+tab-open, large-history-load and profile permission-sweep timings.
+
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
 the preferences dialog loads unpacked folders or installs .zip packages,

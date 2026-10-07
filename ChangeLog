@@ -196,6 +196,9 @@ Event-loop blocking audit (FRZ01):
 Accessibility audit (A11Y01):
     Screen readers now have a name for every chrome control that used to be silent: the private-browsing indicator is a real button (focusable, named, keyboard-activatable to leave private mode) instead of a mouse-only label, and the site icon, clear/search buttons, address and search fields, tab strip, and download rows all expose names and descriptions. Dialog labels were wired to their inputs as buddies so fields announce as "User name", "Password", "Home Page", and so on, with mnemonics added where missing. A new autotests/accessibility suite pins the contract, and the AT-SPI bridge is verified attaching on Linux (QAccessible::isActive() reports true once a widget is shown under an a11y bus).
 
+Performance sanity (PERF01):
+    Cold start no longer stalls for seconds when adblock lists are populated: a cached EasyList-size ruleset cost ~6.7s inside profile bring-up (browser ready in ~0.6s now) because every parsed filter eagerly compiled a QRegularExpression that mostly never fires. Compilation is deferred to first match through a shared, lock-guarded pattern cache — per-rule lazy flags would race because request matching runs on the WebEngine IO thread while the GUI thread can scan the same rules — and the wildcard-to-regexp converter no longer recompiles its five helper expressions per filter. History loading appends then reverses instead of prepending each entry, which Qt 6's contiguous QList made quadratic. The startup permission sweep over the profile tree now runs once per launch and only chmods files whose permissions actually differ. A headless `./arora --perf-smoke` reports cold-start, first-window, tab-open, large-history and permission-sweep timings.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
