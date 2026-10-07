@@ -32,7 +32,11 @@
 #include "locationbar.h"
 #include "locationbarsiteicon.h"
 #include "privacyindicator.h"
+#include "adblockbutton.h"
+#include "adblockdialog.h"
+#include "adblockmanager.h"
 #include "clearbutton.h"
+#include "siteshield.h"
 #include "webview.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
@@ -103,6 +107,7 @@ private slots:
     void dropUrl();
     void siteIcon();
     void privacyIndicator();
+    void adBlockButton();
     void omniboxSuggestions();
     void omniboxScopedCompletions();
 };
@@ -112,6 +117,13 @@ void tst_LocationBar::initTestCase()
     QCoreApplication::setApplicationName("tst_locationbar");
     QSettings settings;
     settings.clear();
+    // Dead local list keeps AdBlockManager away from the live remote
+    // defaults — adBlockButton() exercises the enable toggle, which
+    // would otherwise grant TELEM01 consent and kick real fetches.
+    settings.setValue(QLatin1String("AdBlock/subscriptions"),
+        QStringList() << QLatin1String(
+            "abp:subscribe?location=file%3A%2F%2Fnonexistent-adb05.txt"
+            "&title=DeadList"));
 }
 
 // The constructor wires up the side widgets.
@@ -290,6 +302,65 @@ void tst_LocationBar::privacyIndicator()
     // Clicking it asks the application to leave private mode.
     QTest::mouseClick(&indicator, Qt::LeftButton);
     QVERIFY(!BrowserApplication::isPrivate());
+}
+
+// ADB05: the content-blocker button sits in the same right-side
+// cluster as the site shield, tracks the tab's page, greys while the
+// blocker is disabled, and its popup exposes the count line, the
+// enable toggle and the settings entry point.
+void tst_LocationBar::adBlockButton()
+{
+    TestLocationBar bar;
+    AdBlockButton *button = bar.findChild<AdBlockButton*>();
+    QVERIFY(button);
+    QVERIFY(button->isHidden()); // nothing to report without a view
+
+    SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
+    QVERIFY(shield);
+    QCOMPARE(button->parentWidget(), shield->parentWidget());
+
+    WebView view(BrowserApplication::webEngineProfile());
+    bar.setWebView(&view);
+    QVERIFY(!button->isHidden());
+
+    QVERIFY(button->menu());
+    QAction *toggle = nullptr;
+    QAction *configure = nullptr;
+    for (QAction *action : button->menu()->actions()) {
+        if (action->isCheckable())
+            toggle = action;
+        else if (action->text().contains(QLatin1String("Settings")))
+            configure = action;
+    }
+    QVERIFY(toggle);
+    QVERIFY(configure);
+
+    AdBlockManager *manager = AdBlockManager::instance();
+    const bool wasEnabled = manager->isEnabled();
+    manager->setEnabled(false);
+    QVERIFY(button->toolTip().contains(QLatin1String("disabled"),
+                                     Qt::CaseInsensitive));
+
+    // The popup's checkable row drives AdBlockManager::setEnabled —
+    // trigger() on a checkable action flips its state first.
+    toggle->trigger();
+    QVERIFY(manager->isEnabled());
+    QVERIFY(!button->toolTip().contains(QLatin1String("disabled"),
+                                      Qt::CaseInsensitive));
+
+    // The settings entry opens the shared non-modal AdBlockDialog.
+    configure->trigger();
+    AdBlockDialog *dialog = nullptr;
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        AdBlockDialog *candidate = qobject_cast<AdBlockDialog*>(widget);
+        if (candidate && candidate->isVisible())
+            dialog = candidate;
+    }
+    QVERIFY(dialog);
+    dialog->close();
+
+    manager->setEnabled(wasEnabled);
 }
 
 // SRCH01: the location-bar dropdown merges engine suggestions above

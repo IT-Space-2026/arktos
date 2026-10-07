@@ -31,11 +31,45 @@
 #include "adblocknetwork.h"
 #include "adblockresourcehandler.h"
 
+#include <qhash.h>
+#include <qmutex.h>
 #include <qregularexpression.h>
 #include <qurlquery.h>
 #include <qwebengineurlrequestinfo.h>
 
 // #define ADBLOCKINTERCEPTOR_DEBUG
+
+// ADB05 per-page blocked tally — written from the IO thread by every
+// interceptor instance (normal, off-the-record and tor profiles share
+// this table), read on the GUI thread.  Bounded so a hostile page
+// cannot grow the map without limit.
+static QMutex s_blockedCountLock;
+static QHash<QString, int> s_blockedCounts;
+static const int maxBlockedCountHosts = 512;
+
+void AdBlockRequestInterceptor::noteBlockedRequest(const QUrl &firstPartyUrl)
+{
+    const QString host = firstPartyUrl.host().toLower();
+    if (host.isEmpty())
+        return;
+    const QMutexLocker lock(&s_blockedCountLock);
+    if (s_blockedCounts.size() >= maxBlockedCountHosts
+        && !s_blockedCounts.contains(host))
+        return;
+    s_blockedCounts[host] += 1;
+}
+
+int AdBlockRequestInterceptor::blockedRequestCount(const QString &host)
+{
+    const QMutexLocker lock(&s_blockedCountLock);
+    return s_blockedCounts.value(host.toLower());
+}
+
+void AdBlockRequestInterceptor::clearBlockedRequestCounts()
+{
+    const QMutexLocker lock(&s_blockedCountLock);
+    s_blockedCounts.clear();
+}
 
 AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
@@ -102,6 +136,10 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         // payload or $removeparam-rewritten request URL); the native
         // matcher names a bundled resource instead.
         if (!decision.redirectUrl.isEmpty()) {
+            // A data: payload is a blocked request served a stub; an
+            // http(s) rewrite is a $removeparam redirect — not a block.
+            if (decision.redirectUrl.startsWith(QLatin1String("data:")))
+                noteBlockedRequest(info.firstPartyUrl());
 #if defined(ADBLOCKINTERCEPTOR_DEBUG)
             qDebug() << "AdBlockRequestInterceptor: redirect-url"
                      << info.requestUrl() << "->" << decision.redirectUrl;
@@ -111,6 +149,7 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         }
         const QByteArray resource = AdBlockResourceHandler::canonicalResourceName(
             decision.redirectResource);
+        noteBlockedRequest(info.firstPartyUrl()); // stub or plain block
         if (resource.isEmpty()) {
             info.block(true); // unknown stub — plain block
         } else {
@@ -123,6 +162,7 @@ void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         return;
     }
     case AdBlockDecision::Block:
+        noteBlockedRequest(info.firstPartyUrl());
         info.block(true);
         return;
     }

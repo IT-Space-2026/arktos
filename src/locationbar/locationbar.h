@@ -29,6 +29,7 @@ class WebView;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
 class SiteShieldButton;
+class AdBlockButton;
 class LocationBar : public LineEdit
 {
     Q_OBJECT
@@ -54,6 +55,7 @@ private:
 
     LocationBarSiteIcon *m_siteIcon;
     SiteShieldButton *m_shield;
+    AdBlockButton *m_adBlockButton;
     PrivacyIndicator *m_privacyIndicator;
 };
 

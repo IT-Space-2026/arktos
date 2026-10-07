@@ -48,7 +48,19 @@ public:
 
     virtual void interceptRequest(QWebEngineUrlRequestInfo &info) override;
 
+    // ADB05: session tally of requests the blocker stopped, keyed by
+    // first-party host (the top-level page), so the location-bar
+    // button can show a per-page blocked count.  Written on the IO
+    // thread; both accessors take the internal lock.  Counts are
+    // cumulative for the session — a caller wanting "this page load"
+    // diffs against a baseline taken at load start (counts can mix
+    // when two tabs share a host, which is an accepted approximation).
+    static int blockedRequestCount(const QString &host);
+    static void clearBlockedRequestCounts();  // test hook
+
 private:
+    static void noteBlockedRequest(const QUrl &firstPartyUrl);
+
     AdBlockNetwork *m_network;
 };
 

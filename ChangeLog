@@ -344,6 +344,9 @@ Search shortcut nicknames (SRCH06):
 Status bar widgets (UIP04):
     The status bar gained two permanent right-side widgets, Vivaldi-style: a page-load indicator and a zoom control. While a page loads, the indicator shows a slim progress bar with a running elapsed timer; on completion it reports "Loaded in N s" for a few seconds before clearing itself — it lives outside the temporary-message area so link-hover text never clobbers it. The zoom control reads "- 100% +": the buttons step the current tab through the standard zoom ladder, the percent itself resets to 100%, and the display follows menu, keyboard and Ctrl+wheel zoom as well as each tab's own level on every tab switch. Both honor the existing status-bar show/hide preference.
 
+AdBlock toolbar button (ADB05):
+    A content-blocker button now sits at the right end of the address bar, uBO-style. Its tinted shield icon carries a small numeric badge counting the requests blocked on the current page, and greys out while content blocking is disabled in Settings or the site is whitelisted. Clicking it opens a compact menu with the per-page blocked count, a "Content blocking" enable toggle and an "Ad Block Settings..." entry that opens the existing configuration dialog; Tools > Ad Block is unchanged. The counts come from a new session tally inside the profile request interceptor, keyed by the page's first-party host: plain blocks and redirects to bundled stub resources count, $removeparam query rewrites do not.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

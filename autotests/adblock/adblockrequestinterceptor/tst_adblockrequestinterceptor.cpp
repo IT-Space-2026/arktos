@@ -38,6 +38,7 @@
 
 #include "adblockmanager.h"
 #include "adblocknetwork.h"
+#include "adblockrequestinterceptor.h"
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "schemeaccesshandler.h"
@@ -207,6 +208,7 @@ private slots:
     void redirectUnknownStub();
     void removeParam();
     void mainFrameBlock();
+    void blockedCountTracking();
 
 private:
     // Feeds the given filters into a fresh subscription on the shared
@@ -399,6 +401,34 @@ void tst_AdBlockRequestInterceptor::mainFrameBlock()
     WebPage page(m_profile);
     QVERIFY(loadAndFail(&page, m_server->url(QLatin1String("/mainblock"))));
     QVERIFY(!m_server->requests.contains(QLatin1String("/mainblock")));
+}
+
+// ADB05: intercepted requests bump the per-first-party-host tally the
+// location-bar AdBlockButton diffs against its load-start baseline —
+// plain blocks and stub redirects count, allowed requests do not.
+void tst_AdBlockRequestInterceptor::blockedCountTracking()
+{
+    addRules(QStringList()
+             << QLatin1String("/counted.png")
+             << QLatin1String("/stubbed.js$script,redirect=noop.js"));
+
+    m_server->indexHtml =
+        "<html><body>"
+        "<img src=\"/counted.png\">"
+        "<img src=\"/allowed.png\">"
+        "<script src=\"/stubbed.js\"></script>"
+        "</body></html>";
+
+    const int before = AdBlockRequestInterceptor::blockedRequestCount(
+        QLatin1String("127.0.0.1"));
+    WebPage page(m_profile);
+    QVERIFY(loadSync(&page, m_server->url(QLatin1String("/index.html"))));
+
+    QVERIFY(!m_server->requests.contains(QLatin1String("/counted.png")));
+    QVERIFY(!m_server->requests.contains(QLatin1String("/stubbed.js")));
+    QVERIFY(m_server->requests.contains(QLatin1String("/allowed.png")));
+    QTRY_VERIFY(AdBlockRequestInterceptor::blockedRequestCount(
+        QLatin1String("127.0.0.1")) >= before + 2);
 }
 
 int main(int argc, char *argv[])

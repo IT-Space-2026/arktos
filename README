@@ -122,6 +122,12 @@ grants for the origin with revoke controls, and a clear-site-data
 action.  The shield icon carries a small badge while JavaScript is
 blocked on the current page.
 
+A content-blocker button at the right end of the address bar shows a
+per-page blocked-request count (as an icon badge, and in its popup),
+toggles content blocking on or off globally, and opens the AdBlock
+settings dialog.  The icon greys while blocking is disabled or the
+site is whitelisted.
+
 A "Security Level" selector at the top of the Privacy settings page
 offers three Mullvad-style tiers.  Standard (the default) is the
 current behavior.  Safer blocks external scripts, workers and service
