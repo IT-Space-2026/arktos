@@ -143,7 +143,27 @@ any favicons fetched via their <Image> URLs at runtime are trademarks /
 assets of their respective owners.
 
 ----------------------------------------------------------------------
-9. Runtime dependencies (NOT vendored into this repository)
+9. Bundled icon themes — src/icons/
+----------------------------------------------------------------------
+
+Curated subsets (35 freedesktop-named icons each, plus mechanically
+recolored -dark variants) are vendored as qrc icon themes. Each
+directory carries its own LICENSE file; summary:
+
+  * arora-adwaita{,-dark} — Adwaita Icon Theme, © the GNOME Project.
+    LGPL-3+ or CC-BY-SA-3.0-US at the recipient's choice (newer artwork
+    CC-BY-SA-4.0). Source: gitlab.gnome.org/GNOME/adwaita-icon-theme.
+  * arora-breeze{,-dark} — KDE Breeze Icons, © Uri Herrera and others.
+    LGPL-3+ (upstream explicitly extends the LGPL to its icon artwork).
+    Source: github.com/KDE/breeze-icons.
+  * arora-tabler{,-dark} — Tabler Icons, © 2020-2026 Paweł Kuna. MIT.
+    Source: github.com/tabler/tabler-icons.
+  * arora-legacy — the original Arora artwork (see section 5), served
+    in place from src/data/graphics/ via qrc aliases; the last-resort
+    fallback for names the newer sets do not cover.
+
+----------------------------------------------------------------------
+10. Runtime dependencies (NOT vendored into this repository)
 ----------------------------------------------------------------------
 
   * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
@@ -160,14 +180,14 @@ assets of their respective owners.
     QLibrary for AES-256-GCM; Arora does not link or ship OpenSSL.
 
 ----------------------------------------------------------------------
-10. Translations — src/locale/
+11. Translations — src/locale/
 ----------------------------------------------------------------------
 
 The .ts/.qm translations are community contributions under the project
 license; per-language maintainers are listed in src/locale/maintainers.
 
 ----------------------------------------------------------------------
-11. Test fixtures
+12. Test fixtures
 ----------------------------------------------------------------------
 
 tools/htmlToXBel/tests/{firefox3,opera9,ie7}-bookmarks.html are bookmark
@@ -177,7 +197,7 @@ fuzz/ seed corpus entries derived from it are XBEL test data. None ship
 in installed or bundled builds.
 
 ----------------------------------------------------------------------
-12. Everything else
+13. Everything else
 ----------------------------------------------------------------------
 
 All remaining source, .ui files, src/htmls/ pages, src/data/autofill.js

@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arora Adwaita Dark
+Comment=Dark-scheme recolor of the bundled Adwaita symbolic icons
+Directories=icons
+Inherits=arora-legacy
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256

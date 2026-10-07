@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arora Legacy
+Comment=Original Arora 2009 bundled artwork — final fallback
+Directories=icons
+Inherits=arora-adwaita
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=128

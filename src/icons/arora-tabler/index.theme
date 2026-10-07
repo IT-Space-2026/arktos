@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arora Tabler
+Comment=Bundled Tabler outline icons (MIT)
+Directories=icons
+Inherits=arora-legacy
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256

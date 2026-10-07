@@ -62,6 +62,7 @@
 
 #include "tabbar.h"
 
+#include "aroraicon.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -186,13 +187,10 @@ void TabBar::installCloseButton(int index)
     QToolButton *button = new QToolButton(this);
     button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    // The style's close glyph follows the palette (readable in dark
-    // mode); the bundled png is the fallback for styles without one.
-    QIcon icon = style()->standardIcon(QStyle::SP_TitleBarCloseButton,
-                                       nullptr, this);
-    if (icon.isNull())
-        icon = QIcon(QLatin1String(":graphics/closetab.png"));
-    button->setIcon(icon);
+    // Resolves through AroraIcon: the active icon theme first, the
+    // bundled sets' dark variants when the palette is dark, and the
+    // original closetab.png as the last-resort fallback.
+    button->setIcon(AroraIcon::get(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
     button->setAccessibleName(tr("Close tab"));
     button->setToolTip(tr("Close Tab"));

@@ -105,6 +105,7 @@ HEADERS += \
     $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
+    $$PWD/utils/aroraicon.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
     $$PWD/utils/languagemanager.h \
@@ -145,6 +146,7 @@ SOURCES += \
     $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
+    $$PWD/utils/aroraicon.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
     $$PWD/utils/languagemanager.cpp \
@@ -158,7 +160,8 @@ RESOURCES += \
     $$PWD/data/data.qrc \
     $$PWD/data/graphics/graphics.qrc \
     $$PWD/data/searchengines/searchengines.qrc \
-    $$PWD/htmls/htmls.qrc
+    $$PWD/htmls/htmls.qrc \
+    $$PWD/icons/icons.qrc
 
 DISTFILES += $$PWD/../AUTHORS \
     $$PWD/../ChangeLog \

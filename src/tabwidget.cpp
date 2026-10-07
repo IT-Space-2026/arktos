@@ -63,6 +63,7 @@
 #include "tabwidget.h"
 
 #include "addbookmarkdialog.h"
+#include "aroraicon.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -147,7 +148,7 @@ TabWidget::TabWidget(QWidget *parent)
 
     m_closeTabAction = new QAction(this);
     m_closeTabAction->setShortcuts(QKeySequence::Close);
-    m_closeTabAction->setIcon(QIcon(QLatin1String(":graphics/closetab.png")));
+    m_closeTabAction->setIcon(AroraIcon::get(QLatin1String("window-close")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif
@@ -156,7 +157,7 @@ TabWidget::TabWidget(QWidget *parent)
     m_bookmarkTabsAction = new QAction(this);
     connect(m_bookmarkTabsAction, &QAction::triggered, this, &TabWidget::bookmarkTabs);
 
-    m_newTabAction->setIcon(QIcon(QLatin1String(":graphics/addtab.png")));
+    m_newTabAction->setIcon(AroraIcon::get(QLatin1String("tab-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_newTabAction->setIconVisibleInMenu(false);
 #endif
@@ -167,8 +168,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_previousTabAction = new QAction(this);
     connect(m_previousTabAction, &QAction::triggered, this, &TabWidget::previousTab);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_previousTabAction->setIcon(QIcon::fromTheme(QLatin1String("go-previous")));
-    m_nextTabAction->setIcon(QIcon::fromTheme(QLatin1String("go-next")));
+    m_previousTabAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
+    m_nextTabAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
 #endif
 
     m_recentlyClosedTabsMenu = new QMenu(this);

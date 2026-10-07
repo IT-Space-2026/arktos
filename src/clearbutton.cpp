@@ -28,6 +28,8 @@
 
 #include "clearbutton.h"
 
+#include "aroraicon.h"
+
 #include <qpainter.h>
 
 ClearButton::ClearButton(QWidget *parent)
@@ -41,15 +43,12 @@ ClearButton::ClearButton(QWidget *parent)
     setMinimumSize(22, 22);
     setVisible(false);
 
-    // First check for a style icon, current KDE provides one
-    if (m_styleImage.isNull()) {
-        QLatin1String iconName = (layoutDirection() == Qt::RightToLeft)
-            ? QLatin1String("edit-clear-locationbar-ltr")
-            : QLatin1String("edit-clear-locationbar-rtl");
-        QIcon icon = QIcon::fromTheme(iconName);
-        if (!icon.isNull())
-            m_styleImage = icon.pixmap(16, 16).toImage();
-    }
+    // First check for a themed icon, current KDE provides one.
+    // Resolved live in paintEvent so an icon-theme switch (the
+    // Settings Icons combo) reaches already-constructed buttons.
+    m_styleIcon = AroraIcon::get((layoutDirection() == Qt::RightToLeft)
+        ? QLatin1String("edit-clear-locationbar-ltr")
+        : QLatin1String("edit-clear-locationbar-rtl"));
 }
 
 void ClearButton::textChanged(const QString &text)
@@ -62,10 +61,11 @@ void ClearButton::paintEvent(QPaintEvent *event)
     Q_UNUSED(event);
     QPainter painter(this);
 
-    if (!m_styleImage.isNull()) {
-        int x = (width() - m_styleImage.width()) / 2 - 1;
-        int y = (height() - m_styleImage.height()) / 2 - 1;
-        painter.drawImage(x, y, m_styleImage);
+    const QImage styleImage = m_styleIcon.pixmap(16, 16).toImage();
+    if (!styleImage.isNull()) {
+        int x = (width() - styleImage.width()) / 2 - 1;
+        int y = (height() - styleImage.height()) / 2 - 1;
+        painter.drawImage(x, y, styleImage);
         return;
     }
 

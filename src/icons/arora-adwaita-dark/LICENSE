@@ -1,0 +1,14 @@
+Adwaita icon theme (bundled subset, renamed to freedesktop names; the
+-dark directory is a mechanical recolor of the same artwork).
+
+Copyright the GNOME Project and the Adwaita icon theme authors.
+Source: adwaita-icon-theme (https://gitlab.gnome.org/GNOME/adwaita-icon-theme)
+
+License: this work is licensed under the terms of either the GNU
+Lesser General Public License version 3 or later, or the Creative
+Commons Attribution-ShareAlike 3.0 United States License, at your
+choice; newer artwork in the set is under CC-BY-SA-4.0.
+See /usr/share/doc/adwaita-icon-theme/copyright (Debian packaging)
+for the file-level breakdown.
+
+Attribution: "Adwaita Icon Theme" by the GNOME Project.

@@ -31,6 +31,7 @@
 #include "adblockmodel.h"
 #include "adblockmanager.h"
 #include "adblocksubscription.h"
+#include "aroraicon.h"
 #include "treesortfilterproxymodel.h"
 
 #include <qdesktopservices.h>
@@ -59,7 +60,7 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     connect(menu, &QMenu::aboutToShow,
             this, &AdBlockDialog::aboutToShowActionMenu);
     actionToolButton->setMenu(menu);
-    actionToolButton->setIcon(QIcon(QLatin1String(":128x128/run.png")));
+    actionToolButton->setIcon(AroraIcon::get(QLatin1String("system-run")));
     actionToolButton->setPopupMode(QToolButton::InstantPopup);
 
     AdBlockSubscription *subscription = manager->customRules();

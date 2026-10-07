@@ -24,6 +24,7 @@
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
 #include "acceptlanguagedialog.h"
+#include "aroraicon.h"
 #include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
@@ -32,6 +33,7 @@
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "browsertheme.h"
 #include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
@@ -234,7 +236,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke",
-        "tor-window-smoke", "sorry-smoke",
+        "tor-window-smoke", "sorry-smoke", "icons-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2616,6 +2618,98 @@ int main(int argc, char **argv)
         QTimer::singleShot(240000, &application, [torWinFail]() {
             torWinFail(QLatin1String("timeout waiting for bootstrap/probe"));
         });
+    }
+
+    // Headless verification for ICONS01: each bundled set must render
+    // every registered icon name, a theme switch must reach already
+    // created icons, the -dark recolor variants must engage under a
+    // dark palette, and the 2009 fallback art must resolve when the
+    // active theme misses a name.  Fully synchronous — no event loop.
+    if (args.contains(QLatin1String("--icons-smoke"))) {
+        int failures = 0;
+        auto check = [&failures](const QString &what, bool ok) {
+            qInfo() << "icons-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        auto opaquePixels = [](const QImage &image) {
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (image.pixelColor(x, y).alpha() > 40)
+                        ++count;
+            return count;
+        };
+
+        const QStringList names = AroraIcon::names();
+        check(QLatin1String("name count"), names.count() >= 30);
+        const QStringList sets = { QLatin1String("adwaita"),
+                                   QLatin1String("breeze"),
+                                   QLatin1String("tabler") };
+        for (const QString &set : sets) {
+            AroraIcon::setTheme(set);
+            int missing = 0;
+            for (const QString &name : names) {
+                const QImage image = AroraIcon::get(name)
+                    .pixmap(QSize(24, 24)).toImage();
+                if (image.isNull() || opaquePixels(image) == 0) {
+                    qInfo() << "icons-smoke: missing" << set << name;
+                    ++missing;
+                }
+            }
+            check(set + QLatin1String(" coverage"), missing == 0);
+        }
+
+        // Live apply: an existing QIcon follows setThemeName — that
+        // is what makes the Settings combo need no widget rewiring.
+        AroraIcon::setTheme(QLatin1String("adwaita"));
+        const QIcon live = AroraIcon::get(QLatin1String("go-previous"));
+        const QImage before = live.pixmap(QSize(24, 24)).toImage();
+        AroraIcon::setTheme(QLatin1String("tabler"));
+        check(QLatin1String("live switch"),
+              before != live.pixmap(QSize(24, 24)).toImage());
+
+        // A dark palette selects the pre-recolored -dark variant (Qt
+        // renders currentColor black, it does not palette-recolor).
+        const QPalette savedPalette = qApp->palette();
+        qApp->setPalette(BrowserTheme::darkPalette());
+        check(QLatin1String("dark variant selection"),
+              AroraIcon::effectiveThemeName(QLatin1String("tabler"))
+                  == QLatin1String("arora-tabler-dark"));
+        AroraIcon::setTheme(QLatin1String("tabler"));
+        const QImage darkImage = AroraIcon::get(QLatin1String("go-previous"))
+            .pixmap(QSize(24, 24)).toImage();
+        qlonglong luminance = 0;
+        int opaque = 0;
+        for (int y = 0; y < darkImage.height(); ++y) {
+            for (int x = 0; x < darkImage.width(); ++x) {
+                const QColor color = darkImage.pixelColor(x, y);
+                if (color.alpha() > 128) {
+                    luminance += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        }
+        check(QLatin1String("dark glyphs light"),
+              opaque > 0 && luminance / opaque > 140);
+        qApp->setPalette(savedPalette);
+
+        // The original 2009 artwork is the last resort: under a theme
+        // that does not exist at all, legacy names still resolve, and
+        // names missing there keep falling through to the bundled
+        // Adwaita inheritance.
+        QIcon::setThemeName(QLatin1String("arora-does-not-exist"));
+        check(QLatin1String("legacy fallback"),
+              !AroraIcon::get(QLatin1String("tab-new"))
+                   .pixmap(QSize(16, 16)).isNull());
+        check(QLatin1String("inherited fallback"),
+              !AroraIcon::get(QLatin1String("go-previous"))
+                   .pixmap(QSize(16, 16)).isNull());
+
+        AroraIcon::setTheme(AroraIcon::theme());
+        qInfo() << "icons-smoke:" << (failures == 0 ? "PASS" : "FAIL")
+                << failures << "failures";
+        return failures == 0 ? 0 : 1;
     }
 
     return application.exec();

@@ -63,6 +63,7 @@
 #include "settings.h"
 
 #include "acceptlanguagedialog.h"
+#include "aroraicon.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
 #include "browsermainwindow.h"
@@ -105,6 +106,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     setupUi(this);
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
+
+    // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
+    // the id, each option previews its own view-refresh glyph.
+    for (const QString &id : AroraIcon::themeIds()) {
+        const int row = iconThemeCombo->count();
+        iconThemeCombo->addItem(AroraIcon::themeDisplayName(id), id);
+        iconThemeCombo->setItemIcon(
+            row, AroraIcon::iconForTheme(id, QLatin1String("view-refresh")));
+    }
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
     connect(fixedFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFixedFont);
@@ -224,6 +234,9 @@ void SettingsDialog::loadFromSettings()
     // SRCH03: opt-in — hidden by default now that the omnibox
     // location bar covers searching.
     showSearchBox->setChecked(settings.value(QLatin1String("showSearchBox"), false).toBool());
+    const QString iconTheme = AroraIcon::theme();
+    const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
+    iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("history"));
@@ -378,7 +391,12 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("home"), homeLineEdit->text());
     settings.setValue(QLatin1String("startupBehavior"), startupBehavior->currentIndex());
     settings.setValue(QLatin1String("showSearchBox"), showSearchBox->isChecked());
+    const QString iconTheme = iconThemeCombo->currentData().toString();
+    settings.setValue(QLatin1String("iconTheme"), iconTheme);
     settings.endGroup();
+    // Applies to existing icons live — QIcon theme lookups re-resolve
+    // on setThemeName, no widget rewiring needed.
+    AroraIcon::setTheme(iconTheme);
 
     settings.beginGroup(QLatin1String("downloadmanager"));
     settings.setValue(QLatin1String("alwaysPromptForFileName"), downloadAsk->isChecked());

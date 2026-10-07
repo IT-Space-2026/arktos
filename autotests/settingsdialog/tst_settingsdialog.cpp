@@ -78,6 +78,12 @@ void tst_SettingsDialog::saveAndReload()
         dialog.homeLineEdit->setText(QLatin1String("http://home.example.com/"));
         dialog.startupBehavior->setCurrentIndex(1);
         dialog.showSearchBox->setChecked(true);
+        // ICONS01: pick a non-native bundled set so the round-trip
+        // proves the persisted id lands on the right combo row.
+        const int tablerRow = dialog.iconThemeCombo->findData(
+            QLatin1String("tabler"));
+        QVERIFY(tablerRow >= 0);
+        dialog.iconThemeCombo->setCurrentIndex(tablerRow);
         dialog.expireHistory->setCurrentIndex(2);       // 14 days
         dialog.searchEngineFallback->setChecked(true);
         dialog.downloadAsk->setChecked(true);
@@ -120,6 +126,8 @@ void tst_SettingsDialog::saveAndReload()
     QCOMPARE(settings.value(QLatin1String("MainWindow/home")).toString(),
              QLatin1String("http://home.example.com/"));
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSearchBox")).toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/iconTheme")).toString(),
+             QLatin1String("tabler"));
     QCOMPARE(settings.value(QLatin1String("proxy/enabled")).toBool(), true);
 
     // A fresh dialog must read every value back through loadFromSettings.
@@ -128,6 +136,8 @@ void tst_SettingsDialog::saveAndReload()
         QCOMPARE(reloaded.homeLineEdit->text(),
                  QLatin1String("http://home.example.com/"));
         QVERIFY(reloaded.showSearchBox->isChecked());
+        QCOMPARE(reloaded.iconThemeCombo->currentData().toString(),
+                 QLatin1String("tabler"));
         QCOMPARE(reloaded.expireHistory->currentIndex(), 2);
         QVERIFY(reloaded.searchEngineFallback->isChecked());
         QVERIFY(reloaded.proxySupport->isChecked());

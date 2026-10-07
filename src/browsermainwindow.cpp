@@ -67,6 +67,7 @@
 #include "aboutdialog.h"
 #include "adblockmanager.h"
 #include "addbookmarkdialog.h"
+#include "aroraicon.h"
 #include "autosaver.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
@@ -582,13 +583,13 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileQuit);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_fileNewWindowAction->setIcon(QIcon::fromTheme(QLatin1String("window-new")));
-    m_fileOpenFileAction->setIcon(QIcon::fromTheme(QLatin1String("document-open")));
-    m_filePrintPreviewAction->setIcon(QIcon::fromTheme(QLatin1String("document-print-preview")));
-    m_filePrintAction->setIcon(QIcon::fromTheme(QLatin1String("document-print")));
-    m_fileSaveAsAction->setIcon(QIcon::fromTheme(QLatin1String("document-save-as")));
-    m_fileCloseWindow->setIcon(QIcon::fromTheme(QLatin1String("window-close")));
-    m_fileQuit->setIcon(QIcon::fromTheme(QLatin1String("application-exit")));
+    m_fileNewWindowAction->setIcon(AroraIcon::get(QLatin1String("window-new")));
+    m_fileOpenFileAction->setIcon(AroraIcon::get(QLatin1String("document-open")));
+    m_filePrintPreviewAction->setIcon(AroraIcon::get(QLatin1String("document-print-preview")));
+    m_filePrintAction->setIcon(AroraIcon::get(QLatin1String("document-print")));
+    m_fileSaveAsAction->setIcon(AroraIcon::get(QLatin1String("document-save-as")));
+    m_fileCloseWindow->setIcon(AroraIcon::get(QLatin1String("window-close")));
+    m_fileQuit->setIcon(AroraIcon::get(QLatin1String("application-exit")));
 #endif
 
     // Edit
@@ -638,13 +639,13 @@ void BrowserMainWindow::setupMenu()
     m_editMenu->addAction(m_editFindPreviousAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_editUndoAction->setIcon(QIcon::fromTheme(QLatin1String("edit-undo")));
-    m_editRedoAction->setIcon(QIcon::fromTheme(QLatin1String("edit-redo")));
-    m_editCutAction->setIcon(QIcon::fromTheme(QLatin1String("edit-cut")));
-    m_editCopyAction->setIcon(QIcon::fromTheme(QLatin1String("edit-copy")));
-    m_editPasteAction->setIcon(QIcon::fromTheme(QLatin1String("edit-paste")));
-    m_editSelectAllAction->setIcon(QIcon::fromTheme(QLatin1String("edit-select-all")));
-    m_editFindAction->setIcon(QIcon::fromTheme(QLatin1String("edit-find")));
+    m_editUndoAction->setIcon(AroraIcon::get(QLatin1String("edit-undo")));
+    m_editRedoAction->setIcon(AroraIcon::get(QLatin1String("edit-redo")));
+    m_editCutAction->setIcon(AroraIcon::get(QLatin1String("edit-cut")));
+    m_editCopyAction->setIcon(AroraIcon::get(QLatin1String("edit-copy")));
+    m_editPasteAction->setIcon(AroraIcon::get(QLatin1String("edit-paste")));
+    m_editSelectAllAction->setIcon(AroraIcon::get(QLatin1String("edit-select-all")));
+    m_editFindAction->setIcon(AroraIcon::get(QLatin1String("edit-find")));
 #endif
 
     // View
@@ -752,15 +753,15 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewTextEncodingMenu, &QMenu::triggered,
             this, &BrowserMainWindow::viewTextEncoding);
 
-    m_stopIcon = style()->standardIcon(QStyle::SP_BrowserStop);
-    m_reloadIcon = style()->standardIcon(QStyle::SP_BrowserReload);
+    m_stopIcon = AroraIcon::get(QLatin1String("process-stop"));
+    m_reloadIcon = AroraIcon::get(QLatin1String("view-refresh"));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_viewStopAction->setIcon(m_stopIcon);
     m_viewReloadAction->setIcon(m_reloadIcon);
-    m_viewZoomInAction->setIcon(QIcon::fromTheme(QLatin1String("zoom-in")));
-    m_viewZoomNormalAction->setIcon(QIcon::fromTheme(QLatin1String("zoom-original")));
-    m_viewZoomOutAction->setIcon(QIcon::fromTheme(QLatin1String("zoom-out")));
-    m_viewFullScreenAction->setIcon(QIcon::fromTheme(QLatin1String("view-fullscreen")));
+    m_viewZoomInAction->setIcon(AroraIcon::get(QLatin1String("zoom-in")));
+    m_viewZoomNormalAction->setIcon(AroraIcon::get(QLatin1String("zoom-original")));
+    m_viewZoomOutAction->setIcon(AroraIcon::get(QLatin1String("zoom-out")));
+    m_viewFullScreenAction->setIcon(AroraIcon::get(QLatin1String("view-fullscreen")));
 #endif
 
     // History
@@ -804,8 +805,8 @@ void BrowserMainWindow::setupMenu()
     historyActions.append(m_historyRestoreLastSessionAction);
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_historyRestoreLastSessionAction->setIcon(QIcon::fromTheme(QLatin1String("document-revert")));
-    m_historyHomeAction->setIcon(QIcon::fromTheme(QLatin1String("go-home")));
+    m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
+    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
 #endif
 
     // Bookmarks
@@ -824,7 +825,7 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::showBookmarksDialog);
 
     m_bookmarksAddAction = new QAction(this);
-    m_bookmarksAddAction->setIcon(QIcon(QLatin1String(":addbookmark.png")));
+    m_bookmarksAddAction->setIcon(AroraIcon::get(QLatin1String("bookmark-new")));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_bookmarksAddAction->setIconVisibleInMenu(false);
 #endif
@@ -843,8 +844,8 @@ void BrowserMainWindow::setupMenu()
     bookmarksActions.append(m_bookmarksAddFolderAction);
     m_bookmarksMenu->setInitialActions(bookmarksActions);
 
-    m_bookmarksAddFolderAction->setIcon(QIcon::fromTheme(QLatin1String("folder-new")));
-    m_bookmarksShowAllAction->setIcon(QIcon::fromTheme(QLatin1String("user-bookmarks")));
+    m_bookmarksAddFolderAction->setIcon(AroraIcon::get(QLatin1String("folder-new")));
+    m_bookmarksShowAllAction->setIcon(AroraIcon::get(QLatin1String("user-bookmarks")));
 
     // Window
     m_windowMenu = new QMenu(menuBar());
@@ -920,7 +921,7 @@ void BrowserMainWindow::setupMenu()
     m_helpMenu->addAction(m_helpAboutApplicationAction);
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    m_helpChangeLanguageAction->setIcon(QIcon::fromTheme(QLatin1String("preferences-desktop-locale")));
+    m_helpChangeLanguageAction->setIcon(AroraIcon::get(QLatin1String("preferences-desktop-locale")));
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
     m_helpAboutApplicationAction->setIcon(windowIcon());
 #endif
@@ -1071,7 +1072,7 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->setIconSize(QSize(18, 18));
     addToolBar(m_navigationBar);
 
-    m_historyBackAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack, nullptr, this));
+    m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -1080,7 +1081,7 @@ void BrowserMainWindow::setupToolBar()
             this, &BrowserMainWindow::openActionUrl);
     m_navigationBar->addAction(m_historyBackAction);
 
-    m_historyForwardAction->setIcon(style()->standardIcon(QStyle::SP_ArrowForward, nullptr, this));
+    m_historyForwardAction->setIcon(AroraIcon::get(QLatin1String("go-next")));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);
@@ -1640,7 +1641,7 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     m_windowMenu->addSeparator();
     QAction *downloadManagerAction = m_windowMenu->addAction(tr("Downloads"), QKeySequence(tr("Ctrl+Y", "Download Manager")), this, &BrowserMainWindow::downloadManager);
 
-    downloadManagerAction->setIcon(QIcon::fromTheme(QLatin1String("emblem-downloads")));
+    downloadManagerAction->setIcon(AroraIcon::get(QLatin1String("emblem-downloads")));
 
     m_windowMenu->addSeparator();
     BrowserApplication *application = BrowserApplication::instance();

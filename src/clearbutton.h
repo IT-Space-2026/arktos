@@ -30,6 +30,7 @@
 #define CLEARBUTTON_H
 
 #include <qabstractbutton.h>
+#include <qicon.h>
 
 class ClearButton : public QAbstractButton
 {
@@ -45,7 +46,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    QImage m_styleImage;
+    QIcon m_styleIcon;
 };
 
 #endif // CLEARBUTTON_H

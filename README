@@ -22,6 +22,12 @@ Appearance: Arora follows the desktop light/dark preference (Qt 6.5+
 color-scheme reporting).  On desktops that do not report a scheme —
 or to force a look — set ARORA_COLOR_SCHEME=dark or light.
 
+Icons: the toolbar/menu chrome resolves freedesktop icon names through
+the desktop theme by default; the "Icons:" selector on the General
+preferences page can instead pin a bundled Adwaita, Breeze or Tabler
+set (each ships light + dark variants, applied live).  The original
+2009 artwork remains the final fallback for names a set does not cover.
+
 Search: the address bar doubles as a search box (omnibox) — text that
 is not an address goes to the default search engine, while urls,
 localhost/host:port and dotted names navigate directly.  Its dropdown

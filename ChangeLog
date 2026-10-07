@@ -250,6 +250,11 @@ Button chrome (UIP02):
     Toolbar buttons are consistent across platforms: the navigation bar pins its 18px icon size everywhere (it was macOS-only, so other platforms fell back to the style's larger default), and the bookmarks bar is pinned to 16px favicon size. Buttons keep their flat-with-hover look — nothing forces the raised Qt4-era frames.
     Dialog buttons get uniform modern metrics: a minimum width so short captions like "OK" stop collapsing, and a taller minimum height, applied to every dialog's push buttons through size constraints — the native style keeps rendering them, so the look follows the active light/dark theme. Compact composite rows (the per-download controls) are exempt.
 
+Icon sets (ICONS01):
+    All chrome icons now resolve through a central AroraIcon::get(name) helper that speaks freedesktop icon names: it asks the running desktop theme first, then falls back to bundled sets. A new "Icons:" selector on the General preferences page offers Native (follow the desktop theme), Adwaita, Breeze and Tabler, applied live to every open window.
+    Adwaita, Breeze and Tabler ship as proper icon themes inside the Qt resource system (35 mapped actions each, light + recolored dark variants since Qt does not repaint monochrome SVGs for dark palettes). Anything a set lacks inherits the chain above it, and the original 2009 artwork stays as the final fallback — plus it repairs a dead ":addbookmark.png" reference that rendered as a blank icon.
+    `./arora --icons-smoke` verifies coverage, live switching, light/dark glyph contrast and the fallback chain headlessly; the icon set choice is persisted under MainWindow/iconTheme.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

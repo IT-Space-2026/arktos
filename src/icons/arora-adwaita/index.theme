@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arora Adwaita
+Comment=Bundled Adwaita symbolic icons (CC-BY-SA-3.0/LGPL-3+ or CC-BY-SA-4.0)
+Directories=icons
+Inherits=arora-legacy
+
+[icons]
+Size=16
+Type=Scalable
+MinSize=8
+MaxSize=256
