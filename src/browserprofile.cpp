@@ -23,13 +23,16 @@
 #include "privacyrequestinterceptor.h"
 
 #include <qapplication.h>
+#include <qdebug.h>
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <qurl.h>
 #include <qwebengineclienthints.h>
+#include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
@@ -273,6 +276,13 @@ void applySettings(QWebEngineProfile *profile)
     // settings — the privacy group lives outside websettings/network.
     PrivacyRequestInterceptor::loadSettings();
 
+    // DOH01: DNS-over-HTTPS is engine-global, not per-profile — it is
+    // re-asserted here so a settings-dialog change reaches the
+    // resolver for every profile without waiting for a restart (the
+    // matching feature flag is process-lifetime, applied by
+    // applyChromiumFlags in main()).
+    applySecureDns();
+
     // Named profiles default to StoreOnDisk: Chromium would write every
     // grant()/deny() to permissions.json on disk and silently apply it
     // on later visits without even emitting permissionRequested —
@@ -503,15 +513,73 @@ bool clearDeferredSiteStorage(const QString &storagePath)
     return ok;
 }
 
+// DOH01: the stored DoH mode — 0 off, 1 automatic provider upgrade,
+// 2 custom server with insecure fallback, 3 custom server strict.
+// The PRIV01-era bool key folds into "automatic" so a settings file
+// written before the mode selector keeps its meaning.
+static int secureDnsModeSetting()
+{
+    const QVariant stored =
+        QSettings().value(QLatin1String("privacy/secureDnsMode"));
+    if (stored.isValid())
+        return qBound(0, stored.toInt(), 3);
+    return QSettings().value(QLatin1String("privacy/secureDns"), false)
+        .toBool() ? 1 : 0;
+}
+
+// The DoH URI template for the custom modes.  An empty or invalid
+// entry falls back to the default resolver rather than dropping to
+// plain DNS: a mistyped field must not silently undo the "strict, no
+// fallback" guarantee of mode 3.
+static QString secureDnsServerSetting()
+{
+    QString server = QSettings().value(
+        QLatin1String("privacy/secureDnsServer")).toString().trimmed();
+    const QUrl url(server);
+    if (!server.isEmpty() && url.scheme() == QLatin1String("https")
+        && !url.host().isEmpty())
+        return server;
+    if (!server.isEmpty())
+        qWarning() << "browserprofile: privacy/secureDnsServer" << server
+                   << "is not an https:// URI — using the default resolver";
+    return QLatin1String("https://cloudflare-dns.com/dns-query");
+}
+
+void applySecureDns()
+{
+    using QWebEngineGlobalSettings::SecureDnsMode;
+    QWebEngineGlobalSettings::DnsMode dnsMode;
+    switch (secureDnsModeSetting()) {
+    case 2:
+        dnsMode.secureMode = SecureDnsMode::SecureWithFallback;
+        dnsMode.serverTemplates << secureDnsServerSetting();
+        break;
+    case 3:
+        dnsMode.secureMode = SecureDnsMode::SecureOnly;
+        dnsMode.serverTemplates << secureDnsServerSetting();
+        break;
+    default:
+        // Modes 0/1 both mean SystemOnly at the resolver level — the
+        // automatic upgrade (mode 1) is provider-list driven, armed by
+        // the --enable-features=DnsOverHttps switch in
+        // applyChromiumFlags(), and takes no template.  Calling with
+        // SystemOnly also retracts a template applied earlier this
+        // session when the user downgrades the mode.
+        break;
+    }
+    if (!QWebEngineGlobalSettings::setDnsMode(dnsMode))
+        qWarning() << "browserprofile: DoH configuration rejected:"
+                   << dnsMode.serverTemplates;
+}
+
 void applyChromiumFlags()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     const bool webrtcProtection =
         settings.value(QLatin1String("webrtcIpProtection"), true).toBool();
-    const bool secureDns =
-        settings.value(QLatin1String("secureDns"), false).toBool();
     settings.endGroup();
+    const bool secureDns = secureDnsModeSetting() != 0;
 
     QStringList flags = QString::fromLocal8Bit(
         qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
@@ -544,9 +612,11 @@ void applyChromiumFlags()
             "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"));
     }
     if (secureDns) {
-        // Auto-upgrade mode only — a custom DoH endpoint cannot be
-        // expressed through flags (that needs the SecureDnsMode pref,
-        // which QtWebEngine does not expose).
+        // The DoH feature gate.  Automatic mode (1) is armed by this
+        // switch alone — Chromium upgrades when the network resolver
+        // is on its known-provider list.  The custom modes (2/3)
+        // additionally push their endpoint through
+        // QWebEngineGlobalSettings::setDnsMode in applySecureDns().
         addFlag(QLatin1String("--enable-features=DnsOverHttps"));
     }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());

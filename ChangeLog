@@ -301,6 +301,11 @@ Startup and menu responsiveness (PERF03):
     Menus backed by large models (history, bookmarks) no longer rebuild their whole action tree on every open: ModelMenu repopulates only when the model or a populate-time input changed since the last show — a benchmarked 10,000-entry menu went from ~90ms to ~0ms on reopen while the first build is unchanged.
     New `./arora --profile-startup` option (or ARORA_PROFILE_STARTUP=1) prints a millisecond timeline of the startup stages to stderr, and `--perf-smoke` additionally reports populated-history and flat-menu open/reopen latency.
 
+Custom DNS-over-HTTPS (DOH01):
+    Qt 6's native QWebEngineGlobalSettings::setDnsMode (available since Qt WebEngine 6.6) turns out to expose exactly what the earlier privacy pass concluded was unreachable, so the "Secure DNS" checkbox is now a mode selector: Off (system resolver), Automatic upgrade for resolvers on Chromium's known-provider list, Custom server with system fallback, and Custom server in strict mode — strict fails resolution rather than letting a lookup leak out over plain DNS when the DoH endpoint is down. The endpoint field defaults to https://cloudflare-dns.com/dns-query and accepts any https:// DoH URI template.
+    The legacy privacy/secureDns boolean is migrated (enabled → Automatic) and kept in sync, and the mode applies live — no restart needed — through the QSettings -> applySecureDns() path. Honest bound documented in the README: CNAME-cloaked trackers are still not uncloaked, because that needs DNS-response inspection and QtWebEngine exposes no DNS-response hook to the adblock engine.
+    `./arora --doh-smoke` verifies the wiring headlessly in three stages: strict mode with a dead loopback endpoint must fail every resolution (proves the setting gates DNS and does not fall back), strict mode against a live resolver must load a page (under SecureOnly the resolution could only have come from DoH), and switching back to Off must restore system-DNS loads at runtime.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -129,13 +129,32 @@ bool clearDeferredSiteStorage(const QString &storagePath);
 //     --force-webrtc-ip-handling-policy=disable_non_proxied_udp
 //     WebRTC then only ever runs through the configured proxy — no
 //     local, LAN or real WAN address can leak via ICE candidates.
-//   privacy/secureDns (default off) ->
-//     --enable-features=DnsOverHttps
-//     Honest bound: Chromium's feature only auto-upgrades to DoH when
-//     the system resolver is on its known DoH-provider list (Google/
-//     Cloudflare DNS etc.); a custom DoH endpoint is not exposed.
+//   privacy/secureDnsMode (0-3, default 0) ->
+//     --enable-features=DnsOverHttps when non-zero; see
+//     applySecureDns() for the mode meanings.  The legacy PRIV01 bool
+//     privacy/secureDns still reads as "automatic" (mode 1).
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();
+
+// DOH01: pushes the privacy/secureDns* settings to
+// QWebEngineGlobalSettings::setDnsMode — the Qt6.6+ API for
+// Chromium's DnsOverHttpsMode/Templates knobs (the "custom endpoint
+// not exposed" bound PRIV01 documented was pre-API).
+//   0 Off                       -> SystemOnly (plain system DNS)
+//   1 Automatic                 -> SystemOnly + the feature flag
+//     auto-upgrades when the network resolver is a known provider —
+//     the provider list is Chromium's, not configurable.
+//   2 Custom (with fallback)    -> SecureWithFallback + the
+//     privacy/secureDnsServer URI template; plain DNS still answers
+//     when the endpoint fails.
+//   3 Custom (strict)           -> SecureOnly + the template; nothing
+//     falls back to plain DNS, so an unreachable endpoint means no
+//     resolution at all.
+// Empty/garbage templates resolve to the default
+// (https://cloudflare-dns.com/dns-query) rather than silently
+// downgrading the strict mode to plaintext DNS.
+// Engine-global and safe to re-call — invoked from applySettings().
+void applySecureDns();
 
 // PRIV02: fingerprint-normalization that works through the process
 // environment rather than a Chromium switch.  When

@@ -402,12 +402,16 @@ int main(int argc, char **argv)
     // managers.
     bool smokeRun = false;
     bool telemetrySmoke = false;
+    bool dohSmoke = false;
+    QVariant savedDohMode, savedDohServer;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
             smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
+        if (arg == "--doh-smoke")
+            dohSmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
     }
@@ -418,6 +422,25 @@ int main(int argc, char **argv)
     // BrowserApplication constructor sets the same values again.
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
+
+    // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
+    // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
+    // the engine latches the DnsOverHttps feature switch exactly as a
+    // configured profile would.  The smoke handler rewrites the
+    // endpoint per stage.
+    if (dohSmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        // Remember the real values — the smoke runs against the live
+        // settings store (QSettings does not follow QStandardPaths'
+        // test mode), so finish() restores them on the way out.
+        savedDohMode = settings.value(QLatin1String("secureDnsMode"));
+        savedDohServer = settings.value(QLatin1String("secureDnsServer"));
+        settings.setValue(QLatin1String("secureDnsMode"), 3);
+        settings.setValue(QLatin1String("secureDnsServer"),
+                          QLatin1String("https://127.0.0.1:1/dns-query"));
+        settings.endGroup();
+    }
 
     // TELEM01: --telemetry-smoke points both network stacks at a
     // loopback capture proxy so an unsolicited outbound attempt is
@@ -500,7 +523,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
-        "telemetry-smoke", "profile-startup",
+        "telemetry-smoke", "doh-smoke", "profile-startup",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1074,6 +1097,169 @@ int main(int argc, char **argv)
         poll->start(200);
         applyLevel(PrivacyRequestInterceptor::Standard);
         view->loadUrl(QStringLiteral("http://%1:%2/page").arg(lan).arg(port));
+    }
+
+    // Headless verification for DOH01: custom DNS-over-HTTPS wiring
+    // end-to-end through the real QSettings -> applySecureDns ->
+    // QWebEngineGlobalSettings::setDnsMode path.  The run was seeded
+    // pre-app with strict mode + a dead loopback endpoint, so the
+    // engine latched the DnsOverHttps feature switch exactly like a
+    // configured profile.
+    //   stage 0 — strict + unreachable endpoint: EVERY lookup must
+    //     fail.  Fully local and offline-proof; a page that loads
+    //     here means setDnsMode was silently ignored and plain system
+    //     DNS went through.
+    //   stage 1 — strict + a live resolver (Cloudflare's 1.1.1.1 as
+    //     an IP literal so no bootstrap lookup is needed): a https
+    //     page must load — under SecureOnly the resolution could only
+    //     have come from DoH.  Needs real outbound connectivity; a
+    //     dead control GET downgrades a failure here to a SKIP.
+    //   stage 2 — mode back to Off: a further https load must succeed,
+    //     proving the mode toggles down at runtime.
+    if (args.contains(QLatin1String("--doh-smoke"))) {
+        auto stage = std::make_shared<int>(0);
+        auto done = std::make_shared<bool>(false);
+        auto controlOk = std::make_shared<bool>(false);
+
+        const auto setDoh = [](int mode, const QString &server) {
+            QSettings settings;
+            settings.beginGroup(QLatin1String("privacy"));
+            settings.setValue(QLatin1String("secureDnsMode"), mode);
+            settings.setValue(QLatin1String("secureDnsServer"), server);
+            settings.endGroup();
+            BrowserProfile::applySecureDns();
+        };
+
+        // Engine-free connectivity control — Qt's NAM does not route
+        // through Chromium's resolver, so this GET to the resolver
+        // host proves outbound https is up regardless of DoH state.
+        QNetworkReply *controlReply = networkAccessManager->get(
+            QNetworkRequest(QUrl(QLatin1String("https://1.1.1.1/"))));
+        QObject::connect(controlReply, &QNetworkReply::finished,
+                         &application, [controlReply, controlOk]() {
+            *controlOk = (controlReply->error() == QNetworkReply::NoError);
+            controlReply->deleteLater();
+        });
+
+        const auto finish = [&application, done, &savedDohMode,
+                             &savedDohServer](int rc, const QString &line) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo().noquote() << "doh-smoke:" << line;
+            // Put the caller's own settings back before the store
+            // syncs at exit.
+            QSettings settings;
+            settings.beginGroup(QLatin1String("privacy"));
+            const auto restore = [&settings](const QString &key,
+                                             const QVariant &saved) {
+                if (saved.isValid())
+                    settings.setValue(key, saved);
+                else
+                    settings.remove(key);
+            };
+            restore(QLatin1String("secureDnsMode"), savedDohMode);
+            restore(QLatin1String("secureDnsServer"), savedDohServer);
+            settings.endGroup();
+            application.exit(rc);
+        };
+
+        // Per-stage verdicts read the FIRST terminal status for that
+        // stage's host — the injected notfound page may emit a second
+        // Succeeded for the failed url afterwards.
+        QObject::connect(view->webPage(), &QWebEnginePage::loadingChanged,
+            &application,
+            [view, stage, finish, setDoh, controlOk]
+            (const QWebEngineLoadingInfo &info) {
+            if (info.status() != QWebEngineLoadingInfo::LoadSucceededStatus
+                && info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+                return;
+            const QString host = info.url().host();
+            switch (*stage) {
+            case 0:
+                if (host != QLatin1String("qt.io"))
+                    return;   // stale event (about:blank, error page)
+                if (info.status()
+                        == QWebEngineLoadingInfo::LoadSucceededStatus) {
+                    finish(1, QStringLiteral(
+                        "FAIL stage0: strict + dead endpoint still resolved")
+                        + host);
+                    return;
+                }
+                qInfo() << "doh-smoke: stage0 ok — dead endpoint failed"
+                           " resolution:" << info.errorString();
+                *stage = 1;
+                setDoh(3, QLatin1String("https://1.1.1.1/dns-query"));
+                view->loadUrl(QUrl(QLatin1String("https://example.com/")));
+                return;
+            case 1:
+                if (!host.endsWith(QLatin1String("example.com")))
+                    return;
+                if (info.status()
+                        == QWebEngineLoadingInfo::LoadSucceededStatus) {
+                    *stage = 2;
+#if defined(Q_OS_LINUX)
+                    // Best-effort extra: the resolve-time DoH socket
+                    // can idle-close before the page finishes, so a
+                    // "false" here is normal and carries no verdict.
+                    const QSet<QString> endpoints = processRemoteEndpoints();
+                    qInfo() << "doh-smoke: stage1 ok — loaded under strict"
+                               " DoH (1.1.1.1 socket still open:"
+                            << (endpoints.contains(QLatin1String("1.1.1.1:443"))
+                                || endpoints.contains(
+                                    QLatin1String("1.0.0.1:443")))
+                            << ")";
+#else
+                    qInfo() << "doh-smoke: stage1 ok — loaded under strict"
+                               " DoH";
+#endif
+                    setDoh(0, QLatin1String("https://1.1.1.1/dns-query"));
+                    view->loadUrl(QUrl(QLatin1String("https://www.iana.org/")));
+                    return;
+                }
+                finish(*controlOk ? 1 : 0, QStringLiteral(
+                    "%1 stage1: https://example.com failed under DoH — %2"
+                    " (control GET %3)")
+                        .arg(*controlOk ? QLatin1String("FAIL")
+                                        : QLatin1String("SKIP"),
+                             info.errorString(),
+                             *controlOk ? QLatin1String("ok")
+                                        : QLatin1String("dead")));
+                return;
+            case 2:
+                if (!host.endsWith(QLatin1String("iana.org")))
+                    return;
+                if (info.status()
+                        == QWebEngineLoadingInfo::LoadSucceededStatus) {
+                    finish(0, QStringLiteral("PASS"));
+                    return;
+                }
+                finish(1, QStringLiteral(
+                    "FAIL stage2: system-DNS restore load failed — %1")
+                        .arg(info.errorString()));
+                return;
+            }
+        });
+
+        QTimer::singleShot(90000, &application,
+                           [stage, finish, controlOk]() {
+            if (*stage == 0)
+                finish(1, QStringLiteral(
+                    "FAIL stage0: dead-endpoint resolution never"
+                    " concluded"));
+            else
+                finish(*controlOk ? 1 : 0, QStringLiteral(
+                    "%1: network stage timed out (control GET %2)")
+                        .arg(*controlOk ? QLatin1String("FAIL")
+                                        : QLatin1String("SKIP"),
+                             *controlOk ? QLatin1String("ok")
+                                        : QLatin1String("dead")));
+        });
+
+        // Stage 0's strict+dead configuration was already applied by
+        // the pre-app settings seed and prepareProfile's
+        // applySecureDns — navigating is all that is left.
+        view->loadUrl(QUrl(QLatin1String("https://qt.io/")));
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks

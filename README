@@ -75,9 +75,13 @@ Third-party cookies are rejected (per-site exceptions still apply),
 and an opt-in "Clear browsing data when Arora exits" wipes history,
 cookies, caches and site storage at quit — Chromium's on-disk trees
 are removed at the next start, never under a running browser.  An
-opt-in secure-DNS toggle asks Chromium to upgrade lookups to
-DNS-over-HTTPS when the system resolver supports it (a custom DoH
-endpoint cannot be configured).  The opt-in "Fingerprint Resistance"
+opt-in secure-DNS setting controls DNS-over-HTTPS: off (system
+resolver), Chromium's automatic upgrade for resolvers on its
+known-provider list, or a custom DoH endpoint (default
+https://cloudflare-dns.com/dns-query) either with system-DNS
+fallback or strict — strict fails resolution rather than leaking a
+lookup to plain DNS when the endpoint is unreachable.  The opt-in
+"Fingerprint Resistance"
 group reports UTC as the timezone to every site (JavaScript Date and
 Intl reads) and a generic "en-US, en" language list instead of the
 configured one; the Tor window's profile always normalizes both.
@@ -85,7 +89,10 @@ Honest bounds: an observer can still
 see destination IPs, connection timing and the usual browser
 fingerprinting surface — the Tor window is the answer for hiding
 traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
-fingerprint resistance.
+fingerprint resistance.  CNAME-cloaked trackers (first-party aliases
+that resolve to a tracking service) are not uncloaked: that needs
+DNS-response inspection and QtWebEngine exposes no DNS-response hook
+to the adblock engine.
 
 Zero telemetry: a clean launch opens no unsolicited outbound
 connections.  Chromium's background channels (field-trial/variations

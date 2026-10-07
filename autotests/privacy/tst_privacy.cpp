@@ -82,6 +82,8 @@ private:
     QVariant m_savedTrimReferer;
     QVariant m_savedWebrtc;
     QVariant m_savedSecureDns;
+    QVariant m_savedSecureDnsMode;
+    QVariant m_savedSecureDnsServer;
     QVariant m_savedBlock3p;
     QVariant m_savedSecurityLevel;
     QVariant m_savedEnableJavascript;
@@ -110,6 +112,10 @@ void tst_Privacy::initTestCase()
     m_savedTrimReferer = settings.value(QLatin1String("privacy/trimReferer"));
     m_savedWebrtc = settings.value(QLatin1String("privacy/webrtcIpProtection"));
     m_savedSecureDns = settings.value(QLatin1String("privacy/secureDns"));
+    m_savedSecureDnsMode =
+        settings.value(QLatin1String("privacy/secureDnsMode"));
+    m_savedSecureDnsServer =
+        settings.value(QLatin1String("privacy/secureDnsServer"));
     m_savedBlock3p = settings.value(QLatin1String("cookies/blockThirdPartyCookies"));
     m_savedSecurityLevel = settings.value(QLatin1String("privacy/securityLevel"));
     m_savedEnableJavascript = settings.value(QLatin1String("websettings/enableJavascript"));
@@ -141,6 +147,8 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/trimReferer"), m_savedTrimReferer);
     restoreSetting(settings, QLatin1String("privacy/webrtcIpProtection"), m_savedWebrtc);
     restoreSetting(settings, QLatin1String("privacy/secureDns"), m_savedSecureDns);
+    restoreSetting(settings, QLatin1String("privacy/secureDnsMode"), m_savedSecureDnsMode);
+    restoreSetting(settings, QLatin1String("privacy/secureDnsServer"), m_savedSecureDnsServer);
     restoreSetting(settings, QLatin1String("cookies/blockThirdPartyCookies"), m_savedBlock3p);
     restoreSetting(settings, QLatin1String("privacy/securityLevel"), m_savedSecurityLevel);
     restoreSetting(settings, QLatin1String("websettings/enableJavascript"), m_savedEnableJavascript);
@@ -551,6 +559,9 @@ void tst_Privacy::chromiumFlags()
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("webrtcIpProtection"), true);
     settings.setValue(QLatin1String("secureDns"), true);
+    // The legacy bool alone decides here — a stale mode key from an
+    // earlier run would take precedence and mask it.
+    settings.remove(QLatin1String("secureDnsMode"));
     settings.endGroup();
 
     // Pre-existing user flags are kept, nothing is duplicated.
@@ -588,6 +599,42 @@ void tst_Privacy::chromiumFlags()
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
     QVERIFY(!quietFlags.contains(
         QLatin1String("--enable-features=DnsOverHttps")));
+
+    // DOH01 precedence: when the mode key exists it decides — "off"
+    // wins over a stale legacy bool, and the custom modes arm the
+    // feature gate even with the bool absent.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDns"), true);
+    settings.setValue(QLatin1String("secureDnsMode"), 0);
+    settings.endGroup();
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--enable-features=DnsOverHttps")));
+
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.remove(QLatin1String("secureDns"));
+    settings.setValue(QLatin1String("secureDnsMode"), 3);
+    settings.endGroup();
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--enable-features=DnsOverHttps")));
+
+    // The Qt-side apply path: a strict mode with a syntactically
+    // valid https template is accepted by
+    // QWebEngineGlobalSettings::setDnsMode (URI validation only —
+    // reachability is the resolver's problem), and mode 0 clears it.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 3);
+    settings.setValue(QLatin1String("secureDnsServer"),
+                      QLatin1String("https://127.0.0.1:1/dns-query"));
+    settings.endGroup();
+    BrowserProfile::applySecureDns();
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 0);
+    settings.endGroup();
+    BrowserProfile::applySecureDns();
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.

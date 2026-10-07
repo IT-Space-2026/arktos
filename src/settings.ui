@@ -843,15 +843,59 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="secureDns">
-            <property name="toolTip">
-             <string>Upgrade DNS lookups to DNS-over-HTTPS when your network's resolver supports it (Chromium decides; a custom DoH server cannot be configured). Takes effect after a restart.</string>
-            </property>
-            <property name="text">
-             <string>Secure DNS lookups when available (DNS-over-HTTPS)</string>
-            </property>
-            <property name="checked">
+           <layout class="QHBoxLayout">
+            <item>
+             <widget class="QLabel" name="secureDnsLabel">
+              <property name="text">
+               <string>Secure DNS (DoH):</string>
+              </property>
+              <property name="buddy">
+               <cstring>secureDnsMode</cstring>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="secureDnsMode">
+              <property name="toolTip">
+               <string>DNS-over-HTTPS hides lookups from the local network's plain DNS. Automatic upgrades only when the network resolver is on Chromium's known-provider list; the Custom modes always use the endpoint below — the strict mode never falls back to plain DNS, so an unreachable endpoint stops name resolution entirely. The feature flag takes effect after a restart.</string>
+              </property>
+              <item>
+               <property name="text">
+                <string>Off (system resolver)</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Automatic upgrade</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Custom server (with system fallback)</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Custom server (strict — no fallback)</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="secureDnsServer">
+            <property name="enabled">
              <bool>false</bool>
+            </property>
+            <property name="toolTip">
+             <string>DoH URI template used by the Custom modes, e.g. https://cloudflare-dns.com/dns-query or https://dns.google/dns-query. Invalid entries fall back to the default resolver rather than disabling DoH.</string>
+            </property>
+            <property name="accessibleName">
+             <string>DNS-over-HTTPS server URI template</string>
+            </property>
+            <property name="placeholderText">
+             <string>https://cloudflare-dns.com/dns-query</string>
             </property>
            </widget>
           </item>
@@ -1732,7 +1776,8 @@
   <tabstop>httpsFirst</tabstop>
   <tabstop>trimReferer</tabstop>
   <tabstop>webrtcProtection</tabstop>
-  <tabstop>secureDns</tabstop>
+  <tabstop>secureDnsMode</tabstop>
+  <tabstop>secureDnsServer</tabstop>
   <tabstop>clearOnExit</tabstop>
   <tabstop>reportUtcTimezone</tabstop>
   <tabstop>normalizeAcceptLanguage</tabstop>

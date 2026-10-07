@@ -182,6 +182,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             this, [this](int) { updateSecurityLevelHint(); });
     updateSecurityLevelHint();
 
+    // DOH01: the DoH endpoint field only matters to the two Custom
+    // modes — keep it greyed otherwise.
+    connect(secureDnsMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) { secureDnsServer->setEnabled(index >= 2); });
+
     // SEC13: master-passphrase controls for the credential store.
     connect(credentialPassphraseButton, &QPushButton::clicked,
             this, &SettingsDialog::credentialPassphraseChange);
@@ -376,7 +381,20 @@ void SettingsDialog::loadFromSettings()
     httpsFirst->setChecked(settings.value(QLatin1String("httpsFirst"), true).toBool());
     trimReferer->setChecked(settings.value(QLatin1String("trimReferer"), true).toBool());
     webrtcProtection->setChecked(settings.value(QLatin1String("webrtcIpProtection"), true).toBool());
-    secureDns->setChecked(settings.value(QLatin1String("secureDns"), false).toBool());
+    // DOH01: the PRIV01-era bool folds into "automatic" (mode 1) when
+    // the newer mode key was never written.
+    const QVariant storedDnsMode =
+        settings.value(QLatin1String("secureDnsMode"));
+    const int secureDnsIndex = storedDnsMode.isValid()
+        ? storedDnsMode.toInt()
+        : (settings.value(QLatin1String("secureDns"), false).toBool()
+               ? 1 : 0);
+    secureDnsMode->setCurrentIndex(
+        qBound(0, secureDnsIndex, secureDnsMode->count() - 1));
+    secureDnsServer->setText(settings.value(
+        QLatin1String("secureDnsServer"),
+        QLatin1String("https://cloudflare-dns.com/dns-query")).toString());
+    secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
@@ -549,7 +567,11 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("httpsFirst"), httpsFirst->isChecked());
     settings.setValue(QLatin1String("trimReferer"), trimReferer->isChecked());
     settings.setValue(QLatin1String("webrtcIpProtection"), webrtcProtection->isChecked());
-    settings.setValue(QLatin1String("secureDns"), secureDns->isChecked());
+    settings.setValue(QLatin1String("secureDnsMode"), secureDnsMode->currentIndex());
+    settings.setValue(QLatin1String("secureDnsServer"), secureDnsServer->text().trimmed());
+    // The PRIV01 bool is kept in sync so an older build reading it
+    // lands on "automatic" rather than "off".
+    settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());
