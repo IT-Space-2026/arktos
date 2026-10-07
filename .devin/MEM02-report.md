@@ -155,3 +155,22 @@ HEAD and committing any suppression drift. Reproduce with:
 
 (phase 2 stays bounded manually as above; `ARORA_LEAKS_LSAN_LOGS=dir`
 reuses an existing corpus without rerunning the suite.)
+
+## MEM03 outcome (fix pass, 2026-10-07)
+
+MEM03 inherited an **empty fix list** and closed without touching the
+leak machinery:
+
+* Phase 1 sited 0 of 12,256 LSan blocks in `src/` or `autotests/`;
+  bounded memcheck found 0 definite/indirect bytes lost. There is
+  nothing allocated in our code left to fix.
+* Suppression drift: none. `.devin/lsan.supp` (leaf third-party libs
+  only) and `.devin/valgrind.supp` (`qt6-init-connect-addr16`) are
+  byte-identical to this report's run — every observed record still
+  classifies upstream, so adding entries would only risk masking a
+  future real finding.
+* `git diff c8f8d90..HEAD` over `src/ autotests/ tools/` is empty —
+  the audited code is byte-identical to the instrumented run above
+  (intervening commits are task-queue metadata only), so the
+  phase-1/phase-2 verdict stands without a rerun.
+* `make check` re-verified green on HEAD as the regression gate.

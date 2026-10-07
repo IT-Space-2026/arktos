@@ -1666,4 +1666,25 @@ Kicking off the instrumented LSan build + suite now (long pole) in the backgroun
 - **LSan (batched, sequential):** 12,256 leak blocks — **0 in our code**. Every first-real-frame resolves to `libQt6WebEngineCore` (11,934), `libudev` (230), or `libfontconfig`/`libexpat` (92) — the earlier "arora"/"tst_*" module hits were just the ASan malloc interceptor living in the instrumented binary.
 - **valgrind (3 smallest tests, sequential):** 0 definite/indirect leaks on all three; every printable error context is the upstream Qt-init SSE-16 overread family, matching the `qt6-init-connect-addr16` suppression (verified still firing on 6.12.0).
 
-Now I'll write the deliverable `.devin/MEM02-report.md`, fix the small `VALGRIND: parameter not set` bug in check-leaks.sh, refresh the valgrind.supp version comment, and remove the regeneratable LEAKS.md artifact.Now update the MEM02 row to `done` with the summary + verification.Quick README check, then stage and commit.
+Now I'll write the deliverable `.devin/MEM02-report.md`, fix the small `VALGRIND: parameter not set` bug in check-leaks.sh, refresh the valgrind.supp version comment, and remove the regeneratable LEAKS.md artifact.Now update the MEM02 row to `done` with the summary + verification.Quick README check, then stage and commit.Committed and pushed. Cleaning up the kept instrumented tree and valgrind scratch dirs (they're large).A concurrent change landed (ADB04 was queued mid-run). Let me check the current working-tree diff before finishing.MEM02 is complete and pushed (`c8f8d90`). The leftover working-tree diff is an externally-queued ABOUT01 row plus the loop's transcript log — not mine to commit or revert.
+
+## Summary
+
+**Task:** MEM02 — bounded, report-only memory-leak hunt (the MEM01 split).
+
+**Why MEM01 kept dying:** its valgrind phase ran WebEngine-linked test binaries in parallel (~1.3 GB each) against a 2 GB run-tree cap. MEM02's bound: sequential per-binary LSan runs + memcheck on only the 3 smallest tests.
+
+**What I ran:**
+- **LSan phase** via the existing `check-leaks.sh` (`ARORA_LEAKS_VALGRIND=0 KEEP=1`): fresh ASan+UBSan tree under Qt 6.12.0, full autotest suite (exit 0) + all 18 `--*-smoke` checks under `detect_leaks=1`, strictly one binary at a time.
+- **Result:** **12,256 leak blocks — 0 allocated in `src/` or `autotests/`**. First-real-frame modules: `libQt6WebEngineCore` 11,934 (Chromium teardown), `libudev` 230 (`udev_monitor_new_from_netlink` inside WebEngine), `fontconfig`/`expat` 92. Re-analysis showed earlier "arora"/"tst_*" module hits were just the ASan allocator interceptor resolving inside the instrumented binary — re-verifies MEM01's fixes on current HEAD.
+- **valgrind** on `tst_autosaver`/`tst_xbel`/`tst_bookmarknode`: all pass, **0 definite + 0 indirect lost**. Every printable error context is the upstream Qt-init SSE-16 Addr16 family; `qt6-init-connect-addr16` still fires on 6.12.0. Residual unprintable context counts documented as a valgrind accounting artifact.
+
+**Committed:** `.devin/MEM02-report.md` (methodology, per-family stacks, MEM03 handoff — empty fix list), `.gitignore` entry for the regeneratable `LEAKS.md`, a `VALGRIND: parameter not set` fix in `check-leaks.sh`, `valgrind.supp` version note, ChangeLog bullet, WORKLOG line, task row → `done`.
+
+Stopping here per the one-task rule — next pending row is MEM03 (which the report hands an empty fix list).
+[2026-10-07 10:07:23] <<< devin exited rc=0 (task MEM02)
+[2026-10-07 10:07:23] task MEM02 finished (next: MEM03)
+[2026-10-07 10:07:26] >>> starting run for task MEM03 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+The first pending row is **MEM03** (line 81) — the leak-fix pass gated on MEM02's report. Let me check feasibility: the report should exist and per MEM02's notes it found zero our-code leaks.MEM02's report lists **zero** our-code leaks, and nothing under `src/` has changed since (commits after `c8f8d90` are only queue edits). MEM03's fix list is empty — the work reduces to re-verifying the gate stays green and confirming suppressions/report are committed. Let me check whether MEM02's kept instrumented tree/log corpus is still on disk to reuse.The instrumented corpus was cleaned up, but the report is committed and `git diff c8f8d90..HEAD` on `src/ autotests tools` is empty — the audited code is byte-identical. MEM03's fix list is therefore empty; my job is to confirm the gate artifacts, document the outcome, and verify `make check` passes.
+
+Marking the task in_progress first.Build exists (arora binary from today). Let me check the ChangeLog format (top, where recent entries go) and the `make check` target, then start verification.`make check` is the standard gate (check-warnings scratch rebuild + full test suite). Starting it in the background; while it runs I'll write up the MEM03 outcome.MEM02 already added the ChangeLog line. Now I'll append the MEM03 outcome section to the report while `make check` runs.HEAD moved to 2863e49 — let me check what the loop committed.My `in_progress` marker is already committed (swept into a queue commit — fine). Now appending the MEM03 outcome to the report.`check-warnings` passed; the test suite is running. Let me wait for it to finish.All updates now: ChangeLog line, MEM03 row → done, WORKLOG entry.All updates staged. Committing and pushing.
