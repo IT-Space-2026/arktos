@@ -90,6 +90,8 @@
 #include <QtGui/QPixmap>
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
+#include <QtCore/QCoreApplication>
+#include <QtNetwork/QHostAddress>
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkReply>
@@ -115,7 +117,17 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
+
+#if defined(Q_OS_UNIX)
+#include <cerrno>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
+#endif
 
 #if defined(ARORA_ADBLOCK_RUST)
 #include <QtCore/QJsonArray>
@@ -173,6 +185,190 @@ private:
     QStringList *m_out;
 };
 
+#if defined(Q_OS_UNIX)
+// TELEM01: --telemetry-smoke's capture proxy is a raw loopback socket
+// with a blocking accept loop on a detached thread — it must already
+// be listening when the BrowserApplication constructor runs, because
+// consent-gated adblock fetches and the engine's flag latch can both
+// happen that early, and QTcpServer cannot exist before the
+// application.  Every accepted connection's first request line is
+// recorded (mutex-guarded) and answered 502 so the caller fails fast.
+static QMutex s_telemetryMutex;
+static QStringList s_telemetryHits;
+
+static void telemetryAcceptLoop(int listenFd)
+{
+    static const char reply[] =
+        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n";
+    for (;;) {
+        const int fd = ::accept(listenFd, nullptr, nullptr);
+        if (fd == -1) {
+            if (errno == EINTR)
+                continue;
+            return;
+        }
+        char buffer[1024];
+        pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        const ssize_t n =
+            (::poll(&pfd, 1, 3000) > 0)
+                ? ::recv(fd, buffer, sizeof(buffer) - 1, 0) : -1;
+        if (n > 0) {
+            buffer[n] = '\0';
+            const QByteArray firstLine =
+                QByteArray(buffer, n).split('\n').first().trimmed();
+            const QMutexLocker lock(&s_telemetryMutex);
+            s_telemetryHits.append(QString::fromLatin1(firstLine));
+        }
+        ::send(fd, reply, sizeof(reply) - 1, MSG_NOSIGNAL);
+        ::close(fd);
+    }
+}
+
+// Opens the capture proxy: binds + listens on an ephemeral loopback
+// port and starts the accept thread.  Returns the port, or 0 on
+// failure.
+static quint16 startTelemetryCapture()
+{
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+        return 0;
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(fd, reinterpret_cast<sockaddr *>(&address),
+               sizeof(address)) != 0
+        || ::listen(fd, 32) != 0) {
+        ::close(fd);
+        return 0;
+    }
+    sockaddr_in bound;
+    socklen_t length = sizeof(bound);
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&bound),
+                      &length) != 0) {
+        ::close(fd);
+        return 0;
+    }
+    std::thread(telemetryAcceptLoop, fd).detach();
+    return ntohs(bound.sin_port);
+}
+#endif
+
+#if defined(Q_OS_LINUX)
+// TELEM01: the capture proxy only sees proxy-aware traffic — raw UDP
+// (QUIC, DNS) and any accidental direct connect would slip past it.
+// /proc/net holds the connection table; matching remote endpoints
+// against the socket inodes held by this process tree attributes them
+// to us without flagging unrelated box traffic.
+static QSet<QString> processRemoteEndpoints()
+{
+    QSet<qint64> pids;
+    pids.insert(QCoreApplication::applicationPid());
+    // Descendants (QtWebEngineProcess tree): /proc/<pid>/stat carries
+    // ppid right after the last ')' — comm may contain spaces but no
+    // closing paren.
+    bool grew = true;
+    while (grew) {
+        grew = false;
+        const QStringList procs = QDir(QLatin1String("/proc")).entryList(
+            QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &entry : procs) {
+            bool isPid = false;
+            const qint64 pid = entry.toLongLong(&isPid);
+            if (!isPid || pids.contains(pid))
+                continue;
+            QFile statFile(QLatin1String("/proc/") + entry
+                           + QLatin1String("/stat"));
+            if (!statFile.open(QIODevice::ReadOnly))
+                continue;
+            const QByteArray stat = statFile.readAll();
+            const int paren = stat.lastIndexOf(')');
+            if (paren == -1)
+                continue;
+            const QList<QByteArray> fields =
+                stat.mid(paren + 1).simplified().split(' ');
+            // fields[0] = state, fields[1] = ppid
+            if (fields.count() > 1
+                && pids.contains(fields.at(1).toLongLong())) {
+                pids.insert(pid);
+                grew = true;
+            }
+        }
+    }
+
+    QSet<QString> inodes;
+    for (qint64 pid : pids) {
+        const QDir fdDir(QStringLiteral("/proc/%1/fd").arg(pid));
+        const QFileInfoList entries = fdDir.entryInfoList(
+            QDir::AllEntries | QDir::NoDotAndDotDot | QDir::System);
+        for (const QFileInfo &info : entries) {
+            const QString target = info.symLinkTarget();
+            if (target.startsWith(QLatin1String("socket:[")))
+                inodes.insert(
+                    target.mid(8, target.size() - 9));
+        }
+    }
+    if (inodes.isEmpty())
+        return QSet<QString>();
+
+    QSet<QString> endpoints;
+    static const char *const tables[] = { "tcp", "tcp6", "udp", "udp6" };
+    for (const char *table : tables) {
+        QFile file(QLatin1String("/proc/net/")
+                   + QLatin1String(table));
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const QList<QByteArray> lines = file.readAll().split('\n');
+        for (int i = 1; i < lines.count(); ++i) {
+            const QList<QByteArray> fields =
+                lines.at(i).simplified().split(' ');
+            // sl local_address rem_address st tx_queue... inode (index 9)
+            if (fields.count() < 10
+                || !inodes.contains(
+                    QString::fromLatin1(fields.at(9))))
+                continue;
+            const QByteArray remote = fields.at(2);
+            const int colon = remote.indexOf(':');
+            if (colon == -1)
+                continue;
+            bool ok = false;
+            const quint16 port =
+                remote.mid(colon + 1).toUShort(&ok, 16);
+            if (!ok || port == 0)
+                continue;
+            // Each 8-hex-digit word is a 32-bit field printed
+            // little-endian; reversing its bytes yields network order.
+            const QByteArray hexAddr = remote.left(colon);
+            QByteArray addr;
+            for (int w = 0; w + 8 <= hexAddr.size(); w += 8) {
+                for (int b = 6; b >= 0; b -= 2)
+                    addr.append(
+                        QByteArray::fromHex(hexAddr.mid(w + b, 2)).at(0));
+            }
+            QHostAddress host;
+            if (addr.size() == 4) {
+                host = QHostAddress(qFromBigEndian<quint32>(
+                    reinterpret_cast<const uchar *>(addr.constData())));
+            } else if (addr.size() == 16) {
+                Q_IPV6ADDR ip6;
+                memcpy(&ip6, addr.constData(), 16);
+                host = QHostAddress(ip6);
+            }
+            if (host.isNull() || host.isLoopback())
+                continue;
+            endpoints.insert(host.toString() + QLatin1Char(':')
+                             + QString::number(port));
+        }
+    }
+    return endpoints;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
@@ -199,32 +395,68 @@ int main(int argc, char **argv)
     // constructor already brings up the browsing profile and its
     // managers.
     bool smokeRun = false;
+    bool telemetrySmoke = false;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
             smokeRun = true;
+        if (arg == "--telemetry-smoke")
+            telemetrySmoke = true;
     }
     if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
 
+    // QSettings resolution needs the application identity; the
+    // BrowserApplication constructor sets the same values again.
+    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
+    QCoreApplication::setApplicationName(QLatin1String("Arora"));
+
+    // TELEM01: --telemetry-smoke points both network stacks at a
+    // loopback capture proxy so an unsolicited outbound attempt is
+    // observed, not merely failed.  Everything must be in place before
+    // the BrowserApplication constructor: Chromium's --proxy-server
+    // latches with the engine flags when the browsing profile is
+    // built, and the app-side fetch manager must read the capture
+    // proxy settings early because the adblock consent path fetches
+    // inside the same constructor.
+    quint16 telemetryProxyPort = 0;
+#if defined(Q_OS_UNIX)
+    if (telemetrySmoke)
+        telemetryProxyPort = startTelemetryCapture();
+#endif
+    if (telemetryProxyPort != 0) {
+        const QByteArray endpoint =
+            "http://127.0.0.1:" + QByteArray::number(telemetryProxyPort);
+        QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+        if (!flags.isEmpty())
+            flags += ' ';
+        flags += "--proxy-server=" + endpoint;
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+        QSettings settings;
+        settings.beginGroup(QLatin1String("proxy"));
+        settings.setValue(QLatin1String("enabled"), true);
+        settings.setValue(QLatin1String("type"), 1);
+        settings.setValue(QLatin1String("hostName"),
+                          QLatin1String("127.0.0.1"));
+        settings.setValue(QLatin1String("port"), int(telemetryProxyPort));
+        settings.endGroup();
+    }
+
     // PRIV02: the UTC-timezone normalization is process environment
     // (TZ) and must be in place before ANY engine initialization —
     // the BrowserApplication constructor already brings the browsing
-    // profile up, so this runs even earlier.  QSettings resolution
-    // needs the application identity; the ctor sets the same values.
-    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationName(QLatin1String("Arora"));
+    // profile up, so this runs even earlier.
     BrowserProfile::applyFingerprintEnvironment();
+
+    // PRIV01 + TELEM01: the Chromium switches — WebRTC IP handling,
+    // DoH auto-upgrade, and the background-traffic kill-list — are
+    // appended to QTWEBENGINE_CHROMIUM_FLAGS, which the engine latches
+    // when its context first spins up.  The application constructor
+    // already builds the browsing profile, so this must run before it.
+    BrowserProfile::applyChromiumFlags();
 
     BrowserApplication application(argc, argv);
     const qint64 appCtorMs = perfTimer.elapsed();
-
-    // PRIV01: privacy-driven Chromium switches (WebRTC IP handling,
-    // DNS-over-HTTPS auto-upgrade) must be appended to
-    // QTWEBENGINE_CHROMIUM_FLAGS before the first page spawns
-    // QtWebEngineProcess — the profiles created in the app ctor do
-    // not start it yet.
-    BrowserProfile::applyChromiumFlags();
 
     // A non-standalone run that could not take the single-instance
     // socket already forwarded its url to the running instance and is
@@ -259,6 +491,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
+        "telemetry-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1083,6 +1316,11 @@ int main(int argc, char **argv)
         AdBlockSubscription *subscription =
             new AdBlockSubscription(subscribeUrl, manager);
         manager->addSubscription(subscription);
+        // TELEM01: remote downloads are consent-gated; the smoke is an
+        // explicit user action, so grant and kick the fetch.
+        AdBlockManager::setRemoteListsConsent(
+            AdBlockManager::RemoteListsGranted);
+        subscription->updateNow();
 
         QObject::connect(subscription, &AdBlockSubscription::rulesChanged,
                          &application,
@@ -3347,6 +3585,74 @@ int main(int argc, char **argv)
         });
         view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
                            .arg(server->serverPort())));
+        return application.exec();
+    }
+
+    // Headless verification for TELEM01: a clean launch must produce
+    // zero non-user-initiated connections.  Both network stacks were
+    // pointed at a loopback capture proxy — Chromium through the
+    // --proxy-server flag set before the engine latched its flags, and
+    // the app-side fetch manager through the proxy settings written
+    // next to it — and the capture socket has been accepting since
+    // before the application constructor, so even ctor-early fetchers
+    // arrive as a logged CONNECT/GET.  On Linux a /proc/net poll
+    // additionally catches process-owned sockets that bypass proxies
+    // (QUIC, DNS).  PASS = nothing observed for the whole watch window.
+    if (telemetrySmoke) {
+        auto socketHits = std::make_shared<QStringList>();
+        if (telemetryProxyPort == 0)
+            qWarning() << "telemetry-smoke: capture proxy unavailable"
+                          " — only the socket scan is active";
+
+        // The app-side fetch manager picked the capture proxy up from
+        // the settings written before the application ctor — reload so
+        // a stale persisted proxy value can't leak into the watch
+        // window either.
+        networkAccessManager->loadSettings();
+
+#if defined(Q_OS_LINUX)
+        QTimer *socketPoll = new QTimer(&application);
+        socketPoll->setInterval(250);
+        QObject::connect(socketPoll, &QTimer::timeout, &application,
+                         [socketHits]() {
+            const QSet<QString> endpoints = processRemoteEndpoints();
+            for (const QString &endpoint : endpoints) {
+                if (!socketHits->contains(endpoint)) {
+                    socketHits->append(endpoint);
+                    qInfo() << "telemetry-smoke: process socket:"
+                            << endpoint;
+                }
+            }
+        });
+        socketPoll->start();
+#endif
+
+        int windowMs = qEnvironmentVariableIntValue("ARORA_TELEMETRY_MS");
+        if (windowMs <= 0)
+            windowMs = 30000;
+        qInfo() << "telemetry-smoke: watching" << windowMs
+                << "ms for unsolicited outbound connections";
+        QTimer::singleShot(windowMs, &application,
+                           [&application, socketHits]() {
+            QStringList observed;
+            {
+                const QMutexLocker lock(&s_telemetryMutex);
+                observed = s_telemetryHits;
+            }
+            const bool pass = observed.isEmpty() && socketHits->isEmpty();
+            qInfo() << "telemetry-smoke:" << (pass ? "PASS" : "FAIL")
+                    << "proxy attempts:" << observed
+                    << "socket endpoints:" << *socketHits;
+            // Undo the capture-proxy settings so a dead port does not
+            // leak into later smoke runs sharing this test profile.
+            {
+                QSettings settings;
+                settings.beginGroup(QLatin1String("proxy"));
+                settings.setValue(QLatin1String("enabled"), false);
+                settings.endGroup();
+            }
+            application.exit(pass ? 0 : 1);
+        });
         return application.exec();
     }
 

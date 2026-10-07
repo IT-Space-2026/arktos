@@ -556,6 +556,15 @@ void BrowserApplication::postLaunch()
         }
     }
     BrowserApplication::historyManager();
+
+    // TELEM01: the seeded ad-block subscriptions stay dormant until
+    // the user consents to remote list downloads — ask once here, on
+    // the first normal launch (standalone smoke runs and the tor
+    // process never prompt; the tor profile still fetches lists only
+    // if consent was already granted).
+    if (!isStandalone() && !isTorMode())
+        AdBlockManager::instance()->maybePromptForListConsent(
+            m_mainWindows.isEmpty() ? nullptr : mainWindow());
 }
 
 // TOR02: the tor window's first navigation — deferred by postLaunch()

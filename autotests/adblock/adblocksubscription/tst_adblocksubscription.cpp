@@ -30,9 +30,13 @@
 #include <qsignalspy.h>
 #include <qtry.h>
 
+#include <adblockmanager.h>
 #include <adblocksubscription.h>
 
 #include <qdir.h>
+#include <qsettings.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtemporaryfile.h>
 #include <qurlquery.h>
 
@@ -68,6 +72,7 @@ private slots:
     void removeRule();
     void hostileList();
     void oversizedList();
+    void remoteFetchRequiresConsent();
 };
 
 // Subclass that exposes the protected functions.
@@ -398,6 +403,60 @@ void tst_AdBlockSubscription::oversizedList()
     subscription.updateNow();
 
     QCOMPARE(subscription.allRules().count(), 0);
+}
+
+// TELEM01: the constructor's automatic staleness update must not
+// reach the network until the user consented to remote list
+// downloads; an explicit updateNow() remains an on-demand fetch.
+void tst_AdBlockSubscription::remoteFetchRequiresConsent()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QUrl location(QStringLiteral("http://127.0.0.1:%1/rules.txt")
+                        .arg(server.serverPort()));
+    const QByteArray subscribeUrl = QByteArray("abp:subscribe?location=")
+        + location.toEncoded();
+
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsUndecided);
+    {
+        // Undecided: a never-fetched remote list is "stale", yet the
+        // constructor must not fetch it.
+        AdBlockSubscription subscription(
+            QUrl::fromEncoded(subscribeUrl));
+        QVERIFY(!subscription.lastUpdate().isValid());
+        QVERIFY(!server.waitForNewConnection(500));
+    }
+    {
+        // Declined persists the silence.
+        AdBlockManager::setRemoteListsConsent(
+            AdBlockManager::RemoteListsDeclined);
+        AdBlockSubscription subscription(
+            QUrl::fromEncoded(subscribeUrl));
+        QVERIFY(!server.waitForNewConnection(500));
+    }
+
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsGranted);
+    {
+        AdBlockSubscription subscription(
+            QUrl::fromEncoded(subscribeUrl));
+        QVERIFY(server.waitForNewConnection(8000));
+        QTcpSocket *client = server.nextPendingConnection();
+        QTRY_VERIFY(client->bytesAvailable() > 0);
+        QVERIFY(client->readAll().startsWith("GET /rules.txt"));
+        const QByteArray body =
+            "[Adblock Plus 0.7.1]\n||consent-smoke.invalid^\n";
+        client->write("HTTP/1.1 200 OK\r\nContent-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        client->disconnectFromHost();
+        QTRY_VERIFY(subscription.lastUpdate().isValid());
+        QVERIFY(subscription.allRules().count() >= 1);
+    }
+
+    AdBlockManager::setRemoteListsConsent(
+        AdBlockManager::RemoteListsUndecided);
 }
 
 QTEST_MAIN(tst_AdBlockSubscription)

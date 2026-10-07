@@ -124,6 +124,8 @@ void AdBlockDialog::updateSubscription()
     if (idx.parent().isValid())
         idx = idx.parent();
     AdBlockSubscription *subscription = (AdBlockSubscription*)m_adBlockModel->subscription(idx);
+    // Pressing Update is explicit consent to download remote lists.
+    AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
     subscription->updateNow();
 }
 

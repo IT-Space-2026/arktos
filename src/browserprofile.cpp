@@ -512,8 +512,6 @@ void applyChromiumFlags()
     const bool secureDns =
         settings.value(QLatin1String("secureDns"), false).toBool();
     settings.endGroup();
-    if (!webrtcProtection && !secureDns)
-        return;
 
     QStringList flags = QString::fromLocal8Bit(
         qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
@@ -522,6 +520,20 @@ void applyChromiumFlags()
         if (!flags.contains(flag))
             flags.append(flag);
     };
+
+    // TELEM01: silence the engine's unsolicited background traffic.
+    // Chromium otherwise fetches field-trial/variations seeds, runs a
+    // component updater, uploads domain-reliability reports and usage
+    // metrics, and pings at first run — none of which the user asked
+    // for.  These switches only cut silent channels; no user-visible
+    // feature depends on them.
+    addFlag(QLatin1String("--disable-background-networking"));
+    addFlag(QLatin1String("--disable-component-update"));
+    addFlag(QLatin1String("--disable-domain-reliability"));
+    addFlag(QLatin1String("--disable-metrics"));
+    addFlag(QLatin1String("--disable-sync"));
+    addFlag(QLatin1String("--no-first-run"));
+
     if (webrtcProtection) {
         // Strongest WebRTC IP policy Chromium exposes: every ICE
         // transport goes through the configured proxy (SOCKS5 cannot

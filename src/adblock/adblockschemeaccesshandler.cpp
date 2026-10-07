@@ -93,7 +93,13 @@ void AdBlockSchemeAccessHandler::handleSubscribe(QPointer<QWebEngineUrlRequestJo
     if (result == QMessageBox::No) {
         delete subscription;
     } else {
+        // TELEM01: clicking Subscribe is consent to fetch the list —
+        // the constructor's automatic update was consent-gated, so
+        // kick the download here.
+        AdBlockManager::setRemoteListsConsent(
+            AdBlockManager::RemoteListsGranted);
         AdBlockManager::instance()->addSubscription(subscription);
+        subscription->updateNow();
         AdBlockDialog *dialog = AdBlockManager::instance()->showDialog();
         QAbstractItemModel *model = dialog->treeView->model();
         dialog->treeView->setCurrentIndex(model->index(model->rowCount() -1, 0));

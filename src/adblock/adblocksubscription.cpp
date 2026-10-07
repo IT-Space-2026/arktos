@@ -28,6 +28,7 @@
 
 #include "adblocksubscription.h"
 
+#include "adblockmanager.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 
@@ -213,10 +214,17 @@ void AdBlockSubscription::loadRules()
         }
     }
 
-    if (!m_lastUpdate.isValid()
-        || m_lastUpdate.addDays(7) < QDateTime::currentDateTime()) {
+    const bool stale = !m_lastUpdate.isValid()
+        || m_lastUpdate.addDays(7) < QDateTime::currentDateTime();
+    // TELEM01: this is the automatic refresh path — a remote list may
+    // only be fetched once the user consented to list downloads (the
+    // first-launch prompt, an abp: subscribe, Update Subscription, or
+    // enabling the blocker).  file: subscriptions "update" by
+    // re-reading a local file, so no consent applies to them; and an
+    // explicit updateNow() call stays an on-demand fetch either way.
+    if (stale && (location().scheme() == QLatin1String("file")
+                  || AdBlockManager::remoteListsAllowed()))
         updateNow();
-    }
 }
 
 void AdBlockSubscription::updateNow()
@@ -300,7 +308,14 @@ void AdBlockSubscription::rulesDownloaded()
         qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "Unable to open adblock file for writing:" << fileName;
         return;
     }
-    file.write(response);
+    if (file.write(response) != response.size()) {
+        qWarning() << "AdBlockSubscription::" << __FUNCTION__ << "Unable to write adblock file:" << fileName;
+        return;
+    }
+    // Close before reloading: QFile's internal buffer flushes on
+    // close, and loadRules would otherwise reopen an empty file and
+    // clear m_lastUpdate as "not an adblock list".
+    file.close();
     m_lastUpdate = QDateTime::currentDateTime();
     loadRules();
     emit changed();

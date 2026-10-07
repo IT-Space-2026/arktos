@@ -34,6 +34,7 @@
 #include <qpointer.h>
 
 class QUrl;
+class QWidget;
 class QWebEngineProfile;
 class AutoSaver;
 class AdBlockDialog;
@@ -48,6 +49,31 @@ signals:
     void rulesChanged();
 
 public:
+    // TELEM01: remote filter-list downloads are consent-gated — the
+    // seeded subscriptions must not make the browser contact
+    // easylist.to/ublockorigin.github.io on its own.  Undecided asks
+    // once on first launch (maybePromptForListConsent); explicit user
+    // actions — accepting an abp: subscribe link, pressing Update
+    // Subscription, toggling the blocker on — grant consent through
+    // grantRemoteLists()/setRemoteListsConsent.
+    enum RemoteListsConsent {
+        RemoteListsUndecided = -1,
+        RemoteListsDeclined = 0,
+        RemoteListsGranted = 1
+    };
+    static RemoteListsConsent remoteListsConsent();
+    static void setRemoteListsConsent(RemoteListsConsent consent);
+    // True while remote subscription fetches are allowed (consent
+    // granted).  Consulted by AdBlockSubscription's automatic update
+    // trigger; updateNow() itself stays an explicit fetch.
+    static bool remoteListsAllowed();
+    // Grants consent and refreshes every stale remote subscription.
+    void grantRemoteLists();
+    // One-time first-launch prompt; a no-op once a choice is stored,
+    // when the blocker is disabled, or when no remote subscription
+    // exists.
+    void maybePromptForListConsent(QWidget *parent);
+
     AdBlockManager(QObject *parent = nullptr);
     ~AdBlockManager();
 

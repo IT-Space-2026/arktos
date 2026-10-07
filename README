@@ -83,6 +83,19 @@ fingerprinting surface — the Tor window is the answer for hiding
 traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
 fingerprint resistance.
 
+Zero telemetry: a clean launch opens no unsolicited outbound
+connections.  Chromium's background channels (field-trial/variations
+fetches, component updater, domain-reliability reports, metrics,
+sync, first-run pings) are disabled at startup.  The seeded adblock
+filter lists (EasyList, EasyPrivacy, uBlock filters) stay dormant
+until consent: first launch asks once, and subscribing via an
+abp: link, pressing "Update Subscription", or enabling the blocker
+grants it.  There is no update checker or phone-home code.  Search
+suggestions stay opt-in per engine (SEC11).  `./arora
+--telemetry-smoke` watches a clean launch for 30s through a loopback
+capture proxy plus a /proc socket scan and fails on any outbound
+attempt.
+
 The shield button in the location bar opens a per-site privacy panel:
 the page's security state, a per-site cookie exception (allow, block
 or session-only) with the count of stored cookies, a content-blocking

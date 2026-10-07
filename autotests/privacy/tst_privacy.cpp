@@ -565,15 +565,29 @@ void tst_Privacy::chromiumFlags()
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")), 1);
     QVERIFY(flags.contains(QLatin1String("--enable-features=DnsOverHttps")));
 
-    // Both toggles off -> env untouched.
+    // Toggles off -> only the unconditional TELEM01 kill-list is
+    // appended, user flags stay put, and a second run adds nothing.
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("webrtcIpProtection"), false);
     settings.setValue(QLatin1String("secureDns"), false);
     settings.endGroup();
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--user-flag=1");
     BrowserProfile::applyChromiumFlags();
-    QCOMPARE(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")),
-             QString::fromLatin1("--user-flag=1"));
+    BrowserProfile::applyChromiumFlags();
+    const QStringList quietFlags = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")).split(QLatin1Char(' '),
+                                                   Qt::SkipEmptyParts);
+    QVERIFY(quietFlags.contains(QLatin1String("--user-flag=1")));
+    for (const char *kill :
+         { "--disable-background-networking", "--disable-component-update",
+           "--disable-domain-reliability", "--disable-metrics",
+           "--disable-sync", "--no-first-run" }) {
+        QCOMPARE(quietFlags.count(QLatin1String(kill)), 1);
+    }
+    QVERIFY(!quietFlags.contains(QLatin1String(
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
+    QVERIFY(!quietFlags.contains(
+        QLatin1String("--enable-features=DnsOverHttps")));
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.

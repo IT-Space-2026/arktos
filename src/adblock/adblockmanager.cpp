@@ -39,7 +39,9 @@
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 
+#include <qdatetime.h>
 #include <qhash.h>
+#include <qmessagebox.h>
 #include <qregularexpression.h>
 #include <qstringlist.h>
 #include <qsettings.h>
@@ -93,7 +95,82 @@ void AdBlockManager::setEnabled(bool enabled)
     if (isEnabled() == enabled)
         return;
     m_enabled = enabled;
+    if (enabled) {
+        // TELEM01: switching the blocker on is the user's "yes" to
+        // remote filter lists — gate defers the fetch until here.
+        grantRemoteLists();
+    }
     emit rulesChanged();
+}
+
+AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
+{
+    const int value = QSettings().value(
+        QLatin1String("AdBlock/remoteListsConsent"),
+        int(RemoteListsUndecided)).toInt();
+    if (value < int(RemoteListsUndecided) || value > int(RemoteListsGranted))
+        return RemoteListsUndecided;
+    return RemoteListsConsent(value);
+}
+
+void AdBlockManager::setRemoteListsConsent(RemoteListsConsent consent)
+{
+    QSettings().setValue(QLatin1String("AdBlock/remoteListsConsent"),
+                         int(consent));
+}
+
+bool AdBlockManager::remoteListsAllowed()
+{
+    return remoteListsConsent() == RemoteListsGranted;
+}
+
+void AdBlockManager::grantRemoteLists()
+{
+    if (remoteListsConsent() != RemoteListsGranted)
+        setRemoteListsConsent(RemoteListsGranted);
+    // Only stale or never-fetched remote lists need the kick — a
+    // freshly downloaded list should not be re-fetched on every
+    // enable.
+    const QDateTime now = QDateTime::currentDateTime();
+    const QList<AdBlockSubscription*> list = subscriptions();
+    for (AdBlockSubscription *subscription : list) {
+        if (subscription->location().scheme() == QLatin1String("file"))
+            continue;
+        if (subscription->lastUpdate().isValid()
+            && subscription->lastUpdate().addDays(7) >= now)
+            continue;
+        subscription->updateNow();
+    }
+}
+
+void AdBlockManager::maybePromptForListConsent(QWidget *parent)
+{
+    if (remoteListsConsent() != RemoteListsUndecided || !isEnabled())
+        return;
+    bool hasRemoteSubscription = false;
+    const QList<AdBlockSubscription*> list = subscriptions();
+    for (const AdBlockSubscription *subscription : list) {
+        const QString scheme = subscription->location().scheme();
+        if (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"))
+            hasRemoteSubscription = true;
+    }
+    if (!hasRemoteSubscription)
+        return;
+    const QMessageBox::StandardButton choice = QMessageBox::question(parent,
+        tr("Download Ad-Blocking Filter Lists?"),
+        tr("Arora is configured to block ads and trackers using the "
+           "community filter lists EasyList, EasyPrivacy, and uBlock "
+           "filters. Enabling them downloads the lists once from "
+           "easylist.to and ublockorigin.github.io and refreshes them "
+           "about once a week.\n\nUntil you choose, no list downloads "
+           "are made and the blocker simply has no remote rules. You "
+           "can change this later under Tools > Ad Block."),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (choice == QMessageBox::Yes)
+        grantRemoteLists();
+    else
+        setRemoteListsConsent(RemoteListsDeclined);
 }
 
 AdBlockNetwork *AdBlockManager::network()
