@@ -158,6 +158,16 @@
          </item>
         </widget>
        </item>
+       <item row="4" column="0" colspan="3">
+        <widget class="QCheckBox" name="showSearchBox">
+         <property name="toolTip">
+          <string>Show a dedicated search box next to the location bar. When hidden, searches go through the location bar.</string>
+         </property>
+         <property name="text">
+          <string>Show dedicated search box</string>
+         </property>
+        </widget>
+       </item>
        <item row="6" column="0" colspan="3">
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">

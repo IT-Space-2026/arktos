@@ -97,6 +97,7 @@ public:
     TabWidget *tabWidget() const;
     WebView *currentTab() const;
     ToolbarSearch *toolbarSearch() const;
+    void applySearchBoxVisibility();
     QByteArray saveState(bool withTabs = true) const;
     bool restoreState(const QByteArray &state);
     QAction *showMenuBarAction() const;

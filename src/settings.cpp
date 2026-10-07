@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
+#include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
@@ -220,6 +221,9 @@ void SettingsDialog::loadFromSettings()
     QString defaultHome = QLatin1String("about:home");
     homeLineEdit->setText(settings.value(QLatin1String("home"), defaultHome).toString());
     startupBehavior->setCurrentIndex(settings.value(QLatin1String("startupBehavior"), 0).toInt());
+    // SRCH03: opt-in — hidden by default now that the omnibox
+    // location bar covers searching.
+    showSearchBox->setChecked(settings.value(QLatin1String("showSearchBox"), false).toBool());
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("history"));
@@ -373,6 +377,7 @@ void SettingsDialog::saveToSettings()
     settings.beginGroup(QLatin1String("MainWindow"));
     settings.setValue(QLatin1String("home"), homeLineEdit->text());
     settings.setValue(QLatin1String("startupBehavior"), startupBehavior->currentIndex());
+    settings.setValue(QLatin1String("showSearchBox"), showSearchBox->isChecked());
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("downloadmanager"));
@@ -545,6 +550,8 @@ void SettingsDialog::saveToSettings()
             view->loadSettings();
         else if (TabWidget *tabs = qobject_cast<TabWidget*>(widget))
             tabs->loadSettings();
+        else if (BrowserMainWindow *window = qobject_cast<BrowserMainWindow*>(widget))
+            window->applySearchBoxVisibility();
     }
 }
 

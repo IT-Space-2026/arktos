@@ -1113,6 +1113,21 @@ void BrowserMainWindow::setupToolBar()
     QList<int> sizes;
     sizes << (int)((double)splitterWidth * .80) << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
+
+    applySearchBoxVisibility();
+}
+
+// SRCH03: the dedicated search box is opt-in — the omnibox location
+// bar (SRCH01) covers the same job, so it defaults to hidden.  The
+// widget stays constructed either way: the splitter layout, the
+// search signal wiring, and setWebView() tracking are all unchanged
+// and toggling the preference never re-creates it.
+void BrowserMainWindow::applySearchBoxVisibility()
+{
+    QSettings settings;
+    const bool show = settings.value(
+        QLatin1String("MainWindow/showSearchBox"), false).toBool();
+    m_toolbarSearch->setVisible(show);
 }
 
 void BrowserMainWindow::showBookmarksDialog()
@@ -1499,6 +1514,13 @@ void BrowserMainWindow::goHome()
 
 void BrowserMainWindow::webSearch()
 {
+    if (m_toolbarSearch->isHidden()) {
+        // SRCH03: with the dedicated box hidden the location bar is the
+        // search field (omnibox), so the Ctrl+K-class shortcut focuses
+        // it instead of an invisible widget.
+        selectLineEdit();
+        return;
+    }
     m_toolbarSearch->selectAll();
     m_toolbarSearch->setFocus();
 }

@@ -90,6 +90,7 @@ private slots:
     void events();
     void closeConfirm();
     void chromeMetrics();
+    void searchBoxVisibility();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -351,6 +352,45 @@ void tst_BrowserMainWindow::chromeMetrics()
     TabBar *bar = window->tabWidget()->tabBar();
     QVERIFY(bar->sizeHint().height() >= bar->fontMetrics().height() + 10);
     closeWindow(window);
+}
+
+// SRCH03: the dedicated search box is opt-in — a fresh profile hides
+// it because the omnibox location bar (SRCH01) searches already.  The
+// "Web Search" shortcut then focuses the location bar instead of an
+// invisible widget, and the preference applies live without restart.
+void tst_BrowserMainWindow::searchBoxVisibility()
+{
+    // initTestCase cleared settings; no showSearchBox key = hidden.
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(window->toolbarSearch()->isHidden());
+    QVERIFY(!window->toolbarSearch()->isVisible());
+
+    // Hidden-box webSearch() retargets the location bar.  Focus
+    // delivery is unreliable under the offscreen QPA, so assert the
+    // observable selectAll() state instead.
+    window->tabWidget()->currentLocationBar()->setText(QLatin1String("arora"));
+    QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
+    QVERIFY(window->tabWidget()->currentLocationBar()->hasSelectedText());
+    QVERIFY(!window->toolbarSearch()->hasSelectedText());
+
+    // Opt-in unhides live and the shortcut goes back to the box.
+    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    window->applySearchBoxVisibility();
+    QVERIFY(!window->toolbarSearch()->isHidden());
+    QVERIFY(window->toolbarSearch()->isVisible());
+    window->toolbarSearch()->setText(QLatin1String("arora"));
+    QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
+    QVERIFY(window->toolbarSearch()->hasSelectedText());
+    closeWindow(window);
+
+    // New windows read the persisted key at construction.
+    SubWindow *shown = new SubWindow;
+    shown->show();
+    QVERIFY(shown->toolbarSearch()->isVisible());
+    closeWindow(shown);
+
+    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

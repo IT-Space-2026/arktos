@@ -237,6 +237,9 @@ Omnibox address bar (SRCH01):
 Search settings (SRCH02):
     The preferences dialog gains a dedicated "Search" page: a default-engine combo listing every OpenSearch engine (the pick applies on OK), a "Manage..." button opening the existing engine editor for add/remove/restore-defaults, the moved "use the default search engine as fallback" checkbox (same settings key, existing preference preserved) and the per-engine "Search Suggestions" opt-in moved over from the Privacy page. The suggestions checkbox now follows whichever engine the combo displays — edits for several engines queue up and are written together on OK — so it stays honest while browsing engines that are not yet the default.
 
+Search box visibility (SRCH03):
+    The dedicated search box next to the address bar is now opt-in: the "Show dedicated search box" checkbox on the General preferences page is off by default, since the omnibox address bar covers searching already. The widget stays constructed while hidden — the toggle applies live to every open window — and the Web Search shortcut (Ctrl+K) focuses the address bar instead of an invisible widget while the box is off.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

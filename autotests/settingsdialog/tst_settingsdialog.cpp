@@ -77,6 +77,7 @@ void tst_SettingsDialog::saveAndReload()
         dialog.tabWidget->setCurrentIndex(2);
         dialog.homeLineEdit->setText(QLatin1String("http://home.example.com/"));
         dialog.startupBehavior->setCurrentIndex(1);
+        dialog.showSearchBox->setChecked(true);
         dialog.expireHistory->setCurrentIndex(2);       // 14 days
         dialog.searchEngineFallback->setChecked(true);
         dialog.downloadAsk->setChecked(true);
@@ -118,6 +119,7 @@ void tst_SettingsDialog::saveAndReload()
     QSettings settings;
     QCOMPARE(settings.value(QLatin1String("MainWindow/home")).toString(),
              QLatin1String("http://home.example.com/"));
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSearchBox")).toBool(), true);
     QCOMPARE(settings.value(QLatin1String("proxy/enabled")).toBool(), true);
 
     // A fresh dialog must read every value back through loadFromSettings.
@@ -125,6 +127,7 @@ void tst_SettingsDialog::saveAndReload()
         SettingsDialog reloaded;
         QCOMPARE(reloaded.homeLineEdit->text(),
                  QLatin1String("http://home.example.com/"));
+        QVERIFY(reloaded.showSearchBox->isChecked());
         QCOMPARE(reloaded.expireHistory->currentIndex(), 2);
         QVERIFY(reloaded.searchEngineFallback->isChecked());
         QVERIFY(reloaded.proxySupport->isChecked());

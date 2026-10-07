@@ -28,7 +28,10 @@ localhost/host:port and dotted names navigate directly.  Its dropdown
 can show live suggestions above history matches, but only for engines
 explicitly opted in (search button menu or the dedicated Search page
 in Settings, which also picks the default engine); nothing is sent to
-a suggest endpoint otherwise.
+a suggest endpoint otherwise.  The dedicated search box next to the
+address bar is hidden by default — "Show dedicated search box" on the
+General settings page brings it back, and Ctrl+K focuses the address
+bar while it is off.
 
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
