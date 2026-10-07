@@ -77,6 +77,7 @@ class QStackedWidget;
 QT_END_NAMESPACE
 
 class BrowserMainWindow;
+class OmniboxSuggestions;
 class TabBar;
 class WebView;
 class WebActionMapper;
@@ -203,6 +204,7 @@ private:
     QList<WebActionMapper*> m_actions;
 
     QCompleter *m_lineEditCompleter;
+    OmniboxSuggestions *m_omniboxSuggestions;
     QStackedWidget *m_locationBars;
     TabBar *m_tabBar;
     QToolButton *addTabButton;

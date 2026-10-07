@@ -80,6 +80,47 @@ private:
     bool m_isValid;
 };
 
+// SRCH01: prepends live search-engine suggestions to the history
+// completion so the location bar acts like a modern omnibox.  The
+// model is flat: suggestion rows occupy the top, history rows are
+// forwarded below them.  Suggestion rows report the suggestion text
+// for the url roles, so activating one routes it back through
+// TabWidget::guessUrlFromString — a url-shaped suggestion navigates,
+// anything else searches the current engine.
+class OmniboxCompletionModel : public QAbstractItemModel
+{
+    Q_OBJECT
+
+public:
+    OmniboxCompletionModel(HistoryCompletionModel *historyCompletionModel,
+                           QObject *parent = nullptr);
+
+    HistoryCompletionModel *historyCompletionModel() const;
+
+    void setEngineName(const QString &name);
+    QString engineName() const;
+
+    void setSuggestions(const QStringList &suggestions);
+    QStringList suggestions() const;
+
+    QModelIndex index(int row, int column,
+                      const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &child) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index,
+                  int role = Qt::DisplayRole) const override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+
+private:
+    int suggestionCount() const;
+    QModelIndex historyIndex(int row, int column) const;
+
+    HistoryCompletionModel *m_history;
+    QStringList m_suggestions;
+    QString m_engineName;
+};
+
 class HistoryCompleter : public QCompleter
 {
     Q_OBJECT
@@ -99,6 +140,7 @@ private slots:
 
 private:
     void init();
+    HistoryCompletionModel *historyCompletionModel() const;
     mutable QString m_searchString;
     mutable QTimer m_filterTimer;
 };

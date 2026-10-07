@@ -25,6 +25,10 @@
 #include <tabbar.h>
 #include <webview.h>
 
+#include <opensearchmanager.h>
+#include <opensearchengine.h>
+#include <toolbarsearch.h>
+
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
@@ -76,6 +80,7 @@ private slots:
     void restoreStateCorrupt();
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
+    void omnibox();
 };
 
 // Subclass that exposes the protected functions.
@@ -821,6 +826,83 @@ void tst_TabWidget::tabBarPositionSetting()
 
     settings.remove(QLatin1String("tabBarPosition"));
     settings.endGroup();
+}
+
+// SRCH01: the location bar is an omnibox — guessUrlFromString (driven
+// through loadString) must search for text that is not address-shaped
+// instead of guessing http://, while address-shaped input still
+// navigates.  'keyword terms' shortcuts keep first priority and the
+// searchEngineFallback opt-out restores the historic bare-http guess.
+void tst_TabWidget::omnibox()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("omnibox-test"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://omnibox-test.invalid/s?q={searchTerms}"));
+    // A previous interrupted run may have persisted this engine.
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    manager->setEngineForKeyword(QLatin1String("ot"), engine);
+
+    SubTabWidget widget;
+    widget.newTab();
+    WebView *view = widget.currentWebView();
+    QVERIFY(view);
+
+    // Chromium may normalize a host-only url to "host/" before
+    // urlChanged fires — compare with the trailing slash stripped.
+    const auto check = [&widget, view](const QString &input,
+                                       const QUrl &expected) {
+        QSignalSpy spy(view, &QWebEngineView::urlChanged);
+        widget.loadString(input);
+        QTRY_VERIFY_WITH_TIMEOUT(!spy.isEmpty(), 10000);
+        QCOMPARE(spy.last().first().toUrl().toString(QUrl::StripTrailingSlash),
+                 expected.toString(QUrl::StripTrailingSlash));
+    };
+
+    // Search terms: multi-word input and bare single words both hit
+    // the default engine now — 'word' used to navigate to http://word.
+    check(QLatin1String("browser test"), engine->searchUrl(QLatin1String("browser test")));
+    check(QLatin1String("word"), engine->searchUrl(QLatin1String("word")));
+    check(QLatin1String("a phrase with spaces"),
+          engine->searchUrl(QLatin1String("a phrase with spaces")));
+
+    // Address-shaped input still navigates.  (Chromium normalizes
+    // host-only urls to "host/" before urlChanged fires.)
+    check(QLatin1String("docs.qt.io"), QUrl(QLatin1String("http://docs.qt.io/")));
+    check(QLatin1String("a.b"), QUrl(QLatin1String("http://a.b/")));
+    check(QLatin1String("localhost"), QUrl(QLatin1String("http://localhost/")));
+    check(QLatin1String("localhost:8080"),
+          QUrl(QLatin1String("http://localhost:8080/")));
+    check(QLatin1String("127.0.0.1"), QUrl(QLatin1String("http://127.0.0.1/")));
+
+    // Explicit schemes load as typed — WebEngine can't navigate ftp,
+    // so file: stands in for a non-http explicit scheme.
+    check(QLatin1String("http://example.com/x"),
+          QUrl(QLatin1String("http://example.com/x")));
+    check(QLatin1String("file:///etc/hostname"),
+          QUrl(QLatin1String("file:///etc/hostname")));
+    check(QLatin1String("about:home"),
+          QUrl(QLatin1String("qrc:/startpage.html")));
+
+    // 'keyword terms' wins over everything, even address-shaped terms.
+    check(QLatin1String("ot hello"), engine->searchUrl(QLatin1String("hello")));
+
+    // Opt-out restores the old bare-http guess for non-address input.
+    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+    check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));
+
+    manager->setEngineForKeyword(QLatin1String("ot"), nullptr);
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
+    widget.closeTab();
 }
 
 QTEST_MAIN(tst_TabWidget)

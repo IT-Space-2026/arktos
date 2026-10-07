@@ -35,6 +35,13 @@
 #include "clearbutton.h"
 #include "webview.h"
 #include "browserapplication.h"
+#include "historycompleter.h"
+#include "historymanager.h"
+#include "networkaccessmanager.h"
+#include "omniboxsuggestions.h"
+#include "opensearchengine.h"
+#include "opensearchmanager.h"
+#include "toolbarsearch.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -94,6 +101,7 @@ private slots:
     void dropUrl();
     void siteIcon();
     void privacyIndicator();
+    void omniboxSuggestions();
 };
 
 void tst_LocationBar::initTestCase()
@@ -279,6 +287,112 @@ void tst_LocationBar::privacyIndicator()
     // Clicking it asks the application to leave private mode.
     QTest::mouseClick(&indicator, Qt::LeftButton);
     QVERIFY(!BrowserApplication::isPrivate());
+}
+
+// SRCH01: the location-bar dropdown merges engine suggestions above
+// the history completion — but keystrokes may only reach the suggest
+// endpoint while the engine is opted in (SEC11).  Off must mean zero
+// app-side requests and no rows; on must fetch, populate the merged
+// model and surface the suggestion text through the url role so
+// activation routes back through guessUrlFromString.
+void tst_LocationBar::omniboxSuggestions()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+
+    // A hermetic engine: its suggest endpoint is a local file so the
+    // enabled-path check never leaves the box.
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-omnibox-suggest.json"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("[\"hi\",[\"hi there\",\"hi all\"]]");
+    }
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("omnibox-suggest-test"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://omnibox-suggest.invalid/q={searchTerms}"));
+    engine->setSuggestionsUrlTemplate(
+        QLatin1String("file://") + fixturePath
+        + QLatin1String("?q={searchTerms}"));
+    QVERIFY(engine->providesSuggestions());
+    // A previous interrupted run may have persisted this engine.
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
+
+    // The same completion stack makeNewTab() builds.
+    HistoryCompletionModel *history =
+        new HistoryCompletionModel(this);
+    history->setSourceModel(
+        BrowserApplication::historyManager()->historyFilterModel());
+    OmniboxCompletionModel model(history);
+    HistoryCompleter completer(&model);
+    TestLocationBar bar;
+    bar.setCompleter(&completer);
+    OmniboxSuggestions provider(&model, &completer, this);
+    connect(&bar, &QLineEdit::textEdited,
+            &provider, &OmniboxSuggestions::scheduleSuggestions);
+    QCOMPARE(model.data(model.index(0, 1)).toString(), QString());
+
+    // Every app-side request the NAM creates reports through this
+    // signal — a suggest fetch cannot hide from it.
+    NetworkAccessManager *nam = NetworkAccessManager::instance();
+    QStringList requestUrls;
+    const QMetaObject::Connection requestConn =
+        connect(nam, &NetworkAccessManager::requestCreated, nam,
+            [&requestUrls](QNetworkAccessManager::Operation,
+                           const QNetworkRequest &request, QNetworkReply *) {
+                requestUrls << request.url().toString();
+            });
+
+    // Opt-out (the default): typing must produce ZERO requests.
+    QTest::keyClicks(&bar, QLatin1String("hi"));
+    QTest::qWait(500); // past the 200ms debounce timer
+    QCOMPARE(requestUrls.count(), 0);
+    QCOMPARE(model.suggestions(), QStringList());
+
+    // Opt in: the debounced fetch hits the suggest endpoint and the
+    // rows land above the history block.
+    manager->setSuggestionsEnabledForEngine(engine->name(), true);
+    QTRY_VERIFY_WITH_TIMEOUT(!requestUrls.isEmpty(), 3000);
+    QVERIFY(requestUrls.last().contains(fixturePath));
+    QTRY_VERIFY_WITH_TIMEOUT(model.suggestions().count() == 2, 3000);
+
+    QCOMPARE(model.data(model.index(0, 0)).toString(),
+             QLatin1String("hi there"));
+    QCOMPARE(model.data(model.index(0, 0), HistoryModel::UrlStringRole)
+                 .toString(),
+             QLatin1String("hi there"));
+    QCOMPARE(model.data(model.index(1, 0)).toString(),
+             QLatin1String("hi all"));
+    QCOMPARE(model.data(model.index(0, 1)).toString(),
+             QLatin1String("Search omnibox-suggest-test"));
+    QVERIFY(model.flags(model.index(0, 0)) & Qt::ItemIsSelectable);
+    QVERIFY(model.flags(model.index(0, 0)) & Qt::ItemIsEnabled);
+
+    // History rows are still reachable below the suggestion block and
+    // keep their real roles.
+    const int historyRows = history->rowCount();
+    QCOMPARE(model.rowCount(), 2 + historyRows);
+
+    // Disabling drops the rows and silences the data path again.
+    manager->setSuggestionsEnabledForEngine(engine->name(), false);
+    QCOMPARE(model.suggestions(), QStringList());
+    QCOMPARE(model.rowCount(), historyRows);
+    const int requestsSeen = requestUrls.count();
+    QTest::keyClicks(&bar, QLatin1String(" again"));
+    QTest::qWait(500);
+    QCOMPARE(requestUrls.count(), requestsSeen);
+
+    disconnect(requestConn);
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
+    QFile::remove(fixturePath);
 }
 
 QTEST_MAIN(tst_LocationBar)

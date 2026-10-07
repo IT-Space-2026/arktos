@@ -72,6 +72,7 @@
 #include "historycompleter.h"
 #include "historymanager.h"
 #include "locationbar.h"
+#include "omniboxsuggestions.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "safetext.h"
@@ -90,6 +91,7 @@
 #include <qmenu.h>
 #include <qmessagebox.h>
 #include <qmovie.h>
+#include <qregularexpression.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
 #include <qstyle.h>
@@ -98,6 +100,8 @@
 #include <qwebengineprofile.h>
 
 #include <qdebug.h>
+
+#include <algorithm>
 
 //#define USERMODIFIEDBEHAVIOR_DEBUG
 
@@ -111,6 +115,7 @@ TabWidget::TabWidget(QWidget *parent)
     , m_previousTabAction(nullptr)
     , m_recentlyClosedTabsMenu(nullptr)
     , m_lineEditCompleter(nullptr)
+    , m_omniboxSuggestions(nullptr)
     , m_locationBars(nullptr)
     , m_tabBar(new TabBar(this))
     , addTabButton(nullptr)
@@ -375,9 +380,16 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
     if (!m_lineEditCompleter) {
         HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
         completionModel->setSourceModel(BrowserApplication::historyManager()->historyFilterModel());
-        m_lineEditCompleter = new HistoryCompleter(completionModel, this);
+        // SRCH01: search suggestions sit above the history matches in
+        // the same dropdown — the merged model keeps the completer
+        // hack in HistoryCompleter unaware of the extra rows.
+        OmniboxCompletionModel *omniboxModel =
+            new OmniboxCompletionModel(completionModel, this);
+        m_lineEditCompleter = new HistoryCompleter(omniboxModel, this);
         connect(m_lineEditCompleter, QOverload<const QString &>::of(&QCompleter::activated),
                 this, [this](const QString &string) { loadString(string); });
+        m_omniboxSuggestions = new OmniboxSuggestions(
+            omniboxModel, m_lineEditCompleter, this);
         // Should this be in Qt by default?
         QAbstractItemView *popup = m_lineEditCompleter->popup();
         QListView *listView = qobject_cast<QListView*>(popup);
@@ -388,6 +400,8 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
         }
     }
     locationBar->setCompleter(m_lineEditCompleter);
+    connect(locationBar, &QLineEdit::textEdited,
+            m_omniboxSuggestions, &OmniboxSuggestions::scheduleSuggestions);
     connect(locationBar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
     m_locationBars->addWidget(locationBar);
     m_locationBars->setSizePolicy(locationBar->sizePolicy());
@@ -822,36 +836,87 @@ void TabWidget::loadStringFromUntrustedSource(const QString &string, OpenUrlIn t
     loadUrl(url, tab);
 }
 
+// SRCH01: a whitespace-free token that Qt already resolved to a host
+// name navigates only when it actually looks like an address —
+// localhost / *.localhost, host:port (localhost:8080, [::1]:8080) or
+// a dotted/TLD-shaped name (docs.qt.io, 127.0.0.1).  QUrl::
+// fromUserInput() claims ANY single token is a host ("word" ->
+// http://word), so the omnibox needs its own address shape check:
+// anything else typed alone is a search term.
+static bool looksLikeAddress(const QString &text)
+{
+    const QString host = text.section(QLatin1Char('/'), 0, 0);
+
+    if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0
+        || host.endsWith(QLatin1String(".localhost"), Qt::CaseInsensitive))
+        return true;
+
+    static const QRegularExpression hostPort(
+        QLatin1String("^(\\[[0-9a-fA-F:]+\\]|[A-Za-z0-9._~-]+):\\d+(/.*)?$"));
+    if (hostPort.match(text).hasMatch())
+        return true;
+
+    const int dot = host.indexOf(QLatin1Char('.'));
+    return dot > 0;
+}
+
 QUrl TabWidget::guessUrlFromString(const QString &string)
 {
+    const QString trimmed = string.trimmed();
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
-    QUrl url = manager->convertKeywordSearchToUrl(string);
+
+    // 'keyword terms' engine shortcuts keep first priority.
+    QUrl url = manager->convertKeywordSearchToUrl(trimmed);
     if (url.isValid())
         return url;
 
-    url = QUrl::fromUserInput(string);
+    url = QUrl::fromUserInput(trimmed);
 
     if (url.scheme() == QLatin1String("about")
         && url.path() == QLatin1String("home"))
         url = QUrl(QLatin1String("qrc:/startpage.html"));
 
-    // QUrl::isValid() is too much tolerant.
-    // We actually want to check if the url conforms to the RFC, which QUrl::isValid() doesn't state.
-    if (!url.scheme().isEmpty() && (!url.host().isEmpty() || !url.path().isEmpty()))
-        return url;
-
     QSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));
-    bool search = settings.value(QLatin1String("searchEngineFallback"), false).toBool();
+    // SRCH01: the omnibox searches by default — the checkbox is now an
+    // opt-out that restores the historic bare-http guess.
+    const bool search =
+        settings.value(QLatin1String("searchEngineFallback"), true).toBool();
+    const auto fallbackUrl = [search, &trimmed]() -> QUrl {
+        if (search) {
+            if (OpenSearchEngine *engine =
+                    ToolbarSearch::openSearchManager()->currentEngine()) {
+                const QUrl searchUrl = engine->searchUrl(trimmed);
+                if (!searchUrl.isEmpty() && searchUrl.isValid())
+                    return searchUrl;
+            }
+        }
+        const QString urlString = QLatin1String("http://") + trimmed;
+        return QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);
+    };
 
-    if (search) {
-        url = ToolbarSearch::openSearchManager()->currentEngine()->searchUrl(string.trimmed());
-    } else {
-        QString urlString = QLatin1String("http://") + string.trimmed();
-        url = QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);
-    }
+    // Input with whitespace or no resolvable address at all ("browser
+    // test", "~/foo") can only ever be a search.
+    const bool hasSpace = std::any_of(trimmed.cbegin(), trimmed.cend(),
+        [](QChar c) { return c.isSpace(); });
+    if (trimmed.isEmpty() || hasSpace || url.isEmpty() || !url.isValid())
+        return fallbackUrl();
 
-    return url;
+    // An explicit scheme (file:, javascript:, mailto:, qrc:...) or an
+    // explicitly typed http(s):// is an address — load it as typed.
+    // The untrusted-input scheme gate lives in
+    // loadStringFromUntrustedSource / isUrlAllowedOnUntrustedInput.
+    const bool guessedHttp =
+        (url.scheme() == QLatin1String("http")
+         || url.scheme() == QLatin1String("https"))
+        && !trimmed.startsWith(QLatin1String("http"), Qt::CaseInsensitive);
+    if (!guessedHttp)
+        return url;
+
+    if (looksLikeAddress(trimmed))
+        return url;
+
+    return fallbackUrl();
 }
 
 /*

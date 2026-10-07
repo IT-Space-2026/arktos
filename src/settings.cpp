@@ -220,7 +220,9 @@ void SettingsDialog::loadFromSettings()
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("urlloading"));
-    bool search = settings.value(QLatin1String("searchEngineFallback"), false).toBool();
+    // SRCH01: the omnibox searches by default — the stored value only
+    // exists once the user touches the checkbox.
+    bool search = settings.value(QLatin1String("searchEngineFallback"), true).toBool();
     searchEngineFallback->setChecked(search);
     settings.endGroup();
 

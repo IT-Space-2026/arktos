@@ -167,6 +167,206 @@ bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex
     return (frecency_r < frecency_l);
 }
 
+OmniboxCompletionModel::OmniboxCompletionModel(
+        HistoryCompletionModel *historyCompletionModel, QObject *parent)
+    : QAbstractItemModel(parent)
+    , m_history(historyCompletionModel)
+{
+    m_history->setParent(this);
+
+    // The merged view is flat: every structural signal from the
+    // history block is forwarded with the live suggestion count as the
+    // row offset.
+    connect(m_history, &QAbstractItemModel::rowsAboutToBeInserted,
+            this, [this](const QModelIndex &, int first, int last) {
+        beginInsertRows(QModelIndex(), first + suggestionCount(),
+                        last + suggestionCount());
+    });
+    connect(m_history, &QAbstractItemModel::rowsInserted,
+            this, [this]() { endInsertRows(); });
+    connect(m_history, &QAbstractItemModel::rowsAboutToBeRemoved,
+            this, [this](const QModelIndex &, int first, int last) {
+        beginRemoveRows(QModelIndex(), first + suggestionCount(),
+                        last + suggestionCount());
+    });
+    connect(m_history, &QAbstractItemModel::rowsRemoved,
+            this, [this]() { endRemoveRows(); });
+    connect(m_history, &QAbstractItemModel::rowsAboutToBeMoved,
+            this, [this](const QModelIndex &, int start, int end,
+                         const QModelIndex &, int destination) {
+        beginMoveRows(QModelIndex(), start + suggestionCount(),
+                      end + suggestionCount(), QModelIndex(),
+                      destination + suggestionCount());
+    });
+    connect(m_history, &QAbstractItemModel::rowsMoved,
+            this, [this]() { endMoveRows(); });
+    connect(m_history, &QAbstractItemModel::modelAboutToBeReset,
+            this, [this]() { beginResetModel(); });
+    connect(m_history, &QAbstractItemModel::modelReset,
+            this, [this]() { endResetModel(); });
+    connect(m_history, &QAbstractItemModel::layoutAboutToBeChanged,
+            this, [this]() { emit layoutAboutToBeChanged(); });
+    connect(m_history, &QAbstractItemModel::layoutChanged,
+            this, [this]() { emit layoutChanged(); });
+    connect(m_history, &QAbstractItemModel::dataChanged,
+            this, [this](const QModelIndex &topLeft,
+                         const QModelIndex &bottomRight,
+                         const QList<int> &roles) {
+        const int offset = suggestionCount();
+        emit dataChanged(index(topLeft.row() + offset, topLeft.column()),
+                         index(bottomRight.row() + offset,
+                               bottomRight.column()), roles);
+    });
+}
+
+HistoryCompletionModel *OmniboxCompletionModel::historyCompletionModel() const
+{
+    return m_history;
+}
+
+void OmniboxCompletionModel::setEngineName(const QString &name)
+{
+    if (name == m_engineName)
+        return;
+    m_engineName = name;
+    if (suggestionCount() > 0)
+        emit dataChanged(index(0, 1),
+                         index(suggestionCount() - 1, 1));
+}
+
+QString OmniboxCompletionModel::engineName() const
+{
+    return m_engineName;
+}
+
+void OmniboxCompletionModel::setSuggestions(const QStringList &suggestions)
+{
+    // A short block: enough to serve the dropdown without burying the
+    // history matches underneath.
+    const QStringList capped = suggestions.mid(0, 5);
+    if (capped == m_suggestions)
+        return;
+
+    const int oldCount = m_suggestions.count();
+    const int newCount = capped.count();
+    if (newCount > oldCount)
+        beginInsertRows(QModelIndex(), oldCount, newCount - 1);
+    else if (newCount < oldCount)
+        beginRemoveRows(QModelIndex(), newCount, oldCount - 1);
+
+    const int common = qMin(oldCount, newCount);
+    const bool commonChanged = common > 0
+        && capped.mid(0, common) != m_suggestions.mid(0, common);
+    m_suggestions = capped;
+
+    if (newCount > oldCount)
+        endInsertRows();
+    else if (newCount < oldCount)
+        endRemoveRows();
+
+    if (commonChanged)
+        emit dataChanged(index(0, 0),
+                         index(common - 1, columnCount() - 1));
+}
+
+QStringList OmniboxCompletionModel::suggestions() const
+{
+    return m_suggestions;
+}
+
+int OmniboxCompletionModel::suggestionCount() const
+{
+    return m_suggestions.count();
+}
+
+QModelIndex OmniboxCompletionModel::historyIndex(int row, int column) const
+{
+    return m_history->index(row - suggestionCount(), column);
+}
+
+QModelIndex OmniboxCompletionModel::index(int row, int column,
+                                        const QModelIndex &parent) const
+{
+    if (!hasIndex(row, column, parent))
+        return QModelIndex();
+    return createIndex(row, column);
+}
+
+QModelIndex OmniboxCompletionModel::parent(const QModelIndex &) const
+{
+    return QModelIndex();
+}
+
+int OmniboxCompletionModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : suggestionCount() + m_history->rowCount();
+}
+
+int OmniboxCompletionModel::columnCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : m_history->columnCount();
+}
+
+QVariant OmniboxCompletionModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.parent().isValid())
+        return QVariant();
+
+    if (index.row() < suggestionCount()) {
+        const QString &suggestion = m_suggestions.at(index.row());
+        switch (role) {
+        case HistoryCompletionModel::HistoryCompletionRole:
+            // Stay in step with the history block's matching hack:
+            // the completer only ever sees these rows while it is
+            // live anyway.
+            return m_history->isValid()
+                ? QLatin1String("a") : QLatin1String("b");
+        case HistoryModel::UrlStringRole:
+            // HistoryCompleter::pathFromIndex() reads this role —
+            // returning the text routes activation back through
+            // guessUrlFromString.
+            return suggestion;
+        case Qt::DisplayRole:
+            if (index.column() == 0)
+                return suggestion;
+            return m_engineName.isEmpty()
+                ? QVariant() : tr("Search %1").arg(m_engineName);
+        case Qt::ToolTipRole:
+            return suggestion;
+        case Qt::FontRole:
+            if (index.column() == 1) {
+                QFont font;
+                font.setWeight(QFont::Light);
+                return font;
+            }
+            return QVariant();
+        default:
+            return QVariant();
+        }
+    }
+
+    return m_history->data(historyIndex(index.row(), index.column()), role);
+}
+
+Qt::ItemFlags OmniboxCompletionModel::flags(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return Qt::NoItemFlags;
+    if (index.row() < suggestionCount())
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    return m_history->flags(historyIndex(index.row(), index.column()));
+}
+
+HistoryCompletionModel *HistoryCompleter::historyCompletionModel() const
+{
+    // SRCH01: the location-bar completer is backed by an
+    // OmniboxCompletionModel wrapping the history model.
+    if (OmniboxCompletionModel *omnibox =
+            qobject_cast<OmniboxCompletionModel*>(model()))
+        return omnibox->historyCompletionModel();
+    return qobject_cast<HistoryCompletionModel*>(model());
+}
+
 HistoryCompleter::HistoryCompleter(QObject *parent)
     : QCompleter(parent)
 {
@@ -217,7 +417,7 @@ QStringList HistoryCompleter::splitPath(const QString &path) const
     // if the previous search results are not a superset of
     // the current search results, tell the model that it is not valid yet
     if (!path.startsWith(m_searchString)) {
-        HistoryCompletionModel *completionModel = qobject_cast<HistoryCompletionModel*>(model());
+        HistoryCompletionModel *completionModel = historyCompletionModel();
         Q_ASSERT(completionModel);
         completionModel->setValid(false);
     }
@@ -262,7 +462,7 @@ bool HistoryCompleter::eventFilter(QObject *obj, QEvent *event)
 
 void HistoryCompleter::updateFilter()
 {
-    HistoryCompletionModel *completionModel = qobject_cast<HistoryCompletionModel*>(model());
+    HistoryCompletionModel *completionModel = historyCompletionModel();
     Q_ASSERT(completionModel);
 
     // tell the HistoryCompletionModel about the new search string

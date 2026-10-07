@@ -164,7 +164,7 @@
           <string>Use the default search engine as fallback when the URL given by the user is invalid</string>
          </property>
          <property name="checked">
-          <bool>false</bool>
+          <bool>true</bool>
          </property>
         </widget>
        </item>

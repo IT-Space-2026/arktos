@@ -22,6 +22,13 @@ Appearance: Arora follows the desktop light/dark preference (Qt 6.5+
 color-scheme reporting).  On desktops that do not report a scheme —
 or to force a look — set ARORA_COLOR_SCHEME=dark or light.
 
+Search: the address bar doubles as a search box (omnibox) — text that
+is not an address goes to the default search engine, while urls,
+localhost/host:port and dotted names navigate directly.  Its dropdown
+can show live suggestions above history matches, but only for engines
+explicitly opted in (search button menu or Settings); nothing is sent
+to a suggest endpoint otherwise.
+
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
 the preferences dialog loads unpacked folders or installs .zip packages,
