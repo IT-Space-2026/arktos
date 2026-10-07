@@ -448,6 +448,7 @@ int WebView::levelForZoom(int zoom)
 void WebView::applyZoom()
 {
     setZoomFactor(qreal(m_currentZoom) / 100.0);
+    emit zoomChanged(m_currentZoom);
 }
 
 void WebView::zoomIn()

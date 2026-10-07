@@ -29,16 +29,22 @@
 #include <QtGui/QtGui>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qlabel.h>
 #include <qlineedit.h>
 #include <qmenu.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
+#include <qprogressbar.h>
 #include <qpushbutton.h>
+#include <qstatusbar.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "statusbarwidgets.h"
 #include "tabwidget.h"
 #include "tabbar.h"
 #include "webview.h"
@@ -94,6 +100,7 @@ private slots:
     void closeConfirm();
     void chromeMetrics();
     void searchBoxVisibility();
+    void statusBarWidgets();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -451,6 +458,133 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     closeWindow(shown);
 
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+}
+
+// UIP04: permanent status-bar widgets — a load-time indicator and a
+// -[100%]+ zoom control, both bound to the current tab and re-pointed
+// on tab switches.
+void tst_BrowserMainWindow::statusBarWidgets()
+{
+    // Deterministic widget pass — display state without engine timing.
+    {
+        LoadingIndicator indicator;
+        QLabel *label = indicator.findChild<QLabel *>(
+            QLatin1String("loadingLabel"));
+        QProgressBar *bar = indicator.findChild<QProgressBar *>(
+            QLatin1String("loadingBar"));
+        QVERIFY(label && bar);
+        QVERIFY(!indicator.isVisible());
+        QVERIFY(QMetaObject::invokeMethod(&indicator, "pageLoadStarted"));
+        QVERIFY(indicator.loading());
+        QVERIFY(indicator.isVisible());
+        QVERIFY(QMetaObject::invokeMethod(&indicator, "pageLoadProgress",
+                                          Q_ARG(int, 42)));
+        QCOMPARE(bar->value(), 42);
+        QVERIFY(label->text().endsWith(QLatin1String(" s")));
+        QTest::qWait(50);
+        QVERIFY(QMetaObject::invokeMethod(&indicator, "pageLoadFinished",
+                                          Q_ARG(bool, true)));
+        QVERIFY(!indicator.loading());
+        QVERIFY(!bar->isVisible());
+        QVERIFY(label->text().startsWith(QLatin1String("Loaded in")));
+        QVERIFY(QMetaObject::invokeMethod(&indicator, "clearStatus"));
+        QVERIFY(!indicator.isVisible());
+    }
+
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    LoadingIndicator *indicator = window->findChild<LoadingIndicator *>(
+        QLatin1String("loadingIndicator"));
+    ZoomControl *zoom = window->findChild<ZoomControl *>(
+        QLatin1String("zoomControl"));
+    QVERIFY(indicator);
+    QVERIFY(zoom);
+    // Permanent status-bar citizens — they die with the bar, not the
+    // temporary-message area.
+    QCOMPARE(indicator->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(zoom->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(zoom->webView(), window->currentTab());
+
+    QToolButton *zoomOutButton = zoom->findChild<QToolButton *>(
+        QLatin1String("zoomOutButton"));
+    QToolButton *valueButton = zoom->findChild<QToolButton *>(
+        QLatin1String("zoomValueButton"));
+    QToolButton *zoomInButton = zoom->findChild<QToolButton *>(
+        QLatin1String("zoomInButton"));
+    QVERIFY(zoomOutButton && valueButton && zoomInButton);
+    QCOMPARE(valueButton->text(), QLatin1String("100%"));
+
+    // The buttons drive the page zoom through the WebView ladder…
+    zoomInButton->click();
+    QCOMPARE(window->currentTab()->currentZoom(), 110);
+    QCOMPARE(valueButton->text(), QLatin1String("110%"));
+
+    // …and the display follows the menu/keyboard path too (both
+    // funnel through WebView::applyZoom -> zoomChanged).
+    QVERIFY(QMetaObject::invokeMethod(window, "zoomIn"));
+    QCOMPARE(valueButton->text(), QLatin1String("120%"));
+    zoomOutButton->click();
+    QCOMPARE(valueButton->text(), QLatin1String("110%"));
+
+    // Percent label is the reset affordance.
+    valueButton->click();
+    QCOMPARE(valueButton->text(), QLatin1String("100%"));
+    QCOMPARE(window->currentTab()->zoomFactor(), qreal(1.0));
+
+    // Zoom is per-tab: a new tab reads 100%, switching back shows the
+    // first tab's level again.
+    WebView *firstTab = window->currentTab();
+    firstTab->zoomIn();
+    QCOMPARE(firstTab->currentZoom(), 110);
+    window->tabWidget()->newTab();
+    QVERIFY(window->currentTab() != firstTab);
+    QCOMPARE(zoom->webView(), window->currentTab());
+    QCOMPARE(valueButton->text(), QLatin1String("100%"));
+    window->tabWidget()->setCurrentIndex(0);
+    QCOMPARE(zoom->webView(), firstTab);
+    QCOMPARE(valueButton->text(), QLatin1String("110%"));
+
+    // Load indicator follows a real page load end-to-end.  A local
+    // responder holds the body back for a beat — a data:/file: load
+    // can finish between QTRY polls, so the loading state would not
+    // be reliably observable.
+    QLabel *loadingLabel = indicator->findChild<QLabel *>(
+        QLatin1String("loadingLabel"));
+    QProgressBar *loadingBar = indicator->findChild<QProgressBar *>(
+        QLatin1String("loadingBar"));
+    QVERIFY(loadingLabel && loadingBar);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: text/html\r\n"
+                      "Content-Length: 5\r\n\r\n");
+        QTimer::singleShot(800, socket, [socket]() {
+            socket->write("hello");
+            socket->disconnectFromHost();
+        });
+    });
+    window->currentTab()->loadUrl(
+        QUrl(QStringLiteral("http://127.0.0.1:%1/slow")
+                 .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(indicator->loading(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!indicator->loading()
+                             && loadingLabel->text().startsWith(
+                                 QLatin1String("Loaded in")), 15000);
+    QVERIFY(indicator->lastElapsedMs() > 0);
+
+    // The finished notice clears itself; idle stays hidden.
+    QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 15000);
+
+    closeWindow(window);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

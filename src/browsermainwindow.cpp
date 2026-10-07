@@ -85,6 +85,7 @@
 #include "securestore.h"
 #include "settings.h"
 #include "sourceviewer.h"
+#include "statusbarwidgets.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
@@ -126,6 +127,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 #endif
     , m_bookmarksToolbar(nullptr)
     , m_tabWidget(new TabWidget(this))
+    , m_loadingIndicator(new LoadingIndicator(this))
+    , m_zoomControl(new ZoomControl(this))
     , m_autoSaver(new AutoSaver(this))
 {
     setAttribute(Qt::WA_DeleteOnClose, true);
@@ -228,6 +231,16 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, &BrowserMainWindow::printRequested);
     connect(m_tabWidget, &TabWidget::lastTabClosed,
             this, &BrowserMainWindow::lastTabClosed);
+
+    // UIP04: permanent status-bar widgets — page-load timing and a
+    // zoom control, both bound to whichever tab is current.
+    statusBar()->addPermanentWidget(m_loadingIndicator);
+    statusBar()->addPermanentWidget(m_zoomControl);
+    connect(m_tabWidget, &QTabWidget::currentChanged,
+            this, [this](int) {
+        m_loadingIndicator->setWebView(currentTab());
+        m_zoomControl->setWebView(currentTab());
+    });
 
     updateWindowTitle();
     loadDefaultState();

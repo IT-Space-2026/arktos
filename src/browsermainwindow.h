@@ -76,6 +76,8 @@ class QFrame;
 class HistoryMenu;
 class BookmarksMenuBarMenu;
 class UserAgentMenu;
+class LoadingIndicator;
+class ZoomControl;
 
 /*!
     The MainWindow of the Browser Application.
@@ -255,6 +257,10 @@ private:
     BookmarksToolBar *m_bookmarksToolbar;
 
     TabWidget *m_tabWidget;
+
+    // UIP04: permanent status-bar widgets bound to the current tab.
+    LoadingIndicator *m_loadingIndicator;
+    ZoomControl *m_zoomControl;
 
     AutoSaver *m_autoSaver;
 

@@ -98,6 +98,7 @@ public:
 
     QString lastStatusBarText() const;
     inline int progress() const { return m_progress; }
+    inline int currentZoom() const { return m_currentZoom; }
     TabWidget *tabWidget() const;
     // JSCTL: whether the current page's scripts are blocked.
     bool isJavaScriptBlocked() const;
@@ -105,6 +106,10 @@ public:
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
     void statusBarMessage(const QString &string);
+    // UIP04: every zoom path (menu/keyboard/Ctrl+wheel/status-bar
+    // control) funnels through applyZoom(), which re-emits this so
+    // chrome widgets can track the current percent.
+    void zoomChanged(int zoom);
     // JSCTL: forwarded from WebPage — the shield badge listens here.
     void javaScriptBlockedChanged(bool blocked);
 

@@ -101,6 +101,7 @@ HEADERS += \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
+    $$PWD/statusbarwidgets.h \
     $$PWD/streamingutils.h \
     $$PWD/tabbar.h \
     $$PWD/tabwidget.h \
@@ -148,6 +149,7 @@ SOURCES += \
     $$PWD/settings.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
+    $$PWD/statusbarwidgets.cpp \
     $$PWD/tabbar.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \

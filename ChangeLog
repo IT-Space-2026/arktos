@@ -341,6 +341,9 @@ Search shortcut nicknames (SRCH06):
     The Search preferences page gained a "Shortcuts Nickname" group: Bookmarks, History and Tabs each get a checkbox and an editable nickname (defaulting to @bookmarks, @history and @tabs). Typing a nickname followed by a space at the start of the address bar scopes the completion dropdown to that source — @bookmarks lists matching bookmarks, @history lists only history hits, and @tabs lists the window's open tabs; picking a tab result switches to it instead of reloading. Search-engine keywords still take precedence when a nickname collides, and an unchecked row's token is treated as ordinary search text.
     A "Reset Search Settings to Default" button at the bottom of the page restores every preference the page owns — engine picks, suggestion switches, shortcut nicknames and display options — after a confirmation prompt, leaving all other settings pages untouched.
 
+Status bar widgets (UIP04):
+    The status bar gained two permanent right-side widgets, Vivaldi-style: a page-load indicator and a zoom control. While a page loads, the indicator shows a slim progress bar with a running elapsed timer; on completion it reports "Loaded in N s" for a few seconds before clearing itself — it lives outside the temporary-message area so link-hover text never clobbers it. The zoom control reads "- 100% +": the buttons step the current tab through the standard zoom ladder, the percent itself resets to 100%, and the display follows menu, keyboard and Ctrl+wheel zoom as well as each tab's own level on every tab switch. Both honor the existing status-bar show/hide preference.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
