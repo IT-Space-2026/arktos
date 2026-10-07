@@ -168,8 +168,10 @@ void tst_SafeText::tabTitleIsLiteral()
     QVERIFY(titleSpy.count() >= 1);
 
     // Tab label renders plain: literal text, '&' doubled for the
-    // mnemonic layer.
-    QCOMPARE(widget.tabBar()->tabText(0), SafeText::menu(title));
+    // mnemonic layer. The label update rides a later signal hop than
+    // WebView::title(), so poll rather than compare once.
+    QTRY_COMPARE_WITH_TIMEOUT(widget.tabBar()->tabText(0),
+                              SafeText::menu(title), 5000);
     // Tooltip renders rich: escaped text decodes back to literal.
     QCOMPARE(widget.tabBar()->tabToolTip(0), SafeText::escaped(title));
     QCOMPARE(renderAutoText(widget.tabBar()->tabToolTip(0)), title);

@@ -218,6 +218,9 @@ Session restore (SESS01):
 Tab settings (TABS01):
     The settings dialog's "Tabs" page is now named "Tab Settings" and gains a "Tab bar position" selector (Top/Bottom/Left/Right), saved to the existing tabs settings group and applied live to every open window as well as to newly created ones. On Left/Right the tab strip runs vertically — tabs stay movable, the context menu and close buttons keep working, and dragging a tab away from the strip (sideways, not upward) still tears it out; the corner "+" and shared close buttons are hidden in the vertical positions because QTabWidget does not lay corner widgets out there — New Tab remains on the File menu, the Ctrl+T-class shortcut, and the tab bar's context menu and empty-area double-click.
 
+Tor daemon (TOR01):
+    Arora can now launch and manage its own Tor daemon as a child process — the foundation for private windows that route through Tor. The manager prefers a system `tor` (PATH, /usr/bin/tor or the ARORA_TOR_BINARY override) and falls back to a bundled Tor Expert Bundle (BuildProcess/fetch-tor.sh downloads the official per-platform bundle into the package data area; no binaries are committed). Tor runs with a private data directory, a loopback SOCKS5 listener and control port on auto-assigned ports, and cookie authentication; the browser takes control-protocol ownership, tracks bootstrap progress to 100% before declaring the proxy ready, and shuts the daemon down cleanly when the app exits — it never runs as root. `./arora --tor-smoke` verifies the whole path end to end against a real daemon.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

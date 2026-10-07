@@ -53,6 +53,8 @@
 #include "sourceviewer.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "tormanager.h"
+#include "torsocks5.h"
 #include "webpage.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -82,8 +84,11 @@
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
 #include <QtNetwork/QNetworkCookie>
+#include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
 #include <QtWebEngineCore/QWebEngineFindTextResult>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
@@ -186,7 +191,7 @@ int main(int argc, char **argv)
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
-        "session-smoke", "restore-smoke",
+        "session-smoke", "restore-smoke", "tor-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2177,6 +2182,108 @@ int main(int argc, char **argv)
         QTimer::singleShot(0, &application,
                            [&application]() { application.exit(0); });
         return application.exec();
+    }
+
+    // Headless verification for TOR01: the TorManager daemon layer —
+    // resolve a tor binary, spawn it with a scratch DataDirectory, wait
+    // for bootstrap over the real tor control protocol (cookie auth,
+    // TAKEOWNERSHIP, STATUS_CLIENT events), prove the SOCKS5 listener
+    // speaks the protocol against a local echo target, and check the
+    // daemon is reaped by stop().  Exits 0 on PASS.  Bootstrap needs
+    // real network access to the tor directory authorities.
+    if (args.contains(QLatin1String("--tor-smoke"))) {
+        auto torFail = [&application](const QString &why) {
+            qInfo() << "tor-smoke: FAIL" << why;
+            application.exit(1);
+        };
+
+        const QString binary = TorManager::resolveBinary();
+        if (binary.isEmpty()) {
+            torFail(QLatin1String("no tor binary — set ARORA_TOR_BINARY "
+                                  "or run BuildProcess/fetch-tor.sh"));
+            return application.exec();
+        }
+        qInfo() << "tor-smoke: using" << binary;
+
+        QTemporaryDir torDir(QDir::temp().filePath(
+            QLatin1String("arora-tor-smoke-XXXXXX")));
+        if (!torDir.isValid()) {
+            torFail(QLatin1String("cannot create data directory"));
+            return application.exec();
+        }
+
+        // Local echo target for the SOCKS5 CONNECT — exits cannot
+        // reach 127.0.0.1, so a well-formed refusal reply already
+        // proves the listener speaks the protocol.
+        QTcpServer *echoServer = new QTcpServer(&application);
+        if (!echoServer->listen(QHostAddress::LocalHost, 0)) {
+            torFail(QLatin1String("echo server failed to listen"));
+            return application.exec();
+        }
+        QObject::connect(echoServer, &QTcpServer::newConnection,
+                         &application, [echoServer]() {
+            QTcpSocket *client = echoServer->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                client->write(client->readAll());
+            });
+        });
+        const quint16 echoPort = echoServer->serverPort();
+
+        TorManager *torManager = new TorManager(&application);
+        torManager->setDataDirectory(torDir.path());
+        // Log tor's own notices so bootstrap stalls are diagnosable.
+        QObject::connect(torManager, &TorManager::logLine,
+                         &application, [](const QString &line) {
+            qInfo() << "tor:" << line;
+        });
+        QObject::connect(torManager, &TorManager::bootstrapProgressChanged,
+                         &application,
+                         [](int progress, const QString &summary) {
+            qInfo() << "tor-smoke: bootstrap" << progress
+                    << "%" << summary;
+        });
+        QObject::connect(torManager, &TorManager::failed,
+                         &application, torFail);
+        QObject::connect(torManager, &TorManager::ready,
+                         &application,
+                         [torManager, echoPort, &application,
+                          torFail](const QNetworkProxy &proxy) {
+            qInfo() << "tor-smoke: ready — socks"
+                    << proxy.hostName() << "port" << proxy.port();
+            TorSocks5 *probe = new TorSocks5(&application);
+            QObject::connect(probe, &TorSocks5::finished,
+                             &application,
+                             [torManager, &application, torFail](
+                                 bool granted, int replyCode) {
+                if (replyCode < 0) {
+                    torFail(QLatin1String("socks5 handshake failed"));
+                    return;
+                }
+                qInfo() << "tor-smoke: socks5 CONNECT reply"
+                        << replyCode
+                        << (granted
+                            ? QStringLiteral("(tunnel granted)")
+                            : QStringLiteral("(well-formed refusal — "
+                                             "expected for a loopback "
+                                             "target)"));
+                torManager->stop();
+                const bool reaped = !torManager->isRunning()
+                    && torManager->state() == TorManager::Stopped;
+                qInfo() << "tor-smoke:" << (reaped ? "PASS" : "FAIL")
+                        << "daemon reaped:" << reaped;
+                application.exit(reaped ? 0 : 1);
+            });
+            probe->connectThrough(QHostAddress::LocalHost,
+                                  torManager->socksPort(),
+                                  QStringLiteral("127.0.0.1"),
+                                  echoPort);
+        });
+        // Bootstrap over the real network can take a while.
+        QTimer::singleShot(240000, &application, [torFail]() {
+            torFail(QLatin1String("timeout waiting for bootstrap"));
+        });
+        torManager->start();
     }
 
     return application.exec();

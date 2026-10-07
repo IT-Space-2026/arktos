@@ -55,6 +55,7 @@ include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
+include(tor/tor.pri)                  # TOR01 done
 include(useragent/useragent.pri)      # MIG14 done
 # MIG13: qwebplugins/ deleted (plugin machinery removed per user
 # directive); utils.pri retired — remaining utils/ files are in the

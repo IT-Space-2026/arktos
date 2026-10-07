@@ -35,6 +35,7 @@ SUBDIRS  = \
     tabbar \
     tabwidget \
     toolbarsearch \
+    tormanager \
     utils \
     webactionmapper \
     webpage \
