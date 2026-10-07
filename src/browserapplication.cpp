@@ -700,6 +700,16 @@ QIcon BrowserApplication::icon(const QUrl &url)
 
 QString BrowserApplication::installedDataDirectory()
 {
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // PACK01: prefer the relocatable-bundle layout (<bindir>/../share/arora)
+    // over the compile-time PKGDATADIR so an unpacked bundle finds its
+    // shipped translations and useragents.xml wherever it is extracted.
+    const QString bundled = QDir(qApp->applicationDirPath()
+                                 + QLatin1String("/../share/arora"))
+                            .absolutePath();
+    if (QFileInfo::exists(bundled))
+        return bundled;
+#endif
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS) && defined(PKGDATADIR)
     return QLatin1String(PKGDATADIR);
 #else

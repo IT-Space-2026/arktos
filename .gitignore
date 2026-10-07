@@ -35,3 +35,6 @@ fuzz/*/fuzz_*
 !fuzz/**/*.cpp
 !fuzz/**/*.h
 fuzz/seedgen/seedgen
+
+# PACK01 bundle output
+dist/

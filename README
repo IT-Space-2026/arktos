@@ -24,3 +24,11 @@ the preferences dialog loads unpacked folders or installs .zip packages,
 with a warning for chrome.* APIs Qt does not serve.  Plain user scripts
 (any *.js file in the "userscripts" data directory) are injected into
 every page at document-ready.
+
+Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
+packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
+QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the
+freedesktop metadata into dist/Arora-<ver>-linux-<arch>/ — a relocatable
+directory that runs on a system with no Qt installed via ./arora.
+`make check-bundle` verifies self-containment plus offscreen and native
+Wayland startup in a bubblewrap sandbox with the dev Qt install hidden.

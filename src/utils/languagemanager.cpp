@@ -65,6 +65,9 @@ LanguageManager *LanguageManager::instance()
         // Same locale search path BrowserApplication used to wire up.
         manager->addLocaleDirectory(BrowserPaths::dataFilePath(QLatin1String("locale")));
         manager->addLocaleDirectory(qApp->applicationDirPath() + QLatin1String("/src/.qm/locale"));
+        // PACK01: relocatable-bundle layout (<bindir>/../share/arora/locale).
+        manager->addLocaleDirectory(qApp->applicationDirPath()
+                                    + QLatin1String("/../share/arora/locale"));
 #ifdef PKGDATADIR
         manager->addLocaleDirectory(QLatin1String(PKGDATADIR) + QLatin1String("/locale"));
 #endif

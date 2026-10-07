@@ -199,6 +199,12 @@ Accessibility audit (A11Y01):
 Performance sanity (PERF01):
     Cold start no longer stalls for seconds when adblock lists are populated: a cached EasyList-size ruleset cost ~6.7s inside profile bring-up (browser ready in ~0.6s now) because every parsed filter eagerly compiled a QRegularExpression that mostly never fires. Compilation is deferred to first match through a shared, lock-guarded pattern cache — per-rule lazy flags would race because request matching runs on the WebEngine IO thread while the GUI thread can scan the same rules — and the wildcard-to-regexp converter no longer recompiles its five helper expressions per filter. History loading appends then reverses instead of prepending each entry, which Qt 6's contiguous QList made quadratic. The startup permission sweep over the profile tree now runs once per launch and only chmods files whose permissions actually differ. A headless `./arora --perf-smoke` reports cold-start, first-window, tab-open, large-history and permission-sweep timings.
 
+Self-contained Linux bundle (PACK01):
+    `make bundle` now produces a relocatable directory (dist/Arora-<version>-linux-<arch>/) that contains everything Arora needs to run on a system with no Qt installed: the binary, every Qt and ICU shared library it links, QtWebEngineProcess plus the webengine .pak/icudtl resources, the platform and support plugins (including the Wayland client platform, shell integrations and xdg-desktop-portal theme), Qt and Arora translations, and the freedesktop desktop file/icons/man page. A qt.conf next to the binary anchors Qt's search paths at the bundle root and a thin ./arora wrapper sets the library path, so the directory can be unpacked anywhere.
+    Translations and the useragents.xml override are found in a bundle too — installedDataDirectory() and the language manager now prefer the <bindir>/../share/arora layout before the compile-time prefix.
+    Verified in a bubblewrap sandbox with the development Qt installation masked: the bundle starts and loads pages under the offscreen platform and natively under Wayland against a minimal headless compositor (.devin/wayland-compositor.c), exercised by `make check-bundle`.
+    The desktop entry gained StartupWMClass, Keywords and translated Keywords entries. On X11 note Qt 6 still needs the system libxcb-cursor0 package for the xcb platform plugin; Wayland needs nothing beyond the bundle.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

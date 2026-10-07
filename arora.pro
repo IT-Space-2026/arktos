@@ -22,6 +22,18 @@ check.commands = cd autotests && ./runTests.sh
 check.depends = check-warnings sub-src sub-autotests
 QMAKE_EXTRA_TARGETS += check
 
+# `make bundle` produces the self-contained relocatable Linux bundle in
+# dist/ (PACK01). `make check-bundle` rebuilds it in a scratch dir and
+# verifies self-containment + offscreen and native-Wayland startup inside
+# a bwrap sandbox with the dev Qt install hidden.
+bundle.target = bundle
+bundle.commands = ./BuildProcess/bundle-linux.sh
+QMAKE_EXTRA_TARGETS += bundle
+
+check-bundle.target = check-bundle
+check-bundle.commands = ./.devin/check-bundle.sh
+QMAKE_EXTRA_TARGETS += check-bundle
+
 # `make check-warnings` is the WRN01 zero-warning gate — it builds a
 # throwaway copy of the tree in /tmp (never polluting the in-tree
 # build) and fails if compiling the shipping code (src/ + tools/)
