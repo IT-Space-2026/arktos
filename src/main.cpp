@@ -1121,8 +1121,23 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--search-smoke"))) {
         OpenSearchManager *manager = ToolbarSearch::openSearchManager();
         OpenSearchEngine *google = manager->engine(QLatin1String("Google"));
-        bool ok = manager->enginesCount() >= 6 && google && google->isValid()
-                && manager->currentEngine();
+        OpenSearchEngine *ddg = manager->engine(QLatin1String("DuckDuckGo"));
+        bool ok = manager->enginesCount() >= 7 && google && google->isValid()
+                && ddg && ddg->isValid() && manager->currentEngine();
+
+        // Fresh profiles default to DuckDuckGo; a saved choice is
+        // always respected (a stale saved name falls back to the first
+        // available engine).
+        QSettings engineSettings;
+        const QVariant savedEngine = engineSettings.value(
+            QLatin1String("openSearch/engine"));
+        ok = ok && (savedEngine.isValid()
+                        ? manager->currentEngineName()
+                                    == savedEngine.toString()
+                              || !manager->engineExists(
+                                      savedEngine.toString())
+                        : manager->currentEngineName()
+                                  == QLatin1String("DuckDuckGo"));
         if (google) {
             const QUrl url = google->searchUrl(QLatin1String("hello world"));
             ok = ok && url.isValid()

@@ -29,7 +29,8 @@ set (each ships light + dark variants, applied live).  The original
 2009 artwork remains the final fallback for names a set does not cover.
 
 Search: the address bar doubles as a search box (omnibox) — text that
-is not an address goes to the default search engine, while urls,
+is not an address goes to the default search engine (DuckDuckGo unless
+you pick another), while urls,
 localhost/host:port and dotted names navigate directly.  Its dropdown
 can show live suggestions above history matches, but only for engines
 explicitly opted in (search button menu or the dedicated Search page

@@ -293,6 +293,9 @@ Per-site JavaScript control (JSCTL):
     The decision is applied through each page's own QWebEngineSettings::JavascriptEnabled before the navigation commits, so two tabs can disagree and the choice composes with the security tiers: an explicit allow grant beats every automatic rule — a granted site runs JavaScript even under Safest, and its external script fetches are exempted from Safer's http block inside the request interceptor. A block kills scripts even under Standard. A parent-domain rule covers subdomains and the most specific matching rule wins. The shield icon gains a small badge while scripts are blocked, and the persistent grants are auditable (and revocable) in Settings > Privacy > Site Permissions.
     autotests/scriptcontrol covers the rule store (normalization, session overlay, persistence, specificity), the full tier/rule/global-preference decision table, the interceptor grant exemption, and four end-to-end cases against an in-process http server — including the infobar's allow buttons reloading the page and the Safest-plus-grant combination.
 
+Default search engine (DENG01):
+    The compiled-in default search engine is now DuckDuckGo instead of Google. A bundled DuckDuckGo OpenSearch description joins the engine set (search via https://duckduckgo.com/?q=, suggestions via the duckduckgo.com/ac endpoint). Only profiles that never picked an engine are affected — a saved choice is always respected — and Google stays bundled and selectable like before. As a bonus, default-engine searches no longer hit Google's /sorry/ bot-check, so a fresh install gets working search out of the box.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
