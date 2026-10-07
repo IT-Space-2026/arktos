@@ -122,6 +122,18 @@ public:
     void removeEngine(const QString &name);
     void restoreDefaults();
 
+    // SRCH05: the Settings page's inline editor needs the engine list
+    // to keep a stable, user-arrangeable order — allEnginesNames()
+    // returns it (m_engineOrder first, stragglers appended), and the
+    // order persists through save()/load().
+    bool moveEngine(const QString &name, int offset);
+    // Renames the engine keeping every name-keyed reference (current/
+    // private/image/field picks, suggestion opt-ins) pointed at it.
+    bool renameEngine(const QString &oldName, const QString &newName);
+    // Marks an engine's fields as edited so the autosave persists them
+    // (the engine object itself emits no change notification).
+    void engineEdited(OpenSearchEngine *engine);
+
 public slots:
     void save();
 
@@ -142,6 +154,9 @@ private:
     AutoSaver *m_autoSaver;
 
     QHash<QString, OpenSearchEngine*> m_engines;
+    // SRCH05: display order of allEnginesNames() — user-arranged via
+    // moveEngine, persisted as openSearch/engineOrder.
+    QStringList m_engineOrder;
     QHash<QString, OpenSearchEngine*> m_keywords;
     QStringList m_suggestionsEnabled;
     // SRCH04: bundled engines the user removed — load() re-adds

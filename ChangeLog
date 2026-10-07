@@ -333,6 +333,10 @@ Search settings layout (SRCH04):
     Search suggestions gained per-context toggles — "In Address Field", "In Search Field" and "Only When Using Search Engine Nickname" — layered on top of the per-engine opt-in; no keystroke leaves the address bar or search field unless the engine itself is opted in. Two screenshot items were deliberately skipped: there is no speed dial, and extension control of search awaits a security review.
     Engine upgrades reach existing profiles now: startup merges bundled descriptors that are missing from the saved engine list (a removal blocklist keeps user-deleted bundled engines deleted), and "Restore Defaults" in the engine manager truly refreshes same-named bundled descriptors — previously a stale saved copy shadowed the bundled file forever, so this is how the new image-search endpoints arrive on existing installs.
 
+Search engine editor (SRCH05):
+    The Search settings page now edits engines inline instead of opening a separate manager dialog: an engine list with icons, nickname column and [IMAGE]/[PRIVATE] badges sits beside a live editor for the name, nickname(s), search/suggest/image-search URLs and POST parameters, plus "Set as Default Search" and "Set as Private Search" checkboxes that write straight through to the selectors above. Add, Remove, Up/Down reordering and Restore Defaults work on the page itself; engine order is now a real preference (persisted and honored by every engine dropdown and menu, not just the editor). Renaming an engine re-keys its default/private/image/field assignments, suggestion opt-ins and saved descriptor file rather than orphaning them.
+    Edits validate before they apply — names must be non-empty and unique, nicknames must not collide with another engine's, URLs need a %s or {searchTerms} slot (or POST parameters carrying it) — and bad input reverts with an explanation instead of being silently kept. The standalone engine manager dialog still exists as the fallback when no main window is around to host the settings page.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

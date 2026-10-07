@@ -562,9 +562,9 @@ void ToolbarSearch::showEnginesMenu()
 void ToolbarSearch::showEnginesDialog()
 {
     // MENU01: the Settings > Search page is the canonical engine
-    // manager now (its Manage button still reaches the standalone
-    // OpenSearchDialog).  The dialog stays as the fallback for a
-    // ToolbarSearch with no BrowserMainWindow ancestor.
+    // manager now (SRCH05's inline editor).  The standalone
+    // OpenSearchDialog stays as the fallback for a ToolbarSearch with
+    // no BrowserMainWindow ancestor.
     if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
         SettingsDialog dialog(window);
         dialog.openAtPage(SettingsDialog::SearchPage);

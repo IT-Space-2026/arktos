@@ -65,6 +65,7 @@
 
 #include <qdialog.h>
 #include <qhash.h>
+#include <qset.h>
 #include "ui_settings.h"
 
 class QTreeWidgetItem;
@@ -109,9 +110,18 @@ private slots:
     void chooseStyleSheet();
     void editAutoFillUser();
 
-    void manageEngines();
     void refreshSearchEngines();
     void refreshSearchSuggestions();
+
+    // SRCH05: inline search-engine editor (replaces the Manage dialog).
+    void refreshEngineList();
+    void engineSelectionChanged();
+    void engineAdd();
+    void engineRemove();
+    void engineMove(int offset);
+    void engineRestoreDefaults();
+    void engineAssignmentChanged();
+    void commitEngineEdits();
 
     void loadExtension();
     void installExtension();
@@ -137,6 +147,8 @@ private slots:
 
 private:
     void stashSearchSuggestions();
+    void populateEngineForm();
+    void updateEngineButtonStates();
 
     QFont m_standardFont;
     QFont m_fixedFont;
@@ -146,6 +158,11 @@ private:
     // SRCH04: same unsaved-pick guard for the context combos.
     bool m_privateEngineComboDirty = false;
     bool m_imageEngineComboDirty = false;
+    // SRCH05: engine the edit form currently shows + which of its
+    // fields the user touched since the last populate.
+    QString m_editEngineName;
+    QSet<QString> m_engineFieldsDirty;
+    bool m_populatingEngineForm = false;
 };
 
 #endif // SETTINGS_H

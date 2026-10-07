@@ -50,6 +50,7 @@ private slots:
     void searchTab();
     void searchContextControls();
     void suggestionsCheckbox();
+    void engineEditor();
     void sidebarNavigation();
     void subDialogButtons();
     void setHomeToCurrentPage();
@@ -367,6 +368,136 @@ void tst_SettingsDialog::suggestionsCheckbox()
         manager->setSuggestionsEnabledForEngine(otherCapable, false);
         manager->setCurrentEngineName(engine->name());
     }
+}
+
+// SRCH05: the Search page's inline engine editor — the tree mirrors
+// the manager's engine order with [IMAGE]/[PRIVATE] badges, the form
+// commits field edits on editingFinished, the checkboxes bind the
+// default/private assignments, and the buttons add/rename/reorder/
+// remove engines straight on the shared manager.
+void tst_SettingsDialog::engineEditor()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+    const QStringList engines = manager->allEnginesNames();
+    QVERIFY(engines.count() >= 3);
+
+    QString imageCapable;
+    for (const QString &name : engines) {
+        if (manager->engine(name)->providesImageSearch()) {
+            imageCapable = name;
+            break;
+        }
+    }
+    QVERIFY(!imageCapable.isEmpty());
+
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.engineTree->topLevelItemCount(), engines.count());
+        for (int i = 0; i < engines.count(); ++i)
+            QCOMPARE(dialog.engineTree->topLevelItem(i)
+                         ->data(0, Qt::UserRole).toString(), engines.at(i));
+
+        // Badges: [IMAGE] on capable engines, [PRIVATE] on the
+        // private pick — assigning through the manager updates them.
+        manager->setPrivateEngineName(imageCapable);
+        for (int i = 0; i < dialog.engineTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem *item = dialog.engineTree->topLevelItem(i);
+            const QString name = item->data(0, Qt::UserRole).toString();
+            QCOMPARE(item->text(2).contains(QLatin1String("IMAGE")),
+                     manager->engine(name)->providesImageSearch());
+            QCOMPARE(item->text(2).contains(QLatin1String("PRIVATE")),
+                     name == imageCapable);
+        }
+        manager->setPrivateEngineName(QString());
+
+        // Selecting a row populates the form with that engine.
+        QTreeWidgetItem *item = dialog.engineTree->topLevelItem(1);
+        dialog.engineTree->setCurrentItem(item);
+        const QString name = item->data(0, Qt::UserRole).toString();
+        OpenSearchEngine *engine = manager->engine(name);
+        QCOMPARE(dialog.engineNameEdit->text(), name);
+        QCOMPARE(dialog.engineUrlEdit->text(), engine->searchUrlTemplate());
+        QCOMPARE(dialog.engineDefaultCheck->isChecked(),
+                 manager->currentEngineName() == name);
+        QVERIFY(!dialog.engineDefaultCheck->isChecked()
+                || manager->currentEngineName() == name);
+
+        // Field edits commit on editingFinished; %s normalizes to
+        // {searchTerms}.
+        dialog.engineUrlEdit->setText(QLatin1String("https://e.org/s?q=%s"));
+        QTest::keyClick(dialog.engineUrlEdit, Qt::Key_Return);
+        QCOMPARE(engine->searchUrlTemplate(),
+                 QLatin1String("https://e.org/s?q={searchTerms}"));
+
+        // Nicknames write keyword bindings on the manager.
+        dialog.engineNicknameEdit->setText(QLatin1String("zzq"));
+        QTest::keyClick(dialog.engineNicknameEdit, Qt::Key_Return);
+        QCOMPARE(manager->keywordsForEngine(engine),
+                 QStringList() << QLatin1String("zzq"));
+        QCOMPARE(manager->engineForKeyword(QLatin1String("zzq")), engine);
+        manager->setKeywordsForEngine(engine, QStringList());
+
+        // The checkboxes write the default/private assignments through.
+        if (manager->currentEngineName() != name) {
+            dialog.engineDefaultCheck->setChecked(true);
+            QCOMPARE(manager->currentEngineName(), name);
+        }
+        dialog.enginePrivateCheck->setChecked(true);
+        QCOMPARE(manager->privateEngineName(), name);
+        dialog.enginePrivateCheck->setChecked(false);
+        QCOMPARE(manager->privateEngineName(), QString());
+    }
+    manager->setCurrentEngineName(engines.at(0));
+
+    // Add produces a row and selects it; edits to it (incl. a rename
+    // and POST parameters) apply, up/down reorder, remove drops it.
+    const int count = manager->enginesCount();
+    {
+        SettingsDialog dialog;
+        dialog.engineAddButton->click();
+        QCOMPARE(manager->enginesCount(), count + 1);
+        const QString added = dialog.engineTree->currentItem()
+            ->data(0, Qt::UserRole).toString();
+        QVERIFY(added.startsWith(QLatin1String("New Engine")));
+        QCOMPARE(manager->allEnginesNames().last(), added);
+        QVERIFY(dialog.engineNameEdit->hasFocus()
+                || dialog.engineNameEdit->text() == added);
+
+        // POST parameters parse into the engine's parameter list and
+        // flip its method.
+        OpenSearchEngine *addedEngine = manager->engine(added);
+        dialog.enginePostParamsEdit->setText(
+            QLatin1String("q={searchTerms}&hl=en"));
+        QTest::keyClick(dialog.enginePostParamsEdit, Qt::Key_Return);
+        QCOMPARE(addedEngine->searchMethod(), QLatin1String("post"));
+        QCOMPARE(addedEngine->searchParameters().count(), 2);
+        QCOMPARE(addedEngine->searchParameters().at(0).first,
+                 QLatin1String("q"));
+
+        // Renaming through the Name field re-keys the manager.
+        dialog.engineNameEdit->setText(QLatin1String("Renamed Engine"));
+        QTest::keyClick(dialog.engineNameEdit, Qt::Key_Return);
+        QVERIFY(!manager->engineExists(added));
+        QVERIFY(manager->engineExists(QLatin1String("Renamed Engine")));
+        QCOMPARE(manager->allEnginesNames().last(),
+                 QLatin1String("Renamed Engine"));
+
+        // Up/down reorder the manager's list.
+        const QString before = manager->allEnginesNames().at(count - 1);
+        dialog.engineUpButton->click();
+        QCOMPARE(manager->allEnginesNames().at(count - 1),
+                 QLatin1String("Renamed Engine"));
+        QCOMPARE(manager->allEnginesNames().last(), before);
+        dialog.engineDownButton->click();
+        QCOMPARE(manager->allEnginesNames().last(),
+                 QLatin1String("Renamed Engine"));
+
+        dialog.engineRemoveButton->click();
+        QCOMPARE(manager->enginesCount(), count);
+        QVERIFY(!manager->engineExists(QLatin1String("Renamed Engine")));
+    }
+    manager->restoreDefaults();
 }
 
 // UIP03: the sidebar list and the page stack stay in sync both ways,

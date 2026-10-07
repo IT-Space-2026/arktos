@@ -359,17 +359,10 @@
             </property>
            </widget>
           </item>
-          <item row="0" column="1" colspan="2">
+          <item row="0" column="1" colspan="3">
            <widget class="QComboBox" name="defaultEngineCombo">
             <property name="accessibleName">
              <string>Default search engine</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="3">
-           <widget class="QPushButton" name="manageEnginesButton">
-            <property name="text">
-             <string>Manage...</string>
             </property>
            </widget>
           </item>
@@ -441,6 +434,279 @@
              <bool>true</bool>
             </property>
            </widget>
+          </item>
+          <item row="4" column="0" colspan="5">
+           <layout class="QHBoxLayout" name="engineEditorLayout">
+            <item>
+             <layout class="QVBoxLayout" name="engineListSide">
+              <item>
+               <widget class="QTreeWidget" name="engineTree">
+                <property name="accessibleName">
+                 <string>Search engine list</string>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="uniformRowHeights">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="selectionMode">
+                 <enum>QAbstractItemView::SingleSelection</enum>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>250</width>
+                  <height>140</height>
+                 </size>
+                </property>
+                <column>
+                 <property name="text">
+                  <string>Engine</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>Nickname</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>Badges</string>
+                 </property>
+                </column>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="engineListButtons">
+                <item>
+                 <widget class="QPushButton" name="engineAddButton">
+                  <property name="toolTip">
+                   <string>Add a new search engine</string>
+                  </property>
+                  <property name="text">
+                   <string>Add</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="engineRemoveButton">
+                  <property name="toolTip">
+                   <string>Remove the selected engine</string>
+                  </property>
+                  <property name="text">
+                   <string>Remove</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="engineUpButton">
+                  <property name="toolTip">
+                   <string>Move the selected engine up in the list</string>
+                  </property>
+                  <property name="text">
+                   <string>Up</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="engineDownButton">
+                  <property name="toolTip">
+                   <string>Move the selected engine down in the list</string>
+                  </property>
+                  <property name="text">
+                   <string>Down</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="engineButtonsSpacer">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>10</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="engineDefaultsButton">
+                  <property name="toolTip">
+                   <string>Re-add the bundled search engines and refresh them to their shipped defaults</string>
+                  </property>
+                  <property name="text">
+                   <string>Restore Defaults</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <widget class="QWidget" name="engineEditPane" native="true">
+              <layout class="QFormLayout" name="engineFormLayout">
+               <item row="0" column="0">
+                <widget class="QLabel" name="engineNameLabel">
+                 <property name="text">
+                  <string>Name:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineNameEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="engineNameEdit">
+                 <property name="accessibleName">
+                  <string>Engine name</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="engineNicknameLabel">
+                 <property name="text">
+                  <string>Nickname:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineNicknameEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QLineEdit" name="engineNicknameEdit">
+                 <property name="toolTip">
+                  <string>Keyword(s) for the location bar, e.g. &quot;ddg cats&quot; searches with the engine whose nickname is ddg. Separate multiple nicknames with commas.</string>
+                 </property>
+                 <property name="accessibleName">
+                  <string>Engine nickname</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="engineUrlLabel">
+                 <property name="text">
+                  <string>Search URL:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineUrlEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QLineEdit" name="engineUrlEdit">
+                 <property name="accessibleName">
+                  <string>Engine search URL</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="engineSuggestUrlLabel">
+                 <property name="text">
+                  <string>Suggest URL:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineSuggestUrlEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLineEdit" name="engineSuggestUrlEdit">
+                 <property name="accessibleName">
+                  <string>Suggestions URL</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0">
+                <widget class="QLabel" name="engineImageUrlLabel">
+                 <property name="text">
+                  <string>Image URL:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineImageUrlEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="1">
+                <widget class="QLineEdit" name="engineImageUrlEdit">
+                 <property name="accessibleName">
+                  <string>Image search URL</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="0">
+                <widget class="QLabel" name="enginePostParamsLabel">
+                 <property name="text">
+                  <string>POST parameters:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>enginePostParamsEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="1">
+                <widget class="QLineEdit" name="enginePostParamsEdit">
+                 <property name="accessibleName">
+                  <string>Search POST parameters</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="0">
+                <widget class="QLabel" name="engineImagePostParamsLabel">
+                 <property name="text">
+                  <string>Image POST parameters:</string>
+                 </property>
+                 <property name="buddy">
+                  <cstring>engineImagePostParamsEdit</cstring>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
+                <widget class="QLineEdit" name="engineImagePostParamsEdit">
+                 <property name="accessibleName">
+                  <string>Image search POST parameters</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="7" column="0" colspan="2">
+                <widget class="QLabel" name="engineUrlHint">
+                 <property name="text">
+                  <string>Use %s or {searchTerms} where the search text belongs, e.g. &quot;https://example.com/search?q=%s&quot;. POST parameters are name=value pairs separated by '&amp;' — filling them switches the request to POST.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="8" column="0" colspan="2">
+                <widget class="QCheckBox" name="engineDefaultCheck">
+                 <property name="text">
+                  <string>Set as Default Search</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="9" column="0" colspan="2">
+                <widget class="QCheckBox" name="enginePrivateCheck">
+                 <property name="toolTip">
+                  <string>Use this engine in private and Tor windows.</string>
+                 </property>
+                 <property name="text">
+                  <string>Set as Private Search</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>
@@ -1985,7 +2251,23 @@
   <tabstop>downloadDestination</tabstop>
   <tabstop>downloadDirectoryButton</tabstop>
   <tabstop>defaultEngineCombo</tabstop>
-  <tabstop>manageEnginesButton</tabstop>
+  <tabstop>privateEngineCombo</tabstop>
+  <tabstop>imageEngineCombo</tabstop>
+  <tabstop>engineTree</tabstop>
+  <tabstop>engineAddButton</tabstop>
+  <tabstop>engineRemoveButton</tabstop>
+  <tabstop>engineUpButton</tabstop>
+  <tabstop>engineDownButton</tabstop>
+  <tabstop>engineDefaultsButton</tabstop>
+  <tabstop>engineNameEdit</tabstop>
+  <tabstop>engineNicknameEdit</tabstop>
+  <tabstop>engineUrlEdit</tabstop>
+  <tabstop>engineSuggestUrlEdit</tabstop>
+  <tabstop>engineImageUrlEdit</tabstop>
+  <tabstop>enginePostParamsEdit</tabstop>
+  <tabstop>engineImagePostParamsEdit</tabstop>
+  <tabstop>engineDefaultCheck</tabstop>
+  <tabstop>enginePrivateCheck</tabstop>
   <tabstop>searchEngineFallback</tabstop>
   <tabstop>searchSuggestionsCheckBox</tabstop>
   <tabstop>standardFontButton</tabstop>

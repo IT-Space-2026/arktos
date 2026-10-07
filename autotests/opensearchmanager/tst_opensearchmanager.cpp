@@ -46,6 +46,8 @@ private slots:
     void restoreDefaults();
     void keywords();
     void contextEngines();
+    void engineOrdering();
+    void renameEngine();
     void convertKeywordSearchToUrl();
     void convertKeywordSearchToUrl_data();
 };
@@ -437,6 +439,115 @@ void tst_OpenSearchManager::contextEngines()
     manager.setKeepFieldEngine(true);
     manager.setSuggestionsInAddressField(true);
     manager.setSuggestionsOnlyWithKeyword(false);
+    manager.save();
+}
+
+// SRCH05: allEnginesNames() returns the user-arranged engine order —
+// moveEngine reorders within bounds, add/remove keep the list in sync,
+// and the order survives a save()/load() cycle.
+void tst_OpenSearchManager::engineOrdering()
+{
+    SubOpenSearchManager manager;
+    manager.restoreDefaults();
+
+    QStringList names = manager.allEnginesNames();
+    QVERIFY(names.count() >= 3);
+    QCOMPARE(names.count(), manager.enginesCount());
+
+    const QString first = names.at(0);
+    const QString second = names.at(1);
+
+    QVERIFY(!manager.moveEngine(first, -1));   // already first
+    QVERIFY(manager.moveEngine(first, 1));
+    QCOMPARE(manager.allEnginesNames().at(0), second);
+    QCOMPARE(manager.allEnginesNames().at(1), first);
+    QVERIFY(manager.moveEngine(first, -1));
+    QCOMPARE(manager.allEnginesNames().at(0), first);
+    QVERIFY(!manager.moveEngine(first, -100)); // out of range
+    QVERIFY(!manager.moveEngine(QStringLiteral("nope"), 1));
+    QVERIFY(!manager.moveEngine(first, 0));
+
+    // New engines append at the end, removal drops the slot.
+    OpenSearchEngine *engine = new OpenSearchEngine();
+    engine->setName(QStringLiteral("ZZZTest"));
+    engine->setSearchUrlTemplate(QStringLiteral("http://zzz.test/?q={searchTerms}"));
+    QVERIFY(manager.addEngine(engine));
+    QCOMPARE(manager.allEnginesNames().last(), QStringLiteral("ZZZTest"));
+
+    // The order persists through save()/load().
+    QVERIFY(manager.moveEngine(first, 1));
+    manager.save();
+    {
+        SubOpenSearchManager reloaded;
+        QCOMPARE(reloaded.allEnginesNames(), manager.allEnginesNames());
+        QCOMPARE(reloaded.allEnginesNames().last(), QStringLiteral("ZZZTest"));
+    }
+
+    manager.removeEngine(QStringLiteral("ZZZTest"));
+    QVERIFY(!manager.allEnginesNames().contains(QStringLiteral("ZZZTest")));
+}
+
+// SRCH05: renameEngine re-keys the engine and every name-indexed
+// reference (current/private/image/field picks, suggestion opt-ins,
+// list position); keyword bindings ride on the engine pointer.
+void tst_OpenSearchManager::renameEngine()
+{
+    SubOpenSearchManager manager;
+    manager.restoreDefaults();
+    const QString oldName = manager.allEnginesNames().at(0);
+    const QString otherName = manager.allEnginesNames().at(1);
+    OpenSearchEngine *engine = manager.engine(oldName);
+
+    manager.setCurrentEngineName(oldName);
+    manager.setPrivateEngineName(oldName);
+    manager.setImageEngineName(oldName);
+    manager.setFieldEngineName(oldName);
+    manager.setEngineForKeyword(QStringLiteral("kw"), engine);
+    manager.setSuggestionsEnabledForEngine(oldName, true);
+
+    const QString newName = QStringLiteral("Renamed Engine");
+    QVERIFY(manager.renameEngine(oldName, newName));
+    QVERIFY(!manager.engineExists(oldName));
+    QVERIFY(manager.engineExists(newName));
+    QCOMPARE(manager.engine(newName), engine);
+    QCOMPARE(engine->name(), newName);
+    // The list slot is kept, not appended.
+    QCOMPARE(manager.allEnginesNames().at(0), newName);
+    QCOMPARE(manager.currentEngineName(), newName);
+    QCOMPARE(manager.privateEngineName(), newName);
+    QCOMPARE(manager.imageEngineName(), newName);
+    QCOMPARE(manager.fieldEngineName(), newName);
+    QCOMPARE(manager.engineForKeyword(QStringLiteral("kw")), engine);
+    QVERIFY(manager.suggestionsEnabledForEngine(newName));
+
+    // Renames persist through save()/load() — the descriptor is
+    // rewritten under the new generated file name.
+    manager.save();
+    {
+        SubOpenSearchManager reloaded;
+        QVERIFY(reloaded.engineExists(newName));
+        QVERIFY(!reloaded.engineExists(oldName));
+        QCOMPARE(reloaded.allEnginesNames().at(0), newName);
+        QCOMPARE(reloaded.currentEngineName(), newName);
+        QCOMPARE(reloaded.engineForKeyword(QStringLiteral("kw")),
+                 reloaded.engine(newName));
+        QVERIFY(reloaded.suggestionsEnabledForEngine(newName));
+    }
+
+    // Rejects: missing source, empty/same/duplicate target.
+    QVERIFY(!manager.renameEngine(QStringLiteral("missing"), newName));
+    QVERIFY(!manager.renameEngine(newName, QString()));
+    QVERIFY(!manager.renameEngine(newName, newName));
+    QVERIFY(!manager.renameEngine(newName, otherName));
+
+    // Restore the original state for the following tests.
+    QVERIFY(manager.renameEngine(newName, oldName));
+    QCOMPARE(manager.currentEngineName(), oldName);
+    manager.setPrivateEngineName(QString());
+    manager.setImageEngineName(QString());
+    manager.setFieldEngineName(QString());
+    manager.setEngineForKeyword(QStringLiteral("kw"), nullptr);
+    manager.setSuggestionsEnabledForEngine(oldName, false);
     manager.save();
 }
 

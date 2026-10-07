@@ -74,7 +74,6 @@
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
-#include "opensearchdialog.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
@@ -103,6 +102,9 @@
 #include <qstackedwidget.h>
 #include <qstandardpaths.h>
 #include <qfiledialog.h>
+#include <qheaderview.h>
+#include <qpixmap.h>
+#include <qregularexpression.h>
 #include <qtreewidget.h>
 #include <qboxlayout.h>
 #include <qwebengineprofile.h>
@@ -234,8 +236,6 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // shows; QComboBox::activated marks user picks so a manager change
     // does not clobber an unsaved selection.
     OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
-    connect(manageEnginesButton, &QPushButton::clicked,
-            this, &SettingsDialog::manageEngines);
     connect(defaultEngineCombo, &QComboBox::currentTextChanged,
             this, &SettingsDialog::refreshSearchSuggestions);
     connect(defaultEngineCombo, QOverload<int>::of(&QComboBox::activated),
@@ -259,6 +259,48 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             : static_cast<QRadioButton*>(searchButtonRadio))
                 ->setChecked(true);
     });
+
+    // SRCH05: the inline engine editor — engine names/keywords come
+    // from (possibly remote) OpenSearch XML so the list renders them
+    // as plain text.  Edits apply to the shared manager immediately,
+    // like the old Manage dialog did; typed field edits are staged in
+    // m_engineFieldsDirty until editingFinished or the next action
+    // commits them.
+    engineTree->setItemDelegate(new PlainTextItemDelegate(engineTree));
+    engineTree->header()->setStretchLastSection(false);
+    engineTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    connect(engineTree, &QTreeWidget::itemSelectionChanged,
+            this, &SettingsDialog::engineSelectionChanged);
+    connect(engineAddButton, &QPushButton::clicked,
+            this, &SettingsDialog::engineAdd);
+    connect(engineRemoveButton, &QPushButton::clicked,
+            this, &SettingsDialog::engineRemove);
+    connect(engineDefaultsButton, &QPushButton::clicked,
+            this, &SettingsDialog::engineRestoreDefaults);
+    connect(engineUpButton, &QPushButton::clicked,
+            this, [this]() { engineMove(-1); });
+    connect(engineDownButton, &QPushButton::clicked,
+            this, [this]() { engineMove(1); });
+    const auto markEngineField = [this](QLineEdit *edit, const QString &field) {
+        connect(edit, &QLineEdit::textChanged, this,
+                [this, field](const QString &) {
+            if (!m_populatingEngineForm)
+                m_engineFieldsDirty.insert(field);
+        });
+        connect(edit, &QLineEdit::editingFinished,
+                this, &SettingsDialog::commitEngineEdits);
+    };
+    markEngineField(engineNameEdit, QLatin1String("name"));
+    markEngineField(engineNicknameEdit, QLatin1String("nickname"));
+    markEngineField(engineUrlEdit, QLatin1String("url"));
+    markEngineField(engineSuggestUrlEdit, QLatin1String("suggest"));
+    markEngineField(engineImageUrlEdit, QLatin1String("image"));
+    markEngineField(enginePostParamsEdit, QLatin1String("post"));
+    markEngineField(engineImagePostParamsEdit, QLatin1String("imagepost"));
+    connect(engineDefaultCheck, &QCheckBox::toggled,
+            this, &SettingsDialog::engineAssignmentChanged);
+    connect(enginePrivateCheck, &QCheckBox::toggled,
+            this, &SettingsDialog::engineAssignmentChanged);
 
     loadDefaults();
     loadFromSettings();
@@ -784,6 +826,8 @@ void SettingsDialog::saveToSettings()
 
 void SettingsDialog::accept()
 {
+    // SRCH05: flush a still-focused engine field before persisting.
+    commitEngineEdits();
     saveToSettings();
     QDialog::accept();
 }
@@ -871,13 +915,381 @@ void SettingsDialog::editAutoFillUser()
     dialog.exec();
 }
 
-void SettingsDialog::manageEngines()
+// Serializes an OpenSearchEngine::Parameters list into the editor's
+// "name=value&name2=value2" text form.
+static QString engineParametersText(const OpenSearchEngine::Parameters &parameters)
 {
-    OpenSearchDialog dialog(this);
-    dialog.exec();
-    // The manager emits changed() for every add/remove; refresh once
-    // more so an untouched list still resyncs the combo.
-    refreshSearchEngines();
+    QStringList parts;
+    parts.reserve(parameters.size());
+    for (const OpenSearchEngine::Parameter &param : parameters)
+        parts << param.first + QLatin1Char('=') + param.second;
+    return parts.join(QLatin1Char('&'));
+}
+
+// Parses the "name=value&name2=value2" text form back into Parameters.
+// A pair without '=' or with an empty name is rejected.
+static bool parseEngineParameters(const QString &text,
+                                  OpenSearchEngine::Parameters *out)
+{
+    out->clear();
+    const QStringList pairs = text.split(QLatin1Char('&'), Qt::SkipEmptyParts);
+    for (const QString &pair : pairs) {
+        const int eq = pair.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            return false;
+        out->append(OpenSearchEngine::Parameter(pair.left(eq).trimmed(),
+                                                pair.mid(eq + 1).trimmed()));
+    }
+    return true;
+}
+
+// SRCH05: rebuild the inline editor's engine list from the manager.
+// The selected row survives refreshes (manager edits emit changed());
+// when the row vanished — a remove — the first row takes over.  The
+// badges column shows the engine's [IMAGE] capability and the
+// [PRIVATE] assignment.
+void SettingsDialog::refreshEngineList()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    QString wanted = engineTree->currentItem()
+        ? engineTree->currentItem()->data(0, Qt::UserRole).toString()
+        : QString();
+    if (wanted.isEmpty() || !manager->engineExists(wanted))
+        wanted = m_editEngineName;
+
+    const QSignalBlocker blocker(engineTree);
+    engineTree->clear();
+    const QStringList names = manager->allEnginesNames();
+    for (const QString &name : names) {
+        OpenSearchEngine *engine = manager->engine(name);
+        if (!engine)
+            continue;
+        QTreeWidgetItem *item = new QTreeWidgetItem(engineTree);
+        item->setText(0, name);
+        item->setData(0, Qt::UserRole, name);
+        const QImage image = engine->image();
+        item->setIcon(0, image.isNull()
+            ? HistoryManager::instance()->icon(QUrl(engine->imageUrl()))
+            : QIcon(QPixmap::fromImage(image)));
+        item->setText(1, manager->keywordsForEngine(engine)
+                         .join(QLatin1String(", ")));
+        QStringList badges;
+        if (engine->providesImageSearch())
+            badges << QLatin1String("IMAGE");
+        if (name == manager->privateEngineName())
+            badges << QLatin1String("PRIVATE");
+        item->setText(2, badges.join(QLatin1Char(' ')));
+        if (name == wanted)
+            engineTree->setCurrentItem(item);
+    }
+    if (!engineTree->currentItem() && engineTree->topLevelItemCount() > 0)
+        engineTree->setCurrentItem(engineTree->topLevelItem(0));
+    // Signals were blocked during the rebuild — sync the form side.
+    engineSelectionChanged();
+}
+
+void SettingsDialog::engineSelectionChanged()
+{
+    // A click on another row commits the form's pending edits to the
+    // engine it was showing (the commit itself may trigger a refresh).
+    commitEngineEdits();
+    QTreeWidgetItem *item = engineTree->currentItem();
+    m_editEngineName = item
+        ? item->data(0, Qt::UserRole).toString() : QString();
+    populateEngineForm();
+    updateEngineButtonStates();
+}
+
+void SettingsDialog::populateEngineForm()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = manager->engine(m_editEngineName);
+    engineEditPane->setEnabled(engine != nullptr);
+    m_populatingEngineForm = true;
+    if (!engine) {
+        engineNameEdit->clear();
+        engineNicknameEdit->clear();
+        engineUrlEdit->clear();
+        engineSuggestUrlEdit->clear();
+        engineImageUrlEdit->clear();
+        enginePostParamsEdit->clear();
+        engineImagePostParamsEdit->clear();
+        engineDefaultCheck->setChecked(false);
+        enginePrivateCheck->setChecked(false);
+    } else {
+        engineNameEdit->setText(engine->name());
+        engineNicknameEdit->setText(manager->keywordsForEngine(engine)
+                                    .join(QLatin1String(", ")));
+        engineUrlEdit->setText(engine->searchUrlTemplate());
+        engineSuggestUrlEdit->setText(engine->suggestionsUrlTemplate());
+        engineImageUrlEdit->setText(engine->imageSearchUrlTemplate());
+        enginePostParamsEdit->setText(
+            engineParametersText(engine->searchParameters()));
+        engineImagePostParamsEdit->setText(
+            engineParametersText(engine->imageSearchParameters()));
+        engineDefaultCheck->setChecked(
+            manager->currentEngineName() == engine->name());
+        enginePrivateCheck->setChecked(
+            manager->privateEngineName() == engine->name());
+    }
+    m_engineFieldsDirty.clear();
+    m_populatingEngineForm = false;
+}
+
+void SettingsDialog::updateEngineButtonStates()
+{
+    const int row = engineTree->indexOfTopLevelItem(engineTree->currentItem());
+    const int count = engineTree->topLevelItemCount();
+    engineUpButton->setEnabled(row > 0);
+    engineDownButton->setEnabled(row >= 0 && row < count - 1);
+    engineRemoveButton->setEnabled(row >= 0 && count > 1);
+}
+
+void SettingsDialog::engineAdd()
+{
+    commitEngineEdits();
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    QString name = tr("New Engine");
+    for (int i = 2; manager->engineExists(name); ++i)
+        name = tr("New Engine %1").arg(i);
+    OpenSearchEngine *engine = new OpenSearchEngine();
+    engine->setName(name);
+    // Placeholder endpoint — the URL field is focused so the user
+    // replaces it; the commit validation demands %s/{searchTerms}.
+    engine->setSearchUrlTemplate(QLatin1String("https://"));
+    if (!manager->addEngine(engine)) {
+        delete engine;
+        return;
+    }
+    // addEngine emitted changed() and the list refreshed; select the
+    // new row explicitly and put focus where editing starts.
+    for (int i = 0; i < engineTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = engineTree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == name) {
+            engineTree->setCurrentItem(item);
+            break;
+        }
+    }
+    engineNameEdit->setFocus();
+    engineNameEdit->selectAll();
+}
+
+void SettingsDialog::engineRemove()
+{
+    QTreeWidgetItem *item = engineTree->currentItem();
+    if (!item)
+        return;
+    ToolbarSearch::openSearchManager()->removeEngine(
+        item->data(0, Qt::UserRole).toString());
+    // removeEngine emits changed() — the list refresh selects the
+    // first remaining row.
+}
+
+void SettingsDialog::engineMove(int offset)
+{
+    commitEngineEdits();
+    QTreeWidgetItem *item = engineTree->currentItem();
+    if (!item)
+        return;
+    ToolbarSearch::openSearchManager()->moveEngine(
+        item->data(0, Qt::UserRole).toString(), offset);
+    // changed() -> refreshEngineList keeps the moved row selected.
+}
+
+void SettingsDialog::engineRestoreDefaults()
+{
+    commitEngineEdits();
+    ToolbarSearch::openSearchManager()->restoreDefaults();
+}
+
+// The default/private checkboxes write straight through to the
+// manager — checking "Set as Default" makes that engine the default
+// immediately (unchecking the current default is impossible, there is
+// always one).
+void SettingsDialog::engineAssignmentChanged()
+{
+    if (m_populatingEngineForm)
+        return;
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = manager->engine(m_editEngineName);
+    if (!engine)
+        return;
+    if (engineDefaultCheck->isChecked()
+            && manager->currentEngineName() != engine->name()) {
+        manager->setCurrentEngineName(engine->name());
+    } else if (!engineDefaultCheck->isChecked()
+               && manager->currentEngineName() == engine->name()) {
+        engineDefaultCheck->setChecked(true);
+    }
+    if (enginePrivateCheck->isChecked()
+            && manager->privateEngineName() != engine->name()) {
+        manager->setPrivateEngineName(engine->name());
+    } else if (!enginePrivateCheck->isChecked()
+               && manager->privateEngineName() == engine->name()) {
+        manager->setPrivateEngineName(QString());
+    }
+}
+
+// Applies the fields the user touched to the engine the form was
+// showing.  Values are snapshotted up front because applying an edit
+// emits OpenSearchManager::changed(), whose synchronous refresh
+// repopulates (and resets) the form fields.  Invalid input reverts
+// that one field and is reported once, at the end.
+void SettingsDialog::commitEngineEdits()
+{
+    if (m_editEngineName.isEmpty())
+        return;
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = manager->engine(m_editEngineName);
+    if (!engine) {
+        m_engineFieldsDirty.clear();
+        return;
+    }
+    const QSet<QString> dirty = m_engineFieldsDirty;
+    m_engineFieldsDirty.clear();
+    if (dirty.isEmpty())
+        return;
+
+    const QString wantedName = engineNameEdit->text().trimmed();
+    const QString nicknames = engineNicknameEdit->text();
+    QString url = engineUrlEdit->text().trimmed();
+    QString suggestUrl = engineSuggestUrlEdit->text().trimmed();
+    QString imageUrl = engineImageUrlEdit->text().trimmed();
+    const QString postParams = enginePostParamsEdit->text().trimmed();
+    const QString imagePostParams = engineImagePostParamsEdit->text().trimmed();
+
+    bool edited = false;
+    QStringList problems;
+
+    if (dirty.contains(QLatin1String("nickname"))) {
+        const QStringList keys = nicknames.split(
+            QRegularExpression(QLatin1String("[ ,]+")), Qt::SkipEmptyParts);
+        QString conflictName;
+        for (const QString &key : keys) {
+            OpenSearchEngine *holder = manager->engineForKeyword(key);
+            if (holder && holder != engine) {
+                conflictName = tr("The nickname \"%1\" is already used by \"%2\".")
+                    .arg(key, holder->name());
+                break;
+            }
+        }
+        if (!conflictName.isEmpty()) {
+            problems << conflictName;
+            engineNicknameEdit->setText(manager->keywordsForEngine(engine)
+                                        .join(QLatin1String(", ")));
+        } else {
+            manager->setKeywordsForEngine(engine, keys);
+            edited = true;
+        }
+    }
+
+    if (dirty.contains(QLatin1String("url"))) {
+        url.replace(QLatin1String("%s"), QLatin1String("{searchTerms}"));
+        if (url.isEmpty()) {
+            problems << tr("The search URL cannot be empty.");
+            engineUrlEdit->setText(engine->searchUrlTemplate());
+        } else if (!url.contains(QLatin1String("{searchTerms}"))
+                   && postParams.isEmpty()
+                   && engine->searchParameters().isEmpty()) {
+            problems << tr("The search URL must contain %s or "
+                           "{searchTerms} where the search text is "
+                           "inserted (or POST parameters that carry it).");
+            engineUrlEdit->setText(engine->searchUrlTemplate());
+        } else if (url != engine->searchUrlTemplate()) {
+            engine->setSearchUrlTemplate(url);
+            edited = true;
+        }
+    }
+
+    if (dirty.contains(QLatin1String("suggest"))) {
+        suggestUrl.replace(QLatin1String("%s"), QLatin1String("{searchTerms}"));
+        if (!suggestUrl.isEmpty()
+                && !suggestUrl.contains(QLatin1String("{searchTerms}"))) {
+            problems << tr("The suggest URL must contain %s or "
+                           "{searchTerms} where the search text is "
+                           "inserted.");
+            engineSuggestUrlEdit->setText(engine->suggestionsUrlTemplate());
+        } else if (suggestUrl != engine->suggestionsUrlTemplate()) {
+            engine->setSuggestionsUrlTemplate(suggestUrl);
+            edited = true;
+        }
+    }
+
+    if (dirty.contains(QLatin1String("image"))) {
+        imageUrl.replace(QLatin1String("%s"), QLatin1String("{searchTerms}"));
+        if (!imageUrl.isEmpty()
+                && !imageUrl.contains(QLatin1String("{searchTerms}"))) {
+            problems << tr("The image search URL must contain %s or "
+                           "{searchTerms} where the search text is "
+                           "inserted.");
+            engineImageUrlEdit->setText(engine->imageSearchUrlTemplate());
+        } else if (imageUrl != engine->imageSearchUrlTemplate()) {
+            engine->setImageSearchUrlTemplate(imageUrl);
+            edited = true;
+        }
+    }
+
+    if (dirty.contains(QLatin1String("post"))) {
+        OpenSearchEngine::Parameters params;
+        if (!postParams.isEmpty()
+                && !parseEngineParameters(postParams, &params)) {
+            problems << tr("POST parameters must be name=value pairs "
+                           "separated by '&'.");
+            enginePostParamsEdit->setText(
+                engineParametersText(engine->searchParameters()));
+        } else {
+            engine->setSearchParameters(params);
+            engine->setSearchMethod(postParams.isEmpty()
+                ? QLatin1String("get") : QLatin1String("post"));
+            edited = true;
+        }
+    }
+
+    if (dirty.contains(QLatin1String("imagepost"))) {
+        OpenSearchEngine::Parameters params;
+        if (!imagePostParams.isEmpty()
+                && !parseEngineParameters(imagePostParams, &params)) {
+            problems << tr("Image POST parameters must be name=value "
+                           "pairs separated by '&'.");
+            engineImagePostParamsEdit->setText(
+                engineParametersText(engine->imageSearchParameters()));
+        } else {
+            engine->setImageSearchParameters(params);
+            engine->setImageSearchMethod(imagePostParams.isEmpty()
+                ? QLatin1String("get") : QLatin1String("post"));
+            edited = true;
+        }
+    }
+
+    if (edited)
+        manager->engineEdited(engine);
+
+    // The name commits last: it re-keys the manager, and
+    // m_editEngineName must point at the new name before the emitted
+    // refresh repopulates the form.
+    if (dirty.contains(QLatin1String("name")) && wantedName != engine->name()) {
+        if (wantedName.isEmpty()) {
+            problems << tr("The engine name cannot be empty.");
+            engineNameEdit->setText(engine->name());
+        } else if (manager->engineExists(wantedName)) {
+            problems << tr("An engine named \"%1\" already exists.")
+                            .arg(wantedName);
+            engineNameEdit->setText(engine->name());
+        } else {
+            const QString oldName = engine->name();
+            m_editEngineName = wantedName;
+            if (!manager->renameEngine(oldName, wantedName))
+                m_editEngineName = oldName;
+        }
+    }
+
+    if (!problems.isEmpty()) {
+        // Resync the form — edits that applied already emitted their
+        // own refresh, but a validation-only commit leaves stale text.
+        populateEngineForm();
+        QMessageBox::warning(this, tr("Search Engines"),
+                             problems.join(QLatin1Char('\n')));
+    }
 }
 
 // The combo mirrors OpenSearchManager's engine list.  A name the user
@@ -926,6 +1338,9 @@ void SettingsDialog::refreshSearchEngines()
     }
     imageEngineCombo->setCurrentIndex(qMax(
         0, imageEngineCombo->findData(wantedImage)));
+
+    // SRCH05: the inline editor's list follows the same manager state.
+    refreshEngineList();
 
     refreshSearchSuggestions();
 }

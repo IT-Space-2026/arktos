@@ -208,7 +208,21 @@ bool OpenSearchManager::engineExists(const QString &name)
 
 QStringList OpenSearchManager::allEnginesNames() const
 {
-    return m_engines.keys();
+    // Ordered list: the persisted m_engineOrder first, then any
+    // engine missing from it (defensive — addEngine/removeEngine/load
+    // keep the two in sync).
+    QStringList names;
+    names.reserve(m_engines.count());
+    for (const QString &name : m_engineOrder) {
+        if (m_engines.contains(name) && !names.contains(name))
+            names.append(name);
+    }
+    for (auto it = m_engines.constBegin(), end = m_engines.constEnd();
+         it != end; ++it) {
+        if (!names.contains(it.key()))
+            names.append(it.key());
+    }
+    return names;
 }
 
 int OpenSearchManager::enginesCount() const
@@ -257,6 +271,8 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
         return false;
 
     m_engines[engine->name()] = engine;
+    if (!m_engineOrder.contains(engine->name()))
+        m_engineOrder.append(engine->name());
 
     emit changed();
 
@@ -278,6 +294,7 @@ void OpenSearchManager::removeEngine(const QString &name)
 
     m_engines[name] = nullptr;
     m_engines.remove(name);
+    m_engineOrder.removeAll(name);
 
     m_suggestionsEnabled.removeAll(name);
 
@@ -302,6 +319,83 @@ void OpenSearchManager::removeEngine(const QString &name)
     if (name == m_current)
         setCurrentEngineName(m_engines.keys().at(0));
 
+    emit changed();
+}
+
+// SRCH05: reorder the engine list — offset is relative (-1/+1 for
+// the settings editor's Up/Down buttons).
+bool OpenSearchManager::moveEngine(const QString &name, int offset)
+{
+    const int from = m_engineOrder.indexOf(name);
+    if (from < 0 || offset == 0)
+        return false;
+
+    const int to = from + offset;
+    if (to < 0 || to >= m_engineOrder.count())
+        return false;
+
+    m_engineOrder.move(from, to);
+    emit changed();
+    return true;
+}
+
+// SRCH05: name is the m_engines key AND several name-keyed stores, so
+// renaming goes through the manager to keep all of them in sync.
+// Keyword bindings hold engine POINTERS and survive untouched.
+bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newName)
+{
+    const QString trimmed = newName.trimmed();
+    if (!m_engines.contains(oldName) || trimmed.isEmpty())
+        return false;
+    if (trimmed == oldName)
+        return false;
+    if (m_engines.contains(trimmed))
+        return false;
+
+    OpenSearchEngine *engine = m_engines.take(oldName);
+    engine->setName(trimmed);
+    m_engines.insert(trimmed, engine);
+
+    const int orderIndex = m_engineOrder.indexOf(oldName);
+    if (orderIndex >= 0)
+        m_engineOrder[orderIndex] = trimmed;
+    else
+        m_engineOrder.append(trimmed);
+
+    if (m_suggestionsEnabled.removeAll(oldName))
+        m_suggestionsEnabled.append(trimmed);
+    if (m_current == oldName)
+        m_current = trimmed;
+    if (m_privateEngine == oldName)
+        m_privateEngine = trimmed;
+    if (m_imageEngine == oldName)
+        m_imageEngine = trimmed;
+    if (m_fieldEngine == oldName)
+        m_fieldEngine = trimmed;
+
+    // The persisted descriptor keeps the old generated file name.
+    QFile::remove(QDir(enginesDirectory())
+                  .filePath(generateEngineFileName(oldName)));
+
+    // Renaming a bundled engine blocks the bundled descriptor from
+    // resurrecting on the next load (same bookkeeping removeEngine
+    // uses); naming an engine after a previously removed bundled one
+    // unblocks it — the user's own engine with that name exists now.
+    if (QFile::exists(QLatin1String(":/searchengines/")
+                      + generateEngineFileName(oldName))
+            && !m_removedBundled.contains(oldName))
+        m_removedBundled.append(oldName);
+    m_removedBundled.removeAll(trimmed);
+
+    emit currentEngineChanged();
+    emit changed();
+    return true;
+}
+
+void OpenSearchManager::engineEdited(OpenSearchEngine *engine)
+{
+    if (!engine || m_engines.key(engine).isEmpty())
+        return;
     emit changed();
 }
 
@@ -354,6 +448,9 @@ void OpenSearchManager::save()
     settings.beginGroup(QLatin1String("openSearch"));
     settings.setValue(QLatin1String("engine"), m_current);
     settings.setValue(QLatin1String("removedBundledEngines"), m_removedBundled);
+    // SRCH05: user-arranged engine order for the settings editor and
+    // the engine menus.
+    settings.setValue(QLatin1String("engineOrder"), m_engineOrder);
 
     settings.beginWriteArray(QLatin1String("keywords"), m_keywords.count());
     QHash<QString, OpenSearchEngine*>::const_iterator i = m_keywords.constBegin();
@@ -447,6 +544,22 @@ void OpenSearchManager::load()
     settings.endArray();
 
     m_suggestionsEnabled = settings.value(QLatin1String("suggestions")).toStringList();
+
+    // SRCH05: restore the persisted engine order — names that failed
+    // to load drop out, engines missing from the stored list (new
+    // bundled descriptors, pre-SRCH05 profiles) append at the end.
+    m_engineOrder = settings.value(QLatin1String("engineOrder")).toStringList();
+    for (auto it = m_engineOrder.begin(); it != m_engineOrder.end();) {
+        if (m_engines.contains(*it))
+            ++it;
+        else
+            it = m_engineOrder.erase(it);
+    }
+    for (auto it = m_engines.constBegin(), end = m_engines.constEnd();
+         it != end; ++it) {
+        if (!m_engineOrder.contains(it.key()))
+            m_engineOrder.append(it.key());
+    }
 
     // SRCH04: engine assignments + suggestion-context toggles.
     m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
