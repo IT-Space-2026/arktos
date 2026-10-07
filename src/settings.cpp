@@ -373,6 +373,9 @@ void SettingsDialog::loadFromSettings()
     webrtcProtection->setChecked(settings.value(QLatin1String("webrtcIpProtection"), true).toBool());
     secureDns->setChecked(settings.value(QLatin1String("secureDns"), false).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
+    // PRIV02 fingerprint normalization.
+    reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
+    normalizeAcceptLanguage->setChecked(settings.value(QLatin1String("normalizeAcceptLanguage"), false).toBool());
     securityLevelCombo->setCurrentIndex(qBound(
         int(PrivacyRequestInterceptor::Standard),
         settings.value(QLatin1String("securityLevel"),
@@ -543,8 +546,15 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("webrtcIpProtection"), webrtcProtection->isChecked());
     settings.setValue(QLatin1String("secureDns"), secureDns->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
+    settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
+    settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());
     settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
     settings.endGroup();
+
+    // PRIV02: TZ is process environment — applying it now reaches
+    // engine processes spawned from here on; the ones already running
+    // keep their zone until restart.
+    BrowserProfile::applyFingerprintEnvironment();
 
     // Search engines: flush the per-engine suggestion opt-ins the user
     // edited in the combo session (skipped for engines that vanished

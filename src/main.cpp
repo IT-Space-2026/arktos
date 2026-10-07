@@ -80,8 +80,10 @@
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
 #include <QtCore/QXmlStreamReader>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QProcess>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
 #include <QtGui/QMouseEvent>
@@ -205,6 +207,15 @@ int main(int argc, char **argv)
     if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
 
+    // PRIV02: the UTC-timezone normalization is process environment
+    // (TZ) and must be in place before ANY engine initialization —
+    // the BrowserApplication constructor already brings the browsing
+    // profile up, so this runs even earlier.  QSettings resolution
+    // needs the application identity; the ctor sets the same values.
+    QCoreApplication::setOrganizationName(QLatin1String("Arora"));
+    QCoreApplication::setApplicationName(QLatin1String("Arora"));
+    BrowserProfile::applyFingerprintEnvironment();
+
     BrowserApplication application(argc, argv);
     const qint64 appCtorMs = perfTimer.elapsed();
 
@@ -247,6 +258,7 @@ int main(int argc, char **argv)
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
+        "fingerprint-smoke", "fingerprint-child-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -3048,6 +3060,294 @@ int main(int argc, char **argv)
         qInfo() << "icons-smoke:" << (failures == 0 ? "PASS" : "FAIL")
                 << failures << "failures";
         return failures == 0 ? 0 : 1;
+    }
+
+    // Headless verification for PRIV02 — two runs sharing the
+    // test-mode settings store.
+    //
+    // `--fingerprint-smoke` (parent): the QSettings round-trip, the
+    // Accept-Language override path (stored list untouched, wire
+    // value normalized on both the profile and the app-side NAM), the
+    // TZ env save/restore and the UA-consistency surface are checked
+    // in-process; then a child is spawned with the toggles persisted
+    // because the page-observable surface needs them active BEFORE
+    // the engine initializes.
+    //
+    // `--fingerprint-child-smoke` (child): boots with the toggles
+    // already persisted, loads a local fixture page and asserts what
+    // JavaScript sees — Intl timezone, navigator.languages, UA/client
+    // hints consistency — plus the Accept-Language header on the
+    // wire.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--fingerprint-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "fingerprint-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        QSettings settings;
+        const QVariant savedUtc =
+            settings.value(QLatin1String("privacy/reportUtcTimezone"));
+        const QVariant savedLang =
+            settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
+        const QVariant savedAccept =
+            settings.value(QLatin1String("network/acceptLanguages"));
+
+        // (b) Accept-Language normalization — a distinctive stored
+        // list proves the toggle replaces it rather than appending or
+        // reading the locale.
+        settings.setValue(QLatin1String("network/acceptLanguages"),
+                          QStringList{QLatin1String("Klingon [tlh]")});
+        settings.setValue(QLatin1String("privacy/normalizeAcceptLanguage"),
+                          false);
+        check(AcceptLanguageDialog::acceptLanguages()
+                  == QStringList{QLatin1String("Klingon [tlh]")},
+              "toggle off keeps the configured list");
+        settings.setValue(QLatin1String("privacy/normalizeAcceptLanguage"),
+                          true);
+        check(AcceptLanguageDialog::acceptLanguages()
+                  == AcceptLanguageDialog::normalizedAcceptLanguages(),
+              "toggle on normalizes the list");
+
+        const QByteArray normalizedHeader = AcceptLanguageDialog::httpString(
+            AcceptLanguageDialog::normalizedAcceptLanguages());
+        check(normalizedHeader == "en-US, en;q=0.9",
+              "normalized header string");
+        BrowserProfile::applySettings(profile);
+        check(profile->httpAcceptLanguage()
+                  == QString::fromUtf8(normalizedHeader),
+              "profile sends normalized Accept-Language");
+        // The app-side NAM's wire header is verified in the child run
+        // (its /nam request is captured by the fixture server).
+
+        // (a) TZ env round-trip — the save/restore path that
+        // SettingsDialog::saveToSettings() exercises mid-session.
+        const bool tzWasSet = qEnvironmentVariableIsSet("TZ");
+        const QByteArray tzBefore = qgetenv("TZ");
+        settings.setValue(QLatin1String("privacy/reportUtcTimezone"), true);
+        BrowserProfile::applyFingerprintEnvironment();
+        check(qgetenv("TZ") == "UTC", "TZ forced to UTC");
+        settings.setValue(QLatin1String("privacy/reportUtcTimezone"), false);
+        BrowserProfile::applyFingerprintEnvironment();
+        check(qgetenv("TZ") == tzBefore && qEnvironmentVariableIsSet("TZ") == tzWasSet,
+              "TZ restored on disable");
+
+        // (c) UA consistency — the identity the wire and navigator.*
+        // expose must tell the same story: vanilla Chrome UA, no
+        // QtWebEngine token, client-hints brands agreeing.
+        check(profile->httpUserAgent()
+                  == BrowserProfile::defaultHttpUserAgent(),
+              "profile UA is the vanilla Chrome UA");
+        check(!profile->httpUserAgent().contains(QLatin1String("QtWebEngine")),
+              "no QtWebEngine token");
+        const QVariantMap brands = profile->clientHints()->fullVersionList();
+        check(!brands.value(QLatin1String("Google Chrome")).toString().isEmpty()
+              && brands.value(QLatin1String("Google Chrome"))
+                     == brands.value(QLatin1String("Chromium")),
+              "client hints brands agree with the UA");
+
+        // Seed the toggles for the child run — it must see them in the
+        // settings store before its engine initializes.
+        settings.setValue(QLatin1String("privacy/reportUtcTimezone"), true);
+        settings.setValue(QLatin1String("privacy/normalizeAcceptLanguage"), true);
+        settings.sync();
+
+        QProcess child;
+        child.setProcessChannelMode(QProcess::ForwardedChannels);
+        child.start(QCoreApplication::applicationFilePath(),
+                    QStringList{QStringLiteral("--fingerprint-child-smoke")});
+        const bool childOk = child.waitForFinished(120000)
+            && child.exitStatus() == QProcess::NormalExit
+            && child.exitCode() == 0;
+        check(childOk, "child run: normalized surface visible to JS");
+
+        const auto restore = [&settings](const QString &key,
+                                         const QVariant &saved) {
+            if (saved.isValid())
+                settings.setValue(key, saved);
+            else
+                settings.remove(key);
+        };
+        restore(QLatin1String("privacy/reportUtcTimezone"), savedUtc);
+        restore(QLatin1String("privacy/normalizeAcceptLanguage"), savedLang);
+        restore(QLatin1String("network/acceptLanguages"), savedAccept);
+        BrowserProfile::applyFingerprintEnvironment();
+
+        qInfo() << "fingerprint-smoke:" << (failures == 0 ? "PASS" : "FAIL")
+                << failures << "failures";
+        return failures == 0 ? 0 : 1;
+    }
+
+    if (args.contains(QLatin1String("--fingerprint-child-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "fingerprint-smoke(child):" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        check(qgetenv("TZ") == "UTC",
+              QLatin1String("TZ env forced pre-engine"));
+        check(profile->httpAcceptLanguage()
+                  .startsWith(QLatin1String("en-US")),
+              QLatin1String("profile accept-language normalized"));
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "fingerprint-smoke(child): FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        auto capturedLang = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, capturedLang]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, capturedLang]() {
+                const QByteArray request = client->readAll();
+                QString path;
+                const QList<QByteArray> lines = request.split('\n');
+                for (const QByteArray &line : lines) {
+                    if (line.startsWith("GET ")) {
+                        path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4).trimmed());
+                    } else if (line.startsWith("Accept-Language: ")) {
+                        capturedLang->insert(path,
+                                             line.mid(17).trimmed());
+                    }
+                }
+                const QByteArray body =
+                    "<html><head><title>fingerprint-child</title>"
+                    "</head><body>probe</body></html>";
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto done = std::make_shared<bool>(false);
+        auto finish = [&application, &failures, done](bool ok) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo() << "fingerprint-smoke(child):"
+                    << (ok && failures == 0 ? "PASS" : "FAIL")
+                    << failures << "failures";
+            application.exit(ok && failures == 0 ? 0 : 1);
+        };
+
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [&application, view, profile, server, check,
+                          capturedLang, finish, networkAccessManager](
+                             bool ok) {
+            if (!ok || view->url().isEmpty()
+                || view->url().scheme() != QLatin1String("http"))
+                return;
+            view->page()->runJavaScript(QStringLiteral(
+                "JSON.stringify({"
+                "tz: Intl.DateTimeFormat().resolvedOptions().timeZone,"
+                "offset: new Date().getTimezoneOffset(),"
+                "langs: navigator.languages,"
+                "lang: navigator.language,"
+                "ua: navigator.userAgent,"
+                "platform: navigator.platform,"
+                "brands: (navigator.userAgentData"
+                " ? navigator.userAgentData.brands : null),"
+                "webdriver: !!navigator.webdriver})"),
+                [&application, profile, server, check, capturedLang, finish,
+                 networkAccessManager](const QVariant &result) {
+                const QJsonObject probe = QJsonDocument::fromJson(
+                    result.toString().toUtf8()).object();
+                qInfo() << "fingerprint-smoke(child): page reports"
+                        << result.toString();
+
+                const QString tz = probe.value(QLatin1String("tz")).toString();
+                check(tz == QLatin1String("UTC")
+                          || tz == QLatin1String("Etc/UTC")
+                          || tz == QLatin1String("GMT")
+                          || tz == QLatin1String("Etc/GMT"),
+                      QStringLiteral("JS timezone is UTC (got %1)")
+                          .arg(tz));
+                check(probe.value(QLatin1String("offset")).toInt(-1) == 0,
+                      QLatin1String("Date offset is 0"));
+
+                QStringList langs;
+                const QJsonArray langArray =
+                    probe.value(QLatin1String("langs")).toArray();
+                for (const QJsonValue &v : langArray)
+                    langs << v.toString();
+                check(langs == QStringList{QLatin1String("en-US"),
+                                           QLatin1String("en")},
+                      QStringLiteral("navigator.languages normalized (got %1)")
+                          .arg(langs.join(QLatin1Char(','))));
+                check(probe.value(QLatin1String("lang")).toString()
+                          == QLatin1String("en-US"),
+                      QLatin1String("navigator.language is en-US"));
+
+                const QString ua =
+                    probe.value(QLatin1String("ua")).toString();
+                check(ua == profile->httpUserAgent()
+                          && !ua.contains(QLatin1String("QtWebEngine")),
+                      QLatin1String("navigator.userAgent matches the wire UA"));
+                check(probe.value(QLatin1String("platform")).toString()
+                          .contains(QLatin1String("Linux")),
+                      QLatin1String("navigator.platform consistent with UA"));
+                bool chromeBrand = false;
+                const QJsonArray brandArray =
+                    probe.value(QLatin1String("brands")).toArray();
+                for (const QJsonValue &v : brandArray) {
+                    if (v.toObject().value(QLatin1String("brand")).toString()
+                            == QLatin1String("Google Chrome"))
+                        chromeBrand = true;
+                }
+                check(chromeBrand,
+                      QLatin1String("userAgentData brands carry Google Chrome"));
+                check(!probe.value(QLatin1String("webdriver")).toBool(true),
+                      QLatin1String("navigator.webdriver off"));
+
+                const QString wireLang =
+                    QString::fromUtf8(capturedLang->value(
+                        QLatin1String("/page")))
+                        .remove(QLatin1Char(' '));
+                check(wireLang == QLatin1String("en-US,en;q=0.9"),
+                      QStringLiteral("wire Accept-Language normalized (got %1)")
+                          .arg(QString::fromUtf8(
+                              capturedLang->value(QLatin1String("/page")))));
+
+                // The app-side fetch manager must tell the same story —
+                // a configured list leaking through NAM headers would
+                // defeat the normalization on suggestions/downloads.
+                QNetworkReply *reply = networkAccessManager->get(
+                    QNetworkRequest(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/nam")
+                        .arg(server->serverPort()))));
+                QObject::connect(reply, &QNetworkReply::finished,
+                                 &application,
+                                 [reply, check, capturedLang, finish]() {
+                    reply->deleteLater();
+                    const QString namLang =
+                        QString::fromUtf8(capturedLang->value(
+                            QLatin1String("/nam")))
+                            .remove(QLatin1Char(' '));
+                    check(reply->error() == QNetworkReply::NoError
+                              && namLang == QLatin1String("en-US,en;q=0.9"),
+                          QStringLiteral("NAM Accept-Language normalized (got %1)")
+                              .arg(namLang));
+                    finish(true);
+                });
+            });
+        });
+
+        QTimer::singleShot(30000, &application, [finish]() {
+            finish(false);
+        });
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                           .arg(server->serverPort())));
+        return application.exec();
     }
 
     return application.exec();

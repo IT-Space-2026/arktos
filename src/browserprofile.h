@@ -137,6 +137,21 @@ bool clearDeferredSiteStorage(const QString &storagePath);
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();
 
+// PRIV02: fingerprint-normalization that works through the process
+// environment rather than a Chromium switch.  When
+// privacy/reportUtcTimezone is on, TZ is forced to UTC before the
+// engine exists: Chromium detects the host timezone in-process (the
+// "browser process" lives inside the app) and every spawned
+// QtWebEngineProcess inherits the environment, so JS Date/Intl reads
+// report UTC.  The caller's own TZ value is remembered and restored
+// when the toggle is switched back off.
+// Call from main() BEFORE the application object exists (its ctor
+// already touches the profile) and again from the settings dialog so
+// later-spawned engine processes pick up a mid-session flip — engine
+// processes already running keep the zone they started with, hence
+// the restart note on the checkbox.
+void applyFingerprintEnvironment();
+
 // SEC12: force a profile data tree owner-only — 0700 directories,
 // 0600 files.  Chromium already creates them that way; this repairs
 // trees loosened by umask quirks or manual copies.  Returns false if

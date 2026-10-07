@@ -95,9 +95,22 @@ QStringList AcceptLanguageDialog::defaultAcceptList()
     return expand(QLocale(currentLanguage).language());
 }
 
+QStringList AcceptLanguageDialog::normalizedAcceptLanguages()
+{
+    return QStringList{QLatin1String("en-US"), QLatin1String("en")};
+}
+
 QStringList AcceptLanguageDialog::acceptLanguages()
 {
     QSettings settings;
+    // PRIV02: fingerprint normalization — the fixed list replaces the
+    // configured one on the wire (Accept-Language header and
+    // navigator.languages both derive from it) while the toggle is
+    // on.  The stored list is untouched; disabling restores it.  The
+    // Accept-Language settings dialog deliberately reads the raw key
+    // so the real list stays editable underneath the toggle.
+    if (settings.value(QLatin1String("privacy/normalizeAcceptLanguage"), false).toBool())
+        return normalizedAcceptLanguages();
     QStringList list = settings.value(QLatin1String("network/acceptLanguages")).toStringList();
     if (list.isEmpty())
         list = defaultAcceptList();

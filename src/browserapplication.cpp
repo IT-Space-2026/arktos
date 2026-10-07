@@ -62,6 +62,7 @@
 
 #include "browserapplication.h"
 
+#include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
@@ -149,6 +150,12 @@ static void prepareProfile(QWebEngineProfile *profile)
         BrowserProfile::applyClientHints(profile);
         profile->settings()->setAttribute(
             QWebEngineSettings::DnsPrefetchEnabled, false);
+        // PRIV02: Accept-Language is normalized unconditionally on the
+        // tor profile — a localized list next to the vanilla UA is a
+        // per-user fingerprint regardless of the opt-in toggle.
+        profile->setHttpAcceptLanguage(QString::fromUtf8(
+            AcceptLanguageDialog::httpString(
+                AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
     DownloadManager::instance()->installOnProfile(profile);
     AdBlockManager::instance()->installOnProfile(profile);
@@ -587,6 +594,9 @@ void BrowserApplication::loadSettings()
         BrowserProfile::applySettings(profile);
         profile->setHttpUserAgent(BrowserProfile::defaultHttpUserAgent());
         BrowserProfile::applyClientHints(profile);
+        profile->setHttpAcceptLanguage(QString::fromUtf8(
+            AcceptLanguageDialog::httpString(
+                AcceptLanguageDialog::normalizedAcceptLanguages())));
         profile->settings()->setAttribute(
             QWebEngineSettings::DnsPrefetchEnabled, false);
         return;

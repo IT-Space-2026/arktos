@@ -39,6 +39,11 @@ public:
     // Shared with NetworkAccessManager::acceptLanguage() and
     // BrowserProfile::applySettings (MIG11).
     static QStringList acceptLanguages();
+    // PRIV02: the fixed anonymity-set list that replaces the
+    // configured languages while privacy/normalizeAcceptLanguage is
+    // on (and on the tor profile, which always normalizes).  en-US,en
+    // is what other privacy browsers send.
+    static QStringList normalizedAcceptLanguages();
 
 private slots:
     void load();

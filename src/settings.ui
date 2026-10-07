@@ -872,6 +872,41 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="fingerprintGroupBox">
+         <property name="title">
+          <string>Fingerprint Resistance</string>
+         </property>
+         <layout class="QVBoxLayout">
+          <item>
+           <widget class="QCheckBox" name="reportUtcTimezone">
+            <property name="toolTip">
+             <string>Websites see UTC as your timezone instead of the system's — Date and Intl API reads all report UTC. Takes full effect after a restart; pages already open keep their timezone.</string>
+            </property>
+            <property name="text">
+             <string>Report UTC as the timezone</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="normalizeAcceptLanguage">
+            <property name="toolTip">
+             <string>Send 'en-US, en' as Accept-Language and navigator.languages instead of the configured list so every user looks alike. The Language list setting is preserved and used again when this is off.</string>
+            </property>
+            <property name="text">
+             <string>Report generic language preferences (en-US, en)</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="permissionsGroupBox">
          <property name="title">
           <string>Site Permissions</string>
@@ -1699,6 +1734,8 @@
   <tabstop>webrtcProtection</tabstop>
   <tabstop>secureDns</tabstop>
   <tabstop>clearOnExit</tabstop>
+  <tabstop>reportUtcTimezone</tabstop>
+  <tabstop>normalizeAcceptLanguage</tabstop>
   <tabstop>tabBarPosition</tabstop>
   <tabstop>selectTabsWhenCreated</tabstop>
   <tabstop>confirmClosingMultipleTabs</tabstop>

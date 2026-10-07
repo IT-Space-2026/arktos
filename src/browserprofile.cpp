@@ -35,6 +35,8 @@
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
 
+#include <ctime>
+
 namespace BrowserProfile {
 
 QWebEngineProfile *normalProfile()
@@ -536,6 +538,42 @@ void applyChromiumFlags()
         addFlag(QLatin1String("--enable-features=DnsOverHttps"));
     }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
+}
+
+void applyFingerprintEnvironment()
+{
+    const bool wantUtc = QSettings().value(
+        QLatin1String("privacy/reportUtcTimezone"), false).toBool();
+
+    // Remember the caller's own TZ once so toggling the setting off
+    // restores exactly what was inherited — a TZ the user exported is
+    // never clobbered, and an unset TZ becomes unset again (not
+    // empty, which libc parses as UTC on some platforms).
+    static bool overridden = false;
+    static bool previousWasSet = false;
+    static QByteArray previousTz;
+    if (wantUtc) {
+        if (!overridden) {
+            previousWasSet = qEnvironmentVariableIsSet("TZ");
+            previousTz = qgetenv("TZ");
+            overridden = true;
+        }
+        qputenv("TZ", "UTC");
+    } else if (overridden) {
+        if (previousWasSet)
+            qputenv("TZ", previousTz);
+        else
+            qunsetenv("TZ");
+        overridden = false;
+    }
+
+    // libc caches the zone — the in-process Chromium browser process
+    // and Qt's own QTimeZone reads must see the new value.
+#if defined(Q_OS_WIN)
+    _tzset();
+#else
+    tzset();
+#endif
 }
 
 } // namespace BrowserProfile

@@ -73,7 +73,11 @@ cookies, caches and site storage at quit — Chromium's on-disk trees
 are removed at the next start, never under a running browser.  An
 opt-in secure-DNS toggle asks Chromium to upgrade lookups to
 DNS-over-HTTPS when the system resolver supports it (a custom DoH
-endpoint cannot be configured).  Honest bounds: an observer can still
+endpoint cannot be configured).  The opt-in "Fingerprint Resistance"
+group reports UTC as the timezone to every site (JavaScript Date and
+Intl reads) and a generic "en-US, en" language list instead of the
+configured one; the Tor window's profile always normalizes both.
+Honest bounds: an observer can still
 see destination IPs, connection timing and the usual browser
 fingerprinting surface — the Tor window is the answer for hiding
 traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level

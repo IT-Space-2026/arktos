@@ -33,6 +33,7 @@
 #include <QtTest/QtTest>
 #include <qtest_arora.h>
 
+#include <acceptlanguagedialog.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
@@ -73,6 +74,7 @@ private slots:
     void deferredExitWipe();
 
     void chromiumFlags();
+    void fingerprintNormalization();
 
 private:
     QByteArray m_savedFlags;
@@ -83,6 +85,11 @@ private:
     QVariant m_savedBlock3p;
     QVariant m_savedSecurityLevel;
     QVariant m_savedEnableJavascript;
+    QVariant m_savedUtcTimezone;
+    QVariant m_savedNormalizeLang;
+    QVariant m_savedAcceptLanguages;
+    bool m_savedTzSet;
+    QByteArray m_savedTz;
 };
 
 class SubCookieJar : public CookieJar
@@ -106,6 +113,11 @@ void tst_Privacy::initTestCase()
     m_savedBlock3p = settings.value(QLatin1String("cookies/blockThirdPartyCookies"));
     m_savedSecurityLevel = settings.value(QLatin1String("privacy/securityLevel"));
     m_savedEnableJavascript = settings.value(QLatin1String("websettings/enableJavascript"));
+    m_savedUtcTimezone = settings.value(QLatin1String("privacy/reportUtcTimezone"));
+    m_savedNormalizeLang = settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
+    m_savedAcceptLanguages = settings.value(QLatin1String("network/acceptLanguages"));
+    m_savedTzSet = qEnvironmentVariableIsSet("TZ");
+    m_savedTz = qgetenv("TZ");
 }
 
 static void restoreSetting(QSettings &settings, const QString &key,
@@ -132,7 +144,14 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("cookies/blockThirdPartyCookies"), m_savedBlock3p);
     restoreSetting(settings, QLatin1String("privacy/securityLevel"), m_savedSecurityLevel);
     restoreSetting(settings, QLatin1String("websettings/enableJavascript"), m_savedEnableJavascript);
+    restoreSetting(settings, QLatin1String("privacy/reportUtcTimezone"), m_savedUtcTimezone);
+    restoreSetting(settings, QLatin1String("privacy/normalizeAcceptLanguage"), m_savedNormalizeLang);
+    restoreSetting(settings, QLatin1String("network/acceptLanguages"), m_savedAcceptLanguages);
     PrivacyRequestInterceptor::loadSettings();
+    if (m_savedTzSet)
+        qputenv("TZ", m_savedTz);
+    else
+        qunsetenv("TZ");
 }
 
 void tst_Privacy::init()
@@ -558,6 +577,43 @@ void tst_Privacy::chromiumFlags()
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.
+    init();
+}
+
+void tst_Privacy::fingerprintNormalization()
+{
+    QSettings settings;
+
+    // PRIV02 (a): TZ is forced to UTC, then the caller's original
+    // env is restored verbatim — an exported user TZ is never lost.
+    const bool tzWasSet = qEnvironmentVariableIsSet("TZ");
+    const QByteArray tzBefore = qgetenv("TZ");
+    settings.setValue(QLatin1String("privacy/reportUtcTimezone"), true);
+    BrowserProfile::applyFingerprintEnvironment();
+    QCOMPARE(qgetenv("TZ"), QByteArray("UTC"));
+    settings.setValue(QLatin1String("privacy/reportUtcTimezone"), false);
+    BrowserProfile::applyFingerprintEnvironment();
+    QCOMPARE(qEnvironmentVariableIsSet("TZ"), tzWasSet);
+    QCOMPARE(qgetenv("TZ"), tzBefore);
+
+    // PRIV02 (b): a distinctive configured list proves the toggle
+    // replaces the value on the wire while leaving the stored list
+    // untouched.
+    settings.setValue(QLatin1String("network/acceptLanguages"),
+                      QStringList{QLatin1String("Klingon [tlh]")});
+    QCOMPARE(AcceptLanguageDialog::acceptLanguages(),
+             QStringList({QLatin1String("Klingon [tlh]")}));
+    settings.setValue(QLatin1String("privacy/normalizeAcceptLanguage"), true);
+    QCOMPARE(AcceptLanguageDialog::acceptLanguages(),
+             AcceptLanguageDialog::normalizedAcceptLanguages());
+    QCOMPARE(AcceptLanguageDialog::httpString(
+                 AcceptLanguageDialog::acceptLanguages()),
+             QByteArray("en-US, en;q=0.9"));
+    settings.setValue(QLatin1String("privacy/normalizeAcceptLanguage"), false);
+    QCOMPARE(AcceptLanguageDialog::acceptLanguages(),
+             QStringList({QLatin1String("Klingon [tlh]")}));
+
+    settings.remove(QLatin1String("network/acceptLanguages"));
     init();
 }
 
