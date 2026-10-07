@@ -68,6 +68,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMutex>
 #include <QtCore/QSettings>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
@@ -89,10 +90,13 @@
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
+#include <QtWebEngineCore/QWebEngineClientHints>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
 #include <QtWebEngineCore/QWebEngineFindTextResult>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
+#include <QtWebEngineCore/QWebEngineUrlRequestInfo>
+#include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
 #include <QtWebEngineCore/QWebEngineScriptCollection>
 #include <QtWebEngineCore/QWebEngineSettings>
 #include <QtWidgets/QApplication>
@@ -129,6 +133,38 @@ static int adblockDecisionKind(const AdBlockDecision &decision)
     return int(decision.action);
 }
 #endif
+
+// Records the request headers of every main-frame navigation so
+// --sorry-smoke can see exactly what the engine puts on the wire
+// (client hints included).  interceptRequest() runs on Chromium's IO
+// thread — the captured output is mutex-guarded.
+class ProbeHeaderCapture : public QWebEngineUrlRequestInterceptor
+{
+public:
+    ProbeHeaderCapture(QMutex *mutex, QStringList *out)
+        : m_mutex(mutex), m_out(out) {}
+
+    void interceptRequest(QWebEngineUrlRequestInfo &info) override
+    {
+        if (info.resourceType()
+                != QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
+            return;
+        const QHash<QByteArray, QByteArray> headers = info.httpHeaders();
+        QStringList lines;
+        lines.reserve(headers.size() + 1);
+        lines << QString::fromLatin1(info.requestMethod())
+                + QLatin1Char(' ') + info.requestUrl().toString();
+        for (auto it = headers.constBegin(); it != headers.constEnd(); ++it)
+            lines << QString::fromLatin1(it.key()) + QLatin1String(": ")
+                     + QString::fromLatin1(it.value());
+        const QMutexLocker lock(m_mutex);
+        m_out->append(lines.join(QLatin1Char('\n')));
+    }
+
+private:
+    QMutex *m_mutex;
+    QStringList *m_out;
+};
 
 int main(int argc, char **argv)
 {
@@ -198,7 +234,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke",
-        "tor-window-smoke",
+        "tor-window-smoke", "sorry-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1892,6 +1928,133 @@ int main(int argc, char **argv)
 
         // exec() must run while 'failures' is still alive: the lambdas
         // above capture it by reference.
+        return application.exec();
+    }
+
+    // UA02 empirical probe.  A fresh off-the-record profile reproduces
+    // a first-run user's exact state — no cookies, no cache — while
+    // applySettings gives it the production vanilla UA.  A
+    // cookie-warming load of google.com runs first (consent/SOCS
+    // cookies get set naturally), then a real search.  The interceptor
+    // dumps the wire request headers (client hints included) and a
+    // parallel engine-free NAM GET shows the response status/headers
+    // for the same URL + UA + IP — together they separate browser-side
+    // fingerprinting from IP-reputation flagging.  Report-only like
+    // the ua-smoke live check: a /sorry/ landing prints a verdict
+    // instead of failing, and offline runs SKIP with exit 0.
+    if (args.contains(QLatin1String("--sorry-smoke"))) {
+        QWebEngineProfile *probeProfile = new QWebEngineProfile(&application);
+        BrowserProfile::applySettings(probeProfile);
+
+        QWebEngineClientHints *hints = probeProfile->clientHints();
+        QStringList brands;
+        const QVariantMap brandList = hints->fullVersionList();
+        for (auto it = brandList.constBegin(); it != brandList.constEnd(); ++it)
+            brands << it.key() + QLatin1Char('/') + it.value().toString();
+        qInfo().noquote() << "sorry-smoke: UA:" << probeProfile->httpUserAgent();
+        qInfo().noquote() << "sorry-smoke: client-hints platform="
+            << hints->platform() << "arch=" << hints->arch()
+            << "model=" << hints->model() << "mobile=" << hints->isMobile()
+            << "fullVersion=" << hints->fullVersion()
+            << "platformVersion=" << hints->platformVersion()
+            << "bitness=" << hints->bitness()
+            << "brands=" << brands.join(QLatin1Char(','));
+
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "sorry-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        check(!probeProfile->httpUserAgent()
+                .contains(QLatin1String("QtWebEngine")),
+              "UA carries no QtWebEngine token");
+        check(brandList.contains(QLatin1String("Google Chrome")),
+              "client hints carry the Google Chrome brand");
+
+        QMutex headerMutex;
+        QStringList captured;
+        ProbeHeaderCapture interceptor(&headerMutex, &captured);
+        probeProfile->setUrlRequestInterceptor(&interceptor);
+
+        WebView *probeView = new WebView(probeProfile, &window);
+        window.setCentralWidget(probeView);
+
+        // Engine-free GET of the same URL + UA + egress IP: its status
+        // and response headers are the "is it the browser or the IP"
+        // control measurement.
+        int namStatus = -1;
+        QStringList namHeaders;
+        QNetworkRequest namRequest(QUrl(QLatin1String(
+            "https://www.google.com/search?q=arora+browser")));
+        namRequest.setHeader(QNetworkRequest::UserAgentHeader,
+                             BrowserProfile::defaultHttpUserAgent());
+        QNetworkReply *namReply = networkAccessManager->get(namRequest);
+        QObject::connect(namReply, &QNetworkReply::finished, &application,
+            [namReply, &namStatus, &namHeaders]() {
+            namStatus = namReply->attribute(
+                QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QList<QNetworkReply::RawHeaderPair> raw =
+                namReply->rawHeaderPairs();
+            for (const QNetworkReply::RawHeaderPair &pair : raw)
+                namHeaders.append(QString::fromLatin1(pair.first)
+                    + QLatin1String(": ") + QString::fromLatin1(pair.second));
+            namReply->deleteLater();
+        });
+
+        const QUrl warmUrl(QLatin1String("https://www.google.com/"));
+        const QUrl searchUrl(QLatin1String(
+            "https://www.google.com/search?q=arora+browser"));
+        QElapsedTimer timer;
+        timer.start();
+        int stage = 0;
+        const auto finish = [&application, probeView, &headerMutex,
+                             &captured, &namStatus, &namHeaders, &timer,
+                             &failures]() {
+            const QUrl finalUrl = probeView->url();
+            const bool sorry = WebPage::isRateLimitInterstitialUrl(finalUrl);
+            qInfo().noquote() << "sorry-smoke: final" << finalUrl
+                              << "in" << timer.elapsed() << "ms";
+            qInfo().noquote() << "sorry-smoke: control status" << namStatus
+                << "\n" << namHeaders.join(QLatin1Char('\n'));
+            {
+                const QMutexLocker lock(&headerMutex);
+                for (const QString &capture : captured)
+                    qInfo().noquote() << "sorry-smoke: request\n" << capture;
+            }
+            if (sorry) {
+                qInfo() << "sorry-smoke: WARN /sorry/ landing —"
+                        << (namStatus != 200
+                            ? "control request also non-200: IP reputation,"
+                              " not fixable client-side"
+                            : "control request got 200: browser-side"
+                              " fingerprint (headers/cookies) — actionable");
+            } else {
+                qInfo() << "sorry-smoke: PASS";
+            }
+            application.exit(failures ? 1 : 0);
+        };
+        QObject::connect(probeView, &QWebEngineView::loadFinished,
+            &application, [&](bool ok) {
+            if (!ok)
+                return;  // timeout reports the SKIP
+            if (stage == 0) {
+                // Cookie warming done — the consent cookies google.com
+                // just set now ride along on the real search.
+                stage = 1;
+                qInfo() << "sorry-smoke: warmup landed" << probeView->url()
+                        << (WebPage::isRateLimitInterstitialUrl(probeView->url())
+                            ? "(already /sorry/)" : "");
+                probeView->loadUrl(searchUrl);
+                return;
+            }
+            finish();
+        });
+        QTimer::singleShot(45000, &application, [&application]() {
+            qInfo() << "sorry-smoke: SKIP (timeout — offline?)";
+            application.exit(0);
+        });
+        probeView->loadUrl(warmUrl);
         return application.exec();
     }
 

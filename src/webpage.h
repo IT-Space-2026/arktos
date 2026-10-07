@@ -102,6 +102,10 @@ public:
     static QString userAgent();
     static void setUserAgent(const QString &userAgent);
 
+    // UA02: Google's "/sorry/" bot-check interstitial — detected after
+    // the navigation commits so the page can carry a readable notice.
+    static bool isRateLimitInterstitialUrl(const QUrl &url);
+
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
@@ -116,6 +120,7 @@ private:
     void handleCertificateError(QWebEngineCertificateError error);
     QString certificateErrorHtml(const QWebEngineCertificateError &error);
     void resolveCertificateErrorLink(const QUrl &url);
+    void showRateLimitNoticeIfNeeded();
 
 protected:
     static QString s_userAgent;

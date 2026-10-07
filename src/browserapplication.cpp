@@ -143,6 +143,7 @@ static void prepareProfile(QWebEngineProfile *profile)
         // the tor session — the vanilla UA always applies, and no
         // lookup may precede the proxied request.
         profile->setHttpUserAgent(BrowserProfile::defaultHttpUserAgent());
+        BrowserProfile::applyClientHints(profile);
         profile->settings()->setAttribute(
             QWebEngineSettings::DnsPrefetchEnabled, false);
     }
@@ -568,6 +569,7 @@ void BrowserApplication::loadSettings()
         QWebEngineProfile *profile = BrowserProfile::torProfile();
         BrowserProfile::applySettings(profile);
         profile->setHttpUserAgent(BrowserProfile::defaultHttpUserAgent());
+        BrowserProfile::applyClientHints(profile);
         profile->settings()->setAttribute(
             QWebEngineSettings::DnsPrefetchEnabled, false);
         return;

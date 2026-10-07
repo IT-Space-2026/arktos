@@ -240,6 +240,11 @@ Search settings (SRCH02):
 Search box visibility (SRCH03):
     The dedicated search box next to the address bar is now opt-in: the "Show dedicated search box" checkbox on the General preferences page is off by default, since the omnibox address bar covers searching already. The widget stays constructed while hidden — the toggle applies live to every open window — and the Web Search shortcut (Ctrl+K) focuses the address bar instead of an invisible widget while the box is off.
 
+User agent (UA02):
+    The browser's UA client hints (Sec-CH-UA*) now agree with the vanilla-Chrome user agent: they previously branded the engine as bare "Chromium" while the UA string claimed "Chrome/<version>" — real Chrome sends a "Google Chrome" brand alongside, and the mismatch was a bot-detection tell. The hints are aligned on every profile (browsing, private and Tor) and re-aligned whenever a custom user agent is applied; a non-Chrome override resets them to the honest Chromium defaults.
+    When Google does divert a search to its /sorry/ "unusual traffic" bot check, the page now carries a readable banner explaining that the connection was rate-limited (not an Arora error) and pointing at the default-engine picker under Tools > Options > Search. Google's own recovery flow is left intact underneath — with JavaScript on, the challenge usually solves transparently and lands back on the search results.
+    `./arora --sorry-smoke` is a diagnostic that reproduces the whole flow on a fresh profile: it dumps the wire request headers (client hints included), runs a control fetch through the application network manager for the same URL/UA/IP, and reports whether a /sorry/ landing is browser-side or IP reputation.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

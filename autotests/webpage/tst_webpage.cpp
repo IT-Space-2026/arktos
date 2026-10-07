@@ -70,6 +70,8 @@ private slots:
     void webChannelAddSearchProviderConsent();
     void webChannelAutofillCapture();
     void userAgent();
+    void rateLimitInterstitialUrl_data();
+    void rateLimitInterstitialUrl();
 
 private:
     QVariant evalSync(QWebEnginePage *page, const QString &js);
@@ -716,6 +718,51 @@ void tst_WebPage::userAgent()
     WebPage::setUserAgent("ben");
     QCOMPARE(WebPage::userAgent(), QString("ben"));
     WebPage::setUserAgent(QString());
+}
+
+// UA02: the /sorry/ banner is driven by WebPage::
+// isRateLimitInterstitialUrl — it must catch the real Google bot-check
+// url shapes without matching unrelated pages or lookalike hosts.
+void tst_WebPage::rateLimitInterstitialUrl_data()
+{
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<bool>("isInterstitial");
+
+    QTest::newRow("google.com /sorry/index")
+        << "https://www.google.com/sorry/index?continue=x&q=y" << true;
+    QTest::newRow("google.com /sorry/")
+        << "https://google.com/sorry/" << true;
+    QTest::newRow("google.co.uk")
+        << "https://www.google.co.uk/sorry/index" << true;
+    QTest::newRow("google.com.au")
+        << "https://google.com.au/sorry/" << true;
+    QTest::newRow("subdomain")
+        << "https://ipv4.google.com/sorry/index" << true;
+
+    QTest::newRow("search page, not /sorry/")
+        << "https://www.google.com/search?q=sorry" << false;
+    QTest::newRow("google root")
+        << "https://www.google.com/" << false;
+    QTest::newRow("other host /sorry/")
+        << "https://duckduckgo.com/sorry/" << false;
+    QTest::newRow("google as subdomain of lookalike")
+        << "https://google.com.evil.example/sorry/" << false;
+    QTest::newRow("google label too deep")
+        << "https://www.google.com.evil.com/sorry/" << false;
+    QTest::newRow("label containing google")
+        << "https://evilgoogle.com/sorry/" << false;
+    QTest::newRow("non-google second level")
+        << "https://google.foo.bar/sorry/" << false;
+    QTest::newRow("not a url")
+        << "about:blank" << false;
+}
+
+void tst_WebPage::rateLimitInterstitialUrl()
+{
+    QFETCH(QString, url);
+    QFETCH(bool, isInterstitial);
+    QCOMPARE(WebPage::isRateLimitInterstitialUrl(QUrl(url)),
+             isInterstitial);
 }
 
 

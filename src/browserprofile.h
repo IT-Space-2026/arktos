@@ -58,6 +58,16 @@ QWebEngineProfile *privateProfileIfCreated();
 // bot-detection fingerprints as automation (Google /sorry/ blocks).
 QString defaultHttpUserAgent();
 
+// UA02: keeps the profile's UA client hints (Sec-CH-UA*) consistent
+// with the UA string actually configured.  Chromium's hints brand the
+// engine "Chromium" while our vanilla UA claims "Chrome/<ver>" — real
+// Chrome carries a "Google Chrome" brand alongside, so the mismatch
+// fingerprints the spoof.  When the effective UA contains "Chrome/",
+// the Chromium brand's full version is mirrored under "Google Chrome";
+// a non-Chrome UA (e.g. a Firefox preset) resets the hints to the
+// honest Chromium defaults.  Call after every setHttpUserAgent.
+void applyClientHints(QWebEngineProfile *profile);
+
 // Applies the persisted preferences to the profile's
 // QWebEngineSettings (was BrowserApplication::loadSettings() writing
 // to QWebSettings::globalSettings()):

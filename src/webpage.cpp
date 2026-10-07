@@ -280,10 +280,23 @@ void WebPage::init()
             history->setIcon(url(), icon);
         });
     }
+    // UA02: Google's bot check redirects a search to its /sorry/
+    // interstitial with an ordinary 200 — neither loadFinished(false)
+    // nor an error domain reports it.  Detect the committed url and
+    // lay a readable notice over the page so the failure mode is
+    // diagnosable (and points at the engine switcher) instead of a
+    // bare Google error page.
+    connect(this, &QWebEnginePage::loadFinished, this, [this](bool ok) {
+        if (ok)
+            showRateLimitNoticeIfNeeded();
+    });
+
     // Apply the configured user agent to whichever profile this page is
     // on (private windows run on the off-the-record profile).
-    if (!s_userAgent.isEmpty())
+    if (!s_userAgent.isEmpty()) {
         profile()->setHttpUserAgent(s_userAgent);
+        BrowserProfile::applyClientHints(profile());
+    }
     loadSettings();
 }
 
@@ -358,9 +371,14 @@ void WebPage::setUserAgent(const QString &userAgent)
     const QString effectiveAgent = userAgent.isEmpty()
         ? BrowserProfile::defaultHttpUserAgent()
         : userAgent;
-    BrowserProfile::normalProfile()->setHttpUserAgent(effectiveAgent);
+    const auto applyTo = [effectiveAgent](QWebEngineProfile *profile) {
+        profile->setHttpUserAgent(effectiveAgent);
+        // UA02: the client hints must tell the same story as the UA.
+        BrowserProfile::applyClientHints(profile);
+    };
+    applyTo(BrowserProfile::normalProfile());
     if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
-        otrProfile->setHttpUserAgent(effectiveAgent);
+        applyTo(otrProfile);
 }
 
 // Schemes Chromium renders itself plus the ones this application
@@ -745,6 +763,88 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         else
             page->load(QUrl(QLatin1String("qrc:/startpage.html")));
     });
+}
+
+// UA02: Google serves its "unusual traffic" bot check from
+// <google host>/sorry/index.  No public-suffix list is available in
+// Qt6, so the host check is a label-position approximation: a
+// "google" label in second-to-last place (google.com, www.google.de)
+// or third-to-last with a plausible public-suffix second-level label
+// (google.co.uk, www.google.com.au).  Substring matches would also
+// fire on lookalikes like "google.com.evil.example".
+bool WebPage::isRateLimitInterstitialUrl(const QUrl &url)
+{
+    if (!url.path().startsWith(QLatin1String("/sorry/")))
+        return false;
+    static const QSet<QString> secondLevel = {
+        QStringLiteral("ac"),  QStringLiteral("ad"),
+        QStringLiteral("co"),  QStringLiteral("com"),
+        QStringLiteral("edu"), QStringLiteral("gen"),
+        QStringLiteral("go"),  QStringLiteral("gov"),
+        QStringLiteral("gouv"),QStringLiteral("id"),
+        QStringLiteral("in"),  QStringLiteral("ind"),
+        QStringLiteral("me"),  QStringLiteral("med"),
+        QStringLiteral("mil"), QStringLiteral("ne"),
+        QStringLiteral("net"), QStringLiteral("nom"),
+        QStringLiteral("or"),  QStringLiteral("org"),
+        QStringLiteral("res"), QStringLiteral("sch"),
+        QStringLiteral("web"),
+    };
+    const QStringList labels = url.host().split(QLatin1Char('.'));
+    const int count = labels.size();
+    for (int i = 0; i < count; ++i) {
+        if (labels.at(i) != QLatin1String("google"))
+            continue;
+        if (i == count - 2 && labels.at(i + 1).size() >= 2)
+            return true;
+        if (i == count - 3 && secondLevel.contains(labels.at(i + 1))
+                && labels.at(i + 2).size() >= 2)
+            return true;
+    }
+    return false;
+}
+
+// The /sorry/ page already carries the recovery path (a captcha that
+// unblocks the profile), so the notice is a banner over it rather than
+// a replacement interstitial — replacing the page would hide the only
+// way back out.
+void WebPage::showRateLimitNoticeIfNeeded()
+{
+    if (!isRateLimitInterstitialUrl(url()))
+        return;
+
+    const auto jsQuote = [](QString text) {
+        text.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+        text.replace(QLatin1Char('"'), QLatin1String("\\\""));
+        text.replace(QLatin1Char('\n'), QLatin1String("\\n"));
+        text.remove(QLatin1Char('\r'));
+        return text;
+    };
+    const QString script = QStringLiteral(
+        "(function(){"
+        "if(document.getElementById('arora-rate-limit'))return;"
+        "var bar=document.createElement('div');"
+        "bar.id='arora-rate-limit';"
+        "bar.setAttribute('style','all:initial;display:block;position:relative;"
+            "z-index:2147483647;background:#fff4ce;color:#3b3105;"
+            "border-bottom:2px solid #e0c45f;"
+            "font:14px/1.45 sans-serif;padding:10px 16px;');"
+        "var title=document.createElement('strong');"
+        "title.textContent=\"%1 \";"
+        "bar.appendChild(title);"
+        "var body=document.createElement('span');"
+        "body.textContent=\"%2\";"
+        "bar.appendChild(body);"
+        "var parent=document.body||document.documentElement;"
+        "parent.insertBefore(bar,parent.firstChild);"
+        "})();")
+        .arg(jsQuote(tr("Google rate-limited this connection.")),
+             jsQuote(tr("This is Google's bot check, not an Arora error — "
+                        "it temporarily flagged search traffic from this "
+                        "profile. Complete the prompt below or try again "
+                        "later; or switch the default search engine under "
+                        "Tools > Options > Search.")));
+    runJavaScript(script);
 }
 
 void WebPage::loadSettings()

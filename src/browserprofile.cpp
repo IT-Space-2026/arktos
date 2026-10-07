@@ -28,6 +28,7 @@
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <qwebengineclienthints.h>
 #include <qwebengineprofile.h>
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
@@ -97,6 +98,29 @@ QString defaultHttpUserAgent()
         return ua;
     }();
     return userAgent;
+}
+
+void applyClientHints(QWebEngineProfile *profile)
+{
+    if (!profile)
+        return;
+    QWebEngineClientHints *hints = profile->clientHints();
+    if (!profile->httpUserAgent().contains(QLatin1String("Chrome/"))) {
+        hints->resetAll();
+        return;
+    }
+    // The brand list maps name -> full version ("Chromium" ->
+    // "140.0.7339.225"); the low-entropy Sec-CH-UA major-version list
+    // and the greased brand are derived from it automatically.
+    QVariantMap brands = hints->fullVersionList();
+    const QString chromiumVersion =
+        brands.value(QLatin1String("Chromium")).toString();
+    if (chromiumVersion.isEmpty()
+        || brands.value(QLatin1String("Google Chrome")).toString()
+            == chromiumVersion)
+        return;
+    brands.insert(QLatin1String("Google Chrome"), chromiumVersion);
+    hints->setFullVersionList(brands);
 }
 
 // QWebEngineScript has no "replace" — remove a previously installed
@@ -253,6 +277,7 @@ void applySettings(QWebEngineProfile *profile)
         settings.value(QLatin1String("userAgent")).toString();
     profile->setHttpUserAgent(
         userAgent.isEmpty() ? defaultHttpUserAgent() : userAgent);
+    applyClientHints(profile);
 
     // SEC12: the profile tree must stay owner-only.  This runs at
     // startup so a storage dir loosened by a umask quirk or a manual
