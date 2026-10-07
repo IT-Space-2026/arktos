@@ -74,6 +74,8 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "safetext.h"
+#include "scriptblockinfobar.h"
+#include "scriptcontrolmanager.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
 
@@ -87,12 +89,14 @@
 #include <qsettings.h>
 #include <qwebenginecontextmenurequest.h>
 #include <qwebenginehttprequest.h>
+#include <qwebengineprofile.h>
 
 WebView::WebView(QWidget *parent)
     : QWebEngineView(parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(this))
+    , m_scriptBlockBar(nullptr)
 {
     init();
 }
@@ -102,6 +106,7 @@ WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(profile, this))
+    , m_scriptBlockBar(nullptr)
 {
     init();
 }
@@ -119,6 +124,21 @@ void WebView::init()
             this, [this]() { loadFinished(); });
     connect(m_page, &WebPage::aboutToLoadUrl,
             this, &QWebEngineView::urlChanged);
+
+    // JSCTL: the per-site/tier script decision is applied to the page
+    // before each navigation commits (WebPage::applyJavaScriptPolicy);
+    // this bar is the visible "scripts are off" notice and the undo
+    // path.
+    m_scriptBlockBar = new ScriptBlockInfoBar(this);
+    m_scriptBlockBar->hide();
+    connect(m_page, &WebPage::javaScriptBlockedChanged,
+            this, &WebView::updateScriptBlockBar);
+    connect(m_page, &WebPage::javaScriptBlockedChanged,
+            this, &WebView::javaScriptBlockedChanged);
+    connect(m_scriptBlockBar, &ScriptBlockInfoBar::allowOnce,
+            this, [this]() { allowScriptsOnThisSite(false); });
+    connect(m_scriptBlockBar, &ScriptBlockInfoBar::allowAlways,
+            this, [this]() { allowScriptsOnThisSite(true); });
     // Qt WebEngine has no text-only zoom mode (Chromium zooms the whole
     // page), but keep the zoom-text-only toggle re-applying the zoom so
     // the preference stays wired to something visible.
@@ -542,4 +562,55 @@ void WebView::setStatusBarText(QString string)
 {
     m_statusBarText = std::move(string);
     emit statusBarMessage(m_statusBarText);
+}
+
+bool WebView::isJavaScriptBlocked() const
+{
+    return m_page->isJavaScriptBlocked();
+}
+
+// JSCTL: show/hide the "Scripts blocked on <host>" bar for the current
+// page.  It overlays the top edge of the view; reload follows either
+// allow choice so the lifted policy applies cleanly.
+void WebView::updateScriptBlockBar(bool blocked)
+{
+    if (!m_scriptBlockBar)
+        return;
+    if (blocked) {
+        // url() still names the previous page while the navigation is
+        // pending — the page records the blocked host for us.
+        m_scriptBlockBar->setHost(m_page->javaScriptBlockedHost());
+        m_scriptBlockBar->setGeometry(0, 0, width(),
+                m_scriptBlockBar->sizeHint().height());
+        m_scriptBlockBar->show();
+        // The render widget is a sibling created after the bar — keep
+        // the bar on top.
+        m_scriptBlockBar->raise();
+    } else {
+        m_scriptBlockBar->hide();
+    }
+}
+
+void WebView::allowScriptsOnThisSite(bool persistent)
+{
+    const QString host = m_page->javaScriptBlockedHost();
+    if (host.isEmpty())
+        return;
+    // Off-the-record pages never write the persistent store — their
+    // "always" is this session only (same discipline as SEC05).
+    const bool persist = persistent
+        && !m_page->profile()->isOffTheRecord();
+    ScriptControlManager::instance()->setRuleForHost(
+        host, ScriptControlManager::Allow, persist);
+    reload();
+}
+
+void WebView::resizeEvent(QResizeEvent *event)
+{
+    QWebEngineView::resizeEvent(event);
+    if (m_scriptBlockBar && m_scriptBlockBar->isVisible()) {
+        m_scriptBlockBar->setGeometry(0, 0, width(),
+                m_scriptBlockBar->sizeHint().height());
+        m_scriptBlockBar->raise();
+    }
 }

@@ -70,6 +70,7 @@ private:
     CookieJar *siteCookieJar() const;
     void applyCookieRule(int index);
     void toggleContentBlocking(bool checked);
+    void applyJavaScriptRule(int index);
     void clearSiteData();
     void rebuildPermissionRows();
 
@@ -79,6 +80,8 @@ private:
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
     QCheckBox *m_blockContent;
+    QComboBox *m_javaScriptRule;
+    QLabel *m_javaScriptState;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;

@@ -70,6 +70,7 @@
 
 class QWebEngineProfile;
 class BrowserMainWindow;
+class ScriptBlockInfoBar;
 class TabWidget;
 class WebPage;
 class WebView : public QWebEngineView
@@ -98,10 +99,14 @@ public:
     QString lastStatusBarText() const;
     inline int progress() const { return m_progress; }
     TabWidget *tabWidget() const;
+    // JSCTL: whether the current page's scripts are blocked.
+    bool isJavaScriptBlocked() const;
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
     void statusBarMessage(const QString &string);
+    // JSCTL: forwarded from WebPage — the shield badge listens here.
+    void javaScriptBlockedChanged(bool blocked);
 
 public slots:
     void zoomIn();
@@ -117,11 +122,14 @@ protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     int levelForZoom(int zoom);
     void init();
     void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
+    void updateScriptBlockBar(bool blocked);
+    void allowScriptsOnThisSite(bool persistent);
 
 private slots:
     void setProgress(int progress);
@@ -145,6 +153,7 @@ private:
     int m_currentZoom;
     QList<int> m_zoomLevels;
     WebPage *m_page;
+    ScriptBlockInfoBar *m_scriptBlockBar;
 };
 
 #endif

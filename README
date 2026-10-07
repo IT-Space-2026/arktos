@@ -100,8 +100,11 @@ The shield button in the location bar opens a per-site privacy panel:
 the page's security state, a per-site cookie exception (allow, block
 or session-only) with the count of stored cookies, a content-blocking
 toggle that whitelists the site (the icon greys while it is exempt),
-the remembered permission grants for the origin with revoke controls,
-and a clear-site-data action.
+a per-site JavaScript rule (site default, always allow, always block)
+with the page's current script state, the remembered permission
+grants for the origin with revoke controls, and a clear-site-data
+action.  The shield icon carries a small badge while JavaScript is
+blocked on the current page.
 
 A "Security Level" selector at the top of the Privacy settings page
 offers three Mullvad-style tiers.  Standard (the default) is the
@@ -111,6 +114,19 @@ click-to-play — inline scripts on http pages can still run, and pages
 served from this machine (localhost) keep their scripts because
 Chromium treats them as secure contexts.  Safest disables JavaScript
 on every site, which many websites will not survive.
+
+A page whose scripts are blocked — by a per-site rule, by Safer on an
+insecure http page, or by Safest — shows a slim bar across the top of
+the page ("Scripts blocked on <host>") offering "Allow once"
+(remembered until the browser closes) and "Always allow" (persisted;
+on private-browsing pages it is session-scoped too).  An explicit
+allow grant beats the tier in both directions, so a granted site runs
+JavaScript even under Safest — including its external script fetches,
+which the Safer http block would otherwise drop.  Rules are keyed by
+host, a parent-domain rule covers subdomains, and the most specific
+matching rule wins; the persistent rules are listed (and removable)
+under Settings > Privacy > Site Permissions next to the other
+per-origin grants.
 
 Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
 packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,

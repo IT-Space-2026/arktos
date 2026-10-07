@@ -90,6 +90,8 @@ HEADERS += \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
     $$PWD/plaintexteditsearch.h \
+    $$PWD/scriptblockinfobar.h \
+    $$PWD/scriptcontrolmanager.h \
     $$PWD/searchbar.h \
     $$PWD/searchbutton.h \
     $$PWD/searchlineedit.h \
@@ -133,6 +135,8 @@ SOURCES += \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
     $$PWD/plaintexteditsearch.cpp \
+    $$PWD/scriptblockinfobar.cpp \
+    $$PWD/scriptcontrolmanager.cpp \
     $$PWD/searchbar.cpp \
     $$PWD/searchbutton.cpp \
     $$PWD/searchlineedit.cpp \

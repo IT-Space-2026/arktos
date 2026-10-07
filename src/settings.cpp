@@ -79,6 +79,7 @@
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
 #include "safetext.h"
+#include "scriptcontrolmanager.h"
 #include "securestore.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
@@ -168,6 +169,10 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(permissionsTree, &QTreeWidget::itemSelectionChanged,
             this, &SettingsDialog::permissionSelectionChanged);
     connect(permissions, &WebPermissionManager::changed,
+            this, &SettingsDialog::refreshPermissions);
+    // JSCTL: the per-site JavaScript rules are listed in the same
+    // audit table (key prefix "js|" distinguishes them on removal).
+    connect(ScriptControlManager::instance(), &ScriptControlManager::changed,
             this, &SettingsDialog::refreshPermissions);
     refreshPermissions();
 
@@ -1029,6 +1034,25 @@ void SettingsDialog::refreshPermissions()
         if (item->data(0, Qt::UserRole).toString() == selectedKey)
             permissionsTree->setCurrentItem(item);
     }
+
+    // JSCTL: per-site JavaScript rules share this audit table.  Their
+    // key is "js|<host>" so removal can route to the right store.
+    ScriptControlManager *scripts = ScriptControlManager::instance();
+    const auto addScriptRule = [this, &selectedKey](
+            const QString &host, bool allowed) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(permissionsTree);
+        item->setText(0, host);
+        item->setText(1, tr("JavaScript"));
+        item->setText(2, allowed ? tr("Allowed") : tr("Blocked"));
+        item->setData(0, Qt::UserRole,
+                      QLatin1String("js|") + host);
+        if (item->data(0, Qt::UserRole).toString() == selectedKey)
+            permissionsTree->setCurrentItem(item);
+    };
+    for (const QString &host : scripts->allowedHosts())
+        addScriptRule(host, true);
+    for (const QString &host : scripts->blockedHosts())
+        addScriptRule(host, false);
     permissionSelectionChanged();
 }
 
@@ -1046,6 +1070,12 @@ void SettingsDialog::removePermission()
         .split(QLatin1Char('|'));
     if (parts.count() != 2)
         return;
+    if (parts.at(0) == QLatin1String("js")) {
+        // JSCTL row — clear the per-site JavaScript rule.
+        ScriptControlManager::instance()->setRuleForHost(
+            parts.at(1), ScriptControlManager::SiteDefault);
+        return;
+    }
     WebPermissionManager::instance()->removeEntry(
         QUrl::fromEncoded(parts.at(0).toUtf8()),
         static_cast<QWebEnginePermission::PermissionType>(parts.at(1).toInt()));
@@ -1053,7 +1083,10 @@ void SettingsDialog::removePermission()
 
 void SettingsDialog::clearPermissions()
 {
-    if (WebPermissionManager::instance()->entries().isEmpty())
+    ScriptControlManager *scripts = ScriptControlManager::instance();
+    if (WebPermissionManager::instance()->entries().isEmpty()
+        && scripts->allowedHosts().isEmpty()
+        && scripts->blockedHosts().isEmpty())
         return;
     if (QMessageBox::question(this, tr("Clear Site Permissions"),
             tr("Remove every remembered site permission?"),
@@ -1061,6 +1094,7 @@ void SettingsDialog::clearPermissions()
             != QMessageBox::Yes)
         return;
     WebPermissionManager::instance()->clearEntries();
+    scripts->clearPersistentRules();
 }
 
 // SECLVL: explains the selected tier and greys the Enable Javascript

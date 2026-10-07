@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "cookiejar.h"
+#include "scriptcontrolmanager.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -95,6 +96,30 @@ SitePanel::SitePanel(QWidget *parent)
     connect(m_blockContent, &QCheckBox::toggled,
             this, &SitePanel::toggleContentBlocking);
     layout->addWidget(m_blockContent);
+
+    // JSCTL: per-site JavaScript rule — the explicit grant beats the
+    // security tier in both directions (see ScriptControlManager).
+    QHBoxLayout *jsRow = new QHBoxLayout();
+    jsRow->addWidget(plainLabel(tr("JavaScript"), this));
+    m_javaScriptRule = new QComboBox(this);
+    m_javaScriptRule->setObjectName(QLatin1String("siteJavaScriptRule"));
+    m_javaScriptRule->addItem(tr("Site default"),
+                              int(ScriptControlManager::SiteDefault));
+    m_javaScriptRule->addItem(tr("Always allow"),
+                              int(ScriptControlManager::Allow));
+    m_javaScriptRule->addItem(tr("Always block"),
+                              int(ScriptControlManager::Block));
+    m_javaScriptRule->setToolTip(
+        tr("Per-site JavaScript override — an explicit choice beats "
+           "the security tier in both directions."));
+    connect(m_javaScriptRule, &QComboBox::activated,
+            this, [this](int index) { applyJavaScriptRule(index); });
+    jsRow->addWidget(m_javaScriptRule, 1);
+    layout->addLayout(jsRow);
+
+    m_javaScriptState = plainLabel(QString(), this);
+    m_javaScriptState->setObjectName(QLatin1String("siteJavaScriptState"));
+    layout->addWidget(m_javaScriptState);
 
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
@@ -220,6 +245,26 @@ void SitePanel::refresh()
 
     m_clearData->setEnabled(hasSite);
 
+    ScriptControlManager *scripts = ScriptControlManager::instance();
+    const bool webSite = hasSite
+        && (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"));
+    m_javaScriptRule->setEnabled(webSite);
+    if (webSite) {
+        const int comboIndex = m_javaScriptRule->findData(
+            int(scripts->ruleForHost(site)));
+        m_javaScriptRule->setCurrentIndex(comboIndex >= 0 ? comboIndex : 0);
+        m_javaScriptState->setText(
+            scripts->isJavaScriptEnabledFor(url)
+                ? tr("JavaScript runs on this site")
+                : tr("JavaScript is blocked on this site"));
+    } else {
+        m_javaScriptRule->setCurrentIndex(0);
+        m_javaScriptState->setText(
+            hasSite ? tr("JavaScript rules apply to web sites")
+                    : tr("No site to scope JavaScript to"));
+    }
+
     rebuildPermissionRows();
     m_refreshing = false;
 }
@@ -248,6 +293,25 @@ void SitePanel::toggleContentBlocking(bool checked)
     if (site.isEmpty())
         return;
     AdBlockManager::instance()->setSiteWhitelisted(site, !checked);
+    refresh();
+}
+
+void SitePanel::applyJavaScriptRule(int index)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    const int data = m_javaScriptRule->itemData(index).toInt();
+    // Off-the-record pages never write the persistent store.
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    ScriptControlManager::instance()->setRuleForHost(
+        site, static_cast<ScriptControlManager::Rule>(data), persistent);
+    // The policy is applied pre-navigation; reload so the change takes
+    // effect on the page that is open right now.
+    m_webView->reload();
     refresh();
 }
 

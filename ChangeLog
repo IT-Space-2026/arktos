@@ -288,6 +288,11 @@ Zero telemetry (TELEM01):
     `./arora --telemetry-smoke` performs the verification headlessly: it points both the Qt fetch stack and the engine at a loopback capture proxy (live before the application constructor, so even startup-early fetchers are caught), polls /proc for process-owned sockets that might bypass the proxy, and fails if anything reaches out within 30 seconds.
     Fixed as a side effect: downloaded filter lists were written to a still-open QFile and then re-read as empty, so remote subscriptions never actually persisted.
 
+Per-site JavaScript control (JSCTL):
+    JavaScript can now be allowed or blocked per site. The shield panel's new "JavaScript" selector offers Site default / Always allow / Always block for the current host, and a slim bar across the top of a page whose scripts were blocked — "Scripts blocked on <host>" — offers Allow once (session-scoped) and Always allow (persisted). Rules live in their own settings map rather than the SEC05 permission broker, which is keyed on QWebEnginePermission types and has no JavaScript feature; off-the-record pages never write the persistent store, so private-session "always" lasts only until the browser closes.
+    The decision is applied through each page's own QWebEngineSettings::JavascriptEnabled before the navigation commits, so two tabs can disagree and the choice composes with the security tiers: an explicit allow grant beats every automatic rule — a granted site runs JavaScript even under Safest, and its external script fetches are exempted from Safer's http block inside the request interceptor. A block kills scripts even under Standard. A parent-domain rule covers subdomains and the most specific matching rule wins. The shield icon gains a small badge while scripts are blocked, and the persistent grants are auditable (and revocable) in Settings > Privacy > Site Permissions.
+    autotests/scriptcontrol covers the rule store (normalization, session overlay, persistence, specificity), the full tier/rule/global-preference decision table, the interceptor grant exemption, and four end-to-end cases against an in-process http server — including the infobar's allow buttons reloading the page and the Safest-plus-grant combination.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

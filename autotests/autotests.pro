@@ -31,6 +31,7 @@ SUBDIRS  = \
     privacy \
     safetext \
     schemehandlers \
+    scriptcontrol \
     securestore \
     searchlineedit \
     settingsdialog \

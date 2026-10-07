@@ -20,6 +20,7 @@
 #include "privacyrequestinterceptor.h"
 
 #include "adblockrequestinterceptor.h"
+#include "scriptcontrolmanager.h"
 
 #include <qhostaddress.h>
 #include <qmutex.h>
@@ -202,6 +203,11 @@ bool PrivacyRequestInterceptor::shouldBlockScript(
         return false;
     }
     if (firstPartyUrl.scheme() != QLatin1String("http"))
+        return false;
+    // JSCTL: an explicit per-site Allow grant beats the tier — without
+    // this skip the page would get JavascriptEnabled but its external
+    // scripts would still be dropped here.
+    if (ScriptControlManager::isAllowedHostSnapshot(firstPartyUrl.host()))
         return false;
     return !isLoopbackHost(firstPartyUrl.host());
 }

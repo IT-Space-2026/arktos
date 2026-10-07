@@ -29,6 +29,7 @@
 #include "opensearchmanager.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
+#include "scriptcontrolmanager.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
@@ -172,6 +173,7 @@ WebPage::WebPage(QObject *parent)
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
     , m_certErrorPending(false)
+    , m_javaScriptBlocked(false)
 {
     init();
 }
@@ -184,6 +186,7 @@ WebPage::WebPage(QWebEngineProfile *profile, QObject *parent)
     , m_autoFillBridge(new AutoFillBridge(this))
     , m_webChannel(new QWebChannel(this))
     , m_certErrorPending(false)
+    , m_javaScriptBlocked(false)
 {
     init();
 }
@@ -299,6 +302,9 @@ void WebPage::init()
         BrowserProfile::applyClientHints(profile());
     }
     loadSettings();
+    // JSCTL: the empty url has no host, so this only applies the tier
+    // baseline — every accepted navigation reapplies per-site.
+    applyJavaScriptPolicy(url());
 }
 
 void WebPage::linkedResources(const QString &relation,
@@ -516,6 +522,10 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         }
     }
     if (accepted && isMainFrame) {
+        // JSCTL: decide this navigation's script policy while the load
+        // is still pending — the per-page attribute must be set before
+        // the commit for the renderer to honor it.
+        applyJavaScriptPolicy(url);
         // A real navigation supersedes any pending cert decision — the
         // deferred request is dead by the time the new load commits.
         m_certErrorPending = false;
@@ -890,4 +900,33 @@ void WebPage::loadSettings()
                                                                     TabWidget::NewSelectedTab).toInt();
     settings.endGroup();
     setUserAgent(settings.value(QLatin1String("userAgent")).toString());
+    // JSCTL: the settings dialog replays loadSettings on every live
+    // page — re-evaluate so a tier or global-pref flip reaches open
+    // tabs without waiting for their next navigation.  (Scripts
+    // already running in the document are not retroactively killed;
+    // the attribute governs the page's next script execution.)
+    applyJavaScriptPolicy(url());
+}
+
+// JSCTL: applies the ScriptControlManager decision to this page's own
+// settings object and tracks the blocked state the info bar and shield
+// icon surface.  The bar only makes sense for real sites, so the
+// blocked flag is limited to host-bearing web urls — internal pages
+// keep scripts at every tier anyway.
+void WebPage::applyJavaScriptPolicy(const QUrl &url)
+{
+    const bool enabled =
+        ScriptControlManager::instance()->isJavaScriptEnabledFor(url);
+    if (settings()->testAttribute(QWebEngineSettings::JavascriptEnabled)
+            != enabled)
+        settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
+                                 enabled);
+
+    const QString scheme = url.scheme();
+    const bool blocked = !enabled
+        && (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"));
+    m_javaScriptBlocked = blocked;
+    m_javaScriptBlockedHost = blocked ? url.host() : QString();
+    emit javaScriptBlockedChanged(blocked);
 }

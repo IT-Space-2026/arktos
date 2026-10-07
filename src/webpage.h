@@ -86,6 +86,10 @@ signals:
     // interstitial page has been shown; the decision is resolved via
     // the interstitial's action links.
     void certificateErrorInterstitial(const QUrl &url);
+    // JSCTL: re-emitted whenever the page's JavaScript policy is
+    // re-evaluated (each accepted main-frame navigation and on
+    // loadSettings) — true when scripts are currently blocked.
+    void javaScriptBlockedChanged(bool blocked);
 
 public:
     WebPage(QObject *parent = nullptr);
@@ -105,6 +109,19 @@ public:
     // UA02: Google's "/sorry/" bot-check interstitial — detected after
     // the navigation commits so the page can carry a readable notice.
     static bool isRateLimitInterstitialUrl(const QUrl &url);
+
+    // JSCTL: whether the current page's scripts are blocked by the
+    // per-site rules/security tier (meaningful for http/https pages).
+    bool isJavaScriptBlocked() const { return m_javaScriptBlocked; }
+    // The host the blocked state was computed for — the view's url()
+    // still points at the previous page while acceptNavigationRequest
+    // runs, so the info bar must read the stored host.
+    QString javaScriptBlockedHost() const { return m_javaScriptBlockedHost; }
+    // Re-evaluates the per-site rules + security tier for the current
+    // url and applies them to this page's QWebEngineSettings —
+    // per-page attributes really are per-page in Qt6.  Called for
+    // every accepted main-frame navigation and from loadSettings().
+    void applyJavaScriptPolicy(const QUrl &url);
 
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
@@ -134,6 +151,8 @@ protected:
     QWebEngineCertificateError m_pendingCertError;
     QString m_certErrorNonce;
     bool m_certErrorPending;
+    bool m_javaScriptBlocked;
+    QString m_javaScriptBlockedHost;
 };
 
 #endif // WEBPAGE_H

@@ -25,6 +25,7 @@
 #include "webview.h"
 
 #include <qmenu.h>
+#include <qpainter.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwidgetaction.h>
@@ -70,6 +71,8 @@ void SiteShieldButton::setWebView(WebView *webView)
     if (webView) {
         connect(webView, &QWebEngineView::urlChanged,
                 this, [this](const QUrl &) { refreshIcon(); });
+        connect(webView, &WebView::javaScriptBlockedChanged,
+                this, [this](bool) { refreshIcon(); });
     }
     setVisible(webView != nullptr);
     refreshIcon();
@@ -87,15 +90,35 @@ void SiteShieldButton::refreshIcon()
     AdBlockManager *adblock = AdBlockManager::instance();
     const QString host = m_webView->url().host();
     const bool whitelisted = adblock->isSiteWhitelisted(host);
+    QIcon icon;
+    QString tip;
     if (!adblock->isEnabled()) {
-        setIcon(QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled)));
-        setToolTip(tr("Site privacy — content blocking is disabled"));
+        icon = QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled));
+        tip = tr("Site privacy — content blocking is disabled");
     } else if (whitelisted) {
-        setIcon(QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled)));
-        setToolTip(tr("Site privacy — content blocking is off for %1")
-                       .arg(host));
+        icon = QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled));
+        tip = tr("Site privacy — content blocking is off for %1")
+                  .arg(host);
     } else {
-        setIcon(shield);
-        setToolTip(tr("Site privacy and permissions"));
+        icon = shield;
+        tip = tr("Site privacy and permissions");
     }
+
+    // JSCTL: badge the shield when the current page's scripts are
+    // blocked — a per-site rule, the Safer/Safest tier or the global
+    // setting — so the restriction is visible without opening the
+    // panel.
+    if (m_webView->isJavaScriptBlocked()) {
+        QPixmap pixmap = icon.pixmap(QSize(16, 16));
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(palette().color(QPalette::Accent));
+        painter.setPen(palette().color(QPalette::Base));
+        painter.drawEllipse(QRectF(9.5, 9.5, 6.0, 6.0));
+        painter.end();
+        icon = QIcon(pixmap);
+        tip += tr(" — JavaScript blocked");
+    }
+    setIcon(icon);
+    setToolTip(tip);
 }
