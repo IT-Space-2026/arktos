@@ -16,7 +16,10 @@ fixed probe set.
 
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
-tab-open, large-history-load and profile permission-sweep timings.
+tab-open, large-history-load, menu-open and profile permission-sweep
+timings.  `./arora --profile-startup` (or ARORA_PROFILE_STARTUP=1 on a
+normal launch) prints a millisecond timeline of the startup stages to
+stderr.
 
 Appearance: Arora follows the desktop light/dark preference (Qt 6.5+
 color-scheme reporting).  On desktops that do not report a scheme —

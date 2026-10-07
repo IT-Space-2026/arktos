@@ -30,6 +30,7 @@
 
 #include "adblockmanager.h"
 #include "adblocksubscription.h"
+#include "startupprofile.h"
 
 #if defined(ARORA_ADBLOCK_RUST)
 #include "adblockrustengine.h"
@@ -431,6 +432,7 @@ bool AdBlockNetwork::shouldBlock(const QUrl &url) const
 
 void AdBlockNetwork::rebuildRules()
 {
+    StartupProfile::Scope profileScope("adblock rules snapshot");
     AdBlockManager *manager = AdBlockManager::instance();
     const bool enabled = manager->isEnabled();
     const QList<AdBlockSubscription*> subscriptions = manager->subscriptions();

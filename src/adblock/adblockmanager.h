@@ -106,7 +106,12 @@ public:
 
     // Installs the AdBlockRequestInterceptor on the profile; WebEngine
     // routes all page loads through it instead of the application QNAM.
-    void installOnProfile(QWebEngineProfile *profile);
+    // With deferInitialRules (PERF03) the matcher's first rules
+    // snapshot — a full parse of every subscribed list — is left to
+    // the caller to queue after the first window is shown; until that
+    // rebuild runs the interceptor sees an empty ruleset (allow-all).
+    void installOnProfile(QWebEngineProfile *profile,
+                          bool deferInitialRules = false);
 
 public slots:
     void setEnabled(bool enabled);

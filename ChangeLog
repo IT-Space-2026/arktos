@@ -296,6 +296,11 @@ Per-site JavaScript control (JSCTL):
 Default search engine (DENG01):
     The compiled-in default search engine is now DuckDuckGo instead of Google. A bundled DuckDuckGo OpenSearch description joins the engine set (search via https://duckduckgo.com/?q=, suggestions via the duckduckgo.com/ac endpoint). Only profiles that never picked an engine are affected — a saved choice is always respected — and Google stays bundled and selectable like before. As a bonus, default-engine searches no longer hit Google's /sorry/ bot-check, so a fresh install gets working search out of the box.
 
+Startup and menu responsiveness (PERF03):
+    Startup no longer stalls inside the application constructor: profile bring-up used to build the adblock matcher's rules snapshot synchronously — a full parse of every subscribed filter list — and built it twice. The interceptor now installs with its first snapshot deferred to a queued warmup that runs once the startup navigation is already dispatched; measured on a real profile the constructor dropped ~750→~200ms and first-window-shown ~755→~590ms, with the rules parse (~500ms total) running while the first page is in flight (requests in between see an empty ruleset, i.e. allow-all — documented tradeoff).
+    Menus backed by large models (history, bookmarks) no longer rebuild their whole action tree on every open: ModelMenu repopulates only when the model or a populate-time input changed since the last show — a benchmarked 10,000-entry menu went from ~90ms to ~0ms on reopen while the first build is unchanged.
+    New `./arora --profile-startup` option (or ARORA_PROFILE_STARTUP=1) prints a millisecond timeline of the startup stages to stderr, and `--perf-smoke` additionally reports populated-history and flat-menu open/reopen latency.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

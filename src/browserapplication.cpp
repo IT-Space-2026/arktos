@@ -64,6 +64,7 @@
 
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
+#include "adblocknetwork.h"
 #include "autosaver.h"
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
@@ -80,6 +81,7 @@
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
+#include "startupprofile.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
@@ -158,7 +160,12 @@ static void prepareProfile(QWebEngineProfile *profile)
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
     DownloadManager::instance()->installOnProfile(profile);
-    AdBlockManager::instance()->installOnProfile(profile);
+    // PERF03: install the interceptor with the matcher's first rules
+    // snapshot deferred — parsing every subscribed list here delayed
+    // the first window.  postLaunch() queues the rebuild once the
+    // startup navigation is underway; requests made in between see an
+    // empty ruleset (allow-all).
+    AdBlockManager::instance()->installOnProfile(profile, true);
     if (BrowserApplication::isTorMode()) {
         // A profile accepts exactly one request interceptor — the
         // HTTPS-first upgrade wraps the adblock matcher inside
@@ -304,6 +311,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     // baseline above).  The private profile is prepared lazily by
     // webEngineProfile() the first time private browsing hands it out.
     webEngineProfile();
+    StartupProfile::mark("ctor: browsing profile + services prepared");
 
     QSettings settings;
     settings.beginGroup(QLatin1String("sessions"));
@@ -336,6 +344,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
         // private directly: volatile cookie jar, disk cache disabled.
         networkAccessManager()->privacyChanged(true);
     }
+    StartupProfile::mark("ctor: done");
 }
 
 BrowserApplication::~BrowserApplication()
@@ -502,11 +511,14 @@ void BrowserApplication::quitBrowser()
  */
 void BrowserApplication::postLaunch()
 {
+    StartupProfile::mark("postLaunch: begin");
+
     // The WebKit icon database is gone in Qt WebEngine — icons are
     // delivered per-page via QWebEnginePage::iconChanged and cached by
     // HistoryManager, so there is nothing to configure here.
 
     loadSettings();
+    StartupProfile::mark("postLaunch: settings applied");
 
     // newMainWindow() needs to be called in main() for this to happen
     if (m_mainWindows.count() > 0) {
@@ -555,16 +567,35 @@ void BrowserApplication::postLaunch()
             }
         }
     }
-    BrowserApplication::historyManager();
+    StartupProfile::mark("postLaunch: navigation dispatched");
 
-    // TELEM01: the seeded ad-block subscriptions stay dormant until
-    // the user consents to remote list downloads — ask once here, on
-    // the first normal launch (standalone smoke runs and the tor
-    // process never prompt; the tor profile still fetches lists only
-    // if consent was already granted).
-    if (!isStandalone() && !isTorMode())
-        AdBlockManager::instance()->maybePromptForListConsent(
-            m_mainWindows.isEmpty() ? nullptr : mainWindow());
+    // PERF03: the heavyweight stores were forced synchronously here —
+    // after the first window painted but before the startup
+    // navigation could make progress, so every millisecond of
+    // parsing delayed the first page.  Queue them instead: this
+    // zero-timeout slot runs when the event queue drains, i.e. while
+    // the engine is already fetching.
+    QTimer::singleShot(0, this, [this]() {
+        StartupProfile::mark("deferred warmup: begin");
+        // HistoryManager parses the history file and builds its three
+        // models on construction — everything downstream (menu,
+        // completer, addHistoryEntry) uses the same lazy instance.
+        BrowserApplication::historyManager();
+        // prepareProfile() installed the request interceptors with the
+        // matcher's snapshot deferred — build it now, while the first
+        // page is already in flight.
+        AdBlockManager::instance()->network()->rebuildRules();
+        StartupProfile::mark("deferred warmup: done");
+
+        // TELEM01: the seeded ad-block subscriptions stay dormant until
+        // the user consents to remote list downloads — ask once here, on
+        // the first normal launch (standalone smoke runs and the tor
+        // process never prompt; the tor profile still fetches lists only
+        // if consent was already granted).
+        if (!isStandalone() && !isTorMode())
+            AdBlockManager::instance()->maybePromptForListConsent(
+                m_mainWindows.isEmpty() ? nullptr : mainWindow());
+    });
 }
 
 // TOR02: the tor window's first navigation — deferred by postLaunch()
@@ -832,6 +863,8 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
     browser->show();
+    if (m_mainWindows.count() == 1)
+        StartupProfile::mark("first window shown");
     return browser;
 }
 

@@ -65,10 +65,12 @@
 
 #include "browserapplication.h"
 #include "safetext.h"
+#include "startupprofile.h"
 
 #include <qabstractitemmodel.h>
 #include <qapplication.h>
 #include <qdrag.h>
+#include <qelapsedtimer.h>
 #include <qevent.h>
 #include <qmimedata.h>
 
@@ -81,6 +83,7 @@ ModelMenu::ModelMenu(QWidget *parent)
     , m_maxWidth(-1)
     , m_statusBarTextRole(0)
     , m_separatorRole(0)
+    , m_dirty(true)
     , m_model(nullptr)
 {
     setAcceptDrops(true);
@@ -100,7 +103,28 @@ void ModelMenu::postPopulated()
 
 void ModelMenu::setModel(QAbstractItemModel *model)
 {
+    if (m_model == model)
+        return;
+    if (m_model)
+        disconnect(m_model.data(), nullptr, this, nullptr);
     m_model = model;
+    m_dirty = true;
+    if (m_model) {
+        // PERF03: any model mutation invalidates the populated
+        // action tree; aboutToShow() rebuilds on the next show only.
+        connect(m_model.data(), &QAbstractItemModel::modelReset,
+                this, &ModelMenu::modelChanged);
+        connect(m_model.data(), &QAbstractItemModel::rowsInserted,
+                this, &ModelMenu::modelChanged);
+        connect(m_model.data(), &QAbstractItemModel::rowsRemoved,
+                this, &ModelMenu::modelChanged);
+        connect(m_model.data(), &QAbstractItemModel::rowsMoved,
+                this, &ModelMenu::modelChanged);
+        connect(m_model.data(), &QAbstractItemModel::dataChanged,
+                this, &ModelMenu::modelChanged);
+        connect(m_model.data(), &QAbstractItemModel::layoutChanged,
+                this, &ModelMenu::modelChanged);
+    }
 }
 
 QAbstractItemModel *ModelMenu::model() const
@@ -110,7 +134,10 @@ QAbstractItemModel *ModelMenu::model() const
 
 void ModelMenu::setMaxRows(int max)
 {
-    m_maxRows = max;
+    if (m_maxRows != max) {
+        m_maxRows = max;
+        m_dirty = true;
+    }
 }
 
 int ModelMenu::maxRows() const
@@ -120,7 +147,10 @@ int ModelMenu::maxRows() const
 
 void ModelMenu::setFirstSeparator(int offset)
 {
-    m_firstSeparator = offset;
+    if (m_firstSeparator != offset) {
+        m_firstSeparator = offset;
+        m_dirty = true;
+    }
 }
 
 int ModelMenu::firstSeparator() const
@@ -130,7 +160,10 @@ int ModelMenu::firstSeparator() const
 
 void ModelMenu::setRootIndex(const QModelIndex &index)
 {
-    m_root = index;
+    if (m_root != index) {
+        m_root = index;
+        m_dirty = true;
+    }
 }
 
 QModelIndex ModelMenu::rootIndex() const
@@ -140,7 +173,10 @@ QModelIndex ModelMenu::rootIndex() const
 
 void ModelMenu::setStatusBarTextRole(int role)
 {
-    m_statusBarTextRole = role;
+    if (m_statusBarTextRole != role) {
+        m_statusBarTextRole = role;
+        m_dirty = true;
+    }
 }
 
 int ModelMenu::statusBarTextRole() const
@@ -150,7 +186,10 @@ int ModelMenu::statusBarTextRole() const
 
 void ModelMenu::setSeparatorRole(int role)
 {
-    m_separatorRole = role;
+    if (m_separatorRole != role) {
+        m_separatorRole = role;
+        m_dirty = true;
+    }
 }
 
 int ModelMenu::separatorRole() const
@@ -161,6 +200,19 @@ int ModelMenu::separatorRole() const
 Q_DECLARE_METATYPE(QModelIndex)
 void ModelMenu::aboutToShow()
 {
+    // PERF03: populate lazily and rebuild only when the model (or a
+    // populate-time input) changed — the previous unconditional
+    // clear()+createMenu() rebuilt the whole action tree on every
+    // single open, which is what made menus with a large backing
+    // model (history, bookmarks) feel slow.
+    if (!m_dirty)
+        return;
+
+    const bool profiling = StartupProfile::enabled();
+    QElapsedTimer timer;
+    if (profiling)
+        timer.start();
+
     clear();
 
     if (prePopulated())
@@ -170,6 +222,23 @@ void ModelMenu::aboutToShow()
         max += m_firstSeparator;
     createMenu(m_root, max, this, this);
     postPopulated();
+
+    if (profiling) {
+        StartupProfile::mark(QStringLiteral("menu %1 populated: %2 actions (+%3 ms)")
+            .arg(QLatin1String(metaObject()->className()))
+            .arg(actions().count())
+            .arg(timer.elapsed()));
+    }
+
+    // Cleared last: prePopulated() feeds the setters (setModel,
+    // setRootIndex, setFirstSeparator — see HistoryMenu), whose dirty
+    // marks describe the build just produced, not a pending change.
+    m_dirty = false;
+}
+
+void ModelMenu::modelChanged()
+{
+    m_dirty = true;
 }
 
 ModelMenu *ModelMenu::createBaseMenu()

@@ -66,6 +66,7 @@
 #include "browserpaths.h"
 #include "history.h"
 #include "historyparser.h"
+#include "startupprofile.h"
 
 #include <algorithm>
 
@@ -313,6 +314,7 @@ void HistoryManager::loadSettings()
 
 void HistoryManager::load()
 {
+    StartupProfile::Scope profileScope("history load");
     loadSettings();
 
     QFile historyFile(BrowserPaths::dataFilePath(QLatin1String("history")));

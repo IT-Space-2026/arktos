@@ -28,6 +28,7 @@
 #include "opensearchengine.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
+#include "startupprofile.h"
 
 #include <qdir.h>
 #include <qdiriterator.h>
@@ -270,6 +271,7 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
 
 void OpenSearchManager::load()
 {
+    StartupProfile::Scope profileScope("opensearch engines parse");
     if (!loadDirectory(enginesDirectory()))
         loadDirectory(QLatin1String(":/searchengines"));
 

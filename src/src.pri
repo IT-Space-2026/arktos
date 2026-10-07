@@ -99,6 +99,7 @@ HEADERS += \
     $$PWD/settings.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
+    $$PWD/startupprofile.h \
     $$PWD/streamingutils.h \
     $$PWD/tabbar.h \
     $$PWD/tabwidget.h \

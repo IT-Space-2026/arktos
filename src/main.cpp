@@ -42,6 +42,7 @@
 #include "historymanager.h"
 #include "historyparser.h"
 #include "locationbar.h"
+#include "modelmenu.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
@@ -54,6 +55,7 @@
 #include "settings.h"
 #include "sourcehighlighter.h"
 #include "sourceviewer.h"
+#include "startupprofile.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
@@ -88,6 +90,7 @@
 #include <QtGui/QIcon>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPixmap>
+#include <QtGui/QStandardItemModel>
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
 #include <QtCore/QCoreApplication>
@@ -374,6 +377,9 @@ int main(int argc, char **argv)
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;
     perfTimer.start();
+    // PERF03: --profile-startup / ARORA_PROFILE_STARTUP=1 timeline —
+    // marks print "profile-startup: <ms> <stage>" on stderr.
+    StartupProfile::start();
 
     Q_INIT_RESOURCE(htmls);
     Q_INIT_RESOURCE(data);
@@ -402,6 +408,8 @@ int main(int argc, char **argv)
             smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
+        if (arg == "--profile-startup")
+            StartupProfile::enable();
     }
     if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
@@ -457,6 +465,7 @@ int main(int argc, char **argv)
 
     BrowserApplication application(argc, argv);
     const qint64 appCtorMs = perfTimer.elapsed();
+    StartupProfile::mark("BrowserApplication ctor");
 
     // A non-standalone run that could not take the single-instance
     // socket already forwarded its url to the running instance and is
@@ -491,7 +500,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
-        "telemetry-smoke",
+        "telemetry-smoke", "profile-startup",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -502,6 +511,7 @@ int main(int argc, char **argv)
         // applies the startup behavior — homepage, last-session
         // restore or the url operand — to this first window.
         application.newMainWindow();
+        StartupProfile::mark("newMainWindow returned");
         return application.exec();
     }
 
@@ -518,6 +528,23 @@ int main(int argc, char **argv)
     if (BrowserApplication::isTorMode()
             && !args.contains(QLatin1String("--tor-window-smoke"))) {
         application.newMainWindow();
+        return application.exec();
+    }
+
+    // PERF03: --profile-startup runs the REAL startup path — real
+    // data/settings dirs (no test mode), real BrowserMainWindow,
+    // postLaunch's startup navigation and the deferred warmups — with
+    // the StartupProfile timeline on stderr, then exits.  Unlike the
+    // smokes it deliberately skips the stub WebView below so the
+    // engine spins up exactly where it does in a normal launch.
+    // Wall-clock "startup-to-window" is the delta to the
+    // "first window shown" mark.
+    if (args.contains(QLatin1String("--profile-startup"))) {
+        application.newMainWindow();
+        QTimer::singleShot(6000, &application, [&application]() {
+            StartupProfile::mark("settle — exiting");
+            application.exit(0);
+        });
         return application.exec();
     }
 
@@ -2871,6 +2898,39 @@ int main(int argc, char **argv)
         qInfo() << "perf-smoke: app-ctor" << appCtorMs << "ms"
                 << "(single-instance, profile bring-up, services)";
 
+        // Seed the on-disk history format BEFORE the first window is
+        // built: the window's chrome (location-bar completer, history
+        // menu) lazily pulls in HistoryManager during construction, so
+        // the seed must already exist for the menu bench below to see
+        // a populated history.  Oldest->newest QByteArray blocks,
+        // newest-first in memory.
+        const int envHistoryN = qEnvironmentVariableIntValue("ARORA_PERF_HISTORY_N");
+        const int historyN = envHistoryN > 0 ? envHistoryN : 40000;
+        const QString historyPath =
+            BrowserPaths::dataFilePath(QLatin1String("history"));
+        {
+            QFile seed(historyPath);
+            if (!seed.open(QIODevice::WriteOnly)) {
+                qInfo() << "perf-smoke: FAIL (cannot write history seed)";
+                return 1;
+            }
+            QDataStream out(&seed);
+            const QDateTime base =
+                QDateTime::currentDateTime().addDays(-7);
+            for (int i = 0; i < historyN; ++i) {
+                QByteArray data;
+                QDataStream stream(&data, QIODevice::WriteOnly);
+                // PERF03: 50-second spacing spreads the entries across
+                // ~23 calendar days so the HistoryMenu bench below
+                // exercises the date-folder submenu path too.
+                stream << quint32(HistoryParser::Version)
+                       << QStringLiteral("http://example.com/%1").arg(i)
+                       << base.addSecs(i * 50)
+                       << QStringLiteral("page %1").arg(i);
+                out << data;
+            }
+        }
+
         // First window construction ends in the first tab; extra tabs
         // measure the steady-state tab-open path.
         const qint64 windowStart = perfTimer.elapsed();
@@ -2888,33 +2948,10 @@ int main(int argc, char **argv)
                 << qRound(tabsMs / double(extraTabs) * 10) / 10.0
                 << "ms over" << extraTabs << "tabs";
 
-        // Large-history load: seed the on-disk format directly
-        // (oldest->newest QByteArray blocks, newest-first in memory),
-        // then measure a fresh manager's parse and its two lazy model
-        // warmups, plus the per-visit prepend cost at scale.
-        const int envHistoryN = qEnvironmentVariableIntValue("ARORA_PERF_HISTORY_N");
-        const int historyN = envHistoryN > 0 ? envHistoryN : 40000;
-        const QString historyPath =
-            BrowserPaths::dataFilePath(QLatin1String("history"));
-        {
-            QFile seed(historyPath);
-            if (!seed.open(QIODevice::WriteOnly)) {
-                qInfo() << "perf-smoke: FAIL (cannot write history seed)";
-                return 1;
-            }
-            QDataStream out(&seed);
-            const QDateTime base =
-                QDateTime::currentDateTime().addDays(-7);
-            for (int i = 0; i < historyN; ++i) {
-                QByteArray data;
-                QDataStream stream(&data, QIODevice::WriteOnly);
-                stream << quint32(HistoryParser::Version)
-                       << QStringLiteral("http://example.com/%1").arg(i)
-                       << base.addSecs(i)
-                       << QStringLiteral("page %1").arg(i);
-                out << data;
-            }
-        }
+        // Large-history load (seeded above, before the window pulled
+        // the shared manager in): measure a fresh manager's parse and
+        // its two lazy model warmups, plus the per-visit prepend cost
+        // at scale.
         QElapsedTimer step;
         step.start();
         HistoryManager bench;
@@ -2933,6 +2970,43 @@ int main(int argc, char **argv)
                 << "filter-model" << historyFilterMs << "ms,"
                 << "tree-model" << historyTreeMs << "ms,"
                 << "add-entry" << historyAddMs << "ms";
+
+        // PERF03: menu-open latency on a populated history — the
+        // HistoryMenu walks the shared manager's tree model on show.
+        // Previously every open rebuilt all actions; with the dirty
+        // flag repeats are O(1) while the model is unchanged.
+        step.restart();
+        HistoryMenu historyMenu;
+        emit static_cast<QMenu *>(&historyMenu)->aboutToShow();
+        const qint64 menuFirstMs = step.elapsed();
+        step.restart();
+        emit static_cast<QMenu *>(&historyMenu)->aboutToShow();
+        const qint64 menuSecondMs = step.elapsed();
+        step.restart();
+        emit static_cast<QMenu *>(&historyMenu)->aboutToShow();
+        const qint64 menuThirdMs = step.elapsed();
+        qInfo() << "perf-smoke: history-menu" << historyN << "entries —"
+                << "first open" << menuFirstMs << "ms,"
+                << "reopen" << menuSecondMs << "ms,"
+                << "reopen" << menuThirdMs << "ms";
+
+        // Worst case: a flat model the size of a large bookmark tree —
+        // before PERF03 every open rebuilt all 10000 actions.
+        QStandardItemModel flatModel;
+        for (int i = 0; i < 10000; ++i)
+            flatModel.appendRow(new QStandardItem(
+                QStringLiteral("entry %1").arg(i)));
+        ModelMenu flatMenu;
+        flatMenu.setModel(&flatModel);
+        step.restart();
+        emit static_cast<QMenu *>(&flatMenu)->aboutToShow();
+        const qint64 flatFirstMs = step.elapsed();
+        step.restart();
+        emit static_cast<QMenu *>(&flatMenu)->aboutToShow();
+        const qint64 flatSecondMs = step.elapsed();
+        qInfo() << "perf-smoke: flat-menu 10000 rows —"
+                << "first open" << flatFirstMs << "ms,"
+                << "reopen" << flatSecondMs << "ms";
 
         // SEC12 profile-tree sweep: recursive owner-only enforcement
         // runs on the startup path (applySettings) — measure it on a

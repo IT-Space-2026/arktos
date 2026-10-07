@@ -63,6 +63,7 @@ private slots:
 
     void accessors();
     void population();
+    void caching();
     void subMenus();
     void activation();
     void bookmarksMenu();
@@ -127,6 +128,49 @@ void tst_ModelMenu::population()
     limited.setFirstSeparator(1);
     emit static_cast<QMenu *>(&limited)->aboutToShow();
     QVERIFY(limited.actions().count() <= 4);
+}
+
+// PERF03: aboutToShow rebuilds only while dirty — repeated opens keep
+// the same action objects, and a model mutation invalidates them.
+void tst_ModelMenu::caching()
+{
+    QStandardItemModel model;
+    for (int i = 0; i < 2000; ++i)
+        model.appendRow(new QStandardItem(QString::number(i)));
+
+    ModelMenu menu;
+    menu.setModel(&model);
+    emit static_cast<QMenu *>(&menu)->aboutToShow();
+    QCOMPARE(menu.actions().count(), 2000);
+    QAction *first = menu.actions().constFirst();
+
+    // Unchanged model: reopening keeps the populated actions.
+    emit static_cast<QMenu *>(&menu)->aboutToShow();
+    QCOMPARE(menu.actions().count(), 2000);
+    QCOMPARE(menu.actions().constFirst(), first);
+
+    // A row insertion dirties the menu → the next show rebuilds.
+    model.appendRow(new QStandardItem(QLatin1String("tail")));
+    emit static_cast<QMenu *>(&menu)->aboutToShow();
+    QCOMPARE(menu.actions().count(), 2001);
+    QVERIFY(menu.actions().constFirst() != first);
+
+    // dataChanged (no row-count change) dirties it too.
+    QAction *rebuiltFirst = menu.actions().constFirst();
+    model.item(0)->setText(QLatin1String("renamed"));
+    emit static_cast<QMenu *>(&menu)->aboutToShow();
+    QVERIFY(menu.actions().constFirst() != rebuiltFirst);
+    QCOMPARE(menu.actions().constFirst()->text(),
+             QString::fromLatin1("renamed"));
+
+    // A new model dirties the menu again.
+    QStandardItemModel other;
+    other.appendRow(new QStandardItem(QLatin1String("other")));
+    QAction *beforeSwap = menu.actions().constFirst();
+    menu.setModel(&other);
+    emit static_cast<QMenu *>(&menu)->aboutToShow();
+    QCOMPARE(menu.actions().count(), 1);
+    QVERIFY(menu.actions().constFirst() != beforeSwap);
 }
 
 // Rows with children become nested ModelMenus via createBaseMenu().

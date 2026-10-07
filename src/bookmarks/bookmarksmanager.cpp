@@ -67,6 +67,7 @@
 #include "bookmarksmodel.h"
 #include "browserpaths.h"
 #include "converter.h"
+#include "startupprofile.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
@@ -128,6 +129,8 @@ void BookmarksManager::load()
     if (m_loaded)
         return;
     m_loaded = true;
+
+    StartupProfile::Scope profileScope("bookmarks xbel load");
 
     QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
     if (!QFile::exists(bookmarkFile))

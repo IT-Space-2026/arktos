@@ -66,6 +66,7 @@
 
 #include <qmenu.h>
 #include <qabstractitemmodel.h>
+#include <qpointer.h>
 
 // A QMenu that is dynamically populated from a QAbstractItemModel
 class ModelMenu : public QMenu
@@ -120,6 +121,7 @@ protected:
 private slots:
     void aboutToShow();
     void actionTriggered(QAction *action);
+    void modelChanged();
 
 private:
     QAction *makeAction(const QModelIndex &index);
@@ -128,7 +130,10 @@ private:
     int m_maxWidth;
     int m_statusBarTextRole;
     int m_separatorRole;
-    QAbstractItemModel *m_model;
+    // PERF03: the action tree is rebuilt on show only while dirty —
+    // model signals (and the populate-time setters) set it again.
+    bool m_dirty;
+    QPointer<QAbstractItemModel> m_model;
     QPersistentModelIndex m_root;
     QPoint m_dragStartPos;
 };

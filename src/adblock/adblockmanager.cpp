@@ -184,12 +184,24 @@ AdBlockNetwork *AdBlockManager::network()
     return m_adBlockNetwork;
 }
 
-void AdBlockManager::installOnProfile(QWebEngineProfile *profile)
+void AdBlockManager::installOnProfile(QWebEngineProfile *profile,
+                                      bool deferInitialRules)
 {
-    // Force rules to load and the matcher snapshot to be built on the
-    // GUI thread before the interceptor starts seeing requests on the
-    // WebEngine IO thread.
-    network()->rebuildRules();
+    if (deferInitialRules && !m_adBlockNetwork) {
+        // PERF03: the interceptor needs a live matcher object to hold,
+        // but building its first snapshot parses every subscribed list
+        // — on the startup path that work is deferred to a queued
+        // slot after the first window is shown (postLaunch).  Until
+        // then the interceptor sees an empty ruleset (allow-all).
+        m_adBlockNetwork = new AdBlockNetwork(this);
+        connect(this, &AdBlockManager::rulesChanged,
+                m_adBlockNetwork, &AdBlockNetwork::rebuildRules);
+    } else {
+        // Force rules to load and the matcher snapshot to be built on
+        // the GUI thread before the interceptor starts seeing
+        // requests on the WebEngine IO thread.
+        network()->rebuildRules();
+    }
     // PRIV01: a profile accepts exactly one interceptor — callers that
     // need the privacy composite (prepareProfile) replace this right
     // after; standalone profiles (autotests) keep the adblock-only one.

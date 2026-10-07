@@ -31,6 +31,7 @@
 #include "autosaver.h"
 #include "browserpaths.h"
 #include "securestore.h"
+#include "startupprofile.h"
 #include "streamingutils.h"
 
 #include <qdatastream.h>
@@ -104,6 +105,7 @@ AutoFillManager::AutoFillManager(QObject *parent)
 {
     connect(this, &AutoFillManager::autoFillChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
+    StartupProfile::Scope profileScope("autofill load");
     loadSettings();
     loadFormData();
 }
