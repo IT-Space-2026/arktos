@@ -347,6 +347,9 @@ Status bar widgets (UIP04):
 AdBlock toolbar button (ADB05):
     A content-blocker button now sits at the right end of the address bar, uBO-style. Its tinted shield icon carries a small numeric badge counting the requests blocked on the current page, and greys out while content blocking is disabled in Settings or the site is whitelisted. Clicking it opens a compact menu with the per-page blocked count, a "Content blocking" enable toggle and an "Ad Block Settings..." entry that opens the existing configuration dialog; Tools > Ad Block is unchanged. The counts come from a new session tally inside the profile request interceptor, keyed by the page's first-party host: plain blocks and redirects to bundled stub resources count, $removeparam query rewrites do not.
 
+CSP and sandbox conformance audit (SEC14):
+    The browseraudit.com CSP-category warnings turned out to be stale test expectations rather than browser defects, verified by a new autotests/csp regression suite (15 cases) that replays the same shapes against in-process HTTP/HTTPS/WebSocket endpoints: the bundled Chromium 140 engine correctly allows a same-origin wss:// connection under default-src/connect-src 'self' (the CSP3 matching rule — 'self' on an https origin covers its wss variant — that the 2015-era suite predates), while still blocking cross-host, cross-port and *-src 'none' attempts before they reach the network. Sandboxed iframes behave per spec too: allow-same-origin children can read and write same-site cookies, opaque-origin children cannot, and Arora's third-party cookie filter does not interfere. No application code strips or rewrites CSP headers — profile request interceptors are request-side only and never see response headers. Findings and per-test evidence are documented in .devin/SEC14-report.md.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
