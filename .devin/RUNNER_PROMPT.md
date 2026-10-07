@@ -26,7 +26,7 @@ Your job in THIS run:
 5. Do the task fully:
    - The task row points at relevant files. Follow existing code
      conventions (Qt-style code, qmake .pro/.pri build files).
-   - Qt toolchain lives at ~/Qt/6.11.3/gcc_64 — source `.devin/qt-env.sh`
+   - Qt toolchain lives at ~/Qt/6.12.0/gcc_64 — source `.devin/qt-env.sh`
      (or set QTDIR/PATH accordingly) before qmake/make. NO sudo, ever:
      everything is user-local.
    - Build with `cd /home/szefi/Documents/arora && qmake && make -j2`

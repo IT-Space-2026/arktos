@@ -82,7 +82,7 @@ public:
 
     bool sendDragEnter(QMimeData *mimeData)
     {
-        QDragEnterEvent event(QPoint(1, 1), Qt::CopyAction, mimeData,
+        QDragEnterEvent event(QPointF(1, 1), Qt::CopyAction, mimeData,
                               Qt::LeftButton, Qt::NoModifier);
         dragEnterEvent(&event);
         return event.isAccepted();
@@ -90,7 +90,7 @@ public:
 
     void sendDragMove(QMimeData *mimeData, bool sourceIsSelf)
     {
-        QDragMoveEvent event(QPoint(1, 1), Qt::CopyAction, mimeData,
+        QDragMoveEvent event(QPointF(1, 1), Qt::CopyAction, mimeData,
                              Qt::LeftButton, Qt::NoModifier);
         Q_UNUSED(sourceIsSelf);
         dragMoveEvent(&event);

@@ -261,6 +261,10 @@ Privacy hardening (PRIV01):
     An opt-in "Clear browsing data when Arora exits" setting performs the full private-data wipe at quit — history, cookies, site storage, caches and the saved session — and drops a sentinel so Chromium's on-disk storage trees are removed at the next start rather than under a running browser, where deleting them would wedge Chromium's storage services.
     `./arora --privacy-smoke` verifies the pipeline end to end on loopback (un-upgraded http load, referer spoofed on the cross-site navigation, first-party cookie kept and third-party cookie rejected); autotests/privacy covers the upgrade candidacy rules, downgrade set, cookie policy, deferred-wipe sentinels and flag composition. What an observer can still see — destination IPs, timing, the usual fingerprinting surface — is documented in the README; the Tor window remains the answer for hiding traffic endpoints.
 
+Qt 6.12 toolchain (QTUP01):
+    The browser now builds and runs against Qt 6.12.0 (user-local install at ~/Qt/6.12.0/gcc_64 via .devin/qt-env.sh). Qt 6.11.3 stays on disk as the rollback path; the bundle and analysis helpers' QTDIR defaults, the runner prompt and the task-file context follow the new toolchain.
+    The only source-level change 6.12 required is in the autotests: QDragEnterEvent/QDragMoveEvent constructors taking QPoint are newly deprecated in favor of QPointF. The custom user-agent machinery is unaffected — the default UA is derived from the live factory string at runtime, so it follows whatever Chromium version the Qt build reports.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

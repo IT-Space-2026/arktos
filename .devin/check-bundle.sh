@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QTDIR="${QTDIR:-$HOME/Qt/6.11.3/gcc_64}"
+QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
 BUNDLE="${ARORA_BUNDLE_DIR:-$(mktemp -d /tmp/arora-bundle.XXXXXX)/Arora}"
 SCRATCH="$(mktemp -d /tmp/arora-check-bundle.XXXXXX)"
 COMP_PID=""

@@ -13,7 +13,7 @@
 #     share/                    app .qm, useragents.xml, desktop file, icons, man
 #
 # Usage:  ./BuildProcess/bundle-linux.sh [output-dir]
-# Env:    QTDIR (defaults to ~/Qt/6.11.3/gcc_64), ARORA_VERSION (default 0.2),
+# Env:    QTDIR (defaults to ~/Qt/6.12.0/gcc_64), ARORA_VERSION (default 0.2),
 #         ARORA_BUNDLE_JOBS (make parallelism when a build is needed).
 #
 # The bundle is verified by .devin/check-bundle.sh.
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QTDIR="${QTDIR:-$HOME/Qt/6.11.3/gcc_64}"
+QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
 ARCH="$(uname -m)"
 VER="${ARORA_VERSION:-0.2}"
 OUT="${1:-$SRCROOT/dist/Arora-$VER-linux-$ARCH}"

@@ -23,7 +23,7 @@
 // renders the interstitial whose action links resolve the deferred
 // decision via the arora-cert-error: scheme.
 //
-// Verified Qt 6.11.3 semantics this suite encodes:
+// Verified Qt 6.11.3/6.12.0 semantics this suite encodes:
 //  * acceptCertificate() resumes the parked request and marks the
 //    (host, certificate) pair allowed in Chromium's in-memory cert
 //    policy — a second navigation to the same host on the SAME profile

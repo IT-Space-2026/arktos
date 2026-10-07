@@ -173,7 +173,7 @@ export ROOT BUILD GCC_LOG CLANG_LOG GCC_FINDINGS CLANG_FINDINGS
 python3 - <<'PYEOF'
 import re, os
 ROOT = os.environ['ROOT']; BUILD = os.environ['BUILD']
-QTDIR = os.environ.get('QTDIR', os.path.expanduser('~/Qt/6.11.3/gcc_64'))
+QTDIR = os.environ.get('QTDIR', os.path.expanduser('~/Qt/6.12.0/gcc_64'))
 
 def canonical(path):
     p = path

@@ -69,7 +69,7 @@ public:
 
     void sendDragEnter(QMimeData *mimeData, bool *accepted)
     {
-        QDragEnterEvent event(QPoint(1, 1), Qt::CopyAction, mimeData,
+        QDragEnterEvent event(QPointF(1, 1), Qt::CopyAction, mimeData,
                               Qt::LeftButton, Qt::NoModifier);
         dragEnterEvent(&event);
         *accepted = event.isAccepted();
