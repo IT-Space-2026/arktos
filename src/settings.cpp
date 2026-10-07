@@ -100,6 +100,7 @@
 #include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qsettings.h>
+#include <qstackedwidget.h>
 #include <qstandardpaths.h>
 #include <qfiledialog.h>
 #include <qtreewidget.h>
@@ -111,6 +112,36 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     : QDialog(parent)
 {
     setupUi(this);
+
+    // UIP03: Vivaldi-style sidebar navigation — pagesList rows mirror
+    // the order the QStackedWidget pages had as QTabWidget tabs, and
+    // the two stay in sync both ways so the persisted "currentTab"
+    // index keeps its old meaning.
+    connect(pagesList, &QListWidget::currentRowChanged,
+            tabWidget, &QStackedWidget::setCurrentIndex);
+    connect(tabWidget, &QStackedWidget::currentChanged,
+            pagesList, QOverload<int>::of(&QListWidget::setCurrentRow));
+    static const char *const pageIcons[] = {
+        "go-home",          // General
+        "edit-find",        // Search
+        "zoom-original",    // Appearance
+        "security-high",    // Privacy
+        "tab-new",          // Tab Settings
+        "go-next",          // Proxy
+        "user-bookmarks",   // AutoFill
+        "system-run",       // Advanced
+        "list-add",         // Extensions
+    };
+    for (int i = 0;
+         i < pagesList->count()
+         && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
+        if (QListWidgetItem *item = pagesList->item(i))
+            item->setIcon(AroraIcon::get(QLatin1String(pageIcons[i])));
+    }
+    // Fixed-width nav column sized to the longest translated label.
+    pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
+                             + 2 * pagesList->frameWidth() + 8);
+
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
 

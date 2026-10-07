@@ -320,6 +320,9 @@ About dialog (ABOUT01):
 Web Inspector (DVT01):
     Tools > Web Inspector and the context menu's "Inspect Element" work again — they were silent no-ops because Qt WebEngine renders Chromium DevTools into a page bound via setDevToolsPage(), and nothing ever bound one (WebKit shipped its own inspector). A dedicated inspector window now hosts that page: one shared window that re-points to the current page on each invocation, creates its DevTools page on the inspected page's own profile (private windows included), keeps JavaScript enabled for itself even under the Safest security tier, and releases the binding when it closes or when the inspected page goes away.
 
+Settings navigation (UIP03):
+    The Preferences dialog now uses Vivaldi-style vertical navigation: a fixed-width sidebar on the left lists the nine sections (with icons) and drives a stacked page area, replacing the horizontal tab row. Every page's contents are unchanged, sections are reachable by mouse and keyboard, and the remembered "last open page" preference carries over with the same ordering.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

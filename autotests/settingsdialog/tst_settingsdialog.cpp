@@ -49,6 +49,7 @@ private slots:
     void saveAndReload();
     void searchTab();
     void suggestionsCheckbox();
+    void sidebarNavigation();
     void subDialogButtons();
     void setHomeToCurrentPage();
 };
@@ -256,6 +257,52 @@ void tst_SettingsDialog::suggestionsCheckbox()
         QVERIFY(!manager->suggestionsEnabledForEngine(engine->name()));
         manager->setSuggestionsEnabledForEngine(otherCapable, false);
         manager->setCurrentEngineName(engine->name());
+    }
+}
+
+// UIP03: the sidebar list and the page stack stay in sync both ways,
+// every page is reachable, and the persisted currentTab index keeps
+// the old tab order across a save/reload.
+void tst_SettingsDialog::sidebarNavigation()
+{
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
+        QCOMPARE(dialog.pagesList->count(), 9);
+        for (int row = 0; row < dialog.pagesList->count(); ++row) {
+            dialog.pagesList->setCurrentRow(row);
+            QCOMPARE(dialog.tabWidget->currentIndex(), row);
+            QCOMPARE(dialog.tabWidget->currentWidget(),
+                     dialog.tabWidget->widget(row));
+        }
+        // Stack -> list direction: a programmatic page change moves
+        // the sidebar highlight with it.
+        dialog.tabWidget->setCurrentIndex(0);
+        QCOMPARE(dialog.pagesList->currentRow(), 0);
+        // Row labels carried over from the old tab captions.
+        QCOMPARE(dialog.pagesList->item(0)->text(),
+                 QStringLiteral("General"));
+        QCOMPARE(dialog.pagesList->item(8)->text(),
+                 QStringLiteral("Extensions"));
+    }
+
+    // The persisted currentTab round-trips through the sidebar.
+    {
+        SettingsDialog dialog;
+        dialog.pagesList->setCurrentRow(4);
+        dialog.accept();
+    }
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.tabWidget->currentIndex(), 4);
+        QCOMPARE(dialog.pagesList->currentRow(), 4);
+        dialog.pagesList->setCurrentRow(0);
+        dialog.accept();
+    }
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.tabWidget->currentIndex(), 0);
+        QCOMPARE(dialog.pagesList->currentRow(), 0);
     }
 }
 

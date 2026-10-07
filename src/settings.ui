@@ -25,14 +25,74 @@
     </widget>
    </item>
    <item row="0" column="0">
-    <widget class="QTabWidget" name="tabWidget">
-     <property name="currentIndex">
-      <number>2</number>
-     </property>
+    <layout class="QHBoxLayout" name="pagesLayout">
+     <item>
+      <widget class="QListWidget" name="pagesList">
+       <property name="accessibleName">
+        <string>Settings sections</string>
+       </property>
+       <property name="horizontalScrollBarPolicy">
+        <enum>Qt::ScrollBarAlwaysOff</enum>
+       </property>
+       <property name="selectionMode">
+        <enum>QAbstractItemView::SingleSelection</enum>
+       </property>
+       <property name="currentRow">
+        <number>0</number>
+       </property>
+       <item>
+        <property name="text">
+         <string>General</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Search</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Appearance</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Privacy</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Tab Settings</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Proxy</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>AutoFill</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Advanced</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Extensions</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+     <item>
+      <widget class="QStackedWidget" name="tabWidget">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
      <widget class="QWidget" name="tab">
-      <attribute name="title">
-       <string>General</string>
-      </attribute>
       <layout class="QGridLayout" name="gridLayout_4">
        <item row="0" column="0">
         <widget class="QLabel" name="label_7">
@@ -279,9 +339,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_search">
-      <attribute name="title">
-       <string>Search</string>
-      </attribute>
       <layout class="QVBoxLayout" name="searchTabLayout">
        <item>
         <widget class="QGroupBox" name="enginesGroupBox">
@@ -394,9 +451,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_3">
-      <attribute name="title">
-       <string>Appearance</string>
-      </attribute>
       <layout class="QGridLayout" name="gridLayout_3">
        <item row="0" column="0">
         <widget class="QLabel" name="label_5">
@@ -526,9 +580,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_2">
-      <attribute name="title">
-       <string>Privacy</string>
-      </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_3">
        <item>
         <widget class="QGroupBox" name="securityLevelGroupBox">
@@ -1073,9 +1124,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_6">
-      <attribute name="title">
-       <string>Tab Settings</string>
-      </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_5">
        <item>
         <layout class="QHBoxLayout" name="tabBarPositionLayout">
@@ -1264,9 +1312,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_4">
-      <attribute name="title">
-       <string>Proxy</string>
-      </attribute>
       <layout class="QVBoxLayout" name="verticalLayout">
        <item>
         <widget class="QGroupBox" name="proxySupport">
@@ -1427,9 +1472,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_7">
-      <attribute name="title">
-       <string>AutoFill</string>
-      </attribute>
       <layout class="QGridLayout" name="gridLayout_8">
        <item row="0" column="0">
         <widget class="QLabel" name="label_16">
@@ -1490,9 +1532,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_5">
-      <attribute name="title">
-       <string>Advanced</string>
-      </attribute>
       <layout class="QGridLayout" name="gridLayout_2">
        <item row="0" column="0">
         <widget class="QLabel" name="label_14">
@@ -1585,9 +1624,6 @@
       </layout>
      </widget>
      <widget class="QWidget" name="tab_8">
-      <attribute name="title">
-       <string>Extensions</string>
-      </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_8">
        <item>
         <widget class="QLabel" name="extensionsHintLabel">
@@ -1743,11 +1779,14 @@
        </item>
       </layout>
      </widget>
-    </widget>
+     </widget>
+     </item>
+    </layout>
    </item>
   </layout>
  </widget>
  <tabstops>
+  <tabstop>pagesList</tabstop>
   <tabstop>startupBehavior</tabstop>
   <tabstop>homeLineEdit</tabstop>
   <tabstop>setHomeToCurrentPageButton</tabstop>
