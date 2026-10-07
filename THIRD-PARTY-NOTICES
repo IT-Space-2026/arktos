@@ -1,0 +1,187 @@
+THIRD-PARTY NOTICES
+===================
+
+Arora itself is licensed under the GNU General Public License, version 2
+or later (see LICENSE.GPL2, LICENSE.GPL3 and GPLHEADER). Most source
+files carry an Arora copyright header (Benjamin C. Meyer and other
+contributors — see AUTHORS).
+
+This file lists the third-party code, data and runtime dependencies
+that ship inside this repository or are linked/fetched by the build,
+with the license each one is used under.
+
+----------------------------------------------------------------------
+1. Code derived from the Qt "demo browser" example
+----------------------------------------------------------------------
+
+Copyright (C) 2007-2008 Trolltech ASA. All rights reserved.
+
+Roughly fifty core files (autosaver, browserapplication, browsermainwindow,
+downloadmanager, tabbar, tabwidget, webview, webpage, webactionmapper,
+modelmenu/modeltoolbar, and most of src/bookmarks/, src/history/,
+src/network/cookiejar/, src/opensearch/, src/sourceviewer*, searchlineedit,
+clearbutton, history completion, etc.) descend from Trolltech's Qt
+demonstration browser and carry a second license block below the Arora
+one: GNU GPL version 2.0 or 3.0 (recipient's choice), plus the
+"Trolltech GPL Exception version 1.2". Used here under the GPL — fully
+compatible with Arora's GPL-2+.
+
+Note: those headers reference a GPL_EXCEPTION.txt "in this package"
+that upstream Arora never shipped. The exception only grants
+*additional* rights, so its absence is not a compliance problem; the
+canonical text ships inside Qt 4.x source packages as
+GPL_EXCEPTION.txt.
+
+----------------------------------------------------------------------
+2. src/utils/ utility classes — BSD 3-clause
+----------------------------------------------------------------------
+
+Copyright (c) 2008-2010 Benjamin C. Meyer, Jakub Wieczorek,
+Diego Iastrubni and others (per-file headers).
+
+singleapplication, edittableview, edittreeview, lineedit, squeezelabel,
+treesortfilterproxymodel, languagemanager and safetext are BSD-licensed
+("Redistribution and use in source and binary forms ..."). See
+src/utils/README: the utils classes are intentionally BSD or public
+domain so they can be reused outside Arora. The full notice text is in
+each file header.
+
+----------------------------------------------------------------------
+3. src/network/cookiejar/networkcookiejar/ — MPL/GPL/LGPL tri-license
+----------------------------------------------------------------------
+
+Copyright (C) 2009 Torch Mobile Inc. and Linden Research, Inc.
+Original code by Benjamin Meyer (benjamin.meyer@torchmobile.com).
+
+networkcookiejar.{h,cpp}, networkcookiejar_p.h, twoleveldomains_p.h and
+trie_p.h are licensed under MPL 1.1 / GPL 2.0+ / LGPL 2.1+ (recipient's
+choice). Arora uses them under the GPL option — compatible.
+
+----------------------------------------------------------------------
+4. autotests/modeltest/ — GPL 2.0 (test-only)
+----------------------------------------------------------------------
+
+Copyright (C) 2007 Trolltech ASA ("Qt Concurrent project on Trolltech
+Labs"). modeltest is GPL-2.0 per its header and is only linked into
+test binaries, never into the shipped application.
+
+----------------------------------------------------------------------
+5. Arora icon artwork — GPL 2.0
+----------------------------------------------------------------------
+
+src/data/arora.svg (and the rendered PNG/XPM/ICO/ICNS derivatives under
+src/data/ and BuildProcess/) is "Arora icon" by Jens Bache-Wiig,
+1/5/2008, licensed GPL-2.0 — recorded in the SVG's embedded RDF
+metadata. The other bundled graphics in src/data/graphics/ (addtab,
+closetab, defaulticon, history, private, loading.gif) were committed by
+the Arora project and are covered by the project license.
+
+----------------------------------------------------------------------
+6. Optional Rust adblock engine (CONFIG+=adblock_rust)
+----------------------------------------------------------------------
+
+Not part of the default build. When enabled, src/adblock/rust builds a
+static library that links the following crates (licenses read from each
+crate's Cargo.toml; full lockfile at src/adblock/rust/Cargo.lock):
+
+  MPL-2.0 (GPL-compatible; no "Incompatible With Secondary Licenses"
+  clause is declared):
+      adblock 0.13.3            (Brave adblock-rust engine)
+
+  MIT OR Apache-2.0:
+      addr, arrayvec, base64 (x2), bitflags, displaydoc, either,
+      form_urlencoded, idna, itertools, itoa, percent-encoding,
+      proc-macro2, quote, regex, regex-automata, regex-syntax,
+      rustc-hash, rustc_version, semver, serde, serde_core,
+      serde_derive, serde_json, smallvec, stable_deref_trait, syn (x2),
+      thiserror, thiserror-impl, url, utf8_iter, zmij
+
+  Apache-2.0 (also dual-licensed variants above):
+      flatbuffers, idna_adapter, psl (+psl-types MIT/Apache-2.0)
+
+  Unicode-3.0 (ICU4X crates):
+      icu_collections, icu_locale_core, icu_normalizer(+_data),
+      icu_properties(+_data), icu_provider, litemap, potential_utf,
+      tinystr, writeable, yoke(+_derive), zerofrom(+_derive),
+      zerotrie, zerovec(+_derive)
+
+  Unlicense OR MIT:
+      aho-corasick, memchr
+
+  MIT:
+      precomputed-hash, seahash, synstructure
+
+  (MIT OR Apache-2.0) AND Unicode-3.0:
+      unicode-ident
+
+All of the above are permissive or MPL-2.0 and compatible with Arora's
+GPL-2+ distribution; the adblock crate is file-level copyleft (MPL-2.0),
+satisfied by shipping this source tree.
+
+----------------------------------------------------------------------
+7. Adblock filter subscriptions — fetched at runtime, NOT bundled
+----------------------------------------------------------------------
+
+The default subscription list (src/adblock/adblockmanager.cpp) points at
+EasyList, EasyPrivacy and uBlock filters. These lists are downloaded by
+the user's browser at runtime; no rules are shipped in this repository.
+
+  * EasyList / EasyPrivacy: dual-licensed GNU GPLv3 and
+    Creative Commons Attribution-ShareAlike 3.0
+    (https://easylist.to/pages/licence.html)
+  * uBlock filters (uAssets): GNU GPLv3
+    (https://github.com/uBlockOrigin/uAssets)
+
+----------------------------------------------------------------------
+8. Search engine descriptors — src/data/searchengines/
+----------------------------------------------------------------------
+
+OpenSearch 1.1 XML descriptors for Google, Google I'm Feeling Lucky,
+Yahoo, Wikipedia, YouTube and Reddit. The descriptor files themselves
+are trivial Arora-authored XML (OpenSearch spec); the service names and
+any favicons fetched via their <Image> URLs at runtime are trademarks /
+assets of their respective owners.
+
+----------------------------------------------------------------------
+9. Runtime dependencies (NOT vendored into this repository)
+----------------------------------------------------------------------
+
+  * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
+    a Qt application; qwebchannel.js used by the start page is served
+    from Qt's own qrc:///qtwebchannel/ resource.
+  * QtWebEngine — embeds Chromium/Blink (BSD-3-Clause) plus Chromium's
+    many bundled third-party libraries (ICU, V8, ffmpeg snippets, zlib,
+    NSS, etc.). The corresponding license texts ship with Qt's source
+    and documentation packages (per-module LICENSE* files, reproducible
+    from the installed qtattributionsscanner); `make bundle` ships this
+    file plus LICENSE.GPL2/GPL3 in dist/ alongside the Qt libraries.
+  * OpenSSL libcrypto — Apache License 2.0 (OpenSSL 3.x) / OpenSSL+SSLeay
+    (1.x). src/securestore.cpp resolves EVP symbols at runtime via
+    QLibrary for AES-256-GCM; Arora does not link or ship OpenSSL.
+
+----------------------------------------------------------------------
+10. Translations — src/locale/
+----------------------------------------------------------------------
+
+The .ts/.qm translations are community contributions under the project
+license; per-language maintainers are listed in src/locale/maintainers.
+
+----------------------------------------------------------------------
+11. Test fixtures
+----------------------------------------------------------------------
+
+tools/htmlToXBel/tests/{firefox3,opera9,ie7}-bookmarks.html are bookmark
+exports produced by those browsers, kept as parser fixtures (they
+contain only bookmark titles/URLs). autotests/xbel/frank.xbel and the
+fuzz/ seed corpus entries derived from it are XBEL test data. None ship
+in installed or bundled builds.
+
+----------------------------------------------------------------------
+12. Everything else
+----------------------------------------------------------------------
+
+All remaining source, .ui files, src/htmls/ pages, src/data/autofill.js
+and fetchLinks.js, useragents.xml, bundled adblock stub resources
+(generated byte arrays in adblockresourcehandler.cpp), tools/, fuzz
+harnesses, BuildProcess/ and .devin/ scripts are Arora-authored and
+covered by GPL-2+ (2026 additions marked "The Arora Authors").

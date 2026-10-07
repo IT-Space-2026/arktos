@@ -111,7 +111,7 @@ done
 gzip -9 -c "$SRCROOT/src/data/arora.1" > "$OUT/share/man/man1/arora.1.gz"
 
 # --- licenses ---------------------------------------------------------------
-install -m0644 "$SRCROOT/LICENSE.GPL2" "$SRCROOT/LICENSE.GPL3" "$OUT/"
+install -m0644 "$SRCROOT/LICENSE.GPL2" "$SRCROOT/LICENSE.GPL3" "$SRCROOT/THIRD-PARTY-NOTICES" "$OUT/"
 
 # --- wrapper ----------------------------------------------------------------
 cat > "$OUT/arora" <<'EOF'
