@@ -74,6 +74,11 @@ signals:
 public slots:
     QString translate(const QString &string);
     QString searchUrl(const QString &string) const;
+
+private:
+    // SRCH04: the engine a search runs against depends on whether the
+    // page lives on an off-the-record profile (private/tor context).
+    OpenSearchEngine *contextEngine() const;
 };
 
 class WebPage : public QWebEnginePage

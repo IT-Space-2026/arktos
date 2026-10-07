@@ -883,10 +883,15 @@ QUrl TabWidget::guessUrlFromString(const QString &string)
     // opt-out that restores the historic bare-http guess.
     const bool search =
         settings.value(QLatin1String("searchEngineFallback"), true).toBool();
-    const auto fallbackUrl = [search, &trimmed]() -> QUrl {
+    // SRCH04: private browsing is app-global in Arora (the flag also
+    // covers tor mode) — those contexts search through the configured
+    // private engine.
+    const bool privateContext = BrowserApplication::isPrivate();
+    const auto fallbackUrl = [search, &trimmed, privateContext]() -> QUrl {
         if (search) {
             if (OpenSearchEngine *engine =
-                    ToolbarSearch::openSearchManager()->currentEngine()) {
+                    ToolbarSearch::openSearchManager()
+                        ->engineForContext(privateContext)) {
                 const QUrl searchUrl = engine->searchUrl(trimmed);
                 if (!searchUrl.isEmpty() && searchUrl.isValid())
                     return searchUrl;

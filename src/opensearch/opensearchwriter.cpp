@@ -127,6 +127,29 @@ void OpenSearchWriter::write(OpenSearchEngine *engine)
         writeEndElement();
     }
 
+    if (!engine->imageSearchUrlTemplate().isEmpty()) {
+        writeStartElement(QStringLiteral("Url"));
+        writeAttribute(QStringLiteral("method"), engine->imageSearchMethod());
+        writeAttribute(QStringLiteral("type"), QStringLiteral("text/html"));
+        writeAttribute(QStringLiteral("purpose"), QStringLiteral("image"));
+        writeAttribute(QStringLiteral("template"), engine->imageSearchUrlTemplate());
+
+        if (!engine->imageSearchParameters().isEmpty()) {
+            writeNamespace(QStringLiteral("http://a9.com/-/spec/opensearch/extensions/parameters/1.0/"), QStringLiteral("p"));
+
+            QList<OpenSearchEngine::Parameter>::const_iterator end = engine->imageSearchParameters().constEnd();
+            QList<OpenSearchEngine::Parameter>::const_iterator i = engine->imageSearchParameters().constBegin();
+            for (; i != end; ++i) {
+                writeStartElement(QStringLiteral("p:Parameter"));
+                writeAttribute(QStringLiteral("name"), i->first);
+                writeAttribute(QStringLiteral("value"), i->second);
+                writeEndElement();
+            }
+        }
+
+        writeEndElement();
+    }
+
     if (!engine->imageUrl().isEmpty())
         writeTextElement(QStringLiteral("Image"), engine->imageUrl());
 

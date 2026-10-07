@@ -95,6 +95,112 @@ OpenSearchEngine *OpenSearchManager::engine(const QString &name)
     return m_engines[name];
 }
 
+QString OpenSearchManager::privateEngineName() const
+{
+    return m_privateEngine;
+}
+
+void OpenSearchManager::setPrivateEngineName(QString name)
+{
+    if (!name.isEmpty() && !m_engines.contains(name))
+        return;
+
+    if (m_privateEngine == name)
+        return;
+
+    m_privateEngine = std::move(name);
+    emit currentEngineChanged();
+    emit changed();
+}
+
+QString OpenSearchManager::imageEngineName() const
+{
+    return m_imageEngine;
+}
+
+void OpenSearchManager::setImageEngineName(QString name)
+{
+    if (!name.isEmpty() && !m_engines.contains(name))
+        return;
+
+    if (m_imageEngine == name)
+        return;
+
+    m_imageEngine = std::move(name);
+    emit currentEngineChanged();
+    emit changed();
+}
+
+QString OpenSearchManager::fieldEngineName() const
+{
+    return m_fieldEngine;
+}
+
+void OpenSearchManager::setFieldEngineName(QString name)
+{
+    if (!name.isEmpty() && !m_engines.contains(name))
+        return;
+
+    if (m_fieldEngine == name)
+        return;
+
+    m_fieldEngine = std::move(name);
+    emit currentEngineChanged();
+    emit changed();
+}
+
+bool OpenSearchManager::keepFieldEngine() const
+{
+    return m_keepFieldEngine;
+}
+
+void OpenSearchManager::setKeepFieldEngine(bool keep)
+{
+    if (m_keepFieldEngine == keep)
+        return;
+
+    m_keepFieldEngine = keep;
+    // Toggling the option off must not resurrect a stale pick on the
+    // next start — drop the stored field engine entirely.
+    if (!keep && !m_fieldEngine.isEmpty()) {
+        m_fieldEngine.clear();
+        emit currentEngineChanged();
+    }
+    emit changed();
+}
+
+OpenSearchEngine *OpenSearchManager::engineForContext(bool privateContext) const
+{
+    if (privateContext && m_engines.contains(m_privateEngine))
+        return m_engines.value(m_privateEngine);
+
+    return currentEngine();
+}
+
+OpenSearchEngine *OpenSearchManager::searchFieldEngine(bool privateContext) const
+{
+    if (privateContext)
+        return engineForContext(true);
+
+    if (m_engines.contains(m_fieldEngine))
+        return m_engines.value(m_fieldEngine);
+
+    return currentEngine();
+}
+
+OpenSearchEngine *OpenSearchManager::imageSearchEngine() const
+{
+    if (OpenSearchEngine *engine = m_engines.value(m_imageEngine)) {
+        if (engine->providesImageSearch())
+            return engine;
+    }
+    // The stored pick is unset, gone, or lost its image endpoint —
+    // fall back to the default engine when it can image-search.
+    OpenSearchEngine *fallback = currentEngine();
+    return (fallback && fallback->providesImageSearch()) ? fallback
+                                                       : nullptr;
+}
+
 bool OpenSearchManager::engineExists(const QString &name)
 {
     return m_engines.contains(name);
@@ -175,8 +281,23 @@ void OpenSearchManager::removeEngine(const QString &name)
 
     m_suggestionsEnabled.removeAll(name);
 
+    // A removed engine cannot stay the configured private/image/field
+    // pick — the resolution helpers fall back to the default engine.
+    if (name == m_privateEngine)
+        m_privateEngine.clear();
+    if (name == m_imageEngine)
+        m_imageEngine.clear();
+    if (name == m_fieldEngine)
+        m_fieldEngine.clear();
+
     QString file = QDir(enginesDirectory()).filePath(generateEngineFileName(name));
     QFile::remove(file);
+
+    // Removing a bundled engine must survive the bundled merge in
+    // load() — otherwise the next launch resurrects it.
+    if (QFile::exists(QLatin1String(":/searchengines/") + generateEngineFileName(name))
+            && !m_removedBundled.contains(name))
+        m_removedBundled.append(name);
 
     if (name == m_current)
         setCurrentEngineName(m_engines.keys().at(0));
@@ -232,6 +353,7 @@ void OpenSearchManager::save()
     QSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
     settings.setValue(QLatin1String("engine"), m_current);
+    settings.setValue(QLatin1String("removedBundledEngines"), m_removedBundled);
 
     settings.beginWriteArray(QLatin1String("keywords"), m_keywords.count());
     QHash<QString, OpenSearchEngine*>::const_iterator i = m_keywords.constBegin();
@@ -245,6 +367,18 @@ void OpenSearchManager::save()
     settings.endArray();
 
     settings.setValue(QLatin1String("suggestions"), m_suggestionsEnabled);
+
+    // SRCH04: engine assignments + suggestion-context toggles.
+    settings.setValue(QLatin1String("privateEngine"), m_privateEngine);
+    settings.setValue(QLatin1String("imageEngine"), m_imageEngine);
+    settings.setValue(QLatin1String("keepFieldEngine"), m_keepFieldEngine);
+    // The field pick only persists while "keep last selected" is on;
+    // with it off the field always starts on the default engine.
+    settings.setValue(QLatin1String("fieldEngine"),
+                      m_keepFieldEngine ? m_fieldEngine : QString());
+    settings.setValue(QLatin1String("suggestInAddressField"), m_suggestInAddressField);
+    settings.setValue(QLatin1String("suggestInSearchField"), m_suggestInSearchField);
+    settings.setValue(QLatin1String("suggestOnlyWithKeyword"), m_suggestOnlyWithKeyword);
 
     settings.endGroup();
 }
@@ -272,12 +406,35 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
 void OpenSearchManager::load()
 {
     StartupProfile::Scope profileScope("opensearch engines parse");
-    if (!loadDirectory(enginesDirectory()))
-        loadDirectory(QLatin1String(":/searchengines"));
+    loadDirectory(enginesDirectory());
 
     // get current engine
     QSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
+    m_removedBundled = settings.value(
+        QLatin1String("removedBundledEngines")).toStringList();
+
+    // Bundled engines the persisted directory lacks get added —
+    // upgrades deliver new descriptors to existing profiles.  Engines
+    // the user explicitly removed stay gone via the blocklist.
+    QDirIterator bundled(QLatin1String(":/searchengines"),
+                       QStringList() << QLatin1String("*.xml"));
+    while (bundled.hasNext()) {
+        QFile file(bundled.next());
+        // Same input bound as addEngine(fileName).
+        if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
+            continue;
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&file);
+        if (!engine || !engine->isValid()
+                || m_engines.contains(engine->name())
+                || m_removedBundled.contains(engine->name())) {
+            delete engine;
+            continue;
+        }
+        m_engines[engine->name()] = engine;
+    }
+
     m_current = settings.value(QLatin1String("engine"), QLatin1String("DuckDuckGo")).toString();
 
     int size = settings.beginReadArray(QLatin1String("keywords"));
@@ -290,6 +447,20 @@ void OpenSearchManager::load()
     settings.endArray();
 
     m_suggestionsEnabled = settings.value(QLatin1String("suggestions")).toStringList();
+
+    // SRCH04: engine assignments + suggestion-context toggles.
+    m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
+    m_imageEngine = settings.value(QLatin1String("imageEngine")).toString();
+    m_keepFieldEngine = settings.value(QLatin1String("keepFieldEngine"), true).toBool();
+    m_fieldEngine = m_keepFieldEngine
+        ? settings.value(QLatin1String("fieldEngine")).toString()
+        : QString();
+    m_suggestInAddressField = settings.value(
+        QLatin1String("suggestInAddressField"), true).toBool();
+    m_suggestInSearchField = settings.value(
+        QLatin1String("suggestInSearchField"), true).toBool();
+    m_suggestOnlyWithKeyword = settings.value(
+        QLatin1String("suggestOnlyWithKeyword"), false).toBool();
 
     settings.endGroup();
 
@@ -330,9 +501,94 @@ QStringList OpenSearchManager::suggestionsEnabledEngines() const
     return m_suggestionsEnabled;
 }
 
+bool OpenSearchManager::suggestionsInAddressField() const
+{
+    return m_suggestInAddressField;
+}
+
+void OpenSearchManager::setSuggestionsInAddressField(bool enabled)
+{
+    if (m_suggestInAddressField == enabled)
+        return;
+    m_suggestInAddressField = enabled;
+    emit suggestionsEnabledChanged();
+    emit changed();
+}
+
+bool OpenSearchManager::suggestionsInSearchField() const
+{
+    return m_suggestInSearchField;
+}
+
+void OpenSearchManager::setSuggestionsInSearchField(bool enabled)
+{
+    if (m_suggestInSearchField == enabled)
+        return;
+    m_suggestInSearchField = enabled;
+    emit suggestionsEnabledChanged();
+    emit changed();
+}
+
+bool OpenSearchManager::suggestionsOnlyWithKeyword() const
+{
+    return m_suggestOnlyWithKeyword;
+}
+
+void OpenSearchManager::setSuggestionsOnlyWithKeyword(bool enabled)
+{
+    if (m_suggestOnlyWithKeyword == enabled)
+        return;
+    m_suggestOnlyWithKeyword = enabled;
+    emit suggestionsEnabledChanged();
+    emit changed();
+}
+
 void OpenSearchManager::restoreDefaults()
 {
-    loadDirectory(QLatin1String(":/searchengines"));
+    // Re-add every bundled engine.  Deleted ones come back (the
+    // removal blocklist is part of "defaults"); ones still present
+    // are REPLACED rather than skipped — persisted copies can be
+    // stale (they predate new bundled fields like image-search
+    // endpoints) and "restore defaults" means reverting them anyway.
+    m_removedBundled.clear();
+    QDirIterator iterator(QLatin1String(":/searchengines"),
+                        QStringList() << QLatin1String("*.xml"));
+    bool replaced = false;
+    while (iterator.hasNext()) {
+        QFile file(iterator.next());
+        // Same input bound as addEngine(fileName).
+        if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
+            continue;
+
+        OpenSearchReader reader;
+        OpenSearchEngine *engine = reader.read(&file);
+        if (!engine || !engine->isValid()) {
+            delete engine;
+            continue;
+        }
+
+        OpenSearchEngine *old = m_engines.value(engine->name());
+        if (!old) {
+            addEngine(engine); // emits changed()
+            continue;
+        }
+
+        // Keyword bindings hold engine pointers — re-point them at
+        // the fresh object before the old one dies.
+        for (auto it = m_keywords.begin(), end = m_keywords.end();
+             it != end; ++it) {
+            if (it.value() == old)
+                it.value() = engine;
+        }
+        m_engines[engine->name()] = engine;
+        old->deleteLater();
+        replaced = true;
+    }
+    if (replaced) {
+        // Consumers cache the resolved engine pointer — re-resolve.
+        emit currentEngineChanged();
+        emit changed();
+    }
 }
 
 QString OpenSearchManager::enginesDirectory() const

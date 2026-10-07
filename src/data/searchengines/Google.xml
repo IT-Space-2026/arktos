@@ -4,5 +4,6 @@
     <Description>Google Web Search</Description>
     <Url method="get" type="text/html" template="http://www.google.com/search?hl={language}&amp;q={searchTerms}" />
     <Url method="get" type="application/x-suggestions+json" template="http://suggestqueries.google.com/complete/search?json=t&amp;hl={language}&amp;q={searchTerms}&amp;nolabels=t" />
+    <Url method="get" type="text/html" purpose="image" template="https://lens.google.com/uploadbyurl?url={searchTerms}" />
     <Image width="16" height="16">http://www.google.com/favicon.ico</Image>
 </OpenSearchDescription>

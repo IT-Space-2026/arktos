@@ -39,9 +39,13 @@ can show live suggestions above history matches, but only for engines
 explicitly opted in (search button menu or the dedicated Search page
 in Settings, which also picks the default engine); nothing is sent to
 a suggest endpoint otherwise.  The dedicated search box next to the
-address bar is hidden by default — "Show dedicated search box" on the
-General settings page brings it back, and Ctrl+K focuses the address
-bar while it is off.
+address bar can be a full text field or a compact engine button
+(Search settings page — the same preference the "Show dedicated
+search box" checkbox on the General page toggles).  Button mode is
+the default; Ctrl+K opens its engine menu with a search prompt, or
+selects the field's text in field mode.  The Search page can also
+assign separate engines to private/Tor windows and to image searches
+(the image context menu's "Search Image" entry).
 
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in

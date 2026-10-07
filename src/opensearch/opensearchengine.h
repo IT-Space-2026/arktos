@@ -51,6 +51,12 @@ public:
     Q_PROPERTY(Parameters suggestionsParameters READ suggestionsParameters WRITE setSuggestionsParameters)
     Q_PROPERTY(QString suggestionsMethod READ suggestionsMethod WRITE setSuggestionsMethod)
     Q_PROPERTY(bool providesSuggestions READ providesSuggestions)
+    // SRCH04: engines may carry a second results template for image
+    // searches (<Url type="text/html" purpose="image" ...>).
+    Q_PROPERTY(QString imageSearchUrlTemplate READ imageSearchUrlTemplate WRITE setImageSearchUrlTemplate)
+    Q_PROPERTY(Parameters imageSearchParameters READ imageSearchParameters WRITE setImageSearchParameters)
+    Q_PROPERTY(QString imageSearchMethod READ imageSearchMethod WRITE setImageSearchMethod)
+    Q_PROPERTY(bool providesImageSearch READ providesImageSearch)
     Q_PROPERTY(QString imageUrl READ imageUrl WRITE setImageUrl)
     Q_PROPERTY(bool valid READ isValid)
     Q_PROPERTY(QNetworkAccessManager *networkAccessManager READ networkAccessManager WRITE setNetworkAccessManager)
@@ -73,17 +79,29 @@ public:
     void setSuggestionsUrlTemplate(QString suggestionsUrl);
     QUrl suggestionsUrl(const QString &searchTerm) const;
 
+    bool providesImageSearch() const;
+
+    QString imageSearchUrlTemplate() const;
+    void setImageSearchUrlTemplate(QString imageSearchUrl);
+    QUrl imageSearchUrl(const QString &searchTerm) const;
+
     Parameters searchParameters() const;
     void setSearchParameters(const Parameters &searchParameters);
 
     Parameters suggestionsParameters() const;
     void setSuggestionsParameters(const Parameters &suggestionsParameters);
 
+    Parameters imageSearchParameters() const;
+    void setImageSearchParameters(const Parameters &imageSearchParameters);
+
     QString searchMethod() const;
     void setSearchMethod(const QString &method);
 
     QString suggestionsMethod() const;
     void setSuggestionsMethod(const QString &method);
+
+    QString imageSearchMethod() const;
+    void setImageSearchMethod(const QString &method);
 
     QString imageUrl() const;
     void setImageUrl(QString url);
@@ -108,6 +126,8 @@ public slots:
 
 protected:
     static QString parseTemplate(const QString &searchTerm, const QString &searchTemplate);
+    QUrl buildUrl(const QString &searchTerm, const QString &templ,
+                  const QString &method, const Parameters &parameters) const;
     void loadImage() const;
 
 private slots:
@@ -123,10 +143,13 @@ private:
 
     QString m_searchUrlTemplate;
     QString m_suggestionsUrlTemplate;
+    QString m_imageSearchUrlTemplate;
     Parameters m_searchParameters;
     Parameters m_suggestionsParameters;
+    Parameters m_imageSearchParameters;
     QString m_searchMethod;
     QString m_suggestionsMethod;
+    QString m_imageSearchMethod;
 
     QMap<QString, QNetworkAccessManager::Operation> m_requestMethods;
 

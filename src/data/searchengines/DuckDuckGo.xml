@@ -4,5 +4,6 @@
     <Description>DuckDuckGo Web Search</Description>
     <Url method="get" type="text/html" template="https://duckduckgo.com/?q={searchTerms}" />
     <Url method="get" type="application/x-suggestions+json" template="https://duckduckgo.com/ac/?q={searchTerms}&amp;type=list" />
+    <Url method="get" type="text/html" purpose="image" template="https://duckduckgo.com/?q={searchTerms}&amp;iax=images&amp;ia=images" />
     <Image width="16" height="16">https://duckduckgo.com/favicon.ico</Image>
 </OpenSearchDescription>

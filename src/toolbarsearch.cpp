@@ -65,6 +65,7 @@
 
 #include "autosaver.h"
 #include "browserapplication.h"
+#include "clearbutton.h"
 #include "browsermainwindow.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -80,9 +81,11 @@
 #include <qabstractitemview.h>
 #include <qcompleter.h>
 #include <qcoreapplication.h>
+#include <qinputdialog.h>
 #include <qmenu.h>
 #include <qsettings.h>
 #include <qstandarditemmodel.h>
+#include <qstyle.h>
 #include <qtimer.h>
 #include <qurl.h>
 #include <qwebengineprofile.h>
@@ -155,12 +158,56 @@ OpenSearchManager *ToolbarSearch::openSearchManager()
 void ToolbarSearch::setWebView(WebView *webView)
 {
     m_webView = webView;
+    // Moving the target tab onto/off a private profile changes which
+    // engine this field resolves to.
+    currentEngineChanged();
+}
+
+bool ToolbarSearch::privateContext() const
+{
+    const QWebEnginePage *page = m_webView ? m_webView->webPage() : nullptr;
+    return BrowserApplication::isPrivate()
+        || (page && page->profile()->isOffTheRecord());
+}
+
+OpenSearchEngine *ToolbarSearch::fieldEngine() const
+{
+    return openSearchManager()->searchFieldEngine(privateContext());
+}
+
+void ToolbarSearch::setButtonMode(bool buttonMode)
+{
+    if (m_buttonMode == buttonMode)
+        return;
+    m_buttonMode = buttonMode;
+
+    if (buttonMode) {
+        // Collapse to just the engine button: the field is read-only
+        // and unfocusable, and the button click opens the engines
+        // menu (which offers a "Search..." prompt in this mode).
+        setReadOnly(true);
+        setFocusPolicy(Qt::NoFocus);
+        const int width = searchButton()->sizeHint().width()
+            + style()->pixelMetric(QStyle::PM_DefaultFrameWidth) * 2;
+        setFixedWidth(width);
+        clearButton()->hide();
+    } else {
+        setReadOnly(false);
+        setFocusPolicy(Qt::StrongFocus);
+        setMinimumWidth(0);
+        setMaximumWidth(QWIDGETSIZE_MAX);
+        clearButton()->setVisible(!text().isEmpty());
+    }
+}
+
+bool ToolbarSearch::isButtonMode() const
+{
+    return m_buttonMode;
 }
 
 void ToolbarSearch::currentEngineChanged()
 {
-    OpenSearchEngine *newEngine = openSearchManager()->currentEngine();
-    Q_ASSERT(newEngine);
+    OpenSearchEngine *newEngine = fieldEngine();
     if (!newEngine)
         return;
 
@@ -170,13 +217,33 @@ void ToolbarSearch::currentEngineChanged()
         OpenSearchEngine *oldEngine = openSearchManager()->engine(m_currentEngine);
         disconnect(oldEngine, &OpenSearchEngine::suggestions,
                    this, &ToolbarSearch::newSuggestions);
+        disconnect(oldEngine, &OpenSearchEngine::imageChanged,
+                   this, &ToolbarSearch::updateEngineIcon);
     }
+
+    connect(newEngine, &OpenSearchEngine::imageChanged,
+            this, &ToolbarSearch::updateEngineIcon,
+            Qt::UniqueConnection);
 
     setInactiveText(newEngine->name());
     m_currentEngine = newEngine->name();
     m_suggestions.clear();
     updateSuggestionsEnabled();
+    updateEngineIcon();
     setupList();
+}
+
+// SRCH04: "show search engine icon" decides whether the field's
+// button carries the resolved engine's favicon or the generic
+// magnifier glyph (a null image regenerates the built-in one).
+void ToolbarSearch::updateEngineIcon()
+{
+    QSettings settings;
+    const bool showIcon = settings.value(
+        QLatin1String("toolbarsearch/showEngineIcon"), true).toBool();
+    OpenSearchEngine *engine = fieldEngine();
+    searchButton()->setImage(showIcon && engine ? engine->image()
+                                                : QImage());
 }
 
 /*
@@ -189,16 +256,18 @@ void ToolbarSearch::currentEngineChanged()
  */
 void ToolbarSearch::updateSuggestionsEnabled()
 {
-    const bool enabled =
-        openSearchManager()->suggestionsEnabledForEngine(m_currentEngine);
-    OpenSearchEngine *engine = openSearchManager()->currentEngine();
+    OpenSearchEngine *engine = fieldEngine();
+    // SRCH04: the search-field context toggle gates on top of the
+    // SEC11 per-engine opt-in.
+    const bool enabled = engine
+        && openSearchManager()->suggestionsInSearchField()
+        && openSearchManager()->suggestionsEnabledForEngine(engine->name());
 
     if (enabled) {
         connect(this, &QLineEdit::textEdited,
                 this, &ToolbarSearch::textEdited, Qt::UniqueConnection);
-        if (engine)
-            connect(engine, &OpenSearchEngine::suggestions,
-                    this, &ToolbarSearch::newSuggestions, Qt::UniqueConnection);
+        connect(engine, &OpenSearchEngine::suggestions,
+                this, &ToolbarSearch::newSuggestions, Qt::UniqueConnection);
     } else {
         disconnect(this, &QLineEdit::textEdited,
                    this, &ToolbarSearch::textEdited);
@@ -272,14 +341,15 @@ void ToolbarSearch::textEdited(const QString &text)
 
 void ToolbarSearch::getSuggestions()
 {
-    OpenSearchEngine *engine = openSearchManager()->currentEngine();
-    Q_ASSERT(engine);
+    OpenSearchEngine *engine = fieldEngine();
     if (!engine)
         return;
 
     // Belt-and-suspenders: even a queued timer fires only while the
-    // current engine is opted in (SEC11).
-    if (!openSearchManager()->suggestionsEnabledForEngine(engine->name()))
+    // search field is allowed to suggest AND the resolved engine is
+    // opted in (SRCH04 + SEC11).
+    if (!openSearchManager()->suggestionsInSearchField()
+        || !openSearchManager()->suggestionsEnabledForEngine(engine->name()))
         return;
 
     if (!engine->networkAccessManager())
@@ -290,8 +360,7 @@ void ToolbarSearch::getSuggestions()
 
 void ToolbarSearch::searchNow()
 {
-    OpenSearchEngine *engine = openSearchManager()->currentEngine();
-    Q_ASSERT(engine);
+    OpenSearchEngine *engine = fieldEngine();
     if (!engine)
         return;
 
@@ -302,9 +371,7 @@ void ToolbarSearch::searchNow()
     // land in is not off-the-record.  The app-level private flag covers
     // the cases the bound view cannot (no view wired, or a new tab the
     // search itself would create on the private profile).
-    QWebEnginePage *page = m_webView ? m_webView->webPage() : nullptr;
-    const bool privateTarget = BrowserApplication::isPrivate()
-        || (page && page->profile()->isOffTheRecord());
+    const bool privateTarget = privateContext();
     if (!privateTarget) {
         QStringList newList = m_recentSearches;
         if (newList.contains(searchText))
@@ -318,10 +385,27 @@ void ToolbarSearch::searchNow()
     }
 
     QUrl searchUrl = engine->searchUrl(searchText);
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("toolbarsearch"));
+    // SRCH04: "always search in a new tab" joins Alt as a way to
+    // leave the current page alone.
     TabWidget::OpenUrlIn tab = TabWidget::CurrentTab;
-    if (qApp->keyboardModifiers() == Qt::AltModifier)
+    if (qApp->keyboardModifiers() == Qt::AltModifier
+        || settings.value(QLatin1String("alwaysNewTab"), false).toBool())
         tab = TabWidget::NewSelectedTab;
     emit search(searchUrl, tab);
+
+    // SRCH04: "keep typed text after searching" — with it off the
+    // field resets once the search is dispatched.
+    if (!settings.value(QLatin1String("keepTypedText"), true).toBool())
+        QLineEdit::clear();
+    settings.endGroup();
+
+    // SRCH04: without "keep last selected engine" a one-off field
+    // pick reverts to the default once it has done its job.
+    if (!privateTarget && !openSearchManager()->keepFieldEngine())
+        openSearchManager()->setFieldEngineName(QString());
 }
 
 void ToolbarSearch::newSuggestions(const QStringList &suggestions)
@@ -345,64 +429,104 @@ void ToolbarSearch::retranslate()
 
 void ToolbarSearch::showEnginesMenu()
 {
-    QMenu menu;
+    // Heap + WA_DeleteOnClose: the menu is popped, not exec()ed — a
+    // modal nested loop here would hang the keyboard entry point
+    // (button-mode webSearch()) under scripted/offscreen callers.
+    QMenu *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
 
     QWidget *parent = searchButton()->parentWidget();
-    if (!parent)
+    if (!parent) {
+        delete menu;
         return;
+    }
 
     QPoint pos = parent->mapToGlobal(QPoint(0, parent->height()));
 
+    // SRCH04: in button mode the menu doubles as the search entry
+    // point — a prompt collects the terms and runs the same path as
+    // returnPressed would.
+    if (m_buttonMode) {
+        menu->addAction(tr("Search..."), this, [this]() {
+            bool ok = false;
+            const QString terms = QInputDialog::getText(
+                this, tr("Search"), tr("Search for:"),
+                QLineEdit::Normal, text(), &ok);
+            if (ok && !terms.trimmed().isEmpty()) {
+                setText(terms);
+                searchNow();
+            }
+        });
+        menu->addSeparator();
+    }
+
+    QSettings settings;
+    const bool showNicknames = settings.value(
+        QLatin1String("toolbarsearch/showEngineNickname"), true).toBool();
+    const bool showIcons = settings.value(
+        QLatin1String("toolbarsearch/showEngineIcon"), true).toBool();
+
+    OpenSearchEngine *field = fieldEngine();
     QList<QString> list = openSearchManager()->allEnginesNames();
     for (int i = 0; i < list.count(); ++i) {
         QString name = list.at(i);
         OpenSearchEngine *engine = openSearchManager()->engine(name);
-        OpenSearchEngineAction *action = new OpenSearchEngineAction(engine, &menu);
+        OpenSearchEngineAction *action = new OpenSearchEngineAction(engine, menu);
+        if (showNicknames) {
+            const QStringList keys =
+                openSearchManager()->keywordsForEngine(engine);
+            if (!keys.isEmpty())
+                action->setText(tr("%1 (%2)").arg(
+                    SafeText::menu(name), SafeText::menu(keys.first())));
+        }
+        if (!showIcons)
+            action->setIcon(QIcon());
         action->setData(name);
         connect(action, &QAction::triggered, this, &ToolbarSearch::changeCurrentEngine);
-        menu.addAction(action);
+        menu->addAction(action);
 
-        if (openSearchManager()->currentEngineName() == name) {
+        if (field && field->name() == name) {
             action->setCheckable(true);
             action->setChecked(true);
         }
     }
 
     // Page-advertised engines go between these two separators.
-    QAction *enginesSeparator = menu.addSeparator();
+    QAction *enginesSeparator = menu->addSeparator();
 
     // Per-engine opt-in for suggestions (SEC11): off by default,
     // toggleable right where the engine is picked.  Engines without a
-    // suggest endpoint show a greyed entry.
+    // suggest endpoint — or a search-field context with suggestions
+    // switched off (SRCH04) — show a greyed entry.
     {
-        QAction *suggestionsAction = new QAction(tr("Search Suggestions"), &menu);
+        QAction *suggestionsAction = new QAction(tr("Search Suggestions"), menu);
         suggestionsAction->setCheckable(true);
-        OpenSearchEngine *current = openSearchManager()->currentEngine();
-        const bool capable = current && current->providesSuggestions();
+        const bool capable = field && field->providesSuggestions()
+            && openSearchManager()->suggestionsInSearchField();
         suggestionsAction->setEnabled(capable);
         suggestionsAction->setChecked(capable &&
-            openSearchManager()->suggestionsEnabledForEngine(current->name()));
+            openSearchManager()->suggestionsEnabledForEngine(field->name()));
         connect(suggestionsAction, &QAction::toggled, this, [this](bool checked) {
             openSearchManager()->setSuggestionsEnabledForEngine(
                 m_currentEngine, checked);
         });
-        menu.addAction(suggestionsAction);
+        menu->addAction(suggestionsAction);
     }
 
     // MENU01: engine management lives on the Settings > Search page —
     // this entry deep-links there rather than duplicating the dialog.
-    menu.addAction(tr("Configure Search Engines..."), this, &ToolbarSearch::showEnginesDialog);
+    menu->addAction(tr("Configure Search Engines..."), this, &ToolbarSearch::showEnginesDialog);
 
     if (!m_recentSearches.isEmpty())
-        menu.addAction(tr("Clear Recent Searches"), this, &ToolbarSearch::clear);
+        menu->addAction(tr("Clear Recent Searches"), this, &ToolbarSearch::clear);
 
     // WebEngine has no synchronous DOM access; the page's linked
     // resources are collected in the render process and arrive while
-    // this menu's exec() runs its nested event loop, so the "Add"
-    // actions appear as soon as the page reports them.
+    // the menu is up, so the "Add" actions appear as soon as the page
+    // reports them.
     if (m_webView) {
         WebPage *page = m_webView->webPage();
-        QPointer<QMenu> menuGuard(&menu);
+        QPointer<QMenu> menuGuard(menu);
         QPointer<WebView> viewGuard(m_webView);
         page->linkedResources(QStringLiteral("search"),
                 [this, menuGuard, viewGuard, enginesSeparator](const QList<WebPageLinkedResource> &engines) {
@@ -432,7 +556,7 @@ void ToolbarSearch::showEnginesMenu()
         });
     }
 
-    menu.exec(pos);
+    menu->popup(pos);
 }
 
 void ToolbarSearch::showEnginesDialog()
@@ -455,7 +579,14 @@ void ToolbarSearch::changeCurrentEngine()
 {
     if (QAction *action = qobject_cast<QAction*>(sender())) {
         QString name = action->data().toString();
-        openSearchManager()->setCurrentEngineName(name);
+        // SRCH04: the field has its own engine — a pick in a private
+        // window becomes the private engine, elsewhere it is the
+        // field override.  Whether the pick survives depends on
+        // "keep last selected engine" (manager clears it when off).
+        if (privateContext())
+            openSearchManager()->setPrivateEngineName(name);
+        else
+            openSearchManager()->setFieldEngineName(name);
     }
 }
 

@@ -286,11 +286,21 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     QVERIFY(webSearch);
     QVERIFY(!toolsMenu->actions().contains(webSearch));
 
-    // Triggering it still runs webSearch() — with the dedicated box
-    // hidden (fresh profile) the omnibox location bar gets selected.
-    window->tabWidget()->currentLocationBar()->setText(QLatin1String("arora"));
+    // Triggering it still runs webSearch() — SRCH04's button mode
+    // (fresh profile) answers with the non-modal engines menu, whose
+    // "Search..." prompt is the search entry point.
     webSearch->trigger();
-    QVERIFY(window->tabWidget()->currentLocationBar()->hasSelectedText());
+    QWidget *popup = QApplication::activePopupWidget();
+    QVERIFY(popup);
+    popup->close();
+
+    // Field mode goes back to selecting the box text.
+    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    window->applySearchBoxVisibility();
+    window->toolbarSearch()->setText(QLatin1String("arora"));
+    webSearch->trigger();
+    QVERIFY(window->toolbarSearch()->hasSelectedText());
+    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
     closeWindow(window);
 }
 
@@ -411,31 +421,24 @@ void tst_BrowserMainWindow::chromeMetrics()
     closeWindow(window);
 }
 
-// SRCH03: the dedicated search box is opt-in — a fresh profile hides
-// it because the omnibox location bar (SRCH01) searches already.  The
-// "Web Search" shortcut then focuses the location bar instead of an
-// invisible widget, and the preference applies live without restart.
+// SRCH03+SRCH04: the dedicated search box has two display modes —
+// showSearchBox unset/false collapses it to the engine button
+// (Vivaldi's "Show as a Button"), true gives the full text field.
+// The preference applies live without restart.
 void tst_BrowserMainWindow::searchBoxVisibility()
 {
-    // initTestCase cleared settings; no showSearchBox key = hidden.
+    // initTestCase cleared settings; no showSearchBox key = button mode.
     SubWindow *window = new SubWindow;
     window->show();
-    QVERIFY(window->toolbarSearch()->isHidden());
-    QVERIFY(!window->toolbarSearch()->isVisible());
+    QVERIFY(window->toolbarSearch()->isButtonMode());
+    QVERIFY(window->toolbarSearch()->isVisible());
+    QVERIFY(window->toolbarSearch()->isReadOnly());
 
-    // Hidden-box webSearch() retargets the location bar.  Focus
-    // delivery is unreliable under the offscreen QPA, so assert the
-    // observable selectAll() state instead.
-    window->tabWidget()->currentLocationBar()->setText(QLatin1String("arora"));
-    QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
-    QVERIFY(window->tabWidget()->currentLocationBar()->hasSelectedText());
-    QVERIFY(!window->toolbarSearch()->hasSelectedText());
-
-    // Opt-in unhides live and the shortcut goes back to the box.
+    // Field mode applies live and the shortcut selects the box text.
     QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
-    QVERIFY(!window->toolbarSearch()->isHidden());
-    QVERIFY(window->toolbarSearch()->isVisible());
+    QVERIFY(!window->toolbarSearch()->isButtonMode());
+    QVERIFY(!window->toolbarSearch()->isReadOnly());
     window->toolbarSearch()->setText(QLatin1String("arora"));
     QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
     QVERIFY(window->toolbarSearch()->hasSelectedText());
@@ -444,7 +447,7 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     // New windows read the persisted key at construction.
     SubWindow *shown = new SubWindow;
     shown->show();
-    QVERIFY(shown->toolbarSearch()->isVisible());
+    QVERIFY(!shown->toolbarSearch()->isButtonMode());
     closeWindow(shown);
 
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));

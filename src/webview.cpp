@@ -213,6 +213,18 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(request->mediaUrl().toString());
         menu->addSeparator();
         menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(request->mediaUrl().toString());
+
+        // SRCH04: reverse-image search through the configured image
+        // engine — only offered when an engine actually advertises an
+        // image-search endpoint.
+        if (OpenSearchEngine *imageEngine =
+                ToolbarSearch::openSearchManager()->imageSearchEngine()) {
+            QAction *imageSearchAction = menu->addAction(
+                tr("Search Image with %1")
+                    .arg(SafeText::menu(imageEngine->name())),
+                this, &WebView::imageSearchRequested);
+            imageSearchAction->setData(request->mediaUrl());
+        }
     }
 
     if (!request->selectedText().isEmpty()) {
@@ -377,7 +389,32 @@ void WebView::searchRequested(QAction *action)
         ToolbarSearch::openSearchManager()->engine(action->data().toString());
     if (!engine || selectedText().isEmpty())
         return;
-    emit search(engine->searchUrl(selectedText()), TabWidget::NewSelectedTab);
+    // SRCH04: selection search can open in a background tab instead
+    // of stealing focus.
+    QSettings settings;
+    const bool background = settings.value(
+        QLatin1String("urlloading/selectionSearchInBackground"),
+        false).toBool();
+    emit search(engine->searchUrl(selectedText()),
+                background ? TabWidget::NewNotSelectedTab
+                           : TabWidget::NewSelectedTab);
+}
+
+void WebView::imageSearchRequested()
+{
+    QAction *action = qobject_cast<QAction*>(sender());
+    if (!action)
+        return;
+    const QUrl imageUrl = action->data().toUrl();
+    if (imageUrl.isEmpty())
+        return;
+    OpenSearchEngine *engine =
+        ToolbarSearch::openSearchManager()->imageSearchEngine();
+    if (!engine)
+        return;
+    const QUrl searchUrl = engine->imageSearchUrl(imageUrl.toString());
+    if (!searchUrl.isEmpty() && searchUrl.isValid())
+        emit search(searchUrl, TabWidget::NewSelectedTab);
 }
 
 void WebView::setProgress(int progress)

@@ -245,6 +245,21 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(searchManager, &OpenSearchManager::currentEngineChanged,
             this, &SettingsDialog::refreshSearchEngines);
 
+    // SRCH04: the private/image pickers get the same unsaved-pick
+    // protection as the default combo, and the field/button radios
+    // share the showSearchBox key with the General page's checkbox.
+    connect(privateEngineCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { m_privateEngineComboDirty = true; });
+    connect(imageEngineCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { m_imageEngineComboDirty = true; });
+    connect(searchFieldRadio, &QRadioButton::toggled, this,
+            [this](bool on) { showSearchBox->setChecked(on); });
+    connect(showSearchBox, &QCheckBox::toggled, this, [this](bool on) {
+        (on ? static_cast<QRadioButton*>(searchFieldRadio)
+            : static_cast<QRadioButton*>(searchButtonRadio))
+                ->setChecked(true);
+    });
+
     loadDefaults();
     loadFromSettings();
 }
@@ -298,9 +313,12 @@ void SettingsDialog::loadFromSettings()
     QString defaultHome = QLatin1String("about:home");
     homeLineEdit->setText(settings.value(QLatin1String("home"), defaultHome).toString());
     startupBehavior->setCurrentIndex(settings.value(QLatin1String("startupBehavior"), 0).toInt());
-    // SRCH03: opt-in — hidden by default now that the omnibox
-    // location bar covers searching.
-    showSearchBox->setChecked(settings.value(QLatin1String("showSearchBox"), false).toBool());
+    // SRCH03+SRCH04: the same key backs the General checkbox and the
+    // Search page's field/button radios — button mode when off.
+    const bool showBox = settings.value(QLatin1String("showSearchBox"), false).toBool();
+    showSearchBox->setChecked(showBox);
+    searchFieldRadio->setChecked(showBox);
+    searchButtonRadio->setChecked(!showBox);
     const QString iconTheme = AroraIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
@@ -328,7 +346,37 @@ void SettingsDialog::loadFromSettings()
     // exists once the user touches the checkbox.
     bool search = settings.value(QLatin1String("searchEngineFallback"), true).toBool();
     searchEngineFallback->setChecked(search);
+    // SRCH04: "Search with" context-menu results open unfocused.
+    selectionSearchBackgroundCheck->setChecked(
+        settings.value(QLatin1String("selectionSearchInBackground"),
+                       false).toBool());
     settings.endGroup();
+
+    // SRCH04: dedicated search-field display/behavior switches.
+    settings.beginGroup(QLatin1String("toolbarsearch"));
+    showEngineNicknameCheck->setChecked(
+        settings.value(QLatin1String("showEngineNickname"), true).toBool());
+    showEngineIconCheck->setChecked(
+        settings.value(QLatin1String("showEngineIcon"), true).toBool());
+    alwaysNewTabCheck->setChecked(
+        settings.value(QLatin1String("alwaysNewTab"), false).toBool());
+    keepTypedTextCheck->setChecked(
+        settings.value(QLatin1String("keepTypedText"), true).toBool());
+    settings.endGroup();
+
+    // SRCH04: engine assignments and per-context suggestion toggles
+    // live on the OpenSearchManager (persisted in its openSearch
+    // group), not in a settings group of their own.
+    {
+        OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
+        keepFieldEngineCheck->setChecked(searchManager->keepFieldEngine());
+        suggestInAddressFieldCheck->setChecked(
+            searchManager->suggestionsInAddressField());
+        suggestInSearchFieldCheck->setChecked(
+            searchManager->suggestionsInSearchField());
+        suggestOnlyWithKeywordCheck->setChecked(
+            searchManager->suggestionsOnlyWithKeyword());
+    }
 
     settings.beginGroup(QLatin1String("downloadmanager"));
     bool alwaysPromptForFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
@@ -524,6 +572,20 @@ void SettingsDialog::saveToSettings()
 
     settings.beginGroup(QLatin1String("urlloading"));
     settings.setValue(QLatin1String("searchEngineFallback"), searchEngineFallback->isChecked());
+    settings.setValue(QLatin1String("selectionSearchInBackground"),
+                      selectionSearchBackgroundCheck->isChecked());
+    settings.endGroup();
+
+    // SRCH04: dedicated search-field display/behavior switches.
+    settings.beginGroup(QLatin1String("toolbarsearch"));
+    settings.setValue(QLatin1String("showEngineNickname"),
+                      showEngineNicknameCheck->isChecked());
+    settings.setValue(QLatin1String("showEngineIcon"),
+                      showEngineIconCheck->isChecked());
+    settings.setValue(QLatin1String("alwaysNewTab"),
+                      alwaysNewTabCheck->isChecked());
+    settings.setValue(QLatin1String("keepTypedText"),
+                      keepTypedTextCheck->isChecked());
     settings.endGroup();
 
     // Appearance
@@ -624,6 +686,14 @@ void SettingsDialog::saveToSettings()
     // meanwhile), then the displayed engine becomes the default.
     {
         OpenSearchManager *searchManager = ToolbarSearch::openSearchManager();
+        // Capture every combo pick up front — the manager writes below
+        // emit signals that synchronously refreshSearchEngines(), so
+        // reading the combos late loses the unsaved selection.
+        const QString engineName = defaultEngineCombo->currentText();
+        const QString privatePick =
+            privateEngineCombo->currentData().toString();
+        const QString imagePick =
+            imageEngineCombo->currentData().toString();
         stashSearchSuggestions();
         for (auto it = m_pendingSuggestions.cbegin();
              it != m_pendingSuggestions.cend(); ++it) {
@@ -631,10 +701,25 @@ void SettingsDialog::saveToSettings()
                 searchManager->setSuggestionsEnabledForEngine(it.key(), it.value());
         }
         m_pendingSuggestions.clear();
-        const QString engineName = defaultEngineCombo->currentText();
         if (searchManager->engineExists(engineName))
             searchManager->setCurrentEngineName(engineName);
         m_engineComboDirty = false;
+
+        // SRCH04: context engine assignments — the combos' first row
+        // ("Same as Default") carries empty data, clearing the pick.
+        // setKeepFieldEngine runs first: turning it off drops the
+        // stored field engine before the other writes land.
+        searchManager->setKeepFieldEngine(keepFieldEngineCheck->isChecked());
+        searchManager->setPrivateEngineName(privatePick);
+        searchManager->setImageEngineName(imagePick);
+        searchManager->setSuggestionsInAddressField(
+            suggestInAddressFieldCheck->isChecked());
+        searchManager->setSuggestionsInSearchField(
+            suggestInSearchFieldCheck->isChecked());
+        searchManager->setSuggestionsOnlyWithKeyword(
+            suggestOnlyWithKeywordCheck->isChecked());
+        m_privateEngineComboDirty = false;
+        m_imageEngineComboDirty = false;
     }
 
     // Network
@@ -812,6 +897,35 @@ void SettingsDialog::refreshSearchEngines()
     const int index = defaultEngineCombo->findText(wanted);
     if (index != -1)
         defaultEngineCombo->setCurrentIndex(index);
+
+    // SRCH04: the private and image pickers lead with a
+    // "Same as Default" row whose empty itemData clears the
+    // assignment.  The image list only offers engines that advertise
+    // an image-search endpoint — others could never answer the
+    // request anyway.
+    const QString wantedPrivate = m_privateEngineComboDirty
+        ? privateEngineCombo->currentData().toString()
+        : manager->privateEngineName();
+    const QString wantedImage = m_imageEngineComboDirty
+        ? imageEngineCombo->currentData().toString()
+        : manager->imageEngineName();
+
+    privateEngineCombo->clear();
+    privateEngineCombo->addItem(tr("Same as Default"), QString());
+    for (const QString &name : names)
+        privateEngineCombo->addItem(name, name);
+    privateEngineCombo->setCurrentIndex(qMax(
+        0, privateEngineCombo->findData(wantedPrivate)));
+
+    imageEngineCombo->clear();
+    imageEngineCombo->addItem(tr("Same as Default"), QString());
+    for (const QString &name : names) {
+        OpenSearchEngine *engine = manager->engine(name);
+        if (engine && engine->providesImageSearch())
+            imageEngineCombo->addItem(name, name);
+    }
+    imageEngineCombo->setCurrentIndex(qMax(
+        0, imageEngineCombo->findData(wantedImage)));
 
     refreshSearchSuggestions();
 }

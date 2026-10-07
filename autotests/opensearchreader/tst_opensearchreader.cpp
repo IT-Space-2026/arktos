@@ -35,6 +35,7 @@ public slots:
 private slots:
     void read_data();
     void read();
+    void imageSearch();
     void hostileInput();
 };
 
@@ -139,6 +140,58 @@ void tst_OpenSearchReader::read()
     QCOMPARE(engine->searchMethod(), searchMethod);
     QCOMPARE(engine->suggestionsMethod(), suggestionsMethod);
 
+    delete engine;
+}
+
+// SRCH04: a <Url purpose="image"> element carries the engine's
+// image-search endpoint — its own template, parameters and method.
+// Placing it AFTER the <Image> favicon also proves the early-exit
+// check does not stop before it is reached.
+void tst_OpenSearchReader::imageSearch()
+{
+    QByteArray doc =
+        "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+        "<ShortName>Img</ShortName>"
+        "<Description>image capable</Description>"
+        "<Url type='text/html' method='get' template='http://img.test/search?q={searchTerms}'/>"
+        "<Url type='application/x-suggestions+json' method='get' template='http://img.test/suggest?q={searchTerms}'/>"
+        "<Image width='16' height='16'>http://img.test/favicon.ico</Image>"
+        "<Url type='text/html' purpose='image' method='get' template='http://img.test/images'>"
+        "<Param name='url' value='{searchTerms}'/>"
+        "</Url>"
+        "</OpenSearchDescription>";
+    QBuffer buffer(&doc);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    OpenSearchReader reader;
+    OpenSearchEngine *engine = reader.read(&buffer);
+    QVERIFY(engine);
+    QVERIFY(engine->isValid());
+    QVERIFY(!reader.hasError());
+
+    QVERIFY(engine->providesImageSearch());
+    QCOMPARE(engine->imageSearchUrlTemplate(),
+             QStringLiteral("http://img.test/images"));
+    QCOMPARE(engine->imageSearchMethod(), QStringLiteral("get"));
+    QCOMPARE(engine->imageSearchParameters(),
+             OpenSearchEngine::Parameters()
+                 << OpenSearchEngine::Parameter(QStringLiteral("url"),
+                                                QStringLiteral("{searchTerms}")));
+    // Parameter values run through the same template+query pipeline
+    // as ordinary search parameters.
+    QCOMPARE(engine->imageSearchUrl(QStringLiteral("kitten")).toString(),
+             QStringLiteral("http://img.test/images?url=kitten"));
+
+    // The regular search and favicon fields are untouched.
+    QCOMPARE(engine->searchUrlTemplate(),
+             QStringLiteral("http://img.test/search?q={searchTerms}"));
+    QCOMPARE(engine->imageUrl(),
+             QStringLiteral("http://img.test/favicon.ico"));
+    delete engine;
+
+    // An engine without an image endpoint reports no support.
+    engine = new OpenSearchEngine;
+    QVERIFY(!engine->providesImageSearch());
+    QVERIFY(!engine->imageSearchUrl(QStringLiteral("x")).isValid());
     delete engine;
 }
 

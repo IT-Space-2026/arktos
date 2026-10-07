@@ -58,45 +58,39 @@ bool OmniboxSuggestions::enabled() const
     if (BrowserApplication::isTorMode())
         return false;
 
-    return m_engine
-        && m_engine->providesSuggestions()
-        && ToolbarSearch::openSearchManager()
-            ->suggestionsEnabledForEngine(m_engine->name());
+    // SRCH04: the address field has its own context switch on top of
+    // the per-engine opt-in — the engine-level check happens per
+    // request in requestSuggestions().
+    return ToolbarSearch::openSearchManager()->suggestionsInAddressField();
 }
 
 void OmniboxSuggestions::currentEngineChanged()
 {
-    if (m_engine)
-        disconnect(m_engine, &OpenSearchEngine::suggestions,
-                   this, &OmniboxSuggestions::newSuggestions);
-    m_engine = ToolbarSearch::openSearchManager()->currentEngine();
+    // SRCH04: private windows suggest through the configured private
+    // engine, falling back to the default when unset.
+    m_engine = ToolbarSearch::openSearchManager()
+        ->engineForContext(BrowserApplication::isPrivate());
     m_model->setEngineName(m_engine ? m_engine->name() : QString());
     updateSuggestionsEnabled();
 }
 
-// SEC11: the whole data path — the reply hook, the debounce timer and
-// the rows themselves — only lives while the current engine is opted
-// in.  Disabling drops a pending fetch and any suggestions already
-// delivered.
+// SEC11+SRCH04: any permission change — context toggle or per-engine
+// opt-in — tears down the pending fetch and the rows already
+// delivered.  Which engine the opt-in applies to is resolved per
+// request, so the safest response is an unconditional reset; a
+// still-allowed pending text simply re-arms the debounce.
 void OmniboxSuggestions::updateSuggestionsEnabled()
 {
-    if (!enabled()) {
-        m_timer->stop();
-        if (m_engine)
-            disconnect(m_engine, &OpenSearchEngine::suggestions,
-                       this, &OmniboxSuggestions::newSuggestions);
-        if (!m_model->suggestions().isEmpty())
-            m_model->setSuggestions(QStringList());
-        return;
-    }
+    m_timer->stop();
+    if (m_boundEngine)
+        m_boundEngine->disconnect(this);
+    m_boundEngine = nullptr;
+    if (!m_model->suggestions().isEmpty())
+        m_model->setSuggestions(QStringList());
 
-    connect(m_engine, &OpenSearchEngine::suggestions,
-            this, &OmniboxSuggestions::newSuggestions,
-            Qt::UniqueConnection);
-
-    // Toggling the opt-in on mid-edit fetches for the text already
+    // Toggling an opt-in on mid-edit fetches for the text already
     // typed — the user just consented to it leaving the box.
-    if (!m_pendingText.trimmed().isEmpty())
+    if (enabled() && !m_pendingText.trimmed().isEmpty())
         m_timer->start();
 }
 
@@ -111,14 +105,51 @@ void OmniboxSuggestions::scheduleSuggestions(const QString &text)
 void OmniboxSuggestions::requestSuggestions()
 {
     // Belt-and-suspenders: even a queued timer fires only while the
-    // current engine is opted in (SEC11).
-    if (!enabled() || m_pendingText.trimmed().isEmpty())
+    // address field is allowed to suggest (SEC11 + SRCH04).
+    const QString text = m_pendingText.trimmed();
+    if (!enabled() || text.isEmpty())
         return;
 
-    if (!m_engine->networkAccessManager())
-        m_engine->setNetworkAccessManager(
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+
+    // SRCH04: resolve the engine this input actually targets.  In the
+    // keyword-only mode anything that does not start with a registered
+    // engine keyword stays silent; when it does, the request goes to
+    // that keyword's engine instead of the context engine.
+    OpenSearchEngine *target = m_engine;
+    QString query = text;
+    const int split = text.indexOf(QLatin1Char(' '));
+    OpenSearchEngine *keywordEngine = split > 0
+        ? manager->engineForKeyword(text.left(split)) : nullptr;
+    if (keywordEngine) {
+        // The suggestion goes to the keyword's engine — with the
+        // keyword stripped, like convertKeywordSearchToUrl().
+        target = keywordEngine;
+        query = text.mid(split + 1);
+    } else if (manager->suggestionsOnlyWithKeyword()) {
+        return;
+    }
+
+    // SEC11: the per-engine opt-in still vets every request — a
+    // keyword engine that is not opted in suggests nothing either.
+    if (!target
+        || !target->providesSuggestions()
+        || !manager->suggestionsEnabledForEngine(target->name()))
+        return;
+
+    if (m_boundEngine != target) {
+        if (m_boundEngine)
+            m_boundEngine->disconnect(this);
+        connect(target, &OpenSearchEngine::suggestions,
+                this, &OmniboxSuggestions::newSuggestions,
+                Qt::UniqueConnection);
+        m_boundEngine = target;
+    }
+
+    if (!target->networkAccessManager())
+        target->setNetworkAccessManager(
             NetworkAccessManager::instance());
-    m_engine->requestSuggestions(m_pendingText);
+    target->requestSuggestions(query);
 }
 
 void OmniboxSuggestions::newSuggestions(const QStringList &suggestions)

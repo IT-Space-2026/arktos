@@ -145,6 +145,7 @@ private slots:
     void blockImage();
     void bookmarkLink();
     void searchRequested(QAction *action);
+    void imageSearchRequested();
 
 private:
     QString m_statusBarText;

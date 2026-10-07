@@ -153,15 +153,24 @@ QString JavaScriptAroraObject::translate(const QString &string)
         return qApp->tr(string.toUtf8().constData());
 }
 
+OpenSearchEngine *JavaScriptAroraObject::contextEngine() const
+{
+    const WebPage *page = qobject_cast<const WebPage*>(parent());
+    const bool privateContext = page && page->profile()
+        && page->profile()->isOffTheRecord();
+    return ToolbarSearch::openSearchManager()
+        ->engineForContext(privateContext);
+}
+
 QString JavaScriptAroraObject::currentEngineName() const
 {
-    OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine();
+    OpenSearchEngine *engine = contextEngine();
     return engine ? engine->name() : QString();
 }
 
 QString JavaScriptAroraObject::searchUrl(const QString &string) const
 {
-    OpenSearchEngine *engine = ToolbarSearch::openSearchManager()->currentEngine();
+    OpenSearchEngine *engine = contextEngine();
     return engine ? engine->searchUrl(string).toString() : QString();
 }
 

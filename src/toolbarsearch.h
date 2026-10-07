@@ -70,6 +70,7 @@
 #include <qpointer.h>
 
 class AutoSaver;
+class OpenSearchEngine;
 class OpenSearchManager;
 class QCompleter;
 class QModelIndex;
@@ -94,9 +95,19 @@ public:
     // current tab so searchNow() can tell private targets apart.
     void setWebView(WebView *webView);
 
+    // SRCH04: "show as button" — the field collapses to just the
+    // engine button; searching goes through a prompt in the engines
+    // menu.  BrowserMainWindow drives this from the showSearchBox
+    // setting (its false value used to hide the widget entirely).
+    void setButtonMode(bool buttonMode);
+    bool isButtonMode() const;
+
 public slots:
     void clear();
     void searchNow();
+    // The engine drop-down; also the keyboard entry point when the
+    // widget is in button mode (SRCH04).
+    void showEnginesMenu();
 
 private slots:
     void currentEngineChanged();
@@ -107,7 +118,6 @@ private slots:
     bool completerHighlighted(const QModelIndex &index);
     void getSuggestions();
     void updateSuggestionsEnabled();
-    void showEnginesMenu();
     void showEnginesDialog();
     void changeCurrentEngine();
     void addEngineFromUrl();
@@ -119,9 +129,15 @@ private:
     void load();
     void setupList();
     void retranslate();
+    // SRCH04: which engine this widget's searches/suggestions resolve
+    // to, and whether the target tab lives on a private profile.
+    bool privateContext() const;
+    OpenSearchEngine *fieldEngine() const;
+    void updateEngineIcon();
 
     static OpenSearchManager *s_openSearchManager;
     QString m_currentEngine;
+    bool m_buttonMode = false;
 
     AutoSaver *m_autosaver;
     int m_maxSavedSearches;

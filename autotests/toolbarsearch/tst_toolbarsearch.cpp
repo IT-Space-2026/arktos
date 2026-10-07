@@ -62,6 +62,7 @@ private slots:
     void recentSearches();
     void completerPaths();
     void enginesMenu();
+    void fieldEnginePrefs();
     void suggestionsOptIn();
     void searchBarAnimation();
 };
@@ -164,6 +165,98 @@ void tst_ToolbarSearch::enginesMenu()
     });
     QTest::mouseClick(search.searchButton(), Qt::LeftButton);
     QTest::qWait(150);
+}
+
+// SRCH04: the field has its own engine — a field pick overrides the
+// default for this widget only, "keep last selected" off reverts it
+// after the search, "always new tab" and "keep typed text" change the
+// emitted target and field state, and button mode collapses the field.
+void tst_ToolbarSearch::fieldEnginePrefs()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+
+    QStringList names = manager->allEnginesNames();
+    names.sort();
+    QVERIFY(names.count() >= 2);
+    const QString defaultName = names.at(0);
+    const QString otherName = names.at(1);
+    manager->setCurrentEngineName(defaultName);
+    const QString defaultHost =
+        manager->engine(defaultName)->searchUrl(QString()).host();
+    const QString otherHost =
+        manager->engine(otherName)->searchUrl(QString()).host();
+    QVERIFY(defaultHost != otherHost);
+
+    // A field pick wins over the default engine.
+    manager->setFieldEngineName(otherName);
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("terms"));
+        QSignalSpy spy(&search, &ToolbarSearch::search);
+        search.searchNow();
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(QUrl(spy.first().at(0).toUrl()).host(), otherHost);
+    }
+
+    // keepFieldEngine off: the pick reverts once it has been used.
+    manager->setKeepFieldEngine(false);
+    manager->setFieldEngineName(otherName);
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("terms"));
+        search.searchNow();
+    }
+    QCOMPARE(manager->fieldEngineName(), QString());
+    manager->setKeepFieldEngine(true);
+
+    // alwaysNewTab forces a new-tab target; keepTypedText off clears
+    // the field after the search is dispatched.
+    QSettings().setValue(QLatin1String("toolbarsearch/alwaysNewTab"), true);
+    QSettings().setValue(QLatin1String("toolbarsearch/keepTypedText"), false);
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("terms"));
+        QSignalSpy spy(&search, &ToolbarSearch::search);
+        search.searchNow();
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(1).value<TabWidget::OpenUrlIn>(),
+                 TabWidget::NewSelectedTab);
+        QVERIFY(search.text().isEmpty());
+    }
+    QSettings().remove(QLatin1String("toolbarsearch/alwaysNewTab"));
+    QSettings().remove(QLatin1String("toolbarsearch/keepTypedText"));
+
+    // Private contexts search through the private engine — here the
+    // app-level flag stands in for a bound off-the-record view.
+    manager->setFieldEngineName(QString());
+    manager->setPrivateEngineName(otherName);
+    BrowserApplication::setPrivate(true);
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("secret"));
+        QSignalSpy spy(&search, &ToolbarSearch::search);
+        search.searchNow();
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(QUrl(spy.first().at(0).toUrl()).host(), otherHost);
+    }
+    BrowserApplication::setPrivate(false);
+    manager->setPrivateEngineName(QString());
+
+    // Button mode collapses to a read-only, unfocusable field.
+    {
+        ToolbarSearch search;
+        search.setButtonMode(true);
+        QVERIFY(search.isButtonMode());
+        QVERIFY(search.isReadOnly());
+        QCOMPARE(search.focusPolicy(), Qt::NoFocus);
+        search.setButtonMode(false);
+        QVERIFY(!search.isButtonMode());
+        QVERIFY(!search.isReadOnly());
+    }
+
+    manager->setCurrentEngineName(defaultName);
+    QSettings().remove(QLatin1String("toolbarsearch/recentSearches"));
 }
 
 // SEC11: suggestions are a per-engine opt-in — with the flag off (the

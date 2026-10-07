@@ -57,6 +57,35 @@ public:
     OpenSearchEngine *currentEngine() const;
     void setCurrentEngine(OpenSearchEngine *current);
 
+    // SRCH04: the private windows (and the tor window, which is always
+    // off-the-record) search through a separate engine when one is
+    // configured — an empty name means "same as the default engine".
+    QString privateEngineName() const;
+    void setPrivateEngineName(QString name);
+    // SRCH04: the engine used for image searches; empty = default
+    // engine (used only when it actually offers image search).
+    QString imageEngineName() const;
+    void setImageEngineName(QString name);
+    // SRCH04: the engine last picked in the search field's own
+    // drop-down.  Session-only unless keepFieldEngine() is on; empty =
+    // follow the default engine.
+    QString fieldEngineName() const;
+    void setFieldEngineName(QString name);
+    bool keepFieldEngine() const;
+    void setKeepFieldEngine(bool keep);
+
+    // Engine that a search action in the given context resolves to:
+    // private contexts use the private engine (falling back to the
+    // default when unset or unavailable), normal contexts the default.
+    OpenSearchEngine *engineForContext(bool privateContext) const;
+    // The dedicated search box's engine: private contexts share the
+    // private engine; elsewhere the field override wins over default.
+    OpenSearchEngine *searchFieldEngine(bool privateContext) const;
+    // The configured image-search engine — the stored pick when it
+    // still exists and offers image search, else the default engine
+    // when capable, else nullptr.
+    OpenSearchEngine *imageSearchEngine() const;
+
     OpenSearchEngine *engine(const QString &name);
 
     bool engineExists(const QString &name);
@@ -67,6 +96,18 @@ public:
     bool suggestionsEnabledForEngine(const QString &engineName) const;
     void setSuggestionsEnabledForEngine(const QString &engineName, bool enabled);
     QStringList suggestionsEnabledEngines() const;
+
+    // SRCH04: the SEC11 per-engine opt-in stays the master switch;
+    // these per-context toggles decide WHERE suggestions may fire.
+    // Both default on (an engine that is not opted in still sends
+    // nothing).  When onlyWithKeyword is set, the address field only
+    // suggests once input starts with an engine's keyword.
+    bool suggestionsInAddressField() const;
+    void setSuggestionsInAddressField(bool enabled);
+    bool suggestionsInSearchField() const;
+    void setSuggestionsInSearchField(bool enabled);
+    bool suggestionsOnlyWithKeyword() const;
+    void setSuggestionsOnlyWithKeyword(bool enabled);
 
     QUrl convertKeywordSearchToUrl(const QString &string);
     OpenSearchEngine *engineForKeyword(const QString &keyword) const;
@@ -103,7 +144,17 @@ private:
     QHash<QString, OpenSearchEngine*> m_engines;
     QHash<QString, OpenSearchEngine*> m_keywords;
     QStringList m_suggestionsEnabled;
+    // SRCH04: bundled engines the user removed — load() re-adds
+    // missing bundled descriptors except these.
+    QStringList m_removedBundled;
     QString m_current;
+    QString m_privateEngine;
+    QString m_imageEngine;
+    QString m_fieldEngine;
+    bool m_keepFieldEngine = true;
+    bool m_suggestInAddressField = true;
+    bool m_suggestInSearchField = true;
+    bool m_suggestOnlyWithKeyword = false;
 };
 
 #endif //OPENSEARCHMANAGER_H

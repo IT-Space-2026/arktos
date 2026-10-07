@@ -86,6 +86,7 @@ OpenSearchEngine::OpenSearchEngine(QObject *parent)
     : QObject(parent)
     , m_searchMethod(QLatin1String("get"))
     , m_suggestionsMethod(QLatin1String("get"))
+    , m_imageSearchMethod(QLatin1String("get"))
     , m_networkAccessManager(nullptr)
     , m_suggestionsReply(nullptr)
     , m_delegate(nullptr)
@@ -193,21 +194,8 @@ void OpenSearchEngine::setSearchUrlTemplate(QString searchUrlTemplate)
 */
 QUrl OpenSearchEngine::searchUrl(const QString &searchTerm) const
 {
-    if (m_searchUrlTemplate.isEmpty())
-        return QUrl();
-
-    QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, m_searchUrlTemplate).toUtf8());
-
-    if (m_searchMethod != QLatin1String("post")) {
-        QUrlQuery query(retVal);
-        Parameters::const_iterator end = m_searchParameters.constEnd();
-        Parameters::const_iterator i = m_searchParameters.constBegin();
-        for (; i != end; ++i)
-            query.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
-        retVal.setQuery(query);
-    }
-
-    return retVal;
+    return buildUrl(searchTerm, m_searchUrlTemplate, m_searchMethod,
+                    m_searchParameters);
 }
 
 /*!
@@ -247,15 +235,67 @@ void OpenSearchEngine::setSuggestionsUrlTemplate(QString suggestionsUrlTemplate)
 */
 QUrl OpenSearchEngine::suggestionsUrl(const QString &searchTerm) const
 {
-    if (m_suggestionsUrlTemplate.isEmpty())
+    return buildUrl(searchTerm, m_suggestionsUrlTemplate,
+                    m_suggestionsMethod, m_suggestionsParameters);
+}
+
+/*!
+    \property providesImageSearch
+    \brief indicates whether the engine carries a dedicated image-search
+    URL template
+
+    \sa imageSearchUrl(), imageSearchUrlTemplate()
+*/
+bool OpenSearchEngine::providesImageSearch() const
+{
+    return !m_imageSearchUrlTemplate.isEmpty();
+}
+
+/*!
+    \property imageSearchUrlTemplate
+    \brief the template of the image-search URL
+
+    A second results endpoint (marked purpose="image" in the
+    OpenSearch description) used when the user wants image results
+    rather than web results.
+
+    \sa imageSearchUrl(), providesImageSearch()
+*/
+QString OpenSearchEngine::imageSearchUrlTemplate() const
+{
+    return m_imageSearchUrlTemplate;
+}
+
+void OpenSearchEngine::setImageSearchUrlTemplate(QString imageSearchUrlTemplate)
+{
+    m_imageSearchUrlTemplate = std::move(imageSearchUrlTemplate);
+}
+
+/*!
+    Constructs an image-search URL with a given \a searchTerm.
+
+    \sa imageSearchUrlTemplate(), searchUrl()
+*/
+QUrl OpenSearchEngine::imageSearchUrl(const QString &searchTerm) const
+{
+    return buildUrl(searchTerm, m_imageSearchUrlTemplate,
+                    m_imageSearchMethod, m_imageSearchParameters);
+}
+
+QUrl OpenSearchEngine::buildUrl(const QString &searchTerm,
+                                const QString &templ,
+                                const QString &method,
+                                const Parameters &parameters) const
+{
+    if (templ.isEmpty())
         return QUrl();
 
-    QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, m_suggestionsUrlTemplate).toUtf8());
+    QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, templ).toUtf8());
 
-    if (m_suggestionsMethod != QLatin1String("post")) {
+    if (method != QLatin1String("post")) {
         QUrlQuery query(retVal);
-        Parameters::const_iterator end = m_suggestionsParameters.constEnd();
-        Parameters::const_iterator i = m_suggestionsParameters.constBegin();
+        Parameters::const_iterator end = parameters.constEnd();
+        Parameters::const_iterator i = parameters.constBegin();
         for (; i != end; ++i)
             query.addQueryItem(i->first, parseTemplate(searchTerm, i->second));
         retVal.setQuery(query);
@@ -299,6 +339,21 @@ void OpenSearchEngine::setSuggestionsParameters(const Parameters &suggestionsPar
 }
 
 /*!
+    \property imageSearchParameters
+    \brief additional parameters that will be included in the
+    image-search URL
+*/
+OpenSearchEngine::Parameters OpenSearchEngine::imageSearchParameters() const
+{
+    return m_imageSearchParameters;
+}
+
+void OpenSearchEngine::setImageSearchParameters(const Parameters &imageSearchParameters)
+{
+    m_imageSearchParameters = imageSearchParameters;
+}
+
+/*!
     \property searchMethod
     \brief HTTP request method that will be used to perform search requests
 */
@@ -332,6 +387,24 @@ void OpenSearchEngine::setSuggestionsMethod(const QString &method)
         return;
 
     m_suggestionsMethod = requestMethod;
+}
+
+/*!
+    \property imageSearchMethod
+    \brief HTTP request method used for image-search requests
+*/
+QString OpenSearchEngine::imageSearchMethod() const
+{
+    return m_imageSearchMethod;
+}
+
+void OpenSearchEngine::setImageSearchMethod(const QString &method)
+{
+    QString requestMethod = method.toLower();
+    if (!m_requestMethods.contains(requestMethod))
+        return;
+
+    m_imageSearchMethod = requestMethod;
 }
 
 /*!
@@ -437,8 +510,10 @@ bool OpenSearchEngine::operator==(const OpenSearchEngine &other) const
             && m_imageUrl == other.m_imageUrl
             && m_searchUrlTemplate == other.m_searchUrlTemplate
             && m_suggestionsUrlTemplate == other.m_suggestionsUrlTemplate
+            && m_imageSearchUrlTemplate == other.m_imageSearchUrlTemplate
             && m_searchParameters == other.m_searchParameters
-            && m_suggestionsParameters == other.m_suggestionsParameters);
+            && m_suggestionsParameters == other.m_suggestionsParameters
+            && m_imageSearchParameters == other.m_imageSearchParameters);
 }
 
 bool OpenSearchEngine::operator<(const OpenSearchEngine &other) const

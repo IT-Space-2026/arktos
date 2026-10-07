@@ -132,12 +132,20 @@ OpenSearchEngine *OpenSearchReader::read()
             QString type = attributes().value(QLatin1String("type")).toString();
             QString url = attributes().value(QLatin1String("template")).toString();
             QString method = attributes().value(QLatin1String("method")).toString();
+            // SRCH04: Arora extension — a <Url purpose="image"> element
+            // carries the engine's image-search endpoint.
+            QString purpose = attributes().value(QLatin1String("purpose")).toString();
+
+            if (purpose == QLatin1String("image")
+                && !engine->imageSearchUrlTemplate().isEmpty())
+                continue;
 
             if (type == QLatin1String("application/x-suggestions+json")
                 && !engine->suggestionsUrlTemplate().isEmpty())
                 continue;
 
-            if ((type.isEmpty()
+            if (purpose.isEmpty()
+                && (type.isEmpty()
                 || type == QLatin1String("text/html")
                 || type == QLatin1String("application/xhtml+xml"))
                 && !engine->searchUrlTemplate().isEmpty())
@@ -168,7 +176,11 @@ OpenSearchEngine *OpenSearchReader::read()
                     readNext();
             }
 
-            if (type == QLatin1String("application/x-suggestions+json")) {
+            if (purpose == QLatin1String("image")) {
+                engine->setImageSearchUrlTemplate(url);
+                engine->setImageSearchParameters(parameters);
+                engine->setImageSearchMethod(method);
+            } else if (type == QLatin1String("application/x-suggestions+json")) {
                 engine->setSuggestionsUrlTemplate(url);
                 engine->setSuggestionsParameters(parameters);
                 engine->setSuggestionsMethod(method);
@@ -182,10 +194,14 @@ OpenSearchEngine *OpenSearchReader::read()
              engine->setImageUrl(readElementText());
         }
 
+        // SRCH04: the image-search template joins the early-exit
+        // check — a purpose="image" <Url> placed after the favicon
+        // must still be reached.
         if (!engine->name().isEmpty()
             && !engine->description().isEmpty()
             && !engine->suggestionsUrlTemplate().isEmpty()
             && !engine->searchUrlTemplate().isEmpty()
+            && !engine->imageSearchUrlTemplate().isEmpty()
             && !engine->imageUrl().isEmpty())
             break;
     }

@@ -35,6 +35,7 @@ public slots:
 private slots:
     void write_data();
     void write();
+    void writeImageSearch();
 };
 
 // This will be called before the first test function is executed.
@@ -122,6 +123,33 @@ void tst_OpenSearchWriter::write()
     QFile expected(fileName);
     QVERIFY(expected.open(QIODevice::ReadOnly));
 
+    QCOMPARE(output, expected.readAll());
+}
+
+// SRCH04: an engine carrying an image-search endpoint writes a
+// <Url purpose="image"> element — own method, template and
+// p:Parameter list — after the suggestions Url and before <Image>.
+void tst_OpenSearchWriter::writeImageSearch()
+{
+    OpenSearchEngine engine;
+    engine.setName(QStringLiteral("Img"));
+    engine.setDescription(QStringLiteral("image capable"));
+    engine.setSearchUrlTemplate(
+        QStringLiteral("http://img.test/search?q={searchTerms}"));
+    engine.setImageSearchUrlTemplate(QStringLiteral("http://img.test/images"));
+    engine.setImageSearchParameters(
+        OpenSearchEngine::Parameters()
+            << OpenSearchEngine::Parameter(QStringLiteral("url"),
+                                           QStringLiteral("{searchTerms}")));
+    engine.setImageUrl(QStringLiteral("http://img.test/favicon.ico"));
+
+    QByteArray output;
+    QBuffer buffer(&output);
+    OpenSearchWriter writer;
+    QVERIFY(writer.write(&buffer, &engine));
+
+    QFile expected(QStringLiteral(":/testfile4.xml"));
+    QVERIFY(expected.open(QIODevice::ReadOnly));
     QCOMPARE(output, expected.readAll());
 }
 

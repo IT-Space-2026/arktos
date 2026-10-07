@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Img</ShortName>
+    <Description>image capable</Description>
+    <Url method="get" type="text/html" template="http://img.test/search?q={searchTerms}"/>
+    <Url method="get" type="text/html" purpose="image" template="http://img.test/images" xmlns:p="http://a9.com/-/spec/opensearch/extensions/parameters/1.0/">
+        <p:Parameter name="url" value="{searchTerms}"/>
+    </Url>
+    <Image>http://img.test/favicon.ico</Image>
+</OpenSearchDescription>

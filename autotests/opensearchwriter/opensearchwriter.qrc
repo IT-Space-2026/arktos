@@ -3,5 +3,6 @@
     <file>testfile1.xml</file>
     <file>testfile2.xml</file>
     <file>testfile3.xml</file>
+    <file>testfile4.xml</file>
 </qresource>
 </RCC>

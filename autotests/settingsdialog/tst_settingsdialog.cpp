@@ -48,6 +48,7 @@ private slots:
     void constructDefaults();
     void saveAndReload();
     void searchTab();
+    void searchContextControls();
     void suggestionsCheckbox();
     void sidebarNavigation();
     void subDialogButtons();
@@ -193,6 +194,114 @@ void tst_SettingsDialog::searchTab()
         QCOMPARE(dialog.defaultEngineCombo->currentText(), other);
     }
     manager->setCurrentEngineName(original);
+}
+
+// SRCH04: the Search page's context pickers — private window and
+// image search — mirror the OpenSearchManager assignments, lead with
+// "Same as Default", and the image list only offers engines that
+// advertise an image-search endpoint.  The grouped checkboxes persist
+// through save/reload.
+void tst_SettingsDialog::searchContextControls()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    manager->restoreDefaults();
+
+    const QStringList engines = manager->allEnginesNames();
+    QString imageCapable;
+    bool hasImageless = false;
+    for (const QString &name : engines) {
+        if (manager->engine(name)->providesImageSearch()
+            && imageCapable.isEmpty())
+            imageCapable = name;
+        if (!manager->engine(name)->providesImageSearch())
+            hasImageless = true;
+    }
+    QVERIFY(!imageCapable.isEmpty());
+    QVERIFY(hasImageless);
+
+    // Combos: private lists every engine; image lists only capable
+    // ones; both start on "Same as Default" when nothing is set.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.privateEngineCombo->itemText(0),
+                 QStringLiteral("Same as Default"));
+        QCOMPARE(dialog.privateEngineCombo->count(), engines.count() + 1);
+        QVERIFY(dialog.imageEngineCombo->count() < engines.count() + 1);
+        for (int i = 1; i < dialog.imageEngineCombo->count(); ++i) {
+            const QString name = dialog.imageEngineCombo->itemData(i).toString();
+            QVERIFY(manager->engine(name)->providesImageSearch());
+        }
+
+        dialog.privateEngineCombo->setCurrentIndex(
+            dialog.privateEngineCombo->findData(imageCapable));
+        dialog.imageEngineCombo->setCurrentIndex(
+            dialog.imageEngineCombo->findData(imageCapable));
+
+        // Flip the grouped toggles to non-default states.
+        dialog.searchButtonRadio->setChecked(true);
+        QVERIFY(!dialog.showSearchBox->isChecked());
+        dialog.showEngineNicknameCheck->setChecked(false);
+        dialog.alwaysNewTabCheck->setChecked(true);
+        dialog.keepFieldEngineCheck->setChecked(false);
+        dialog.keepTypedTextCheck->setChecked(false);
+        dialog.selectionSearchBackgroundCheck->setChecked(true);
+        dialog.suggestInAddressFieldCheck->setChecked(false);
+        dialog.suggestOnlyWithKeywordCheck->setChecked(true);
+        dialog.accept();
+    }
+
+    QCOMPARE(manager->privateEngineName(), imageCapable);
+    QCOMPARE(manager->imageEngineName(), imageCapable);
+    QCOMPARE(manager->imageSearchEngine(), manager->engine(imageCapable));
+    QVERIFY(!manager->keepFieldEngine());
+    QVERIFY(!manager->suggestionsInAddressField());
+    QVERIFY(manager->suggestionsOnlyWithKeyword());
+
+    QSettings settings;
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSearchBox")).toBool(),
+             false);
+    QCOMPARE(settings.value(QLatin1String("toolbarsearch/alwaysNewTab")).toBool(),
+             true);
+    QCOMPARE(settings.value(QLatin1String("toolbarsearch/keepTypedText")).toBool(),
+             false);
+    QCOMPARE(settings.value(
+                 QLatin1String("urlloading/selectionSearchInBackground"))
+                 .toBool(),
+             true);
+
+    // A reopened dialog reflects the stored state everywhere.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.privateEngineCombo->currentData().toString(),
+                 imageCapable);
+        QCOMPARE(dialog.imageEngineCombo->currentData().toString(),
+                 imageCapable);
+        QVERIFY(dialog.searchButtonRadio->isChecked());
+        QVERIFY(!dialog.showEngineNicknameCheck->isChecked());
+        QVERIFY(dialog.alwaysNewTabCheck->isChecked());
+        QVERIFY(!dialog.keepFieldEngineCheck->isChecked());
+        QVERIFY(dialog.selectionSearchBackgroundCheck->isChecked());
+        QVERIFY(!dialog.suggestInAddressFieldCheck->isChecked());
+        QVERIFY(dialog.suggestOnlyWithKeywordCheck->isChecked());
+
+        // Back to defaults for the rest of the suite.
+        dialog.searchFieldRadio->setChecked(true);
+        dialog.privateEngineCombo->setCurrentIndex(0);
+        dialog.imageEngineCombo->setCurrentIndex(0);
+        dialog.showEngineNicknameCheck->setChecked(true);
+        dialog.alwaysNewTabCheck->setChecked(false);
+        dialog.keepFieldEngineCheck->setChecked(true);
+        dialog.keepTypedTextCheck->setChecked(true);
+        dialog.selectionSearchBackgroundCheck->setChecked(false);
+        dialog.suggestInAddressFieldCheck->setChecked(true);
+        dialog.suggestOnlyWithKeywordCheck->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(manager->privateEngineName(), QString());
+    QCOMPARE(manager->imageEngineName(), QString());
+    QVERIFY(manager->keepFieldEngine());
+    QVERIFY(manager->suggestionsInAddressField());
+    QVERIFY(!manager->suggestionsOnlyWithKeyword());
 }
 
 // SEC11/SRCH02: the Search tab's Search Suggestions checkbox is bound

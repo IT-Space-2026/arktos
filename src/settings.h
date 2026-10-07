@@ -143,6 +143,9 @@ private:
     QString m_suggestionsEngine;
     QHash<QString, bool> m_pendingSuggestions;
     bool m_engineComboDirty = false;
+    // SRCH04: same unsaved-pick guard for the context combos.
+    bool m_privateEngineComboDirty = false;
+    bool m_imageEngineComboDirty = false;
 };
 
 #endif // SETTINGS_H

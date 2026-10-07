@@ -45,6 +45,7 @@ private slots:
     void generateEngineFileName();
     void restoreDefaults();
     void keywords();
+    void contextEngines();
     void convertKeywordSearchToUrl();
     void convertKeywordSearchToUrl_data();
 };
@@ -337,6 +338,106 @@ void tst_OpenSearchManager::keywords()
         manager.setKeywordsForEngine(engine1, QStringList());
         manager.setKeywordsForEngine(engine2, QStringList());
     }
+}
+
+// SRCH04: the per-context engine picks — private, image, search
+// field — resolve with their documented fallbacks, persist through
+// save()/load(), and are cleared when the engine they point at is
+// removed.
+void tst_OpenSearchManager::contextEngines()
+{
+    SubOpenSearchManager manager;
+    manager.restoreDefaults();
+
+    QStringList names = manager.allEnginesNames();
+    names.sort();
+    QVERIFY(names.count() >= 3);
+
+    // An engine that offers image search (the bundled DuckDuckGo,
+    // Google and Yahoo! do) and one that does not.
+    QString imageName, plainName;
+    for (const QString &name : names) {
+        OpenSearchEngine *engine = manager.engine(name);
+        if (engine->providesImageSearch() && imageName.isEmpty())
+            imageName = name;
+        if (!engine->providesImageSearch() && plainName.isEmpty())
+            plainName = name;
+    }
+    QVERIFY(!imageName.isEmpty());
+    QVERIFY(!plainName.isEmpty());
+    const QString other = names.first() == imageName
+        ? names.at(1) : names.first();
+
+    manager.setCurrentEngineName(plainName);
+
+    // Private context: unset falls back to the default engine;
+    // unknown names are rejected.
+    QCOMPARE(manager.privateEngineName(), QString());
+    QCOMPARE(manager.engineForContext(true), manager.engine(plainName));
+    QCOMPARE(manager.engineForContext(false), manager.engine(plainName));
+    manager.setPrivateEngineName(imageName);
+    QCOMPARE(manager.engineForContext(true), manager.engine(imageName));
+    QCOMPARE(manager.engineForContext(false), manager.engine(plainName));
+    manager.setPrivateEngineName(QLatin1String("does-not-exist"));
+    QCOMPARE(manager.privateEngineName(), imageName);
+
+    // Field engine: normal contexts honor the pick; private contexts
+    // resolve to the private engine instead.
+    QCOMPARE(manager.fieldEngineName(), QString());
+    QCOMPARE(manager.searchFieldEngine(false), manager.engine(plainName));
+    manager.setFieldEngineName(other);
+    QCOMPARE(manager.searchFieldEngine(false), manager.engine(other));
+    QCOMPARE(manager.searchFieldEngine(true), manager.engine(imageName));
+
+    // "Keep last selected" off drops the stored field pick.
+    QVERIFY(manager.keepFieldEngine());
+    manager.setKeepFieldEngine(false);
+    QCOMPARE(manager.fieldEngineName(), QString());
+    QCOMPARE(manager.searchFieldEngine(false), manager.engine(plainName));
+
+    // Image engine: the default engine lacks an image endpoint here,
+    // so an unset pick resolves to nothing; once configured the
+    // capable engine answers.
+    QVERIFY(!manager.imageSearchEngine());
+    manager.setImageEngineName(imageName);
+    QCOMPARE(manager.imageSearchEngine(), manager.engine(imageName));
+    // An image-incapable pick cannot serve even when stored — the
+    // default engine (plainName, itself incapable) gives no fallback.
+    manager.setImageEngineName(plainName);
+    QVERIFY(!manager.imageSearchEngine());
+    manager.setImageEngineName(imageName);
+
+    // Suggestion-context toggles: defaults on/on/off.
+    QVERIFY(manager.suggestionsInAddressField());
+    QVERIFY(manager.suggestionsInSearchField());
+    QVERIFY(!manager.suggestionsOnlyWithKeyword());
+    manager.setSuggestionsInAddressField(false);
+    manager.setSuggestionsOnlyWithKeyword(true);
+
+    // Persistence: everything above survives a save/load cycle.
+    manager.save();
+    {
+        SubOpenSearchManager reloaded;
+        QCOMPARE(reloaded.privateEngineName(), imageName);
+        QCOMPARE(reloaded.imageEngineName(), imageName);
+        QVERIFY(!reloaded.suggestionsInAddressField());
+        QVERIFY(reloaded.suggestionsInSearchField());
+        QVERIFY(reloaded.suggestionsOnlyWithKeyword());
+        // keepFieldEngine was left off — the stored field pick is gone.
+        QVERIFY(!reloaded.keepFieldEngine());
+        QCOMPARE(reloaded.fieldEngineName(), QString());
+    }
+
+    // Removing the engine clears the configured picks.
+    manager.removeEngine(imageName);
+    QCOMPARE(manager.privateEngineName(), QString());
+    QCOMPARE(manager.imageEngineName(), QString());
+
+    // Restore defaults so later tests see a clean slate.
+    manager.setKeepFieldEngine(true);
+    manager.setSuggestionsInAddressField(true);
+    manager.setSuggestionsOnlyWithKeyword(false);
+    manager.save();
 }
 
 void tst_OpenSearchManager::convertKeywordSearchToUrl_data()

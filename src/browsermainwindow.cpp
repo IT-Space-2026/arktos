@@ -1138,16 +1138,19 @@ void BrowserMainWindow::setupToolBar()
 }
 
 // SRCH03: the dedicated search box is opt-in — the omnibox location
-// bar (SRCH01) covers the same job, so it defaults to hidden.  The
-// widget stays constructed either way: the splitter layout, the
-// search signal wiring, and setWebView() tracking are all unchanged
-// and toggling the preference never re-creates it.
+// bar (SRCH01) covers the same job.  SRCH04 repurposes the setting
+// into Vivaldi's two display modes: showSearchBox on gives the full
+// text field, off collapses it to just the engine button instead of
+// hiding it outright.  The widget stays constructed either way: the
+// splitter layout, the search signal wiring, and setWebView()
+// tracking are all unchanged.
 void BrowserMainWindow::applySearchBoxVisibility()
 {
     QSettings settings;
-    const bool show = settings.value(
+    const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
-    m_toolbarSearch->setVisible(show);
+    m_toolbarSearch->setButtonMode(!field);
+    m_toolbarSearch->setVisible(true);
 }
 
 void BrowserMainWindow::showBookmarksDialog()
@@ -1534,11 +1537,11 @@ void BrowserMainWindow::goHome()
 
 void BrowserMainWindow::webSearch()
 {
-    if (m_toolbarSearch->isHidden()) {
-        // SRCH03: with the dedicated box hidden the location bar is the
-        // search field (omnibox), so the Ctrl+K-class shortcut focuses
-        // it instead of an invisible widget.
-        selectLineEdit();
+    // SRCH04: in button mode there is no field to focus — the
+    // shortcut opens the engines menu, which leads with a "Search..."
+    // prompt.
+    if (m_toolbarSearch->isButtonMode()) {
+        m_toolbarSearch->showEnginesMenu();
         return;
     }
     m_toolbarSearch->selectAll();

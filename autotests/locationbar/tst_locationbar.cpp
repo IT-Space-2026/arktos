@@ -389,6 +389,34 @@ void tst_LocationBar::omniboxSuggestions()
     QTest::qWait(500);
     QCOMPARE(requestUrls.count(), requestsSeen);
 
+    // SRCH04: the address-field context switch gates on top of the
+    // per-engine opt-in — with it off, an opted-in engine still sees
+    // nothing.
+    manager->setSuggestionsEnabledForEngine(engine->name(), true);
+    manager->setSuggestionsInAddressField(false);
+    QTest::keyClicks(&bar, QLatin1String("x"));
+    QTest::qWait(500);
+    QCOMPARE(requestUrls.count(), requestsSeen);
+    manager->setSuggestionsInAddressField(true);
+
+    // Nickname-only mode: plain text stays silent while input that
+    // leads with the engine's keyword routes to that engine.  The bar
+    // accumulates every keyClicks run, so it must be cleared for the
+    // keyword to actually sit at the start of the input.
+    manager->setSuggestionsOnlyWithKeyword(true);
+    bar.clear();
+    QTest::keyClicks(&bar, QLatin1String("plain"));
+    QTest::qWait(500);
+    QCOMPARE(requestUrls.count(), requestsSeen);
+    manager->setEngineForKeyword(QLatin1String("omni"), engine);
+    bar.clear();
+    QTest::keyClicks(&bar, QLatin1String("omni h"));
+    QTRY_VERIFY_WITH_TIMEOUT(requestUrls.count() > requestsSeen, 3000);
+    QVERIFY(requestUrls.last().contains(fixturePath));
+    manager->setEngineForKeyword(QLatin1String("omni"), nullptr);
+    manager->setSuggestionsOnlyWithKeyword(false);
+    manager->setSuggestionsEnabledForEngine(engine->name(), false);
+
     disconnect(requestConn);
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());

@@ -67,7 +67,12 @@ private:
     QCompleter *m_completer;
     QTimer *m_timer;
     QString m_pendingText;
+    // SRCH04: m_engine is the context-resolved engine the completion
+    // rows suggest for; m_boundEngine is the engine whose reply hook
+    // is currently connected — it differs when the text routes to a
+    // keyword engine.
     QPointer<OpenSearchEngine> m_engine;
+    QPointer<OpenSearchEngine> m_boundEngine;
 };
 
 #endif // OMNIBOXSUGGESTIONS_H
