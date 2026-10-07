@@ -34,6 +34,7 @@ SUBDIRS  = \
     searchlineedit \
     settingsdialog \
     singleapplication \
+    sitepanel \
     tabbar \
     tabwidget \
     toolbarsearch \

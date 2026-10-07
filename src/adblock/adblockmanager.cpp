@@ -40,6 +40,7 @@
 #include "networkaccessmanager.h"
 
 #include <qhash.h>
+#include <qregularexpression.h>
 #include <qstringlist.h>
 #include <qsettings.h>
 #include <qurlquery.h>
@@ -301,6 +302,55 @@ void AdBlockManager::load()
         connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
         m_subscriptions.append(adBlockSubscription);
     }
+}
+
+QString AdBlockManager::siteWhitelistFilter(const QString &host)
+{
+    // IDN hosts ride the filter in punycode — that is the spelling the
+    // matcher sees in the encoded request url.
+    const QByteArray ace = QUrl::toAce(host);
+    const QString encoded = ace.isEmpty()
+        ? host.toLower() : QString::fromLatin1(ace).toLower();
+    // Anything outside a strict hostname shape (slashes, whitespace,
+    // separators, IPv6 colons) would corrupt the ABP anchor syntax.
+    static const QRegularExpression validHost(
+        QStringLiteral("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"));
+    if (!validHost.match(encoded).hasMatch())
+        return QString();
+    return QLatin1String("@@||") + encoded + QLatin1String("^$document");
+}
+
+bool AdBlockManager::isSiteWhitelisted(const QString &host)
+{
+    const QString filter = siteWhitelistFilter(host);
+    if (filter.isEmpty())
+        return false;
+    const QList<AdBlockRule> rules = customRules()->allRules();
+    for (const AdBlockRule &rule : rules) {
+        if (rule.isEnabled() && rule.filter() == filter)
+            return true;
+    }
+    return false;
+}
+
+void AdBlockManager::setSiteWhitelisted(const QString &host, bool whitelisted)
+{
+    const QString filter = siteWhitelistFilter(host);
+    if (filter.isEmpty())
+        return;
+    AdBlockSubscription *custom = customRules();
+    const QList<AdBlockRule> rules = custom->allRules();
+    bool found = false;
+    // Walk backwards so removeRule keeps the earlier offsets valid.
+    for (int i = rules.count() - 1; i >= 0; --i) {
+        if (rules.at(i).filter() != filter)
+            continue;
+        found = true;
+        if (!whitelisted)
+            custom->removeRule(i);
+    }
+    if (whitelisted && !found)
+        custom->addRule(AdBlockRule(filter));
 }
 
 AdBlockDialog *AdBlockManager::showDialog()

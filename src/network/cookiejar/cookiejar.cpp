@@ -412,6 +412,102 @@ void CookieJar::setCookies(const QList<QNetworkCookie> &cookies)
     emit cookiesChanged();
 }
 
+bool CookieJar::ruleForHost(const QString &host, CookieRule *rule) const
+{
+    // Same precedence the IO-thread filter applies: block first, then
+    // allow, then allow-for-session.
+    if (isOnDomainList(m_exceptions_block, host)) {
+        if (rule)
+            *rule = Block;
+        return true;
+    }
+    if (isOnDomainList(m_exceptions_allow, host)) {
+        if (rule)
+            *rule = Allow;
+        return true;
+    }
+    if (isOnDomainList(m_exceptions_allowForSession, host)) {
+        if (rule)
+            *rule = AllowForSession;
+        return true;
+    }
+    return false;
+}
+
+// Entries targeting exactly this host — "host" and its ".host" twin.
+// Broader rules ("example.com" covering "www.example.com") are left
+// alone: dropping them from here would unblock the whole domain.
+static QStringList withoutHostEntries(QStringList list, const QString &host)
+{
+    const QString dotted = QLatin1Char('.') + host;
+    list.removeAll(host);
+    list.removeAll(dotted);
+    return list;
+}
+
+void CookieJar::clearRuleForHost(const QString &host)
+{
+    if (host.isEmpty())
+        return;
+    setBlockedCookies(withoutHostEntries(m_exceptions_block, host));
+    setAllowedCookies(withoutHostEntries(m_exceptions_allow, host));
+    setAllowForSessionCookies(
+        withoutHostEntries(m_exceptions_allowForSession, host));
+}
+
+void CookieJar::setRuleForHost(const QString &host, CookieRule rule)
+{
+    if (host.isEmpty())
+        return;
+    clearRuleForHost(host);
+    switch (rule) {
+    case Block:
+        setBlockedCookies(withoutHostEntries(m_exceptions_block, host)
+                          << host);
+        break;
+    case Allow:
+        setAllowedCookies(withoutHostEntries(m_exceptions_allow, host)
+                          << host);
+        break;
+    case AllowForSession:
+        setAllowForSessionCookies(
+            withoutHostEntries(m_exceptions_allowForSession, host)
+            << host);
+        break;
+    }
+}
+
+void CookieJar::removeCookiesForHost(const QString &host)
+{
+    if (host.isEmpty())
+        return;
+    QList<QNetworkCookie> keep;
+    bool removed = false;
+    for (const QNetworkCookie &cookie : m_cookies) {
+        QString domain = cookie.domain();
+        if (domain.startsWith(QLatin1Char('.')))
+            domain = domain.mid(1);
+        // Scoped to the host or a subdomain the site controls...
+        const bool underHost = domain == host
+            || domain.endsWith(QLatin1Char('.') + host);
+        // ...or to a parent domain the site still receives.
+        const bool coversHost = host == domain
+            || host.endsWith(QLatin1Char('.') + domain);
+        if (underHost || coversHost) {
+            if (m_store)
+                m_store->deleteCookie(cookie);
+            removed = true;
+        } else {
+            keep.append(cookie);
+        }
+    }
+    if (removed) {
+        m_cookies = keep;
+        m_saveTimer->changeOccurred();
+        emit cookiesChanged();
+    }
+}
+
 bool CookieJar::isOnDomainList(const QStringList &rules, const QString &domain)
 {
     // Either the rule matches the domain exactly

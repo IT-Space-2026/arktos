@@ -23,6 +23,7 @@
 #include "locationbarsiteicon.h"
 #include "privacyindicator.h"
 #include "searchlineedit.h"
+#include "siteshield.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -38,6 +39,7 @@ LocationBar::LocationBar(QWidget *parent)
     : LineEdit(parent)
     , m_webView(nullptr)
     , m_siteIcon(nullptr)
+    , m_shield(nullptr)
     , m_privacyIndicator(nullptr)
 {
     // Urls are always LeftToRight
@@ -52,6 +54,11 @@ LocationBar::LocationBar(QWidget *parent)
     // site icon on the left
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
+
+    // SHLD01: shield indicator opens the per-site privacy panel —
+    // leftmost of the right-side cluster, next to the page content.
+    m_shield = new SiteShieldButton(this);
+    addWidget(m_shield, RightSide);
 
     // privacy indicator at rightmost position
     m_privacyIndicator = new PrivacyIndicator(this);
@@ -74,6 +81,7 @@ void LocationBar::setWebView(WebView *webView)
     Q_ASSERT(webView);
     m_webView = webView;
     m_siteIcon->setWebView(webView);
+    m_shield->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
             this, &LocationBar::webViewUrlChanged);

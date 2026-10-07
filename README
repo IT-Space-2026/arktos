@@ -79,6 +79,13 @@ fingerprinting surface — the Tor window is the answer for hiding
 traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
 fingerprint resistance.
 
+The shield button in the location bar opens a per-site privacy panel:
+the page's security state, a per-site cookie exception (allow, block
+or session-only) with the count of stored cookies, a content-blocking
+toggle that whitelists the site (the icon greys while it is exempt),
+the remembered permission grants for the origin with revoke controls,
+and a clear-site-data action.
+
 Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
 packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
 QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the

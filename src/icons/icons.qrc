@@ -224,6 +224,7 @@
     <file>arora-tabler-dark/icons/zoom-out.svg</file>
     <file>arora-legacy/index.theme</file>
     <file>arora-legacy/LICENSE</file>
+    <file>arora-legacy/icons/security-high.svg</file>
     <file alias="arora-legacy/icons/tab-new.png">../data/graphics/addtab.png</file>
     <file alias="arora-legacy/icons/window-close.png">../data/graphics/closetab.png</file>
     <file alias="arora-legacy/icons/system-run.png">../data/128x128/run.png</file>

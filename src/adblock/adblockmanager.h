@@ -64,6 +64,20 @@ public:
     AdBlockPage *page();
     AdBlockSubscription *customRules();
 
+    // SHLD01: per-site content-blocking switch, surfaced by the
+    // location-bar shield panel.  Whitelisting a site writes the
+    // standard ABP "@@||host^$document" exception into the user's
+    // custom-rules subscription — the matcher's document-exception
+    // path then allows every request the page makes and AdBlockPage
+    // skips its cosmetic injection.  Persists through the normal
+    // subscription save path and works under both the native and the
+    // optional Rust engine.
+    // siteWhitelistFilter returns an empty string for hosts that can
+    // not be expressed safely inside an ABP domain anchor.
+    static QString siteWhitelistFilter(const QString &host);
+    bool isSiteWhitelisted(const QString &host);
+    void setSiteWhitelisted(const QString &host, bool whitelisted);
+
     // Installs the AdBlockRequestInterceptor on the profile; WebEngine
     // routes all page loads through it instead of the application QNAM.
     void installOnProfile(QWebEngineProfile *profile);

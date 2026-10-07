@@ -28,6 +28,7 @@
 class WebView;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
+class SiteShieldButton;
 class LocationBar : public LineEdit
 {
     Q_OBJECT
@@ -52,6 +53,7 @@ private:
     QPointer<WebView> m_webView;
 
     LocationBarSiteIcon *m_siteIcon;
+    SiteShieldButton *m_shield;
     PrivacyIndicator *m_privacyIndicator;
 };
 

@@ -163,6 +163,24 @@ public:
     bool blockThirdPartyCookies() const;
     void setBlockThirdPartyCookies(bool blockThirdPartyCookies);
 
+    // SHLD01: per-site helpers for the location-bar shield panel.
+    // ruleForHost reports the EFFECTIVE exception — a parent-domain
+    // entry covers subdomains, matching the cookie filter's semantics.
+    // Returns false when no list matches (the global accept policy
+    // applies).
+    bool ruleForHost(const QString &host, CookieRule *rule) const;
+    // Moves the host onto the chosen exception list: exact-host
+    // entries are dropped from the other two lists first.  A broader
+    // parent-domain entry in another list still wins — those are only
+    // editable in the cookie exceptions dialog.
+    void setRuleForHost(const QString &host, CookieRule rule);
+    // Removes exact-host entries (host and .host) from every list.
+    void clearRuleForHost(const QString &host);
+    // Deletes stored cookies scoped to the host, a parent domain of
+    // the host, or a subdomain of it — the shield panel's per-site
+    // "clear data" path.
+    void removeCookiesForHost(const QString &host);
+
 public slots:
     void clear();
     void loadSettings();

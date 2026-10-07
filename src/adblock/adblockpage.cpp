@@ -399,13 +399,19 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
 
     // Document-level cosmetic exceptions: @@||site^$elemhide disables
     // element hiding on the page entirely, @@||site^$generichide only
-    // suppresses the generic (domain-less) rules.
+    // suppresses the generic (domain-less) rules.  SHLD01: a
+    // @@||site^$document exception is the shield panel's per-site
+    // whitelist — per uBO/ABP semantics it turns blocking off for the
+    // page completely, cosmetic filtering included.
     bool elemHide = false;
     bool genericHide = false;
     for (const AdBlockSubscription *subscription : subscriptions) {
         if (!subscription->isEnabled())
             continue;
         for (const AdBlockRule *rule : subscription->networkExceptionRules()) {
+            if (rule->isDocumentException()
+                && rule->networkMatch(documentUrl, host, 0))
+                return;
             if (rule->isElemHide()
                 && rule->networkMatch(documentUrl, host, 0))
                 elemHide = true;
