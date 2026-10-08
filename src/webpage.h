@@ -128,6 +128,11 @@ public:
     // every accepted main-frame navigation and from loadSettings().
     void applyJavaScriptPolicy(const QUrl &url);
 
+    // Bisection/testing aid: drops the armed per-page DocumentReady
+    // scripts and stops re-arming them; re-enabling re-arms for the
+    // current url.
+    void setInjectedScriptsEnabled(bool enabled);
+
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
@@ -137,6 +142,13 @@ private slots:
 
 private:
     void init();
+    // SEC16: arms the per-page DocumentReady user scripts (adblock
+    // cosmetic pass, autofill fill/capture) for the document about to
+    // commit at url.  Fed pre-commit from acceptNavigationRequest and
+    // again at urlChanged; the same-url dedup keeps the injected
+    // autofill token consistent with the bridge when both fire for
+    // one load.
+    void schedulePageScripts(const QUrl &url);
     void showErrorPage(const QUrl &url, const QString &errorString,
                        bool httpsUpgradeFailed = false);
     void confirmAndOpenExternalUrl(const QUrl &url);
@@ -158,6 +170,12 @@ protected:
     bool m_certErrorPending;
     bool m_javaScriptBlocked;
     QString m_javaScriptBlockedHost;
+    QUrl m_scheduledScriptUrl;
+    bool m_injectedScriptsEnabled = true;
+    // SEC16: set between loadStarted and the terminal loadingChanged;
+    // gates the urlChanged re-arm so same-document navigations don't
+    // rotate the injected autofill token.
+    bool m_documentLoadPending = false;
 };
 
 #endif // WEBPAGE_H

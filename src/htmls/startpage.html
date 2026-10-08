@@ -63,10 +63,20 @@
         function init()
         {
             document.forms[0].lineEdit.select();
-            if (typeof QWebChannel == 'undefined' || !window.qt
-                || !qt.webChannelTransport)
-                return;
-            new QWebChannel(qt.webChannelTransport, function (channel) {
+            // CHAN01: share the page's one channel client via the
+            // bootstrap WebPage arms at DocumentCreation — a second
+            // client would steal qt.webChannelTransport's single
+            // onmessage slot from in-flight calls.
+            var connect = window.__aroraChannel;
+            if (!connect) {
+                if (typeof QWebChannel == 'undefined' || !window.qt
+                    || !qt.webChannelTransport)
+                    return;
+                connect = function (ready) {
+                    new QWebChannel(qt.webChannelTransport, ready);
+                };
+            }
+            connect(function (channel) {
                 arora = channel.objects.arora;
                 update();
             });

@@ -69,6 +69,7 @@ private slots:
     void webChannelForgedAutofillReport();
     void webChannelAddSearchProviderConsent();
     void webChannelAutofillCapture();
+    void webChannelAutofillIsolation();
     void userAgent();
     void rateLimitInterstitialUrl_data();
     void rateLimitInterstitialUrl();
@@ -150,6 +151,10 @@ QVariant tst_WebPage::evalSync(QWebEnginePage *page, const QString &js)
 class SubWebPage : public WebPage
 {
 public:
+    SubWebPage(QObject *parent = nullptr) : WebPage(parent) {}
+    SubWebPage(QWebEngineProfile *profile, QObject *parent = nullptr)
+        : WebPage(profile, parent) {}
+
     void call_aboutToLoadUrl(QUrl const &url)
         { emit SubWebPage::aboutToLoadUrl(url); }
 
@@ -158,6 +163,25 @@ public:
 
     QWebEnginePage *call_createWindow(QWebEnginePage::WebWindowType type)
         { return SubWebPage::createWindow(type); }
+
+    // CHAN01: collects renderer console messages so tests can assert
+    // on uncaught page errors (e.g. the execCallbacks TypeError).
+    QStringList consoleMessages;
+    void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level,
+            const QString &message, int lineNumber,
+            const QString &sourceId) override
+    {
+        consoleMessages.append(message);
+        WebPage::javaScriptConsoleMessage(level, message, lineNumber,
+                                          sourceId);
+    }
+    int execCallbackErrors() const
+    {
+        int count = 0;
+        for (const QString &message : consoleMessages)
+            count += message.contains(QLatin1String("execCallbacks"));
+        return count;
+    }
 };
 
 // This will be called before the first test function is executed.
@@ -479,13 +503,23 @@ void tst_WebPage::webChannelStartPage()
     QTRY_COMPARE_WITH_TIMEOUT(
         evalSync(&page, QLatin1String("window.__engineType")).toString(),
         QStringLiteral("string"), 15000);
+
+    // CHAN01: the page's own channel client coexists with the armed
+    // autofill bundle — neither may steal the other's transport
+    // messages.
+    QTest::qWait(300);
+    QVERIFY2(page.execCallbackErrors() == 0,
+             qPrintable(page.consoleMessages.join(QLatin1Char('\n'))));
 }
 
 // SEC08: a hostile page can open its own QWebChannel client — the
 // transport is injected into every page and qwebchannel.js is public —
 // and reach aroraAutofill.submitForm directly.  Reports without the
 // per-load token only the injected autofill.js holds must be dropped:
-// no write to the store, not even a save prompt.
+// no write to the store, not even a save prompt.  CHAN01: with the
+// transport demux armed (arora-channel.js) the forged-call exercise
+// also proves two clients coexist on one transport — any misrouted
+// response would surface as an execCallbacks console error.
 void tst_WebPage::webChannelForgedAutofillReport()
 {
     QFile channelFile(QLatin1String(":/qtwebchannel/qwebchannel.js"));
@@ -542,9 +576,9 @@ void tst_WebPage::webChannelForgedAutofillReport()
     QCOMPARE(evalSync(page, QLatin1String("window.__objects")).toString(),
              QStringLiteral("aroraAutofill,external"));
 
-    // Wait until the injected capture hook is armed (the prototype
-    // submit wrapper is installed inside the channel handshake), then
-    // fire one more forged call against the armed bridge.
+    // Wait until the injected capture hook is armed (the DocumentReady
+    // bundle wraps the prototype submit), then fire one more forged
+    // call against the armed bridge.
     QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
         "HTMLFormElement.prototype.submit.toString()"
         ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
@@ -676,8 +710,8 @@ void tst_WebPage::webChannelAutofillCapture()
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
             && loaded.last().at(0).toBool(), 15000);
 
-    // The capture hook installs inside the channel handshake after
-    // loadFinished; the prototype submit wrapper is the marker.
+    // The capture hook arms as a per-page DocumentReady script; the
+    // main-world shim's prototype submit wrapper is the marker.
     QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
         "HTMLFormElement.prototype.submit.toString()"
         ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
@@ -703,6 +737,89 @@ void tst_WebPage::webChannelAutofillCapture()
         found |= (element.first == QLatin1String("user")
                   && element.second == QLatin1String("captureduser"));
     QVERIFY(found);
+
+    autoFill->setForms(baseline);
+}
+
+// CHAN01: qt.webChannelTransport is a single per-frame object with
+// one onmessage slot — the injected autofill client and a page-side
+// QWebChannel client used to fight over it, and responses addressed
+// to one landed in the other's execCallbacks table
+// ("channel.execCallbacks[message.id] is not a function" on every
+// load).  arora-channel.js now demultiplexes the slot across clients,
+// so a live page-side channel plus a submit report must coexist: the
+// report arrives, the page's own channel keeps round-tripping, and
+// the console stays clean.
+void tst_WebPage::webChannelAutofillIsolation()
+{
+    QFile channelFile(QLatin1String(":/qtwebchannel/qwebchannel.js"));
+    QVERIFY2(channelFile.open(QIODevice::ReadOnly),
+             "bundled qwebchannel.js required");
+
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    server.pageBody = QByteArrayLiteral("<html><head><script>")
+        + channelFile.readAll()
+        + QByteArrayLiteral("</script></head><body>"
+        "<form name='login' onsubmit='return false'>"
+        "<input id='u' name='user' type='text'>"
+        "<input id='p' name='pw' type='password'></form>"
+        "<script>"
+        "window.__state='connecting';"
+        "new QWebChannel(qt.webChannelTransport, function (channel) {"
+        "  window.__channel=channel; window.__state='done'; });"
+        "</script></body></html>");
+
+    AutoFillManager *autoFill = AutoFillManager::instance();
+    const QList<AutoFillManager::Form> baseline = autoFill->forms();
+    autoFill->setForms(QList<AutoFillManager::Form>());
+
+    QWebEngineProfile profile(QStringLiteral("tst_webpage_isolation"));
+    QWebEngineView view;
+    SubWebPage *page = new SubWebPage(&profile, &view);
+    view.setPage(page);
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        evalSync(page, QLatin1String("window.__state")).toString(),
+        QStringLiteral("done"), 15000);
+
+    // Wait for the capture hook, then submit and immediately exercise
+    // the page's own channel — the report spins up the shared client
+    // while the page's invoke round-trips in flight, the interleaving
+    // that produced the execCallbacks errors on the shared transport.
+    // (AddSearchProvider on a file: url is refused before prompting;
+    // a void slot still answers a callback, so __pageCall proves the
+    // page's own client is fully functional alongside ours.)
+    QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
+        "HTMLFormElement.prototype.submit.toString()"
+        ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
+    page->runJavaScript(QLatin1String(
+        "window.__pageCall='pending';"
+        "document.getElementById('u').value='isolateduser';"
+        "document.getElementById('p').value='isolatedpw';"
+        "document.forms[0].dispatchEvent("
+        "  new Event('submit', {bubbles:true, cancelable:true}));"
+        "window.__channel.objects.external.AddSearchProvider("
+        "  'file:///etc/passwd', function () {"
+        "    window.__pageCall='done'; });"));
+
+    QVERIFY(answerModal(QMessageBox::Yes));
+    QTRY_VERIFY_WITH_TIMEOUT(autoFill->forms().count() == 1, 5000);
+    QCOMPARE(autoFill->forms().first().url, server.url());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        evalSync(page, QLatin1String("window.__pageCall")).toString(),
+        QStringLiteral("done"), 5000);
+
+    // Let any misrouted responses settle, then assert no client hit a
+    // foreign callback table.
+    QTest::qWait(500);
+    QVERIFY2(page->execCallbackErrors() == 0,
+             qPrintable(page->consoleMessages.join(QLatin1Char('\n'))));
 
     autoFill->setForms(baseline);
 }

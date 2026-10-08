@@ -1,16 +1,29 @@
-// Injected by AutoFillManager::attachToPage() into the main world of
-// every loaded page (WebEngine's runJavaScript replaced WebKit's
-// synchronous evaluateJavaScript, so fill + capture share one script).
-// Fills stored form data, then — when CAPTURE_FLAG is true — reports
-// submitted forms back through the "aroraAutofill" QWebChannel object.
-// FORMS_JSON, CAPTURE_FLAG and REPORT_TOKEN are substituted C++-side.
-// The token lives only in this closure — it authenticates reports to
-// the aroraAutofill bridge, which page script can otherwise reach
-// through the shared channel transport but cannot forge calls on.
+// Armed per navigation by AutoFillManager::scheduleOnPage() as a
+// per-page QWebEngineScript at DocumentReady in the page's main
+// world.  Fills stored form data immediately, and — when CAPTURE_FLAG
+// is true — reports submitted forms back through the "aroraAutofill"
+// QWebChannel object.  FORMS_JSON, CAPTURE_FLAG and REPORT_TOKEN are
+// substituted C++-side; all three stay inside this closure, so page
+// script cannot read the token that authenticates a report (SEC08).
+//
+// The client is opened lazily and shared: qt.webChannelTransport has
+// a single onmessage slot per frame and every `new QWebChannel`
+// replaces it, so a second client steals the first client's in-flight
+// responses — the recurring "execCallbacks[message.id] is not a
+// function" errors (CHAN01) came from an autofill client colliding
+// with page-side channel users such as the start page.  WebPage arms
+// arora-channel.js at DocumentCreation, which owns the transport's
+// dispatch and hands out one shared client via __aroraChannel(); the
+// fallback below keeps the attachToPage path working on pages that
+// never ran the bootstrap.
 (function () {
     var savedForms = FORMS_JSON;
     var capture = CAPTURE_FLAG;
     var reportToken = "REPORT_TOKEN";
+
+    var pendingReports = [];
+    var bridge = null;
+    var connecting = false;
 
     function fillForms() {
         for (var i = 0; i < savedForms.length; ++i) {
@@ -62,13 +75,46 @@
         return (data.hasPassword && data.elements.length) ? data : null;
     }
 
-    function installCapture(bridge) {
+    function flushReports() {
+        while (bridge && pendingReports.length)
+            bridge.submitForm(reportToken, String(location.href),
+                              pendingReports.shift());
+    }
+
+    function connectChannel() {
+        // __aroraChannel (arora-channel.js) serves the one shared
+        // client; it queues this callback if the handshake is still
+        // in flight, so no second client ever competes for the
+        // transport's onmessage slot.
+        if (window.__aroraChannel) {
+            window.__aroraChannel(function (channel) {
+                bridge = channel.objects.aroraAutofill || null;
+                flushReports();
+            });
+            return;
+        }
+        // Fallback for documents where the DocumentCreation bootstrap
+        // was never armed (attachToPage on a bare page).
+        if (!window.qt || !qt.webChannelTransport || !window.QWebChannel)
+            return;
+        connecting = true;
+        new QWebChannel(qt.webChannelTransport, function (channel) {
+            connecting = false;
+            bridge = channel.objects.aroraAutofill || null;
+            flushReports();
+        });
+    }
+
+    function installCapture() {
         var report = function (form) {
             if (!form || form.tagName != 'FORM')
                 return;
             var data = serializeForm(form);
-            if (data)
-                bridge.submitForm(reportToken, String(location.href), data);
+            if (data) {
+                pendingReports.push(data);
+                if (!bridge)
+                    connectChannel();
+            }
         };
         document.addEventListener('submit', function (event) {
             report(event.target);
@@ -83,14 +129,9 @@
     }
 
     function start() {
-        if (capture && window.qt && qt.webChannelTransport) {
-            new QWebChannel(qt.webChannelTransport, function (channel) {
-                var bridge = channel.objects.aroraAutofill;
-                if (bridge)
-                    installCapture(bridge);
-            });
-        }
         fillForms();
+        if (capture)
+            installCapture();
     }
 
     if (window.QWebChannel || !capture) {

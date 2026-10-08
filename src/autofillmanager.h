@@ -98,11 +98,16 @@ public:
 
     void loadSettings();
 
-    // Called from WebView::loadFinished for every completed load.
-    // Installs the submit-capture hook — unless the page lives on an
-    // off-the-record profile — and fills any stored forms matching the
-    // page's url.
+    // Immediate path: inject the bundle into the already-loaded
+    // document through runJavaScript (tests + the audit-bisection
+    // harness).
     void attachToPage(QWebEnginePage *page);
+
+    // SEC16: arms the same bundle as a named per-page QWebEngineScript
+    // at DocumentReady keyed to the navigation's target url — the
+    // injection rides Chromium's own script pipeline instead of
+    // competing with paint-gated subresource scheduling after load.
+    void scheduleOnPage(QWebEnginePage *page, const QUrl &url);
 
     void setForms(const QList<Form> &forms);
     QList<Form> forms() const;
@@ -121,6 +126,8 @@ private:
     static QString autoFillDataFile();
     bool allowedToAutoFill(bool password) const;
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
+    QString scriptForPage(QWebEnginePage *page, const QUrl &url);
+    bool captureEnabledForPage(QWebEnginePage *page) const;
     QString autoFillScript(const QList<Form> &forms, bool capture,
                            const QString &reportToken) const;
     bool promptToSave(const QUrl &url);

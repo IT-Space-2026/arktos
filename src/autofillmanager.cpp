@@ -47,6 +47,8 @@
 #include <quuid.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginescript.h>
+#include <qwebenginescriptcollection.h>
 
 #include <qdebug.h>
 
@@ -55,13 +57,14 @@
 // Qt WebEngine has neither the POST-body interception the Qt4 version
 // used to observe form submits (QtNetwork no longer sees web traffic)
 // nor synchronous DOM access.  Both sides now live in the render
-// process: autofill.js is injected after each successful load, fills
-// stored values, and reports submits through the "aroraAutofill"
-// QWebChannel object.  Known deltas vs the WebKit implementation:
-// forms submitted before the channel handshake completes (a few ms
-// after load) can be missed, submits inside iframes are not captured
-// (the old code only looked at the main frame too), and a submit that
-// navigates immediately may race the channel message delivery.
+// process: autofill.js is armed per navigation as a page user script
+// that runs at DocumentReady, fills stored values, and reports submits
+// through the "aroraAutofill" QWebChannel object.  Known deltas vs the
+// WebKit implementation: forms submitted before the channel handshake
+// completes (a few ms after DOMContentLoaded) can be missed, submits
+// inside iframes are not captured (the old code only looked at the
+// main frame too), and a submit that navigates immediately may race
+// the channel message delivery.
 
 AutoFillBridge::AutoFillBridge(QObject *parent)
     : QObject(parent)
@@ -222,16 +225,22 @@ void AutoFillManager::loadFormData()
     StreamingUtils::readBoundedList(stream, m_forms);
 }
 
-void AutoFillManager::attachToPage(QWebEnginePage *page)
+// Builds the injected bundle for a document at url and re-arms the
+// page's capture bridge to match.  Private browsing is per-profile:
+// pages on the off-the-record profile get the fill pass (parity with
+// the old global private mode) but no submit capture, and their
+// bridge drops reports.
+bool AutoFillManager::captureEnabledForPage(QWebEnginePage *page) const
 {
-    if (!page)
-        return;
+    return page && !page->profile()->isOffTheRecord()
+        && page->findChild<AutoFillBridge *>();
+}
 
-    // Private browsing is per-profile now: pages on the off-the-record
-    // profile get the fill pass (parity with the old global private
-    // mode) but no submit capture, and their bridge drops reports.
-    AutoFillBridge *bridge = page->findChild<AutoFillBridge *>();
-    const bool capture = !page->profile()->isOffTheRecord() && bridge;
+QString AutoFillManager::scriptForPage(QWebEnginePage *page,
+        const QUrl &url)
+{
+    const bool capture = captureEnabledForPage(page);
+    AutoFillBridge *bridge = page ? page->findChild<AutoFillBridge *>() : nullptr;
     // SEC08: a fresh token per load — the injected script passes it
     // back inside its closure, and the bridge rejects reports without
     // it so page script cannot mint submits of its own.
@@ -239,10 +248,50 @@ void AutoFillManager::attachToPage(QWebEnginePage *page)
             ? QUuid::createUuid().toString(QUuid::WithoutBraces)
             : QString();
     if (bridge)
-        bridge->setPageInfo(page->url(), capture, token);
+        bridge->setPageInfo(url, capture, token);
 
-    const QList<Form> forms = fetchForms(stripUrl(page->url()));
-    page->runJavaScript(autoFillScript(forms, capture, token));
+    return autoFillScript(fetchForms(stripUrl(url)), capture, token);
+}
+
+static void replacePageScript(QWebEnginePage *page, const QString &name,
+        const QString &source)
+{
+    QWebEngineScriptCollection &scripts = page->scripts();
+    const QList<QWebEngineScript> installed = scripts.toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts.remove(script);
+    }
+    if (source.isEmpty())
+        return;
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentReady);
+    // MainWorld is NOT the QWebEngineScript default (the default is
+    // ApplicationWorld): the bundle must run where the page's
+    // HTMLFormElement.prototype and the __aroraChannel bootstrap live.
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setRunsOnSubFrames(false);
+    script.setSourceCode(source);
+    scripts.insert(script);
+}
+
+void AutoFillManager::attachToPage(QWebEnginePage *page)
+{
+    if (!page)
+        return;
+    const QString script = scriptForPage(page, page->url());
+    if (!script.isEmpty())
+        page->runJavaScript(script);
+}
+
+void AutoFillManager::scheduleOnPage(QWebEnginePage *page,
+        const QUrl &url)
+{
+    if (!page)
+        return;
+    const QString source = scriptForPage(page, url);
+    replacePageScript(page, QLatin1String("arora:autofill"), source);
 }
 
 QString AutoFillManager::autoFillScript(const QList<Form> &forms,

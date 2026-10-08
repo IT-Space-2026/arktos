@@ -66,9 +66,7 @@
 
 #include "adblockdialog.h"
 #include "adblockmanager.h"
-#include "adblockpage.h"
 #include "addbookmarkdialog.h"
-#include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "devtoolswindow.h"
@@ -482,11 +480,6 @@ void WebView::loadFinished()
                    << "Url:" << url();
     }
     m_progress = 0;
-    AdBlockManager::instance()->page()->applyRulesToPage(page());
-    // TOR02: no autofill fill/capture in a tor window — stored
-    // credentials are a cross-context identity leak.
-    if (!BrowserApplication::isTorMode())
-        AutoFillManager::instance()->attachToPage(m_page);
 }
 
 bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)

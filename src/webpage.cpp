@@ -20,6 +20,8 @@
 
 #include "webpage.h"
 
+#include "adblockmanager.h"
+#include "adblockpage.h"
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
@@ -58,6 +60,8 @@
 #include <qwebenginehistory.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
+#include <qwebenginescript.h>
+#include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
 #include <qwebengineview.h>
 
@@ -223,6 +227,38 @@ void WebPage::init()
         m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
         setWebChannel(m_webChannel);
 
+        // CHAN01: arm the shared-channel bootstrap at DocumentCreation.
+        // qt.webChannelTransport is one object per frame with a single
+        // onmessage slot — every new QWebChannel replaces it and the
+        // displaced client's in-flight responses then crash the new
+        // owner's execCallbacks dispatch (the recurring console noise).
+        // The bootstrap demultiplexes that slot across clients and
+        // hands Arora's features one shared lazy client through
+        // window.__aroraChannel, so our own code never runs two clients
+        // and a page-side client can coexist instead of corrupting
+        // either side.  The demux has to be installed before page
+        // script can construct a channel client of its own — hence
+        // DocumentCreation, once per page rather than per navigation.
+        QString bootstrapSource;
+        QFile channelClientFile(
+            QLatin1String(":/qtwebchannel/qwebchannel.js"));
+        if (channelClientFile.open(QIODevice::ReadOnly))
+            bootstrapSource += QString::fromUtf8(
+                channelClientFile.readAll());
+        QFile bootstrapFile(QLatin1String(":arora-channel.js"));
+        if (bootstrapFile.open(QIODevice::ReadOnly))
+            bootstrapSource += QString::fromUtf8(bootstrapFile.readAll());
+        if (!bootstrapSource.isEmpty()) {
+            QWebEngineScript bootstrap;
+            bootstrap.setName(QLatin1String("arora:channel"));
+            bootstrap.setInjectionPoint(
+                QWebEngineScript::DocumentCreation);
+            bootstrap.setWorldId(QWebEngineScript::MainWorld);
+            bootstrap.setRunsOnSubFrames(false);
+            bootstrap.setSourceCode(bootstrapSource);
+            scripts().insert(bootstrap);
+        }
+
         // The "arora" object serves only internal qrc pages (the start
         // page).  It is registered when the main frame commits to a qrc
         // url — before the page's channel handshake — and removed again
@@ -236,6 +272,28 @@ void WebPage::init()
                 m_webChannel->deregisterObject(m_javaScriptAroraObject);
         });
     }
+
+    // SEC16: commits that did not pass through acceptNavigationRequest
+    // (or whose final url differs after a redirect) still arm the
+    // per-page DocumentReady scripts once the committed url is known.
+    // urlChanged also fires for same-document navigations (fragment
+    // changes, history.pushState) — verified on Qt 6.12: those emit
+    // neither loadStarted nor a LoadStarted loadingChanged entry, only
+    // a bare LoadSucceeded.  Re-arming there would rotate the autofill
+    // report token out from under the still-live script, so re-arming
+    // is gated on a real load being in flight.
+    connect(this, &QWebEnginePage::loadStarted, this,
+            [this]() { m_documentLoadPending = true; });
+    connect(this, &QWebEnginePage::loadingChanged, this,
+            [this](const QWebEngineLoadingInfo &info) {
+        if (info.status() != QWebEngineLoadingInfo::LoadStartedStatus)
+            m_documentLoadPending = false;
+    });
+    connect(this, &QWebEnginePage::urlChanged, this,
+            [this](const QUrl &url) {
+        if (m_documentLoadPending)
+            schedulePageScripts(url);
+    });
 
     // SEC15: keep Chromium's built-in error pages enabled.  With them
     // disabled, failed SUBFRAME loads produce no error commit and no
@@ -540,6 +598,17 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         // is still pending — the per-page attribute must be set before
         // the commit for the renderer to honor it.
         applyJavaScriptPolicy(url);
+        // SEC16: arm the per-document scripts pre-commit so they are
+        // in the collection before the new document is created —
+        // DocumentReady injection can't race a fast local load.  A
+        // link click that only changes the fragment is same-document:
+        // the armed scripts keep running in the existing document, so
+        // re-arming would only rotate the autofill token they carry.
+        const bool sameDocument =
+            url.adjusted(QUrl::RemoveFragment)
+                == this->url().adjusted(QUrl::RemoveFragment);
+        if (!sameDocument || type != QWebEnginePage::NavigationTypeLinkClicked)
+            schedulePageScripts(url);
         // A real navigation supersedes any pending cert decision — the
         // deferred request is dead by the time the new load commits.
         m_certErrorPending = false;
@@ -943,4 +1012,48 @@ void WebPage::applyJavaScriptPolicy(const QUrl &url)
     m_javaScriptBlocked = blocked;
     m_javaScriptBlockedHost = blocked ? url.host() : QString();
     emit javaScriptBlockedChanged(blocked);
+}
+
+// SEC16: arms the adblock cosmetic pass and the autofill bundle as
+// per-page QWebEngineScripts injected at DocumentReady.  Both used to
+// run from WebView::loadFinished, where their renderer-side work
+// competed with the paint-gated subresource scheduling that happens
+// on the load-event turn (the browseraudit latency group).  The
+// dedup is load-identity, not just bookkeeping: re-arming an already
+// committed url would rotate the autofill report token while a script
+// carrying the previous token may already be running.
+void WebPage::schedulePageScripts(const QUrl &url)
+{
+    if (url == m_scheduledScriptUrl)
+        return;
+    m_scheduledScriptUrl = url;
+    if (!m_injectedScriptsEnabled)
+        return;
+    AdBlockManager::instance()->page()->scheduleRulesOnPage(this, url);
+    // TOR02: no autofill fill/capture in a tor window — stored
+    // credentials are a cross-context identity leak.
+    if (!BrowserApplication::isTorMode())
+        AutoFillManager::instance()->scheduleOnPage(this, url);
+}
+
+void WebPage::setInjectedScriptsEnabled(bool enabled)
+{
+    if (m_injectedScriptsEnabled == enabled)
+        return;
+    m_injectedScriptsEnabled = enabled;
+    if (!enabled) {
+        // The "arora:" name prefix namespaces only the two scripts this
+        // path arms — audit-harness capture scripts use "arora-*" and
+        // are deliberately not matched.
+        QWebEngineScriptCollection &collection = scripts();
+        const QList<QWebEngineScript> installed = collection.toList();
+        for (const QWebEngineScript &script : installed) {
+            if (script.name().startsWith(QLatin1String("arora:")))
+                collection.remove(script);
+        }
+        return;
+    }
+    const QUrl armed = m_scheduledScriptUrl;
+    m_scheduledScriptUrl = QUrl();
+    schedulePageScripts(armed.isEmpty() ? url() : armed);
 }

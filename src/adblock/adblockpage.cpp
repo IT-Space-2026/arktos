@@ -37,10 +37,14 @@
 #include "adblocknetwork.h"
 #endif
 
+#include <qfile.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qurl.h>
 #include <qwebenginepage.h>
+#include <qwebenginescript.h>
+#include <qwebenginescriptcollection.h>
 
 #include <qdebug.h>
 
@@ -330,15 +334,37 @@ static QString cosmeticEngineScript(const QJsonArray &procedures,
     return script;
 }
 
+// Shared injector: appends (or refreshes) the page's arora-adblock
+// <style> element carrying the given css rule set.
+static QString adblockStyleScript(const QStringList &selectors)
+{
+    // QWebElement DOM access is gone in Qt WebEngine; the filters
+    // are injected as a <style> element through JavaScript.
+    // Wrapping the joined selectors in :is() gives a forgiving
+    // selector list so one malformed rule can't kill the rest.
+    const QString css = QLatin1String(":is(")
+        + selectors.join(QLatin1Char(','))
+        + QLatin1String(") { display: none !important; }");
+    const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
+        .toJson(QJsonDocument::Compact);
+    return QLatin1String(
+        "(function(){var s=document.getElementById('arora-adblock');"
+        "if(!s){s=document.createElement('style');s.id='arora-adblock';"
+        "document.documentElement.appendChild(s);}"
+        "s.textContent=%1[0];})()")
+        .arg(QString::fromUtf8(jsonCss));
+}
+
 #if defined(ARORA_ADBLOCK_RUST)
-// Applies an adblock-rust cosmetic payload (the JSON produced by
-// url_cosmetic_resources): hide selectors go through the same
-// forgiving :is() stylesheet injection as the native path —
+// Builds the renderer script for an adblock-rust cosmetic payload (the
+// JSON produced by url_cosmetic_resources): hide selectors go through
+// the same forgiving :is() stylesheet injection as the native path —
 // :-abp-* pseudos get the usual translation — and the engine's
 // assembled scriptlet body is run verbatim.  generichide is already
 // accounted for inside hide (the engine drops generic selectors).
-static void applyRustCosmetic(QWebEnginePage *page, const QJsonObject &cosmetic)
+static QString rustCosmeticScript(const QJsonObject &cosmetic)
 {
+    QStringList parts;
     const QJsonArray hide = cosmetic.value(QLatin1String("hide")).toArray();
     QStringList selectors;
     for (const QJsonValue &value : hide) {
@@ -348,34 +374,43 @@ static void applyRustCosmetic(QWebEnginePage *page, const QJsonObject &cosmetic)
             continue; // pseudo we cannot translate
         selectors.append(css);
     }
-    if (!selectors.isEmpty()) {
-        const QString css = QLatin1String(":is(")
-            + selectors.join(QLatin1Char(','))
-            + QLatin1String(") { display: none !important; }");
-        const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
-            .toJson(QJsonDocument::Compact);
-        const QString script = QLatin1String(
-            "(function(){var s=document.getElementById('arora-adblock');"
-            "if(!s){s=document.createElement('style');s.id='arora-adblock';"
-            "document.documentElement.appendChild(s);}"
-            "s.textContent=%1[0];})()")
-            .arg(QString::fromUtf8(jsonCss));
-        page->runJavaScript(script);
-    }
+    if (!selectors.isEmpty())
+        parts.append(adblockStyleScript(selectors));
 
     const QString script = cosmetic.value(QLatin1String("script")).toString();
     if (!script.isEmpty())
-        page->runJavaScript(script);
+        parts.append(script);
+    return parts.join(QLatin1Char('\n'));
 }
 #endif
 
-void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
+// Replaces the named per-page user script — removing it entirely when
+// the payload is empty so a disabled feature leaves nothing armed.
+static void replacePageScript(QWebEnginePage *page, const QString &name,
+        const QString &source)
 {
-    if (!page)
+    QWebEngineScriptCollection &scripts = page->scripts();
+    const QList<QWebEngineScript> installed = scripts.toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts.remove(script);
+    }
+    if (source.isEmpty())
         return;
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentReady);
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setRunsOnSubFrames(false);
+    script.setSourceCode(source);
+    scripts.insert(script);
+}
+
+QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
+{
     AdBlockManager *manager = AdBlockManager::instance();
     if (!manager->isEnabled())
-        return;
+        return QString();
 
 #if defined(ARORA_ADBLOCK_RUST)
     // The Rust engine is authoritative when loaded; an empty object
@@ -383,18 +418,16 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
     // Hostless documents (about:blank and friends) cannot be
     // evaluated by adblock-rust at all — uBO likewise injects nothing
     // there — so they also stay on the native path.
-    if (!page->url().host().isEmpty()) {
+    if (!url.host().isEmpty()) {
         const QJsonObject rustCosmetic =
-            manager->network()->rustCosmetic(page->url());
-        if (!rustCosmetic.isEmpty()) {
-            applyRustCosmetic(page, rustCosmetic);
-            return;
-        }
+            manager->network()->rustCosmetic(url);
+        if (!rustCosmetic.isEmpty())
+            return rustCosmeticScript(rustCosmetic);
     }
 #endif
 
-    const QString host = page->url().host();
-    const QString documentUrl = QString::fromUtf8(page->url().toEncoded());
+    const QString host = url.host();
+    const QString documentUrl = QString::fromUtf8(url.toEncoded());
     const QList<AdBlockSubscription*> subscriptions = manager->subscriptions();
 
     // Document-level cosmetic exceptions: @@||site^$elemhide disables
@@ -411,7 +444,7 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
         for (const AdBlockRule *rule : subscription->networkExceptionRules()) {
             if (rule->isDocumentException()
                 && rule->networkMatch(documentUrl, host, 0))
-                return;
+                return QString();
             if (rule->isElemHide()
                 && rule->networkMatch(documentUrl, host, 0))
                 elemHide = true;
@@ -421,7 +454,7 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
         }
     }
     if (elemHide)
-        return;
+        return QString();
 
     QStringList cssBodies;
     QStringList exceptions;
@@ -529,25 +562,36 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
         cssSelectors.append(css);
     }
 
-    if (!cssSelectors.isEmpty()) {
-        // QWebElement DOM access is gone in Qt WebEngine; the filters
-        // are injected as a <style> element through runJavaScript.
-        // Wrapping the joined selectors in :is() gives a forgiving
-        // selector list so one malformed rule can't kill the rest.
-        const QString css = QLatin1String(":is(")
-            + cssSelectors.join(QLatin1Char(','))
-            + QLatin1String(") { display: none !important; }");
-        const QByteArray jsonCss = QJsonDocument(QJsonArray() << css)
-            .toJson(QJsonDocument::Compact);
-        const QString script = QLatin1String(
-            "(function(){var s=document.getElementById('arora-adblock');"
-            "if(!s){s=document.createElement('style');s.id='arora-adblock';"
-            "document.documentElement.appendChild(s);}"
-            "s.textContent=%1[0];})()")
-            .arg(QString::fromUtf8(jsonCss));
-        page->runJavaScript(script);
-    }
-
+    QStringList parts;
+    if (!cssSelectors.isEmpty())
+        parts.append(adblockStyleScript(cssSelectors));
     if (!procedures.isEmpty() || !scriptlets.isEmpty())
-        page->runJavaScript(cosmeticEngineScript(procedures, scriptlets));
+        parts.append(cosmeticEngineScript(procedures, scriptlets));
+    return parts.join(QLatin1Char('\n'));
+}
+
+void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
+{
+    if (!page)
+        return;
+    const QString script = cosmeticScriptForUrl(page->url());
+    if (!script.isEmpty())
+        page->runJavaScript(script);
+}
+
+void AdBlockPage::scheduleRulesOnPage(QWebEnginePage *page,
+        const QUrl &url)
+{
+    if (!page)
+        return;
+    const QString source = cosmeticScriptForUrl(url);
+    if (qEnvironmentVariableIsSet("ARORA_DEBUG_COSMETIC")) {
+        QFile dump(qEnvironmentVariable("ARORA_DEBUG_COSMETIC"));
+        if (dump.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            dump.write(source.toUtf8());
+        qWarning() << "adblock cosmetic script for" << url
+                   << "bytes:" << source.size();
+    }
+    replacePageScript(page, QLatin1String("arora:adblock-cosmetic"),
+                      source);
 }

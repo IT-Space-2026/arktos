@@ -467,9 +467,9 @@ static int browserAuditSmoke(BrowserApplication &application,
         // pieces of prepareProfile()/WebPage wiring onto the OTR profile
         // so a divergent result can be attributed to one component.
         // Values: settings cookies interceptor extensions webpage webview
-        // Modifier: nofinish (with webview) disconnects
-        // WebView::loadFinished so applyRulesToPage()/attachToPage()
-        // never run.  Modifier: contained (without webview) puts the
+        // Modifier: noinject (with webview) disables the page's armed
+        // DocumentReady scripts so scheduleRulesOnPage()/scheduleOnPage()
+        // never inject.  Modifier: contained (without webview) puts the
         // plain view inside a shown QMainWindow like the webview wire
         // does, to separate widget-hierarchy effects from WebView
         // wiring.  Modifier: bar (without webview) adds a hidden child
@@ -486,50 +486,56 @@ static int browserAuditSmoke(BrowserApplication &application,
                 AdBlockManager::instance()->network(), profile));
         if (wire.contains(QLatin1String("extensions")))
             ExtensionManager::instance()->installOnProfile(profile);
-        // webview adds the WebView-level loadFinished handlers (adblock
-        // cosmetic injection + autofill attach) that a plain
-        // QWebEngineView+WebPage pairing never runs.
+        // webview adds the WebView/WebPage-level per-document scripts
+        // (adblock cosmetic injection + autofill attach) that a plain
+        // QWebEngineView+QWebEnginePage pairing never runs — SEC16
+        // moved them off loadFinished into DocumentReady user scripts.
         if (wire.contains(QLatin1String("webview"))) {
             auto *container = new QMainWindow;
             WebView *webView = new WebView(profile, container);
             container->setCentralWidget(webView);
             container->resize(1024, 768);
             container->show();
-            if (wire.contains(QLatin1String("nofinish")))
-                // WebView::init connects loadFinished through a
-                // lambda, so a slot-name disconnect cannot reach it —
-                // drop every receiver of the view's signal instead.
-                QObject::disconnect(webView, &QWebEngineView::loadFinished,
-                                    nullptr, nullptr);
+            if (wire.contains(QLatin1String("noinject")))
+                webView->webPage()->setInjectedScriptsEnabled(false);
             view = webView;
         } else {
             if (wire.contains(QLatin1String("webpage")))
                 bareView->setPage(new WebPage(profile, bareView));
             else
                 bareView->setPage(new QWebEnginePage(profile, bareView));
-            if (wire.contains(QLatin1String("autofill"))) {
-                // Run WebView::loadFinished's autofill half alone on
-                // the plain view — attaches the injected
-                // qwebchannel.js+autofill.js bundle at loadFinished.
+            // noinject disarms the page's own DocumentReady scripts so
+            // the autofill/cosmetic wires below can re-arm a single
+            // script in isolation.
+            if (wire.contains(QLatin1String("noinject"))) {
                 WebPage *wp = qobject_cast<WebPage*>(bareView->page());
                 if (wp)
-                    QObject::connect(bareView,
-                        &QWebEngineView::loadFinished, bareView,
-                        [wp]() {
-                            AutoFillManager::instance()->attachToPage(wp);
+                    wp->setInjectedScriptsEnabled(false);
+            }
+            if (wire.contains(QLatin1String("autofill"))) {
+                // Run the autofill half alone on the plain view —
+                // arms the qwebchannel.js+autofill.js bundle at each
+                // commit like WebPage::schedulePageScripts does.
+                WebPage *wp = qobject_cast<WebPage*>(bareView->page());
+                if (wp)
+                    QObject::connect(wp,
+                        &QWebEnginePage::urlChanged, bareView,
+                        [wp](const QUrl &url) {
+                            AutoFillManager::instance()
+                                ->scheduleOnPage(wp, url);
                         });
             }
             if (wire.contains(QLatin1String("cosmetic"))) {
-                // Run WebView::loadFinished's adblock half alone on
-                // the plain view — manager construction plus the
-                // cosmetic rule pass at loadFinished.
+                // Run the adblock half alone on the plain view —
+                // arms the cosmetic payload per commit like
+                // WebPage::schedulePageScripts does.
                 WebPage *wp = qobject_cast<WebPage*>(bareView->page());
                 if (wp)
-                    QObject::connect(bareView,
-                        &QWebEngineView::loadFinished, bareView,
-                        [wp]() {
+                    QObject::connect(wp,
+                        &QWebEnginePage::urlChanged, bareView,
+                        [wp](const QUrl &url) {
                             AdBlockManager::instance()->page()
-                                ->applyRulesToPage(wp);
+                                ->scheduleRulesOnPage(wp, url);
                         });
             }
             if (wire.contains(QLatin1String("bar"))) {
@@ -678,6 +684,93 @@ static int browserAuditSmoke(BrowserApplication &application,
     });
 
     return application.exec();
+}
+
+// SEC16: the adblock smokes below inject probe filters into the shared
+// test-mode custom subscription and AdBlockManager's AutoSaver
+// persists whatever the subscription still holds when the process
+// exits.  A run that fails to clean up leaves its probes behind for
+// every later run — a leftover "##body" element-hide rule restyled
+// every page the browseraudit harness loaded.  Drop leftovers from
+// earlier runs before snapshotting.
+static const char *const kSmokeFilters[] = {
+    "||adblock-smoke.invalid^",
+    ".invalid^",
+    "@@||allowed-smoke.invalid^",
+    "##body",
+    "||list-smoke.invalid^",
+    "||ads.example.com^",
+    "||banner.example^$script",
+    "@@||banner.example^$script,domain=trusted.example",
+    "||tracker.example^$third-party",
+    "||cdn.example/lib.js$~third-party",
+    "||redir.example/vast.xml$redirect=noop-vast-4.0",
+    "||param.example^$removeparam=utm_source",
+    "smoke.example##.ad-banner",
+};
+
+static void purgeSmokeFilters(AdBlockSubscription *custom)
+{
+    const QList<AdBlockRule> rules = custom->allRules();
+    for (int i = rules.count() - 1; i >= 0; --i) {
+        const QString filter = rules.at(i).filter();
+        for (const char *smokeFilter : kSmokeFilters) {
+            if (filter == QLatin1String(smokeFilter)) {
+                custom->removeRule(i);
+                break;
+            }
+        }
+    }
+}
+
+// Snapshots every subscription's rules and enabled flag plus the
+// subscription list itself, and restores them from a post-routine:
+// those run inside ~QCoreApplication, before ~QObject tears down the
+// children (NetworkAccessManager -> AdBlockManager) whose destructor
+// performs the final saveIfNeccessary — so a smoke's mutations never
+// reach disk on either the exit() or the early-return path.
+struct AdBlockSmokeState {
+    AdBlockSubscription *subscription;
+    QList<AdBlockRule> rules;
+    bool enabled;
+};
+static QList<AdBlockSmokeState> *s_adBlockSmokeSaved = nullptr;
+
+static void restoreAdBlockState()
+{
+    if (!s_adBlockSmokeSaved)
+        return;
+    AdBlockManager *manager = AdBlockManager::instance();
+    for (AdBlockSubscription *subscription : manager->subscriptions()) {
+        bool savedBefore = false;
+        for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
+            if (state.subscription == subscription) {
+                savedBefore = true;
+                break;
+            }
+        }
+        if (!savedBefore)
+            manager->removeSubscription(subscription);
+    }
+    for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
+        state.subscription->setEnabled(state.enabled);
+        state.subscription->setRules(state.rules);
+    }
+    delete s_adBlockSmokeSaved;
+    s_adBlockSmokeSaved = nullptr;
+}
+
+static void restoreAdBlockStateOnExit()
+{
+    if (s_adBlockSmokeSaved)
+        return;
+    AdBlockManager *manager = AdBlockManager::instance();
+    s_adBlockSmokeSaved = new QList<AdBlockSmokeState>;
+    for (AdBlockSubscription *subscription : manager->subscriptions())
+        s_adBlockSmokeSaved->append({subscription,
+                                     subscription->allRules(),
+                                     subscription->isEnabled()});
+    qAddPostRoutine(&restoreAdBlockState);
 }
 
 int main(int argc, char **argv)
@@ -1763,6 +1856,8 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--adblock-smoke"))) {
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
+        purgeSmokeFilters(custom);
+        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||adblock-smoke.invalid^")));
         custom->addRule(AdBlockRule(QLatin1String(".invalid^")));
         custom->addRule(AdBlockRule(QLatin1String("@@||allowed-smoke.invalid^")));
@@ -1819,9 +1914,9 @@ int main(int argc, char **argv)
                 || view->url() != QUrl(QLatin1String("about:blank")))
                 return;
             adblockSmokeStage = 3;
-            // WebView::loadFinished -> AdBlockPage::applyRulesToPage
-            // queued its style-injection runJavaScript before this
-            // check runs, so the element must already exist.
+            // WebPage::schedulePageScripts armed the "arora:adblock-
+            // cosmetic" DocumentReady script at commit, so the style
+            // element must already exist by loadFinished.
             view->webPage()->runJavaScript(
                 QLatin1String("!!document.getElementById('arora-adblock')"),
                 [&application](const QVariant &result) {
@@ -1855,8 +1950,21 @@ int main(int argc, char **argv)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockNetwork *network = manager->network();
 
+        // Earlier runs persisted their smoke subscription into the
+        // shared test-mode settings list; drop leftovers before the
+        // exit-restore snapshot is taken.
+        for (AdBlockSubscription *existing : manager->subscriptions()) {
+            const QUrlQuery query(existing->url());
+            if (query.queryItemValue(QLatin1String("title"),
+                                     QUrl::PrettyDecoded)
+                    == QLatin1String("list-smoke"))
+                manager->removeSubscription(existing);
+        }
+
         // A second subscription proves multi-subscription matching.
         AdBlockSubscription *custom = manager->customRules();
+        purgeSmokeFilters(custom);
+        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||list-smoke.invalid^")));
 
         QUrl subscribeUrl;
@@ -2162,6 +2270,8 @@ int main(int argc, char **argv)
 #if defined(ARORA_ADBLOCK_RUST)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
+        purgeSmokeFilters(custom);
+        restoreAdBlockStateOnExit();
         // Test-mode app data persists between runs — an earlier
         // --adblock-list-smoke leaves a full EasyList subscription
         // behind.  Disable everything but the custom corpus so the
