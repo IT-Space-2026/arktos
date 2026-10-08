@@ -40,7 +40,25 @@ public:
     void setWebView(WebView *webView);
     WebView *webView() const;
 
+    // SAFE03: anti-phishing display aids.
+    //
+    // registrableDomainRange() returns the character range of the
+    // registrable domain (eTLD+1 approximation) inside an encoded url
+    // string so the bar can de-emphasize everything around it.  Qt6
+    // dropped QUrl::topLevelDomain + the public-suffix list, so
+    // multi-label registry boundaries (co.uk, com.au, ...) ride the
+    // cookie jar's two-level ccTLD table; anything else assumes a
+    // one-label suffix and hosts with too few labels emphasize whole.
+    //
+    // unicodeUrlHint() returns the decoded (Unicode) url when the
+    // displayed host carries an internationalized name that is shown
+    // in punycode, an empty string otherwise.
+    static bool registrableDomainRange(const QString &displayText,
+                                       int &start, int &length);
+    static QString unicodeUrlHint(const QString &displayText);
+
 protected:
+    bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
@@ -52,6 +70,8 @@ private slots:
     void webViewUrlChanged(const QUrl &url);
 
 private:
+    void displayUrl(const QUrl &url);
+
     QPointer<WebView> m_webView;
 
     LocationBarSiteIcon *m_siteIcon;

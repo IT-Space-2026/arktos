@@ -25,7 +25,11 @@
 #include <QtGui/QtGui>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qboxlayout.h>
+#include <qlabel.h>
 #include <qmimedata.h>
+#include <qstyleoption.h>
+#include <qtooltip.h>
 
 #include <memory>
 
@@ -88,6 +92,27 @@ public:
                           Qt::NoModifier);
         mouseDoubleClickEvent(&event);
     }
+
+    void sendToolTip()
+    {
+        QHelpEvent event(QEvent::ToolTip, QPoint(3, 3), QPoint(3, 3));
+        this->event(&event);
+    }
+
+    // The text area LocationBar::paintEvent computes for the SAFE03
+    // emphasis repaint.
+    QRect textContentsRect()
+    {
+        QStyleOptionFrame panel;
+        initStyleOption(&panel);
+        QRect rect =
+            style()->subElementRect(QStyle::SE_LineEditContents, &panel,
+                                    this);
+        rect.adjust(2, 0, -2, 0);
+        rect.adjust(textMargin(LineEdit::LeftSide), 0,
+                    -textMargin(LineEdit::RightSide), 0);
+        return rect;
+    }
 };
 
 class tst_LocationBar : public QObject
@@ -110,6 +135,10 @@ private slots:
     void adBlockButton();
     void omniboxSuggestions();
     void omniboxScopedCompletions();
+    void domainEmphasis_data();
+    void domainEmphasis();
+    void punycodeDisplay();
+    void domainEmphasisPaint();
 };
 
 void tst_LocationBar::initTestCase()
@@ -672,6 +701,182 @@ void tst_LocationBar::omniboxScopedCompletions()
     historyManager->removeHistoryEntry(
         QUrl(QLatin1String("http://unrelated.example/")));
     ScopeShortcuts::reset();
+}
+
+// SAFE03: the registrable-domain character range inside an encoded
+// url — scheme, subdomains, userinfo, port and path are the dimmed
+// parts; the eTLD+1 range is what a phishing reader must see.
+void tst_LocationBar::domainEmphasis_data()
+{
+    QTest::addColumn<QString>("text");
+    QTest::addColumn<QString>("domain"); // empty => no range
+
+    QTest::newRow("phishing-subdomain")
+        << QString("http://paypal.com.evil.tld/login")
+        << QString("evil.tld");
+    QTest::newRow("two-level-tld")
+        << QString("https://www.example.co.uk/path?q=1#f")
+        << QString("example.co.uk");
+    QTest::newRow("plain-host")
+        << QString("http://example.com") << QString("example.com");
+    QTest::newRow("deep-subdomains")
+        << QString("http://a.b.c.example.com/")
+        << QString("example.com");
+    QTest::newRow("userinfo")
+        << QString("http://user:pass@www.bank.com/")
+        << QString("bank.com");
+    QTest::newRow("ipv4")
+        << QString("http://192.168.0.1:8080/x")
+        << QString("192.168.0.1");
+    QTest::newRow("ipv6")
+        << QString("http://[2001:db8::1]:8443/")
+        << QString("[2001:db8::1]");
+    QTest::newRow("localhost")
+        << QString("http://localhost:9/") << QString("localhost");
+    QTest::newRow("no-subdomain")
+        << QString("http://example.co.uk") << QString("example.co.uk");
+    QTest::newRow("bare-suffix")
+        << QString("http://co.uk/") << QString("co.uk");
+    QTest::newRow("punycode-host")
+        << QString("https://xn--tst-qla.example.de/")
+        << QString("example.de");
+    QTest::newRow("fqdn-root-dot")
+        << QString("http://example.com./root")
+        << QString("example.com");
+    QTest::newRow("uppercase")
+        << QString("HTTP://WWW.EXAMPLE.CO.UK/")
+        << QString("EXAMPLE.CO.UK");
+    QTest::newRow("about-blank") << QString("about:blank")
+                                 << QString();
+    QTest::newRow("file-no-host") << QString("file:///tmp/x")
+                                  << QString();
+    QTest::newRow("no-authority") << QString("qrc:/startpage.html")
+                                  << QString();
+    QTest::newRow("internal-empty-authority")
+        << QString("arora-file:///tmp/") << QString();
+    QTest::newRow("plain-text") << QString("just words")
+                                << QString();
+}
+
+void tst_LocationBar::domainEmphasis()
+{
+    QFETCH(QString, text);
+    QFETCH(QString, domain);
+
+    int start = -1;
+    int length = 0;
+    const bool ok =
+        LocationBar::registrableDomainRange(text, start, length);
+    if (domain.isEmpty()) {
+        QVERIFY(!ok);
+        return;
+    }
+    QVERIFY(ok);
+    QCOMPARE(text.mid(start, length), domain);
+}
+
+// SAFE03(b): an internationalized host is stored/displayed as
+// punycode; the tooltip offers the Unicode form.
+void tst_LocationBar::punycodeDisplay()
+{
+    QCOMPARE(LocationBar::unicodeUrlHint(
+                 QLatin1String("http://xn--mnchen-3ya.de/")),
+             QString::fromUtf8("http://münchen.de/"));
+    QVERIFY(LocationBar::unicodeUrlHint(
+                QLatin1String("http://example.com/")).isEmpty());
+    QVERIFY(LocationBar::unicodeUrlHint(
+                QLatin1String("not a url")).isEmpty());
+    QVERIFY(LocationBar::unicodeUrlHint(
+                QLatin1String("http://192.168.0.1/")).isEmpty());
+
+    // A real url delivered to the bar renders ACE in the field.
+    TestLocationBar bar;
+    WebView view(BrowserApplication::webEngineProfile());
+    bar.setWebView(&view);
+    const QUrl idn(QString::fromUtf8("http://münchen.de/"));
+    QVERIFY(QMetaObject::invokeMethod(&bar, "webViewUrlChanged",
+                                    Q_ARG(QUrl, idn)));
+    QCOMPARE(bar.text(), QLatin1String("http://xn--mnchen-3ya.de/"));
+    QCOMPARE(bar.cursorPosition(), 0);
+
+    // The ToolTip event surfaces the Unicode form through QToolTip.
+    const auto findTip = []() -> QLabel * {
+        for (QWidget *widget : qApp->topLevelWidgets()) {
+            if (widget->inherits("QTipLabel") && widget->isVisible())
+                return qobject_cast<QLabel*>(widget);
+        }
+        return nullptr;
+    };
+    bar.sendToolTip();
+    QLabel *tip = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((tip = findTip()) != nullptr, 3000);
+    QVERIFY(tip->text().contains(QString::fromUtf8("münchen")));
+    QToolTip::hideText();
+}
+
+// SAFE03 render check: the unfocused bar must really repaint the url
+// with the domain at full text strength and the rest faded — assert
+// on the painted pixels, not just the range maths.
+void tst_LocationBar::domainEmphasisPaint()
+{
+    QWidget window;
+    QVBoxLayout layout(&window);
+    TestLocationBar *bar = new TestLocationBar(&window);
+    layout.addWidget(bar);
+    QLineEdit *focusSponge = new QLineEdit(&window);
+    layout.addWidget(focusSponge);
+    window.resize(520, window.sizeHint().height());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    focusSponge->setFocus();
+    qApp->processEvents();
+    QVERIFY(!bar->hasFocus());
+
+    const QString url = QLatin1String("http://paypal.com.evil.tld/login");
+    bar->setText(url);
+    bar->setCursorPosition(0);
+
+    int start = -1;
+    int length = 0;
+    QVERIFY(LocationBar::registrableDomainRange(url, start, length));
+    QCOMPARE(url.mid(start, length), QLatin1String("evil.tld"));
+
+    const QImage image = bar->grab().toImage();
+    QVERIFY(!image.isNull());
+    const QRect textRect = bar->textContentsRect();
+    const QFontMetrics fm = bar->fontMetrics();
+    const int domainX =
+        textRect.x() + fm.horizontalAdvance(url.left(start));
+    const int domainEnd =
+        domainX + fm.horizontalAdvance(url.mid(start, length));
+
+    // Closest any pixel in the range gets to the full text color.
+    const QColor strong = bar->palette().color(QPalette::Text);
+    const auto closestToStrong = [&](int fromX, int toX) {
+        int best = 255 * 3;
+        for (int x = fromX; x < qMin(toX, image.width()); ++x) {
+            for (int y = textRect.y();
+                 y <= qMin(textRect.bottom(), image.height() - 1); ++y) {
+                const QColor pixel = image.pixelColor(x, y);
+                const int diff = qAbs(pixel.red() - strong.red())
+                    + qAbs(pixel.green() - strong.green())
+                    + qAbs(pixel.blue() - strong.blue());
+                best = qMin(best, diff);
+            }
+        }
+        return best;
+    };
+
+    const int prefixDiff = closestToStrong(textRect.x(), domainX);
+    const int domainDiff = closestToStrong(domainX, domainEnd);
+    const int suffixDiff =
+        closestToStrong(domainEnd, textRect.right() + 1);
+
+    // Domain glyphs keep (near) full-strength text color; the
+    // surrounding scheme/subdomain/path runs are visibly dimmed.
+    QVERIFY(domainDiff <= 60);
+    QVERIFY(prefixDiff > domainDiff + 20);
+    QVERIFY(suffixDiff > domainDiff + 20);
 }
 
 QTEST_MAIN(tst_LocationBar)

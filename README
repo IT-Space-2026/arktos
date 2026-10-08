@@ -157,6 +157,14 @@ grants for the origin with revoke controls, and a clear-site-data
 action.  The shield icon carries a small badge while JavaScript is
 blocked on the current page.
 
+The address bar itself is an anti-phishing aid: for a displayed url it
+dims the scheme, subdomains, port and path and keeps the registrable
+domain full-strength, so the real owner of a link like
+paypal.com.evil.tld is impossible to miss.  Hosts written in a
+non-ascii alphabet stay in their punycode (xn--) spelling rather than
+the confusable glyphs — hovering the bar shows the Unicode form as a
+tooltip.  Focusing or editing the bar shows the plain url text.
+
 A content-blocker button at the right end of the address bar shows a
 per-page blocked-request count (as an icon badge, and in its popup),
 toggles content blocking on or off globally, and opens the AdBlock

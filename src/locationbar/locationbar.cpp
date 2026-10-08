@@ -26,14 +26,17 @@
 #include "privacyindicator.h"
 #include "searchlineedit.h"
 #include "siteshield.h"
+#include "twoleveldomains_p.h"
 #include "webview.h"
 
 #include <qapplication.h>
 #include <qdrag.h>
 #include <qevent.h>
+#include <qhostaddress.h>
 #include <qmimedata.h>
 #include <qpainter.h>
 #include <qstyleoption.h>
+#include <qtooltip.h>
 
 #include <qdebug.h>
 
@@ -115,8 +118,142 @@ void LocationBar::webViewUrlChanged(const QUrl &url)
 {
     if (hasFocus())
         return;
+    displayUrl(url);
+}
+
+void LocationBar::displayUrl(const QUrl &url)
+{
     setText(QString::fromUtf8(url.toEncoded()));
     setCursorPosition(0);
+}
+
+bool LocationBar::registrableDomainRange(const QString &displayText,
+                                         int &start, int &length)
+{
+    start = -1;
+    length = 0;
+
+    // <scheme>://<authority><path…> — no authority, nothing to mark.
+    const int schemeEnd = displayText.indexOf(QLatin1String("://"));
+    if (schemeEnd < 0)
+        return false;
+    const int authorityStart = schemeEnd + 3;
+    int authorityEnd = displayText.size();
+    for (int i = authorityStart; i < displayText.size(); ++i) {
+        const QChar c = displayText.at(i);
+        if (c == QLatin1Char('/') || c == QLatin1Char('?')
+            || c == QLatin1Char('#')) {
+            authorityEnd = i;
+            break;
+        }
+    }
+
+    // userinfo@ — the host starts after the last '@' in the authority.
+    int hostStart = authorityStart;
+    const int at = displayText.lastIndexOf(QLatin1Char('@'),
+                                           authorityEnd - 1);
+    if (at >= authorityStart)
+        hostStart = at + 1;
+    if (hostStart >= authorityEnd)
+        return false;
+
+    if (displayText.at(hostStart) == QLatin1Char('[')) {
+        // IPv6/IPvFuture literal: emphasize the bracketed host whole.
+        const int hostEnd =
+            displayText.indexOf(QLatin1Char(']'), hostStart + 1);
+        if (hostEnd < 0 || hostEnd >= authorityEnd)
+            return false;
+        start = hostStart;
+        length = hostEnd - hostStart + 1;
+        return true;
+    }
+
+    // :port ends the host.
+    int hostEnd = authorityEnd;
+    const int colon = displayText.indexOf(QLatin1Char(':'), hostStart);
+    if (colon >= 0 && colon < authorityEnd)
+        hostEnd = colon;
+
+    // FQDN root dot(s) belong to no label.
+    int end = hostEnd;
+    while (end > hostStart
+           && displayText.at(end - 1) == QLatin1Char('.'))
+        --end;
+    if (end <= hostStart)
+        return false;
+
+    // IP literals have no registrable domain — emphasize the address.
+    QHostAddress address;
+    if (address.setAddress(
+            QStringView(displayText).mid(hostStart, end - hostStart)
+                .toString())) {
+        start = hostStart;
+        length = end - hostStart;
+        return true;
+    }
+
+    const QStringView view(displayText);
+    const int lastDot =
+        displayText.lastIndexOf(QLatin1Char('.'), end - 1);
+    const QStringView tld = lastDot < hostStart
+        ? view.mid(hostStart, end - hostStart)
+        : view.mid(lastDot + 1, end - lastDot - 1);
+
+    bool twoLevel = false;
+    for (int i = 0; twoLevelDomains[i]; ++i) {
+        if (!tld.compare(QLatin1String(twoLevelDomains[i]),
+                         Qt::CaseInsensitive)) {
+            twoLevel = true;
+            break;
+        }
+    }
+    const int needed = twoLevel ? 3 : 2;
+
+    // Walk the dots backwards; each one delimits one more label.
+    int pos = end;
+    int found = 0;
+    int domainStart = hostStart;
+    while (pos > hostStart && found < needed) {
+        const int dot = displayText.lastIndexOf(QLatin1Char('.'),
+                                                pos - 1);
+        if (dot < hostStart)
+            break;
+        domainStart = dot + 1;
+        ++found;
+        pos = dot;
+    }
+    if (found < needed)
+        domainStart = hostStart;
+
+    start = domainStart;
+    length = end - domainStart;
+    return true;
+}
+
+QString LocationBar::unicodeUrlHint(const QString &displayText)
+{
+    const QUrl url = QUrl::fromEncoded(displayText.toUtf8());
+    const QString host = url.host();
+    if (host.isEmpty() || host == url.host(QUrl::FullyEncoded))
+        return QString();
+    return url.toString(QUrl::RemovePassword);
+}
+
+bool LocationBar::event(QEvent *event)
+{
+    // The bar stores the url's encoded form, so an internationalized
+    // host already renders as xn-- punycode; offer the Unicode form as
+    // a tooltip (Chrome-style) whenever it differs.
+    if (event->type() == QEvent::ToolTip) {
+        const QString hint = unicodeUrlHint(text());
+        if (!hint.isEmpty()) {
+            QHelpEvent *help = static_cast<QHelpEvent*>(event);
+            QToolTip::showText(help->globalPos(),
+                               tr("Unicode form: %1").arg(hint), this);
+            return true;
+        }
+    }
+    return LineEdit::event(event);
 }
 
 void LocationBar::paintEvent(QPaintEvent *event)
@@ -131,6 +268,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
     }
 
     // set the progress bar
+    QBrush baseBrush = QBrush(backgroundColor);
     if (m_webView) {
         int progress = m_webView->progress();
         if (progress == 0) {
@@ -144,17 +282,66 @@ void LocationBar::paintEvent(QPaintEvent *event)
             gradient.setColorAt(0, loadingColor);
             gradient.setColorAt(((double)progress)/100, backgroundColor);
             p.setBrush(QPalette::Base, gradient);
+            baseBrush = gradient;
         }
         setPalette(p);
     }
 
     LineEdit::paintEvent(event);
+
+    // SAFE03: with the url on display (not being edited), repaint the
+    // text dimmed except the registrable domain so the site's real
+    // identity stands out — the paypal.com.evil.tld trick can't hide
+    // the domain inside the subdomain run.  cursorPosition()==0 keeps
+    // the scroll offset at zero so the segment maths below line up
+    // with where QLineEdit painted the text.
+    int start = -1;
+    int length = 0;
+    if (hasFocus() || hasSelectedText() || cursorPosition() != 0
+        || !registrableDomainRange(text(), start, length))
+        return;
+
+    QStyleOptionFrame panel;
+    initStyleOption(&panel);
+    QRect textRect =
+        style()->subElementRect(QStyle::SE_LineEditContents, &panel, this);
+    // same text area LineEdit::paintEvent uses for inactiveText.
+    textRect.adjust(2, 0, -2, 0);
+    textRect.adjust(textMargin(LineEdit::LeftSide), 0,
+                    -textMargin(LineEdit::RightSide), 0);
+    if (textRect.isEmpty())
+        return;
+
+    const QString shown = text();
+    const QFontMetrics fm = fontMetrics();
+    const int domainX =
+        textRect.x() + fm.horizontalAdvance(shown.left(start));
+    const int domainWidth =
+        fm.horizontalAdvance(shown.mid(start, length));
+    const int baseline =
+        textRect.y() + (textRect.height() - fm.height() + 1) / 2
+        + fm.ascent();
+
+    QPainter painter(this);
+    painter.setClipRect(textRect);
+    painter.fillRect(textRect, baseBrush);
+    const QColor faded =
+        palette().color(QPalette::Disabled, QPalette::Text);
+    painter.setPen(faded);
+    painter.drawText(textRect.x(), baseline, shown.left(start));
+    painter.drawText(domainX + domainWidth, baseline,
+                     shown.mid(start + length));
+    painter.setPen(palette().color(QPalette::Text));
+    painter.drawText(domainX, baseline, shown.mid(start, length));
 }
 
 void LocationBar::focusOutEvent(QFocusEvent *event)
 {
     if (text().isEmpty() && m_webView)
         webViewUrlChanged(m_webView->url());
+    // Home the scroll so the SAFE03 domain-emphasis repaint (which
+    // assumes an unscrolled bar) lines up on an unfocused widget.
+    setCursorPosition(0);
     QLineEdit::focusOutEvent(event);
 }
 
@@ -169,7 +356,7 @@ void LocationBar::mouseDoubleClickEvent(QMouseEvent *event)
 void LocationBar::keyPressEvent(QKeyEvent *event)
 {
     if (event->key() == Qt::Key_Escape && m_webView) {
-        setText(QString::fromUtf8(m_webView->url().toEncoded()));
+        displayUrl(m_webView->url());
         selectAll();
         return;
     }
@@ -220,7 +407,7 @@ void LocationBar::dropEvent(QDropEvent *event)
         return;
     }
 
-    setText(QString::fromUtf8(url.toEncoded()));
+    displayUrl(url);
     selectAll();
 
     event->acceptProposedAction();
