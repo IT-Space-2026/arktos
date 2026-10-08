@@ -68,6 +68,7 @@
 #include "autofillmanager.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
+#include "containermanager.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
@@ -915,6 +916,9 @@ void SettingsDialog::saveToSettings()
     BrowserProfile::applySettings(BrowserProfile::normalProfile());
     if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
         BrowserProfile::applySettings(otrProfile);
+    // CONT01: materialized container profiles too — a settings change
+    // reaches them without a restart just like the normal profile.
+    ContainerManager::instance()->reapplySettings();
     NetworkAccessManager::instance()->loadSettings();
     CookieJar::instance()->loadSettings();
     HistoryManager::instance()->loadSettings();

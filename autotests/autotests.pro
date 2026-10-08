@@ -13,6 +13,7 @@ SUBDIRS  = \
     certerror \
     cookiejar \
     cookiemodel \
+    containermanager \
     csp \
     devtools \
     dialogs \

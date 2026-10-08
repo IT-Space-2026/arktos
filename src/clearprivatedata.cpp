@@ -20,6 +20,7 @@
 #include "clearprivatedata.h"
 
 #include "browserprofile.h"
+#include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "historymanager.h"
@@ -123,14 +124,21 @@ void ClearPrivateData::accept()
 
     settings.endGroup();
 
-    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+    // The clear claims cover every browsing profile: the normal
+    // profile plus any materialized container profiles — clearing
+    // "cookies" while containers kept theirs would quietly preserve
+    // the very data the user asked to remove (CONT01).
+    QList<QWebEngineProfile*> profiles;
+    profiles.append(BrowserProfile::normalProfile());
+    profiles.append(ContainerManager::instance()->createdProfiles());
 
     if (m_browsingHistory->isChecked()) {
         HistoryManager::instance()->clear();
         // Chromium keeps its own visited-link database (the :visited
         // styling and Omnibox history) — clear it too or links would
         // keep rendering as visited.
-        profile->clearAllVisitedLinks();
+        for (QWebEngineProfile *profile : profiles)
+            profile->clearAllVisitedLinks();
     }
 
     if (m_downloadHistory->isChecked()) {
@@ -150,7 +158,8 @@ void ClearPrivateData::accept()
     }
 
     if (m_cookies->isChecked()) {
-        CookieJar::instance()->clear();
+        for (QWebEngineProfile *profile : profiles)
+            CookieJar::instance(profile)->clear();
     }
 
     if (m_siteData->isChecked()) {
@@ -168,20 +177,23 @@ void ClearPrivateData::accept()
             "rs.forEach(function(r){r.unregister()})})}catch(e){}"
             "try{if(window.caches&&caches.keys)"
             "caches.keys().then(function(ns){ns.forEach(function(n){caches.delete(n)})})}catch(e){}");
+        const QSet<QWebEngineProfile*> profileSet(profiles.begin(), profiles.end());
         const QWidgetList widgets = qApp->allWidgets();
         for (QWidget *widget : widgets) {
             QWebEngineView *view = qobject_cast<QWebEngineView*>(widget);
-            if (view && view->page() && view->page()->profile() == profile)
+            if (view && view->page() && profileSet.contains(view->page()->profile()))
                 view->page()->runJavaScript(wipeScript);
         }
         // Then schedule the on-disk storage trees for removal at the
         // next profile start — deleting them under the live browser
         // wedges Chromium's storage services (see browserprofile.cpp).
-        BrowserProfile::clearSiteStorage(profile);
+        for (QWebEngineProfile *profile : profiles)
+            BrowserProfile::clearSiteStorage(profile);
     }
 
     if (m_cache->isChecked()) {
-        profile->clearHttpCache();
+        for (QWebEngineProfile *profile : profiles)
+            profile->clearHttpCache();
         // The app-side fetch cache (opensearch, adblock lists) too.
         if (QAbstractNetworkCache *cache = NetworkAccessManager::instance()->cache())
             cache->clear();

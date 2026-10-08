@@ -1,0 +1,142 @@
+/*
+ * Copyright 2026 The Arora Authors
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301  USA
+ */
+
+#ifndef CONTAINERMANAGER_H
+#define CONTAINERMANAGER_H
+
+#include <qcolor.h>
+#include <qhash.h>
+#include <qlist.h>
+#include <qobject.h>
+#include <qstring.h>
+
+class QWebEngineProfile;
+
+/*!
+    Firefox-style containers — named, isolated browsing contexts.
+
+    Each container owns a dedicated PERSISTENT QWebEngineProfile whose
+    storage lives under <app data dir>/containers/<id>/, so cookies,
+    localStorage/IndexedDB, service workers, the http cache and
+    permissions are all partitioned by the engine itself.  The default
+    container — the unlabeled browsing context — keeps using the
+    shared "arora" profile and is identified by an empty id.
+
+    The registry (id/name/color) is a QSettings "containers" group so
+    it survives restarts; profiles themselves are materialized lazily
+    by profileFor() and run through the exact same service attachment
+    the normal profile gets (BrowserApplication::prepareProfile —
+    cookie jar, scheme handlers, settings, download manager, adblock +
+    privacy interceptor, extensions).
+
+    Scope notes (see .devin/Arora-Task.md CONT01-05): tab assignment
+    and the management UI land in CONT02/CONT03; this is the core —
+    registry, lazy profiles and the isolation plumbing.
+*/
+class ContainerManager : public QObject
+{
+    Q_OBJECT
+
+public:
+    struct Container {
+        QString id;
+        QString name;
+        QColor color;
+    };
+
+    explicit ContainerManager(QObject *parent = nullptr);
+    ~ContainerManager();
+
+    // Lazy qApp-owned singleton — same pattern as
+    // HistoryManager::instance()/AdBlockManager::instance().
+    static ContainerManager *instance();
+
+    // The default (unlabeled) container's id.  Everything that is not
+    // a registered container — including the normal "arora" profile —
+    // maps to it.
+    static QString defaultContainerId();
+
+    // Registered containers in creation order.
+    QList<Container> containers() const;
+    bool isContainerId(const QString &id) const;
+    Container containerForId(const QString &id) const;
+
+    Container createContainer(const QString &name, const QColor &color);
+    bool renameContainer(const QString &id, const QString &name);
+    bool setContainerColor(const QString &id, const QColor &color);
+
+    // Removes the registry entry AND the on-disk state: the
+    // materialized profile (if any) is destroyed and its storage +
+    // cache trees deleted recursively.  Callers must have closed
+    // every page living on the container profile first — destroying a
+    // profile with live WebContents is unsupported.  The default
+    // container can never be deleted.
+    bool deleteContainer(const QString &id);
+
+    // The container's browsing profile, lazily created and prepared.
+    // The default container resolves to BrowserProfile::normalProfile();
+    // unknown ids and tor mode resolve to nullptr — containers never
+    // exist on the tor profile (they are persistent state).
+    QWebEngineProfile *profileFor(const QString &id);
+    // Same lookup without materializing — nullptr until profileFor()
+    // has created it (or when it was released/deleted).
+    QWebEngineProfile *profileIfCreated(const QString &id) const;
+    // Every container profile materialized so far — the settings
+    // re-apply loops (BrowserApplication::loadSettings, the settings
+    // dialog, WebPage::setUserAgent) and the private-data wipes use
+    // this so containers keep the full default-profile treatment.
+    QList<QWebEngineProfile*> createdProfiles() const;
+    // Reverse lookup for tab<->container binding (CONT02): the id a
+    // profile belongs to — the default id for the normal profile and
+    // for anything that is not a container profile.
+    QString containerIdForProfile(QWebEngineProfile *profile) const;
+
+    // <app data dir>/containers/<id> — the profile's persistent
+    // storage root.  Only meaningful for registered ids.
+    QString storagePath(const QString &id) const;
+
+    // Re-runs BrowserProfile::applySettings on every materialized
+    // container profile — called from the settings save paths so a
+    // settings change reaches live container profiles the same way it
+    // reaches the normal and private ones.
+    void reapplySettings();
+
+    // Destroys the materialized profile without touching the registry
+    // or on-disk state — the next profileFor() recreates it on the
+    // same data.  Same no-live-pages contract as deleteContainer();
+    // used by deleteContainer and by tests simulating a restart.
+    void releaseProfileFor(const QString &id);
+
+signals:
+    void containersChanged();
+
+private:
+    void loadRegistry();
+    void saveRegistry(const Container &container) const;
+    void removeRegistry(const QString &id) const;
+    void removeStorageTree(const QString &path) const;
+    QString storageNameFor(const QString &id) const;
+
+    QList<Container> m_containers;
+    // Materialized profiles only, keyed by container id.  The default
+    // container is never an entry — it lives in BrowserProfile.
+    QHash<QString, QWebEngineProfile*> m_profiles;
+};
+
+#endif // CONTAINERMANAGER_H

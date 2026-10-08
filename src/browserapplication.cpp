@@ -72,6 +72,7 @@
 #include "browserprofile.h"
 #include "browsermainwindow.h"
 #include "browsertheme.h"
+#include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
@@ -135,7 +136,7 @@ static bool s_torMode = false;
 // MIG03/MIG05/MIG09).
 static QSet<QWebEngineProfile *> s_preparedProfiles;
 
-static void prepareProfile(QWebEngineProfile *profile)
+void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
 {
     if (!profile || s_preparedProfiles.contains(profile))
         return;
@@ -644,6 +645,9 @@ void BrowserApplication::loadSettings()
     BrowserProfile::applySettings(BrowserProfile::normalProfile());
     if (QWebEngineProfile *otr = BrowserProfile::privateProfileIfCreated())
         BrowserProfile::applySettings(otr);
+    // CONT01: materialized container profiles keep user preferences
+    // too — they run the same applySettings as the normal profile.
+    ContainerManager::instance()->reapplySettings();
 }
 
 QList<BrowserMainWindow*> BrowserApplication::mainWindows()
@@ -722,13 +726,21 @@ void BrowserApplication::clearPrivateDataOnExit()
     if (!QSettings().value(QLatin1String("privacy/clearOnExit"), false).toBool())
         return;
 
-    QWebEngineProfile *profile = BrowserProfile::normalProfile();
+    // Every browsing profile the app materialized: the normal profile
+    // plus any container profiles — a "clear all data" exit wipe that
+    // skipped containers would silently keep their cookies/storage.
+    QList<QWebEngineProfile*> profiles;
+    profiles.append(BrowserProfile::normalProfile());
+    profiles.append(ContainerManager::instance()->createdProfiles());
+
     HistoryManager *history = HistoryManager::instance();
     history->clear();
     history->clearIcons();
-    profile->clearAllVisitedLinks();
-    CookieJar::instance(profile)->clear();
-    profile->clearHttpCache();
+    for (QWebEngineProfile *profile : profiles) {
+        profile->clearAllVisitedLinks();
+        CookieJar::instance(profile)->clear();
+        profile->clearHttpCache();
+    }
     DownloadManager::instance()->cleanup();
     // The search-history lists live in every ToolbarSearch; windows
     // still exist on both call paths, so clear them while they can.
@@ -740,7 +752,8 @@ void BrowserApplication::clearPrivateDataOnExit()
     // Sentinel-driven disk wipe at next start — covers the DOM
     // storage trees AND the cookie/cache network state that async
     // profile deletes may not flush before this process exits.
-    BrowserProfile::clearAllStorageOnNextStart(profile);
+    for (QWebEngineProfile *profile : profiles)
+        BrowserProfile::clearAllStorageOnNextStart(profile);
 
     // The saved session blob is itself browsing history — leaving it
     // behind would undo the wipe.

@@ -110,6 +110,14 @@ public:
     // The profile pages are created on: the default profile normally, an
     // off-the-record profile while private browsing is enabled (MIG03).
     static QWebEngineProfile *webEngineProfile();
+    // Attaches the app-level services to a profile the first time it
+    // is seen: cookie jar, custom scheme handlers, persisted settings,
+    // download manager, the adblock + privacy request interceptors and
+    // extensions (with the tor-mode hardening pins instead in a tor
+    // process).  Idempotent — webEngineProfile() runs it for the
+    // normal/private/tor profiles, ContainerManager::profileFor() for
+    // container profiles.
+    static void prepareProfile(QWebEngineProfile *profile);
     static DownloadManager *downloadManager();
     static NetworkAccessManager *networkAccessManager();
     static BookmarksManager *bookmarksManager();

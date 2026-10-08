@@ -414,6 +414,10 @@ Prefetch and remote-font blocking (SAFE04):
     Two new request-layer blocks on the Privacy page: "Block prefetch requests" (privacy/blockPrefetch, default on) drops <link rel=prefetch> and speculation-rules prefetch loads — pages fetched only because a link pointed at them, leaking connections to sites the user never visited — and "Block remote web fonts" (privacy/blockRemoteFonts, default off — opt-in, since icon fonts break) drops downloadable font files, a fingerprinting and tracking channel, while local and system fonts keep working. The Tor window honors both toggles.
     Speculation-rules prefetch navigations reach the request interceptor disguised as ordinary page loads, but Chromium marks every prefetch flavor with a "Purpose"/"Sec-Purpose: prefetch" request header — both are matched, not just the prefetch resource type. `./arora --resourceblock-smoke` proves it end to end on a loopback fixture: armed toggles never let a font or prefetch request reach the wire, and the controls confirm the fixture can deliver them.
 
+Isolated container profiles (CONT01):
+    Firefox-style containers begin with the profile core: a ContainerManager keeps a persistent registry of named containers (id, name, color) and lazily creates one dedicated WebEngine profile per container under a "containers/<id>" storage tree — giving each container its own cookies, cache, local storage and service workers. Every container profile is prepared through the same path as the normal profile, so the privacy/adblock interceptor, custom scheme handlers, cookie jar, download manager and all WebEngine settings apply identically inside containers.
+    Settings changes, user-agent/client-hints updates, clear-private-data and clear-on-exit now reach every materialized container profile, and deleting a container removes its registry entry plus its on-disk storage. Tor mode hands out no container profile at all — containers are persistent state and can never live on the Tor session.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

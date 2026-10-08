@@ -25,6 +25,7 @@
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "containermanager.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
@@ -462,6 +463,12 @@ void WebPage::setUserAgent(const QString &userAgent)
     applyTo(BrowserProfile::normalProfile());
     if (QWebEngineProfile *otrProfile = BrowserProfile::privateProfileIfCreated())
         applyTo(otrProfile);
+    // CONT01: a UA override applies on materialized container profiles
+    // too — containers send the same UA as the rest of the browser.
+    const QList<QWebEngineProfile*> containerProfiles =
+        ContainerManager::instance()->createdProfiles();
+    for (QWebEngineProfile *containerProfile : containerProfiles)
+        applyTo(containerProfile);
 }
 
 // Schemes Chromium renders itself plus the ones this application
