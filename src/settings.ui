@@ -2320,7 +2320,7 @@
        <item>
         <widget class="QLabel" name="extensionsHintLabel">
          <property name="text">
-          <string>Manifest V3 extensions: load an unpacked folder for the session, or install a folder/.zip into the profile. Newly loaded extensions start disabled.</string>
+          <string>Manifest V3 extensions: load an unpacked folder for the session, or install a folder/.zip into the profile. Every load or install shows a permission review first. Newly loaded extensions start disabled.</string>
          </property>
          <property name="wordWrap">
           <bool>true</bool>

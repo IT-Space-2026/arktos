@@ -74,6 +74,7 @@
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
 #include "extensionmanager.h"
+#include "extensionreviewdialog.h"
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -1582,40 +1583,17 @@ void SettingsDialog::stashSearchSuggestions()
         m_pendingSuggestions[m_suggestionsEngine] = searchSuggestionsCheckBox->isChecked();
 }
 
-// Shared manifest pre-check for load/install: warns about MV2
-// packages and chrome.* APIs Qt WebEngine cannot serve, and asks
-// whether to proceed anyway.
-static bool confirmExtensionLoad(const ExtensionManager::Manifest &manifest,
-                                 const QString &title, QWidget *parent)
-{
-    QStringList warnings;
-    if (!manifest.error.isEmpty())
-        warnings << manifest.error;
-    if (!manifest.unsupported.isEmpty())
-        warnings << SettingsDialog::tr("Declares chrome.* APIs unavailable in "
-                                       "Qt WebEngine (calls will fail): %1")
-                    .arg(manifest.unsupported.join(QLatin1String(", ")));
-    if (!manifest.unverified.isEmpty())
-        warnings << SettingsDialog::tr("Declares chrome.* APIs with only "
-                                       "partial Qt WebEngine support: %1")
-                    .arg(manifest.unverified.join(QLatin1String(", ")));
-    if (warnings.isEmpty())
-        return true;
-    return QMessageBox::warning(parent, title,
-        warnings.join(QLatin1String("\n\n"))
-            + SettingsDialog::tr("\n\nContinue anyway?"),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
-            == QMessageBox::Yes;
-}
-
 void SettingsDialog::loadExtension()
 {
     const QString path = QFileDialog::getExistingDirectory(
         this, tr("Select Unpacked Extension Folder"), QDir::homePath());
     if (path.isEmpty())
         return;
-    if (!confirmExtensionLoad(ExtensionManager::inspectManifest(path),
-                              tr("Load Extension"), this))
+    // EXT02: explicit consent with a permission review — nothing
+    // loads silently, warnings or not.
+    if (!ExtensionReviewDialog::review(
+            ExtensionManager::inspectManifest(path), path,
+            ExtensionReviewDialog::Load, this))
         return;
     ExtensionManager::instance()->loadExtension(path);
 }
@@ -1642,8 +1620,9 @@ void SettingsDialog::installExtension()
             tr("Extension packages (*.zip);;All files (*)"));
     if (path.isEmpty())
         return;
-    if (!confirmExtensionLoad(ExtensionManager::inspectManifest(path),
-                              tr("Install Extension"), this))
+    if (!ExtensionReviewDialog::review(
+            ExtensionManager::inspectManifest(path), path,
+            ExtensionReviewDialog::Install, this))
         return;
     ExtensionManager::instance()->installExtension(path);
 }
@@ -1688,8 +1667,11 @@ void SettingsDialog::extensionSelectionChanged()
             lines << tr("Error: %1").arg(info.error);
         if (info.builtin)
             lines << tr("Built-in component extension.");
+        if (!info.path.isEmpty())
+            lines << tr("Source: %1").arg(info.path);
         if (info.actionPopupUrl.isValid())
-            lines << tr("Popup URL: %1").arg(info.actionPopupUrl.toString());
+            lines << tr("Declares a toolbar action — Qt WebEngine has no "
+                        "extension toolbar, so its popup will not appear.");
         if (!info.path.isEmpty()) {
             const ExtensionManager::Manifest manifest =
                 ExtensionManager::inspectManifest(info.path);

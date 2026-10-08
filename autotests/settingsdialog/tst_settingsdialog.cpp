@@ -31,6 +31,7 @@
 
 #include "settings.h"
 #include "browserapplication.h"
+#include "extensionreviewdialog.h"
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
@@ -64,6 +65,7 @@ private slots:
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void extensionReview();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -1016,6 +1018,156 @@ void tst_SettingsDialog::containersPage()
         QVERIFY(manager->profileIfCreated(id) == nullptr);
         QVERIFY(!QDir(storagePath).exists());
     }
+}
+
+// EXT02: the permission-review dialog is the consent gate every
+// load/install passes through — a hostile manifest must surface its
+// permissions humanized and the support caveats, MV2 must block
+// approval, and cancel/approve must map to refuse/install.
+void tst_SettingsDialog::extensionReview()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString manifestPath = dir.path() + QLatin1String("/manifest.json");
+    {
+        QFile file(manifestPath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(R"({
+            "manifest_version": 3,
+            "name": "HostileExt",
+            "version": "1.2.3",
+            "description": "totally harmless",
+            "action": {},
+            "permissions": ["tabs", "cookies", "debugger", "unknownthing"],
+            "host_permissions": ["<all_urls>"]
+        })");
+    }
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(manifest.valid);
+    QCOMPARE(manifest.manifestVersion, 3);
+    QCOMPARE(manifest.name, QLatin1String("HostileExt"));
+
+    {
+        ExtensionReviewDialog dialog(manifest, dir.path(),
+                                     ExtensionReviewDialog::Install);
+        QLabel *nameLabel = dialog.findChild<QLabel *>(
+            QLatin1String("nameLabel"));
+        QVERIFY(nameLabel);
+        QVERIFY(nameLabel->text().contains(QLatin1String("HostileExt")));
+        QVERIFY(nameLabel->text().contains(QLatin1String("1.2.3")));
+        QCOMPARE(nameLabel->textFormat(), Qt::PlainText);
+
+        QLabel *sourceLabel = dialog.findChild<QLabel *>(
+            QLatin1String("sourceLabel"));
+        QVERIFY(sourceLabel);
+        QVERIFY(sourceLabel->text().contains(dir.path()));
+
+        QListWidget *perms = dialog.findChild<QListWidget *>(
+            QLatin1String("permissionsList"));
+        QVERIFY(perms);
+        QStringList permTexts;
+        for (int i = 0; i < perms->count(); ++i)
+            permTexts << perms->item(i)->text();
+        QVERIFY(permTexts.join(QLatin1Char('\n'))
+                .contains(QLatin1String("browsing history")));
+        QVERIFY(permTexts.join(QLatin1Char('\n'))
+                .contains(QLatin1String("cookies")));
+        QVERIFY(permTexts.join(QLatin1Char('\n'))
+                .contains(QLatin1String("debugger")));
+        QVERIFY(permTexts.join(QLatin1Char('\n'))
+                .contains(QLatin1String("all websites")));
+        // Unknown API names fall back to a generic line naming them.
+        QVERIFY(permTexts.join(QLatin1Char('\n'))
+                .contains(QLatin1String("unknownthing")));
+
+        QListWidget *warnings = dialog.findChild<QListWidget *>(
+            QLatin1String("warningsList"));
+        QVERIFY(warnings);
+        QString warningText;
+        for (int i = 0; i < warnings->count(); ++i)
+            warningText += warnings->item(i)->text() + QLatin1Char('\n');
+        // "debugger" is on the unsupported list; the action key earns
+        // the no-toolbar honesty note.
+        QVERIFY(warningText.contains(QLatin1String("will not work")));
+        QVERIFY(warningText.contains(QLatin1String("debugger")));
+        QVERIFY(warningText.contains(QLatin1String("toolbar")));
+
+        QPushButton *approve = dialog.findChild<QPushButton *>(
+            QLatin1String("approveButton"));
+        QVERIFY(approve);
+        QVERIFY(approve->isEnabled());
+        QCOMPARE(approve->text(), QLatin1String("Install"));
+    }
+
+    // MV2 manifests disable the approve button entirely.
+    QTemporaryDir mv2Dir;
+    QVERIFY(mv2Dir.isValid());
+    {
+        QFile file(mv2Dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\": 2, \"name\": \"Legacy\"}");
+    }
+    {
+        const ExtensionManager::Manifest mv2 =
+            ExtensionManager::inspectManifest(mv2Dir.path());
+        QVERIFY(mv2.valid);
+        ExtensionReviewDialog dialog(mv2, mv2Dir.path(),
+                                     ExtensionReviewDialog::Install);
+        QPushButton *approve = dialog.findChild<QPushButton *>(
+            QLatin1String("approveButton"));
+        QVERIFY(approve);
+        QVERIFY(!approve->isEnabled());
+    }
+
+    // A .zip cannot be inspected — the review still demands consent
+    // and labels the package.
+    {
+        QFile zip(dir.path() + QLatin1String("/packed.zip"));
+        QVERIFY(zip.open(QIODevice::WriteOnly));
+        zip.write("PK\x05\x06");
+        zip.close();
+        const ExtensionManager::Manifest packed =
+            ExtensionManager::inspectManifest(zip.fileName());
+        QVERIFY(!packed.valid);
+        ExtensionReviewDialog dialog(packed, zip.fileName(),
+                                     ExtensionReviewDialog::Install);
+        QPushButton *approve = dialog.findChild<QPushButton *>(
+            QLatin1String("approveButton"));
+        QVERIFY(approve);
+        QVERIFY(approve->isEnabled());
+        QLabel *sourceLabel = dialog.findChild<QLabel *>(
+            QLatin1String("sourceLabel"));
+        QVERIFY(sourceLabel->text().contains(QLatin1String("package")));
+        QListWidget *warnings = dialog.findChild<QListWidget *>(
+            QLatin1String("warningsList"));
+        QVERIFY(warnings->count() > 0);
+    }
+
+    // Consent gate: approve returns true, cancel returns false.
+    const QString dirPath = dir.path();
+    QTimer::singleShot(50, qApp, [dirPath]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (ExtensionReviewDialog *dialog =
+                qobject_cast<ExtensionReviewDialog *>(widget)) {
+            dialog->findChild<QPushButton *>(
+                QLatin1String("approveButton"))->click();
+        }
+    });
+    QVERIFY(ExtensionReviewDialog::review(
+        manifest, dirPath, ExtensionReviewDialog::Install));
+
+    rejectModal(50);
+    QVERIFY(!ExtensionReviewDialog::review(
+        manifest, dirPath, ExtensionReviewDialog::Load));
+
+    // Humanization sanity: the marquee mappings read like risk text.
+    QCOMPARE(ExtensionReviewDialog::describePermission(
+                 QLatin1String("cookies")),
+             ExtensionReviewDialog::tr("Read and modify cookies"));
+    QVERIFY(ExtensionReviewDialog::describeHostPermission(
+                QLatin1String("*://*.example.com/*"))
+            .contains(QLatin1String("example.com")));
 }
 
 QTEST_MAIN(tst_SettingsDialog)

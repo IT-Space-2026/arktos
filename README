@@ -49,8 +49,11 @@ assign separate engines to private/Tor windows and to image searches
 
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
-the preferences dialog loads unpacked folders or installs .zip packages,
-with a warning for chrome.* APIs Qt does not serve.  Plain user scripts
+the preferences dialog loads unpacked folders or installs .zip packages.
+Every load or install first shows a permission-review screen listing the
+extension's requested access in plain language plus which declared
+chrome.* APIs Qt does not serve; nothing installs without consent.
+Plain user scripts
 (any *.js file in the "userscripts" data directory) are injected into
 every page at document-ready.
 
