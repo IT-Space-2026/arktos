@@ -299,6 +299,111 @@ static quint16 startTelemetryCapture()
     std::thread(telemetryAcceptLoop, fd).detach();
     return ntohs(bound.sin_port);
 }
+
+// SAFE01: --httpsonly-smoke's answering proxy.  Chromium points at it
+// via --proxy-server, so http:// requests to the fake .test hosts
+// arrive here in absolute-uri form and CONNECT tunnels arrive for the
+// https: half — every target host is recorded (mutex-guarded) so the
+// smoke can prove "the refused request never reached the network".
+// GETs get a canned 200 (redir.test answers a 302 to postredir.test
+// for the redirect-hop case); CONNECTs get a fast 502 — the tunnel
+// attempt itself is the observation, and the failed https then
+// downgrades the host through the PRIV01 path.
+static QMutex s_httpOnlyMutex;
+static QSet<QString> s_httpOnlyGets;
+static QSet<QString> s_httpOnlyConnects;
+
+static void httpOnlyProxyAcceptLoop(int listenFd)
+{
+    for (;;) {
+        const int fd = ::accept(listenFd, nullptr, nullptr);
+        if (fd == -1) {
+            if (errno == EINTR)
+                continue;
+            return;
+        }
+        QByteArray request;
+        char buffer[4096];
+        for (;;) {
+            pollfd pfd;
+            pfd.fd = fd;
+            pfd.events = POLLIN;
+            const ssize_t n =
+                (::poll(&pfd, 1, 3000) > 0)
+                    ? ::recv(fd, buffer, sizeof(buffer), 0) : -1;
+            if (n <= 0)
+                break;
+            request.append(buffer, int(n));
+            if (request.contains("\r\n\r\n") || request.size() > 16384)
+                break;
+        }
+        const QByteArray firstLine =
+            request.left(request.indexOf('\n')).trimmed();
+        const QList<QByteArray> parts = firstLine.split(' ');
+        const QByteArray target =
+            parts.size() > 1 ? parts.at(1).trimmed() : QByteArray();
+        QByteArray reply;
+        if (firstLine.startsWith("CONNECT ")) {
+            const QByteArray host = target.left(target.indexOf(':'));
+            {
+                const QMutexLocker lock(&s_httpOnlyMutex);
+                s_httpOnlyConnects.insert(QString::fromLatin1(host));
+            }
+            reply = "HTTP/1.1 502 Bad Gateway\r\n"
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n";
+        } else {
+            const QString host =
+                QUrl(QString::fromUtf8(target)).host();
+            {
+                const QMutexLocker lock(&s_httpOnlyMutex);
+                s_httpOnlyGets.insert(host);
+            }
+            if (host == QLatin1String("redir.test")) {
+                reply = "HTTP/1.1 302 Found\r\n"
+                        "Location: http://postredir.test/redir-land\r\n"
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+            } else {
+                const QByteArray body =
+                    QByteArrayLiteral("<html><body>httpsonly-served:")
+                    + host.toUtf8() + QByteArrayLiteral("</body></html>");
+                reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                        "Content-Length: "
+                    + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body;
+            }
+        }
+        ::send(fd, reply.constData(), size_t(reply.size()), MSG_NOSIGNAL);
+        ::close(fd);
+    }
+}
+
+static quint16 startHttpOnlyProxy()
+{
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+        return 0;
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(fd, reinterpret_cast<sockaddr *>(&address),
+               sizeof(address)) != 0
+        || ::listen(fd, 32) != 0) {
+        ::close(fd);
+        return 0;
+    }
+    sockaddr_in bound;
+    socklen_t length = sizeof(bound);
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&bound),
+                      &length) != 0) {
+        ::close(fd);
+        return 0;
+    }
+    std::thread(httpOnlyProxyAcceptLoop, fd).detach();
+    return ntohs(bound.sin_port);
+}
 #endif
 
 #if defined(Q_OS_LINUX)
@@ -1086,8 +1191,10 @@ int main(int argc, char **argv)
     bool tlsOffSmoke = false;
     bool webrtcSmoke = false;
     bool webrtcOffSmoke = false;
+    bool httpOnlySmoke = false;
     QVariant savedDohMode, savedDohServer, savedTlsStrict;
     QVariant savedWebrtcProtection;
+    QVariant savedHttpsFirst, savedHttpsOnly, savedHttpExceptions;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -1108,6 +1215,8 @@ int main(int argc, char **argv)
             webrtcSmoke = true;
         if (arg == "--webrtc-off-smoke")
             webrtcOffSmoke = true;
+        if (arg == "--httpsonly-smoke")
+            httpOnlySmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
     }
@@ -1167,6 +1276,38 @@ int main(int argc, char **argv)
         settings.setValue(QLatin1String("webrtcIpProtection"),
                           webrtcSmoke);
         settings.endGroup();
+    }
+
+    // SAFE01: --httpsonly-smoke pins the HTTPS-Only + https-first
+    // toggles to their shipped defaults (and clears the exception
+    // list) BEFORE applyChromiumFlags/applySettings read them, then
+    // points the engine at the answering proxy so a request that
+    // should have been refused is observable rather than merely
+    // failed.  finish() restores the real values on the way out.
+    quint16 httpOnlyProxyPort = 0;
+#if defined(Q_OS_UNIX)
+    if (httpOnlySmoke)
+        httpOnlyProxyPort = startHttpOnlyProxy();
+#endif
+    if (httpOnlySmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        savedHttpsFirst = settings.value(QLatin1String("httpsFirst"));
+        savedHttpsOnly = settings.value(QLatin1String("httpsOnly"));
+        savedHttpExceptions =
+            settings.value(QLatin1String("httpsOnlyExceptions"));
+        settings.setValue(QLatin1String("httpsFirst"), true);
+        settings.setValue(QLatin1String("httpsOnly"), true);
+        settings.remove(QLatin1String("httpsOnlyExceptions"));
+        settings.endGroup();
+        if (httpOnlyProxyPort != 0) {
+            QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+            if (!flags.isEmpty())
+                flags += ' ';
+            flags += "--proxy-server=http://127.0.0.1:"
+                + QByteArray::number(httpOnlyProxyPort);
+            qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+        }
     }
 
     // TELEM01: --telemetry-smoke points both network stacks at a
@@ -1250,7 +1391,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "referer-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
-        "ping-smoke",
+        "ping-smoke", "httpsonly-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
@@ -2124,6 +2265,236 @@ int main(int argc, char **argv)
             qInfo() << "ping-smoke: FAIL (timeout)";
             restorePings();
             application.exit(1);
+        });
+    }
+
+    // SAFE01 e2e: HTTPS-Only strict mode through the real navigation
+    // path, with every wire attempt observable at the answering proxy:
+    //   0 fresh host — the http:// navigation is silently upgraded to
+    //     https: (proxy sees CONNECT up.test:443), the 502'd tunnel
+    //     fails the load and the host lands in the downgrade set
+    //   1 retried http:// — now vetoed and swapped for the
+    //     arora-http-warning: interstitial; no up.test request ever
+    //     reaches the proxy
+    //   2 proceed — the session exception lets http:// through and
+    //     the proxy serves it
+    //   3 redirect hop — redir.test (allowed) 302s onto the already
+    //     downgraded postredir.test; the http: hop warns and the
+    //     request never leaves
+    //   4 https: untouched — the tls.test CONNECT attempt reaches the
+    //     proxy and fails clean, no warning page
+    //   5 loopback exempt — http://127.0.0.1 loads straight from the
+    //     local fixture (Chromium bypasses the proxy for loopback)
+    //   6 toggle off — privacy/httpsOnly=false restores plain-http
+    //     loading for a fresh host
+    if (args.contains(QLatin1String("--httpsonly-smoke"))) {
+        const auto restoreHttpOnly =
+            [savedHttpsFirst, savedHttpsOnly, savedHttpExceptions]() {
+            QSettings settings;
+            settings.beginGroup(QLatin1String("privacy"));
+            const auto restore = [&settings](const QString &key,
+                                             const QVariant &saved) {
+                if (saved.isValid())
+                    settings.setValue(key, saved);
+                else
+                    settings.remove(key);
+            };
+            restore(QLatin1String("httpsFirst"), savedHttpsFirst);
+            restore(QLatin1String("httpsOnly"), savedHttpsOnly);
+            restore(QLatin1String("httpsOnlyExceptions"),
+                    savedHttpExceptions);
+            settings.endGroup();
+            PrivacyRequestInterceptor::loadSettings();
+        };
+        const auto finish = [&application, restoreHttpOnly](int code) {
+            restoreHttpOnly();
+            application.exit(code);
+        };
+#if !defined(Q_OS_UNIX)
+        qInfo() << "httpsonly-smoke: FAIL (proxy unsupported here)";
+        finish(1);
+        return application.exec();
+#endif
+        if (httpOnlyProxyPort == 0) {
+            qInfo() << "httpsonly-smoke: FAIL (proxy listen)";
+            finish(1);
+            return application.exec();
+        }
+        // Hermeticity: the user's real subscriptions could eat the
+        // fixture hosts — neuter adblock, restored on exit.
+        restoreAdBlockStateOnExit();
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+
+        // Loopback fixture for the exemption stage — Chromium never
+        // proxies localhost, so this page arrives direct.
+        QTcpServer *local = new QTcpServer(&application);
+        if (!local->listen(QHostAddress::LocalHost)) {
+            qInfo() << "httpsonly-smoke: FAIL (local listen)";
+            finish(1);
+            return application.exec();
+        }
+        const quint16 localPort = local->serverPort();
+        const QUrl localUrl(QStringLiteral("http://127.0.0.1:%1/")
+                                .arg(localPort));
+        QObject::connect(local, &QTcpServer::newConnection, &application,
+                         [local]() {
+            QTcpSocket *client = local->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                const QByteArray body = QByteArrayLiteral(
+                    "<html><head><title>local-ok</title></head></html>");
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                              "Content-Length: "
+                              + QByteArray::number(body.size())
+                              + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto stage = std::make_shared<int>(0);
+        auto stageTicks = std::make_shared<int>(0);
+        auto finishSeen = std::make_shared<bool>(false);
+        auto finishUrl = std::make_shared<QUrl>();
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application,
+                         [view, finishSeen, finishUrl](bool) {
+            *finishSeen = true;
+            *finishUrl = view->url();
+        });
+
+        const auto advance = [stage, stageTicks, finishSeen]() {
+            ++*stage;
+            *stageTicks = 0;
+            *finishSeen = false;
+        };
+
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [view, poll, stage, stageTicks, finishSeen,
+                          finishUrl, advance, finish, localUrl]() {
+            QSet<QString> gets, connects;
+            {
+                const QMutexLocker lock(&s_httpOnlyMutex);
+                gets = s_httpOnlyGets;
+                connects = s_httpOnlyConnects;
+            }
+            const auto fail = [poll, finish, stage,
+                               gets, connects](const char *why) {
+                qInfo() << "httpsonly-smoke: FAIL" << why
+                        << "stage:" << *stage
+                        << "gets:" << gets << "connects:" << connects;
+                poll->stop();
+                finish(1);
+            };
+            switch (*stage) {
+            case 0:
+                // http://up.test was issued at block entry — the
+                // interceptor upgrades it to https:, the proxy refuses
+                // the tunnel, and the failed load downgrades the host.
+                if (!PrivacyRequestInterceptor::isDowngraded(
+                        QStringLiteral("up.test")))
+                    break;
+                if (!connects.contains(QLatin1String("up.test")))
+                    return fail("https upgrade never reached the proxy");
+                qInfo() << "httpsonly-smoke: stage0 upgraded+downgraded";
+                advance();
+                view->loadUrl(QUrl(QLatin1String("http://up.test/")));
+                break;
+            case 1:
+                // The downgraded host stays http: — HTTPS-Only must
+                // veto it for the warning page, off the wire entirely.
+                if (view->url().scheme()
+                        != QLatin1String("arora-http-warning"))
+                    break;
+                if (gets.contains(QLatin1String("up.test")))
+                    return fail("refused http request reached the proxy");
+                qInfo() << "httpsonly-smoke: stage1 warned";
+                advance();
+                PrivacyRequestInterceptor::allowHttpForHost(
+                    QStringLiteral("up.test"), false);
+                view->loadUrl(QUrl(QLatin1String("http://up.test/ok")));
+                break;
+            case 2:
+                if (!*finishSeen || *finishUrl
+                        != QUrl(QLatin1String("http://up.test/ok")))
+                    break;
+                if (!gets.contains(QLatin1String("up.test")))
+                    return fail("allowed http request never served");
+                qInfo() << "httpsonly-smoke: stage2 proceed loaded";
+                advance();
+                PrivacyRequestInterceptor::allowHttpForHost(
+                    QStringLiteral("redir.test"), false);
+                // Both hosts are pre-downgraded so https-first leaves
+                // them at http: — the redirect source so its request
+                // really reaches the proxy, the hop target so its
+                // http: arrival cannot upgrade away and must warn.
+                PrivacyRequestInterceptor::noteNavigationFailure(
+                    QUrl(QLatin1String("https://redir.test/")));
+                PrivacyRequestInterceptor::noteNavigationFailure(
+                    QUrl(QLatin1String("https://postredir.test/")));
+                view->loadUrl(QUrl(QLatin1String("http://redir.test/")));
+                break;
+            case 3:
+                if (view->url().scheme()
+                        != QLatin1String("arora-http-warning"))
+                    break;
+                if (!gets.contains(QLatin1String("redir.test")))
+                    return fail("redirect source never served");
+                if (gets.contains(QLatin1String("postredir.test")))
+                    return fail("refused redirect hop reached proxy");
+                qInfo() << "httpsonly-smoke: stage3 redirect-hop warned";
+                advance();
+                view->loadUrl(QUrl(QLatin1String("https://tls.test/")));
+                break;
+            case 4:
+                if (!*finishSeen)
+                    break;
+                if (view->url().scheme()
+                        == QLatin1String("arora-http-warning"))
+                    return fail("https navigation hit the warning");
+                if (!connects.contains(QLatin1String("tls.test")))
+                    return fail("https CONNECT never reached the proxy");
+                qInfo() << "httpsonly-smoke: stage4 https unaffected";
+                advance();
+                view->loadUrl(localUrl);
+                break;
+            case 5:
+                if (!*finishSeen || *finishUrl != localUrl)
+                    break;
+                if (view->title() != QLatin1String("local-ok"))
+                    return fail("loopback page did not come from the fixture");
+                qInfo() << "httpsonly-smoke: stage5 loopback exempt";
+                advance();
+                {
+                    QSettings settings;
+                    settings.beginGroup(QLatin1String("privacy"));
+                    settings.setValue(QLatin1String("httpsOnly"), false);
+                    settings.setValue(QLatin1String("httpsFirst"), false);
+                    settings.endGroup();
+                    PrivacyRequestInterceptor::loadSettings();
+                }
+                view->loadUrl(QUrl(QLatin1String("http://plainoff.test/")));
+                break;
+            case 6:
+                if (!gets.contains(QLatin1String("plainoff.test"))
+                    || !*finishSeen || *finishUrl
+                        != QUrl(QLatin1String("http://plainoff.test/")))
+                    break;
+                qInfo() << "httpsonly-smoke: PASS";
+                poll->stop();
+                finish(0);
+                return;
+            }
+            if (++*stageTicks > 80)   // ~20s per stage
+                return fail("stage timeout");
+        });
+        poll->start(250);
+        view->loadUrl(QUrl(QLatin1String("http://up.test/")));
+        QTimer::singleShot(120000, &application,
+                           [&application, finish]() {
+            qInfo() << "httpsonly-smoke: FAIL (overall timeout)";
+            finish(1);
         });
     }
 

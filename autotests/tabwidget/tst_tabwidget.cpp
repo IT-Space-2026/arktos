@@ -843,12 +843,17 @@ void tst_TabWidget::omnibox()
     QSettings settings;
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
 
-    // PRIV01: the profile interceptor upgrades http: navigations to
-    // https: — this test asserts the URL the address bar resolved to,
-    // not the transport, so the upgrade is switched off for it.
+    // PRIV01/SAFE01: the profile interceptor upgrades http:
+    // navigations to https: and HTTPS-Only swaps surviving http:
+    // targets for the warning interstitial — this test asserts the
+    // URL the address bar resolved to, not the transport, so both
+    // are switched off for it.
     const QVariant savedHttpsFirst =
         settings.value(QLatin1String("privacy/httpsFirst"));
+    const QVariant savedHttpsOnly =
+        settings.value(QLatin1String("privacy/httpsOnly"));
     settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
     PrivacyRequestInterceptor::loadSettings();
 
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
@@ -921,6 +926,10 @@ void tst_TabWidget::omnibox()
         settings.setValue(QLatin1String("privacy/httpsFirst"), savedHttpsFirst);
     else
         settings.remove(QLatin1String("privacy/httpsFirst"));
+    if (savedHttpsOnly.isValid())
+        settings.setValue(QLatin1String("privacy/httpsOnly"), savedHttpsOnly);
+    else
+        settings.remove(QLatin1String("privacy/httpsOnly"));
     PrivacyRequestInterceptor::loadSettings();
 }
 

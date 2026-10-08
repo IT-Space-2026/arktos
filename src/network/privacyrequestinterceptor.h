@@ -191,6 +191,30 @@ public:
     // interceptor consults the same toggle.
     static bool blockPingsEnabled();
 
+    // SAFE01: HTTPS-Only strict mode (privacy/httpsOnly, default on).
+    // A main-frame navigation that is still http: after the
+    // https-first upgrade pass is refused and WebPage shows a
+    // "this site doesn't support HTTPS" warning interstitial instead.
+    // Proceeding once remembers the host for the session; "always
+    // allow" persists it in QSettings.  Loopback/LAN/.onion hosts are
+    // exempt — the same carve-out https-first uses.
+    static bool httpsOnlyEnabled();
+    // The pure decision — safe on the IO thread (lock-guarded
+    // snapshots + mutex-guarded sets only).
+    static bool shouldWarnHttp(const QUrl &url);
+    static bool isHttpAllowedHost(const QString &host);
+    static void allowHttpForHost(const QString &host, bool persistent);
+    static void clearHttpAllowance(const QString &host);
+    static QStringList httpExceptionHosts();
+
+    // The interceptor records each blocked main-frame http: URL here
+    // (mutex-guarded, bounded) so WebPage can distinguish its own
+    // HTTPS-Only refusal from a real network failure and swap in the
+    // warning interstitial.  take() consumes the record — a URL
+    // warned for once does not linger.
+    static void recordBlockedHttpNav(const QUrl &url);
+    static bool takeBlockedHttpNav(const QUrl &url);
+
 private:
     AdBlockRequestInterceptor *m_adBlock;
 };

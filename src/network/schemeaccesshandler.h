@@ -44,21 +44,24 @@ public:
     static void registerUrlSchemes();
     static void installAll(QWebEngineProfile *profile, QObject *parent = nullptr);
 
-    // SEC06: certificate-error interstitial plumbing.  WebPage renders
-    // the per-error markup and publishes it under a random nonce; the
-    // CertErrorSchemeHandler serves it on the IO thread for
-    // arora-cert-error:interstitial?n=<nonce>.  The nonce is also what
-    // WebPage checks on the proceed/back action links, so web content
-    // cannot forge either half of the flow.
-    static void publishCertErrorPage(const QString &nonce, const QString &html);
-    static bool hasCertErrorPage(const QString &nonce);
-    static void installCertErrorHandler(QWebEngineProfile *profile);
+    // SEC06/SAFE01: interstitial plumbing shared by the
+    // certificate-error (arora-cert-error:) and HTTPS-Only warning
+    // (arora-http-warning:) pages.  WebPage renders the per-warning
+    // markup and publishes it under a random nonce; the
+    // InterstitialSchemeHandler serves it on the IO thread for
+    // <scheme>:interstitial?n=<nonce>.  The nonce is also what WebPage
+    // checks on the proceed/back action links, so web content cannot
+    // forge either half of the flow.
+    static void publishInterstitialPage(const QString &nonce, const QString &html);
+    static bool hasInterstitialPage(const QString &nonce);
+    static void installInterstitialHandlers(QWebEngineProfile *profile);
 
-    // Internals for CertErrorSchemeHandler — call certErrorMutex()
-    // before touching certErrorPages()/certErrorOrder() (IO thread).
-    static QMutex &certErrorMutex();
-    static QHash<QString, QString> &certErrorPages();
-    static QStringList &certErrorOrder();
+    // Internals for InterstitialSchemeHandler — call
+    // interstitialMutex() before touching
+    // interstitialPages()/interstitialOrder() (IO thread).
+    static QMutex &interstitialMutex();
+    static QHash<QString, QString> &interstitialPages();
+    static QStringList &interstitialOrder();
 };
 
 #endif // SCHEMEACCESSHANDLER_H

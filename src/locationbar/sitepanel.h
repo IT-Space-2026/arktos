@@ -43,6 +43,8 @@ class WebView;
 //     @@||host^$document whitelist exception in AdBlockManager,
 //   - a POPUP01 "allow pop-ups on this site" toggle writing the
 //     PopupBlocker per-host exception list,
+//   - a SAFE01 "always allow HTTP" toggle writing the HTTPS-Only
+//     exception list the warning interstitial consults,
 //   - the remembered WebPermissionManager grants for the origin with
 //     per-entry revoke buttons (SEC05),
 //   - a "clear site data" button wiping the host's cookies and the
@@ -74,6 +76,7 @@ private:
     void toggleContentBlocking(bool checked);
     void applyJavaScriptRule(int index);
     void togglePopups(bool checked);
+    void toggleHttpAllowance(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
 
@@ -86,6 +89,7 @@ private:
     QComboBox *m_javaScriptRule;
     QLabel *m_javaScriptState;
     QCheckBox *m_allowPopups;
+    QCheckBox *m_allowHttp;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;

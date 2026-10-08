@@ -91,6 +91,9 @@ signals:
     // interstitial page has been shown; the decision is resolved via
     // the interstitial's action links.
     void certificateErrorInterstitial(const QUrl &url);
+    // SAFE01: emitted when an http: main-frame navigation is stopped
+    // by HTTPS-Only mode and the warning interstitial is being shown.
+    void httpOnlyInterstitial(const QUrl &url);
     // JSCTL: re-emitted whenever the page's JavaScript policy is
     // re-evaluated (each accepted main-frame navigation and on
     // loadSettings) — true when scripts are currently blocked.
@@ -170,6 +173,11 @@ private:
     void handleCertificateError(QWebEngineCertificateError error);
     QString certificateErrorHtml(const QWebEngineCertificateError &error);
     void resolveCertificateErrorLink(const QUrl &url);
+    // SAFE01: HTTPS-Only warning page — shown when an http:
+    // main-frame navigation survives the https-first upgrade pass.
+    void showHttpWarning(const QUrl &url);
+    QString httpWarningHtml(const QUrl &url);
+    void resolveHttpWarningLink(const QUrl &url);
     void showRateLimitNoticeIfNeeded();
 
 protected:
@@ -183,6 +191,11 @@ protected:
     QWebEngineCertificateError m_pendingCertError;
     QString m_certErrorNonce;
     bool m_certErrorPending;
+    // SAFE01: pending HTTPS-Only warning — the refused http: target
+    // and the nonce binding its interstitial's action links.
+    QUrl m_httpWarningUrl;
+    QString m_httpWarningNonce;
+    bool m_httpWarningPending = false;
     bool m_javaScriptBlocked;
     QString m_javaScriptBlockedHost;
     QUrl m_scheduledScriptUrl;

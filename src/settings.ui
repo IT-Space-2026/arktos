@@ -1439,6 +1439,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="httpsOnly">
+            <property name="toolTip">
+             <string>Warn before a page loads over plain HTTP: any main-frame navigation that is still HTTP after the HTTPS upgrade pass shows a warning page instead of loading insecurely, offering proceed-once and always-allow choices per site. Localhost, LAN addresses and .onion names stay exempt.</string>
+            </property>
+            <property name="text">
+             <string>Warn before loading a site over plain HTTP</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <layout class="QHBoxLayout">
             <item>
              <widget class="QLabel" name="refererPolicyLabel">
@@ -2471,6 +2484,7 @@
   <tabstop>filterTrackingCookiesCheckbox</tabstop>
   <tabstop>blockThirdPartyCookies</tabstop>
   <tabstop>httpsFirst</tabstop>
+  <tabstop>httpsOnly</tabstop>
   <tabstop>refererPolicy</tabstop>
   <tabstop>webrtcProtection</tabstop>
   <tabstop>secureDnsMode</tabstop>

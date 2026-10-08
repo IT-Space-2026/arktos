@@ -37,23 +37,24 @@ SchemeAccessHandler::SchemeAccessHandler(QObject *parent)
 {
 }
 
-// SEC06: serves the certificate-error interstitial at
-// arora-cert-error:interstitial?n=<nonce>.  The interstitial cannot be
-// delivered with setHtml(): a data: document committed on top of a
-// failed navigation is sandboxed by Chromium — its links to a custom
-// scheme land on about:blank#blocked and never reach
+// SEC06/SAFE01: serves the in-app warning interstitials at
+// <scheme>:interstitial?n=<nonce> — arora-cert-error: for certificate
+// errors, arora-http-warning: for HTTPS-Only blocks.  An interstitial
+// cannot be delivered with setHtml(): a data: document committed on
+// top of a failed navigation is sandboxed by Chromium — its links to
+// a custom scheme land on about:blank#blocked and never reach
 // acceptNavigationRequest.  Serving the page from a real URL keeps
 // its action links working.
 //
-// The rendered markup is per-error (host, chain details, nonce-bound
+// The rendered markup is per-warning (host, details, nonce-bound
 // action links), so WebPage publishes it into a nonce-keyed registry
 // and this handler looks it up on the IO thread.  Action URLs
-// (arora-cert-error:proceed|back) are intercepted and refused by
+// (<scheme>:proceed|back|always) are intercepted and refused by
 // WebPage::acceptNavigationRequest before they ever reach here.
-class CertErrorSchemeHandler : public QWebEngineUrlSchemeHandler
+class InterstitialSchemeHandler : public QWebEngineUrlSchemeHandler
 {
 public:
-    CertErrorSchemeHandler(QObject *parent = nullptr)
+    InterstitialSchemeHandler(QObject *parent = nullptr)
         : QWebEngineUrlSchemeHandler(parent)
     {
     }
@@ -63,8 +64,8 @@ public:
         const QUrl url = job->requestUrl();
         QString html;
         {
-            QMutexLocker lock(&SchemeAccessHandler::certErrorMutex());
-            html = SchemeAccessHandler::certErrorPages().value(
+            QMutexLocker lock(&SchemeAccessHandler::interstitialMutex());
+            html = SchemeAccessHandler::interstitialPages().value(
                     QUrlQuery(url).queryItemValue(QLatin1String("n")));
         }
         if (url.path() != QLatin1String("interstitial") || html.isEmpty()) {
@@ -77,56 +78,59 @@ public:
     }
 };
 
-QMutex &SchemeAccessHandler::certErrorMutex()
+QMutex &SchemeAccessHandler::interstitialMutex()
 {
     static QMutex mutex;
     return mutex;
 }
 
-QHash<QString, QString> &SchemeAccessHandler::certErrorPages()
+QHash<QString, QString> &SchemeAccessHandler::interstitialPages()
 {
     static QHash<QString, QString> pages;
     return pages;
 }
 
-QStringList &SchemeAccessHandler::certErrorOrder()
+QStringList &SchemeAccessHandler::interstitialOrder()
 {
     static QStringList order;
     return order;
 }
 
-void SchemeAccessHandler::publishCertErrorPage(const QString &nonce,
+void SchemeAccessHandler::publishInterstitialPage(const QString &nonce,
         const QString &html)
 {
-    QMutexLocker lock(&certErrorMutex());
-    certErrorPages().insert(nonce, html);
-    certErrorOrder().append(nonce);
+    QMutexLocker lock(&interstitialMutex());
+    interstitialPages().insert(nonce, html);
+    interstitialOrder().append(nonce);
     // Bound the registry — each entry is a few KiB of markup.  Pages
     // are only re-served while their nonce survives, so evicting the
     // oldest just makes a very stale interstitial 404 on reload.
-    while (certErrorOrder().size() > 64)
-        certErrorPages().remove(certErrorOrder().takeFirst());
+    while (interstitialOrder().size() > 64)
+        interstitialPages().remove(interstitialOrder().takeFirst());
 }
 
-bool SchemeAccessHandler::hasCertErrorPage(const QString &nonce)
+bool SchemeAccessHandler::hasInterstitialPage(const QString &nonce)
 {
-    QMutexLocker lock(&certErrorMutex());
-    return certErrorPages().contains(nonce);
+    QMutexLocker lock(&interstitialMutex());
+    return interstitialPages().contains(nonce);
 }
 
-void SchemeAccessHandler::installCertErrorHandler(QWebEngineProfile *profile)
+void SchemeAccessHandler::installInterstitialHandlers(QWebEngineProfile *profile)
 {
     if (!profile)
         return;
     // GUI thread only (called from installAll / WebPage).  Tracks which
-    // profiles already carry the handler so foreign profiles touched by
-    // a WebPage get it lazily without double-installing.
+    // profiles already carry the handlers so foreign profiles touched
+    // by a WebPage get them lazily without double-installing.
     static QSet<QWebEngineProfile *> installed;
     if (installed.contains(profile))
         return;
     profile->installUrlSchemeHandler(
             QByteArrayLiteral("arora-cert-error"),
-            new CertErrorSchemeHandler(profile));
+            new InterstitialSchemeHandler(profile));
+    profile->installUrlSchemeHandler(
+            QByteArrayLiteral("arora-http-warning"),
+            new InterstitialSchemeHandler(profile));
     installed.insert(profile);
     QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
         installed.remove(profile);
@@ -151,7 +155,7 @@ void SchemeAccessHandler::registerUrlSchemes()
     QWebEngineUrlScheme::registerScheme(scheme);
 
     // SEC06: arora-cert-error: carries the certificate-error
-    // interstitial (served by CertErrorSchemeHandler from the nonce
+    // interstitial (served by InterstitialSchemeHandler from the nonce
     // registry) and its action links (proceed/back), which
     // WebPage::acceptNavigationRequest resolves and refuses.  The
     // scheme must be registered or clicks go down Chromium's
@@ -161,11 +165,21 @@ void SchemeAccessHandler::registerUrlSchemes()
     certErrorScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     certErrorScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
     QWebEngineUrlScheme::registerScheme(certErrorScheme);
+
+    // SAFE01: arora-http-warning: carries the HTTPS-Only warning
+    // interstitial from the same nonce registry; its action links are
+    // proceed (allow this host once) / always (persist an exception)
+    // / back.  Same registration requirement as arora-cert-error.
+    QWebEngineUrlScheme httpWarningScheme(
+        QByteArrayLiteral("arora-http-warning"));
+    httpWarningScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+    httpWarningScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
+    QWebEngineUrlScheme::registerScheme(httpWarningScheme);
 }
 
 void SchemeAccessHandler::installAll(QWebEngineProfile *profile, QObject *parent)
 {
     FileAccessHandler *fileHandler = new FileAccessHandler(parent);
     profile->installUrlSchemeHandler(fileHandler->scheme(), fileHandler);
-    installCertErrorHandler(profile);
+    installInterstitialHandlers(profile);
 }

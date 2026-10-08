@@ -343,9 +343,11 @@ void WebPage::init()
         HistoryManager *history = HistoryManager::instance();
         connect(this, &QWebEnginePage::loadFinished, this,
                 [this, history](bool ok) {
-            // The certificate-error interstitial is chrome, not a
-            // visited page — keep it out of history.
-            if (ok && url().scheme() != QLatin1String("arora-cert-error"))
+            // The warning interstitials are chrome, not visited
+            // pages — keep them out of history.
+            const QString scheme = url().scheme();
+            if (ok && scheme != QLatin1String("arora-cert-error")
+                && scheme != QLatin1String("arora-http-warning"))
                 history->addHistoryEntry(url().toString());
         });
         connect(this, &QWebEnginePage::titleChanged, this,
@@ -549,9 +551,26 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         const QString nonce = QUrlQuery(url)
                 .queryItemValue(QLatin1String("n"));
         if (url.path() == QLatin1String("interstitial"))
-            return SchemeAccessHandler::hasCertErrorPage(nonce);
+            return SchemeAccessHandler::hasInterstitialPage(nonce);
         if (m_certErrorPending && nonce == m_certErrorNonce)
             resolveCertificateErrorLink(url);
+        return false;
+    }
+
+    // SAFE01: the HTTPS-Only warning interstitial and its action
+    // links — same nonce-bound scheme trick as the certificate-error
+    // pages: only the rendered warning knows the nonce, so web
+    // content cannot forge an "always allow" for a host it did not
+    // trigger a warning for.
+    if (scheme == QLatin1String("arora-http-warning")) {
+        if (!isMainFrame)
+            return false;
+        const QString nonce = QUrlQuery(url)
+                .queryItemValue(QLatin1String("n"));
+        if (url.path() == QLatin1String("interstitial"))
+            return SchemeAccessHandler::hasInterstitialPage(nonce);
+        if (m_httpWarningPending && nonce == m_httpWarningNonce)
+            resolveHttpWarningLink(url);
         return false;
     }
 
@@ -575,6 +594,23 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 
     // Qt WebEngine asks the user about resubmitting POST data itself; the old
     // NavigationTypeFormResubmitted prompt has no equivalent here.
+
+    // SAFE01: HTTPS-Only mode — an http: main-frame navigation that
+    // the https-first upgrade did not claim (upgradeable hosts were
+    // already redirected inside the interceptor; a host surviving here
+    // as http: was downgraded after a failed https load, or the
+    // upgrade is off) is refused and swapped for the warning
+    // interstitial.  Redirect hops reach this hook too — the probe
+    // run for this task verified a mid-chain redirect re-fires
+    // acceptNavigationRequest — and the request interceptor covers
+    // whatever bypasses it, so every http: hop warns.  Tor windows
+    // exempt .onion and upgrade everything else, so nothing warns
+    // there.
+    if (isMainFrame && !BrowserApplication::isTorMode()
+        && PrivacyRequestInterceptor::shouldWarnHttp(url)) {
+        showHttpWarning(url);
+        return false;
+    }
 
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
 
@@ -622,6 +658,9 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         // A real navigation supersedes any pending cert decision — the
         // deferred request is dead by the time the new load commits.
         m_certErrorPending = false;
+        // Same for a pending HTTPS-Only warning — another navigation
+        // being accepted means the refused target no longer applies.
+        m_httpWarningPending = false;
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
     }
@@ -745,6 +784,21 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
     if (errorUrl.isEmpty())
         return;
 
+    // SAFE01: a main-frame http: request the privacy interceptor just
+    // refused under HTTPS-Only mode arrives here as a failed load
+    // (ERR_ACCESS_DENIED, verified by the task's probe).  Swap in the
+    // warning interstitial instead of the not-found page.  A vetoed
+    // navigation never reaches the interceptor, so this path covers
+    // the hops acceptNavigationRequest missed; the pending check
+    // below silences the vetoed navigation's own failure signal when
+    // one is still emitted.
+    if (PrivacyRequestInterceptor::takeBlockedHttpNav(errorUrl)) {
+        showHttpWarning(errorUrl);
+        return;
+    }
+    if (m_httpWarningPending && errorUrl == m_httpWarningUrl)
+        return;
+
     if (errorUrl != m_requestedUrl) {
         // PRIV01: the HTTPS-first interceptor upgrades http:
         // navigations inside the network stack — acceptNavigationRequest
@@ -799,12 +853,18 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
     if (httpsUpgradeFailed) {
         // PRIV01: the visible downgrade-warning path — the host sits
         // in the session downgrade set, so the suggestion explains
-        // both the failure and that plain http now works again.
+        // both the failure and what plain http: does next: under
+        // HTTPS-Only mode every request warns first, otherwise it is
+        // simply allowed for the rest of the session.
         html.replace(QLatin1String("</ul>"),
             QLatin1String("<li>")
-            + tr("The secure (HTTPS) connection failed.  Plain HTTP "
-                 "requests to this site will be allowed for the rest "
-                 "of this session.")
+            + (PrivacyRequestInterceptor::httpsOnlyEnabled()
+                ? tr("The secure (HTTPS) connection failed.  Plain "
+                     "HTTP requests to this site will show a warning "
+                     "before loading.")
+                : tr("The secure (HTTPS) connection failed.  Plain "
+                     "HTTP requests to this site will be allowed for "
+                     "the rest of this session."))
             + QLatin1String("</li></ul>"));
     }
     setHtml(html, errorUrl);
@@ -875,7 +935,7 @@ void WebPage::handleCertificateError(QWebEngineCertificateError error)
     // The nonce is embedded in the page's action links and published
     // alongside the markup — only the rendered interstitial knows it.
     m_certErrorNonce = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    SchemeAccessHandler::publishCertErrorPage(m_certErrorNonce,
+    SchemeAccessHandler::publishInterstitialPage(m_certErrorNonce,
             certificateErrorHtml(error));
     error.rejectCertificate();
 
@@ -883,7 +943,7 @@ void WebPage::handleCertificateError(QWebEngineCertificateError error)
     // handler — not setHtml(): a data: document committed over a
     // failed navigation is sandboxed and its custom-scheme links never
     // reach acceptNavigationRequest (about:blank#blocked).
-    SchemeAccessHandler::installCertErrorHandler(profile());
+    SchemeAccessHandler::installInterstitialHandlers(profile());
     load(QUrl(QLatin1String("arora-cert-error:interstitial?n=")
               + m_certErrorNonce));
     emit certificateErrorInterstitial(error.url());
@@ -970,6 +1030,123 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         QTimer::singleShot(0, this, [page, url]() {
             if (page)
                 page->load(url);
+        });
+        return;
+    }
+    // "back to safety" (or anything unrecognised): leave the
+    // interstitial — back in history when there is one, otherwise the
+    // start page.  Queued for the same re-entrancy reason.
+    QTimer::singleShot(0, this, [page]() {
+        if (!page)
+            return;
+        if (page->history()->canGoBack())
+            page->history()->back();
+        else
+            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+    });
+}
+
+// SAFE01: HTTPS-Only strict mode — the http: target a navigation was
+// stopped for becomes a nonce-bound interstitial on the private
+// arora-http-warning: scheme (same machinery as the certificate-error
+// page; setHtml() cannot work — a data: document's custom-scheme
+// links are sandboxed to about:blank#blocked).  Called both from the
+// acceptNavigationRequest veto and from handleLoadingChanged when the
+// interceptor refused a hop, so the load() below is always queued —
+// a navigation issued synchronously inside the veto would re-enter
+// Chromium's navigation machinery.
+void WebPage::showHttpWarning(const QUrl &target)
+{
+    m_httpWarningPending = true;
+    m_httpWarningUrl = target;
+    m_httpWarningNonce =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    SchemeAccessHandler::publishInterstitialPage(m_httpWarningNonce,
+            httpWarningHtml(target));
+    SchemeAccessHandler::installInterstitialHandlers(profile());
+    const QUrl interstitial(
+        QLatin1String("arora-http-warning:interstitial?n=")
+        + m_httpWarningNonce);
+    QPointer<WebPage> page(this);
+    QTimer::singleShot(0, this, [page, interstitial]() {
+        if (page)
+            page->load(interstitial);
+    });
+    emit httpOnlyInterstitial(target);
+}
+
+QString WebPage::httpWarningHtml(const QUrl &target)
+{
+    QFile warningFile(QLatin1String(":/certerror.html"));
+    if (!warningFile.open(QIODevice::ReadOnly))
+        return QString();
+    QString html = QLatin1String(warningFile.readAll());
+    QWidget *view = QWebEngineView::forPage(this);
+    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
+    QBuffer imageBuffer;
+    imageBuffer.open(QBuffer::ReadWrite);
+    if (pixmap.save(&imageBuffer, "PNG")) {
+        html.replace(QLatin1String("IMAGE_BINARY_DATA_HERE"),
+                     QLatin1String(imageBuffer.buffer().toBase64()));
+    }
+
+    // Everything interpolated here is web-controlled — escape it.
+    const QString shownHost =
+        QString::fromUtf8(target.host().toUtf8()).toHtmlEscaped();
+    const QString shownUrl =
+        QString::fromUtf8(target.toEncoded()).toHtmlEscaped();
+
+    QString buttons = tr("<a id=\"back\" href=\"arora-http-warning:back?n=%1\">Back to safety</a>")
+            .arg(m_httpWarningNonce);
+    buttons += tr("<a id=\"proceed\" href=\"arora-http-warning:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+            .arg(m_httpWarningNonce);
+    // "Always" persists a host exception — off-the-record profiles
+    // never write settings, so they only get the session-scoped path.
+    if (!profile()->isOffTheRecord()) {
+        buttons += tr("<a id=\"always\" href=\"arora-http-warning:always?n=%1\">Always allow HTTP on this site</a>")
+                .arg(m_httpWarningNonce);
+    }
+
+    html = html.arg(
+        tr("Insecure connection: %1").arg(shownUrl),
+        tr("This site does not support HTTPS"),
+        tr("Arora stopped %1 from loading because it can only be "
+           "reached over an unencrypted HTTP connection.  Anyone on "
+           "the network path can read or change everything sent to or "
+           "received from this site — including passwords and "
+           "cookies.").arg(shownHost),
+        QLatin1String("<li>")
+            + tr("Requested address: %1").arg(shownUrl)
+            + QLatin1String("</li>"),
+        QLatin1String("<li>")
+            + tr("The site may simply not offer a secure version, or "
+                 "the connection may have been stripped back to HTTP "
+                 "by a network attacker.")
+            + QLatin1String("</li>"),
+        buttons);
+    return html;
+}
+
+void WebPage::resolveHttpWarningLink(const QUrl &command)
+{
+    const QUrl target = m_httpWarningUrl;
+    m_httpWarningPending = false;
+    QPointer<WebPage> page(this);
+    if (command.path() == QLatin1String("proceed")
+        || command.path() == QLatin1String("always")) {
+        // "proceed" remembers the host for the session; "always"
+        // persists it in QSettings.  An off-the-record page never
+        // renders the always link — force session scope anyway so a
+        // nonce-carrying forged navigation cannot persist either.
+        const bool persist = command.path() == QLatin1String("always")
+            && !profile()->isOffTheRecord();
+        PrivacyRequestInterceptor::allowHttpForHost(target.host(),
+                                                  persist);
+        // Queued: navigating from inside acceptNavigationRequest
+        // would re-enter Chromium's navigation machinery.
+        QTimer::singleShot(0, this, [page, target]() {
+            if (page)
+                page->load(target);
         });
         return;
     }

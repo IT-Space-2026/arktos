@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
+#include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
@@ -131,6 +132,18 @@ SitePanel::SitePanel(QWidget *parent)
             this, &SitePanel::togglePopups);
     layout->addWidget(m_allowPopups);
 
+    // SAFE01: the host exception the HTTPS-Only warning interstitial
+    // consults — the persistent half of its "always allow" link.
+    m_allowHttp = new QCheckBox(
+        tr("Always allow insecure HTTP on this site"), this);
+    m_allowHttp->setObjectName(QLatin1String("siteAllowHttp"));
+    m_allowHttp->setToolTip(
+        tr("Skips the HTTPS-Only warning page for this host — its "
+           "pages load over plain HTTP without asking."));
+    connect(m_allowHttp, &QCheckBox::toggled,
+            this, &SitePanel::toggleHttpAllowance);
+    layout->addWidget(m_allowHttp);
+
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
     line2->setFrameShadow(QFrame::Sunken);
@@ -216,6 +229,9 @@ void SitePanel::refresh()
     if (scheme == QLatin1String("arora-cert-error"))
         m_securityLabel->setText(
             tr("Certificate error — the connection could not be verified"));
+    else if (scheme == QLatin1String("arora-http-warning"))
+        m_securityLabel->setText(
+            tr("Blocked by HTTPS-Only mode — the site is not secure"));
     else if (scheme == QLatin1String("https"))
         m_securityLabel->setText(tr("Connection is secure (HTTPS)"));
     else if (scheme == QLatin1String("http"))
@@ -280,6 +296,14 @@ void SitePanel::refresh()
     m_allowPopups->setEnabled(webSite);
     m_allowPopups->setChecked(
         webSite && PopupBlocker::instance()->isAllowedHost(site));
+
+    // SAFE01: the HTTPS-Only exception is host-keyed like the others.
+    // While the warning page itself is shown the url is the internal
+    // interstitial (no host) — the row becomes meaningful once the
+    // user has proceeded onto the http: site.
+    m_allowHttp->setEnabled(webSite);
+    m_allowHttp->setChecked(
+        webSite && PrivacyRequestInterceptor::isHttpAllowedHost(site));
 
     rebuildPermissionRows();
     m_refreshing = false;
@@ -347,6 +371,25 @@ void SitePanel::togglePopups(bool checked)
         blocker->allowHost(site, persistent);
     else
         blocker->removeAllowedHost(site);
+    refresh();
+}
+
+void SitePanel::toggleHttpAllowance(bool checked)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    // Off-the-record pages never write the persistent store — the
+    // exception lives only for the session, like the interstitial's
+    // session-scoped "proceed".
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    if (checked)
+        PrivacyRequestInterceptor::allowHttpForHost(site, persistent);
+    else
+        PrivacyRequestInterceptor::clearHttpAllowance(site);
     refresh();
 }
 

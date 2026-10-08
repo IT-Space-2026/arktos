@@ -40,6 +40,7 @@
 // on the GUI thread.  Defaults favor privacy.
 static QReadWriteLock s_policyLock;
 static bool s_httpsFirst = true;
+static bool s_httpsOnly = true;
 static int s_refererPolicy = PrivacyRequestInterceptor::RefererTrimmed;
 static int s_securityLevel = PrivacyRequestInterceptor::Standard;
 static bool s_blockPings = true;
@@ -52,11 +53,31 @@ static QSet<QString> s_downgradedHosts;
 // Bound so a hostile page cannot grow the set without limit.
 static const int maxDowngradedHosts = 256;
 
+// SAFE01: HTTPS-Only host exceptions.  A "proceed once" choice lands
+// in the session set; "always allow" lands in the persisted snapshot
+// (refreshed from the privacy/httpsOnlyExceptions QSettings list by
+// loadSettings() and allowHttpForHost/clearHttpAllowance on the GUI
+// thread).  Written on the GUI thread, read on the IO thread.
+static QMutex s_httpAllowLock;
+static QSet<QString> s_sessionHttpAllowed;
+static QSet<QString> s_persistedHttpAllowed;
+static const int maxHttpAllowedHosts = 256;
+
+// SAFE01: main-frame http: URLs the interceptor just refused under
+// HTTPS-Only mode.  WebPage consumes a record to recognize its own
+// refusal (LoadFailed + ERR_ACCESS_DENIED) and show the warning page
+// instead of the generic not-found error.  Bounded — a full set just
+// drops the interstitial recognition, never the block itself.
+static QMutex s_blockedNavLock;
+static QSet<QString> s_blockedHttpNavs;
+static const int maxBlockedHttpNavs = 64;
+
 void PrivacyRequestInterceptor::loadSettings()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     const bool httpsFirst = settings.value(QLatin1String("httpsFirst"), true).toBool();
+    const bool httpsOnly = settings.value(QLatin1String("httpsOnly"), true).toBool();
     const int refererPolicy = storedRefererPolicy();
     const int securityLevel = qBound(
         int(PrivacyRequestInterceptor::Standard),
@@ -65,12 +86,27 @@ void PrivacyRequestInterceptor::loadSettings()
         int(PrivacyRequestInterceptor::Safest));
     const bool blockPings =
         settings.value(QLatin1String("blockPings"), true).toBool();
+    QSet<QString> persistedHttpAllowed;
+    const QStringList exceptions =
+        settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
+    for (const QString &host : exceptions) {
+        const QString lowered = host.toLower();
+        if (!lowered.isEmpty())
+            persistedHttpAllowed.insert(lowered);
+    }
     settings.endGroup();
-    QWriteLocker lock(&s_policyLock);
-    s_httpsFirst = httpsFirst;
-    s_refererPolicy = refererPolicy;
-    s_securityLevel = securityLevel;
-    s_blockPings = blockPings;
+    {
+        QWriteLocker lock(&s_policyLock);
+        s_httpsFirst = httpsFirst;
+        s_httpsOnly = httpsOnly;
+        s_refererPolicy = refererPolicy;
+        s_securityLevel = securityLevel;
+        s_blockPings = blockPings;
+    }
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        s_persistedHttpAllowed = persistedHttpAllowed;
+    }
 }
 
 bool PrivacyRequestInterceptor::httpsFirstEnabled()
@@ -216,6 +252,121 @@ void PrivacyRequestInterceptor::clearDowngradedHosts()
 {
     const QMutexLocker lock(&s_downgradeLock);
     s_downgradedHosts.clear();
+}
+
+bool PrivacyRequestInterceptor::httpsOnlyEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_httpsOnly;
+}
+
+bool PrivacyRequestInterceptor::shouldWarnHttp(const QUrl &url)
+{
+    bool httpsFirst, httpsOnly;
+    {
+        QReadLocker lock(&s_policyLock);
+        httpsFirst = s_httpsFirst;
+        httpsOnly = s_httpsOnly;
+    }
+    if (!httpsOnly)
+        return false;
+    if (url.scheme() != QLatin1String("http"))
+        return false;
+    const QString host = url.host().toLower();
+    if (host.isEmpty() || isPrivateOrLocalHost(host))
+        return false;
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        if (s_sessionHttpAllowed.contains(host)
+            || s_persistedHttpAllowed.contains(host))
+            return false;
+    }
+    // The https-first upgrade claims upgradeable hosts first — when
+    // it is on, only a host that can no longer be upgraded away
+    // (downgraded after a failed https load) still warns.  With the
+    // upgrade off, every public http: navigation warns.
+    if (httpsFirst && isUpgradeCandidate(url))
+        return false;
+    return true;
+}
+
+bool PrivacyRequestInterceptor::isHttpAllowedHost(const QString &host)
+{
+    const QString lowered = host.toLower();
+    const QMutexLocker lock(&s_httpAllowLock);
+    return s_sessionHttpAllowed.contains(lowered)
+        || s_persistedHttpAllowed.contains(lowered);
+}
+
+void PrivacyRequestInterceptor::allowHttpForHost(const QString &host,
+                                                 bool persistent)
+{
+    const QString lowered = host.toLower();
+    if (lowered.isEmpty())
+        return;
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        if (s_sessionHttpAllowed.size() < maxHttpAllowedHosts)
+            s_sessionHttpAllowed.insert(lowered);
+        if (!persistent)
+            return;
+        if (s_persistedHttpAllowed.contains(lowered))
+            return;
+    }
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    QStringList exceptions =
+        settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
+    if (!exceptions.contains(lowered)) {
+        exceptions.append(lowered);
+        settings.setValue(QLatin1String("httpsOnlyExceptions"), exceptions);
+    }
+    settings.endGroup();
+    const QMutexLocker lock(&s_httpAllowLock);
+    s_persistedHttpAllowed.insert(lowered);
+}
+
+void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
+{
+    const QString lowered = host.toLower();
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        s_sessionHttpAllowed.remove(lowered);
+        s_persistedHttpAllowed.remove(lowered);
+    }
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    QStringList exceptions =
+        settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
+    if (exceptions.removeAll(lowered) > 0)
+        settings.setValue(QLatin1String("httpsOnlyExceptions"), exceptions);
+    settings.endGroup();
+}
+
+QStringList PrivacyRequestInterceptor::httpExceptionHosts()
+{
+    const QMutexLocker lock(&s_httpAllowLock);
+    QStringList hosts = s_persistedHttpAllowed.values();
+    hosts.sort();
+    return hosts;
+}
+
+void PrivacyRequestInterceptor::recordBlockedHttpNav(const QUrl &url)
+{
+    const QMutexLocker lock(&s_blockedNavLock);
+    if (s_blockedHttpNavs.size() >= maxBlockedHttpNavs) {
+        // A flooded set cannot keep the interstitial mapping — the
+        // block still happens, the page just falls back to the
+        // generic error.  Dropping is the conservative direction.
+        return;
+    }
+    s_blockedHttpNavs.insert(QString::fromUtf8(url.toEncoded()));
+}
+
+bool PrivacyRequestInterceptor::takeBlockedHttpNav(const QUrl &url)
+{
+    const QMutexLocker lock(&s_blockedNavLock);
+    return s_blockedHttpNavs.remove(QString::fromUtf8(url.toEncoded()));
 }
 
 // Narrower than isPrivateOrLocalHost: only a real loopback page is a
@@ -405,6 +556,24 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         qDebug() << "PrivacyRequestInterceptor: https-first" << url << "->" << https;
 #endif
         info.redirect(https);
+        return;
+    }
+
+    // SAFE01: HTTPS-Only mode — an http: main-frame request still
+    // standing after the https-first upgrade pass (upgradeable hosts
+    // were redirected above; only downgraded/allowed/exempt http:
+    // reaches this line) is refused here.  WebPage recognizes the
+    // recorded refusal and shows the warning interstitial; the
+    // acceptNavigationRequest veto covers the navigations it sees,
+    // this block covers every redirect hop and anything that bypasses
+    // the page hook.
+    if (resourceType == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
+        && shouldWarnHttp(url)) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: https-only block" << url;
+#endif
+        recordBlockedHttpNav(url);
+        info.block(true);
         return;
     }
 

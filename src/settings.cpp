@@ -541,6 +541,10 @@ void SettingsDialog::loadFromSettings()
     // Chromium flags and the clear-on-exit hook read these keys too.
     settings.beginGroup(QLatin1String("privacy"));
     httpsFirst->setChecked(settings.value(QLatin1String("httpsFirst"), true).toBool());
+    // SAFE01: HTTPS-Only warning gate — defaults on alongside
+    // httpsFirst (the upgrade still runs first; only the http: that
+    // remains warns).
+    httpsOnly->setChecked(settings.value(QLatin1String("httpsOnly"), true).toBool());
     // REF01: the PRIV01-era bool folds into the refererPolicy selector
     // — an old "trimReferer = false" maps to "Chromium default" (index
     // 0), anything else to "Trimmed" (index 1).
@@ -771,6 +775,7 @@ void SettingsDialog::saveToSettings()
     // Connections & Storage hardening (PRIV01).
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), httpsFirst->isChecked());
+    settings.setValue(QLatin1String("httpsOnly"), httpsOnly->isChecked());
     settings.setValue(QLatin1String("refererPolicy"), refererPolicy->currentIndex());
     // The PRIV01 bool stays in sync so an older build maps "Chromium
     // default" to off and everything else to its trimmed behavior.
