@@ -721,6 +721,248 @@ static int browserAuditSmoke(BrowserApplication &application,
     return application.exec();
 }
 
+// ANON01: --anon-smoke loads the ipduh.com privacy test
+// (https://ipduh.com/anonymity-check/ redirects to /privacy-test/) on
+// the real browsing profile, waits for the page's own async probes to
+// settle — the DNS-resolver identification (azax'/ms/ds/' polls), the
+// response-header anomaly scan, the JS system-info table (doa24), font
+// enumeration and the storage/cookie readbacks — then dumps the
+// rendered report sections plus a set of direct JS probes (navigator,
+// timezone, an RTCPeerConnection ICE-gather to verify LEAK01's armed
+// WebRTC policy) to a JSON file for .devin/ANON01-report.md.  The flag
+// hits a live site so it stays out of check-coverage's SMOKE_FLAGS,
+// same as --browseraudit-smoke.
+static const char kAnonIceProbeJs[] = R"JS(
+(function () {
+    window.__aroraIce = { done: false, candidates: [], error: null };
+    window.addEventListener('load', function () {
+        try {
+            if (typeof RTCPeerConnection !== 'function') {
+                window.__aroraIce.error = 'RTCPeerConnection unavailable';
+                window.__aroraIce.done = true;
+                return;
+            }
+            var pc = new RTCPeerConnection({ iceServers: [] });
+            pc.onicecandidate = function (event) {
+                if (event.candidate)
+                    window.__aroraIce.candidates.push(
+                        String(event.candidate.candidate));
+            };
+            pc.createDataChannel('x');
+            pc.createOffer().then(function (offer) {
+                return pc.setLocalDescription(offer);
+            });
+            setTimeout(function () {
+                window.__aroraIce.done = true;
+                try { pc.close(); } catch (e) {}
+            }, 4000);
+        } catch (e) {
+            window.__aroraIce.error = String(e);
+            window.__aroraIce.done = true;
+        }
+    });
+})();
+)JS";
+
+static const char kAnonExtractJs[] = R"JS(
+(function () {
+    function text(id) {
+        var el = document.getElementById(id);
+        return el ? el.innerText : null;
+    }
+    var ids = ['loc_chk', 'doa24', 'srvdiv1', 'srvdiv2', 'srvdiv3',
+               'hdrs_ph', 'js_http_headers', 'htm_response',
+               'anmls_plchldr', 'local_storage', 'session_storage',
+               'cookie_test', 'det_fonts', 'js_show_cookies', 'duhbot'];
+    var sections = {};
+    for (var i = 0; i < ids.length; ++i)
+        sections[ids[i]] = text(ids[i]);
+    var body = document.body ? document.body.innerText : '';
+    return JSON.stringify({
+        url: location.href,
+        title: document.title,
+        readyState: document.readyState,
+        sections: sections,
+        body: body.length > 200000 ? body.slice(0, 200000) : body,
+        probes: {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            languages: navigator.languages,
+            language: navigator.language,
+            hardwareConcurrency: navigator.hardwareConcurrency,
+            deviceMemory: navigator.deviceMemory,
+            timezone: Intl.DateTimeFormat().resolvedOptions()
+                         .timeZone,
+            timezoneOffset: new Date().getTimezoneOffset(),
+            webdriver: navigator.webdriver,
+            cookiesEnabled: navigator.cookieEnabled,
+            doNotTrack: navigator.doNotTrack,
+            plugins: navigator.plugins.length,
+            mimeTypes: navigator.mimeTypes.length,
+            historyLength: history.length,
+            screen: { w: screen.width, h: screen.height,
+                      dpr: window.devicePixelRatio },
+            ice: window.__aroraIce || null
+        }
+    });
+})()
+)JS";
+
+static const char kAnonSettleJs[] = R"JS(
+JSON.stringify({
+    ice: !!(window.__aroraIce && window.__aroraIce.done),
+    dns: ['srvdiv1', 'srvdiv2', 'srvdiv3'].filter(function (id) {
+        var el = document.getElementById(id);
+        return el && el.innerText.trim().length > 0;
+    }).length,
+    doa: !!(document.getElementById('doa24')
+            && document.getElementById('doa24').innerText
+                       .trim().length > 0),
+    fonts: !!(document.getElementById('det_fonts')
+              && document.getElementById('det_fonts').innerText
+                         .trim().length > 0),
+    hdrs: !!(document.getElementById('js_http_headers')
+             && document.getElementById('js_http_headers').innerText
+                        .trim().length > 0),
+    rs: document.readyState
+})
+)JS";
+
+static int anonSmoke(BrowserApplication &application, WebView *view)
+{
+    const QString outPath = qEnvironmentVariable(
+        "ARORA_ANON_OUT",
+        QStringLiteral("/tmp/anon-check.json"));
+
+    view->window()->resize(1024, 768);
+    view->window()->show();
+
+    QWebEngineScript iceProbe;
+    iceProbe.setName(QStringLiteral("arora-anon-ice-probe"));
+    iceProbe.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    iceProbe.setWorldId(QWebEngineScript::MainWorld);
+    iceProbe.setRunsOnSubFrames(false);
+    iceProbe.setSourceCode(QString::fromUtf8(kAnonIceProbeJs));
+    view->page()->scripts().insert(iceProbe);
+
+    const QUrl target(qEnvironmentVariable("ARORA_ANON_URL",
+        QStringLiteral("https://ipduh.com/privacy-test/")));
+    qInfo() << "anon-smoke: loading" << target << "->" << outPath;
+
+    auto *loaded = new bool(false);
+    QObject::connect(view, &QWebEngineView::loadFinished,
+                     &application, [loaded](bool ok) {
+        *loaded = ok;
+    });
+    view->load(target);
+
+    // Settle poll: the DNS-resolver readouts, header anomaly scan and
+    // font/storage probes all fill in asynchronously after load —
+    // extract once they look populated, or when the generous deadline
+    // passes (a stalled probe must not lose the rest of the report).
+    const QElapsedTimer deadline = [] {
+        QElapsedTimer timer;
+        timer.start();
+        return timer;
+    }();
+    int settleMs = qEnvironmentVariableIntValue("ARORA_ANON_SETTLE_MS");
+    if (settleMs <= 0)
+        settleMs = 60 * 1000;
+
+    auto *poller = new QTimer(&application);
+    poller->setInterval(1500);
+    QObject::connect(poller, &QTimer::timeout, &application,
+                     [=, &application]() {
+        if (!*loaded || deadline.elapsed() > settleMs)
+            return;
+        view->page()->runJavaScript(
+            QString::fromUtf8(kAnonSettleJs),
+            [=, &application](const QVariant &status) {
+                const QJsonObject state = QJsonDocument::fromJson(
+                    status.toString().toUtf8()).object();
+                const int dns = state.value(QLatin1String("dns"))
+                                    .toInt();
+                const bool settled =
+                    state.value(QLatin1String("ice")).toBool()
+                    && state.value(QLatin1String("doa")).toBool()
+                    && state.value(QLatin1String("hdrs")).toBool()
+                    && dns > 0;
+                const bool giveUp = deadline.elapsed() > 30000;
+                if (!settled && !giveUp) {
+                    qInfo() << "anon-smoke: waiting" << status.toString();
+                    return;
+                }
+                poller->stop();
+                view->page()->runJavaScript(
+                    QString::fromUtf8(kAnonExtractJs),
+                    [=, &application](const QVariant &payload) {
+                        const QByteArray json =
+                            payload.toString().toUtf8();
+                        QJsonParseError parseError;
+                        QJsonObject envelope = QJsonDocument::fromJson(
+                            json, &parseError).object();
+                        if (parseError.error
+                                != QJsonParseError::NoError) {
+                            qInfo() << "anon-smoke: FAIL (extract parse:"
+                                    << parseError.errorString() << ")";
+                            application.exit(3);
+                            return;
+                        }
+                        // Record the effective privacy posture so the
+                        // report ties each flagged item to the setting
+                        // that covers it.
+                        const QSettings settings;
+                        QJsonObject posture;
+                        static const char *const keys[] = {
+                            "privacy/webrtcIpProtection",
+                            "privacy/secureDnsMode",
+                            "privacy/secureDnsServer",
+                            "privacy/httpsFirst",
+                            "privacy/trimReferer",
+                            "privacy/blockThirdPartyCookies",
+                            "privacy/reportUtcTimezone",
+                            "privacy/normalizeAcceptLanguage",
+                            "privacy/tlsStrictCiphers",
+                            "privacy/securityLevel",
+                        };
+                        for (const char *key : keys)
+                            posture.insert(QLatin1String(key),
+                                settings.value(QLatin1String(key))
+                                    .toJsonValue());
+                        envelope.insert(QStringLiteral("settings"),
+                                        posture);
+                        envelope.insert(
+                            QStringLiteral("chromiumVersion"),
+                            QLatin1String(
+                                qWebEngineChromiumVersion()));
+                        QFile out(outPath);
+                        if (!out.open(QIODevice::WriteOnly)) {
+                            qInfo() << "anon-smoke: FAIL (cannot write"
+                                    << outPath << ")";
+                            application.exit(3);
+                            return;
+                        }
+                        out.write(QJsonDocument(envelope).toJson());
+                        qInfo() << "anon-smoke: DONE dns=" << dns
+                                << "settled=" << settled
+                                << "->" << outPath;
+                        application.exit(0);
+                    });
+            });
+    });
+    poller->start();
+
+    int timeoutMs = qEnvironmentVariableIntValue("ARORA_ANON_TIMEOUT_MS");
+    if (timeoutMs <= 0)
+        timeoutMs = 3 * 60 * 1000;
+    QTimer::singleShot(timeoutMs, &application, [&application]() {
+        qInfo() << "anon-smoke: FAIL (timeout)";
+        application.exit(2);
+    });
+
+    return application.exec();
+}
+
 // SEC16: the adblock smokes below inject probe filters into the shared
 // test-mode custom subscription and AdBlockManager's AutoSaver
 // persists whatever the subscription still holds when the process
@@ -1010,7 +1252,7 @@ int main(int argc, char **argv)
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
-        "browseraudit-smoke", "browseraudit-bare",
+        "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1148,6 +1390,12 @@ int main(int argc, char **argv)
             || args.contains(QLatin1String("--browseraudit-bare")))
         return browserAuditSmoke(application, view,
             args.contains(QLatin1String("--browseraudit-bare")));
+
+    // ANON01: live-site measurement — drives the ipduh.com privacy
+    // test on the browsing profile and records the rendered report
+    // plus direct JS probes for .devin/ANON01-report.md.
+    if (args.contains(QLatin1String("--anon-smoke")))
+        return anonSmoke(application, view);
 
     window.show();
 
