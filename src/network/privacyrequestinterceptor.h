@@ -215,6 +215,16 @@ public:
     static void recordBlockedHttpNav(const QUrl &url);
     static bool takeBlockedHttpNav(const QUrl &url);
 
+    // SAFE02: the pure decision behind the insecure-form-submission
+    // warning — true when a POST to this url would travel over
+    // plaintext http.  Loopback/LAN/.onion targets are exempt (same
+    // carve-out https-first uses); a host https-first will still
+    // upgrade is exempt too, since the redirect moves the body onto
+    // TLS before it reaches the wire.  Unlike shouldWarnHttp the
+    // HTTPS-Only exception lists do NOT suppress this warning — an
+    // excepted host is exactly where plaintext posts still flow.
+    static bool shouldWarnFormPost(const QUrl &url);
+
 private:
     AdBlockRequestInterceptor *m_adBlock;
 };

@@ -33,6 +33,7 @@
 #include <autofillmanager.h>
 #include <opensearchmanager.h>
 #include <popupblocker.h>
+#include <privacyrequestinterceptor.h>
 #include <toolbarsearch.h>
 #include <webpage.h>
 #include <webview.h>
@@ -78,10 +79,19 @@ private slots:
     void userAgent();
     void rateLimitInterstitialUrl_data();
     void rateLimitInterstitialUrl();
+    void insecureFormDecision_data();
+    void insecureFormDecision();
+    void insecureFormUpgradeInterplay();
+    void insecureFormPrompt();
+    void insecureFormHttpsOnlyWins();
+    void insecureFormRealSubmit();
 
 private:
     QVariant evalSync(QWebEnginePage *page, const QString &js);
+    void pinPrivacy(bool httpsOnly, bool httpsFirst);
     QList<QUrl> m_openedUrls;
+    QVariant m_savedHttpsOnly;
+    QVariant m_savedHttpsFirst;
 };
 
 // Minimal HTTP responder for the channel tests: "/" serves pageBody,
@@ -198,6 +208,45 @@ public:
     }
 };
 
+// SAFE02: the insecure-form warning exec()s inside
+// acceptNavigationRequest, so the answer has to be armed before the
+// call — the timer polls inside the nested modal loop.  count records
+// how many dialogs were dismissed: 0 proves none appeared.  The
+// warning's "Submit Anyway" is a role button, so the click is by
+// ButtonRole, not StandardButton.
+class ModalClicker
+{
+public:
+    explicit ModalClicker(QMessageBox::ButtonRole role)
+    {
+        m_timer.setInterval(50);
+        QObject::connect(&m_timer, &QTimer::timeout, qApp,
+                         [this, role]() {
+            QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget());
+            if (!box)
+                return;
+            QAbstractButton *target = nullptr;
+            for (QAbstractButton *candidate : box->buttons()) {
+                if (box->buttonRole(candidate) == role) {
+                    target = candidate;
+                    break;
+                }
+            }
+            if (target)
+                target->click();
+            else
+                box->reject();
+            ++count;
+        });
+        m_timer.start();
+    }
+    int count = 0;
+
+private:
+    QTimer m_timer;
+};
+
 // This will be called before the first test function is executed.
 // It is only called once.
 void tst_WebPage::initTestCase()
@@ -207,6 +256,25 @@ void tst_WebPage::initTestCase()
 
     QDesktopServices::setUrlHandler(QLatin1String("mailto"), this, "openUrl");
     QDesktopServices::setUrlHandler(QLatin1String("ftp"), this, "openUrl");
+
+    // SAFE02: the form-post tests pin the HTTPS policy keys; stash
+    // the user's values so nothing leaks past the suite.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    m_savedHttpsOnly = settings.value(QLatin1String("httpsOnly"));
+    m_savedHttpsFirst = settings.value(QLatin1String("httpsFirst"));
+    settings.endGroup();
+}
+
+void tst_WebPage::pinPrivacy(bool httpsOnly, bool httpsFirst)
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("httpsOnly"), httpsOnly);
+    settings.setValue(QLatin1String("httpsFirst"), httpsFirst);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    PrivacyRequestInterceptor::clearDowngradedHosts();
 }
 
 // This will be called after the last test function is executed.
@@ -218,6 +286,17 @@ void tst_WebPage::cleanupTestCase()
 
     QSettings settings;
     settings.setValue("userAgent", QString());
+    const auto restore = [&settings](const QString &key,
+                                     const QVariant &saved) {
+        if (saved.isValid())
+            settings.setValue(key, saved);
+        else
+            settings.remove(key);
+    };
+    restore(QLatin1String("privacy/httpsOnly"), m_savedHttpsOnly);
+    restore(QLatin1String("privacy/httpsFirst"), m_savedHttpsFirst);
+    PrivacyRequestInterceptor::loadSettings();
+    PrivacyRequestInterceptor::clearDowngradedHosts();
 }
 
 // This will be called before each test function is executed.
@@ -238,6 +317,23 @@ void tst_WebPage::cleanup()
     blocker->removeAllowedHost(QLatin1String("127.0.0.1"));
     blocker->clearSessionHosts();
     blocker->setEnabled(true);
+
+    // SAFE02: any privacy pinning a test did is undone — the saved
+    // values (or defaults when none existed) go back.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    const auto restore = [&settings](const QString &key,
+                                     const QVariant &saved) {
+        if (saved.isValid())
+            settings.setValue(key, saved);
+        else
+            settings.remove(key);
+    };
+    restore(QLatin1String("httpsOnly"), m_savedHttpsOnly);
+    restore(QLatin1String("httpsFirst"), m_savedHttpsFirst);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    PrivacyRequestInterceptor::clearDowngradedHosts();
 }
 
 void tst_WebPage::webpage_data()
@@ -1117,6 +1213,207 @@ void tst_WebPage::rateLimitInterstitialUrl()
     QFETCH(bool, isInterstitial);
     QCOMPARE(WebPage::isRateLimitInterstitialUrl(QUrl(url)),
              isInterstitial);
+}
+
+// SAFE02: the pure decision — warn only when the POST would really
+// travel plaintext: public http targets warn, https is silent, and
+// the loopback/LAN/.onion carve-outs match the https-first ones.
+void tst_WebPage::insecureFormDecision_data()
+{
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<bool>("warn");
+
+    QTest::newRow("public http warns")
+        << QString("http://formpost.test/login") << true;
+    QTest::newRow("https silent")
+        << QString("https://formpost.test/login") << false;
+    QTest::newRow("localhost exempt")
+        << QString("http://localhost:8080/form") << false;
+    QTest::newRow("loopback v4 exempt")
+        << QString("http://127.0.0.1/form") << false;
+    QTest::newRow("loopback v6 exempt")
+        << QString("http://[::1]/form") << false;
+    QTest::newRow("lan 10/8 exempt")
+        << QString("http://10.1.2.3/form") << false;
+    QTest::newRow("lan 192.168 exempt")
+        << QString("http://192.168.1.10/form") << false;
+    QTest::newRow(".local exempt")
+        << QString("http://nas.local/form") << false;
+    QTest::newRow(".onion exempt")
+        << QString("http://abcdefghijklmnop.onion/form") << false;
+    QTest::newRow("public IP literal warns")
+        << QString("http://203.0.113.9/form") << true;
+    QTest::newRow("hostless http is not a warning")
+        << QString("http:///form") << false;
+}
+
+void tst_WebPage::insecureFormDecision()
+{
+    pinPrivacy(false, false);   // both HTTPS modes off: raw decision
+    QFETCH(QString, url);
+    QFETCH(bool, warn);
+    QCOMPARE(PrivacyRequestInterceptor::shouldWarnFormPost(QUrl(url)),
+             warn);
+}
+
+// The https-first upgrade rides the POST onto TLS before the wire —
+// an upgradeable host does not warn; once the secure load failed and
+// the host is downgraded, the same post is plaintext and does warn.
+// Unlike HTTPS-Only, the http-exception list does NOT suppress the
+// form warning: an excepted host is exactly where plaintext posts
+// still flow.
+void tst_WebPage::insecureFormUpgradeInterplay()
+{
+    const QUrl http(QStringLiteral("http://upgradeable-form.test/x"));
+    const QUrl https(QStringLiteral("https://upgradeable-form.test/x"));
+
+    pinPrivacy(false, true);    // strict veto off, upgrade on
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnFormPost(http));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http));
+
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(https));
+    QVERIFY(PrivacyRequestInterceptor::shouldWarnFormPost(http));
+    PrivacyRequestInterceptor::clearDowngradedHosts();
+
+    pinPrivacy(true, false);    // strict veto on, upgrade off
+    const QString allowedHost = QStringLiteral("excepted-form.test");
+    PrivacyRequestInterceptor::allowHttpForHost(allowedHost, false);
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(
+        QUrl(QStringLiteral("http://") + allowedHost
+             + QLatin1Char('/'))));
+    QVERIFY(PrivacyRequestInterceptor::shouldWarnFormPost(
+        QUrl(QStringLiteral("http://") + allowedHost
+             + QLatin1String("/form"))));
+    PrivacyRequestInterceptor::clearHttpAllowance(allowedHost);
+}
+
+// The prompt itself: cancel refuses the navigation, submit lets the
+// POST proceed (synchronously, so the body is not lost), and the
+// approval sticks for the rest of the page — the same target asks
+// once, a different host asks again, https and exempt hosts never
+// ask, and subframe posts warn like main-frame ones.
+void tst_WebPage::insecureFormPrompt()
+{
+    pinPrivacy(false, false);
+    SubWebPage page;
+    const QUrl post1(QStringLiteral("http://formpost-one.test/submit"));
+    const QUrl post2(QStringLiteral("http://formpost-two.test/submit"));
+    const QUrl post3(QStringLiteral("http://formpost-three.test/x"));
+    const QUrl secure(
+        QStringLiteral("https://formpost-one.test/submit"));
+    const QUrl local(
+        QStringLiteral("http://127.0.0.1:9/submit"));
+
+    {   // Cancel aborts the submission.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(!page.call_acceptNavigationRequest(
+            post1, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 1);
+    }
+    {   // Submit Anyway lets the navigation through.
+        ModalClicker clicker(QMessageBox::AcceptRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            post1, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 1);
+    }
+    {   // One-shot per page: the same target is silent now.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            post1, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 0);
+    }
+    {   // A different plaintext target asks again.
+        ModalClicker clicker(QMessageBox::AcceptRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            post2, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 1);
+    }
+    {   // https posts never prompt.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            secure, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 0);
+    }
+    {   // Neither do loopback targets.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            local, QWebEnginePage::NavigationTypeFormSubmitted, true));
+        QCOMPARE(clicker.count, 0);
+    }
+    {   // Subframe form posts warn the same way.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(!page.call_acceptNavigationRequest(
+            post3, QWebEnginePage::NavigationTypeFormSubmitted, false));
+        QCOMPARE(clicker.count, 1);
+    }
+    {   // Link clicks and other navigation types are unaffected.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        QVERIFY(page.call_acceptNavigationRequest(
+            post1, QWebEnginePage::NavigationTypeLinkClicked, true));
+        QCOMPARE(clicker.count, 0);
+    }
+}
+
+// Ordering with SAFE01: a non-excepted http: navigation is owned by
+// the HTTPS-Only interstitial — the form prompt must not stack a
+// second dialog on the refusal.
+void tst_WebPage::insecureFormHttpsOnlyWins()
+{
+    pinPrivacy(true, false);
+    SubWebPage page;
+    QSignalSpy warned(&page, SIGNAL(httpOnlyInterstitial(QUrl)));
+    const QUrl post(QStringLiteral("http://formpost-veto.test/login"));
+
+    ModalClicker clicker(QMessageBox::RejectRole);
+    QVERIFY(!page.call_acceptNavigationRequest(
+        post, QWebEnginePage::NavigationTypeFormSubmitted, true));
+    QCOMPARE(clicker.count, 0);          // no form prompt
+    QCOMPARE(warned.count(), 1);         // interstitial took over
+    QCOMPARE(warned.at(0).at(0).toUrl(), post);
+}
+
+// End to end: a real form in a real page.  The test page lives on
+// loopback (exempt) and POSTs to a public-looking host — cancel keeps
+// the page put, submit releases the navigation (which then fails on
+// the unresolvable name, harmlessly).
+void tst_WebPage::insecureFormRealSubmit()
+{
+    pinPrivacy(false, false);
+    LocalHttpServer server;
+    server.pageBody =
+        "<html><body><form id=f method=post"
+        " action='http://realpost.invalid/submit'>"
+        "<input name=q value=x></form></body></html>";
+    QVERIFY(server.start());
+
+    SubWebPage page;
+    QSignalSpy loaded(&page, SIGNAL(loadFinished(bool)));
+    page.load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    QCOMPARE(loaded.last().at(0).toBool(), true);
+    QCOMPARE(page.url(), server.url());
+
+    QSignalSpy navigating(&page, SIGNAL(aboutToLoadUrl(QUrl)));
+
+    {   // Cancel: the form navigation is refused, the page stays.
+        ModalClicker clicker(QMessageBox::RejectRole);
+        page.runJavaScript(QLatin1String(
+            "document.getElementById('f').requestSubmit(); true"));
+        QTRY_VERIFY_WITH_TIMEOUT(clicker.count == 1, 10000);
+        QTest::qWait(300);
+        QCOMPARE(page.url(), server.url());
+        QCOMPARE(navigating.count(), 0);
+    }
+
+    {   // Submit Anyway: the navigation is released to the network.
+        ModalClicker clicker(QMessageBox::AcceptRole);
+        page.runJavaScript(QLatin1String(
+            "document.getElementById('f').requestSubmit(); true"));
+        QTRY_VERIFY_WITH_TIMEOUT(clicker.count == 1, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(navigating.count() == 1, 10000);
+        QCOMPARE(navigating.at(0).at(0).toUrl().host(),
+                 QStringLiteral("realpost.invalid"));
+    }
 }
 
 

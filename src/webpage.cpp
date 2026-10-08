@@ -49,6 +49,7 @@
 #include <qmetaobject.h>
 #include <qpixmap.h>
 #include <qpointer.h>
+#include <qpushbutton.h>
 #include <qsettings.h>
 #include <qset.h>
 #include <qsslcertificate.h>
@@ -535,6 +536,40 @@ void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
     }, Qt::QueuedConnection);
 }
 
+// SAFE02: while one insecure-form prompt is open, a nested insecure
+// form post (the still-live document's scripts can trigger another
+// navigation while exec() waits) is refused rather than stacking a
+// second modal on top of the first.
+static bool s_formPostPromptActive = false;
+
+// Deliberately synchronous: the navigation hook must answer
+// synchronously, and refusing now to re-issue the submit after a
+// queued prompt would drop the POST body — Chromium never hands it
+// back.  The engine's own javascriptConfirm() runs the same kind of
+// nested loop while a navigation throttle waits.
+bool WebPage::confirmInsecureFormPost(const QUrl &url)
+{
+    if (s_formPostPromptActive)
+        return false;
+    s_formPostPromptActive = true;
+    QWidget *parent = QWebEngineView::forPage(this);
+    QMessageBox box(QMessageBox::Warning,
+        tr("Insecure Form Submission"),
+        tr("This form is sending information to %1 over an insecure "
+           "connection.\n\nAnyone on the network could read or "
+           "change the data — including passwords.")
+            .arg(QString::fromUtf8(url.host().toUtf8())),
+        QMessageBox::Cancel, parent);
+    // The destination host is page-controlled; render it literally.
+    box.setTextFormat(Qt::PlainText);
+    QPushButton *submitButton =
+        box.addButton(tr("Submit Anyway"), QMessageBox::AcceptRole);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+    s_formPostPromptActive = false;
+    return box.clickedButton() == submitButton;
+}
+
 bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame)
 {
     const QString scheme = url.scheme();
@@ -610,6 +645,37 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         && PrivacyRequestInterceptor::shouldWarnHttp(url)) {
         showHttpWarning(url);
         return false;
+    }
+
+    // SAFE02: insecure form submission — a POST bound for a public
+    // http: endpoint exposes its contents to anyone on the network
+    // path, so the user confirms it once per target host per page.
+    // The HTTPS-Only veto above claims non-excepted hosts first (the
+    // two never double-prompt), so this fires for excepted/downgraded
+    // hosts and when the strict mode is off.  Subframe form posts
+    // warn too — the same data leaves the machine.  Only
+    // FormSubmitted is gated: no other navigation type carries a
+    // request body through this hook (resubmits on reload get
+    // Chromium's own prompt).
+    if (type == QWebEnginePage::NavigationTypeFormSubmitted
+        && !BrowserApplication::isTorMode()
+        && PrivacyRequestInterceptor::shouldWarnFormPost(url)) {
+        // Approvals belong to the document that asked — this->url()
+        // is still the submitting page while the hook runs, so a
+        // committed navigation re-keys the set lazily on the next
+        // post and every page gets asked once per target.
+        const QUrl source =
+            this->url().adjusted(QUrl::RemoveFragment);
+        if (m_insecureFormApprovalsPage != source) {
+            m_insecureFormApprovedHosts.clear();
+            m_insecureFormApprovalsPage = source;
+        }
+        const QString targetHost = url.host().toLower();
+        if (!m_insecureFormApprovedHosts.contains(targetHost)) {
+            if (!confirmInsecureFormPost(url))
+                return false;
+            m_insecureFormApprovedHosts.insert(targetHost);
+        }
     }
 
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);

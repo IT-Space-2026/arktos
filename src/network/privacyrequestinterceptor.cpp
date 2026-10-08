@@ -369,6 +369,21 @@ bool PrivacyRequestInterceptor::takeBlockedHttpNav(const QUrl &url)
     return s_blockedHttpNavs.remove(QString::fromUtf8(url.toEncoded()));
 }
 
+bool PrivacyRequestInterceptor::shouldWarnFormPost(const QUrl &url)
+{
+    if (url.scheme() != QLatin1String("http"))
+        return false;
+    const QString host = url.host();
+    if (host.isEmpty() || isPrivateOrLocalHost(host))
+        return false;
+    // The https-first upgrade claims the request before it goes out —
+    // the body then travels over TLS (or the submit fails into the
+    // downgrade set, which makes the next attempt warn here).
+    if (httpsFirstEnabled() && isUpgradeCandidate(url))
+        return false;
+    return true;
+}
+
 // Narrower than isPrivateOrLocalHost: only a real loopback page is a
 // "potentially trustworthy" secure context (Chromium treats
 // http://localhost and http://127.0.0.0/8 as secure).  LAN/private

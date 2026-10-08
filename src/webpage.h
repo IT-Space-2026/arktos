@@ -23,6 +23,7 @@
 #include "tabwidget.h"
 
 #include <qlist.h>
+#include <qset.h>
 #include <qwebenginecertificateerror.h>
 #include <qwebenginepage.h>
 
@@ -173,6 +174,9 @@ private:
     void handleCertificateError(QWebEngineCertificateError error);
     QString certificateErrorHtml(const QWebEngineCertificateError &error);
     void resolveCertificateErrorLink(const QUrl &url);
+    // SAFE02: modal confirmation for a form submission bound for a
+    // public http: endpoint; true when the user chose to submit.
+    bool confirmInsecureFormPost(const QUrl &url);
     // SAFE01: HTTPS-Only warning page — shown when an http:
     // main-frame navigation survives the https-first upgrade pass.
     void showHttpWarning(const QUrl &url);
@@ -209,6 +213,11 @@ protected:
     // probe could capture (window.open with no target records none).
     int m_blockedPopupCount = 0;
     QList<QUrl> m_blockedPopupUrls;
+    // SAFE02: http: hosts whose form submissions the user already
+    // confirmed on the current document — lazily re-keyed to the
+    // submitting page's url so each page asks once per target host.
+    QUrl m_insecureFormApprovalsPage;
+    QSet<QString> m_insecureFormApprovedHosts;
 };
 
 #endif // WEBPAGE_H
