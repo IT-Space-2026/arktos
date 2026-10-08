@@ -92,6 +92,9 @@ public:
     void accept() override;
     void openAtPage(Page page);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void loadDefaults();
     void loadFromSettings();

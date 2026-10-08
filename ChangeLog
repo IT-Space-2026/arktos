@@ -406,6 +406,9 @@ Address-bar anti-phishing surface (SAFE03):
     The address bar now emphasizes the registrable domain in a displayed url: while the bar is not being edited, the scheme, userinfo, subdomains, port and path render dimmed and the effective TLD+1 stays full-strength — the paypal.com.evil.tld trick can no longer hide the real domain inside a long subdomain run. Qt 6 dropped QUrl::topLevelDomain and its public-suffix table, so multi-label registry boundaries (co.uk, com.au and friends) ride the cookie jar's two-level ccTLD list and everything else assumes a one-label suffix; hosts with too few labels, IP literals and localhost emphasize whole. The emphasis is repaint-only — the underlying text is unchanged and editing, selecting or focusing the bar shows it plainly.
     Internationalized host names keep showing their punycode (xn--) form in the bar — a homograph like the Cyrillic "рayрal" can never masquerade as the ascii spelling — and hovering the bar offers a tooltip with the Unicode form for readability.
 
+Scrollable Preferences pages (UIP06):
+    Fixed the Preferences dialog opening taller than the screen with the OK/Cancel buttons unreachable — on small screens, scaled displays or large fonts the tallest settings page used to push the whole button row out of view, making it impossible to apply any setting. Every settings page now lives in its own scroll area, so an over-tall page scrolls instead of growing the window, and the dialog itself can never open larger than ~90% of the available screen. Page contents, the section sidebar, the page order and the remembered "last open page" preference are unchanged.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

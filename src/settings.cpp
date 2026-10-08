@@ -100,6 +100,8 @@
 #include <qlistwidget.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
+#include <qscreen.h>
+#include <qscrollarea.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
 #include <qstandardpaths.h>
@@ -145,6 +147,21 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // Fixed-width nav column sized to the longest translated label.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
                              + 2 * pagesList->frameWidth() + 8);
+
+    // UIP06: the stack's sizeHint is the tallest page, which can
+    // exceed the screen and push the button box out of reach.
+    // Wrap each page in a scroll area (scroll areas live on the page
+    // content, not the dialog shell) so pages scroll instead — the
+    // sidebar keeps its fixed height and the stack keeps its indices.
+    for (int i = 0; i < tabWidget->count(); ++i) {
+        QWidget *page = tabWidget->widget(i);
+        tabWidget->removeWidget(page);
+        QScrollArea *area = new QScrollArea;
+        area->setFrameShape(QFrame::NoFrame);
+        area->setWidgetResizable(true);
+        area->setWidget(page);
+        tabWidget->insertWidget(i, area);
+    }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
@@ -326,6 +343,22 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 void SettingsDialog::openAtPage(Page page)
 {
     tabWidget->setCurrentIndex(int(page));
+}
+
+void SettingsDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    // UIP06: never open larger than ~90% of the screen — the wrapped
+    // pages scroll to cover the overflow so OK/Cancel stay reachable.
+    QScreen *screen = this->screen();
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+    const QSize cap = screen->availableGeometry().size() * 9 / 10;
+    const QSize bounded = size().boundedTo(cap);
+    if (bounded != size())
+        resize(bounded);
 }
 
 void SettingsDialog::loadDefaults()

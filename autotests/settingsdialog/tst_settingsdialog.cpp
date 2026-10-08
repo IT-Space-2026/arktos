@@ -25,6 +25,8 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qscrollarea.h>
+#include <qscrollbar.h>
 #include <qwebengineprofile.h>
 
 #include "settings.h"
@@ -56,6 +58,7 @@ private slots:
     void searchShortcutNicknames();
     void resetSearchSettings();
     void sidebarNavigation();
+    void scrollablePages();
     void subDialogButtons();
     void setHomeToCurrentPage();
     void popupExceptions();
@@ -700,6 +703,85 @@ void tst_SettingsDialog::sidebarNavigation()
         QCOMPARE(dialog.tabWidget->currentIndex(), 0);
         QCOMPARE(dialog.pagesList->currentRow(), 0);
     }
+}
+
+// UIP06: every stacked page lives inside a scroll area so a page
+// taller than the screen scrolls instead of pushing the button box
+// out of reach; the dialog itself can never open larger than ~90% of
+// the available screen.
+void tst_SettingsDialog::scrollablePages()
+{
+    SettingsDialog dialog;
+
+    // One resizable, frameless scroll area per page — stack indices
+    // unchanged (the sidebar stays unwrapped and fixed-height).
+    QCOMPARE(dialog.tabWidget->count(), 9);
+    for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+        QScrollArea *area = qobject_cast<QScrollArea *>(
+            dialog.tabWidget->widget(i));
+        QVERIFY(area);
+        QVERIFY(area->widgetResizable());
+        QVERIFY(area->widget());
+        QCOMPARE(area->frameShape(), QFrame::NoFrame);
+    }
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    const QSize avail = dialog.screen()->availableGeometry().size();
+    QVERIFY(dialog.height() <= avail.height() * 9 / 10 + 1);
+    QVERIFY(dialog.width() <= avail.width() * 9 / 10 + 1);
+    QVERIFY(dialog.rect().contains(dialog.buttonBox->geometry()));
+
+    // Re-showing at an oversized geometry snaps back inside the cap.
+    dialog.hide();
+    dialog.resize(avail.width() + 400, avail.height() + 400);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    qApp->processEvents();
+    QVERIFY(dialog.height() <= avail.height() * 9 / 10 + 1);
+    QVERIFY(dialog.width() <= avail.width() * 9 / 10 + 1);
+    QVERIFY(dialog.rect().contains(dialog.buttonBox->geometry()));
+
+    // Force a small viewport: a tall page must gain a scrollbar whose
+    // range reaches the bottom of its content, while the button box
+    // stays inside the dialog.
+    const int shortHeight = qMax(200, avail.height() / 4);
+    dialog.resize(dialog.width(), shortHeight);
+    qApp->processEvents();
+    QVERIFY(dialog.height() <= shortHeight + 1);
+    QVERIFY(dialog.rect().contains(dialog.buttonBox->geometry()));
+    bool sawScrollablePage = false;
+    for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+        dialog.tabWidget->setCurrentIndex(i);
+        qApp->processEvents();
+        QScrollArea *area = qobject_cast<QScrollArea *>(
+            dialog.tabWidget->currentWidget());
+        QVERIFY(area);
+        QScrollBar *bar = area->verticalScrollBar();
+        // Content may compress to its layout minimum but is never
+        // squished below it; anything taller scrolls to the bottom.
+        QVERIFY(area->widget()->height()
+                >= area->widget()->minimumSizeHint().height());
+        if (area->widget()->height() > area->viewport()->height()) {
+            sawScrollablePage = true;
+            QVERIFY2(bar->maximum() > 0,
+                     qPrintable(QStringLiteral(
+                         "page %1 widget=%2 viewport=%3 max=%4")
+                         .arg(i)
+                         .arg(area->widget()->height())
+                         .arg(area->viewport()->height())
+                         .arg(bar->maximum())));
+            bar->setValue(bar->maximum());
+            QCOMPARE(bar->value(), bar->maximum());
+            // The maximum scroll position really is the page bottom.
+            QVERIFY(bar->value() + area->viewport()->height()
+                    >= area->widget()->height());
+        } else {
+            QCOMPARE(bar->maximum(), 0);
+        }
+    }
+    QVERIFY(sawScrollablePage);
+    dialog.close();
 }
 
 // Each button that pops a nested dialog runs it under a timer that
