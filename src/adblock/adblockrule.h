@@ -44,8 +44,8 @@ class QUrl;
           subdocument, document, xmlhttprequest, ping, websocket, other,
           and the legacy names background/object-subrequest/xbl/dtd)
           matched against QWebEngineUrlRequestInfo::resourceType()
-        - third-party / first-party (~third-party) matched against the
-          first-party (document) host
+        - third-party / first-party (~third-party, and the uBO 3p/1p
+          spellings) matched against the first-party (document) host
         - domain=d1|~d2 restricting the source document host
         - denyallow=d1|d2 excluding request target hosts (uBO)
         - important (uBO: block beats plain @@ exceptions)
@@ -54,9 +54,12 @@ class QUrl;
         - badfilter disabling the identical filter in the same list
         - match-case
         Options that change semantics and cannot be implemented (csp,
-        rewrite=, header=, replace=, cookie=, sitekey=, webrtc, popup,
-        mp4) mark the rule unsupported so it never matches; unknown
-        options are ignored.
+        rewrite=/urlrewrite=, header=, replace=, cookie=, sitekey=,
+        webrtc, popup, popunder, from=, to=, method=, ip=, cname,
+        inline-script, inline-font, permissions=, mp4) mark the rule
+        unsupported so it never matches; unknown options are ignored.
+        An ignored constraint would widen the match to every request
+        (STALL01) — inert is the safe failure.
 
       Cosmetic filters: domains ##sel / #@#sel / #?#sel / #@?#sel /
         #$#snippet / #@$#snippet / ##+js(scriptlet,args) and the uBO

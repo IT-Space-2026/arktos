@@ -120,11 +120,29 @@ static bool stripQueryParams(QUrl *url, const QStringList &specs)
     return true;
 }
 
+bool AdBlockRequestInterceptor::isWebRequestScheme(const QString &scheme)
+{
+    return scheme == QLatin1String("http")
+        || scheme == QLatin1String("https")
+        || scheme == QLatin1String("ws")
+        || scheme == QLatin1String("wss");
+}
+
 void AdBlockRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread.  info.block(true) fails the
     // request with net::ERR_BLOCKED_BY_CLIENT, the same net result the
     // old ContentAccessDenied QNetworkReply produced.
+    //
+    // STALL01: only web requests reach the filter lists.  Internal
+    // schemes — devtools:, chrome:, qrc:, arora-file:/-cert-error:/
+    // -http-warning:/-resource:, abp: — and other non-web schemes
+    // pass through untouched.  Without this guard a uBO
+    // $script,redirect=noopjs rule rewritten past its from=/to=
+    // constraint also fired on the arora-resource: stub it redirected
+    // to, and every redirected request re-entered the matcher.
+    if (!isWebRequestScheme(info.requestUrl().scheme()))
+        return;
     const AdBlockDecision decision = m_network->match(
         info.requestUrl(), info.firstPartyUrl(), info.resourceType());
 

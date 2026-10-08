@@ -58,6 +58,17 @@ public:
     static int blockedRequestCount(const QString &host);
     static void clearBlockedRequestCounts();  // test hook
 
+    // STALL01: true only for schemes filter lists can legitimately
+    // describe — http(s) pages/resources and ws(s) for $websocket
+    // rules.  Everything else (devtools:, chrome:, qrc:, arora-file:,
+    // arora-cert-error:, arora-http-warning:, arora-resource: — the
+    // stub redirect targets — abp:, data:, about:, file:, blob:,
+    // javascript: ...) must pass through interception untouched: a
+    // filter that rewrites an internal request can break browser UI,
+    // and an adblock redirect target matching the same rule again
+    // spins the redirect chain.
+    static bool isWebRequestScheme(const QString &scheme);
+
 private:
     static void noteBlockedRequest(const QUrl &firstPartyUrl);
 

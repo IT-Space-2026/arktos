@@ -411,6 +411,41 @@ void tst_AdBlockRule::networkMatchContext_data()
     QTest::newRow("u1") << QString("||ads.example^$popup")
                         << QString("http://ads.example/x")
                         << QString() << -1 << false;
+    // STALL01: constraint options we cannot honor must go inert —
+    // an ignored from=/to= constraint used to widen these rules to
+    // every request on every page (the live-load hang).
+    QTest::newRow("u2") << QString("*$script,redirect-rule=noopjs,from=dutchycorp.*,to=~sentry-cdn.com")
+                        << QString("https://en.wikipedia.org/x.js")
+                        << QString("en.wikipedia.org") << 3 << false;
+    QTest::newRow("u3") << QString("$image,3p,denyallow=cdn77.org,from=pussyspace.com|pussyspace.net")
+                        << QString("https://upload.wikimedia.org/x.jpg")
+                        << QString("en.wikipedia.org") << 4 << false;
+    QTest::newRow("u4") << QString("||ads.example^$to=ads.example")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 4 << false;
+    QTest::newRow("u5") << QString("||ads.example^$popunder")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << -1 << false;
+    QTest::newRow("u6") << QString("||ads.example^$method=POST")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << -1 << false;
+
+    // uBO party/type aliases behave like the long spellings.
+    QTest::newRow("a0") << QString("||snap.com^$3p")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("techcrunch.com") << 3 << true;
+    QTest::newRow("a1") << QString("||snap.com^$3p")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("snap.com") << 3 << false;
+    QTest::newRow("a2") << QString("||snap.com^$1p")
+                        << QString("http://spa.snap.com/x.js")
+                        << QString("snap.com") << 3 << true;
+    QTest::newRow("a3") << QString("||ads.example^$frame")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 1 << true;
+    QTest::newRow("a4") << QString("||ads.example^$frame")
+                        << QString("http://ads.example/x")
+                        << QString("page.example") << 3 << false;
 
     // cosmetic filters never match network urls
     QTest::newRow("c0") << QString("example.com#@#.ad")
@@ -488,6 +523,21 @@ void tst_AdBlockRule::optionParsing_data()
     QTest::newRow("csp") << QString("||a^$csp=script-src 'none'")
                          << false << false << false << false << false << false
                          << QString() << QString();
+    QTest::newRow("queryprune") << QString("||a^$queryprune=utm_source")
+                                 << false << false << false << true << false << false
+                                 << QString() << QString("utm_source");
+    QTest::newRow("from") << QString("*$script,from=x.example")
+                          << false << false << false << false << false << false
+                          << QString() << QString();
+    QTest::newRow("to") << QString("*$script,to=x.example")
+                        << false << false << false << false << false << false
+                        << QString() << QString();
+    QTest::newRow("popunder") << QString("*$popunder")
+                              << false << false << false << false << false << false
+                              << QString() << QString();
+    QTest::newRow("method") << QString("||a^$method=POST")
+                            << false << false << false << false << false << false
+                            << QString() << QString();
 }
 
 void tst_AdBlockRule::optionParsing()

@@ -519,6 +519,14 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — only the lock-guarded
     // snapshots may be read here.
+    //
+    // STALL01: internal/non-web requests (devtools:, chrome:, qrc:,
+    // arora-*:, abp:, data:, ...) pass through untouched — none of
+    // the policies below are meaningful outside http(s)/ws(s), and
+    // the delegated adblock match must never see them.
+    if (!AdBlockRequestInterceptor::isWebRequestScheme(
+            info.requestUrl().scheme()))
+        return;
     bool httpsFirst;
     bool blockPings;
     {

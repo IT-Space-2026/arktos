@@ -209,6 +209,8 @@ private slots:
     void removeParam();
     void mainFrameBlock();
     void blockedCountTracking();
+    void webSchemeGate();
+    void selfRedirectTerminates();
 
 private:
     // Feeds the given filters into a fresh subscription on the shared
@@ -429,6 +431,58 @@ void tst_AdBlockRequestInterceptor::blockedCountTracking()
     QVERIFY(m_server->requests.contains(QLatin1String("/allowed.png")));
     QTRY_VERIFY(AdBlockRequestInterceptor::blockedRequestCount(
         QLatin1String("127.0.0.1")) >= before + 2);
+}
+
+// STALL01: only real web schemes may reach the matcher — internal
+// and non-web schemes (arora-resource:, abp:, devtools:, qrc:,
+// arora-file:, arora-cert-error:, chrome:, data:, file:, ...) bypass
+// interception untouched so a stub redirect target can never re-enter
+// the rule engine, and filter lists cannot swallow browser internals.
+void tst_AdBlockRequestInterceptor::webSchemeGate()
+{
+    typedef AdBlockRequestInterceptor I;
+    QVERIFY(I::isWebRequestScheme(QLatin1String("http")));
+    QVERIFY(I::isWebRequestScheme(QLatin1String("https")));
+    QVERIFY(I::isWebRequestScheme(QLatin1String("ws")));
+    QVERIFY(I::isWebRequestScheme(QLatin1String("wss")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-resource")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-file")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("arora-cert-error")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("abp")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("devtools")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("chrome")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("qrc")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("data")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("about")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("file")));
+    QVERIFY(!I::isWebRequestScheme(QLatin1String("ftp")));
+    QVERIFY(!I::isWebRequestScheme(QString()));
+}
+
+// STALL01: a global *$script redirect points every script at
+// arora-resource:/noop.js — a URL that itself matches *$script.
+// Without the internal-scheme gate the stub request re-enters the
+// matcher and re-redirects, churning until the load starves; with it,
+// the stub is served and the load terminates.
+void tst_AdBlockRequestInterceptor::selfRedirectTerminates()
+{
+    addRules(QStringList()
+             << QLatin1String("*$script,redirect=noop.js"));
+
+    m_server->indexHtml =
+        "<html><body>"
+        "<script src=\"/loop.js\" "
+        "onload=\"window.__loopState='ok'\" "
+        "onerror=\"window.__loopState='err'\"></script>"
+        "</body></html>";
+
+    WebPage page(m_profile);
+    QVERIFY(loadSync(&page, m_server->url(QLatin1String("/index.html"))));
+
+    QVERIFY(!m_server->requests.contains(QLatin1String("/loop.js")));
+    QCOMPARE(evalSync(&page, QLatin1String(
+        "String(window.__loopState || 'none')")).toString(),
+        QLatin1String("ok"));
 }
 
 int main(int argc, char *argv[])

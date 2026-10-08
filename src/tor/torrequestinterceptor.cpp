@@ -33,6 +33,13 @@ TorRequestInterceptor::TorRequestInterceptor(AdBlockNetwork *network, QObject *p
 void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — no GUI state may be touched.
+    //
+    // STALL01: internal/non-web requests (devtools:, chrome:, qrc:,
+    // arora-*:, abp:, ...) pass through untouched, same as in the
+    // privacy and adblock interceptors.
+    if (!AdBlockRequestInterceptor::isWebRequestScheme(
+            info.requestUrl().scheme()))
+        return;
     const QUrl url = info.requestUrl();
     if (url.scheme() == QLatin1String("http")
         && !url.host().endsWith(QLatin1String(".onion"))) {

@@ -104,14 +104,17 @@ static quint32 typeOptionMask(const QString &name, bool *ok)
         return typeBit(RtMedia);
     if (name == QLatin1String("font"))
         return typeBit(RtFontResource);
-    if (name == QLatin1String("subdocument"))
+    if (name == QLatin1String("subdocument")
+        || name == QLatin1String("frame"))    // uBO alias
         return typeBit(RtSubFrame);
-    if (name == QLatin1String("document"))
+    if (name == QLatin1String("document")
+        || name == QLatin1String("doc"))      // uBO alias
         return typeBit(RtMainFrame);
     if (name == QLatin1String("xmlhttprequest")
         || name == QLatin1String("xhr"))
         return typeBit(RtXhr);
-    if (name == QLatin1String("ping"))
+    if (name == QLatin1String("ping")
+        || name == QLatin1String("beacon"))   // uBO alias
         return typeBit(RtPing);
     if (name == QLatin1String("websocket"))
         return typeBit(254);
@@ -122,18 +125,33 @@ static quint32 typeOptionMask(const QString &name, bool *ok)
 }
 
 // Options that alter matching in ways we cannot honor; a filter using
-// one is parsed but never applied.
+// one is parsed but never applied.  Inert is the safe failure — a
+// silently ignored constraint option (STALL01: from=/to= were that)
+// widens the rule to every request.
 static bool isUnsupportedOption(const QString &name)
 {
     static const QStringList unsupported = {
         QLatin1String("csp"),         // needs response headers
         QLatin1String("rewrite"),     // uBO response rewrite
+        QLatin1String("urlrewrite"),  // uBO spelling of the same
         QLatin1String("header"),      // uBO response header
         QLatin1String("replace"),     // ABP response body rewrite
         QLatin1String("cookie"),      // response cookies
         QLatin1String("sitekey"),     // page-supplied key
         QLatin1String("webrtc"),      // non-HTTP traffic
         QLatin1String("popup"),       // new-window context only
+        QLatin1String("popunder"),    // same
+        // Constraint options that restrict where a rule applies —
+        // ignoring them would widen the rule to every request, which
+        // is how the STALL01 page-load hang happened.
+        QLatin1String("from"),        // uBO source-document restriction
+        QLatin1String("to"),          // uBO target-host restriction
+        QLatin1String("method"),      // uBO HTTP-method restriction
+        QLatin1String("ip"),          // uBO source-IP restriction
+        QLatin1String("cname"),       // uBO CNAME-cloak restriction
+        QLatin1String("inline-script"),  // needs response inspection
+        QLatin1String("inline-font"),    // same
+        QLatin1String("permissions"), // response permissions policy
         QLatin1String("mp4")          // redirect alias we don't ship
     };
     const int eq = name.indexOf(QLatin1Char('='));
@@ -387,19 +405,24 @@ void AdBlockRule::parseOptions(const QStringList &options)
             m_important = true;
         } else if (name == QLatin1String("badfilter")) {
             m_badFilter = true;
-        } else if (name == QLatin1String("elemhide")) {
+        } else if (name == QLatin1String("elemhide")
+                   || name == QLatin1String("ehide")) {
             m_elemHide = true;
-        } else if (name == QLatin1String("generichide")) {
+        } else if (name == QLatin1String("generichide")
+                   || name == QLatin1String("ghide")) {
             m_genericHide = true;
         } else if (name == QLatin1String("genericblock")) {
             m_genericBlock = true;
-        } else if (name == QLatin1String("third-party")) {
+        } else if (name == QLatin1String("third-party")
+                   || name == QLatin1String("3p")
+                   || name == QLatin1String("~first-party")
+                   || name == QLatin1String("~1p")) {
             m_party = ThirdParty;
         } else if (name == QLatin1String("first-party")
-                   || name == QLatin1String("~third-party")) {
+                   || name == QLatin1String("1p")
+                   || name == QLatin1String("~third-party")
+                   || name == QLatin1String("~3p")) {
             m_party = FirstParty;
-        } else if (name == QLatin1String("~first-party")) {
-            m_party = ThirdParty;
         } else if (name == QLatin1String("domain")) {
             m_domainOption += value.split(QLatin1Char('|'),
                                           Qt::SkipEmptyParts);
@@ -413,7 +436,8 @@ void AdBlockRule::parseOptions(const QStringList &options)
             if (name == QLatin1String("redirect-rule"))
                 m_notTypeMask |= typeBit(RtMainFrame);
             m_redirect = value;
-        } else if (name == QLatin1String("removeparam")) {
+        } else if (name == QLatin1String("removeparam")
+                   || name == QLatin1String("queryprune")) {
             // A /regex/ spec is compiled per request on the IO thread;
             // drop rules whose spec is invalid or catastrophic.
             if (value.startsWith(QLatin1Char('/'))
