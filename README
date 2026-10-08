@@ -74,7 +74,10 @@ skipped; a site whose https fails is allowed over http for the rest
 of the session — the error page says so).  Cross-site navigations
 send the destination's own origin as Referer instead of the page you
 came from.  WebRTC traffic is confined to proxied/public interfaces
-so voice/video sites cannot discover local or real IP addresses.
+so voice/video sites cannot discover local or real IP addresses —
+verified headlessly: ./arora --webrtc-smoke enumerates a real
+RTCPeerConnection's ICE candidates and asserts none carry an IP
+(--webrtc-off-smoke is the unprotected control).
 Third-party cookies are rejected (per-site exceptions still apply),
 and an opt-in "Clear browsing data when Arora exits" wipes history,
 cookies, caches and site storage at quit — Chromium's on-disk trees
@@ -84,7 +87,12 @@ resolver), Chromium's automatic upgrade for resolvers on its
 known-provider list, or a custom DoH endpoint (default
 https://cloudflare-dns.com/dns-query) either with system-DNS
 fallback or strict — strict fails resolution rather than leaking a
-lookup to plain DNS when the endpoint is unreachable.  TLS
+lookup to plain DNS when the endpoint is unreachable.  Honest bound:
+with secure DNS off or in automatic mode the browser's lookups go to
+the system resolver and are visible to the local network — only a
+strict custom endpoint or the Tor window (whose SOCKS5 route tunnels
+DNS too) hides them, and a system VPN/DoH resolver is the whole-OS
+answer.  TLS
 connections advertise only forward-secret AEAD cipher suites: the
 RSA key-exchange and CBC suites are stripped from the ClientHello
 (a toggle, on by default — a site that only supports the removed

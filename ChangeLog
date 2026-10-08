@@ -367,6 +367,10 @@ TLS cipher suites (TLS01):
 Location bar layout (UIP05):
     The site-privacy shield moved from the trailing button cluster to the left end of the address bar, Vivaldi-style — shield first, then the site icon, then the address text — so the privacy/identity controls sit together in the leading zone. The panel still opens anchored under the icon, and the content-blocker button keeps its spot at the right end.
 
+WebRTC and DNS leak verification (LEAK01):
+    Verified empirically that the WebRTC IP-handling hardening actually engages: a new headless probe (`arora --webrtc-smoke`) loads a page that creates a real RTCPeerConnection and enumerates its ICE candidates — with "Prevent WebRTC from exposing IP addresses" on (the default), Chromium's disable_non_proxied_udp policy leaves no UDP transport at all and zero candidates are emitted, not even mDNS-obfuscated ones. The unprotected control run (`arora --webrtc-off-smoke`) still produces candidates, proving the probe exercises real WebRTC machinery — the earlier suspicion that the engine flag latched too late was unfounded, it lands before the browser starts. The engine flag is process-global, so normal, private and Tor profiles are all covered; the matching per-profile WebRTCPublicInterfacesOnly attribute stays as a second layer.
+    DNS story documented honestly in the README: with secure DNS off or in automatic-upgrade mode the browser resolves through the system resolver and lookups are visible to the local network — only a strict custom DoH endpoint (Privacy settings) or the Tor window (whose SOCKS5 route tunnels DNS too) hides them, and a system VPN or DoH resolver is the whole-OS answer.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

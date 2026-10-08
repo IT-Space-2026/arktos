@@ -841,7 +841,10 @@ int main(int argc, char **argv)
     bool dohSmoke = false;
     bool tlsSmoke = false;
     bool tlsOffSmoke = false;
+    bool webrtcSmoke = false;
+    bool webrtcOffSmoke = false;
     QVariant savedDohMode, savedDohServer, savedTlsStrict;
+    QVariant savedWebrtcProtection;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -858,6 +861,10 @@ int main(int argc, char **argv)
             tlsSmoke = true;
         if (arg == "--tls-off-smoke")
             tlsOffSmoke = true;
+        if (arg == "--webrtc-smoke")
+            webrtcSmoke = true;
+        if (arg == "--webrtc-off-smoke")
+            webrtcOffSmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
     }
@@ -899,6 +906,23 @@ int main(int argc, char **argv)
         settings.beginGroup(QLatin1String("privacy"));
         savedTlsStrict = settings.value(QLatin1String("tlsStrictCiphers"));
         settings.setValue(QLatin1String("tlsStrictCiphers"), tlsSmoke);
+        settings.endGroup();
+    }
+
+    // LEAK01: --webrtc-smoke pins privacy/webrtcIpProtection BEFORE
+    // applyChromiumFlags reads it, so the run deterministically
+    // exercises the armed policy; --webrtc-off-smoke forces it off for
+    // the differential control (unprotected ICE gathering must still
+    // produce candidates, else a "no leak" verdict proves nothing).
+    // The smoke's finish() restores the real value on the way out —
+    // QSettings ignores the test-mode paths.
+    if (webrtcSmoke || webrtcOffSmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        savedWebrtcProtection =
+            settings.value(QLatin1String("webrtcIpProtection"));
+        settings.setValue(QLatin1String("webrtcIpProtection"),
+                          webrtcSmoke);
         settings.endGroup();
     }
 
@@ -984,6 +1008,7 @@ int main(int argc, char **argv)
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
+        "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare",
     };
@@ -1954,6 +1979,207 @@ int main(int argc, char **argv)
             // No live-network stage — the capture alone is the
             // differential control.
             QTimer::singleShot(0, &application, startCapture);
+    }
+
+    // LEAK01: --webrtc-smoke proves the WebRTC IP-handling switch
+    // actually latched — the user's leak report.  The flag lands in
+    // QTWEBENGINE_CHROMIUM_FLAGS before the BrowserApplication
+    // constructor runs, but Chromium reads that variable once when its
+    // context spins up and ignores it afterwards, so env-presence
+    // alone is not the verdict: a real RTCPeerConnection's ICE
+    // candidate enumeration must surface NO IP literal while the
+    // policy is armed (disable_non_proxied_udp + no proxy leaves no
+    // UDP transport at all).  --webrtc-off-smoke is the differential
+    // control: unprotected gathering must still produce candidates,
+    // otherwise a "no leak" on-mode result proves nothing.  An
+    // mdns *.local candidate is counted separately — it is the
+    // deliberate obfuscation shape, not a raw-IP leak.
+    if (webrtcSmoke || webrtcOffSmoke) {
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "webrtc-smoke: FAIL (listen)"
+                    << server->errorString();
+            if (savedWebrtcProtection.isValid())
+                QSettings().setValue(
+                    QLatin1String("privacy/webrtcIpProtection"),
+                    savedWebrtcProtection);
+            else
+                QSettings().remove(
+                    QLatin1String("privacy/webrtcIpProtection"));
+            return 1;
+        }
+        static const QByteArray rtcPage = QByteArray(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+            "Connection: close\r\n\r\n"
+            "<!doctype html><html><body><script>"
+            "window.__rtc={cands:[],done:false,err:null};"
+            "try{"
+            "var pc=new RTCPeerConnection({iceServers:[]});"
+            "pc.onicecandidate=function(e){"
+            "if(e.candidate&&e.candidate.candidate)"
+            "window.__rtc.cands.push(e.candidate.candidate);"
+            "else window.__rtc.done=true;};"
+            "pc.onicegatheringstatechange=function(){"
+            "if(pc.iceGatheringState==='complete')"
+            "window.__rtc.done=true;};"
+            "pc.createDataChannel('x');"
+            "pc.createOffer().then(function(o){"
+            "return pc.setLocalDescription(o);}).catch(function(e){"
+            "window.__rtc.err=String(e);window.__rtc.done=true;});"
+            "window.setTimeout(function(){window.__rtc.done=true;},9000);"
+            "}catch(e){window.__rtc.err=String(e);"
+            "window.__rtc.done=true;}"
+            "</script></body></html>");
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            // Consume the request before replying — closing with
+            // unread bytes in the receive queue turns into a TCP RST
+            // (ERR_CONNECTION_RESET) instead of a clean close.
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                client->readAll();
+                client->write(rtcPage);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto done = std::make_shared<bool>(false);
+        const auto finish = [&application, done, &savedWebrtcProtection]
+                            (int rc, const QString &line) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo().noquote() << "webrtc-smoke:" << line;
+            // Put the caller's own setting back before the store
+            // syncs at exit (the pre-app seed pinned it).
+            if (savedWebrtcProtection.isValid())
+                QSettings().setValue(
+                    QLatin1String("privacy/webrtcIpProtection"),
+                    savedWebrtcProtection);
+            else
+                QSettings().remove(
+                    QLatin1String("privacy/webrtcIpProtection"));
+            application.exit(rc);
+        };
+
+        const bool flagInEnv = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")
+            .contains("force-webrtc-ip-handling-policy="
+                      "disable_non_proxied_udp");
+        if (webrtcSmoke && !flagInEnv) {
+            finish(1, QStringLiteral(
+                "FAIL (policy enabled but the engine flag never"
+                " reached QTWEBENGINE_CHROMIUM_FLAGS)"));
+        }
+        if (webrtcOffSmoke && flagInEnv) {
+            finish(1, QStringLiteral(
+                "FAIL (policy disabled but the engine flag is still"
+                " advertised)"));
+        }
+
+        // Dedicated probe view — the shared stub view may still be
+        // carrying the firstUrl navigation (tls-smoke hit the same
+        // wedge and isolates its capture view for that reason).  It
+        // must be shown: a hidden WebContents is backgrounded, which
+        // throttles the in-page settle timer and can stall the whole
+        // gather (the same reason COV03's findText test shows its
+        // view under offscreen).
+        auto *rtcView = new WebView(profile, &window);
+        rtcView->show();
+
+        const auto verdict = [finish, webrtcOffSmoke]
+                             (const QStringList &cands,
+                              const QString &err) {
+            if (!err.isEmpty()) {
+                finish(1, QStringLiteral(
+                    "FAIL (RTCPeerConnection error: %1)").arg(err));
+                return;
+            }
+            int ipCount = 0, mdnsCount = 0;
+            for (const QString &cand : cands) {
+                // candidate:<f> <comp> <tp> <prio> <addr> <port> typ ..
+                const QString addr =
+                    cand.split(QLatin1Char(' '), Qt::SkipEmptyParts)
+                        .value(4);
+                if (QHostAddress(addr).isNull()) {
+                    if (addr.endsWith(QLatin1String(".local")))
+                        ++mdnsCount;
+                } else {
+                    ++ipCount;
+                    qInfo() << "webrtc-smoke: candidate with IP"
+                            << addr;
+                }
+            }
+            if (webrtcOffSmoke) {
+                // Control: gathering must work unprotected — raw IPs
+                // are the expected leak shape, mdns names still count
+                // as real candidates.
+                if (cands.count() >= 1) {
+                    finish(0, QStringLiteral(
+                        "PASS (off-mode control: %1 candidates,"
+                        " %2 raw-IP, %3 mdns — leak reproduced)")
+                        .arg(cands.count()).arg(ipCount).arg(mdnsCount));
+                } else {
+                    finish(1, QStringLiteral(
+                        "FAIL (off-mode control: 0 candidates — probe"
+                        " cannot discriminate)"));
+                }
+                return;
+            }
+            if (ipCount > 0) {
+                finish(1, QStringLiteral(
+                    "FAIL (%1 IP-literal candidate(s) leaked despite"
+                    " disable_non_proxied_udp)")
+                    .arg(ipCount));
+            } else {
+                finish(0, QStringLiteral(
+                    "PASS (0 IP-literal candidates under"
+                    " disable_non_proxied_udp; %1 mdns-obfuscated,"
+                    " %2 total candidates)")
+                    .arg(mdnsCount).arg(cands.count()));
+            }
+        };
+
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [rtcView, poll, verdict]() {
+            rtcView->webPage()->runJavaScript(
+                QStringLiteral("JSON.stringify(window.__rtc||null)"),
+                [poll, verdict](const QVariant &result) {
+                const QJsonObject rtc = QJsonDocument::fromJson(
+                    result.toString().toUtf8()).object();
+                if (rtc.isEmpty())
+                    return;   // probe page not up yet
+                const QStringList cands =
+                    rtc.value(QLatin1String("cands")).toVariant()
+                        .toStringList();
+                const QString err =
+                    rtc.value(QLatin1String("err")).toString();
+                if (rtc.value(QLatin1String("done")).toBool()
+                    || !err.isEmpty()) {
+                    poll->stop();
+                    verdict(cands, err);
+                }
+            });
+        });
+        QObject::connect(rtcView->webPage(),
+                         &QWebEnginePage::loadingChanged, &application,
+                         [poll, finish]
+                         (const QWebEngineLoadingInfo &info) {
+            if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+                return;
+            poll->stop();
+            finish(1, QStringLiteral(
+                "FAIL (probe page load failed: %1 %2)")
+                .arg(info.errorString()).arg(info.errorDomain()));
+        });
+        rtcView->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/")
+            .arg(server->serverPort())));
+        poll->start(500);
+        QTimer::singleShot(45000, &application, [done, finish]() {
+            finish(1, QStringLiteral(
+                "FAIL (timeout: ICE gathering never settled)"));
+        });
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks
