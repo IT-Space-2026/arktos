@@ -606,6 +606,8 @@ void SettingsDialog::loadFromSettings()
     secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
     strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     blockPings->setChecked(settings.value(QLatin1String("blockPings"), true).toBool());
+    blockPrefetch->setChecked(settings.value(QLatin1String("blockPrefetch"), true).toBool());
+    blockRemoteFonts->setChecked(settings.value(QLatin1String("blockRemoteFonts"), false).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
@@ -821,6 +823,8 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
     settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("blockPings"), blockPings->isChecked());
+    settings.setValue(QLatin1String("blockPrefetch"), blockPrefetch->isChecked());
+    settings.setValue(QLatin1String("blockRemoteFonts"), blockRemoteFonts->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());

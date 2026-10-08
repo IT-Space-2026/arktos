@@ -58,6 +58,14 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         info.block(true);
         return;
     }
+    // SAFE04: prefetch loads connect to sites the user never visited —
+    // the shared privacy toggles apply in tor windows too, where an
+    // unsolicited connection is the most suspicious traffic of all.
+    if (PrivacyRequestInterceptor::shouldBlockResource(
+            info.resourceType(), info.httpHeaders())) {
+        info.block(true);
+        return;
+    }
     // SECLVL: the only http: left here is .onion — Safer drops its
     // script-execution fetches just like on the normal profile.
     if (PrivacyRequestInterceptor::shouldBlockScript(

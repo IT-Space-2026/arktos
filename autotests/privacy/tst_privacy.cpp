@@ -71,6 +71,8 @@ private slots:
     void blockScriptSafer();
     void securityLevelAttributes();
 
+    void resourceBlockToggles();
+
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
 
@@ -94,6 +96,8 @@ private:
     QVariant m_savedEnableJavascript;
     QVariant m_savedUtcTimezone;
     QVariant m_savedNormalizeLang;
+    QVariant m_savedBlockRemoteFonts;
+    QVariant m_savedBlockPrefetch;
     QVariant m_savedAcceptLanguages;
     bool m_savedTzSet;
     QByteArray m_savedTz;
@@ -129,6 +133,10 @@ void tst_Privacy::initTestCase()
     m_savedUtcTimezone = settings.value(QLatin1String("privacy/reportUtcTimezone"));
     m_savedNormalizeLang = settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
     m_savedAcceptLanguages = settings.value(QLatin1String("network/acceptLanguages"));
+    m_savedBlockRemoteFonts =
+        settings.value(QLatin1String("privacy/blockRemoteFonts"));
+    m_savedBlockPrefetch =
+        settings.value(QLatin1String("privacy/blockPrefetch"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -163,6 +171,8 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/reportUtcTimezone"), m_savedUtcTimezone);
     restoreSetting(settings, QLatin1String("privacy/normalizeAcceptLanguage"), m_savedNormalizeLang);
     restoreSetting(settings, QLatin1String("network/acceptLanguages"), m_savedAcceptLanguages);
+    restoreSetting(settings, QLatin1String("privacy/blockRemoteFonts"), m_savedBlockRemoteFonts);
+    restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -182,6 +192,8 @@ void tst_Privacy::init()
                       int(PrivacyRequestInterceptor::RefererTrimmed));
     settings.setValue(QLatin1String("securityLevel"),
                       int(PrivacyRequestInterceptor::Standard));
+    settings.setValue(QLatin1String("blockRemoteFonts"), false);
+    settings.setValue(QLatin1String("blockPrefetch"), true);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -541,6 +553,70 @@ void tst_Privacy::securityLevelAttributes()
     BrowserProfile::applySettings(&profile);
     QVERIFY(engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
     QVERIFY(!engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
+}
+
+// SAFE04: the two resource-type toggles — privacy/blockRemoteFonts
+// (opt-in, default off) and privacy/blockPrefetch (default on) — feed
+// the pure shouldBlockResource() decision the interceptors consult.
+void tst_Privacy::resourceBlockToggles()
+{
+    typedef QWebEngineUrlRequestInfo I;
+    typedef PrivacyRequestInterceptor P;
+    QSettings settings;
+    const QHash<QByteArray, QByteArray> noHeaders;
+    // Chromium marks every prefetch flavor with a purpose header —
+    // <link rel=prefetch> arrives typed ResourceTypePrefetch, while
+    // speculation-rules prefetch/prerender navigations are
+    // misclassified as MainFrame and only the header gives them away.
+    const QHash<QByteArray, QByteArray> specPrefetchHeaders = {
+        { "Sec-Purpose", "prefetch" },
+        { "Purpose", "prefetch" },
+    };
+
+    // Shipped defaults: prefetch blocked, remote fonts pass.
+    QVERIFY(!P::blockRemoteFontsEnabled());
+    QVERIFY(P::blockPrefetchEnabled());
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeFontResource,
+                                    noHeaders));
+    QVERIFY(P::shouldBlockResource(I::ResourceTypePrefetch, noHeaders));
+    QVERIFY(P::shouldBlockResource(I::ResourceTypeMainFrame,
+                                   specPrefetchHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeMainFrame, noHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeImage, noHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeScript, noHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeStylesheet,
+                                    noHeaders));
+    // Header matching is case-insensitive on both sides.
+    QVERIFY(P::shouldBlockResource(I::ResourceTypeMainFrame,
+                                   {{ "sec-purpose", "Prefetch" }}));
+    QVERIFY(P::shouldBlockResource(
+                I::ResourceTypeMainFrame,
+                {{ "Sec-Purpose", "prefetch" },
+                 { "X-Unrelated", "prefetch" }}));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeMainFrame,
+                                    {{ "X-Purpose", "prefetch" }}));
+
+    // Arming the font toggle blocks only font downloads.
+    settings.setValue(QLatin1String("privacy/blockRemoteFonts"), true);
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(P::blockRemoteFontsEnabled());
+    QVERIFY(P::shouldBlockResource(I::ResourceTypeFontResource,
+                                   noHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeImage, noHeaders));
+
+    // The toggles are independent: disarming prefetch still leaves
+    // the font block on — and untags both prefetch flavors.
+    settings.setValue(QLatin1String("privacy/blockPrefetch"), false);
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(!P::blockPrefetchEnabled());
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypePrefetch, noHeaders));
+    QVERIFY(!P::shouldBlockResource(I::ResourceTypeMainFrame,
+                                    specPrefetchHeaders));
+    QVERIFY(P::shouldBlockResource(I::ResourceTypeFontResource,
+                                   noHeaders));
+
+    // Back to defaults for the rest of the suite.
+    init();
 }
 
 void tst_Privacy::thirdPartyCookies()

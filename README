@@ -129,7 +129,12 @@ reports — are dropped at the request layer (a "Block tracking pings
 and beacons" toggle, on by default; CSP still enforces, only its
 telemetry reports are suppressed, so sites lose the telemetry and
 users lose the tracking channel).  `./arora --ping-smoke` proves
-all three vectors against a loopback fixture.
+all three vectors against a loopback fixture.  Two sibling toggles
+ride the same interceptor: "Block prefetch requests" (on by default)
+drops <link rel=prefetch> and speculation-rules prefetch loads —
+pages fetched only because a link pointed at them — and "Block
+remote web fonts" (off by default, opt-in) drops downloadable fonts,
+a fingerprinting vector; local/system fonts are unaffected.
 
 Zero telemetry: a clean launch opens no unsolicited outbound
 connections.  Chromium's background channels (field-trial/variations

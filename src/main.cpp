@@ -1391,7 +1391,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "referer-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
-        "ping-smoke", "httpsonly-smoke",
+        "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
@@ -2266,6 +2266,208 @@ int main(int argc, char **argv)
             restorePings();
             application.exit(1);
         });
+    }
+
+    // SAFE04: the privacy/blockRemoteFonts + privacy/blockPrefetch
+    // toggles vs a loopback fixture.  Each phase loads a page whose
+    // JS (a) injects <link rel=prefetch href=/prefetch-target>,
+    // (b) FontFace.load()s /font.woff2 and (c) fetch()es /probe —
+    // the probe proves requests flow, so silent /font.woff2 or
+    // /prefetch-target wires mean the interceptor dropped them.
+    //   phase 1 — both toggles armed: neither resource arrives
+    //   phase 2 — fonts allowed, prefetch armed: the font arrives
+    //             (proves the toggle really gates, not the fixture),
+    //             the prefetch still must not
+    //   phase 3 — both off: prefetch arrives too (control)
+    // The real settings are restored on exit.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--resourceblock-smoke"))) {
+        restoreAdBlockStateOnExit();
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+
+        const QVariant savedFonts =
+            QSettings().value(QLatin1String("privacy/blockRemoteFonts"));
+        const QVariant savedPrefetch =
+            QSettings().value(QLatin1String("privacy/blockPrefetch"));
+        auto restoreToggles = [savedFonts, savedPrefetch]() {
+            QSettings settings;
+            if (savedFonts.isValid())
+                settings.setValue(QLatin1String("privacy/blockRemoteFonts"),
+                                  savedFonts);
+            else
+                settings.remove(QLatin1String("privacy/blockRemoteFonts"));
+            if (savedPrefetch.isValid())
+                settings.setValue(QLatin1String("privacy/blockPrefetch"),
+                                  savedPrefetch);
+            else
+                settings.remove(QLatin1String("privacy/blockPrefetch"));
+            PrivacyRequestInterceptor::loadSettings();
+        };
+        auto armToggles = [](bool fonts, bool prefetch) {
+            QSettings settings;
+            settings.setValue(QLatin1String("privacy/blockRemoteFonts"), fonts);
+            settings.setValue(QLatin1String("privacy/blockPrefetch"), prefetch);
+            PrivacyRequestInterceptor::loadSettings();
+        };
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "resourceblock-smoke: FAIL (listen)"
+                    << server->errorString();
+            restoreToggles();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto hits = std::make_shared<QSet<QString>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, hits]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, hits]() {
+                const QByteArray request = client->readAll();
+                const int sp = request.indexOf(' ');
+                const int httpAt = request.indexOf(" HTTP/");
+                if (sp > 0 && httpAt > sp) {
+                    const QString path = QString::fromLatin1(
+                        request.mid(sp + 1, httpAt - sp - 1));
+                    hits->insert(path);
+                }
+                const QByteArray body =
+                    "<html><body>resourceblock</body></html>";
+                client->write("HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto state = std::make_shared<int>(0);
+        auto jsFired = std::make_shared<bool>(false);
+        auto settleTicks = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, state, jsFired](bool ok) {
+            if (!ok)
+                return;
+            const QString path = view->url().path();
+            if (path == QStringLiteral("/page%1").arg(*state + 1)) {
+                *jsFired = true;
+                view->webPage()->runJavaScript(QStringLiteral(
+                    "var l=document.createElement('link');"
+                    "l.rel='prefetch';l.href='/prefetch-target';"
+                    "document.head.appendChild(l);"
+                    "var s=document.createElement('script');"
+                    "s.type='speculationrules';"
+                    "s.textContent=JSON.stringify({prefetch:"
+                    "[{source:'list',urls:['/prefetch-spec']}]});"
+                    "document.head.appendChild(s);"
+                    "new FontFace('smoke','url(/font.woff2)')"
+                    ".load().catch(function(){});"
+                    "fetch('/probe');"));
+            }
+        });
+        auto fail = [&application, restoreToggles](const QString &why) {
+            qInfo() << "resourceblock-smoke: FAIL" << why;
+            restoreToggles();
+            application.exit(1);
+        };
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, view, hits, state, jsFired,
+                          settleTicks, ticks, armToggles, fail,
+                          restoreToggles, port]() {
+            const bool font = hits->contains(QLatin1String("/font.woff2"));
+            const bool prefetchLink =
+                hits->contains(QLatin1String("/prefetch-target"));
+            const bool prefetchSpec =
+                hits->contains(QLatin1String("/prefetch-spec"));
+            const bool prefetch = prefetchLink || prefetchSpec;
+            const bool probe = hits->contains(QLatin1String("/probe"));
+            const bool nav =
+                hits->contains(QStringLiteral("/page%1").arg(*state + 1));
+            ++*ticks;
+            switch (*state) {
+            case 0:
+                // A leak fails the moment it is observed.
+                if (font || prefetch) {
+                    fail(QStringLiteral(
+                        "armed font:%1 prefetch-link:%2 prefetch-spec:%3")
+                        .arg(font).arg(prefetchLink).arg(prefetchSpec));
+                    return;
+                }
+                // Wait for the page's probe fetch (JS ran), then a
+                // ~3s settle for late wires.
+                if (nav && probe && *jsFired)
+                    ++*settleTicks;
+                if (*settleTicks < 12 && *ticks <= 40)
+                    return;
+                if (!nav || !probe) {
+                    fail(QStringLiteral("armed fixture dead nav:%1 probe:%2")
+                         .arg(nav).arg(probe));
+                    return;
+                }
+                qInfo() << "resourceblock-smoke: phase-1 armed PASS"
+                        << "(font+prefetch absent, probe landed)";
+                *state = 1;
+                *jsFired = false;
+                *settleTicks = 0;
+                *ticks = 0;
+                hits->clear();
+                armToggles(false, true);
+                view->loadUrl(QUrl(QStringLiteral(
+                    "http://127.0.0.1:%1/page2").arg(port)));
+                return;
+            case 1:
+                // Fonts allowed: the font must arrive, prefetch must not.
+                if (prefetch) {
+                    fail(QStringLiteral("prefetch leaked while armed"));
+                    return;
+                }
+                if (nav && probe && font && *jsFired)
+                    ++*settleTicks;
+                if (*settleTicks < 12 && *ticks <= 60)
+                    return;
+                if (!font) {
+                    fail(QStringLiteral(
+                        "font missing with toggle off nav:%1 probe:%2")
+                        .arg(nav).arg(probe));
+                    return;
+                }
+                qInfo() << "resourceblock-smoke: phase-2 PASS"
+                        << "(font landed, prefetch still blocked)";
+                *state = 2;
+                *jsFired = false;
+                *settleTicks = 0;
+                *ticks = 0;
+                hits->clear();
+                armToggles(false, false);
+                view->loadUrl(QUrl(QStringLiteral(
+                    "http://127.0.0.1:%1/page3").arg(port)));
+                return;
+            default:
+                // Control: prefetch must now arrive.
+                if (nav && probe && prefetch) {
+                    qInfo() << "resourceblock-smoke: PASS"
+                            << "(control delivered font+prefetch)";
+                    restoreToggles();
+                    application.exit(0);
+                    return;
+                }
+                if (*ticks > 60) {
+                    fail(QStringLiteral(
+                        "control missing nav:%1 probe:%2 prefetch:%3")
+                        .arg(nav).arg(probe).arg(prefetch));
+                    return;
+                }
+            }
+        });
+        armToggles(true, true);
+        poll->start(250);
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page1")
+                               .arg(port)));
+        QTimer::singleShot(60000, &application,
+                           [fail]() { fail(QStringLiteral("timeout")); });
     }
 
     // SAFE01 e2e: HTTPS-Only strict mode through the real navigation

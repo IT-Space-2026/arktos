@@ -1599,6 +1599,32 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="blockPrefetch">
+            <property name="toolTip">
+             <string>Drop prefetch and prerender hints (&lt;link rel=prefetch&gt;) — they fetch pages you may never visit, leaking connections and bandwidth to sites a link merely points at.</string>
+            </property>
+            <property name="text">
+             <string>Block prefetch requests</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="blockRemoteFonts">
+            <property name="toolTip">
+             <string>Drop downloadable web fonts — font requests fingerprint your GPU/OS text stack and contact third-party hosts on every visit. Local and system fonts still work, but sites relying on icon fonts may render wrong.</string>
+            </property>
+            <property name="text">
+             <string>Block remote web fonts</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="clearOnExit">
             <property name="toolTip">
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
@@ -2491,6 +2517,8 @@
   <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
   <tabstop>blockPings</tabstop>
+  <tabstop>blockPrefetch</tabstop>
+  <tabstop>blockRemoteFonts</tabstop>
   <tabstop>clearOnExit</tabstop>
   <tabstop>reportUtcTimezone</tabstop>
   <tabstop>normalizeAcceptLanguage</tabstop>

@@ -44,6 +44,8 @@ static bool s_httpsOnly = true;
 static int s_refererPolicy = PrivacyRequestInterceptor::RefererTrimmed;
 static int s_securityLevel = PrivacyRequestInterceptor::Standard;
 static bool s_blockPings = true;
+static bool s_blockRemoteFonts = false;
+static bool s_blockPrefetch = true;
 
 // Session-scoped set of hosts whose https main-frame load failed —
 // their http: requests stop being upgraded.  Written from the GUI
@@ -86,6 +88,10 @@ void PrivacyRequestInterceptor::loadSettings()
         int(PrivacyRequestInterceptor::Safest));
     const bool blockPings =
         settings.value(QLatin1String("blockPings"), true).toBool();
+    const bool blockRemoteFonts =
+        settings.value(QLatin1String("blockRemoteFonts"), false).toBool();
+    const bool blockPrefetch =
+        settings.value(QLatin1String("blockPrefetch"), true).toBool();
     QSet<QString> persistedHttpAllowed;
     const QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
@@ -102,6 +108,8 @@ void PrivacyRequestInterceptor::loadSettings()
         s_refererPolicy = refererPolicy;
         s_securityLevel = securityLevel;
         s_blockPings = blockPings;
+        s_blockRemoteFonts = blockRemoteFonts;
+        s_blockPrefetch = blockPrefetch;
     }
     {
         const QMutexLocker lock(&s_httpAllowLock);
@@ -168,6 +176,53 @@ bool PrivacyRequestInterceptor::blockPingsEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_blockPings;
+}
+
+bool PrivacyRequestInterceptor::blockRemoteFontsEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_blockRemoteFonts;
+}
+
+bool PrivacyRequestInterceptor::blockPrefetchEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_blockPrefetch;
+}
+
+// SAFE04: remote fonts fingerprint GPU/OS text stacks and ping a
+// third-party host on every visit — opt-in since icon fonts break.
+// Prefetch loads connect to sites a link merely points at — the user
+// never asked for the fetch, so it is on by default.  Speculation-
+// rules prefetch/prerender navigations arrive classified as
+// ResourceTypeMainFrame (indistinguishable from a link click by type
+// alone), but every prefetch flavor is marked with a
+// Purpose/Sec-Purpose: prefetch request header — match both.  A
+// prefetch-upgraded real navigation keeps the header too; blocking it
+// just costs Chromium a non-prefetch refetch, never a broken page.
+bool PrivacyRequestInterceptor::shouldBlockResource(
+        QWebEngineUrlRequestInfo::ResourceType type,
+        const QHash<QByteArray, QByteArray> &headers)
+{
+    bool blockRemoteFonts, blockPrefetch;
+    {
+        QReadLocker lock(&s_policyLock);
+        blockRemoteFonts = s_blockRemoteFonts;
+        blockPrefetch = s_blockPrefetch;
+    }
+    if (type == QWebEngineUrlRequestInfo::ResourceTypeFontResource)
+        return blockRemoteFonts;
+    if (!blockPrefetch)
+        return false;
+    if (type == QWebEngineUrlRequestInfo::ResourceTypePrefetch)
+        return true;
+    for (auto it = headers.cbegin(); it != headers.cend(); ++it) {
+        const QByteArray key = it.key().toLower();
+        if ((key == "sec-purpose" || key == "purpose")
+            && it.value().toLower().contains("prefetch"))
+            return true;
+    }
+    return false;
 }
 
 // A host is upgraded only when TLS has a chance of existing: loopback
@@ -563,6 +618,19 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
                    == QWebEngineUrlRequestInfo::ResourceTypeCspReport)) {
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
         qDebug() << "PrivacyRequestInterceptor: ping block"
+                 << info.requestUrl() << "type" << resourceType;
+#endif
+        info.block(true);
+        return;
+    }
+
+    // SAFE04: opt-in remote-font block and the default-on prefetch
+    // block — dropped before the navigation/script stages, which only
+    // ever see other resource types.  The header scan catches
+    // speculation-rules prefetches Chromium mislabels as MainFrame.
+    if (shouldBlockResource(resourceType, info.httpHeaders())) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: resource block"
                  << info.requestUrl() << "type" << resourceType;
 #endif
         info.block(true);

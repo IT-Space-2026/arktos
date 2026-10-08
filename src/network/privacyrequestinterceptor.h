@@ -20,6 +20,7 @@
 #ifndef PRIVACYREQUESTINTERCEPTOR_H
 #define PRIVACYREQUESTINTERCEPTOR_H
 
+#include <qhash.h>
 #include <qwebengineurlrequestinterceptor.h>
 #include <qwebengineurlrequestinfo.h>
 
@@ -75,6 +76,17 @@ class QUrl;
 // CSP violation reports all ride Chromium's ping/report upload
 // channel.  BrowserProfile additionally switches
 // HyperlinkAuditingEnabled off so <a ping> requests never initiate.
+//
+// SAFE04: two resource-type blocks riding the same snapshot —
+// privacy/blockPrefetch (default on) drops <link rel=prefetch> loads,
+// which fetch pages the user never navigated to; privacy/
+// blockRemoteFonts (default off, opt-in hardening) drops remote
+// font downloads, a fingerprinting and tracking vector — local and
+// system fonts are unaffected.  Speculation-rules prefetch/prerender
+// navigations reach the interceptor classified as ResourceType
+// MainFrame — indistinguishable from a real link click — but every
+// prefetch flavor carries a Purpose/Sec-Purpose: prefetch header, so
+// the decision matches the header too, not just the resource type.
 class PrivacyRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
     Q_OBJECT
@@ -190,6 +202,21 @@ public:
     // report requests are dropped while it is set.  The tor
     // interceptor consults the same toggle.
     static bool blockPingsEnabled();
+
+    // SAFE04: the persisted privacy/blockRemoteFonts (default off)
+    // and privacy/blockPrefetch (default on) toggles as loaded into
+    // the IO-thread snapshot.  shouldBlockResource() is the pure
+    // decision both interceptors consult — true when the resource
+    // type is a remote font and its opt-in block is armed, or a
+    // prefetch and its block is armed.  A prefetch is either
+    // ResourceTypePrefetch or any request carrying a
+    // Purpose/Sec-Purpose: prefetch header — speculation-rules
+    // prefetch navigations are misclassified as MainFrame.
+    static bool blockRemoteFontsEnabled();
+    static bool blockPrefetchEnabled();
+    static bool shouldBlockResource(
+            QWebEngineUrlRequestInfo::ResourceType type,
+            const QHash<QByteArray, QByteArray> &headers);
 
     // SAFE01: HTTPS-Only strict mode (privacy/httpsOnly, default on).
     // A main-frame navigation that is still http: after the
