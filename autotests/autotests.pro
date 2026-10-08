@@ -29,6 +29,7 @@ SUBDIRS  = \
     opensearchmanager \
     opensearchreader \
     opensearchwriter \
+    popupblocker \
     privatebrowsing \
     privacy \
     safetext \

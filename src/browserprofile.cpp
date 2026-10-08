@@ -257,6 +257,12 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setFontFamily(QWebEngineSettings::FixedFont, fixedFont.family());
     engineSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, fixedFont.pointSize());
 
+    // POPUP01: the attribute stays bound to the blocker preference.
+    // false makes Chromium drop zero-user-gesture window.open calls of
+    // EVERY shape inside the renderer — including plain opens that
+    // would reach WebPage::createWindow tab-typed and slip through as
+    // pop-unders.  Gesture-initiated calls still reach createWindow
+    // either way; PopupBlocker gates the pop-up-shaped ones there.
     engineSettings->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows,
                                  !settings.value(QLatin1String("blockPopupWindows"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::JavascriptEnabled,

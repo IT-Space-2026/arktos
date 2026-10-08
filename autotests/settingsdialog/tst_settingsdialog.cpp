@@ -33,6 +33,7 @@
 #include "cookiejar.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "popupblocker.h"
 #include "scopeshortcuts.h"
 #include "toolbarsearch.h"
 #include "webview.h"
@@ -57,6 +58,7 @@ private slots:
     void sidebarNavigation();
     void subDialogButtons();
     void setHomeToCurrentPage();
+    void popupExceptions();
 };
 
 void tst_SettingsDialog::initTestCase()
@@ -763,6 +765,42 @@ void tst_SettingsDialog::setHomeToCurrentPage()
     SettingsDialog dialog(&window);
     dialog.setHomeToCurrentPageButton->click();
     QVERIFY(dialog.homeLineEdit->text().startsWith(QLatin1String("data:text/html")));
+}
+
+// POPUP01: the Privacy page's site-permission audit table lists
+// pop-up exceptions ("popup|<host>" keys), and Remove drops the host
+// from the PopupBlocker store.
+void tst_SettingsDialog::popupExceptions()
+{
+    PopupBlocker *blocker = PopupBlocker::instance();
+    blocker->clearAllowedHosts();
+    blocker->clearSessionHosts();
+    blocker->allowHost(QLatin1String("popups.example"));
+
+    SettingsDialog dialog;
+    QTreeWidgetItem *row = nullptr;
+    for (int i = 0; i < dialog.permissionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.permissionsTree->topLevelItem(i);
+        if (item->text(0) == QLatin1String("popups.example"))
+            row = item;
+    }
+    QVERIFY(row);
+    QCOMPARE(row->text(1), QStringLiteral("Pop-ups"));
+    QCOMPARE(row->text(2), QStringLiteral("Allowed"));
+    QCOMPARE(row->data(0, Qt::UserRole).toString(),
+             QLatin1String("popup|popups.example"));
+
+    dialog.permissionsTree->setCurrentItem(row);
+    QVERIFY(dialog.permissionRemoveButton->isEnabled());
+    dialog.permissionRemoveButton->click();
+    QVERIFY(!blocker->isAllowedHost(QLatin1String("popups.example")));
+
+    // PopupBlocker::changed re-runs refreshPermissions synchronously —
+    // the row is gone from the rebuilt table.
+    for (int i = 0; i < dialog.permissionsTree->topLevelItemCount(); ++i) {
+        QVERIFY(dialog.permissionsTree->topLevelItem(i)->text(0)
+                != QLatin1String("popups.example"));
+    }
 }
 
 QTEST_MAIN(tst_SettingsDialog)

@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "cookiejar.h"
+#include "popupblocker.h"
 #include "scriptcontrolmanager.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
@@ -120,6 +121,15 @@ SitePanel::SitePanel(QWidget *parent)
     m_javaScriptState = plainLabel(QString(), this);
     m_javaScriptState->setObjectName(QLatin1String("siteJavaScriptState"));
     layout->addWidget(m_javaScriptState);
+
+    // POPUP01: per-site pop-up exception — the opener-side allowlist
+    // PopupBlocker consults in createWindow.
+    m_allowPopups = new QCheckBox(
+        tr("Allow pop-ups on this site"), this);
+    m_allowPopups->setObjectName(QLatin1String("siteAllowPopups"));
+    connect(m_allowPopups, &QCheckBox::toggled,
+            this, &SitePanel::togglePopups);
+    layout->addWidget(m_allowPopups);
 
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
@@ -265,6 +275,12 @@ void SitePanel::refresh()
                     : tr("No site to scope JavaScript to"));
     }
 
+    // POPUP01: the exception is host-keyed like the JavaScript one —
+    // only real web sites get the toggle.
+    m_allowPopups->setEnabled(webSite);
+    m_allowPopups->setChecked(
+        webSite && PopupBlocker::instance()->isAllowedHost(site));
+
     rebuildPermissionRows();
     m_refreshing = false;
 }
@@ -312,6 +328,25 @@ void SitePanel::applyJavaScriptRule(int index)
     // The policy is applied pre-navigation; reload so the change takes
     // effect on the page that is open right now.
     m_webView->reload();
+    refresh();
+}
+
+void SitePanel::togglePopups(bool checked)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    // Off-the-record pages get a session rule — nothing private is
+    // ever written to the persistent store.
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    PopupBlocker *blocker = PopupBlocker::instance();
+    if (checked)
+        blocker->allowHost(site, persistent);
+    else
+        blocker->removeAllowedHost(site);
     refresh();
 }
 

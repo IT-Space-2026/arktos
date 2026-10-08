@@ -95,6 +95,11 @@ signals:
     // re-evaluated (each accepted main-frame navigation and on
     // loadSettings) — true when scripts are currently blocked.
     void javaScriptBlockedChanged(bool blocked);
+    // POPUP01: emitted whenever the blocked pop-up state changes — a
+    // pop-up-shaped createWindow() was refused, a target url was
+    // captured for the "Open once" list, or a new document reset the
+    // tally.  The location-bar indicator follows this.
+    void popupBlocked();
 
 public:
     WebPage(QObject *parent = nullptr);
@@ -132,6 +137,16 @@ public:
     // scripts and stops re-arming them; re-enabling re-arms for the
     // current url.
     void setInjectedScriptsEnabled(bool enabled);
+
+    // POPUP01: pop-up attempts refused on the current document — the
+    // count (every rejected createWindow) and the target urls the
+    // dead-end probe pages captured, which the indicator offers for
+    // "Open once".  Both reset on each new main-frame document.
+    int blockedPopupCount() const { return m_blockedPopupCount; }
+    QList<QUrl> blockedPopupUrls() const { return m_blockedPopupUrls; }
+    // Called by the dead-end page a blocked createWindow() hands back
+    // once the engine navigates it — records the pop-up's target url.
+    void noteBlockedPopupTarget(const QUrl &url);
 
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
@@ -176,6 +191,11 @@ protected:
     // gates the urlChanged re-arm so same-document navigations don't
     // rotate the injected autofill token.
     bool m_documentLoadPending = false;
+    // POPUP01: refused pop-up attempts on the current document —
+    // count covers every blocked createWindow, urls only the ones a
+    // probe could capture (window.open with no target records none).
+    int m_blockedPopupCount = 0;
+    QList<QUrl> m_blockedPopupUrls;
 };
 
 #endif // WEBPAGE_H

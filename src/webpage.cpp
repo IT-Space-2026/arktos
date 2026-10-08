@@ -29,6 +29,7 @@
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "scriptcontrolmanager.h"
@@ -607,6 +608,15 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         const bool sameDocument =
             url.adjusted(QUrl::RemoveFragment)
                 == this->url().adjusted(QUrl::RemoveFragment);
+        if (!sameDocument
+            && (m_blockedPopupCount != 0
+                || !m_blockedPopupUrls.isEmpty())) {
+            // POPUP01: a new document gets a fresh blocked pop-up
+            // tally — the indicator shows per-page counts.
+            m_blockedPopupCount = 0;
+            m_blockedPopupUrls.clear();
+            emit popupBlocked();
+        }
         if (!sameDocument || type != QWebEnginePage::NavigationTypeLinkClicked)
             schedulePageScripts(url);
         // A real navigation supersedes any pending cert decision — the
@@ -619,9 +629,79 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     return accepted;
 }
 
+// POPUP01: the dead-end page a blocked pop-up gets in place of a real
+// window.  window.open() still hands script a live window handle —
+// the same thing a genuine block looks like to the page — but every
+// navigation is refused.  The first http(s)/ftp target is reported
+// back to the opener so the blocked indicator can offer "Open once",
+// then the probe deletes itself; pop-ups the blocked page itself
+// tries to open stay inside the dead-end, and a handle that only
+// ever gets document.writes is reaped by the grace timer.
+class PopupProbePage : public WebPage
+{
+public:
+    PopupProbePage(QWebEngineProfile *profile, WebPage *source)
+        : WebPage(profile, source)
+        , m_source(source)
+    {
+        QTimer::singleShot(30000, this, &QObject::deleteLater);
+    }
+
+protected:
+    bool acceptNavigationRequest(const QUrl &url,
+                                 NavigationType type,
+                                 bool isMainFrame) override
+    {
+        Q_UNUSED(type);
+        if (!isMainFrame)
+            return false;
+        const QString scheme = url.scheme();
+        if (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https")
+            || scheme == QLatin1String("ftp")) {
+            if (WebPage *source = m_source)
+                source->noteBlockedPopupTarget(url);
+            deleteLater();
+        }
+        // about:blank and script/data urls keep the probe alive a
+        // moment longer — a script may navigate the handle to the
+        // real target right after opening it — but never load.
+        return false;
+    }
+
+    QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override
+    {
+        Q_UNUSED(type);
+        return new PopupProbePage(profile(), m_source);
+    }
+
+private:
+    QPointer<WebPage> m_source;
+};
+
 QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
 {
-    Q_UNUSED(type);
+    // POPUP01: Chromium only withholds window.open calls that lack a
+    // user gesture (the JavascriptCanOpenWindows=false binding keeps
+    // doing that upstream, and keeping it matters — a gesture-less
+    // plain window.open would otherwise arrive here tab-typed and
+    // slip through as a pop-under).  Every call that can produce a
+    // window arrives at createWindow; the blocker gates the
+    // pop-up-shaped kinds — window.open with a feature string arrives
+    // as WebBrowserWindow or WebDialog — while
+    // WebBrowserTab/WebBrowserBackgroundTab are target=_blank-style
+    // requests governed by the openTargetBlankLinksIn preference.
+    // Chromium does not say whether a feature-less window.open
+    // produced a tab-typed request, so that ambiguity deliberately
+    // belongs to the tab-placement setting, not the pop-up blocker.
+    const bool popupShaped = type == QWebEnginePage::WebBrowserWindow
+        || type == QWebEnginePage::WebDialog;
+    if (popupShaped && PopupBlocker::instance()->shouldBlock(url())) {
+        ++m_blockedPopupCount;
+        emit popupBlocked();
+        return new PopupProbePage(profile(), this);
+    }
+
     WebView *sourceView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
     if (sourceView && sourceView->tabWidget()) {
         if (WebView *webView = sourceView->tabWidget()->getView(
@@ -634,6 +714,19 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
     webView->setAttribute(Qt::WA_DeleteOnClose);
     webView->show();
     return webView->webPage();
+}
+
+// POPUP01: a dead-end probe reports the url the refused pop-up tried
+// to reach.  Only urls worth offering for "Open once" are recorded
+// (the probe itself filters to http/https/ftp); duplicates are
+// folded and the list is capped so a pop-up storm cannot grow it.
+void WebPage::noteBlockedPopupTarget(const QUrl &url)
+{
+    if (m_blockedPopupUrls.contains(url)
+        || m_blockedPopupUrls.size() >= 20)
+        return;
+    m_blockedPopupUrls.append(url);
+    emit popupBlocked();
 }
 
 void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)

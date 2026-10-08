@@ -76,6 +76,7 @@
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
@@ -207,6 +208,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // JSCTL: the per-site JavaScript rules are listed in the same
     // audit table (key prefix "js|" distinguishes them on removal).
     connect(ScriptControlManager::instance(), &ScriptControlManager::changed,
+            this, &SettingsDialog::refreshPermissions);
+    // POPUP01: pop-up exceptions share the table ("popup|" keys).
+    connect(PopupBlocker::instance(), &PopupBlocker::changed,
             this, &SettingsDialog::refreshPermissions);
     refreshPermissions();
 
@@ -1736,6 +1740,19 @@ void SettingsDialog::refreshPermissions()
         addScriptRule(host, true);
     for (const QString &host : scripts->blockedHosts())
         addScriptRule(host, false);
+
+    // POPUP01: sites the user allowed pop-ups on share this audit
+    // table too — key "popup|<host>".
+    for (const QString &host : PopupBlocker::instance()->allowedHosts()) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(permissionsTree);
+        item->setText(0, host);
+        item->setText(1, tr("Pop-ups"));
+        item->setText(2, tr("Allowed"));
+        item->setData(0, Qt::UserRole,
+                      QLatin1String("popup|") + host);
+        if (item->data(0, Qt::UserRole).toString() == selectedKey)
+            permissionsTree->setCurrentItem(item);
+    }
     permissionSelectionChanged();
 }
 
@@ -1759,6 +1776,11 @@ void SettingsDialog::removePermission()
             parts.at(1), ScriptControlManager::SiteDefault);
         return;
     }
+    if (parts.at(0) == QLatin1String("popup")) {
+        // POPUP01 row — drop the pop-up exception for the host.
+        PopupBlocker::instance()->removeAllowedHost(parts.at(1));
+        return;
+    }
     WebPermissionManager::instance()->removeEntry(
         QUrl::fromEncoded(parts.at(0).toUtf8()),
         static_cast<QWebEnginePermission::PermissionType>(parts.at(1).toInt()));
@@ -1767,9 +1789,11 @@ void SettingsDialog::removePermission()
 void SettingsDialog::clearPermissions()
 {
     ScriptControlManager *scripts = ScriptControlManager::instance();
+    PopupBlocker *popups = PopupBlocker::instance();
     if (WebPermissionManager::instance()->entries().isEmpty()
         && scripts->allowedHosts().isEmpty()
-        && scripts->blockedHosts().isEmpty())
+        && scripts->blockedHosts().isEmpty()
+        && popups->allowedHosts().isEmpty())
         return;
     if (QMessageBox::question(this, tr("Clear Site Permissions"),
             tr("Remove every remembered site permission?"),
@@ -1778,6 +1802,7 @@ void SettingsDialog::clearPermissions()
         return;
     WebPermissionManager::instance()->clearEntries();
     scripts->clearPersistentRules();
+    popups->clearAllowedHosts();
 }
 
 // SECLVL: explains the selected tier and greys the Enable Javascript

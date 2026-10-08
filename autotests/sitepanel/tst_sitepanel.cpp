@@ -40,6 +40,7 @@
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "cookiejar.h"
+#include "popupblocker.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "webpermissionmanager.h"
@@ -121,6 +122,8 @@ void tst_SitePanel::init()
     jar.setAllowedCookies(QStringList());
     jar.setAllowForSessionCookies(QStringList());
     jar.setCookies(QList<QNetworkCookie>());
+    PopupBlocker::instance()->clearAllowedHosts();
+    PopupBlocker::instance()->clearSessionHosts();
 }
 
 void tst_SitePanel::cleanup()
@@ -137,6 +140,9 @@ void tst_SitePanel::cleanup()
         jar->setCookies(QList<QNetworkCookie>());
     }
     WebPermissionManager::instance()->clearEntries();
+    PopupBlocker::instance()->removeAllowedHost(QLatin1String("127.0.0.1"));
+    PopupBlocker::instance()->removeAllowedHost(QLatin1String("example.com"));
+    PopupBlocker::instance()->clearSessionHosts();
 }
 
 // public static QString siteWhitelistFilter(const QString &host)
@@ -283,6 +289,13 @@ void tst_SitePanel::panelWithoutPage()
     QVERIFY(block);
     QVERIFY(!block->isEnabled());
 
+    // POPUP01: no site means nothing to scope a pop-up exception to.
+    QCheckBox *popups = panel.findChild<QCheckBox*>(
+        QLatin1String("siteAllowPopups"));
+    QVERIFY(popups);
+    QVERIFY(!popups->isEnabled());
+    QVERIFY(!popups->isChecked());
+
     QPushButton *clear = panel.findChild<QPushButton*>(
         QLatin1String("siteClearData"));
     QVERIFY(clear);
@@ -358,6 +371,23 @@ void tst_SitePanel::panelForSite()
     block->setChecked(true);
     QVERIFY(!adblock->isSiteWhitelisted(host));
     adblock->setEnabled(enabled);
+
+    // POPUP01: the pop-up toggle writes the PopupBlocker exception —
+    // checked again after a refresh, and removed on untoggle.
+    QCheckBox *popups = panel.findChild<QCheckBox*>(
+        QLatin1String("siteAllowPopups"));
+    QVERIFY(popups);
+    QVERIFY(popups->isEnabled());
+    QVERIFY(!popups->isChecked());
+    PopupBlocker *blocker = PopupBlocker::instance();
+    popups->setChecked(true);
+    QVERIFY(blocker->isAllowedHost(host));
+    panel.refresh();
+    QVERIFY(popups->isChecked());
+    popups->setChecked(false);
+    QVERIFY(!blocker->isAllowedHost(host));
+    panel.refresh();
+    QVERIFY(!popups->isChecked());
 
     // SEC05 permission rows: seed a remembered grant, revoke it from
     // the panel, and check the broker forgets it.

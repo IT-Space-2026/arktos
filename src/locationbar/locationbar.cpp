@@ -22,6 +22,7 @@
 #include "adblockbutton.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
+#include "popupblockerbutton.h"
 #include "privacyindicator.h"
 #include "searchlineedit.h"
 #include "siteshield.h"
@@ -42,6 +43,7 @@ LocationBar::LocationBar(QWidget *parent)
     , m_siteIcon(nullptr)
     , m_shield(nullptr)
     , m_adBlockButton(nullptr)
+    , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
 {
     // Urls are always LeftToRight
@@ -68,6 +70,11 @@ LocationBar::LocationBar(QWidget *parent)
     m_adBlockButton = new AdBlockButton(this);
     addWidget(m_adBlockButton, RightSide);
 
+    // POPUP01: blocked pop-up indicator — appears directly left of the
+    // ad-block button only while the page has refused pop-ups.
+    m_popupBlockerButton = new PopupBlockerButton(this);
+    addWidget(m_popupBlockerButton, RightSide);
+
     // privacy indicator at rightmost position
     m_privacyIndicator = new PrivacyIndicator(this);
     addWidget(m_privacyIndicator, RightSide);
@@ -91,6 +98,7 @@ void LocationBar::setWebView(WebView *webView)
     m_siteIcon->setWebView(webView);
     m_shield->setWebView(webView);
     m_adBlockButton->setWebView(webView);
+    m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
             this, &LocationBar::webViewUrlChanged);

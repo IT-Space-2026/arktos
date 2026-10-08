@@ -130,7 +130,8 @@ the page's security state, a per-site cookie exception (allow, block
 or session-only) with the count of stored cookies, a content-blocking
 toggle that whitelists the site (the icon greys while it is exempt),
 a per-site JavaScript rule (site default, always allow, always block)
-with the page's current script state, the remembered permission
+with the page's current script state, an "Allow pop-ups on this site"
+toggle, the remembered permission
 grants for the origin with revoke controls, and a clear-site-data
 action.  The shield icon carries a small badge while JavaScript is
 blocked on the current page.
@@ -140,6 +141,20 @@ per-page blocked-request count (as an icon badge, and in its popup),
 toggles content blocking on or off globally, and opens the AdBlock
 settings dialog.  The icon greys while blocking is disabled or the
 site is whitelisted.
+
+"Block Popup Windows" (Privacy settings, on by default) is a real
+pop-up blocker: window.open calls that request a window shape are
+refused inside the browser rather than merely suppressed when they
+lack a user gesture, so click-triggered pop-ups are covered too.
+While a page has refused pop-ups a small indicator appears at the
+right end of the address bar with a count badge; its menu offers
+each captured destination for "Open once", an "Always allow pop-ups"
+exception for the site, and a shortcut to the settings.  Exceptions
+apply to the site showing the pop-up (a rule for example.com covers
+its subdomains), persist between sessions, and can also be managed
+from the site panel or the Privacy page's remembered-permissions
+list.  Tab-shaped opens (target=_blank links) are unaffected — they
+follow the "open target-blank links in" preference.
 
 A "Security Level" selector at the top of the Privacy settings page
 offers three Mullvad-style tiers.  Standard (the default) is the

@@ -41,6 +41,8 @@ class WebView;
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an
 //     @@||host^$document whitelist exception in AdBlockManager,
+//   - a POPUP01 "allow pop-ups on this site" toggle writing the
+//     PopupBlocker per-host exception list,
 //   - the remembered WebPermissionManager grants for the origin with
 //     per-entry revoke buttons (SEC05),
 //   - a "clear site data" button wiping the host's cookies and the
@@ -71,6 +73,7 @@ private:
     void applyCookieRule(int index);
     void toggleContentBlocking(bool checked);
     void applyJavaScriptRule(int index);
+    void togglePopups(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
 
@@ -82,6 +85,7 @@ private:
     QCheckBox *m_blockContent;
     QComboBox *m_javaScriptRule;
     QLabel *m_javaScriptState;
+    QCheckBox *m_allowPopups;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;

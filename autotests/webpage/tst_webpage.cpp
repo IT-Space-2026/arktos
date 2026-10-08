@@ -32,6 +32,7 @@
 
 #include <autofillmanager.h>
 #include <opensearchmanager.h>
+#include <popupblocker.h>
 #include <toolbarsearch.h>
 #include <webpage.h>
 #include <webview.h>
@@ -62,6 +63,10 @@ private slots:
     void externalProtocolPrompt();
     void createPlugin();
     void createWindow();
+    void popupBlocking();
+    void popupTargetCapture();
+    void popupStateReset();
+    void popupClickBlocking();
     void handleUnsupportedContent();
     void linkedResources();
     void javaScriptObjects();
@@ -182,6 +187,15 @@ public:
             count += message.contains(QLatin1String("execCallbacks"));
         return count;
     }
+
+    // POPUP01: records the shape Chromium reports for each window
+    // request so tests can see whether a window.open arrived at all.
+    QList<QWebEnginePage::WebWindowType> windowTypes;
+    QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override
+    {
+        windowTypes.append(type);
+        return WebPage::createWindow(type);
+    }
 };
 
 // This will be called before the first test function is executed.
@@ -209,11 +223,21 @@ void tst_WebPage::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_WebPage::init()
 {
+    // POPUP01: the blocker singleton is QSettings-backed — each test
+    // starts enabled with an empty exception store.
+    PopupBlocker *blocker = PopupBlocker::instance();
+    blocker->clearAllowedHosts();
+    blocker->clearSessionHosts();
+    blocker->setEnabled(true);
 }
 
 // This will be called after every test function.
 void tst_WebPage::cleanup()
 {
+    PopupBlocker *blocker = PopupBlocker::instance();
+    blocker->removeAllowedHost(QLatin1String("127.0.0.1"));
+    blocker->clearSessionHosts();
+    blocker->setEnabled(true);
 }
 
 void tst_WebPage::webpage_data()
@@ -371,6 +395,219 @@ void tst_WebPage::createWindow()
     QCOMPARE(newPage->profile(), page.profile());
     // The standalone WebView owns the page; close the window to clean up.
     delete QWebEngineView::forPage(newPage);
+}
+
+// POPUP01: pop-up-shaped window requests dead-end in a probe page —
+// no real window is created and the blocked counter ticks — while
+// tab-shaped requests still follow the openTargetBlankLinksIn path.
+void tst_WebPage::popupBlocking()
+{
+    PopupBlocker *blocker = PopupBlocker::instance();
+    LocalHttpServer server;
+    server.pageBody = "<html><body>popup opener</body></html>";
+    QVERIFY(server.start());
+
+    SubWebPage page;
+    QSignalSpy loaded(&page, SIGNAL(loadFinished(bool)));
+    page.load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    QCOMPARE(loaded.last().at(0).toBool(), true);
+    QCOMPARE(page.url().host(), QLatin1String("127.0.0.1"));
+
+    QSignalSpy blockedSpy(&page, SIGNAL(popupBlocked()));
+
+    QWebEnginePage *windowProbe =
+        page.call_createWindow(QWebEnginePage::WebBrowserWindow);
+    QVERIFY(windowProbe);
+    QVERIFY(!QWebEngineView::forPage(windowProbe));
+    QCOMPARE(page.blockedPopupCount(), 1);
+    QCOMPARE(blockedSpy.count(), 1);
+
+    QWebEnginePage *dialogProbe =
+        page.call_createWindow(QWebEnginePage::WebDialog);
+    QVERIFY(dialogProbe);
+    QVERIFY(!QWebEngineView::forPage(dialogProbe));
+    QCOMPARE(page.blockedPopupCount(), 2);
+
+    // Tab-shaped requests are target=_blank territory — governed by
+    // the tab-placement preference, never by the pop-up blocker.
+    QWebEnginePage *tabPage =
+        page.call_createWindow(QWebEnginePage::WebBrowserTab);
+    QVERIFY(tabPage);
+    QVERIFY(QWebEngineView::forPage(tabPage));
+    delete QWebEngineView::forPage(tabPage);
+    QCOMPARE(page.blockedPopupCount(), 2);
+
+    QWebEnginePage *bgTabPage =
+        page.call_createWindow(QWebEnginePage::WebBrowserBackgroundTab);
+    QVERIFY(bgTabPage);
+    QVERIFY(QWebEngineView::forPage(bgTabPage));
+    delete QWebEngineView::forPage(bgTabPage);
+
+    // A persistent site exception lets pop-ups through again.
+    blocker->allowHost(QLatin1String("127.0.0.1"));
+    QWebEnginePage *allowed =
+        page.call_createWindow(QWebEnginePage::WebBrowserWindow);
+    QVERIFY(allowed);
+    QVERIFY(QWebEngineView::forPage(allowed));
+    delete QWebEngineView::forPage(allowed);
+    QCOMPARE(page.blockedPopupCount(), 2);
+    blocker->removeAllowedHost(QLatin1String("127.0.0.1"));
+
+    // Blocker switched off: pop-up shapes get real windows again.
+    blocker->setEnabled(false);
+    QWebEnginePage *unblocked =
+        page.call_createWindow(QWebEnginePage::WebBrowserWindow);
+    QVERIFY(unblocked);
+    QVERIFY(QWebEngineView::forPage(unblocked));
+    delete QWebEngineView::forPage(unblocked);
+    blocker->setEnabled(true);
+}
+
+// POPUP01: the dead-end probe refuses every navigation but reports
+// the first http(s)/ftp target back so the indicator can offer it
+// for "Open once".  about:blank keeps the probe alive unrecorded —
+// scripts routinely open a blank handle then steer it.
+void tst_WebPage::popupTargetCapture()
+{
+    LocalHttpServer server;
+    server.pageBody = "<html><body>popup opener</body></html>";
+    QVERIFY(server.start());
+
+    SubWebPage page;
+    QSignalSpy loaded(&page, SIGNAL(loadFinished(bool)));
+    page.load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    QWebEnginePage *probe =
+        page.call_createWindow(QWebEnginePage::WebBrowserWindow);
+    QVERIFY(probe);
+    QCOMPARE(page.blockedPopupCount(), 1);
+    QVERIFY(page.blockedPopupUrls().isEmpty());
+
+    probe->load(QUrl("about:blank"));
+    QTest::qWait(300);
+    QVERIFY(page.blockedPopupUrls().isEmpty());
+
+    const QUrl target(QStringLiteral("http://popup.invalid/landing"));
+    probe->load(target);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        page.blockedPopupUrls().contains(target), 15000);
+
+    // Duplicates fold and the list is capped — a pop-up storm cannot
+    // grow the indicator menu without bound.
+    page.noteBlockedPopupTarget(target);
+    QCOMPARE(page.blockedPopupUrls().count(), 1);
+    for (int i = 0; i < 25; ++i)
+        page.noteBlockedPopupTarget(QUrl(
+            QStringLiteral("http://p%1.invalid/").arg(i)));
+    QCOMPARE(page.blockedPopupUrls().count(), 20);
+}
+
+// POPUP01: the blocked tally belongs to the document that produced it
+// — a fragment-only click keeps it, a real navigation clears it.
+void tst_WebPage::popupStateReset()
+{
+    LocalHttpServer server;
+    server.pageBody = "<html><body>popup opener</body></html>";
+    QVERIFY(server.start());
+
+    SubWebPage page;
+    QSignalSpy loaded(&page, SIGNAL(loadFinished(bool)));
+    page.load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    delete page.call_createWindow(QWebEnginePage::WebBrowserWindow);
+    page.noteBlockedPopupTarget(QUrl("http://popup.invalid/a"));
+    QCOMPARE(page.blockedPopupCount(), 1);
+    QCOMPARE(page.blockedPopupUrls().count(), 1);
+
+    QUrl sameDoc = page.url();
+    sameDoc.setFragment(QStringLiteral("here"));
+    QVERIFY(page.call_acceptNavigationRequest(sameDoc,
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QCOMPARE(page.blockedPopupCount(), 1);
+
+    QUrl next = server.url();
+    next.setPath(QStringLiteral("/other"));
+    QSignalSpy blockedSpy(&page, SIGNAL(popupBlocked()));
+    QVERIFY(page.call_acceptNavigationRequest(next,
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QCOMPARE(page.blockedPopupCount(), 0);
+    QVERIFY(page.blockedPopupUrls().isEmpty());
+    QCOMPARE(blockedSpy.count(), 1);
+}
+
+// POPUP01 e2e: the Kephyr click-test scenario — a real button click
+// calls window.open with a feature string, which is exactly what
+// JavascriptCanOpenWindows alone lets through.  With the app-side
+// blocker the request dead-ends: the tally ticks, the probe reports
+// the destination, and no window appears.
+void tst_WebPage::popupClickBlocking()
+{
+    LocalHttpServer server;
+    server.pageBody =
+        "<html><body><button id=\"pop\""
+        " style=\"position:absolute;left:0;top:0;width:200px;height:50px\""
+        " onclick=\"window.__clicked=1;"
+        "var w=window.open('popup.html','p','width=200,height=200');"
+        "window.__handle=(w!==null)\""
+        ">open</button></body></html>";
+    QVERIFY(server.start());
+
+    WebView view;
+    view.resize(400, 300);
+    // SubWebPage exposes the blocked counters; setPage attaches it to
+    // the view so createWindow sees the real WebView path.
+    SubWebPage *page = new SubWebPage(view.webPage()->profile(), &view);
+    view.setPage(page);
+    view.show();
+
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    QCOMPARE(loaded.last().at(0).toBool(), true);
+
+    // The gesture-less window.open suppression lives upstream in the
+    // renderer; for the exercise of createWindow itself the attribute
+    // is flipped on — the app-side blocker is what must stop the call.
+    page->settings()->setAttribute(
+        QWebEngineSettings::JavascriptCanOpenWindows, true);
+
+    // Input must go to the render delegate — Chromium reads mouse
+    // events off its own child widget, and the synthetic click counts
+    // as a user gesture there, so the window.open survives the
+    // renderer's gesture check and reaches createWindow.
+    QWidget *surface = nullptr;
+    const QList<QWidget*> children = view.findChildren<QWidget*>();
+    for (QWidget *child : children) {
+        if (child->objectName().contains(
+                QLatin1String("render"), Qt::CaseInsensitive)
+            || child->inherits(
+                "RenderWidgetHostViewQtDelegateWidget"))
+            surface = child;
+    }
+    if (!surface && !children.isEmpty())
+        surface = children.last();
+    QVERIFY(surface);
+    QTest::mouseMove(surface, QPoint(50, 25));
+    QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(50, 25));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        evalSync(page, QLatin1String("window.__clicked")).toInt() == 1,
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!page->windowTypes.isEmpty(), 15000);
+    // A feature-string window.open reports as WebDialog (or
+    // WebBrowserWindow) — never a tab shape — which is why the
+    // createWindow gate keys on the window type.
+    QCOMPARE(page->windowTypes.count(), 1);
+    QVERIFY(page->windowTypes.first() == QWebEnginePage::WebBrowserWindow
+            || page->windowTypes.first() == QWebEnginePage::WebDialog);
+    QTRY_COMPARE_WITH_TIMEOUT(page->blockedPopupCount(), 1, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !page->blockedPopupUrls().isEmpty(), 15000);
+    QCOMPARE(page->blockedPopupUrls().first().path(),
+             QLatin1String("/popup.html"));
 }
 
 void tst_WebPage::handleUnsupportedContent()
