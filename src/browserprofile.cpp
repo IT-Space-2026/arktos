@@ -87,23 +87,54 @@ QWebEngineProfile *torProfile()
     return s_torProfile;
 }
 
+int presentedChromeMajor()
+{
+    return 155;
+}
+
 QString defaultHttpUserAgent()
 {
     // UA01: Qt's factory UA carries a "QtWebEngine/<ver>" product
     // token that bot-detection fingerprints as automation — Google's
     // /sorry/ interstitial fired on a plain google.com search.  Vanilla
     // Chrome strings do not trip it, so Arora ships Qt's own default
-    // minus that token; the platform and bundled-Chromium version
-    // tokens stay accurate.  A throwaway anonymous profile is asked
-    // because the browsing profiles cannot be — applySettings() may
-    // already have overridden their UA by the time this runs.
+    // minus that token; the platform tokens stay accurate.  UA03: the
+    // Chrome/<major> milestone is bumped to presentedChromeMajor() —
+    // sites version-sniff it to nag "browser out of date" once the
+    // bundled Chromium lags stable.  Only the version digits change;
+    // the engine is still the bundled Chromium.  A throwaway anonymous
+    // profile is asked because the browsing profiles cannot be —
+    // applySettings() may already have overridden their UA by the
+    // time this runs.
     static const QString userAgent = [] {
         QWebEngineProfile probe;
         QString ua = probe.httpUserAgent();
         ua.remove(QRegularExpression(QLatin1String("\\s*QtWebEngine/\\S+")));
+        ua.replace(QRegularExpression(QLatin1String("Chrome/\\d+")),
+                   QLatin1String("Chrome/")
+                       + QString::number(presentedChromeMajor()));
         return ua;
     }();
     return userAgent;
+}
+
+// The brand version the client hints should carry for an effective UA:
+// the UA's own Chrome milestone over the real engine version's build
+// tail — "155.0.7339.225" for a "Chrome/155.0.0.0" UA on a Chromium
+// "140.0.7339.225" engine — which is the shape real Chrome uses (a
+// reduced UA token alongside full-version hints).  Empty when the UA
+// does not claim Chrome.
+static QString presentedBrandVersion(const QString &httpUserAgent,
+                                     const QString &engineVersion)
+{
+    const QRegularExpressionMatch match =
+        QRegularExpression(QLatin1String("Chrome/(\\d+)"))
+            .match(httpUserAgent);
+    if (!match.hasMatch())
+        return QString();
+    const int dot = engineVersion.indexOf(QLatin1Char('.'));
+    return match.captured(1)
+        + (dot > 0 ? engineVersion.mid(dot) : QLatin1String(".0.0.0"));
 }
 
 void applyClientHints(QWebEngineProfile *profile)
@@ -111,22 +142,34 @@ void applyClientHints(QWebEngineProfile *profile)
     if (!profile)
         return;
     QWebEngineClientHints *hints = profile->clientHints();
-    if (!profile->httpUserAgent().contains(QLatin1String("Chrome/"))) {
+    QVariantMap brands = hints->fullVersionList();
+    const QString presented = presentedBrandVersion(
+        profile->httpUserAgent(),
+        brands.value(QLatin1String("Chromium")).toString());
+    if (presented.isEmpty()) {
+        // A non-Chrome UA (e.g. a Firefox preset) gets the honest
+        // Chromium defaults.
         hints->resetAll();
         return;
     }
     // The brand list maps name -> full version ("Chromium" ->
     // "140.0.7339.225"); the low-entropy Sec-CH-UA major-version list
-    // and the greased brand are derived from it automatically.
-    QVariantMap brands = hints->fullVersionList();
-    const QString chromiumVersion =
-        brands.value(QLatin1String("Chromium")).toString();
-    if (chromiumVersion.isEmpty()
-        || brands.value(QLatin1String("Google Chrome")).toString()
-            == chromiumVersion)
-        return;
-    brands.insert(QLatin1String("Google Chrome"), chromiumVersion);
-    hints->setFullVersionList(brands);
+    // and the greased brand are derived from it automatically.  Real
+    // Chrome brands itself "Chromium" AND "Google Chrome" at the same
+    // version — a UA claiming Chrome/155 over hints reporting
+    // Chromium/140 is itself a fingerprinting tell, so both brands
+    // carry the presented version (the greased "Not*" brand keeps its
+    // deliberately unrelated value).
+    const QLatin1String chromiumBrand(QLatin1String("Chromium"));
+    const QLatin1String chromeBrand(QLatin1String("Google Chrome"));
+    bool changed = brands.value(chromiumBrand).toString() != presented;
+    brands.insert(chromiumBrand, presented);
+    changed |= brands.value(chromeBrand).toString() != presented;
+    brands.insert(chromeBrand, presented);
+    if (changed)
+        hints->setFullVersionList(brands);
+    if (hints->fullVersion() != presented)
+        hints->setFullVersion(presented);
 }
 
 // QWebEngineScript has no "replace" — remove a previously installed

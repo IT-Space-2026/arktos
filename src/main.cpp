@@ -3113,6 +3113,28 @@ int main(int argc, char **argv)
         check(vanilla.contains(QLatin1String("Chrome/"))
               && vanilla.contains(QLatin1String("Safari/")),
               "vanilla UA is Chrome-shaped");
+        // UA03: the Chrome milestone presented to sniffers is the
+        // presentation version, and the client hints must tell the
+        // same story on both brands — a 140-hints/155-UA split is
+        // itself a fingerprint.
+        const QString presentedMajor =
+            QString::number(BrowserProfile::presentedChromeMajor());
+        check(vanilla.contains(QLatin1String("Chrome/")
+                               + presentedMajor + QLatin1Char('.')),
+              "UA presents the bumped Chrome milestone");
+        {
+            const QVariantMap hints =
+                profile->clientHints()->fullVersionList();
+            const QString chromiumHint =
+                hints.value(QLatin1String("Chromium")).toString();
+            const QString chromeHint =
+                hints.value(QLatin1String("Google Chrome")).toString();
+            check(chromiumHint.startsWith(presentedMajor + QLatin1Char('.'))
+                  && chromeHint == chromiumHint,
+                  "client hints brands carry the presented version");
+            check(profile->clientHints()->fullVersion() == chromiumHint,
+                  "fullVersion hint agrees with the brands");
+        }
         check(profile->httpUserAgent() == vanilla,
               "browsing profile sends vanilla UA");
 
@@ -4257,12 +4279,29 @@ int main(int argc, char **argv)
                           .contains(QLatin1String("Linux")),
                       QLatin1String("navigator.platform consistent with UA"));
                 bool chromeBrand = false;
+                const QString presentedMajor = QString::number(
+                    BrowserProfile::presentedChromeMajor());
                 const QJsonArray brandArray =
                     probe.value(QLatin1String("brands")).toArray();
                 for (const QJsonValue &v : brandArray) {
-                    if (v.toObject().value(QLatin1String("brand")).toString()
-                            == QLatin1String("Google Chrome"))
+                    const QJsonObject brand = v.toObject();
+                    const QString name =
+                        brand.value(QLatin1String("brand")).toString();
+                    if (name == QLatin1String("Google Chrome"))
                         chromeBrand = true;
+                    // UA03: a version-bearing brand must not
+                    // contradict the presented UA milestone — a
+                    // UA/brand split is itself a fingerprint.
+                    if ((name == QLatin1String("Google Chrome")
+                         || name == QLatin1String("Chromium"))) {
+                        check(brand.value(QLatin1String("version")).toString()
+                                  == presentedMajor,
+                              QStringLiteral("%1 brand presents major %2 "
+                                             "(got %3)")
+                                  .arg(name, presentedMajor,
+                                       brand.value(QLatin1String("version"))
+                                           .toString()));
+                    }
                 }
                 check(chromeBrand,
                       QLatin1String("userAgentData brands carry Google Chrome"));

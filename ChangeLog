@@ -357,6 +357,10 @@ browseraudit.com full-suite baseline (SEC15):
 WebChannel console noise eliminated (CHAN01):
     The recurring "Uncaught TypeError: channel.execCallbacks[message.id] is not a function" errors on every launch and page load are gone. The cause was transport contention: qt.webChannelTransport exposes a single onmessage slot per frame and each new QWebChannel client replaces it, so the injected autofill client and page-side clients (like the start page's own) stole each other's in-flight responses. A new page bootstrap (armed at document creation) now demultiplexes that slot across clients — responses are routed to whichever client's callback table owns their id — and Arora's own features share one lazy channel client instead of each opening its own. The start page's engine switcher, the consent-gated AddSearchProvider hook and the autofill save prompt all keep working alongside page-created channel clients.
 
+User agent (UA03):
+    The default user agent now presents a newer Chrome milestone ("Chrome/155" instead of the bundled Chromium's real "Chrome/140"), because sites that version-sniff the UA nag "browser out of date" as soon as the engine's milestone lags Chrome stable. This is presentation only — the engine underneath is still the bundled Chromium, and no feature gates change; if a site breaks anyway, the User Agent menu's override or a preset is the escape hatch. The presented number lives in one place (BrowserProfile::presentedChromeMajor) for easy bumping.
+    The client hints tell the same story instead of leaking the real version: both the "Chromium" and "Google Chrome" brands now carry the presented milestone over the real build's tail ("155.0.<build>.<patch>" — the same reduced-UA/full-version shape real Chrome sends), so the UA string, navigator.userAgentData and the Sec-CH-UA headers agree instead of fingerprinting a mismatch. Platform tokens stay accurate — only the Chrome version number is presented.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

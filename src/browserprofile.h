@@ -53,9 +53,21 @@ QWebEngineProfile *torProfile();
 // re-application).
 QWebEngineProfile *privateProfileIfCreated();
 
+// UA03: the Chrome milestone the default UA presents on the wire.
+// Sites version-sniff "Chrome/<major>" to nag "browser out of date" —
+// honestly reporting the bundled Chromium reads stale as soon as its
+// milestone lags stable, so the token is bumped to this presentation
+// version instead.  Presentation only: the engine underneath is still
+// the bundled Chromium and no feature gates change (the escape hatch
+// for a site that breaks is the WebPage::setUserAgent override or a
+// useragents.xml preset).  Bump the number when sites start flagging
+// it as stale again.
+int presentedChromeMajor();
+
 // The user agent Arora sends when no override is configured (UA01):
 // Qt's factory UA minus the "QtWebEngine/<ver>" product token, which
-// bot-detection fingerprints as automation (Google /sorry/ blocks).
+// bot-detection fingerprints as automation (Google /sorry/ blocks),
+// with the Chrome/<ver> token presenting presentedChromeMajor() (UA03).
 QString defaultHttpUserAgent();
 
 // UA02: keeps the profile's UA client hints (Sec-CH-UA*) consistent
@@ -63,9 +75,11 @@ QString defaultHttpUserAgent();
 // engine "Chromium" while our vanilla UA claims "Chrome/<ver>" — real
 // Chrome carries a "Google Chrome" brand alongside, so the mismatch
 // fingerprints the spoof.  When the effective UA contains "Chrome/",
-// the Chromium brand's full version is mirrored under "Google Chrome";
-// a non-Chrome UA (e.g. a Firefox preset) resets the hints to the
-// honest Chromium defaults.  Call after every setHttpUserAgent.
+// the UA's own major is presented on both the "Chromium" and "Google
+// Chrome" brands (UA03: the real engine's build tail is kept, which
+// is the shape real Chrome uses — a reduced UA over a full build
+// version); a non-Chrome UA (e.g. a Firefox preset) resets the hints
+// to the honest Chromium defaults.  Call after every setHttpUserAgent.
 void applyClientHints(QWebEngineProfile *profile);
 
 // Applies the persisted preferences to the profile's
