@@ -42,6 +42,7 @@ static QReadWriteLock s_policyLock;
 static bool s_httpsFirst = true;
 static int s_refererPolicy = PrivacyRequestInterceptor::RefererTrimmed;
 static int s_securityLevel = PrivacyRequestInterceptor::Standard;
+static bool s_blockPings = true;
 
 // Session-scoped set of hosts whose https main-frame load failed —
 // their http: requests stop being upgraded.  Written from the GUI
@@ -62,11 +63,14 @@ void PrivacyRequestInterceptor::loadSettings()
         settings.value(QLatin1String("securityLevel"),
                        int(PrivacyRequestInterceptor::Standard)).toInt(),
         int(PrivacyRequestInterceptor::Safest));
+    const bool blockPings =
+        settings.value(QLatin1String("blockPings"), true).toBool();
     settings.endGroup();
     QWriteLocker lock(&s_policyLock);
     s_httpsFirst = httpsFirst;
     s_refererPolicy = refererPolicy;
     s_securityLevel = securityLevel;
+    s_blockPings = blockPings;
 }
 
 bool PrivacyRequestInterceptor::httpsFirstEnabled()
@@ -122,6 +126,12 @@ int PrivacyRequestInterceptor::securityLevel()
 {
     QReadLocker lock(&s_policyLock);
     return s_securityLevel;
+}
+
+bool PrivacyRequestInterceptor::blockPingsEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_blockPings;
 }
 
 // A host is upgraded only when TLS has a chance of existing: loopback
@@ -359,9 +369,30 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // Runs on the WebEngine IO thread — only the lock-guarded
     // snapshots may be read here.
     bool httpsFirst;
+    bool blockPings;
     {
         QReadLocker lock(&s_policyLock);
         httpsFirst = s_httpsFirst;
+        blockPings = s_blockPings;
+    }
+
+    // PING01: navigator.sendBeacon, <a ping> hyperlink auditing and
+    // CSP report uploads are telemetry-shaped POSTs — page-requested
+    // outbound traffic the user never sees.  Drop them at the request
+    // layer; CSP enforcement is unaffected (it happens regardless of
+    // whether the report is delivered).
+    const QWebEngineUrlRequestInfo::ResourceType resourceType =
+        info.resourceType();
+    if (blockPings
+        && (resourceType == QWebEngineUrlRequestInfo::ResourceTypePing
+            || resourceType
+                   == QWebEngineUrlRequestInfo::ResourceTypeCspReport)) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: ping block"
+                 << info.requestUrl() << "type" << resourceType;
+#endif
+        info.block(true);
+        return;
     }
 
     const QUrl url = info.requestUrl();

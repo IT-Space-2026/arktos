@@ -382,6 +382,13 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setAttribute(QWebEngineSettings::WebRTCPublicInterfacesOnly,
         QSettings().value(QLatin1String("privacy/webrtcIpProtection"), true).toBool());
 
+    // PING01: <a ping> auditing rides the same privacy/blockPings
+    // toggle as the interceptor's sendBeacon/CSP-report drop — with
+    // the attribute off Chromium never initiates the ping, and the
+    // interceptor catches anything that still slips.
+    engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
+        !QSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
+
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
     // settings — the privacy group lives outside websettings/network.

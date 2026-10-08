@@ -117,7 +117,13 @@ traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
 fingerprint resistance.  CNAME-cloaked trackers (first-party aliases
 that resolve to a tracking service) are not uncloaked: that needs
 DNS-response inspection and QtWebEngine exposes no DNS-response hook
-to the adblock engine.
+to the adblock engine.  Page-requested tracking uploads —
+navigator.sendBeacon beacons, <a ping> link audits and CSP violation
+reports — are dropped at the request layer (a "Block tracking pings
+and beacons" toggle, on by default; CSP still enforces, only its
+telemetry reports are suppressed, so sites lose the telemetry and
+users lose the tracking channel).  `./arora --ping-smoke` proves
+all three vectors against a loopback fixture.
 
 Zero telemetry: a clean launch opens no unsolicited outbound
 connections.  Chromium's background channels (field-trial/variations

@@ -1250,6 +1250,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "referer-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
+        "ping-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
@@ -1942,6 +1943,186 @@ int main(int argc, char **argv)
                            [&application, restorePolicy]() {
             qInfo() << "referer-smoke: FAIL (timeout)";
             restorePolicy();
+            application.exit(1);
+        });
+    }
+
+    // PING01: the privacy/blockPings toggle vs a loopback fixture that
+    // exercises all three ping-spotter vectors — navigator.sendBeacon,
+    // an <a ping> link click and a CSP report-uri upload.  Phase 1
+    // runs with the toggle ON: the click's navigation proves the
+    // vectors fired, but /beacon, /aping and /csp must never reach the
+    // server.  Phase 2 turns the toggle off through the same
+    // QSettings + applySettings path the dialog uses — a control that
+    // must observe all three uploads, else a clean phase 1 was
+    // vacuous.  The real setting is restored on exit.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--ping-smoke"))) {
+        // The user's subscription lists could match fixture paths —
+        // neuter adblock for the smoke, restored on exit.
+        restoreAdBlockStateOnExit();
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+
+        const QVariant savedBlockPings =
+            QSettings().value(QLatin1String("privacy/blockPings"));
+        auto restorePings = [savedBlockPings]() {
+            QSettings settings;
+            if (savedBlockPings.isValid())
+                settings.setValue(QLatin1String("privacy/blockPings"),
+                                  savedBlockPings);
+            else
+                settings.remove(QLatin1String("privacy/blockPings"));
+            PrivacyRequestInterceptor::loadSettings();
+        };
+        auto armPings = [](bool on) {
+            QSettings().setValue(QLatin1String("privacy/blockPings"), on);
+            PrivacyRequestInterceptor::loadSettings();
+            // The profile attribute decides whether <a ping> requests
+            // are initiated at all — re-apply the way a settings
+            // dialog save would.
+            BrowserProfile::applySettings(
+                BrowserApplication::webEngineProfile());
+        };
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "ping-smoke: FAIL (listen)" << server->errorString();
+            restorePings();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto hits = std::make_shared<QSet<QString>>();
+        // Every request is recorded by path and gets a bare 200 —
+        // except /page and /page2, which serve the fixture with a CSP
+        // header: img-src 'none' makes the <img> a guaranteed
+        // violation and report-uri points the report at /csp.  Only
+        // the legacy report-uri is named on purpose — CSP3 says a
+        // report-to directive makes report-uri ignored entirely, and
+        // Reporting-API uploads are batched/deferred well past this
+        // fixture's window.
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, hits]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, hits]() {
+                const QByteArray request = client->readAll();
+                const int sp = request.indexOf(' ');
+                const int httpAt = request.indexOf(" HTTP/");
+                QString path;
+                if (sp > 0 && httpAt > sp) {
+                    path = QString::fromLatin1(
+                        request.mid(sp + 1, httpAt - sp - 1));
+                    hits->insert(path);
+                }
+                QByteArray head;
+                QByteArray body = "ok";
+                if (path == QLatin1String("/page")
+                    || path == QLatin1String("/page2")) {
+                    head = "Content-Type: text/html\r\n"
+                        "Content-Security-Policy: img-src 'none'; "
+                            "report-uri /csp\r\n";
+                    body = "<html><body>"
+                        "<img src=\"/violated.png\">"
+                        "<a id=\"lnk\" href=\"/nav-target\""
+                        " ping=\"/aping\">x</a>"
+                        "</body></html>";
+                }
+                client->write("HTTP/1.1 200 OK\r\n" + head
+                    + "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        auto state = std::make_shared<int>(0);
+        auto jsFired = std::make_shared<bool>(false);
+        auto settleTicks = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        QTimer *poll = new QTimer(&application);
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                         [view, state, jsFired](bool ok) {
+            if (!ok)
+                return;
+            const QString path = view->url().path();
+            if ((*state == 0 && path == QLatin1String("/page"))
+                || (*state == 1 && path == QLatin1String("/page2"))) {
+                *jsFired = true;
+                view->webPage()->runJavaScript(QStringLiteral(
+                    "navigator.sendBeacon('/beacon','ping-smoke');"
+                    "document.getElementById('lnk').click();"));
+            }
+        });
+        QObject::connect(poll, &QTimer::timeout, &application,
+                         [&application, view, hits, state, jsFired,
+                          settleTicks, ticks, armPings, restorePings,
+                          port]() {
+            const bool beacon = hits->contains(QLatin1String("/beacon"));
+            const bool aping = hits->contains(QLatin1String("/aping"));
+            const bool csp = hits->contains(QLatin1String("/csp"));
+            const bool nav = hits->contains(QLatin1String("/nav-target"));
+            if (*state == 0) {
+                // A leak is a failure the moment it is observed.
+                if (beacon || aping || csp) {
+                    qInfo() << "ping-smoke: phase-1 armed FAIL"
+                            << "beacon:" << beacon << "aping:" << aping
+                            << "csp:" << csp;
+                    restorePings();
+                    application.exit(1);
+                    return;
+                }
+                // Wait for the click's navigation to land (proves the
+                // ping vectors fired), then a ~3s settle for any late
+                // upload; no click at all within ~10s means the
+                // fixture broke rather than the block holding.
+                ++*ticks;
+                if (nav && *jsFired)
+                    ++*settleTicks;
+                if (*settleTicks < 12 && *ticks <= 40)
+                    return;
+                qInfo() << "ping-smoke: phase-1 armed nav:" << nav
+                        << "beacon:" << beacon << "aping:" << aping
+                        << "csp:" << csp
+                        << (nav ? "PASS" : "FAIL");
+                if (!nav) {
+                    restorePings();
+                    application.exit(1);
+                    return;
+                }
+                // Phase 2 — control: the toggle off must let all
+                // three vectors through, proving the fixture fires.
+                *state = 1;
+                *jsFired = false;
+                *settleTicks = 0;
+                hits->clear();
+                armPings(false);
+                view->loadUrl(QUrl(QStringLiteral(
+                    "http://127.0.0.1:%1/page2").arg(port)));
+                return;
+            }
+            // Control phase: all three uploads must arrive.
+            if (beacon && aping && csp) {
+                qInfo() << "ping-smoke: PASS (control delivered"
+                        << "beacon+aping+csp)";
+                restorePings();
+                application.exit(0);
+                return;
+            }
+            if (++*settleTicks > 40) {   // ~10s
+                qInfo() << "ping-smoke: FAIL (control missing)"
+                        << "beacon:" << beacon << "aping:" << aping
+                        << "csp:" << csp << "nav:" << nav;
+                restorePings();
+                application.exit(1);
+            }
+        });
+        armPings(true);
+        poll->start(250);
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                               .arg(port)));
+        QTimer::singleShot(40000, &application,
+                           [&application, restorePings]() {
+            qInfo() << "ping-smoke: FAIL (timeout)";
+            restorePings();
             application.exit(1);
         });
     }

@@ -41,6 +41,16 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         info.redirect(https);
         return;
     }
+    // PING01: beacons, <a ping> audits and CSP reports are telemetry
+    // uploads — the shared privacy toggle drops them in tor windows
+    // too; a deanonymizing POST is the last thing that should slip.
+    if (PrivacyRequestInterceptor::blockPingsEnabled()
+        && (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypePing
+            || info.resourceType()
+                   == QWebEngineUrlRequestInfo::ResourceTypeCspReport)) {
+        info.block(true);
+        return;
+    }
     // SECLVL: the only http: left here is .onion — Safer drops its
     // script-execution fetches just like on the normal profile.
     if (PrivacyRequestInterceptor::shouldBlockScript(

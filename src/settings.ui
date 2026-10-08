@@ -1573,6 +1573,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="blockPings">
+            <property name="toolTip">
+             <string>Drop navigator.sendBeacon beacons, &lt;a ping&gt; link-tracking pings and Content-Security-Policy violation reports — invisible uploads sites use to track what you click and where you go. CSP still protects you; only its telemetry reports are suppressed. Uncheck to let sites receive them again.</string>
+            </property>
+            <property name="text">
+             <string>Block tracking pings and beacons</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="clearOnExit">
             <property name="toolTip">
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
@@ -2463,6 +2476,7 @@
   <tabstop>secureDnsMode</tabstop>
   <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
+  <tabstop>blockPings</tabstop>
   <tabstop>clearOnExit</tabstop>
   <tabstop>reportUtcTimezone</tabstop>
   <tabstop>normalizeAcceptLanguage</tabstop>

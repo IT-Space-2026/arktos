@@ -69,6 +69,12 @@ class QUrl;
 // are Safest's JavascriptEnabled-off job).  http on loopback is a
 // "potentially trustworthy" secure context in Chromium, so local dev
 // pages keep their scripts; plain http on LAN/public hosts does not.
+//
+// PING01: privacy/blockPings (default on) drops the telemetry-shaped
+// request types — sendBeacon beacons, <a ping> hyperlink audits and
+// CSP violation reports all ride Chromium's ping/report upload
+// channel.  BrowserProfile additionally switches
+// HyperlinkAuditingEnabled off so <a ping> requests never initiate.
 class PrivacyRequestInterceptor : public QWebEngineUrlRequestInterceptor
 {
     Q_OBJECT
@@ -178,6 +184,12 @@ public:
     static int securityLevel();
     static bool shouldBlockScript(const QUrl &firstPartyUrl,
             QWebEngineUrlRequestInfo::ResourceType type);
+
+    // PING01: the persisted privacy/blockPings toggle (default on) as
+    // loaded into the IO-thread snapshot — sendBeacon/<a ping>/CSP
+    // report requests are dropped while it is set.  The tor
+    // interceptor consults the same toggle.
+    static bool blockPingsEnabled();
 
 private:
     AdBlockRequestInterceptor *m_adBlock;
