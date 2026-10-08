@@ -553,6 +553,7 @@ void SettingsDialog::loadFromSettings()
         QLatin1String("secureDnsServer"),
         QLatin1String("https://cloudflare-dns.com/dns-query")).toString());
     secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
+    strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
@@ -762,6 +763,7 @@ void SettingsDialog::saveToSettings()
     // The PRIV01 bool is kept in sync so an older build reading it
     // lands on "automatic" rather than "off".
     settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
+    settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());

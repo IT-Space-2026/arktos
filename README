@@ -84,7 +84,11 @@ resolver), Chromium's automatic upgrade for resolvers on its
 known-provider list, or a custom DoH endpoint (default
 https://cloudflare-dns.com/dns-query) either with system-DNS
 fallback or strict — strict fails resolution rather than leaking a
-lookup to plain DNS when the endpoint is unreachable.  The opt-in
+lookup to plain DNS when the endpoint is unreachable.  TLS
+connections advertise only forward-secret AEAD cipher suites: the
+RSA key-exchange and CBC suites are stripped from the ClientHello
+(a toggle, on by default — a site that only supports the removed
+suites will not load; takes effect after a restart).  The opt-in
 "Fingerprint Resistance"
 group reports UTC as the timezone to every site (JavaScript Date and
 Intl reads) and a generic "en-US, en" language list instead of the

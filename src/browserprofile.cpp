@@ -621,6 +621,8 @@ void applyChromiumFlags()
     settings.beginGroup(QLatin1String("privacy"));
     const bool webrtcProtection =
         settings.value(QLatin1String("webrtcIpProtection"), true).toBool();
+    const bool strictTlsCiphers =
+        settings.value(QLatin1String("tlsStrictCiphers"), true).toBool();
     settings.endGroup();
     const bool secureDns = secureDnsModeSetting() != 0;
 
@@ -661,6 +663,25 @@ void applyChromiumFlags()
         // additionally push their endpoint through
         // QWebEngineGlobalSettings::setDnsMode in applySecureDns().
         addFlag(QLatin1String("--enable-features=DnsOverHttps"));
+    }
+    if (strictTlsCiphers) {
+        // TLS01: strip the weak suites from the ClientHello — RSA key
+        // exchange has no forward secrecy and CBC is weak — leaving
+        // TLS 1.3 plus the ECDHE+AEAD set advertised.  This only
+        // narrows what we OFFER; negotiated strong suites are
+        // unaffected.  Feature-checked on the bundled Chromium: the
+        // switch still reaches the network service's SSLConfig and
+        // drops exactly these suites (probe: local TLS capture of the
+        // advertised list).  An operator-supplied
+        // --cipher-suite-blacklist in the environment wins over the
+        // built-in list.
+        const QLatin1String prefix("--cipher-suite-blacklist=");
+        bool alreadySet = false;
+        for (const QString &flag : flags)
+            alreadySet |= flag.startsWith(prefix);
+        if (!alreadySet)
+            flags.append(prefix
+                + QLatin1String("0x009c,0x009d,0x002f,0x0035,0xc013,0xc014"));
     }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
 }

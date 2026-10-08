@@ -192,6 +192,41 @@ private:
     QStringList *m_out;
 };
 
+// TLS01: extracts the cipher-suite ids a TLS ClientHello offers, from
+// a captured first record.  Used by --tls-smoke / --tls-off-smoke —
+// the loopback listener never completes a handshake, the advertised
+// list itself is the verdict.  Returns empty when the bytes are not
+// (yet) a complete ClientHello record.
+static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
+{
+    if (record.size() < 5 || quint8(record.at(0)) != 0x16)
+        return {};
+    const quint16 recordLength =
+        quint16(quint8(record.at(3)) << 8 | quint8(record.at(4)));
+    if (record.size() < 5 + recordLength)
+        return {};
+    const QByteArray body = record.mid(5, recordLength);
+    // handshake: type(1)=ClientHello, length(3), version(2),
+    // random(32), session-id length(1)+id, cipher-list length(2)+list
+    if (body.size() < 39 || quint8(body.at(0)) != 0x01)
+        return {};
+    int p = 4 + 2 + 32;
+    const int sessionIdLength = quint8(body.at(p));
+    p += 1 + sessionIdLength;
+    if (p + 2 > body.size())
+        return {};
+    const int listLength =
+        quint8(body.at(p)) << 8 | quint8(body.at(p + 1));
+    p += 2;
+    if (p + listLength > body.size())
+        return {};
+    QList<quint16> ciphers;
+    for (int i = p; i + 2 <= p + listLength; i += 2)
+        ciphers.append(
+            quint16(quint8(body.at(i)) << 8 | quint8(body.at(i + 1))));
+    return ciphers;
+}
+
 #if defined(Q_OS_UNIX)
 // TELEM01: --telemetry-smoke's capture proxy is a raw loopback socket
 // with a blocking accept loop on a detached thread — it must already
@@ -804,7 +839,9 @@ int main(int argc, char **argv)
     bool smokeRun = false;
     bool telemetrySmoke = false;
     bool dohSmoke = false;
-    QVariant savedDohMode, savedDohServer;
+    bool tlsSmoke = false;
+    bool tlsOffSmoke = false;
+    QVariant savedDohMode, savedDohServer, savedTlsStrict;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -817,6 +854,10 @@ int main(int argc, char **argv)
             telemetrySmoke = true;
         if (arg == "--doh-smoke")
             dohSmoke = true;
+        if (arg == "--tls-smoke")
+            tlsSmoke = true;
+        if (arg == "--tls-off-smoke")
+            tlsOffSmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
     }
@@ -844,6 +885,20 @@ int main(int argc, char **argv)
         settings.setValue(QLatin1String("secureDnsMode"), 3);
         settings.setValue(QLatin1String("secureDnsServer"),
                           QLatin1String("https://127.0.0.1:1/dns-query"));
+        settings.endGroup();
+    }
+
+    // TLS01: the ClientHello smokes pin privacy/tlsStrictCiphers
+    // BEFORE applyChromiumFlags reads it, so each run exercises the
+    // setting deterministically regardless of the real store —
+    // --tls-smoke forces it on, --tls-off-smoke forces it off for the
+    // differential control.  The smoke's finish() restores the real
+    // value on the way out (QSettings ignores the test-mode paths).
+    if (tlsSmoke || tlsOffSmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        savedTlsStrict = settings.value(QLatin1String("tlsStrictCiphers"));
+        settings.setValue(QLatin1String("tlsStrictCiphers"), tlsSmoke);
         settings.endGroup();
     }
 
@@ -928,7 +983,8 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
-        "telemetry-smoke", "doh-smoke", "profile-startup",
+        "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
+        "profile-startup",
         "browseraudit-smoke", "browseraudit-bare",
     };
     for (const char *option : internalOptions)
@@ -1675,6 +1731,229 @@ int main(int argc, char **argv)
         // the pre-app settings seed and prepareProfile's
         // applySecureDns — navigating is all that is left.
         view->loadUrl(QUrl(QLatin1String("https://qt.io/")));
+    }
+
+    // TLS01: --tls-smoke / --tls-off-smoke inspect the cipher suites
+    // the engine advertises by capturing the raw ClientHello off a
+    // loopback listener — the server never completes the handshake,
+    // the navigation fails on purpose and the capture is the verdict.
+    // --tls-smoke pins privacy/tlsStrictCiphers on and also attempts a
+    // best-effort live https load to prove ordinary sites still
+    // negotiate the reduced list: a fast LoadFailed on a live network
+    // is the shape a real cipher regression takes and fails the run,
+    // while a silent stall is harness/network flake (the engine has
+    // been observed wedging navigations in this stub window) and only
+    // downgrades the stage to a SKIP — the local capture alone
+    // carries the assertion.
+    // The capture navigation runs on its OWN WebView/page: the
+    // broken handshake's LoadFailed commits an error page that
+    // cancels any other in-flight navigation on the same page, so
+    // sharing the smoke view could wedge or cancel the capture
+    // (observed as LoadStarted-then-silence and teardown crashes
+    // during development).  A dedicated view also keeps whatever
+    // state the live stage leaves from reaching the capture.
+    // --tls-off-smoke pins the setting off and asserts the weak suites
+    // ARE advertised — a differential control attributing the
+    // stripping to the flag, not to a Chromium default.
+    if (tlsSmoke || tlsOffSmoke) {
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "tls-smoke: FAIL (listen)" << server->errorString();
+            if (savedTlsStrict.isValid())
+                QSettings().setValue(
+                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
+            else
+                QSettings().remove(
+                    QLatin1String("privacy/tlsStrictCiphers"));
+            return 1;
+        }
+
+        auto done = std::make_shared<bool>(false);
+        auto capturing = std::make_shared<bool>(false);
+        const auto finish = [&application, done, &savedTlsStrict]
+                            (int rc, const QString &line) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo().noquote() << "tls-smoke:" << line;
+            // Put the caller's own setting back before the store
+            // syncs at exit (the pre-app seed pinned it).
+            if (savedTlsStrict.isValid())
+                QSettings().setValue(
+                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
+            else
+                QSettings().remove(
+                    QLatin1String("privacy/tlsStrictCiphers"));
+            application.exit(rc);
+        };
+
+        // Engine-free connectivity control for the real-https stage —
+        // Qt's NAM does not use Chromium's TLS stack, so it probes
+        // plain network liveness like doh-smoke's control does.
+        auto controlOk = std::make_shared<bool>(false);
+        QNetworkReply *controlReply = networkAccessManager->get(
+            QNetworkRequest(QUrl(QLatin1String("https://example.com/"))));
+        QObject::connect(controlReply, &QNetworkReply::finished,
+                         &application, [controlReply, controlOk]() {
+            *controlOk = (controlReply->error() == QNetworkReply::NoError);
+            controlReply->deleteLater();
+        });
+
+        const auto verdict = [finish, tlsOffSmoke]
+                             (const QList<quint16> &ciphers) {
+            QStringList listed;
+            for (quint16 cipher : ciphers)
+                listed << QStringLiteral("0x%1")
+                    .arg(cipher, 4, 16, QLatin1Char('0'));
+            qInfo() << "tls-smoke: advertised"
+                    << listed.join(QLatin1Char(','));
+            static const quint16 weak[] = {
+                0x009c, 0x009d, 0x002f, 0x0035, 0xc013, 0xc014 };
+            int weakSeen = 0;
+            for (quint16 cipher : weak)
+                weakSeen += ciphers.contains(cipher) ? 1 : 0;
+            if (tlsOffSmoke) {
+                finish(weakSeen == 6 ? 0 : 1, QStringLiteral(
+                    "%1 (off-mode control: %2/6 weak suites advertised)")
+                    .arg(weakSeen == 6 ? QLatin1String("PASS")
+                                       : QLatin1String("FAIL"))
+                    .arg(weakSeen));
+                return;
+            }
+            const bool strongKept =
+                ciphers.contains(quint16(0x1301))
+                && (ciphers.contains(quint16(0xc02f))
+                    || ciphers.contains(quint16(0xc02b))
+                    || ciphers.contains(quint16(0xcca9)));
+            if (weakSeen != 0 || !strongKept) {
+                finish(1, QStringLiteral(
+                    "FAIL (%1 weak suite(s) advertised, strong set %2)")
+                    .arg(weakSeen)
+                    .arg(strongKept ? QLatin1String("intact")
+                                    : QLatin1String("damaged")));
+                return;
+            }
+            finish(0, QStringLiteral(
+                "PASS (0 weak suites advertised, TLS 1.3 + ECDHE/AEAD"
+                " intact)"));
+        };
+
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, capturing, verdict]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            // One capture is the whole point of the listener —
+            // refusing the port afterwards makes Chromium's
+            // connection-error retry fail fast instead of parking the
+            // navigation on a second unanswered handshake.
+            server->close();
+            auto buffer = std::make_shared<QByteArray>();
+            auto parsed = std::make_shared<bool>(false);
+            const auto tryParse =
+                [client, buffer, capturing, parsed, verdict]() {
+                if (!*capturing || *parsed)
+                    return;
+                const QList<quint16> ciphers =
+                    tlsClientHelloCiphers(*buffer);
+                if (ciphers.isEmpty())
+                    return;
+                // The handshake is never answered — abort the socket
+                // once the ClientHello is captured so the engine's
+                // pending navigation fails fast.  The sentinel keeps
+                // a re-entrant disconnected() out of the verdict.
+                *parsed = true;
+                client->abort();
+                verdict(ciphers);
+            };
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, buffer, tryParse]() {
+                buffer->append(client->readAll());
+                tryParse();
+            });
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [client, tryParse]() {
+                tryParse();
+                client->deleteLater();
+            });
+        });
+
+        const auto startCapture = [&window, profile, server,
+                                   capturing]() {
+            if (*capturing)
+                return;
+            *capturing = true;
+            // Hidden child view — the engine only needs its network
+            // stack for the ClientHello, and a separate page isolates
+            // the deliberately-failed navigation's error-page commit
+            // from whatever load the smoke view is still carrying.
+            auto *captureView = new WebView(profile, &window);
+            captureView->loadUrl(QUrl(QStringLiteral("https://127.0.0.1:%1/")
+                .arg(server->serverPort())));
+        };
+        // Deferred so a just-failed live navigation's error-page
+        // commit can settle before the capture view is created.
+        const auto queueCapture = [&application, startCapture]() {
+            QTimer::singleShot(250, &application, startCapture);
+        };
+
+        if (tlsSmoke) {
+            // Live https under the reduced list — best-effort per the
+            // block comment; the capture below is the actual verdict.
+            // Like the capture, this runs on its own view created
+            // up front: a SECOND real navigation on the shared stub
+            // view reliably wedges in this harness (LoadStarted then
+            // silence) while a view's first navigation does not.
+            auto *liveView = new WebView(profile, &window);
+            const auto onLoadingChanged =
+                [finish, controlOk, queueCapture]
+                (const QWebEngineLoadingInfo &info) {
+                if (info.status() != QWebEngineLoadingInfo::LoadSucceededStatus
+                    && info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+                    return;
+                if (!info.url().host().endsWith(QLatin1String("example.com")))
+                    return;
+                if (info.status() == QWebEngineLoadingInfo::LoadFailedStatus
+                    && *controlOk) {
+                    finish(1, QStringLiteral(
+                        "FAIL: https://example.com failed under strict"
+                        " ciphers — %1 (control GET ok)")
+                        .arg(info.errorString()));
+                    return;
+                }
+                qInfo() << "tls-smoke: external https"
+                        << (info.status()
+                                == QWebEngineLoadingInfo::LoadSucceededStatus
+                            ? "ok" : "skipped (network dead)")
+                        << "— proceeding to local capture";
+                queueCapture();
+            };
+            QObject::connect(liveView->webPage(),
+                             &QWebEnginePage::loadingChanged,
+                             &application, onLoadingChanged);
+            liveView->loadUrl(QUrl(QLatin1String("https://example.com/")));
+        }
+
+        // The live stage gets 40s, then the rest of the run belongs to
+        // the capture.  A stalled live load is not a cipher verdict.
+        QTimer::singleShot(40000, &application,
+                           [done, capturing, controlOk, startCapture]() {
+            if (*done || *capturing)
+                return;
+            qInfo() << "tls-smoke: external https stalled"
+                    << (*controlOk ? "(control GET ok — infra flake,"
+                                     " not a cipher verdict)"
+                                   : "(control GET dead — offline)")
+                    << "— proceeding to local capture";
+            startCapture();
+        });
+        QTimer::singleShot(90000, &application, [done, finish]() {
+            finish(1, QStringLiteral(
+                "FAIL (timeout: no ClientHello captured)"));
+        });
+
+        if (tlsOffSmoke)
+            // No live-network stage — the capture alone is the
+            // differential control.
+            QTimer::singleShot(0, &application, startCapture);
     }
 
     // Headless verification for MIG07: exercise the app-wide bookmarks

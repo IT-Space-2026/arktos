@@ -147,6 +147,14 @@ bool clearDeferredSiteStorage(const QString &storagePath);
 //     --enable-features=DnsOverHttps when non-zero; see
 //     applySecureDns() for the mode meanings.  The legacy PRIV01 bool
 //     privacy/secureDns still reads as "automatic" (mode 1).
+//   privacy/tlsStrictCiphers (default on) -> TLS01
+//     --cipher-suite-blacklist=0x009c,0x009d,0x002f,0x0035,0xc013,0xc014
+//     drops the non-forward-secret RSA key-exchange suites and the
+//     ECDHE CBC_SHA suites from the ClientHello, leaving TLS 1.3 and
+//     ECDHE+AEAD.  Advertised-suites only — negotiated strong suites
+//     are unaffected; the escape hatch exists for ancient TLS sites.
+//     A --cipher-suite-blacklist already present in the environment
+//     takes precedence over the built-in list.
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();
 

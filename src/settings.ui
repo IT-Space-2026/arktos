@@ -1519,6 +1519,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="strictTlsCiphers">
+            <property name="toolTip">
+             <string>Advertise only forward-secret AEAD cipher suites in TLS connections — RSA key-exchange and CBC suites are never offered. Takes effect after a restart; ancient sites that require the removed suites will not load.</string>
+            </property>
+            <property name="text">
+             <string>Offer only strong TLS cipher suites</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="clearOnExit">
             <property name="toolTip">
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
@@ -2407,6 +2420,7 @@
   <tabstop>trimReferer</tabstop>
   <tabstop>webrtcProtection</tabstop>
   <tabstop>secureDnsMode</tabstop>
+  <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
   <tabstop>clearOnExit</tabstop>
   <tabstop>reportUtcTimezone</tabstop>
