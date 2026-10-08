@@ -2382,6 +2382,13 @@
           </widget>
          </item>
          <item>
+          <widget class="QPushButton" name="extensionUpdateButton">
+           <property name="text">
+            <string>Check for Updates</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <spacer name="extensionsButtonSpacer">
            <property name="orientation">
             <enum>Qt::Horizontal</enum>
@@ -2395,6 +2402,16 @@
           </spacer>
          </item>
         </layout>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="extensionAutoUpdateCheck">
+         <property name="toolTip">
+          <string>Checks each extension's update_url once a day and downloads newer packages for review. Updates are never installed silently — apply them with Check for Updates.</string>
+         </property>
+         <property name="text">
+          <string>Automatically check for extension updates</string>
+         </property>
+        </widget>
        </item>
        <item>
         <widget class="QLabel" name="extensionDetailsLabel">

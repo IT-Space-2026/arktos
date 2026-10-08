@@ -65,7 +65,9 @@
 
 #include <qdialog.h>
 #include <qhash.h>
+#include <qlist.h>
 #include <qset.h>
+#include "extensionmanager.h"
 #include "ui_settings.h"
 
 class QTreeWidgetItem;
@@ -132,6 +134,9 @@ private slots:
     void loadExtension();
     void installExtension();
     void removeExtension();
+    void checkExtensionUpdates();
+    void extensionUpdateCheckFinished(
+        const QList<ExtensionManager::UpdateResult> &results);
     void extensionSelectionChanged();
     void extensionItemChanged(QTreeWidgetItem *item, int column);
     void extensionError(const QString &message);
@@ -184,6 +189,9 @@ private:
     QString m_editEngineName;
     QSet<QString> m_engineFieldsDirty;
     bool m_populatingEngineForm = false;
+    // EXT03: distinguishes the button-triggered check (summary box)
+    // from the opt-in background check firing while the dialog is up.
+    bool m_manualExtensionCheck = false;
 };
 
 #endif // SETTINGS_H

@@ -192,6 +192,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(extensionLoadButton, &QPushButton::clicked, this, &SettingsDialog::loadExtension);
     connect(extensionInstallButton, &QPushButton::clicked, this, &SettingsDialog::installExtension);
     connect(extensionRemoveButton, &QPushButton::clicked, this, &SettingsDialog::removeExtension);
+    connect(extensionUpdateButton, &QPushButton::clicked, this, &SettingsDialog::checkExtensionUpdates);
     connect(extensionsTree, &QTreeWidget::itemSelectionChanged, this, &SettingsDialog::extensionSelectionChanged);
     connect(extensionsTree, &QTreeWidget::itemChanged, this, &SettingsDialog::extensionItemChanged);
     connect(userScriptsOpenButton, &QPushButton::clicked, this, &SettingsDialog::openUserScriptsFolder);
@@ -206,10 +207,22 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(extensions, &ExtensionManager::changed, this, &SettingsDialog::refreshExtensions);
     connect(extensions, &ExtensionManager::userScriptsChanged, this, &SettingsDialog::refreshUserScripts);
     connect(extensions, &ExtensionManager::errorOccurred, this, &SettingsDialog::extensionError);
+    // EXT03: the opt-in background check may finish while the dialog
+    // is open — only the button-triggered check pops the summary.
+    connect(extensions, &ExtensionManager::updateCheckStarted, this,
+            [this]() { extensionUpdateButton->setEnabled(false); });
+    connect(extensions, &ExtensionManager::updateCheckFinished, this,
+            &SettingsDialog::extensionUpdateCheckFinished);
+    connect(extensions, &ExtensionManager::updateAvailable, this,
+            [this](const ExtensionManager::UpdateResult &) {
+        extensionSelectionChanged();
+    });
     if (!ExtensionManager::isSupported()) {
         extensionsTree->setEnabled(false);
         extensionLoadButton->setEnabled(false);
         extensionInstallButton->setEnabled(false);
+        extensionUpdateButton->setEnabled(false);
+        extensionAutoUpdateCheck->setEnabled(false);
         extensionsHintLabel->setText(
             tr("This build of Qt WebEngine was compiled without extension support."));
     }
@@ -692,6 +705,10 @@ void SettingsDialog::loadFromSettings()
     settings.beginGroup(QLatin1String("autofill"));
     autoFillPasswordFormsCheckBox->setChecked(settings.value(QLatin1String("passwordForms"), true).toBool());
     settings.endGroup();
+
+    // EXT03: the opt-in background update check (default off).
+    extensionAutoUpdateCheck->setChecked(
+        ExtensionManager::updateCheckEnabled());
 }
 
 void SettingsDialog::saveToSettings()
@@ -943,6 +960,11 @@ void SettingsDialog::saveToSettings()
     settings.beginGroup(QLatin1String("autofill"));
     settings.setValue(QLatin1String("passwordForms"), autoFillPasswordFormsCheckBox->isChecked());
     settings.endGroup();
+
+    // EXT03: opt-in background update check — applies immediately;
+    // the next scheduled slot reads the stored value.
+    ExtensionManager::setUpdateCheckEnabled(
+        extensionAutoUpdateCheck->isChecked());
 
     // Re-apply: the profile-level settings (was
     // BrowserApplication::loadSettings()), then each live manager.
@@ -1643,6 +1665,59 @@ void SettingsDialog::removeExtension()
     ExtensionManager::instance()->removeExtension(id);
 }
 
+void SettingsDialog::checkExtensionUpdates()
+{
+    ExtensionManager *extensions = ExtensionManager::instance();
+    if (extensions->updateCheckInProgress())
+        return;
+    m_manualExtensionCheck = true;
+    extensions->checkForUpdates(true);
+}
+
+void SettingsDialog::extensionUpdateCheckFinished(
+    const QList<ExtensionManager::UpdateResult> &results)
+{
+    if (ExtensionManager::isSupported())
+        extensionUpdateButton->setEnabled(true);
+    extensionSelectionChanged();
+    if (!m_manualExtensionCheck)
+        return;
+    m_manualExtensionCheck = false;
+
+    QStringList installed;
+    QStringList downloaded;
+    QStringList failed;
+    for (const ExtensionManager::UpdateResult &result : results) {
+        if (!result.error.isEmpty()) {
+            failed << tr("%1: %2").arg(result.name, result.error);
+        } else if (!result.availableVersion.isEmpty()) {
+            if (result.installTriggered)
+                installed << tr("%1 (version %2)")
+                    .arg(result.name, result.availableVersion);
+            else
+                downloaded << tr("%1 (version %2, saved to %3)")
+                    .arg(result.name, result.availableVersion,
+                         result.savedTo);
+        }
+    }
+
+    QString text;
+    if (installed.isEmpty() && downloaded.isEmpty() && failed.isEmpty())
+        text = tr("All extensions are up to date.");
+    else {
+        QStringList parts;
+        if (!installed.isEmpty())
+            parts << tr("Updated: %1").arg(installed.join(QLatin1String(", ")));
+        if (!downloaded.isEmpty())
+            parts << tr("Update available, install manually: %1")
+                         .arg(downloaded.join(QLatin1String(", ")));
+        if (!failed.isEmpty())
+            parts << tr("Failed: %1").arg(failed.join(QLatin1String(", ")));
+        text = parts.join(QLatin1Char('\n'));
+    }
+    QMessageBox::information(this, tr("Extension Updates"), text);
+}
+
 void SettingsDialog::extensionSelectionChanged()
 {
     QTreeWidgetItem *item = extensionsTree->currentItem();
@@ -1677,6 +1752,25 @@ void SettingsDialog::extensionSelectionChanged()
                 ExtensionManager::inspectManifest(info.path);
             if (!manifest.version.isEmpty())
                 lines << tr("Version %1").arg(manifest.version);
+            // EXT03: update source + last check outcome.
+            if (manifest.updateUrl.isEmpty())
+                lines << tr("No update source — this extension cannot "
+                            "check for updates.");
+            else
+                lines << tr("Update source: %1").arg(manifest.updateUrl);
+            const ExtensionManager::UpdateResult update =
+                ExtensionManager::instance()->updateResultFor(info.id);
+            if (!update.error.isEmpty())
+                lines << tr("Update check failed: %1").arg(update.error);
+            else if (!update.availableVersion.isEmpty())
+                lines << (update.installTriggered
+                    ? tr("Update to version %1 was installed.")
+                        .arg(update.availableVersion)
+                    : tr("Update to version %1 downloaded to %2 — "
+                         "install it with the Install button.")
+                        .arg(update.availableVersion, update.savedTo));
+            else if (update.upToDate)
+                lines << tr("Extension is up to date.");
             if (!manifest.permissions.isEmpty())
                 lines << tr("Permissions: %1")
                              .arg(manifest.permissions.join(QLatin1String(", ")));

@@ -22,12 +22,14 @@
 
 #include <qobject.h>
 
+#include <qhash.h>
 #include <qlist.h>
 #include <qstring.h>
 #include <qstringlist.h>
 #include <qurl.h>
 
 class QWebEngineProfile;
+class QNetworkReply;
 
 // Application-side wrapper around QWebEngineExtensionManager (EXT01).
 // The Qt API (QtWebEngine 6.10+, tech preview) loads and installs
@@ -84,6 +86,27 @@ public:
         QStringList hostPermissions;
         QStringList unsupported;      // permissions Qt WebEngine cannot serve
         QStringList unverified;       // registered but delegates may be stubs
+        QString updateUrl;            // update_url — self-hosted update manifest
+    };
+
+    // Result of one extension's update check (EXT03).  Chrome Web
+    // Store auto-update does not exist in Qt WebEngine — there is no
+    // CRX3 signing verification and no store client — so extensions
+    // can only self-update through a manifest "update_url" pointing
+    // at a gupdate XML manifest (the static self-hosting update
+    // protocol; the Omaha request/POST variant used by
+    // update.googleapis.com is not attempted).
+    struct UpdateResult {
+        QString id;
+        QString name;
+        QString currentVersion;
+        QString error;            // fetch/parse failure detail
+        QString availableVersion; // non-empty when the remote is newer
+        QUrl codeBase;            // package URL from the update manifest
+        QString savedTo;          // downloaded package file, if fetched
+        bool noSource = false;    // no update_url — cannot self-update
+        bool upToDate = false;    // remote version not newer
+        bool installTriggered = false; // .zip handed to installExtension()
     };
 
     static ExtensionManager *instance();
@@ -111,6 +134,44 @@ public:
     // inspected — Qt's installer handles them).
     static Manifest inspectManifest(const QString &path);
 
+    // EXT03 update checks.  checkForUpdates() GETs every extension's
+    // update_url through the application-side network manager,
+    // compares dotted-quad versions and downloads the package into the
+    // updates directory.  A .zip package is handed to installExtension
+    // (packages carrying the manifest "key" update the extension in
+    // place under the same id); anything else — typically a .crx Qt
+    // cannot install — is saved for manual install and flagged in the
+    // result.  Automatic checks only detect + download; installing is
+    // reserved for the user-initiated check.
+    void checkForUpdates(bool manual = false);
+    bool updateCheckInProgress() const;
+    UpdateResult updateResultFor(const QString &id) const;
+    QString updateUrlFor(const QString &id) const;
+
+    // Directory the downloaded update packages land in.
+    static QString updatesPath();
+    // <0 / 0 / >0 like strcmp, over dotted numeric components —
+    // "1.0" == "1.0.0", "1.10" > "1.9".  Components past the fourth
+    // and non-numeric input compare lexically.
+    static int compareVersions(const QString &a, const QString &b);
+    // Parses a gupdate XML response into the result's
+    // availableVersion/codeBase (status ok) or upToDate
+    // (noupdate/not-newer), setting error otherwise.  expectedId
+    // matches <app appid> when the document carries more than one
+    // extension; a single-app document is accepted regardless — the
+    // Chromium-derived id is opaque to self-hosted manifests.
+    static bool parseUpdateManifest(const QByteArray &xml,
+                                    const QString &expectedId,
+                                    UpdateResult *result);
+
+    // Opt-in periodic check ("extensions/autoUpdateCheck", default
+    // off — silent code updates are a supply-chain risk, so the
+    // background check only detects and downloads; installs still
+    // come from the manual button).  While enabled, checks run at
+    // most once every 20 hours.
+    static bool updateCheckEnabled();
+    static void setUpdateCheckEnabled(bool enabled);
+
     // chrome.* permission names whose browser-side delegates Qt
     // WebEngine does not provide — see extensionmanager.cpp for the
     // rationale list.
@@ -134,12 +195,36 @@ signals:
     void errorOccurred(const QString &message);       // unsupported build, bad call
     void userScriptsChanged();
 
+    void updateCheckStarted();
+    void updateCheckFinished(const QList<ExtensionManager::UpdateResult> &results);
+    void updateAvailable(const ExtensionManager::UpdateResult &result);
+
 private:
     explicit ExtensionManager(QObject *parent = nullptr);
 
     void reloadUserScripts(QWebEngineProfile *profile);
+    void scheduleAutoUpdateCheck();
+    void maybeAutoUpdateCheck();
+    void fetchUpdateManifest(const UpdateResult &result,
+                             const QUrl &updateUrl);
+    void fetchUpdatePackage(const UpdateResult &result);
+    void finishUpdateCheck();
 
     QList<QWebEngineProfile *> m_profiles;
+
+    // In-flight update jobs keyed by the reply currently active for
+    // the extension (manifest fetch, then package download).
+    struct UpdateJob {
+        UpdateResult result;
+        QUrl updateUrl;
+    };
+    QHash<QNetworkReply *, UpdateJob> m_updateJobs;
+    QList<UpdateResult> m_updateResults;
+    QHash<QString, UpdateResult> m_lastUpdateResults;
+    QHash<QString, QString> m_updateUrls;
+    bool m_updateCheckRunning = false;
+    bool m_updateCheckManual = false;
+    bool m_autoUpdateScheduled = false;
 };
 
 #endif // EXTENSIONMANAGER_H

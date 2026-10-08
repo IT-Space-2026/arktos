@@ -70,6 +70,8 @@
 
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
+#include <QtCore/QCryptographicHash>
+#include <QtCore/QDataStream>
 #include <QtCore/QDateTime>
 #include <QtCore/QDebug>
 #include <QtCore/QElapsedTimer>
@@ -1674,7 +1676,8 @@ int main(int argc, char **argv)
         "bookmarks-smoke", "search-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
-        "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
+        "app-smoke", "extension-smoke", "extension-update-smoke",
+        "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
@@ -5287,6 +5290,395 @@ int main(int argc, char **argv)
             die(QStringLiteral("timeout"));
         });
         extensions->loadExtension(extDir);
+
+        // exec() must run while this block's locals are still alive:
+        // the finished-signal lambdas above capture them by reference.
+        return application.exec();
+    }
+
+    // Headless verification for EXT03: update_url self-update checks.
+    // A loopback QTcpServer serves a gupdate XML update manifest plus
+    // a .zip package carrying the same manifest "key" (Chromium
+    // derives a stable extension id from the key, so the update
+    // replaces the installed copy in place).  Companion fixtures
+    // cover no update_url ("no update source"), an older offered
+    // version (up to date) and a 404 (fetch error).  Exits 0 on PASS.
+    // All mutable state is function-scope: the finished-signal
+    // lambdas capture it by reference and run inside exec().
+    int updateFailures = 0;
+    QString updateExtId;
+    bool updateInstallSeenOnce = false;
+    bool updateCheckRan = false;
+    QHash<QString, QString> updateNameToId;
+    QStringList updateInstallQueue;
+    QString updateSmokeDir;
+    if (args.contains(QLatin1String("--extension-update-smoke"))) {
+        ExtensionManager *upm = ExtensionManager::instance();
+        const auto check = [&updateFailures](bool ok, const QString &what) {
+            qInfo() << "extension-update-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++updateFailures;
+        };
+
+        check(ExtensionManager::compareVersions(
+                  QLatin1String("1.0"), QLatin1String("1.0.0")) == 0,
+              QStringLiteral("compareVersions: 1.0 == 1.0.0"));
+        check(ExtensionManager::compareVersions(
+                  QLatin1String("1.10"), QLatin1String("1.9")) > 0,
+              QStringLiteral("compareVersions: 1.10 > 1.9 (numeric)"));
+        check(ExtensionManager::compareVersions(
+                  QLatin1String("1.0.0.4"), QLatin1String("1.0.0.3")) > 0,
+              QStringLiteral("compareVersions: dotted-quad"));
+
+        // Update-check opt-in round-trips through QSettings.
+        const bool savedAutoCheck = ExtensionManager::updateCheckEnabled();
+        ExtensionManager::setUpdateCheckEnabled(!savedAutoCheck);
+        check(ExtensionManager::updateCheckEnabled() == !savedAutoCheck,
+              QStringLiteral("auto-check setting round-trip"));
+        ExtensionManager::setUpdateCheckEnabled(savedAutoCheck);
+
+        // The manifest "key" pins the extension id across versions:
+        // id = sha256(der)[0..15] with each nibble mapped to a..p.
+        const QByteArray keyB64 = QByteArray(
+            "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwYuPekcWIAkEN3CP"
+            "24vGQTxaXe9g8+7oMnJFyW8QkgDoWgefD4/5afApmrXZvkRgqbELzzAj6834"
+            "U58qLSytBsAwSn+B1LL8sSokzvdPgOhEBKfgmjydnFUWCeaA8fFrN76tJUoi"
+            "+k+GKDIqEqe5v6f6SPtizOEpn0az/UrwNwxylKNzbrhHsCpuWp8wW1pAblG9"
+            "eo454u8DkoVnYrAM0RcEmbz8UU4MEJ6Y95gGJJHCYjuDRSKus4/c/SCUFcve"
+            "T1FPEd23mNNn955R0FNWpyandtFE3v1B5/07okhRz3UvOMnRbLIMQd1GD/9O"
+            "MxQkSijroQcWq6wE3mBUZDzZrQIDAQAB");
+        const QByteArray der = QByteArray::fromBase64(keyB64);
+        check(!der.isEmpty(), QStringLiteral("fixture key decodes"));
+        const QByteArray idDigest = QCryptographicHash::hash(
+            der, QCryptographicHash::Sha256);
+        for (int i = 0; i < 16; ++i) {
+            const uchar byte = uchar(idDigest.at(i));
+            updateExtId += QLatin1Char('a' + (byte >> 4));
+            updateExtId += QLatin1Char('a' + (byte & 0x0F));
+        }
+
+        // Minimal stored-method zip writer — the package fixture is
+        // built in-process so the smoke has no tooling dependency.
+        const auto zipCrc32 = [](const QByteArray &data) -> quint32 {
+            static quint32 table[256];
+            static bool ready = false;
+            if (!ready) {
+                for (int i = 0; i < 256; ++i) {
+                    quint32 c = quint32(i);
+                    for (int k = 0; k < 8; ++k)
+                        c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+                    table[i] = c;
+                }
+                ready = true;
+            }
+            quint32 crc = 0xFFFFFFFFu;
+            for (char ch : data)
+                crc = table[(crc ^ uchar(ch)) & 0xFF] ^ (crc >> 8);
+            return crc ^ 0xFFFFFFFFu;
+        };
+        const auto makeZip = [&zipCrc32](
+                const QList<QPair<QByteArray, QByteArray>> &entries) {
+            QByteArray out;
+            QByteArray central;
+            for (const auto &entry : entries) {
+                const QByteArray &name = entry.first;
+                const QByteArray &data = entry.second;
+                const quint32 offset = quint32(out.size());
+                const quint32 crc = zipCrc32(data);
+                QDataStream local(&out, QIODevice::Append);
+                local.setByteOrder(QDataStream::LittleEndian);
+                local << quint32(0x04034b50) << quint16(20) << quint16(0)
+                      << quint16(0) << quint16(0) << quint16(0) << crc
+                      << quint32(data.size()) << quint32(data.size())
+                      << quint16(name.size()) << quint16(0);
+                out.append(name);
+                out.append(data);
+                QDataStream cd(&central, QIODevice::Append);
+                cd.setByteOrder(QDataStream::LittleEndian);
+                cd << quint32(0x02014b50) << quint16(20) << quint16(20)
+                   << quint16(0) << quint16(0) << quint16(0) << quint16(0)
+                   << crc << quint32(data.size()) << quint32(data.size())
+                   << quint16(name.size()) << quint16(0) << quint16(0)
+                   << quint16(0) << quint16(0) << quint32(0) << offset;
+                central.append(name);
+            }
+            const quint32 cdOffset = quint32(out.size());
+            out.append(central);
+            QDataStream eocd(&out, QIODevice::Append);
+            eocd.setByteOrder(QDataStream::LittleEndian);
+            eocd << quint32(0x06054b50) << quint16(0) << quint16(0)
+                 << quint16(entries.size()) << quint16(entries.size())
+                 << quint32(central.size()) << cdOffset << quint16(0);
+            return out;
+        };
+
+        const QString smokeDir = QDir::temp().filePath(
+            QLatin1String("arora-extupdate-smoke"));
+        const auto writeExtension = [&smokeDir](const QString &name,
+                const QString &version, const QString &updateUrl,
+                bool keyed) -> QString {
+            const QString dir = smokeDir + QLatin1Char('/') + name;
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                return QString();
+            QByteArray manifest = "{\"manifest_version\":3,"
+                "\"name\":\"" + name.toUtf8() + "\","
+                "\"version\":\"" + version.toUtf8() + "\","
+                "\"background\":{\"service_worker\":\"sw.js\"}";
+            if (keyed)
+                manifest += ",\"key\":\""
+                    + QByteArray(
+                        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwYuPekcWIAkEN3CP"
+                        "24vGQTxaXe9g8+7oMnJFyW8QkgDoWgefD4/5afApmrXZvkRgqbELzzAj6834"
+                        "U58qLSytBsAwSn+B1LL8sSokzvdPgOhEBKfgmjydnFUWCeaA8fFrN76tJUoi"
+                        "+k+GKDIqEqe5v6f6SPtizOEpn0az/UrwNwxylKNzbrhHsCpuWp8wW1pAblG9"
+                        "eo454u8DkoVnYrAM0RcEmbz8UU4MEJ6Y95gGJJHCYjuDRSKus4/c/SCUFcve"
+                        "T1FPEd23mNNn955R0FNWpyandtFE3v1B5/07okhRz3UvOMnRbLIMQd1GD/9O"
+                        "MxQkSijroQcWq6wE3mBUZDzZrQIDAQAB") + "\"";
+            if (!updateUrl.isEmpty())
+                manifest += ",\"update_url\":\""
+                    + updateUrl.toUtf8() + "\"";
+            manifest += "}";
+            manifestFile.write(manifest);
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly))
+                return QString();
+            worker.write("chrome.runtime.onInstalled.addListener(function(){});\n");
+            return dir;
+        };
+
+        // Fixtures: ext-a updates via key-pinned zip; ext-b has no
+        // update_url; ext-c is offered an older version; ext-d's
+        // manifest endpoint 404s.
+        QTcpServer updateServer;
+        if (!updateServer.listen(QHostAddress::LocalHost)) {
+            qInfo() << "extension-update-smoke: FAIL (server listen)";
+            return 1;
+        }
+        const int updatePort = updateServer.serverPort();
+        const QByteArray serverBase =
+            "http://127.0.0.1:" + QByteArray::number(updatePort);
+        const QByteArray updateXml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<gupdate xmlns=\"http://www.google.com/update2/response\""
+            " protocol=\"2.0\"><app appid=\"" + updateExtId.toUtf8()
+            + "\"><updatecheck codebase=\"" + serverBase
+            + "/pkg.zip\" version=\"2.0.0\"/></app></gupdate>";
+        const QByteArray oldXml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<gupdate xmlns=\"http://www.google.com/update2/response\""
+            " protocol=\"2.0\"><app appid=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">"
+            "<updatecheck codebase=\"" + serverBase
+            + "/pkg.zip\" version=\"0.5.0\"/></app></gupdate>";
+        const QByteArray zipPackage = makeZip({
+            {QByteArray("manifest.json"), QByteArray(
+                "{\"manifest_version\":3,\"name\":\"upd-a\","
+                "\"version\":\"2.0.0\",\"key\":\"") + keyB64
+                + QByteArray("\",\"background\":{\"service_worker\":\"sw.js\"}}")},
+            {QByteArray("sw.js"), QByteArray(
+                "chrome.runtime.onInstalled.addListener(function(){});\n")},
+        });
+        check(!zipPackage.isEmpty(), QStringLiteral("zip fixture built"));
+
+        QObject::connect(&updateServer, &QTcpServer::newConnection,
+                         &application, [&]() {
+            QTcpSocket *socket = updateServer.nextPendingConnection();
+            QObject::connect(socket, &QTcpSocket::readyRead,
+                             socket, [socket, updateXml, oldXml,
+                                      zipPackage]() {
+                const QByteArray request = socket->readAll();
+                const int sp = request.indexOf(' ');
+                const QByteArray path = sp >= 0
+                    ? request.mid(sp + 1, request.indexOf(' ', sp + 1) - sp - 1)
+                    : QByteArray();
+                QByteArray body;
+                int status = 200;
+                QByteArray statusText = "OK";
+                QByteArray contentType = "application/xml";
+                if (path == "/update.xml") {
+                    body = updateXml;
+                } else if (path == "/update-old.xml") {
+                    body = oldXml;
+                } else if (path == "/pkg.zip") {
+                    body = zipPackage;
+                    contentType = "application/zip";
+                } else {
+                    status = 404;
+                    statusText = "Not Found";
+                }
+                QByteArray head = "HTTP/1.1 " + QByteArray::number(status)
+                    + ' ' + statusText + "\r\nContent-Length: "
+                    + QByteArray::number(body.size())
+                    + "\r\nContent-Type: " + contentType
+                    + "\r\nConnection: close\r\n\r\n";
+                socket->write(head + body);
+                socket->disconnectFromHost();
+            });
+        });
+
+        // Synchronous checks on the response parser.
+        ExtensionManager::UpdateResult probe;
+        probe.currentVersion = QStringLiteral("1.0.0");
+        check(ExtensionManager::parseUpdateManifest(
+                  updateXml, updateExtId, &probe)
+              && probe.availableVersion == QLatin1String("2.0.0")
+              && probe.codeBase.path() == QLatin1String("/pkg.zip"),
+              QStringLiteral("gupdate manifest parsed"));
+        probe = ExtensionManager::UpdateResult();
+        probe.currentVersion = QStringLiteral("9.9");
+        check(ExtensionManager::parseUpdateManifest(
+                  updateXml, updateExtId, &probe) && probe.upToDate,
+              QStringLiteral("older offered version = up to date"));
+        probe = ExtensionManager::UpdateResult();
+        probe.currentVersion = QStringLiteral("1.0.0");
+        check(!ExtensionManager::parseUpdateManifest(
+                  QByteArray("<gupdate>"), updateExtId, &probe)
+              && !probe.error.isEmpty(),
+              QStringLiteral("truncated manifest is an error"));
+
+        // Fixtures: upd-a updates via a key-pinned zip; upd-b has no
+        // update_url; upd-c is offered an older version; upd-d's
+        // manifest endpoint 404s.
+        updateSmokeDir = smokeDir;
+        const QString dirA = writeExtension(QLatin1String("upd-a"),
+            QStringLiteral("1.0.0"),
+            QString::fromUtf8(serverBase) + QLatin1String("/update.xml"),
+            true);
+        const QString dirB = writeExtension(QLatin1String("upd-b"),
+            QStringLiteral("1.0.0"), QString(), false);
+        const QString dirC = writeExtension(QLatin1String("upd-c"),
+            QStringLiteral("1.0.0"),
+            QString::fromUtf8(serverBase)
+                + QLatin1String("/update-old.xml"), false);
+        const QString dirD = writeExtension(QLatin1String("upd-d"),
+            QStringLiteral("1.0.0"),
+            QString::fromUtf8(serverBase)
+                + QLatin1String("/missing.xml"), false);
+        check(!dirA.isEmpty() && !dirB.isEmpty()
+              && !dirC.isEmpty() && !dirD.isEmpty(),
+              QStringLiteral("extension fixtures written"));
+
+        const auto udie = [&application, &updateSmokeDir](
+                              const QString &why) {
+            qInfo() << "extension-update-smoke: FAIL" << why;
+            QDir(updateSmokeDir).removeRecursively();
+            application.exit(1);
+        };
+
+        QObject::connect(upm, &ExtensionManager::extensionInstalled,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            qInfo() << "extension-update-smoke: installFinished"
+                    << "name:" << info.name << "id:" << info.id
+                    << "installed:" << info.installed
+                    << "error:" << info.error;
+            static const QSet<QString> fixtureNames = {
+                QStringLiteral("upd-a"), QStringLiteral("upd-b"),
+                QStringLiteral("upd-c"), QStringLiteral("upd-d")};
+            if (!fixtureNames.contains(info.name))
+                return;
+            if (!info.error.isEmpty()) {
+                udie(QStringLiteral("install failed: %1 — %2")
+                     .arg(info.name, info.error));
+                return;
+            }
+            // Feed the next queued fixture install.
+            if (!updateInstallQueue.isEmpty())
+                upm->installExtension(updateInstallQueue.takeFirst());
+            updateNameToId.insert(info.name, info.id);
+            if (info.id == updateExtId && updateInstallSeenOnce) {
+                // Second install of the keyed fixture = the update
+                // landed under the same extension id.
+                const ExtensionManager::Manifest updated =
+                    ExtensionManager::inspectManifest(info.path);
+                check(updated.valid
+                      && updated.version == QLatin1String("2.0.0"),
+                      QStringLiteral("update installed in place (v2.0.0)"));
+                qInfo() << "extension-update-smoke:"
+                        << (updateFailures == 0 ? "PASS" : "FAIL")
+                        << "failures:" << updateFailures;
+                QDir(updateSmokeDir).removeRecursively();
+                application.exit(updateFailures == 0 ? 0 : 1);
+                return;
+            }
+            if (info.id == updateExtId)
+                updateInstallSeenOnce = true;
+            if (updateNameToId.size() == 4 && !updateCheckRan) {
+                updateCheckRan = true;
+                check(updateNameToId.value(QStringLiteral("upd-a"))
+                        == updateExtId,
+                      QStringLiteral("manifest key pins the extension id"));
+                upm->checkForUpdates(true);
+            }
+        });
+
+        QObject::connect(upm, &ExtensionManager::updateCheckFinished,
+            &application,
+            [&](const QList<ExtensionManager::UpdateResult> &results) {
+            const auto findResult = [&results](const QString &id) {
+                for (const ExtensionManager::UpdateResult &r : results) {
+                    if (r.id == id)
+                        return r;
+                }
+                return ExtensionManager::UpdateResult();
+            };
+            const ExtensionManager::UpdateResult ra =
+                findResult(updateNameToId.value(QStringLiteral("upd-a")));
+            check(ra.availableVersion == QLatin1String("2.0.0"),
+                  QStringLiteral("newer version detected"));
+            check(!ra.savedTo.isEmpty() && QFile::exists(ra.savedTo),
+                  QStringLiteral("update package downloaded"));
+            check(ra.installTriggered,
+                  QStringLiteral("zip package handed to installer"));
+            check(findResult(updateNameToId.value(
+                      QStringLiteral("upd-b"))).noSource,
+                  QStringLiteral("no update_url = no update source"));
+            check(findResult(updateNameToId.value(
+                      QStringLiteral("upd-c"))).upToDate,
+                  QStringLiteral("older remote version = up to date"));
+            check(!findResult(updateNameToId.value(
+                      QStringLiteral("upd-d"))).error.isEmpty(),
+                  QStringLiteral("failed manifest fetch is an error"));
+        });
+
+        QObject::connect(upm, &ExtensionManager::errorOccurred,
+            &application, [](const QString &message) {
+            qInfo() << "extension-update-smoke: errorOccurred" << message;
+        });
+
+        // Drop leftovers from an interrupted earlier run so installs
+        // start clean.
+        const QString installRoot = upm->installPath();
+        for (const QString &sub : QDir(installRoot)
+                .entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            if (sub.startsWith(QLatin1String("upd-")))
+                QDir(installRoot + QLatin1Char('/') + sub)
+                    .removeRecursively();
+        }
+
+        // Chromium's installer refuses until the extension system has
+        // warmed up — mirror --extension-smoke and load once before
+        // installing the fixtures.  Installs are serialized: Qt's
+        // installer stages into a shared scratch dir, so concurrent
+        // installExtension() calls can trip over each other.
+        updateInstallQueue.clear();
+        updateInstallQueue << dirA << dirB << dirC << dirD;
+        QObject::connect(upm, &ExtensionManager::extensionLoaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name != QLatin1String("upd-b"))
+                return;
+            QTimer::singleShot(500, &application, [&]() {
+                if (!updateInstallQueue.isEmpty())
+                    upm->installExtension(updateInstallQueue.takeFirst());
+            });
+        });
+
+        QTimer::singleShot(60000, &application, [udie]() {
+            udie(QStringLiteral("timeout"));
+        });
+        upm->loadExtension(dirB);
 
         // exec() must run while this block's locals are still alive:
         // the finished-signal lambdas above capture them by reference.
