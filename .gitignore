@@ -41,3 +41,7 @@ fuzz/seedgen/seedgen
 
 # PACK01 bundle output
 dist/
+
+# crash dumps from debugged smoke runs
+core
+core.*

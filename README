@@ -71,9 +71,18 @@ page carries the hardening toggles, all defaulting to the private
 choice.  Plain-http page loads are upgraded to https where a secure
 endpoint plausibly exists (loopback, LAN addresses and .onion are
 skipped; a site whose https fails is allowed over http for the rest
-of the session — the error page says so).  Cross-site navigations
-send the destination's own origin as Referer instead of the page you
-came from.  WebRTC traffic is confined to proxied/public interfaces
+of the session — the error page says so).  The "Referer header"
+selector controls what other parties see: "Trimmed" (the default)
+sends cross-site requests the destination's own origin — nothing
+about the page you came from, navigations and subresources alike —
+and same-site requests just the origin, never the full path or
+query; "Strict" sends nothing to other sites; "Never" withholds the
+header everywhere.  Pages that deliberately withhold their referer
+(noreferrer links, stricter site policies, insecure downgrades)
+always stay silent, and a site redirecting you to a different origin
+reveals at most the origin you came from — the one leg the engine
+recomputes past our control.  WebRTC traffic is confined to
+proxied/public interfaces
 so voice/video sites cannot discover local or real IP addresses —
 verified headlessly: ./arora --webrtc-smoke enumerates a real
 RTCPeerConnection's ICE candidates and asserts none carry an IP

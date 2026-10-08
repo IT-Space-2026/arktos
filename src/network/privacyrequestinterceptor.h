@@ -25,6 +25,7 @@
 
 class AdBlockNetwork;
 class AdBlockRequestInterceptor;
+class QByteArray;
 class QString;
 class QUrl;
 
@@ -43,12 +44,21 @@ class QUrl;
 // requests to it pass through un-upgraded, and the error page tells
 // the user.  Nothing is persisted.
 //
-// Referrer trim: Chromium already defaults to
-// strict-origin-when-cross-origin, which still sends the *referring
-// site's origin* to third parties.  When enabled, cross-site requests
-// instead carry the *target's* own origin — nothing about the page
-// the user came from leaks at all (same trick as uBlock Origin's
-// referrer spoof / Firefox's target-origin trimming).
+// Referer policy (REF01): Chromium's built-in default is
+// strict-origin-when-cross-origin — same-site requests carry the full
+// URL (path + query leak) and cross-site requests still reveal the
+// *referring* site's origin.  applyRefererPolicy() rewrites the
+// renderer-computed Referer — which is present in httpHeaders() for
+// every request class, and whose setHttpHeader() override DOES reach
+// the wire for subresources on Qt 6.12 (verified against a loopback
+// two-site matrix — the PRIV01 comment that called subresource writes
+// a no-op was stale).  An absent header stays absent: rel=noreferrer
+// links, pages with a stricter Referer-Policy and https->http
+// downgrades are never handed a referer the sender asked to withhold.
+// One leg the rewrite cannot reach: redirect follow-ups recompute the
+// Referer from the redirect chain's stored referrer AFTER the
+// interceptor ran — those are covered by the page-level
+// referrer-meta script BrowserProfile installs (referrerMetaValue).
 //
 // SECLVL: Mullvad-style security tiers (privacy/securityLevel).
 // From Safer up, script-execution subresource requests (external
@@ -71,6 +81,27 @@ public:
         Standard = 0,
         Safer = 1,
         Safest = 2
+    };
+
+    // REF01: persisted as privacy/refererPolicy (int), migrated from
+    // the PRIV01 privacy/trimReferer bool (false -> EngineDefault,
+    // anything else -> the Trimmed default).
+    //   EngineDefault  untouched — Chromium strict-origin-when-cross-origin
+    //   Trimmed        cross-site -> the *target's* own origin (uBO
+    //                  referrer-spoof trick: nothing about the source
+    //                  page crosses); same-site -> the referrer's
+    //                  origin only, never path/query.  Redirect
+    //                  follow-ups still carry the source ORIGIN —
+    //                  Chromium recomputes them past the interceptor.
+    //   Strict         cross-site -> no Referer at all (the injected
+    //                  meta covers redirect legs too); same-site ->
+    //                  origin only
+    //   Never          the header is removed everywhere
+    enum RefererPolicy {
+        RefererEngineDefault = 0,
+        RefererTrimmed = 1,
+        RefererStrict = 2,
+        RefererNever = 3
     };
 
 
@@ -97,8 +128,46 @@ public:
     // Test/introspection seam: the static policy decisions.
     static bool httpsFirstEnabled();
     static bool trimRefererEnabled();
+    static int refererPolicy();
     static bool isUpgradeCandidate(const QUrl &url);
     static void clearDowngradedHosts();  // test cleanup
+
+    // The persisted level straight from QSettings incl. the
+    // trimReferer-bool migration — usable before loadSettings() has
+    // populated the snapshot (BrowserProfile consults it when
+    // installing the referrer-meta script).
+    static int storedRefererPolicy();
+
+    // REF01: Chromium recomputes the Referer for redirect follow-up
+    // legs *after* the interceptor ran, so setHttpHeader never reaches
+    // their wire value.  The reachable fix is a page-level referrer
+    // policy — the source document's policy is what the redirect
+    // chain carries.  Maps a level to the <meta name="referrer">
+    // content injected into pages that don't set their own:
+    //   Trimmed -> "strict-origin"  (path/query never leaves on any
+    //                              leg; the interceptor's target-
+    //                              origin spoof still covers the legs
+    //                              it can write)
+    //   Strict  -> "same-origin"    (cross-site gets nothing, incl.
+    //                              redirect legs)
+    //   Never   -> "no-referrer"
+    // EngineDefault -> "" (no script).
+    static QByteArray referrerMetaValue(int level);
+
+    // REF01: apply the loaded referer policy to one request.  Safe on
+    // the IO thread (reads the lock-guarded snapshot).  minimumLevel
+    // lets the tor profile enforce at least RefererTrimmed even when
+    // the user picked EngineDefault for the normal profiles.
+    static void applyRefererPolicy(QWebEngineUrlRequestInfo &info,
+                                   int minimumLevel = RefererEngineDefault);
+
+    // The pure decision behind applyRefererPolicy(): the Referer value
+    // that should go on the wire for a request to `target` whose
+    // renderer-computed referer is `source`.  An empty return means
+    // the header must be removed.  EngineDefault returns `source`
+    // unchanged.
+    static QByteArray rewrittenReferer(int level, const QUrl &source,
+                                       const QUrl &target);
 
     // SECLVL: the tier currently loaded into the IO-thread snapshot
     // and the pure decision the interceptor consults — block a

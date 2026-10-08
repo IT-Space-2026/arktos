@@ -541,7 +541,17 @@ void SettingsDialog::loadFromSettings()
     // Chromium flags and the clear-on-exit hook read these keys too.
     settings.beginGroup(QLatin1String("privacy"));
     httpsFirst->setChecked(settings.value(QLatin1String("httpsFirst"), true).toBool());
-    trimReferer->setChecked(settings.value(QLatin1String("trimReferer"), true).toBool());
+    // REF01: the PRIV01-era bool folds into the refererPolicy selector
+    // — an old "trimReferer = false" maps to "Chromium default" (index
+    // 0), anything else to "Trimmed" (index 1).
+    const QVariant storedRefererPolicy =
+        settings.value(QLatin1String("refererPolicy"));
+    const int refererIndex = storedRefererPolicy.isValid()
+        ? storedRefererPolicy.toInt()
+        : (settings.value(QLatin1String("trimReferer"), true).toBool()
+               ? 1 : 0);
+    refererPolicy->setCurrentIndex(
+        qBound(0, refererIndex, refererPolicy->count() - 1));
     webrtcProtection->setChecked(settings.value(QLatin1String("webrtcIpProtection"), true).toBool());
     // DOH01: the PRIV01-era bool folds into "automatic" (mode 1) when
     // the newer mode key was never written.
@@ -760,7 +770,10 @@ void SettingsDialog::saveToSettings()
     // Connections & Storage hardening (PRIV01).
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), httpsFirst->isChecked());
-    settings.setValue(QLatin1String("trimReferer"), trimReferer->isChecked());
+    settings.setValue(QLatin1String("refererPolicy"), refererPolicy->currentIndex());
+    // The PRIV01 bool stays in sync so an older build maps "Chromium
+    // default" to off and everything else to its trimmed behavior.
+    settings.setValue(QLatin1String("trimReferer"), refererPolicy->currentIndex() != 0);
     settings.setValue(QLatin1String("webrtcIpProtection"), webrtcProtection->isChecked());
     settings.setValue(QLatin1String("secureDnsMode"), secureDnsMode->currentIndex());
     settings.setValue(QLatin1String("secureDnsServer"), secureDnsServer->text().trimmed());

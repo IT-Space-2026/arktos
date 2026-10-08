@@ -48,5 +48,10 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         info.block(true);
         return;
     }
+    // REF01: a tor window must never leak where the user came from —
+    // at least the Trimmed policy applies here even if the normal
+    // profiles run EngineDefault; a stricter user choice still wins.
+    PrivacyRequestInterceptor::applyRefererPolicy(
+        info, PrivacyRequestInterceptor::RefererTrimmed);
     m_adBlock->interceptRequest(info);
 }

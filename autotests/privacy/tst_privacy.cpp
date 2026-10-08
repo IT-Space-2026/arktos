@@ -27,8 +27,10 @@
 //   - the arora-site-wipe / arora-exit-wipe sentinel handling in
 //     BrowserProfile::clearDeferredSiteStorage()
 //   - QTWEBENGINE_CHROMIUM_FLAGS composition in applyChromiumFlags()
+//   - the pure referer rewrite decision (rewrittenReferer) and the
+//     privacy/refererPolicy selector incl. trimReferer migration
 // end-to-end HTTPS upgrade + referer trim is exercised by the
-// --privacy-smoke mode.
+// --privacy-smoke and --referer-smoke modes.
 
 #include <QtTest/QtTest>
 #include <qtest_arora.h>
@@ -61,6 +63,8 @@ private slots:
     void downgradeFlow();
     void downgradeBoundaries();
     void settingsRoundTrip();
+    void refererPolicyMigration();
+    void refererRewriteMatrix();
 
     void blockScriptStandard();
     void blockScriptSafer_data();
@@ -80,6 +84,7 @@ private:
     QByteArray m_savedFlags;
     QVariant m_savedHttpsFirst;
     QVariant m_savedTrimReferer;
+    QVariant m_savedRefererPolicy;
     QVariant m_savedWebrtc;
     QVariant m_savedSecureDns;
     QVariant m_savedSecureDnsMode;
@@ -110,6 +115,8 @@ void tst_Privacy::initTestCase()
     QSettings settings;
     m_savedHttpsFirst = settings.value(QLatin1String("privacy/httpsFirst"));
     m_savedTrimReferer = settings.value(QLatin1String("privacy/trimReferer"));
+    m_savedRefererPolicy =
+        settings.value(QLatin1String("privacy/refererPolicy"));
     m_savedWebrtc = settings.value(QLatin1String("privacy/webrtcIpProtection"));
     m_savedSecureDns = settings.value(QLatin1String("privacy/secureDns"));
     m_savedSecureDnsMode =
@@ -145,6 +152,7 @@ void tst_Privacy::cleanupTestCase()
     QSettings settings;
     restoreSetting(settings, QLatin1String("privacy/httpsFirst"), m_savedHttpsFirst);
     restoreSetting(settings, QLatin1String("privacy/trimReferer"), m_savedTrimReferer);
+    restoreSetting(settings, QLatin1String("privacy/refererPolicy"), m_savedRefererPolicy);
     restoreSetting(settings, QLatin1String("privacy/webrtcIpProtection"), m_savedWebrtc);
     restoreSetting(settings, QLatin1String("privacy/secureDns"), m_savedSecureDns);
     restoreSetting(settings, QLatin1String("privacy/secureDnsMode"), m_savedSecureDnsMode);
@@ -170,6 +178,8 @@ void tst_Privacy::init()
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), true);
     settings.setValue(QLatin1String("trimReferer"), true);
+    settings.setValue(QLatin1String("refererPolicy"),
+                      int(PrivacyRequestInterceptor::RefererTrimmed));
     settings.setValue(QLatin1String("securityLevel"),
                       int(PrivacyRequestInterceptor::Standard));
     settings.endGroup();
@@ -290,16 +300,122 @@ void tst_Privacy::settingsRoundTrip()
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     settings.setValue(QLatin1String("httpsFirst"), false);
-    settings.setValue(QLatin1String("trimReferer"), false);
+    settings.setValue(QLatin1String("refererPolicy"),
+                      int(PrivacyRequestInterceptor::RefererEngineDefault));
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     QVERIFY(!PrivacyRequestInterceptor::httpsFirstEnabled());
     QVERIFY(!PrivacyRequestInterceptor::trimRefererEnabled());
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererEngineDefault));
 
     // Restore the test defaults for subsequent cases.
     init();
     QVERIFY(PrivacyRequestInterceptor::httpsFirstEnabled());
     QVERIFY(PrivacyRequestInterceptor::trimRefererEnabled());
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererTrimmed));
+}
+
+void tst_Privacy::refererPolicyMigration()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+
+    // Selector wins over the legacy bool — Strict selected while an
+    // old profile still has trimReferer=false means Strict.
+    settings.setValue(QLatin1String("trimReferer"), false);
+    settings.setValue(QLatin1String("refererPolicy"),
+                      int(PrivacyRequestInterceptor::RefererStrict));
+    PrivacyRequestInterceptor::loadSettings();
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererStrict));
+    QVERIFY(PrivacyRequestInterceptor::trimRefererEnabled());
+
+    // Selector absent: the PRIV01 bool migrates — false to
+    // EngineDefault, true to Trimmed.
+    settings.remove(QLatin1String("refererPolicy"));
+    settings.setValue(QLatin1String("trimReferer"), false);
+    PrivacyRequestInterceptor::loadSettings();
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererEngineDefault));
+    settings.setValue(QLatin1String("trimReferer"), true);
+    PrivacyRequestInterceptor::loadSettings();
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererTrimmed));
+
+    // Out-of-range stored values clamp instead of corrupting policy.
+    settings.setValue(QLatin1String("refererPolicy"), 99);
+    PrivacyRequestInterceptor::loadSettings();
+    QCOMPARE(PrivacyRequestInterceptor::refererPolicy(),
+             int(PrivacyRequestInterceptor::RefererNever));
+    settings.endGroup();
+    init();
+}
+
+void tst_Privacy::refererRewriteMatrix()
+{
+    typedef PrivacyRequestInterceptor P;
+    const QUrl srcHttp(QStringLiteral("http://site-a.test/dir/page?q=1"));
+    const QUrl srcHttps(QStringLiteral("https://site-a.test/dir/page?q=1"));
+    const QUrl sameSite(QStringLiteral("http://site-a.test/other"));
+    const QUrl crossSite(QStringLiteral("http://site-b.test/res"));
+    const QByteArray full = srcHttp.toString().toUtf8();
+
+    // EngineDefault leaves the renderer's referer untouched.
+    QCOMPARE(P::rewrittenReferer(P::RefererEngineDefault, srcHttp,
+                                 crossSite), full);
+
+    // Trimmed: the source's path/query never leave — cross-site sees
+    // only the *target's* origin, same-site sees only its own origin.
+    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, crossSite),
+             QByteArray("http://site-b.test/"));
+    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, sameSite),
+             QByteArray("http://site-a.test/"));
+
+    // Strict: cross-site gets nothing, same-site keeps the origin.
+    QVERIFY(P::rewrittenReferer(P::RefererStrict, srcHttp, crossSite)
+            .isEmpty());
+    QCOMPARE(P::rewrittenReferer(P::RefererStrict, srcHttp, sameSite),
+             QByteArray("http://site-a.test/"));
+
+    // Never: the header goes away even same-site.
+    QVERIFY(P::rewrittenReferer(P::RefererNever, srcHttp, sameSite)
+            .isEmpty());
+    QVERIFY(P::rewrittenReferer(P::RefererNever, srcHttp, crossSite)
+            .isEmpty());
+
+    // https->http downgrade silences the header at every hardened
+    // level, even though the referer itself is same-site.
+    QVERIFY(P::rewrittenReferer(P::RefererTrimmed, srcHttps,
+                                QUrl("http://site-a.test/other"))
+            .isEmpty());
+    QVERIFY(P::rewrittenReferer(P::RefererStrict, srcHttps,
+                                crossSite).isEmpty());
+    // ...but http->https is not a downgrade.
+    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
+                                 QUrl("https://site-a.test/other")),
+             QByteArray("http://site-a.test/"));
+
+    // Sibling hosts under one site are same-site; a different
+    // registrable base is not (same two-label rule as adblock).
+    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
+                                 QUrl("http://cdn.site-a.test/x")),
+             QByteArray("http://site-a.test/"));
+    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
+                                 QUrl("http://a.co.uk/x")),
+             QByteArray("http://a.co.uk/"));
+
+    // The injected referrer-meta mapping — the legs the interceptor
+    // cannot rewrite (redirect follow-ups) are covered by the page's
+    // own computed policy instead.
+    QVERIFY(P::referrerMetaValue(P::RefererEngineDefault).isEmpty());
+    QCOMPARE(P::referrerMetaValue(P::RefererTrimmed),
+             QByteArray("strict-origin"));
+    QCOMPARE(P::referrerMetaValue(P::RefererStrict),
+             QByteArray("same-origin"));
+    QCOMPARE(P::referrerMetaValue(P::RefererNever),
+             QByteArray("no-referrer"));
 }
 
 void tst_Privacy::blockScriptStandard()

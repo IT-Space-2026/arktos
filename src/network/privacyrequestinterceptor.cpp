@@ -40,7 +40,7 @@
 // on the GUI thread.  Defaults favor privacy.
 static QReadWriteLock s_policyLock;
 static bool s_httpsFirst = true;
-static bool s_trimReferer = true;
+static int s_refererPolicy = PrivacyRequestInterceptor::RefererTrimmed;
 static int s_securityLevel = PrivacyRequestInterceptor::Standard;
 
 // Session-scoped set of hosts whose https main-frame load failed —
@@ -56,7 +56,7 @@ void PrivacyRequestInterceptor::loadSettings()
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     const bool httpsFirst = settings.value(QLatin1String("httpsFirst"), true).toBool();
-    const bool trimReferer = settings.value(QLatin1String("trimReferer"), true).toBool();
+    const int refererPolicy = storedRefererPolicy();
     const int securityLevel = qBound(
         int(PrivacyRequestInterceptor::Standard),
         settings.value(QLatin1String("securityLevel"),
@@ -65,7 +65,7 @@ void PrivacyRequestInterceptor::loadSettings()
     settings.endGroup();
     QWriteLocker lock(&s_policyLock);
     s_httpsFirst = httpsFirst;
-    s_trimReferer = trimReferer;
+    s_refererPolicy = refererPolicy;
     s_securityLevel = securityLevel;
 }
 
@@ -78,7 +78,44 @@ bool PrivacyRequestInterceptor::httpsFirstEnabled()
 bool PrivacyRequestInterceptor::trimRefererEnabled()
 {
     QReadLocker lock(&s_policyLock);
-    return s_trimReferer;
+    return s_refererPolicy != RefererEngineDefault;
+}
+
+int PrivacyRequestInterceptor::refererPolicy()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_refererPolicy;
+}
+
+int PrivacyRequestInterceptor::storedRefererPolicy()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    // REF01: the PRIV01 bool folds into the level selector — an old
+    // "trimReferer = false" maps to EngineDefault, anything else to
+    // the Trimmed default.
+    const QVariant storedPolicy =
+        settings.value(QLatin1String("refererPolicy"));
+    const int level = storedPolicy.isValid()
+        ? storedPolicy.toInt()
+        : (settings.value(QLatin1String("trimReferer"), true).toBool()
+               ? int(RefererTrimmed) : int(RefererEngineDefault));
+    settings.endGroup();
+    return qBound(int(RefererEngineDefault), level, int(RefererNever));
+}
+
+QByteArray PrivacyRequestInterceptor::referrerMetaValue(int level)
+{
+    switch (level) {
+    case RefererTrimmed:
+        return QByteArrayLiteral("strict-origin");
+    case RefererStrict:
+        return QByteArrayLiteral("same-origin");
+    case RefererNever:
+        return QByteArrayLiteral("no-referrer");
+    default:
+        return QByteArray();
+    }
 }
 
 int PrivacyRequestInterceptor::securityLevel()
@@ -235,35 +272,80 @@ static bool sameSite(const QString &a, const QString &b)
     return aBase == bBase;
 }
 
-// Cross-site requests carry the *target's* origin as Referer so the
-// referring page's identity never leaves (the uBlock Origin referrer
-// spoof trick).  Honest bound: the header write is only honored for
-// navigation requests — Chromium composes the Referer for subresource
-// loads after the interceptor runs, so their referrer falls back to
-// its built-in strict-origin-when-cross-origin policy (referring
-// origin still leaks; only full-path leaking is prevented there).
-// The header is written unconditionally for cross-site navigations
-// rather than only when one is visible, since the outgoing value is
-// not what httpHeaders() shows; the spoofed value is information the
-// destination already knows about itself.  Same-site requests keep
-// the full header untouched.
-static void trimRefererHeader(QWebEngineUrlRequestInfo &info)
+// scheme://host[:port]/ — the "origin" a Referer is trimmed down to.
+static QByteArray refererOrigin(const QUrl &url)
 {
-    const QUrl firstParty = info.firstPartyUrl();
-    const QUrl url = info.requestUrl();
-    if (!firstParty.isValid() || firstParty.isEmpty()
-        || sameSite(firstParty.host(), url.host()))
-        return;
-    if (url.scheme() != QLatin1String("http")
-        && url.scheme() != QLatin1String("https"))
-        return;
     QUrl origin;
     origin.setScheme(url.scheme());
     origin.setHost(url.host());
     if (url.port() != -1)
         origin.setPort(url.port());
-    info.setHttpHeader("Referer",
-                       (origin.toString() + QLatin1Char('/')).toUtf8());
+    return (origin.toString() + QLatin1Char('/')).toUtf8();
+}
+
+void PrivacyRequestInterceptor::applyRefererPolicy(
+        QWebEngineUrlRequestInfo &info, int minimumLevel)
+{
+    int level;
+    {
+        QReadLocker lock(&s_policyLock);
+        level = qMax(s_refererPolicy, minimumLevel);
+    }
+    if (level == RefererEngineDefault)
+        return;
+
+    const QUrl url = info.requestUrl();
+    if (url.scheme() != QLatin1String("http")
+        && url.scheme() != QLatin1String("https"))
+        return;
+
+    // The renderer-computed Referer (already honoring the page's own
+    // referrer policy) is visible here for navigations AND
+    // subresources.  No header means the referer was deliberately
+    // withheld — typed navigation, rel=noreferrer, a no-referrer page
+    // policy or a downgrade — and a hardening feature must not
+    // synthesize one.
+    const QByteArray refHeader = info.httpHeaders().value("Referer");
+    if (refHeader.isEmpty())
+        return;
+    const QUrl refUrl(QString::fromUtf8(refHeader));
+    if (refUrl.scheme() != QLatin1String("http")
+        && refUrl.scheme() != QLatin1String("https"))
+        return;  // opaque/scheme-less referer — leave it alone
+
+    const QByteArray rewritten = rewrittenReferer(level, refUrl, url);
+    static const bool debug =
+        qEnvironmentVariableIsSet("ARORA_PRIVACY_DEBUG");
+    if (debug)
+        qInfo().noquote() << "PrivacyRequestInterceptor: referer"
+            << refHeader << "->" << rewritten << "for" << url;
+    info.setHttpHeader("Referer", rewritten);
+}
+
+QByteArray PrivacyRequestInterceptor::rewrittenReferer(
+        int level, const QUrl &source, const QUrl &target)
+{
+    if (level <= RefererEngineDefault)
+        return source.toString().toUtf8();
+    if (level == RefererNever)
+        return QByteArray();
+
+    // strict-origin's downgrade rule everywhere: an https origin is
+    // never revealed inside a plaintext http request.
+    if (source.scheme() == QLatin1String("https")
+        && target.scheme() == QLatin1String("http"))
+        return QByteArray();
+
+    const bool crossSite = !sameSite(source.host(), target.host());
+    if (crossSite) {
+        if (level >= RefererStrict)
+            return QByteArray();
+        // uBO referrer-spoof: the destination only ever sees itself.
+        return refererOrigin(target);
+    }
+    // Same-site: the origin alone — the full path and query never
+    // leave, even to another endpoint of the same site.
+    return refererOrigin(source);
 }
 
 PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network, QObject *parent)
@@ -276,11 +358,10 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — only the lock-guarded
     // snapshots may be read here.
-    bool httpsFirst, trimReferer;
+    bool httpsFirst;
     {
         QReadLocker lock(&s_policyLock);
         httpsFirst = s_httpsFirst;
-        trimReferer = s_trimReferer;
     }
 
     const QUrl url = info.requestUrl();
@@ -308,8 +389,7 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         return;
     }
 
-    if (trimReferer)
-        trimRefererHeader(info);
+    applyRefererPolicy(info);
 
     m_adBlock->interceptRequest(info);
 }

@@ -919,6 +919,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                             "privacy/secureDnsServer",
                             "privacy/httpsFirst",
                             "privacy/trimReferer",
+                            "privacy/refererPolicy",
                             "privacy/blockThirdPartyCookies",
                             "privacy/reportUtcTimezone",
                             "privacy/normalizeAcceptLanguage",
@@ -1247,6 +1248,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
+        "referer-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
@@ -1524,6 +1526,12 @@ int main(int argc, char **argv)
     // its Set-Cookie must be rejected as third-party while the
     // first-party Set-Cookie lands.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--privacy-smoke"))) {
+        // Hermeticity: the user's real subscription lists match the
+        // fixture paths (EasyList blocks a bare "/img" request) —
+        // neuter adblock for the smoke, restored on exit.
+        restoreAdBlockStateOnExit();
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
         QTcpServer *server = new QTcpServer(&application);
         // AnyIPv4 so both 127.0.0.1 and 127.0.0.2 reach the listener.
         if (!server->listen(QHostAddress::AnyIPv4)) {
@@ -1606,9 +1614,9 @@ int main(int argc, char **argv)
                 return; // retry for ~20s
             // Navigation referer carries the *target* origin only —
             // the referring host 127.0.0.1 must not appear in it.
-            // (Subresource referers are Chromium's own policy — the
-            // interceptor header write is ignored there; printed for
-            // transparency, not gated.)
+            // (Subresource referers get the same rewrite since
+            // REF01 — the header write DOES reach the wire on Qt
+            // 6.12; printed for transparency, not gated.)
             const bool navTrimmed = navReferer.startsWith("http://127.0.0.2:")
                 && !navReferer.contains("127.0.0.1");
             const bool pass = sawImg && navTrimmed && first && !third;
@@ -1631,6 +1639,310 @@ int main(int argc, char **argv)
             if (view->url().path() == QLatin1String("/page"))
                 view->webPage()->runJavaScript(QStringLiteral(
                     "location.href='http://127.0.0.2:%1/nav'").arg(port));
+        });
+    }
+
+    // REF01: deterministic referer matrix over the two loopback
+    // "sites" 127.0.0.1 and 127.0.0.2 — the same scenarios the
+    // darklaunch referer tool covers plus the indirect navigation
+    // paths.  Two phases: the persisted default policy (Trimmed) then
+    // Never, applied mid-run through the same QSettings +
+    // loadSettings() path the settings dialog uses.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--referer-smoke"))) {
+        // Hermeticity: the user's real subscription lists match the
+        // fixture paths (EasyList blocks bare "/img" requests) —
+        // neuter adblock for the smoke, restored on exit.
+        restoreAdBlockStateOnExit();
+        for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
+            s->setEnabled(false);
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::AnyIPv4)) {
+            qInfo() << "referer-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        const QString h1 = QStringLiteral("http://127.0.0.1:%1").arg(port);
+        const QString h2 = QStringLiteral("http://127.0.0.2:%1").arg(port);
+        auto observed = std::make_shared<QHash<QString, QByteArray>>();
+        QObject::connect(server, &QTcpServer::newConnection, &application,
+                         [server, observed, h1, h2]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, observed, h1, h2]() {
+                const QByteArray request = client->readAll();
+                const int splitAt = request.indexOf("\r\n\r\n");
+                const QByteArray head = splitAt == -1 ? request
+                    : request.left(splitAt);
+                QString path;
+                QByteArray wireReferer;
+                for (const QByteArray &line : head.split('\n')) {
+                    if (line.startsWith("GET ") || line.startsWith("POST ")) {
+                        const int sp = line.indexOf(' ');
+                        path = QString::fromLatin1(
+                            line.mid(sp + 1,
+                                     line.indexOf(" HTTP/") - sp - 1).trimmed());
+                    } else if (line.startsWith("Referer: ")) {
+                        wireReferer = line.mid(9).trimmed();
+                        (*observed)[QLatin1String("referer:") + path] =
+                            wireReferer;
+                    }
+                }
+                (*observed)[QLatin1String("seen:") + path] = "1";
+                qInfo().noquote() << "referer-smoke: req" << path
+                    << "ref:" << (wireReferer.isEmpty()
+                                  ? QByteArray("<none>") : wireReferer);
+                QByteArray body, extra;
+                const auto subst = [&h1, &h2](QByteArray text) {
+                    return text.replace("H1", h1.toUtf8())
+                               .replace("H2", h2.toUtf8());
+                };
+                if (path == QLatin1String("/page")
+                        || path == QLatin1String("/neverpage")) {
+                    const QByteArray tag = path == QLatin1String("/page")
+                        ? QByteArray() : QByteArray("n-");
+                    body = subst("<html><body>"
+                        "<a id='lnk' href='H2/TAGnav'>nav</a>"
+                        "<a id='noref' href='H2/TAGnref' rel='noreferrer'>nr</a>"
+                        "<a id='redlnk' href='H1/TAGredir'>rc</a>"
+                        "<a id='sredlnk' href='H1/TAGsredir'>sr</a>"
+                        "<img src='H2/TAGimg'>"
+                        "<img src='H1/TAGsameimg'>"
+                        "<iframe src='H2/TAGifr'></iframe>"
+                        "<script src='H2/TAGs.js'></script>"
+                        "<script>fetch('H2/TAGxhr',{mode:'no-cors'});</script>"
+                        "</body></html>").replace("TAG", tag);
+                } else if (path.contains(QLatin1String("redir"))) {
+                    // Cross-site chain: *redir -> H2/*final.
+                    // Same-site chain: *sredir -> H1/*sfinal — under
+                    // the engine default the follow-up leg would
+                    // carry the page's FULL url; the injected meta
+                    // trims it to the origin.
+                    const QByteArray tag =
+                        path.startsWith(QLatin1String("/n-"))
+                        ? QByteArray("n-") : QByteArray();
+                    const bool same =
+                        path.contains(QLatin1String("sredir"));
+                    client->write(subst("HTTP/1.1 302 Found\r\nLocation: "
+                        + (same ? QByteArray("H1") : QByteArray("H2"))
+                        + "/" + tag
+                        + (same ? QByteArray("sfinal")
+                                : QByteArray("final"))
+                        + "\r\nContent-Length: 0\r\n"
+                        "Connection: close\r\n\r\n"));
+                    client->disconnectFromHost();
+                    return;
+                } else if (path == QLatin1String("/meta")) {
+                    body = subst("<html><head><meta http-equiv='refresh'"
+                        " content='0;url=H2/metadest'></head></html>");
+                } else if (path == QLatin1String("/form")) {
+                    body = subst("<html><body><form method='post'"
+                        " action='H2/formdest'>"
+                        "<input type='submit' id='go'></form>"
+                        "<script>document.getElementById('go').click()</script>"
+                        "</body></html>");
+                } else if (path == QLatin1String("/ownmeta")) {
+                    body = subst("<html><head><meta name='referrer'"
+                        " content='no-referrer'></head>"
+                        "<body><img src='H2/omimg'></body></html>");
+                } else if (path == QLatin1String("/hdrmeta")) {
+                    extra = "Referrer-Policy: no-referrer\r\n";
+                    body = subst(
+                        "<html><body><img src='H2/hmimg'></body></html>");
+                } else {
+                    body = path.endsWith(QLatin1String(".js"))
+                        ? QByteArray("/*ok*/") : QByteArray("ok");
+                }
+                QByteArray reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n" + extra
+                    + "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body;
+                client->write(reply);
+                client->disconnectFromHost();
+            });
+        });
+
+        // Phase 1 pins the Trimmed level — the smoke grades the
+        // recommended policy, whatever the user profile had stored.
+        const QVariant savedRefererPolicy =
+            QSettings().value(QLatin1String("privacy/refererPolicy"));
+        auto restorePolicy = [savedRefererPolicy]() {
+            QSettings settings;
+            if (savedRefererPolicy.isValid())
+                settings.setValue(QLatin1String("privacy/refererPolicy"),
+                                  savedRefererPolicy);
+            else
+                settings.remove(QLatin1String("privacy/refererPolicy"));
+            PrivacyRequestInterceptor::loadSettings();
+        };
+        QSettings().setValue(QLatin1String("privacy/refererPolicy"),
+                             int(PrivacyRequestInterceptor::RefererTrimmed));
+        PrivacyRequestInterceptor::loadSettings();
+        // The level also drives the injected referrer-meta script —
+        // refresh it the same way a settings apply would.
+        BrowserProfile::installReferrerPolicy(view->page()->profile());
+
+        // Step queue: {url to load, js to run once the page settles}.
+        // Click steps act on the /page loaded by the preceding load
+        // step.  Steps advance only after the main frame reports
+        // loadFinished(true) and no new loadStarted for 800ms — a
+        // fixed timer races in-flight navigations and aborts loads
+        // before their subresources fire.
+        struct RefStep { QString url; QByteArray js; };
+        const QList<RefStep> steps = {
+            { h1 + QLatin1String("/page"), {} },                     // subresource matrix
+            { {}, QByteArray("document.getElementById('lnk').click()") },
+            { h1 + QLatin1String("/page"), {} },
+            { {}, QByteArray("document.getElementById('noref').click()") },
+            { h1 + QLatin1String("/page"), {} },
+            { {}, QByteArray("document.getElementById('redlnk').click()") },
+            { h1 + QLatin1String("/page"), {} },
+            { {}, QByteArray("document.getElementById('sredlnk').click()") },
+            { h1 + QLatin1String("/meta"), {} },
+            { h1 + QLatin1String("/form"), {} },
+            { h1 + QLatin1String("/ownmeta"), {} },
+            { h1 + QLatin1String("/hdrmeta"), {} },
+        };
+        auto stepIndex = std::make_shared<int>(-1);
+        auto phase = std::make_shared<int>(0);
+        auto phase2Step = std::make_shared<int>(0);
+        QTimer *settle = new QTimer(&application);
+        settle->setSingleShot(true);
+        settle->setInterval(800);
+        QObject::connect(settle, &QTimer::timeout, &application,
+                         [&application, view, steps, stepIndex, phase,
+                          phase2Step, observed, h1, h2, restorePolicy]() {
+            const int i = ++*stepIndex;
+            if (*phase == 0 && i >= steps.size()) {
+                // Grade phase 1 (Trimmed) once the matrix completed.
+                QStringList failures;
+                auto expectRef = [&](const char *p, const QByteArray &want) {
+                    const QByteArray got =
+                        observed->value(QLatin1String("referer:") + QLatin1String(p));
+                    if (got != want)
+                        failures += QString::fromLatin1(
+                            "%1 got '%2' want '%3'")
+                            .arg(QLatin1String(p),
+                                 QString::fromUtf8(got),
+                                 QString::fromUtf8(want));
+                };
+                auto expectNone = [&](const char *p) {
+                    if (observed->contains(QLatin1String("referer:") + QLatin1String(p)))
+                        failures += QString::fromLatin1("%1 leaked '%2'")
+                            .arg(QLatin1String(p), QString::fromUtf8(
+                                observed->value(
+                                    QLatin1String("referer:") + QLatin1String(p))));
+                    if (!observed->contains(QLatin1String("seen:") + QLatin1String(p)))
+                        failures += QString::fromLatin1("%1 never seen")
+                            .arg(QLatin1String(p));
+                };
+                const QByteArray o1 = (h1 + QLatin1Char('/')).toUtf8();
+                const QByteArray o2 = (h2 + QLatin1Char('/')).toUtf8();
+                expectRef("/img", o2);       // cross-site subresource spoof
+                expectRef("/s.js", o2);
+                expectRef("/ifr", o2);
+                expectRef("/xhr", o2);
+                expectRef("/sameimg", o1);   // same-site: origin only
+                expectRef("/nav", o2);       // link click
+                expectNone("/nref");         // rel=noreferrer stays silent
+                expectRef("/redir", o1);     // chain hop, same-site
+                // Chain end, cross-site: Chromium recomputes the
+                // Referer of a redirect follow-up AFTER the
+                // interceptor ran, so the target-origin spoof can't
+                // reach it — the wire carries the engine-computed
+                // value, which under the injected strict-origin meta
+                // is the source's ORIGIN (never the full path).
+                expectRef("/final", o1);
+                // Same-site chain end: redirect legs are likewise
+                // engine-computed, but the injected strict-origin
+                // meta makes the follow-up carry only the origin —
+                // without it this would be the page's full URL.
+                expectRef("/sredir", o1);
+                expectRef("/sfinal", o1);
+                expectRef("/metadest", o2);  // meta refresh
+                expectRef("/formdest", o2);  // POST form nav
+                expectNone("/omimg");        // page meta no-referrer
+                expectNone("/hmimg");        // header no-referrer
+                for (const QString &f : std::as_const(failures))
+                    qInfo().noquote() << "referer-smoke:" << f;
+                qInfo() << "referer-smoke: phase-1 trimmed"
+                        << (failures.isEmpty() ? "PASS" : "FAIL");
+                if (!failures.isEmpty()) {
+                    restorePolicy();
+                    application.exit(1);
+                    return;
+                }
+                // Phase 2: the Never level must silence every referer,
+                // proven on a fresh page (n-* paths).
+                *phase = 1;
+                QSettings().setValue(
+                    QLatin1String("privacy/refererPolicy"),
+                    int(PrivacyRequestInterceptor::RefererNever));
+                PrivacyRequestInterceptor::loadSettings();
+                BrowserProfile::installReferrerPolicy(
+                    view->page()->profile());
+                QString neverUrl = steps.at(0).url;
+                view->loadUrl(QUrl(neverUrl.replace(
+                    QStringLiteral("/page"),
+                    QStringLiteral("/neverpage"))));
+                return;
+            }
+            if (*phase == 1) {
+                // First tick after /neverpage settled: click through
+                // the same-site redirect to a cross-site end — the
+                // leg the header rewrite cannot reach and the
+                // injected no-referrer meta must cover.
+                if (*phase2Step == 0) {
+                    ++*phase2Step;
+                    qInfo() << "referer-smoke: phase-2 click n-redir";
+                    view->webPage()->runJavaScript(QStringLiteral(
+                        "document.getElementById('redlnk').click()"));
+                    return;
+                }
+                // Grade phase 2: every n-* referer must stay absent.
+                const char *const neverPaths[] = {
+                    "/n-img", "/n-sameimg", "/n-s.js", "/n-ifr", "/n-xhr",
+                    "/n-redir", "/n-final" };
+                bool pass = true;
+                for (const char *p : neverPaths) {
+                    const QByteArray got =
+                        observed->value(QLatin1String("referer:") + QLatin1String(p));
+                    if (!got.isEmpty()) {
+                        qInfo().noquote() << "referer-smoke: never-level leak"
+                            << p << got;
+                        pass = false;
+                    }
+                    if (!observed->contains(QLatin1String("seen:") + QLatin1String(p))) {
+                        qInfo().noquote() << "referer-smoke:" << p
+                                          << "never seen";
+                        pass = false;
+                    }
+                }
+                qInfo() << "referer-smoke:" << (pass ? "PASS" : "FAIL");
+                restorePolicy();
+                application.exit(pass ? 0 : 1);
+                return;
+            }
+            const RefStep &step = steps.at(i);
+            qInfo() << "referer-smoke: step" << i << step.url
+                    << step.js;
+            if (!step.url.isEmpty())
+                view->loadUrl(QUrl(step.url));
+            else
+                view->webPage()->runJavaScript(QString::fromLatin1(step.js));
+        });
+        // A new navigation cancels any pending settle; a completed one
+        // starts the quiet period.  Failed loads don't advance steps —
+        // the global timeout turns a stuck run into a FAIL.
+        QObject::connect(view, &QWebEngineView::loadStarted,
+                         settle, &QTimer::stop);
+        QObject::connect(view, &QWebEngineView::loadFinished, settle,
+                         [settle](bool ok) { if (ok) settle->start(); });
+        settle->start();  // first tick runs step 0
+        QTimer::singleShot(90000, &application,
+                           [&application, restorePolicy]() {
+            qInfo() << "referer-smoke: FAIL (timeout)";
+            restorePolicy();
+            application.exit(1);
         });
     }
 

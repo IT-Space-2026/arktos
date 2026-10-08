@@ -235,6 +235,68 @@ static void installUserStyleSheet(QWebEngineProfile *profile, const QUrl &url)
     scripts->insert(script);
 }
 
+// REF01: pushes the referer level into the document itself.  The
+// interceptor's setHttpHeader rewrite never reaches redirect
+// follow-up legs — Chromium recomputes the Referer for those from the
+// request's stored referrer after the interceptor ran — so the level
+// is also expressed as a <meta name="referrer"> injected at
+// DocumentCreation: the source document's policy is what the redirect
+// chain carries.  Pages that ship their own meta keep theirs (it
+// parses after ours and wins); only pages without one get the floor —
+// which is also what keeps a site's stricter explicit policy intact.
+// The tor profile floors at Trimmed, matching
+// applyRefererPolicy's minimumLevel argument.
+void installReferrerPolicy(QWebEngineProfile *profile)
+{
+    const QString name = QLatin1String("aroraReferrerPolicy");
+    QWebEngineScriptCollection *scripts = profile->scripts();
+    const QList<QWebEngineScript> installed = scripts->toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts->remove(script);
+    }
+
+    const int floor = (profile == s_torProfile)
+        ? int(PrivacyRequestInterceptor::RefererTrimmed)
+        : int(PrivacyRequestInterceptor::RefererEngineDefault);
+    const int level = qMax(
+        PrivacyRequestInterceptor::storedRefererPolicy(), floor);
+    const QByteArray meta =
+        PrivacyRequestInterceptor::referrerMetaValue(level);
+    if (meta.isEmpty())
+        return;
+
+    // At DocumentCreation the parser may not have produced a <head>
+    // (or even <html>) yet — attach to the head/root if it exists,
+    // else on the first observed insertion.  NEVER append to the
+    // document itself: before <html> exists that makes <meta> a
+    // document element child and the parser's own root insertion
+    // collides with it.  Either way the meta exists before the parser
+    // can have queued any subresource, so navigations, subresources
+    // and redirect hops are all computed under it.
+    const QString source = QStringLiteral(
+        "(function(){"
+        "var meta=document.createElement('meta');"
+        "meta.name='referrer';meta.content='%1';"
+        "function attach(){"
+        "var p=document.head||document.documentElement;"
+        "if(p){p.appendChild(meta);return true}return false}"
+        "if(!attach()){"
+        "var o=new MutationObserver(function(){if(attach())o.disconnect()});"
+        "o.observe(document,{childList:true,subtree:true})}})();")
+        .arg(QLatin1String(meta));
+
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setRunsOnSubFrames(true);
+    // ApplicationWorld so page scripts cannot remove or rewrite the
+    // meta — the DOM is shared, so the policy still applies.
+    script.setWorldId(QWebEngineScript::ApplicationWorld);
+    script.setSourceCode(source);
+    scripts->insert(script);
+}
+
 void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
@@ -348,6 +410,10 @@ void applySettings(QWebEngineProfile *profile)
 
     installUserStyleSheet(profile, settings.value(QLatin1String("userStyleSheet")).toUrl());
     settings.endGroup();
+
+    // REF01: page-level referrer policy for the legs the request
+    // interceptor cannot write (redirect follow-ups).
+    installReferrerPolicy(profile);
 
     // The app's network cache preference drives both the profile's
     // Chromium cache and (through NetworkAccessManager::loadSettings)

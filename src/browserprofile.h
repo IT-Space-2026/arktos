@@ -95,6 +95,13 @@ void applyClientHints(QWebEngineProfile *profile);
 // intentionally not applied; see MIG11 notes in .devin/Arora-Task.md.
 void applySettings(QWebEngineProfile *profile);
 
+// REF01: (re)installs the named <meta name="referrer"> injection
+// script matching the effective referer level on this profile (the
+// tor profile floors at Trimmed).  EngineDefault removes the script.
+// applySettings() calls it; standalone callers exist for test modes
+// that pin a level after the profile was already prepared.
+void installReferrerPolicy(QWebEngineProfile *profile);
+
 // SEC12: QWebEngineProfile exposes no API for DOM storage —
 // clearHttpCache() only reaches the HTTP cache.  This schedules
 // removal of the per-site storage trees Chromium persists under the
