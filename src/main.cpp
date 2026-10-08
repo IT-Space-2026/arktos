@@ -1069,6 +1069,270 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
     return application.exec();
 }
 
+// XSLEAK04: --xsleak-smoke re-runs the xsinator.com battery on the
+// browsing profile with shipping defaults — the same discipline the
+// user-measured baseline used — and dumps every test's {res0, res1}
+// pair plus the suite's own verdict class to a JSON file for the
+// diff in .devin/XSLEAK01-report.md.  --xsleak-open is the
+// attribution run: websettings/blockPopupWindows and
+// privacy/blockPings are pinned OFF before the profile exists so the
+// popup- and report-mediated vectors (COOP, CSPDirective and the six
+// test_needsWindow cases that depend on window.WW) produce real
+// verdicts instead of dead-end timeouts.
+//
+// The suite is self-driving: runAllTestsBtn.onclick() is an async
+// function that awaits every test and resolves when the run finishes.
+// The injected capture waits for the module script to have populated
+// the leak table, neutralizes exportToServer (same local-results
+// discipline as browseraudit-smoke's sendresults=false), invokes the
+// handler and publishes the serialized results — the same
+// window.exportResult() object the suite's own export button writes.
+static const char kXsLeakCaptureJs[] = R"JS(
+(function () {
+    var started = false;
+    var poll = setInterval(function () {
+        if (started)
+            return;
+        var table = document.getElementById('leakTable');
+        var button = document.getElementById('runAllTestsBtn');
+        if (document.readyState !== 'complete'
+                || !table || !table.rows.length
+                || !button || typeof button.onclick !== 'function'
+                || typeof window.exportResult !== 'function')
+            return;
+        started = true;
+        clearInterval(poll);
+        window.exportToServer = function () { return Promise.resolve(); };
+        Promise.resolve(button.onclick())
+            .then(function () {
+                window.__aroraResults = xsLeakDump();
+                window.__aroraDone = true;
+            }, function (err) {
+                window.__aroraError = String(err);
+                window.__aroraResults = xsLeakDump();
+                window.__aroraDone = true;
+            });
+    }, 50);
+    // A full timeout sweep of the battery is the worst case; the C++
+    // watchdog ends the run regardless.
+    setTimeout(function () { clearInterval(poll); }, 1200000);
+
+    // Rows carry the suite's own verdict as a table-* class; export
+    // it next to the raw res0/res1 so the report can diff without
+    // re-deriving the verdict rules.
+    window.xsLeakDump = function () {
+        var table = document.getElementById('leakTable');
+        var rows = [];
+        if (table) {
+            for (var i = 0; i < table.rows.length; ++i) {
+                var cells = table.rows[i].cells;
+                rows.push({
+                    name: cells.length > 1 ? cells[1].innerText : '',
+                    verdict: table.rows[i].className
+                });
+            }
+        }
+        return {
+            exported: typeof window.exportResult === 'function'
+                ? window.exportResult('Arora', 'Linux', '') : null,
+            rows: rows,
+            error: window.__aroraError || null
+        };
+    };
+})();
+)JS";
+
+// Readable any time — used for progress and for the partial dump a
+// watchdog timeout still produces (exportResult reads the live test
+// objects, so unrun tests show their current state).
+static const char kXsLeakStatusJs[] = R"JS(
+JSON.stringify({
+    done: window.__aroraDone === true,
+    finished: Array.prototype.filter.call(
+        document.querySelectorAll('#leakTable tr'),
+        function (r) {
+            return /table-(success|danger|warning)/.test(r.className);
+        }).length,
+    total: document.getElementById('leakTable')
+        ? document.getElementById('leakTable').rows.length : 0,
+    dump: (window.__aroraDone === true
+           || window.__aroraTimedOut === true)
+        && typeof window.xsLeakDump === 'function'
+        ? window.xsLeakDump() : null,
+    rs: document.readyState
+})
+)JS";
+
+static int xsLeakSmoke(BrowserApplication &application, WebView *view,
+                       bool permissive,
+                       const QVariant &savedPopupBlocking,
+                       const QVariant &savedBlockPings)
+{
+    const QString mode = permissive ? QStringLiteral("open")
+                                    : QStringLiteral("defaults");
+    const QString outPath = qEnvironmentVariable(
+        "ARORA_XSLEAK_OUT",
+        QStringLiteral("/tmp/xsleak-%1.json").arg(mode));
+
+    // The suite drives itself through promises and popup windows —
+    // a hidden WebContents gets throttled timers and every test would
+    // stall at its timeout.
+    view->window()->resize(1024, 768);
+    view->window()->show();
+
+    QWebEngineScript capture;
+    capture.setName(QStringLiteral("arora-xsleak-capture"));
+    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    capture.setWorldId(QWebEngineScript::MainWorld);
+    capture.setRunsOnSubFrames(false);
+    capture.setSourceCode(QString::fromUtf8(kXsLeakCaptureJs));
+    view->page()->scripts().insert(capture);
+
+    // Restore the caller's real settings on the way out — the
+    // permissive run pinned them on the live store before the
+    // BrowserApplication constructor (QSettings ignores the test-mode
+    // paths).
+    auto done = std::make_shared<bool>(false);
+    const auto finish = [&application, done, permissive,
+                         &savedPopupBlocking, &savedBlockPings]
+                        (int rc, const QString &line) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << "xsleak-smoke:" << line;
+        if (permissive) {
+            QSettings settings;
+            if (savedPopupBlocking.isValid())
+                settings.setValue(
+                    QLatin1String("websettings/blockPopupWindows"),
+                    savedPopupBlocking);
+            else
+                settings.remove(
+                    QLatin1String("websettings/blockPopupWindows"));
+            if (savedBlockPings.isValid())
+                settings.setValue(QLatin1String("privacy/blockPings"),
+                                  savedBlockPings);
+            else
+                settings.remove(QLatin1String("privacy/blockPings"));
+        }
+        application.exit(rc);
+    };
+
+    const auto dumpResults = [view, &application, outPath, mode,
+                              finish](bool complete) {
+        view->page()->runJavaScript(
+            QStringLiteral(
+                "JSON.stringify(window.xsLeakDump && "
+                "window.xsLeakDump())"),
+            [=, &application](const QVariant &payload) {
+                const QByteArray json = payload.toString().toUtf8();
+                QJsonParseError parseError;
+                QJsonObject envelope = QJsonDocument::fromJson(
+                    json, &parseError).object();
+                if (parseError.error != QJsonParseError::NoError) {
+                    finish(3, QStringLiteral(
+                        "FAIL (dump parse: %1)")
+                        .arg(parseError.errorString()));
+                    return;
+                }
+                envelope.insert(QStringLiteral("profile"), mode);
+                envelope.insert(QStringLiteral("complete"), complete);
+                envelope.insert(
+                    QStringLiteral("chromiumVersion"),
+                    QLatin1String(qWebEngineChromiumVersion()));
+                QFile out(outPath);
+                if (!out.open(QIODevice::WriteOnly)) {
+                    finish(3, QStringLiteral(
+                        "FAIL (cannot write %1)").arg(outPath));
+                    return;
+                }
+                out.write(QJsonDocument(envelope).toJson());
+                const QJsonArray testcases = envelope
+                    .value(QLatin1String("exported")).toObject()
+                    .value(QLatin1String("testcases")).toArray();
+                int leaking = 0, clean = 0, timedOut = 0,
+                    other = 0;
+                const QJsonArray rows = envelope
+                    .value(QLatin1String("rows")).toArray();
+                for (const QJsonValue &row : rows) {
+                    const QString verdict = row.toObject()
+                        .value(QLatin1String("verdict")).toString();
+                    if (verdict == QLatin1String("table-danger"))
+                        ++leaking;
+                    else if (verdict == QLatin1String("table-success"))
+                        ++clean;
+                    else if (verdict == QLatin1String("table-secondary"))
+                        ++timedOut;
+                    else
+                        ++other;
+                }
+                finish(complete ? 0 : 2, QStringLiteral(
+                    "%1 %2 - %3 tests: %4 leaking, %5 clean,"
+                    " %6 timed-out, %7 unfinished/other -> %8")
+                    .arg(complete ? QStringLiteral("DONE")
+                                  : QStringLiteral("PARTIAL"))
+                    .arg(mode).arg(testcases.count())
+                    .arg(leaking).arg(clean).arg(timedOut).arg(other)
+                    .arg(outPath));
+            });
+    };
+
+    const QUrl suiteUrl(qEnvironmentVariable("ARORA_XSLEAK_URL",
+        QStringLiteral("https://xsinator.com/")));
+    qInfo() << "xsleak-smoke: mode" << mode << "loading" << suiteUrl
+            << "->" << outPath;
+    view->load(suiteUrl);
+
+    auto *finished = new bool(false);
+    auto *progress = new int(-1);
+    QTimer *poller = new QTimer(&application);
+    poller->setInterval(4000);
+    QObject::connect(poller, &QTimer::timeout, &application,
+                     [=, &application]() {
+        if (*finished)
+            return;
+        view->page()->runJavaScript(
+            QString::fromUtf8(kXsLeakStatusJs),
+            [=, &application](const QVariant &status) {
+                const QJsonObject state = QJsonDocument::fromJson(
+                    status.toString().toUtf8()).object();
+                if (!state.value(QLatin1String("done")).toBool()) {
+                    const int count =
+                        state.value(QLatin1String("finished"))
+                            .toInt(-1);
+                    if (count != *progress) {
+                        *progress = count;
+                        qInfo() << "xsleak-smoke: progress" << count
+                                << "of"
+                                << state.value(QLatin1String("total"))
+                                       .toInt()
+                                << "-"
+                                << status.toString().left(200);
+                    }
+                    return;
+                }
+                *finished = true;
+                poller->stop();
+                dumpResults(true);
+            });
+    });
+    poller->start();
+
+    int timeoutMs =
+        qEnvironmentVariableIntValue("ARORA_XSLEAK_TIMEOUT_MS");
+    if (timeoutMs <= 0)
+        timeoutMs = 20 * 60 * 1000;
+    QTimer::singleShot(timeoutMs, &application, [=, &application]() {
+        // Still dump whatever the suite produced — a partial result
+        // table distinguishes a stalled run from a dead page.
+        view->page()->runJavaScript(
+            QStringLiteral("window.__aroraTimedOut = true"),
+            [=, &application](const QVariant &) { dumpResults(false); });
+    });
+
+    return application.exec();
+}
+
 // SEC16: the adblock smokes below inject probe filters into the shared
 // test-mode custom subscription and AdBlockManager's AutoSaver
 // persists whatever the subscription still holds when the process
@@ -1192,9 +1456,11 @@ int main(int argc, char **argv)
     bool webrtcSmoke = false;
     bool webrtcOffSmoke = false;
     bool httpOnlySmoke = false;
+    bool xsleakOpen = false;
     QVariant savedDohMode, savedDohServer, savedTlsStrict;
     QVariant savedWebrtcProtection;
     QVariant savedHttpsFirst, savedHttpsOnly, savedHttpExceptions;
+    QVariant savedPopupBlocking, savedBlockPings;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -1203,6 +1469,10 @@ int main(int argc, char **argv)
         // on its own it still takes that path, so it is a smoke run too.
         if (arg == "--browseraudit-bare")
             smokeRun = true;
+        // Modifier for --xsleak-smoke's attribution run; on its own it
+        // still takes that path, so it is a smoke run too.
+        if (arg == "--xsleak-open")
+            xsleakOpen = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
         if (arg == "--doh-smoke")
@@ -1341,6 +1611,22 @@ int main(int argc, char **argv)
         settings.endGroup();
     }
 
+    // XSLEAK04: --xsleak-open pins the two defaults that otherwise
+    // dead-end suite vectors — the popup blocker (window.WW orchestration)
+    // and the ping/CSP-report block (the CSPDirective verdict channel) —
+    // BEFORE the browsing profile and its interceptor snapshot exist.
+    // xsLeakSmoke's finish() restores the real values on the way out.
+    if (xsleakOpen) {
+        QSettings settings;
+        savedPopupBlocking = settings.value(
+            QLatin1String("websettings/blockPopupWindows"));
+        savedBlockPings = settings.value(
+            QLatin1String("privacy/blockPings"));
+        settings.setValue(QLatin1String("websettings/blockPopupWindows"),
+                          false);
+        settings.setValue(QLatin1String("privacy/blockPings"), false);
+    }
+
     // PRIV02: the UTC-timezone normalization is process environment
     // (TZ) and must be in place before ANY engine initialization —
     // the BrowserApplication constructor already brings the browsing
@@ -1397,6 +1683,7 @@ int main(int argc, char **argv)
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
+        "xsleak-smoke", "xsleak-open",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -1540,6 +1827,18 @@ int main(int argc, char **argv)
     // plus direct JS probes for .devin/ANON01-report.md.
     if (args.contains(QLatin1String("--anon-smoke")))
         return anonSmoke(application, view);
+
+    // XSLEAK04: live-site measurement — re-runs the full xsinator
+    // battery on the browsing profile and dumps per-test res0/res1
+    // pairs plus the suite's verdict classes for the report diff.
+    // --xsleak-open re-runs it with the popup blocker and the
+    // ping/CSP-report block pinned off to attribute the timeouts the
+    // shipping defaults cause.
+    if (args.contains(QLatin1String("--xsleak-smoke"))
+            || args.contains(QLatin1String("--xsleak-open")))
+        return xsLeakSmoke(application, view,
+            args.contains(QLatin1String("--xsleak-open")),
+            savedPopupBlocking, savedBlockPings);
 
     window.show();
 

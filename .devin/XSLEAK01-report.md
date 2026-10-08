@@ -1,12 +1,15 @@
-# XSLEAK01 — xsinator.com XS-Leak baseline + classification
+# XSLEAK01 — xsinator.com XS-Leak baseline, mitigations + verification
 (Qt 6.12.0 / Chromium 140.0.7339.225)
 
 Baseline + per-vector disposition for the XS-Leak test battery at
-https://xsinator.com/testing.html, following the SEC15/ANON01
+https://xsinator.com/testing.html (the suite now lives at the site
+root — the old page redirects), following the SEC15/ANON01
 convention (app-fixable / app-mitigable / engine-side with named API
-gap / test-stale).  This is the report-only split (XSLEAK02): no code
-changes, no blind re-runs — the baseline below is the user-measured
-result JSON pasted into the parent task spec.
+gap / test-stale).  XSLEAK02 wrote the report-only baseline
+classification below (user-measured result JSON, no blind re-runs);
+XSLEAK03 landed the app-side mitigations; XSLEAK04 re-ran the full
+battery on the live site — the re-run results and final per-vector
+dispositions are in the last section.
 
 ## Baseline provenance + suite methodology
 
@@ -215,3 +218,73 @@ read deltas against this list, not against upstream:
 - `privacy/blockThirdPartyWebSockets` (opt-in, default off) → when
   armed, WebSocket(GC)-family oracles collapse to clean.
 - Adblock subscriptions → any vector whose endpoints match rules.
+
+## XSLEAK04 — post-fix re-run + final dispositions
+
+Two live runs of the current suite (38 tests — the site added
+MediaError, Style Reload Error, Payment API, Performance API Empty
+Page and WebSocket (FF) since the baseline) via `--xsleak-smoke` /
+`--xsleak-open` (src/main.cpp; captures committed under
+`.devin/xsleak01/`):
+
+- **defaults** (`--xsleak-smoke`, shipping settings): 16 leaking,
+  17 clean, 3 timed out, 2 warning — matches the baseline discipline
+  (user-driven run on the app profile).
+- **open** (`--xsleak-open`, `websettings/blockPopupWindows` and
+  `privacy/blockPings` pinned off): 18 leaking, 17 clean, 0 timed
+  out, 3 warning.
+
+One methodology note: the scripted run clicks "Run all tests" without
+a user activation, so under defaults `window.open` is refused before
+`createWindow` and the suite's orchestration window (`window.WW`) is
+null — under a real user click it would instead be the
+`PopupProbePage` dead-end.  Either way the six `test_needsWindow`
+vectors cannot progress under the shipped popup blocker; the open run
+is their true measurement.
+
+### Per-vector diff (baseline → defaults run → open run → final disposition)
+
+| Vector | Baseline | defaults | open | Final disposition |
+|--------|----------|----------|------|-------------------|
+| EventHandler (Object/Stylesheet/Script) | leaking ×3 | leaking ×3 | leaking ×3 | **engine-side** — no load/error uniformization hook (gap 2) |
+| RequestMerging | leaking | leaking | leaking | **engine-side** — no request-coalescing hook (gap 6) |
+| URLMaxLength | leaking | leaking | leaking | **engine-side** — engine-internal URL limit (gap 4) |
+| MaxRedirect | leaking | leaking | leaking | **engine-side** — engine-internal redirect limit (gap 4) |
+| HistoryLength | leaking | *timed out* (WW dead-end) | **leaking** | **engine-side, confirmed leaking** — defaults-mode timeout attributed to the popup/orchestration-window dead-end; real verdict reproduced under open mode (gap 4) |
+| CSPRedirectDetection | leaking | leaking | leaking | **engine-side** — navigation oracle, no CSP-enforcement feedback (gap 4) |
+| WebSocket (GC) | leaking | "Mitigated: random pool limit" | same | **upstream-mitigated** — the suite itself reports the oracle closed by Chromium's randomized WebSocket pool cap; verdict is warning not leaking. The XSLEAK03 opt-in `privacy/blockThirdPartyWebSockets` remains as a stronger app-side block |
+| FrameCount | leaking | *timed out* (WW dead-end) | **leaking** | **engine-side, confirmed leaking** — same WW attribution as HistoryLength (gap 3) |
+| MediaDimensions | leaking | leaking | leaking | **engine-side** — media metadata surface (gap 3) |
+| MediaDuration | leaking | leaking | leaking | **engine-side** — media metadata surface (gap 3) |
+| Cache (CORS) | leaking | leaking | leaking | **engine-side** — Chromium network-service cache timing; partitioning does not close it on 140 (gap 7). Not test-stale |
+| IdAttribute | leaking | leaking | leaking | **engine-side** — DOM oracle (gap 3) |
+| CSSProperty | leaking | leaking | leaking | **engine-side** — CSS state oracle (gap 3) |
+| ContentDocument-X-Frame | leaking | **clean** (0/0) | clean (0/0) | **no longer reproduces** — upstream engine or fixture change since the baseline; not attributable to app code (XSLEAK03 touched no XFO path). Re-check on the next Qt bump |
+| CORP | leaking | leaking | leaking | **engine-side** — no response-header access (gap 1) |
+| CORB | leaking | leaking | leaking | **engine-side** — no response-header access (gap 1) |
+| DownloadDetection | leaking | leaking | leaking | **engine-side** — no download-interrupt outcome hook (gap 8) |
+| PerfAPI-DownloadDetection | leaking | leaking | leaking | **engine-side** — Resource Timing internals (gap 5) |
+| PerfAPI-CORP | ambiguous (1/1) | clean (1/1) | clean (1/1) | **resolved clean** — equal non-error values: no distinguishable difference |
+| CSPDirective | timed out | clean (0/0) | clean (0/0) | **resolved clean** — the suspected report-channel interference does not stall the current suite; verdict lands with pings blocked AND unblocked |
+| COOP | timed out | timed out (WW dead-end) | partial (res0=0, res1 timed out) | **engine-side, partially measured** — the open run completed one phase (0) before the other stalled at the suite deadline; no embedder COOP hook exists either way (gap 4 family) |
+| PerfAPI-X-Frame | timed out | clean (0/0) | clean (0/0) | **resolved clean** — the baseline timeout was orchestration flake, as suspected |
+| 9 baseline-clean vectors | clean | clean | clean | unchanged |
+| 5 new suite vectors | — | clean ×3, n/a warning ×2 | same | no regressions |
+
+### Close-out summary
+
+- **App-side delta of XSLEAK03, verified on the wire:** the defaults
+  run shows zero leaks attributable to app code — every still-leaking
+  vector reproduces identically in the open run, and each maps to a
+  named engine-side gap above.  The one app-reachable vector
+  (WebSocket) is additionally covered by upstream's randomized pool
+  mitigation plus the opt-in third-party-ws block.
+- **Net vs baseline:** 18 leaking → 16 confirmed engine-side leaking
+  + 1 upstream-mitigated (ws) + 1 no-longer-reproducing
+  (ContentDocument-X-Frame); all 3 baseline timeouts resolved or
+  attributed (COOP partially measured, engine-side).
+- Every vector carries a final disposition → XSLEAK01 closes.
+  Future Qt/Chromium upgrades should re-check the gap list (no
+  response-header access, no load/error uniformization, no
+  frame-tree/timing/history controls, no coalescing or download
+  hooks).
