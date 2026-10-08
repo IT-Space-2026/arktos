@@ -2608,4 +2608,33 @@ Now the big remaining gate: `make check`. Kicking it off detached so its memory 
 - `--quit-after-load https://example.com/` rc=0 — real https negotiates under the flag
 - `make check` rc=0 — check-warnings PASS + suite green offscreen
 
-Now finalize the task row, WORKLOG, and commit.Row marked done and WORKLOG appended. Final review before committing.
+Now finalize the task row, WORKLOG, and commit.Row marked done and WORKLOG appended. Final review before committing.Done. **TLS01 completed and pushed** (`ac96358`).
+
+**What I found:** TLS01 was `in_progress` from an interrupted run — the implementation was already in the tree (cipher blacklist flag + `privacy/tlsStrictCiphers` setting + Settings checkbox + smoke harnesses), but the verification kept dying on the loop's 2GB memory cap and a harness flake where the stub view's external https navigation wedged (`LoadStarted` then silence).
+
+**What I did:**
+- Resumed rather than restarted; diagnosed the wedge: the deliberately-failed loopback navigation's error-page commit cancels sibling navigations on the same page. Restructured `--tls-smoke` so the ClientHello capture runs on a **dedicated hidden WebView**, and made the live-https stage best-effort — a fast `LoadFailed` on a live network FAILs (the shape a real cipher regression takes), while a silent stall SKIPs to the deterministic capture verdict.
+- Registered `--tls-smoke`/`--tls-off-smoke` in `check-coverage.sh`'s smoke list.
+
+**Verified:**
+- `--tls-smoke` PASS — ClientHello advertises only GREASE + TLS 1.3 (0x1301–3) + ECDHE/AEAD (0xc02b/2f/2c/30, 0xcca9/a8); all six weak suites gone
+- `--tls-off-smoke` PASS — 6/6 weak suites advertised with the setting off (proves the flag causes the stripping)
+- `--quit-after-load https://example.com/` exit 0 under the flag — real sites still negotiate
+- `make check` rc=0 — check-warnings PASS + 56 test programs 0 failed offscreen
+
+Task row → `done`, ChangeLog/README/WORKLOG updated. Stopping here per the one-task rule — the loop will pick up UIP05 next.
+[2026-10-08 06:54:12] <<< devin exited rc=0 (task TLS01)
+[2026-10-08 06:54:12] skipping WIN01 — needs: requirement not met on this host
+[2026-10-08 06:54:12] skipping MAC01 — needs: requirement not met on this host
+[2026-10-08 06:54:12] skipping BSD01 — needs: requirement not met on this host
+[2026-10-08 06:54:12] task TLS01 finished (next: UIP05)
+[2026-10-08 06:54:14] skipping WIN01 — needs: requirement not met on this host
+[2026-10-08 06:54:14] skipping MAC01 — needs: requirement not met on this host
+[2026-10-08 06:54:14] skipping BSD01 — needs: requirement not met on this host
+[2026-10-08 06:54:15] >>> starting run for task UIP05 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+WIN01 has `needs:windows` — unsatisfied on this Linux box, so it's skipped. Continuing to read the queue.The first workable row is **UIP05** (row 132): move the SHLD01 shield indicator to the left of the location bar. The earlier pending rows (WIN01/MAC01/BSD01) all declare unsatisfied `needs:` tags, and MEM01/BADSSL01 are `blocked`. UIP05 is pure Qt widget work — feasible. Let me look at the code.Now let me check tests that reference the shield or its position, plus how the popup panel anchors.The panel is menu-hosted on the button, so anchoring follows the button automatically. Let me check the adblock button for placement comments.Now I understand the layout: `LineEdit::addWidget` appends to `m_leftLayout` for `LeftSide` (each left widget lands further right, toward the text). The plan:
+
+- `LocationBar` ctor: move `SiteShieldButton` from the right cluster to the left cluster, leftmost (shield → site icon, per the task's Vivaldi note).
+- Update `tst_locationbar.cpp` — the `adBlockButton` test currently asserts shield and adblock button share a parent (same cluster); after the move they won't.
+
+Let me mark the task in_progress first, then check for other placement references.README mentions the shield button without a side — I'll update it to say left. Now the code change — shield goes to the left cluster, leftmost (Vivaldi order: shield → site icon):Now update the test to reflect the new placement and verify positioning:Also add the shield to the `widgets()` presence check:Now build. Source the Qt env and run qmake + make.Build succeeded. Checking for warnings, then running the locationbar test:`QToolButton::showMenu()` runs `menu->exec()` — a nested loop that blocked the test for 300s. I need a timer to dismiss it after capturing the position:Both targeted suites pass. Now the full `make check` gate (runs check-warnings + all test programs offscreen):While `make check` runs, update ChangeLog and README:Checking `make check` progress:`tst_webview` hit the known GL SIGTRAP under plain offscreen — prior task notes document this as a pre-existing environment issue fixed by `LIBGL_ALWAYS_SOFTWARE=1`. Re-running the check with that:All 56 test programs passed, zero failures. Finalizing: update the task row, WORKLOG, then commit.

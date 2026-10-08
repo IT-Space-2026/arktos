@@ -53,7 +53,12 @@ LocationBar::LocationBar(QWidget *parent)
     setMinimumHeight(fontMetrics().height() + 12);
 
     setUpdatesEnabled(false);
-    // site icon on the left
+    // UIP05: the shield indicator opens the per-site privacy panel —
+    // leftmost of the leading site-info zone, Vivaldi-style.
+    m_shield = new SiteShieldButton(this);
+    addWidget(m_shield, LeftSide);
+
+    // site icon on the left, next to the shield
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
 
@@ -62,11 +67,6 @@ LocationBar::LocationBar(QWidget *parent)
     // lands furthest right).
     m_adBlockButton = new AdBlockButton(this);
     addWidget(m_adBlockButton, RightSide);
-
-    // SHLD01: shield indicator opens the per-site privacy panel —
-    // leftmost of the right-side cluster, next to the page content.
-    m_shield = new SiteShieldButton(this);
-    addWidget(m_shield, RightSide);
 
     // privacy indicator at rightmost position
     m_privacyIndicator = new PrivacyIndicator(this);

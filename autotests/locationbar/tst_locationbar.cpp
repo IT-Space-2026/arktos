@@ -131,6 +131,8 @@ void tst_LocationBar::widgets()
 {
     TestLocationBar bar;
     QVERIFY(bar.findChild<LocationBarSiteIcon*>());
+    QVERIFY(bar.findChild<SiteShieldButton*>());
+    QVERIFY(bar.findChild<AdBlockButton*>());
     QVERIFY(bar.findChild<PrivacyIndicator*>());
     QVERIFY(bar.findChild<ClearButton*>());
     QVERIFY(!bar.webView());
@@ -304,10 +306,12 @@ void tst_LocationBar::privacyIndicator()
     QVERIFY(!BrowserApplication::isPrivate());
 }
 
-// ADB05: the content-blocker button sits in the same right-side
-// cluster as the site shield, tracks the tab's page, greys while the
-// blocker is disabled, and its popup exposes the count line, the
-// enable toggle and the settings entry point.
+// ADB05 + UIP05: the content-blocker button anchors the right-side
+// cluster while the site shield sits on the opposite side — leftmost
+// of the leading site-info zone beside the site icon.  The button
+// tracks the tab's page, greys while the blocker is disabled and its
+// popup exposes the count line, the enable toggle and the settings
+// entry point.
 void tst_LocationBar::adBlockButton()
 {
     TestLocationBar bar;
@@ -316,12 +320,41 @@ void tst_LocationBar::adBlockButton()
     QVERIFY(button->isHidden()); // nothing to report without a view
 
     SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
+    LocationBarSiteIcon *siteIcon = bar.findChild<LocationBarSiteIcon*>();
     QVERIFY(shield);
-    QCOMPARE(button->parentWidget(), shield->parentWidget());
+    QVERIFY(siteIcon);
+    // Left and right clusters are different SideWidget containers:
+    // the shield shares the site icon's, the blocker does not.
+    QCOMPARE(shield->parentWidget(), siteIcon->parentWidget());
+    QVERIFY(button->parentWidget() != shield->parentWidget());
 
     WebView view(BrowserApplication::webEngineProfile());
     bar.setWebView(&view);
     QVERIFY(!button->isHidden());
+    QVERIFY(!shield->isHidden());
+
+    // Vivaldi order on the left — shield, then site icon, then the
+    // url text; the blocker stays at the right end.
+    bar.show();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        shield->mapTo(&bar, QPoint(0, 0)).x()
+            < siteIcon->mapTo(&bar, QPoint(0, 0)).x()
+        && shield->mapTo(&bar, QPoint(0, 0)).x()
+            < button->mapTo(&bar, QPoint(0, 0)).x(), 3000);
+
+    // The panel popup still anchors under the shield at its new spot.
+    // showMenu() runs the menu's nested exec() loop, so a timer
+    // captures the geometry and dismisses it from inside.
+    QVERIFY(shield->menu());
+    QPoint menuPos(-1, -1);
+    QTimer::singleShot(200, shield->menu(), [shield, &menuPos]() {
+        menuPos = shield->menu()->pos();
+        shield->menu()->hide();
+    });
+    shield->showMenu();
+    QVERIFY(menuPos.x() >= 0);
+    QVERIFY(qAbs(menuPos.x()
+            - shield->mapToGlobal(QPoint(0, shield->height())).x()) < 16);
 
     QVERIFY(button->menu());
     QAction *toggle = nullptr;

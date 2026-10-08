@@ -116,7 +116,8 @@ suggestions stay opt-in per engine (SEC11).  `./arora
 capture proxy plus a /proc socket scan and fails on any outbound
 attempt.
 
-The shield button in the location bar opens a per-site privacy panel:
+The shield button at the left end of the address bar (beside the
+site icon) opens a per-site privacy panel:
 the page's security state, a per-site cookie exception (allow, block
 or session-only) with the count of stored cookies, a content-blocking
 toggle that whitelists the site (the icon greys while it is exempt),
