@@ -53,9 +53,11 @@ the preferences dialog loads unpacked folders or installs .zip packages.
 Every load or install first shows a permission-review screen listing the
 extension's requested access in plain language plus which declared
 chrome.* APIs Qt does not serve; nothing installs without consent.
-Plain user scripts
+Extensions never run in private windows or Tor windows — the engine
+itself refuses off-the-record profiles, and Tor additionally keeps the
+profile detached from the extension system entirely.  Plain user scripts
 (any *.js file in the "userscripts" data directory) are injected into
-every page at document-ready.
+every page at document-ready, private windows included.
 
 Tor: File → "New Tor Window" (or `arora --tor`) opens a separate Arora
 process whose tabs all route through a managed Tor daemon — the web

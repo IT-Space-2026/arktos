@@ -121,8 +121,11 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     reloadUserScripts(profile);
 
 #if QT_CONFIG(webengine_extensions)
-    // Qt WebEngine cannot load extensions into off-the-record
-    // profiles; the OTR profile carries only its built-in components.
+    // Qt WebEngine refuses extensions on off-the-record profiles —
+    // loadFinished answers "Can't load in off-the-record mode" and
+    // installFinished "Cannot install in off-the-record mode" (EXT04,
+    // verified Qt 6.12.0).  The OTR profile carries only its built-in
+    // components plus the user scripts injected above.
     if (profile->isOffTheRecord())
         return;
 
@@ -150,6 +153,11 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
 
     scheduleAutoUpdateCheck();
 #endif
+}
+
+bool ExtensionManager::isInstalledOnProfile(QWebEngineProfile *profile) const
+{
+    return m_profiles.contains(profile);
 }
 
 QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const

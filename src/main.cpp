@@ -108,6 +108,8 @@
 #include <QtNetwork/QTcpSocket>
 #include <QtWebEngineCore/QWebEngineClientHints>
 #include <QtWebEngineCore/QWebEngineDownloadRequest>
+#include <QtWebEngineCore/QWebEngineExtensionInfo>
+#include <QtWebEngineCore/QWebEngineExtensionManager>
 #include <QtWebEngineCore/QWebEngineFindTextResult>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
@@ -1676,7 +1678,8 @@ int main(int argc, char **argv)
         "bookmarks-smoke", "search-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
-        "app-smoke", "extension-smoke", "extension-update-smoke",
+        "app-smoke", "extension-smoke", "extension-otr-smoke",
+        "extension-update-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "referer-smoke", "container-smoke",
@@ -5296,6 +5299,158 @@ int main(int argc, char **argv)
         return application.exec();
     }
 
+    // Headless verification for EXT04: off-the-record profiles cannot
+    // carry extensions.  A standalone probe on Qt 6.12.0 recorded the
+    // engine refusing both verbs — loadExtension answers
+    // "Can't load in off-the-record mode" and installExtension
+    // "Cannot install in off-the-record mode" — which is why there is
+    // no "allow in private windows" toggle.  This smoke pins that
+    // rejection end-to-end through the real prepareProfile path: if a
+    // future Qt lifts the OTR ban, the checks here FAIL and the
+    // per-extension toggle should be built instead of shipping silent
+    // support.  Exits 0 on PASS.
+    int otrExtFailures = 0;
+    QString otrExtDir;
+    if (args.contains(QLatin1String("--extension-otr-smoke"))) {
+        const auto check = [&otrExtFailures](bool ok, const char *what) {
+            qInfo() << "extension-otr-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++otrExtFailures;
+        };
+        const auto die = [&application](const QString &why) {
+            qInfo() << "extension-otr-smoke: FAIL" << why;
+            fflush(nullptr);
+            // quick_exit: tearing down a second live profile hits the
+            // known Chromium shutdown crash (MIG12 notes) — the
+            // verdict is already printed, don't let it mask the rc.
+            std::quick_exit(1);
+        };
+
+        QWebEngineProfile *otrProfile = BrowserProfile::privateProfile();
+        check(otrProfile->isOffTheRecord(),
+              "private profile is off-the-record");
+
+        // The real prepare path: installOnProfile registers the OTR
+        // profile for user scripts but skips the extension wiring.
+        BrowserApplication::prepareProfile(otrProfile);
+        check(ExtensionManager::instance()->isInstalledOnProfile(otrProfile),
+              "OTR profile registered (user scripts)");
+
+        // MV3 fixture — same shape as --extension-smoke.
+        otrExtDir = QDir::temp().filePath(
+            QLatin1String("arora-ext-otr-smoke"));
+        QDir().mkpath(otrExtDir);
+        {
+            QFile manifestFile(otrExtDir
+                + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-otr-smoke: FAIL (cannot write manifest)";
+                return 1;
+            }
+            manifestFile.write(
+                "{\"manifest_version\":3,"
+                "\"name\":\"arora-otr-smoke-ext\","
+                "\"version\":\"0.1\","
+                "\"description\":\"EXT04 OTR fixture\","
+                "\"permissions\":[\"storage\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+            QFile worker(otrExtDir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-otr-smoke: FAIL (cannot write worker)";
+                return 1;
+            }
+            worker.write(
+                "chrome.runtime.onInstalled.addListener(function(){});\n");
+        }
+
+#if QT_CONFIG(webengine_extensions)
+        QWebEngineExtensionManager *otrExtensions =
+            otrProfile->extensionManager();
+        check(otrExtensions != nullptr,
+              "OTR profile still exposes an extension manager");
+        if (!otrExtensions) {
+            qInfo() << "extension-otr-smoke: FAIL failures:"
+                    << otrExtFailures;
+            return 1;
+        }
+
+        // Baseline: only the shipped component extensions — built-ins
+        // DO carry a path (Qt's resources dir), so match the two
+        // component ids ExtensionManager hardcodes.
+        static const char *const kBuiltinIds[] = {
+            "mhjfbmdgcfjbbpaeojofohoefgiehjai", // Chromium PDF viewer
+            "nkeimhogjdpnpccoofpliimaahmaaome", // Google Hangouts
+        };
+        bool onlyBuiltins = true;
+        for (const QWebEngineExtensionInfo &info
+             : otrExtensions->extensions()) {
+            bool known = false;
+            for (const char *id : kBuiltinIds) {
+                if (info.id() == QLatin1String(id))
+                    known = true;
+            }
+            if (!known) {
+                onlyBuiltins = false;
+                qInfo() << "extension-otr-smoke: unexpected OTR entry"
+                        << info.name() << info.id() << info.path();
+            }
+        }
+        check(onlyBuiltins,
+              "OTR profile lists built-in components only");
+
+        // Engine gate 1: a load on the OTR profile must be refused.
+        // Gate 2 chains inside: install must be refused too.
+        QObject::connect(otrExtensions,
+            &QWebEngineExtensionManager::loadFinished,
+            &application,
+            [&, check, otrExtensions, otrExtDir](
+                const QWebEngineExtensionInfo &info) {
+            check(!info.isLoaded()
+                  && info.error().contains(
+                      QLatin1String("off-the-record")),
+                  "OTR loadExtension refused by engine");
+            QObject::connect(otrExtensions,
+                &QWebEngineExtensionManager::installFinished,
+                &application,
+                [&, check](const QWebEngineExtensionInfo &inst) {
+                check(!inst.isInstalled()
+                      && inst.error().contains(
+                          QLatin1String("off-the-record")),
+                      "OTR installExtension refused by engine");
+                // The refusal must not leak into the normal profile's
+                // extension view.
+                bool leaked = false;
+                for (const ExtensionManager::ExtensionInfo &entry
+                     : ExtensionManager::instance()->extensions()) {
+                    if (entry.name
+                        == QLatin1String("arora-otr-smoke-ext"))
+                        leaked = true;
+                }
+                check(!leaked,
+                      "OTR refusal leaves normal profile untouched");
+                qInfo() << "extension-otr-smoke:"
+                        << (otrExtFailures == 0 ? "PASS" : "FAIL")
+                        << "failures:" << otrExtFailures;
+                QDir(otrExtDir).removeRecursively();
+                fflush(nullptr);
+                std::quick_exit(otrExtFailures == 0 ? 0 : 1);
+            });
+            otrExtensions->installExtension(otrExtDir);
+        });
+        QTimer::singleShot(20000, &application, [die]() {
+            die(QStringLiteral("timeout"));
+        });
+        otrExtensions->loadExtension(otrExtDir);
+        return application.exec();
+#else
+        qInfo() << "extension-otr-smoke: SKIP"
+                << "(Qt built without webengine_extensions)";
+        QDir(otrExtDir).removeRecursively();
+        return 0;
+#endif
+    }
+
     // Headless verification for EXT03: update_url self-update checks.
     // A loopback QTcpServer serves a gupdate XML update manifest plus
     // a .zip package carrying the same manifest "key" (Chromium
@@ -6437,6 +6592,21 @@ int main(int argc, char **argv)
         }
         if (!BrowserApplication::isPrivate()) {
             torWinFail(QLatin1String("tor mode does not imply private"));
+            return application.exec();
+        }
+
+        // EXT04: a tor process must never attach the extension
+        // manager — extensions are a deanonymization surface, so the
+        // tor profile is not even registered for user scripts and
+        // the extension list stays empty.
+        if (ExtensionManager::instance()->isInstalledOnProfile(
+                BrowserApplication::webEngineProfile())) {
+            torWinFail(QLatin1String(
+                "tor profile attached to extension manager"));
+            return application.exec();
+        }
+        if (!ExtensionManager::instance()->extensions().isEmpty()) {
+            torWinFail(QLatin1String("extensions listed on tor profile"));
             return application.exec();
         }
 

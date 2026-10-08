@@ -41,8 +41,15 @@ class QNetworkReply;
 //
 // Feature notes (from the Qt documentation):
 //   - Manifest V3 only; MV2 packages are rejected outright.
-//   - Extensions cannot be loaded on off-the-record profiles, so
-//     installOnProfile() skips them.
+//   - Extensions cannot be loaded on off-the-record profiles.
+//     Verified on Qt 6.12.0 (EXT04 probe): loadExtension answers
+//     "Can't load in off-the-record mode" and installExtension
+//     "Cannot install in off-the-record mode", so installOnProfile()
+//     skips OTR profiles for extensions while still attaching the
+//     user-scripts collection.  --extension-otr-smoke pins the
+//     rejection — if a future Qt lifts it, that smoke fails and the
+//     per-extension "allow in private windows" toggle should be
+//     built then.
 //   - Loaded extensions start disabled; enabling is explicit.
 //   - Every profile ships the built-in Google Hangouts and Chromium
 //     PDF viewer components; they appear in the list and can be
@@ -117,9 +124,15 @@ public:
 
     // Attaches the profile's QWebEngineExtensionManager and injects the
     // user-scripts directory.  Off-the-record profiles are skipped for
-    // extension loading (unsupported upstream) but still get user
-    // scripts, matching userStyleSheet behavior.
+    // extension loading — the engine refuses both load and install on
+    // them (verified Qt 6.12.0) — but still get user scripts, matching
+    // userStyleSheet behavior.
     void installOnProfile(QWebEngineProfile *profile);
+
+    // True once installOnProfile() has run for the profile — the tor
+    // profile must never appear here (extensions are a
+    // deanonymization surface in that window).
+    bool isInstalledOnProfile(QWebEngineProfile *profile) const;
 
     QList<ExtensionInfo> extensions() const;
     QString installPath() const;

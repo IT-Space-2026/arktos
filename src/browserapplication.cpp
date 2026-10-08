@@ -182,9 +182,11 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
     }
     if (!BrowserApplication::isTorMode()) {
         // QWebEngineExtensionManager wiring + user-scripts injection.
-        // The OTR profile is skipped for extensions upstream but
-        // still receives user scripts.  The tor profile gets neither —
-        // extensions and injected scripts are fingerprintable surface.
+        // The OTR profile is skipped for extensions — Qt 6.12 refuses
+        // OTR loads outright ("Can't load in off-the-record mode",
+        // EXT04) — but still receives user scripts.  The tor profile
+        // gets neither — extensions and injected scripts are
+        // fingerprintable surface; keep it that way (hard refusal).
         ExtensionManager::instance()->installOnProfile(profile);
     }
 }

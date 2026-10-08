@@ -86,7 +86,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --settings-smoke --autofill-smoke --find-smoke --source-smoke
 --adblock-smoke --adblock-list-smoke --adblock-rust-smoke
---extension-smoke --ua-smoke"
+--extension-smoke --extension-otr-smoke --ua-smoke"
 for flag in $SMOKE_FLAGS; do
     name=$(echo "$flag" | tr -d -)
     timeout 240 ./arora "$flag" >"$LOGDIR/smoke-$name.log" 2>&1

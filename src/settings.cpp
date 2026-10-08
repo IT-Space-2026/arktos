@@ -217,7 +217,20 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             [this](const ExtensionManager::UpdateResult &) {
         extensionSelectionChanged();
     });
-    if (!ExtensionManager::isSupported()) {
+    if (BrowserApplication::isTorMode()) {
+        // EXT04: a tor process never attaches a profile to the
+        // extension manager — extensions are a deanonymization
+        // surface there.  State the hard refusal rather than showing
+        // controls that could only fail.
+        extensionsTree->setEnabled(false);
+        extensionLoadButton->setEnabled(false);
+        extensionInstallButton->setEnabled(false);
+        extensionUpdateButton->setEnabled(false);
+        extensionAutoUpdateCheck->setEnabled(false);
+        extensionRemoveButton->setEnabled(false);
+        extensionsHintLabel->setText(
+            tr("Extensions never run in a Tor window."));
+    } else if (!ExtensionManager::isSupported()) {
         extensionsTree->setEnabled(false);
         extensionLoadButton->setEnabled(false);
         extensionInstallButton->setEnabled(false);
