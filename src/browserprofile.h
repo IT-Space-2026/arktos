@@ -141,6 +141,14 @@ bool clearAllStorageOnNextStart(QWebEngineProfile *profile);
 // clearAllStorageOnNextStart().
 bool clearDeferredSiteStorage(const QString &storagePath);
 
+// CONT05: immediate variant of the site-data wipe for a storage root
+// whose profile is NOT running — a registered container that was
+// never materialized this session (ContainerManager::
+// clearUnmaterializedStorage).  Removes the same trees
+// clearSiteStorage would defer, right now; safe only because nothing
+// holds them open.  Do NOT call on a live profile's root.
+bool clearSiteStorageNow(const QString &storagePath);
+
 // PRIV01: appends privacy-motivated Chromium switches to
 // QTWEBENGINE_CHROMIUM_FLAGS for QtWebEngineProcess.  Must run before
 // the first page spawns the process — main() calls it right after the

@@ -755,6 +755,13 @@ void BrowserApplication::clearPrivateDataOnExit()
     for (QWebEngineProfile *profile : profiles)
         BrowserProfile::clearAllStorageOnNextStart(profile);
 
+    // CONT05: registered containers whose profile was never
+    // materialized this session have no live profile to send the
+    // sentinels to — nothing holds their trees open, so remove them
+    // outright.  Without this an exit wipe would silently keep every
+    // unused container's cookies, DOM storage and cache.
+    ContainerManager::instance()->wipeUnmaterializedStorage();
+
     // The saved session blob is itself browsing history — leaving it
     // behind would undo the wipe.
     QSettings settings;

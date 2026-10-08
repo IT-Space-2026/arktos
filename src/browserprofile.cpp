@@ -598,17 +598,13 @@ bool clearAllStorageOnNextStart(QWebEngineProfile *profile)
     return ok;
 }
 
-bool clearDeferredSiteStorage(const QString &storagePath)
+// CONT05: the tree removal itself, shared by the sentinel wipe
+// (clearDeferredSiteStorage) and by clearSiteStorageNow — neither may
+// run while the owning profile is live.  includeNetworkState adds the
+// exit-wipe dirs (Network/, Cache/, Code Cache/).
+static bool removeSiteDataTrees(const QString &storagePath,
+                                bool includeNetworkState)
 {
-    if (storagePath.isEmpty())
-        return true;
-    const QString sentinelPath = deferredWipeSentinel(storagePath);
-    const QString exitSentinelPath = exitWipeSentinel(storagePath);
-    const bool siteWipe = QFile::exists(sentinelPath);
-    const bool exitWipe = QFile::exists(exitSentinelPath);
-    if (!siteWipe && !exitWipe)
-        return true;
-
     bool ok = true;
     for (const char *name : deferredSiteDirs) {
         QDir dir(storagePath + QLatin1Char('/') + QLatin1String(name));
@@ -620,17 +616,41 @@ bool clearDeferredSiteStorage(const QString &storagePath)
         if (file.exists())
             ok &= file.remove();
     }
-    if (exitWipe) {
+    if (includeNetworkState) {
         for (const char *name : exitWipeDirs) {
             QDir dir(storagePath + QLatin1Char('/') + QLatin1String(name));
             if (dir.exists())
                 ok &= dir.removeRecursively();
         }
     }
+    return ok;
+}
+
+bool clearDeferredSiteStorage(const QString &storagePath)
+{
+    if (storagePath.isEmpty())
+        return true;
+    const QString sentinelPath = deferredWipeSentinel(storagePath);
+    const QString exitSentinelPath = exitWipeSentinel(storagePath);
+    const bool siteWipe = QFile::exists(sentinelPath);
+    const bool exitWipe = QFile::exists(exitSentinelPath);
+    if (!siteWipe && !exitWipe)
+        return true;
+
+    bool ok = removeSiteDataTrees(storagePath, exitWipe);
     if (siteWipe)
         ok &= QFile::remove(sentinelPath);
     if (exitWipe)
         ok &= QFile::remove(exitSentinelPath);
+    ensureUserOnlyPermissions(storagePath);
+    return ok;
+}
+
+bool clearSiteStorageNow(const QString &storagePath)
+{
+    if (storagePath.isEmpty())
+        return true;
+    const bool ok = removeSiteDataTrees(storagePath, false);
     ensureUserOnlyPermissions(storagePath);
     return ok;
 }

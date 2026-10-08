@@ -66,6 +66,33 @@ Expert Bundle via BuildProcess/fetch-tor.sh.  `./arora --tor-smoke` and
 `./arora --tor-window-smoke` verify the daemon layer and the end-to-end
 window routing headlessly.
 
+Containers: Firefox-style persistent containers separate a site's
+state per purpose (Work, Shopping, ...).  Each named container runs
+on its own persistent QWebEngineProfile (storage name
+"arora-container-<id>", data under <app data>/containers/<id>/), so
+cookies, localStorage/IndexedDB and the other DOM stores, service
+workers and the Cache API, the http cache, the http-auth credential
+cache, permissions and the visited-links database are partitioned per
+container and per the default (non-container) profile — container tabs
+log into the same site independently.  The partition is verified
+against a loopback fixture in autotests/containermanager (cookie,
+localStorage, IndexedDB, service-worker, http-auth and http-cache
+checks).  Deliberately shared, application-level surfaces: browsing
+history and the icon store are one global database — a container visit
+is recorded like any other (private/Tor visits still record nothing);
+download history and the autofill/password stores are global too, and
+every container profile receives the same privacy interceptor, adblock
+rules, settings and scheme handlers as the normal profile.  Honest
+engine bound: Chromium's network service is shared process-wide, so
+sub-profile state it owns — DNS resolution caches, socket pools and
+TLS session resumption — may be shared between containers; containers
+isolate *storage and identity*, not the transport layer (the Tor
+window is the answer for traffic-level separation).  Containers cannot
+be used in private or Tor windows — those run single off-the-record
+profiles and persistent container state would defeat their purpose —
+and site rules ("always open this site in container X") never fire
+there either.
+
 Privacy: the "Connections & Storage" group on the Privacy preferences
 page carries the hardening toggles, all defaulting to the private
 choice.  Plain-http page loads are upgraded to https where a secure

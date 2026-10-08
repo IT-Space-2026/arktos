@@ -132,6 +132,14 @@ void ClearPrivateData::accept()
     profiles.append(BrowserProfile::normalProfile());
     profiles.append(ContainerManager::instance()->createdProfiles());
 
+    // CONT05: a container whose profile was never materialized this
+    // session keeps its cookies/storage/cache on disk untouched by
+    // every per-profile clear below — wipe the same classes directly.
+    // Nothing holds those trees open, so removal is immediate.
+    ContainerManager::instance()->clearUnmaterializedStorage(
+        m_cookies->isChecked(), m_siteData->isChecked(),
+        m_cache->isChecked(), m_browsingHistory->isChecked());
+
     if (m_browsingHistory->isChecked()) {
         HistoryManager::instance()->clear();
         // Chromium keeps its own visited-link database (the :visited

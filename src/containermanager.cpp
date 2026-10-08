@@ -27,12 +27,14 @@
 #include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qdir.h>
+#include <qfile.h>
 #include <qicon.h>
 #include <qinputdialog.h>
 #include <qlineedit.h>
 #include <qpainter.h>
 #include <qpixmap.h>
 #include <qsettings.h>
+#include <qstandardpaths.h>
 #include <qthread.h>
 #include <quuid.h>
 #include <qwebengineprofile.h>
@@ -140,6 +142,10 @@ bool ContainerManager::deleteContainer(const QString &id)
     if (id.isEmpty() || !isContainerId(id))
         return false;
 
+    // The live profile's paths are authoritative; a never-materialized
+    // container still has its storage root plus the derived cache and
+    // default-storage dirs Qt keys off the storage name (CONT05) —
+    // compute those unconditionally so deletion removes everything.
     QString storagePath;
     QString cachePath;
     if (QWebEngineProfile *profile = m_profiles.take(id)) {
@@ -149,6 +155,8 @@ bool ContainerManager::deleteContainer(const QString &id)
     }
     if (storagePath.isEmpty())
         storagePath = this->storagePath(id);
+    if (cachePath.isEmpty())
+        cachePath = cachePathFor(id);
 
     for (int i = m_containers.count() - 1; i >= 0; --i) {
         if (m_containers.at(i).id == id)
@@ -169,6 +177,7 @@ bool ContainerManager::deleteContainer(const QString &id)
     removeStorageTree(storagePath);
     if (!cachePath.isEmpty())
         removeStorageTree(cachePath);
+    removeStorageTree(defaultDataPathFor(id));
 
     emit containersChanged();
     emit siteRulesChanged();
@@ -194,11 +203,12 @@ void ContainerManager::removeStorageTree(const QString &path) const
 
 QWebEngineProfile *ContainerManager::profileFor(const QString &id)
 {
-    // CONT05: containers are persistent state and can never live on
-    // the tor profile — a tor process hands out no container at all,
-    // not even the "default container" notion (its profile IS a
-    // persistent store).
-    if (BrowserApplication::isTorMode())
+    // CONT05: containers are persistent state — an off-the-record
+    // session must never be handed one (a page on a persistent
+    // profile inside a "private" window would write to disk).
+    // isPrivate() already covers tor mode; a tor process hands out
+    // no container at all, not even the "default container" notion.
+    if (BrowserApplication::isPrivate())
         return nullptr;
     // The default container IS the normal browsing profile — no
     // separate storage, all existing state belongs to it.
@@ -265,6 +275,63 @@ QString ContainerManager::storagePath(const QString &id) const
 {
     return BrowserPaths::dataFilePath(QLatin1String("containers"))
         + QLatin1Char('/') + id;
+}
+
+// Qt derives a named profile's default paths as
+// <writableLocation>/QtWebEngine/<storageName>; the container root
+// only overrides persistentStoragePath, so the http cache dir and the
+// residue default dir still follow this formula (verified against a
+// materialized profile's cachePath()).
+QString ContainerManager::cachePathFor(const QString &id) const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+        + QLatin1String("/QtWebEngine/") + storageNameFor(id);
+}
+
+QString ContainerManager::defaultDataPathFor(const QString &id) const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QLatin1String("/QtWebEngine/") + storageNameFor(id);
+}
+
+void ContainerManager::clearUnmaterializedStorage(bool cookies, bool siteData,
+                                                  bool cache, bool visitedLinks)
+{
+    if (!cookies && !siteData && !cache && !visitedLinks)
+        return;
+    // Chromium's cookie database moved under Network/ in newer
+    // milestones — remove both layouts.
+    static const char *const cookieFiles[] = {
+        "Cookies", "Cookies-journal",
+        "Network/Cookies", "Network/Cookies-journal",
+    };
+    for (const Container &container : m_containers) {
+        const QString id = container.id;
+        if (m_profiles.contains(id))
+            continue;
+        const QString storage = storagePath(id);
+        if (cookies) {
+            for (const char *name : cookieFiles)
+                QFile::remove(storage + QLatin1Char('/') + QLatin1String(name));
+        }
+        if (visitedLinks)
+            QFile::remove(storage + QLatin1String("/Visited Links"));
+        if (siteData)
+            BrowserProfile::clearSiteStorageNow(storage);
+        if (cache)
+            removeStorageTree(cachePathFor(id));
+    }
+}
+
+void ContainerManager::wipeUnmaterializedStorage()
+{
+    for (const Container &container : m_containers) {
+        if (m_profiles.contains(container.id))
+            continue;
+        removeStorageTree(storagePath(container.id));
+        removeStorageTree(cachePathFor(container.id));
+        removeStorageTree(defaultDataPathFor(container.id));
+    }
 }
 
 void ContainerManager::reapplySettings()

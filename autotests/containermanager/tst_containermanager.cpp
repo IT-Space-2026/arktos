@@ -17,16 +17,18 @@
  * 02110-1301  USA
  */
 
-// CONT01: Firefox-style containers — the ContainerManager registry
+// CONT01-05: Firefox-style containers — the ContainerManager registry
 // (id/name/color persisted in QSettings), lazy per-container
 // QWebEngineProfiles under containers/<id>/, the shared
-// prepareProfile() service attach, cross-container cookie isolation,
-// profile persistence across a simulated restart, deletion hygiene
-// and the tor-mode refusal.
+// prepareProfile() service attach, cross-container cookie/DOM-storage/
+// auth/cache isolation, profile persistence across a simulated
+// restart, deletion and clear-data hygiene for containers never
+// materialized this session, and the off-the-record refusals.
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
 #include <qbuffer.h>
+#include <qcheckbox.h>
 #include <qdatastream.h>
 #include <qdir.h>
 #include <qimage.h>
@@ -48,9 +50,12 @@
 #include "adblocksubscription.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "clearprivatedata.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "historymanager.h"
 #include "opensearchmanager.h"
+#include "privacyrequestinterceptor.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 #include "tabbar.h"
@@ -91,8 +96,15 @@ public:
 
     QStringList requests;
     QStringList cookieHeaders;
+    // CONT05: "<target> <authorization>" for every request carrying
+    // credentials — http-auth isolation is checked on the wire.
+    QStringList authHeaders;
     QByteArray indexHtml;
     QByteArray setCookie;
+    // CONT05: Cache-Control response header, e.g. "public, max-age=3600".
+    QByteArray cacheControl;
+    // CONT05: a path that answers 401 Basic until it sees credentials.
+    QString protectedPath;
     // CONT04: target path -> absolute Location for 302 answers, so a
     // test can drive a mid-chain redirect across hosts.
     QHash<QString, QString> redirects;
@@ -110,6 +122,20 @@ private:
             if (line.startsWith("Cookie:"))
                 cookieHeaders.append(QString::fromUtf8(target + ' '
                                      + line.mid(7).trimmed()));
+            if (line.startsWith("Authorization:"))
+                authHeaders.append(QString::fromUtf8(target + ' '
+                                     + line.mid(14).trimmed()));
+        }
+
+        if (!protectedPath.isEmpty()
+            && QString::fromUtf8(target).startsWith(protectedPath)
+            && !request.contains("\nAuthorization:")) {
+            const QByteArray denied = "HTTP/1.0 401 Unauthorized\r\n"
+                "WWW-Authenticate: Basic realm=\"cont05\"\r\n"
+                "Content-Length: 0\r\nConnection: close\r\n\r\n";
+            socket->write(denied);
+            socket->disconnectFromHost();
+            return;
         }
 
         const QByteArray location =
@@ -132,12 +158,18 @@ private:
             mimeType = "text/html";
             body = indexHtml.isEmpty()
                 ? QByteArray("<html><body>ok</body></html>") : indexHtml;
+        } else if (target.endsWith(".js")) {
+            // CONT05: a service-worker script — any valid JS registers.
+            mimeType = "text/javascript";
+            body = "self.addEventListener('fetch',function(){});\n";
         }
 
         QByteArray response = "HTTP/1.0 200 OK\r\nContent-Type: " + mimeType
             + "\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n";
         if (!setCookie.isEmpty())
             response += "Set-Cookie: " + setCookie + "\r\n";
+        if (!cacheControl.isEmpty())
+            response += "Cache-Control: " + cacheControl + "\r\n";
         response += "Connection: close\r\n\r\n" + body;
         socket->write(response);
         socket->disconnectFromHost();
@@ -190,6 +222,40 @@ static bool hasCookie(CookieJar *jar, const QString &name)
     return false;
 }
 
+// CONT05: runJavaScript, synchronous — invalid QVariant on timeout.
+static QVariant evalJs(QWebEnginePage *page, const QString &script)
+{
+    QVariant result;
+    bool done = false;
+    page->runJavaScript(script,
+        [&result, &done](const QVariant &v) { result = v; done = true; });
+    for (int waited = 0; !done && waited < 15000; waited += 50)
+        QTest::qWait(50);
+    return result;
+}
+
+// CONT05: poll a page-side expression (e.g. "String(window.__flag||'')")
+// until it reports a non-empty string — the async IndexedDB/service-
+// worker probes resolve after loadFinished.
+static QString evalJsUntil(QWebEnginePage *page, const QString &script,
+                           int timeout = 15000)
+{
+    for (int waited = 0; waited < timeout; waited += 100) {
+        const QString value = evalJs(page, script).toString();
+        if (!value.isEmpty())
+            return value;
+        QTest::qWait(100);
+    }
+    return QString();
+}
+
+static bool writeMarker(const QString &path)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write("x") == 1;
+}
+
 class tst_ContainerManager : public QObject
 {
     Q_OBJECT
@@ -224,6 +290,20 @@ private slots:
     void siteRuleDiversion();
     void siteRuleRedirectChain();
     void siteRuleGates();
+
+    // CONT05: the isolation audit — an off-the-record session can
+    // never hold a container profile; every storage class stays
+    // partitioned per profile; delete/clear reach containers never
+    // materialized this session; and the deliberately app-global
+    // surfaces (history) are pinned so a regression makes noise.
+    void privateModeRefuses();
+    void domStorageIsolation();
+    void httpAuthIsolation();
+    void httpCacheIsolation();
+    void derivedPathCleanup();
+    void unmaterializedClear();
+    void clearDialogCoversUnmaterialized();
+    void historyIsGlobalByDesign();
 
 private:
     QString create(const QString &name = QString())
@@ -269,8 +349,11 @@ void tst_ContainerManager::init()
     }
     m_server->requests.clear();
     m_server->cookieHeaders.clear();
+    m_server->authHeaders.clear();
     m_server->indexHtml.clear();
     m_server->setCookie.clear();
+    m_server->cacheControl.clear();
+    m_server->protectedPath.clear();
     m_server->redirects.clear();
 }
 
@@ -377,6 +460,10 @@ void tst_ContainerManager::preparedServices()
              QWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
     // The per-profile cookie jar exists and is bound to this profile.
     QCOMPARE(CookieJar::instance(profile)->profile(), profile);
+    // CONT05: the composite privacy+adblock request interceptor is
+    // attached (profile-parented; there is no getter) — the adblock
+    // e2e proof is adblockAppliesOnContainerProfile below.
+    QVERIFY(profile->findChild<PrivacyRequestInterceptor*>() != nullptr);
 }
 
 // Cookies a page on container A receives stay inside A's store — the
@@ -1051,6 +1138,428 @@ void tst_ContainerManager::siteRuleGates()
         QVERIFY(m_server->requests.contains(
             QLatin1String("/cont04-here.html")));
     }
+}
+
+// CONT05 (c): private mode fails just as closed as tor — profileFor
+// refuses every id including the default, "new tab in container"
+// falls back to the single private profile, and reopen-in-container
+// is a no-op.  A persistent container inside a private window would
+// write to disk where the user expects nothing to be written.
+void tst_ContainerManager::privateModeRefuses()
+{
+    const QString id = create();
+    ContainerManager *manager = ContainerManager::instance();
+    // Materialize first — the refusal must cover a live profile too.
+    QVERIFY(manager->profileFor(id));
+
+    BrowserApplication::setPrivate(true);
+    QVERIFY(manager->profileFor(id) == nullptr);
+    QVERIFY(manager->profileFor(QString()) == nullptr);
+    // The private profile stays singular — every caller gets the one
+    // OTR instance.
+    QCOMPARE(BrowserApplication::webEngineProfile(),
+             BrowserProfile::privateProfile());
+
+    TabWidget widget;
+    WebView *tab = widget.makeNewTabInContainer(id, true);
+    QVERIFY(tab);
+    QVERIFY(tab->page()->profile()->isOffTheRecord());
+    QCOMPARE(tab->page()->profile(), BrowserProfile::privateProfile());
+    QCOMPARE(tab->containerId(), QString());
+
+    const int count = widget.count();
+    widget.reopenTabInContainer(0, id);
+    QCOMPARE(widget.count(), count);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QCOMPARE(widget.webView(0)->page()->profile(),
+             BrowserProfile::privateProfile());
+
+    BrowserApplication::setPrivate(false);
+    QVERIFY(manager->profileFor(id) != nullptr);
+}
+
+// CONT05 (a): DOM storage is profile-partitioned — localStorage,
+// IndexedDB and service-worker registrations planted on container A
+// are invisible to container B and to the default profile on the SAME
+// origin (the test server answers every profile identically).
+void tst_ContainerManager::domStorageIsolation()
+{
+    const QString idA = create();
+    const QString idB = create();
+    ContainerManager *manager = ContainerManager::instance();
+    QWebEngineProfile *profileA = manager->profileFor(idA);
+    QWebEngineProfile *profileB = manager->profileFor(idB);
+    QVERIFY(profileA && profileB && profileA != profileB);
+
+    // The seed page writes all three storage classes and raises
+    // __cont05seeded once IndexedDB committed and the service-worker
+    // registration resolved (or proved unsupported — __cont05sw then
+    // stays 'none' and the reader's sw check is skipped).
+    m_server->indexHtml = QByteArray(
+        "<html><body><script>"
+        "try{localStorage.setItem('cont05-ls','containerA')}catch(e){}"
+        "window.__cont05sw='none';"
+        "var cont05Left=2;"
+        "function cont05Done(){if(--cont05Left===0)window.__cont05seeded='yes'}"
+        "try{var rq=indexedDB.open('cont05-db',1);"
+        "rq.onupgradeneeded=function(e){e.target.result.createObjectStore('kv')};"
+        "rq.onsuccess=function(e){var tx=e.target.result.transaction('kv','readwrite');"
+        "tx.objectStore('kv').put('containerA','marker');"
+        "tx.oncomplete=cont05Done;tx.onerror=cont05Done};"
+        "rq.onerror=cont05Done}catch(e){cont05Done()}"
+        "try{if(navigator.serviceWorker&&navigator.serviceWorker.register){"
+        "navigator.serviceWorker.register('cont05-sw.js').then("
+        "function(){window.__cont05sw='yes';cont05Done()},"
+        "function(){cont05Done()})}else{cont05Done()}}"
+        "catch(e){cont05Done()}"
+        "</script></body></html>");
+
+    WebPage pageA(profileA);
+    QVERIFY(loadSync(&pageA, m_server->url(QLatin1String("/cont05-a.html"))));
+    QCOMPARE(evalJsUntil(&pageA,
+                         QStringLiteral("String(window.__cont05seeded||'')")),
+             QLatin1String("yes"));
+    const QString swSeed = evalJs(&pageA,
+        QStringLiteral("String(window.__cont05sw||'none')")).toString();
+    qInfo() << "cont05 service-worker seed state:" << swSeed;
+    QCOMPARE(evalJs(&pageA,
+        QStringLiteral("String(localStorage.getItem('cont05-ls'))")).toString(),
+        QLatin1String("containerA"));
+
+    // Read back on another profile of the same origin: "idb:fresh"
+    // means open() ran its upgrade — the database did not exist there;
+    // "sw:0" means no service-worker registrations are visible.
+    static const char probeScript[] =
+        "(function(){"
+        "var r='ls:'+String(localStorage.getItem('cont05-ls'));"
+        "var left=2;"
+        "function fin(){if(--left===0)window.__cont05probe=r}"
+        "try{var rq=indexedDB.open('cont05-db',1);"
+        "rq.onupgradeneeded=function(){r+=',idb:fresh'};"
+        "rq.onsuccess=function(e){if(r.indexOf('idb:')<0)r+=',idb:'+"
+        "(e.target.result.objectStoreNames.contains('kv')?'leaked':'empty');"
+        "fin()};"
+        "rq.onerror=function(){r+=',idb:error';fin()}"
+        "}catch(e){r+=',idb:throw';fin()}"
+        "try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations){"
+        "navigator.serviceWorker.getRegistrations().then("
+        "function(rs){r+=',sw:'+rs.length;fin()},"
+        "function(){r+=',sw:error';fin()})}else{r+=',sw:none';fin()}}"
+        "catch(e){r+=',sw:throw';fin()}"
+        "})();'go'";
+
+    m_server->indexHtml.clear();
+    const auto probeProfile = [&](QWebEngineProfile *profile,
+                                  const char *path) -> QString {
+        WebPage page(profile);
+        if (!loadSync(&page, m_server->url(QLatin1String(path))))
+            return QStringLiteral("load-failed");
+        evalJs(&page, QLatin1String(probeScript));
+        return evalJsUntil(&page,
+            QStringLiteral("String(window.__cont05probe||'')"));
+    };
+
+    const QString fromB = probeProfile(profileB, "/cont05-b.html");
+    QVERIFY2(fromB.contains(QLatin1String("ls:null")), qPrintable(fromB));
+    QVERIFY2(fromB.contains(QLatin1String(",idb:fresh")), qPrintable(fromB));
+    if (swSeed == QLatin1String("yes"))
+        QVERIFY2(fromB.contains(QLatin1String(",sw:0")), qPrintable(fromB));
+
+    const QString fromDefault =
+        probeProfile(BrowserApplication::webEngineProfile(), "/cont05-d.html");
+    QVERIFY2(fromDefault.contains(QLatin1String("ls:null")),
+             qPrintable(fromDefault));
+    QVERIFY2(fromDefault.contains(QLatin1String(",idb:fresh")),
+             qPrintable(fromDefault));
+    if (swSeed == QLatin1String("yes"))
+        QVERIFY2(fromDefault.contains(QLatin1String(",sw:0")),
+                 qPrintable(fromDefault));
+}
+
+// CONT05 (a): Chromium's preemptive http-auth cache lives in the
+// profile's network context — after container A authenticates, the
+// same realm on B and on the default profile challenges again, and
+// the wire never sees A's credentials leaving A's partition.
+void tst_ContainerManager::httpAuthIsolation()
+{
+    const QString idA = create();
+    const QString idB = create();
+    ContainerManager *manager = ContainerManager::instance();
+    QWebEngineProfile *profileA = manager->profileFor(idA);
+    QWebEngineProfile *profileB = manager->profileFor(idB);
+    QVERIFY(profileA && profileB);
+
+    // The realm is a path prefix — each profile exercises its own url
+    // so wire assertions can attribute Authorization headers without
+    // in-flight noise (e.g. a late favicon fetch on the same origin)
+    // polluting another profile's window.
+    m_server->protectedPath = QLatin1String("/cont05-auth");
+    const QByteArray credsA = QByteArray("aliceA:secretA").toBase64();
+    const QByteArray credsB = QByteArray("bobB:secretB").toBase64();
+    const QByteArray credsD = QByteArray("carolD:secretD").toBase64();
+    const auto authsFor = [this](const QString &path) {
+        QStringList out;
+        for (const QString &entry : m_server->authHeaders) {
+            if (entry.startsWith(path + QLatin1Char(' ')))
+                out << entry;
+        }
+        return out.join(QLatin1Char(';'));
+    };
+
+    const QString pathA = QLatin1String("/cont05-auth-a.html");
+    int challengesA = 0;
+    {
+        WebPage pageA(profileA);
+        connect(&pageA, &QWebEnginePage::authenticationRequired, this,
+            [&challengesA](const QUrl &, QAuthenticator *auth) {
+                ++challengesA;
+                auth->setUser(QLatin1String("aliceA"));
+                auth->setPassword(QLatin1String("secretA"));
+            });
+        QVERIFY(loadSync(&pageA, m_server->url(pathA)));
+        QVERIFY(challengesA >= 1);
+        QVERIFY(authsFor(pathA).contains(QLatin1String(credsA)));
+    }
+
+    // A repeat load inside A answers without a challenge — the
+    // credentials are cached, just inside A's partition.
+    int challengesA2 = 0;
+    {
+        WebPage pageA2(profileA);
+        connect(&pageA2, &QWebEnginePage::authenticationRequired, this,
+            [&challengesA2](const QUrl &, QAuthenticator *) {
+                ++challengesA2;
+            });
+        QVERIFY(loadSync(&pageA2, m_server->url(pathA)));
+        QCOMPARE(challengesA2, 0);
+    }
+
+    // B gets challenged — a shared auth cache would have answered
+    // silently with A's credentials.
+    const QString pathB = QLatin1String("/cont05-auth-b.html");
+    int challengesB = 0;
+    {
+        WebPage pageB(profileB);
+        connect(&pageB, &QWebEnginePage::authenticationRequired, this,
+            [&challengesB](const QUrl &, QAuthenticator *auth) {
+                ++challengesB;
+                auth->setUser(QLatin1String("bobB"));
+                auth->setPassword(QLatin1String("secretB"));
+            });
+        QVERIFY(loadSync(&pageB, m_server->url(pathB)));
+        QVERIFY(challengesB >= 1);
+    }
+    QVERIFY(authsFor(pathB).contains(QLatin1String(credsB)));
+    QVERIFY(!authsFor(pathB).contains(QLatin1String(credsA)));
+
+    // The default container challenges too, with its own credentials.
+    const QString pathD = QLatin1String("/cont05-auth-d.html");
+    int challengesD = 0;
+    {
+        WebPage pageD(BrowserApplication::webEngineProfile());
+        connect(&pageD, &QWebEnginePage::authenticationRequired, this,
+            [&challengesD](const QUrl &, QAuthenticator *auth) {
+                ++challengesD;
+                auth->setUser(QLatin1String("carolD"));
+                auth->setPassword(QLatin1String("secretD"));
+            });
+        QVERIFY(loadSync(&pageD, m_server->url(pathD)));
+        QVERIFY(challengesD >= 1);
+    }
+    QVERIFY(authsFor(pathD).contains(QLatin1String(credsD)));
+    QVERIFY(!authsFor(pathD).contains(QLatin1String(credsA)));
+    QVERIFY(!authsFor(pathD).contains(QLatin1String(credsB)));
+}
+
+// CONT05 (a): the http cache is per-profile — a resource container A
+// cached fresh (max-age) is fetched again by container B rather than
+// served from A's store.  A's repeat load proves the cache works at
+// all, so "B fetched" is isolation, not a dead cache.
+void tst_ContainerManager::httpCacheIsolation()
+{
+    const QString idA = create();
+    const QString idB = create();
+    ContainerManager *manager = ContainerManager::instance();
+    QWebEngineProfile *profileA = manager->profileFor(idA);
+    QWebEngineProfile *profileB = manager->profileFor(idB);
+    QVERIFY(profileA && profileB);
+
+    m_server->cacheControl = "public, max-age=3600";
+    const QString path = QLatin1String("/cont05-cache.png");
+    const QUrl url = m_server->url(path);
+    const auto hits = [this, &path] {
+        return m_server->requests.count(path);
+    };
+
+    {
+        WebPage pageA(profileA);
+        QVERIFY(loadSync(&pageA, url));
+        QCOMPARE(hits(), 1);
+    }
+    {
+        WebPage pageA2(profileA);
+        QVERIFY(loadSync(&pageA2, url));
+        QTest::qWait(300);
+        QCOMPARE(hits(), 1);    // served from A's own cache
+    }
+    {
+        WebPage pageB(profileB);
+        QVERIFY(loadSync(&pageB, url));
+        QCOMPARE(hits(), 2);    // A's cached copy is unreachable
+    }
+    {
+        WebPage pageDefault(BrowserApplication::webEngineProfile());
+        QVERIFY(loadSync(&pageDefault, url));
+        QCOMPARE(hits(), 3);
+    }
+}
+
+// CONT05: the derived on-disk paths — Qt keys a named profile's cache
+// dir and default-storage residue off the storage name, not the
+// overridden persistentStoragePath.  cachePathFor must predict the
+// live profile's real cachePath, and deleteContainer must remove all
+// three trees even when the profile was never materialized.
+void tst_ContainerManager::derivedPathCleanup()
+{
+    ContainerManager *manager = ContainerManager::instance();
+
+    const QString idLive = create();
+    QWebEngineProfile *profile = manager->profileFor(idLive);
+    QVERIFY(profile);
+    QCOMPARE(manager->cachePathFor(idLive), profile->cachePath());
+    QCOMPARE(manager->defaultDataPathFor(idLive),
+             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+             + QLatin1String("/QtWebEngine/") + profile->storageName());
+    QVERIFY(!profile->cachePath().contains(QLatin1String("/containers/")));
+
+    // A never-materialized container still has the on-disk residue an
+    // earlier session would have left — deletion must reach all of it.
+    const QString id = create();
+    const QString storage = manager->storagePath(id);
+    const QString cache = manager->cachePathFor(id);
+    const QString dflt = manager->defaultDataPathFor(id);
+    QVERIFY(!manager->profileIfCreated(id));
+    QVERIFY(QDir().mkpath(storage + QLatin1String("/Local Storage")));
+    QVERIFY(QDir().mkpath(cache + QLatin1String("/Cache")));
+    QVERIFY(QDir().mkpath(dflt));
+    QVERIFY(writeMarker(storage + QLatin1String("/Cookies")));
+
+    QVERIFY(manager->deleteContainer(id));
+    m_created.removeAll(id);
+    QVERIFY(!QDir(storage).exists());
+    QVERIFY(!QDir(cache).exists());
+    QVERIFY(!QDir(dflt).exists());
+}
+
+// CONT05: the ClearPrivateData claim reaches containers whose profile
+// was never materialized — on-disk cookies, site storage, cache and
+// visited-links files go away directly, while a materialized
+// container is skipped (its clears run through the live profile; the
+// trees must never be ripped out from under it, HARD01).
+void tst_ContainerManager::unmaterializedClear()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    const QString storage = manager->storagePath(id);
+    const QString cache = manager->cachePathFor(id);
+    QVERIFY(QDir().mkpath(storage + QLatin1String("/Network")));
+    QVERIFY(writeMarker(storage + QLatin1String("/Cookies")));
+    QVERIFY(writeMarker(storage + QLatin1String("/Network/Cookies")));
+    QVERIFY(writeMarker(storage + QLatin1String("/Visited Links")));
+    QVERIFY(QDir().mkpath(storage + QLatin1String("/Local Storage")));
+    QVERIFY(QDir().mkpath(storage + QLatin1String("/IndexedDB")));
+    QVERIFY(QDir().mkpath(cache + QLatin1String("/Cache")));
+
+    // Flag granularity: site-data only leaves the cookies alone.
+    const QString id2 = create();
+    const QString storage2 = manager->storagePath(id2);
+    QVERIFY(QDir().mkpath(storage2 + QLatin1String("/Local Storage")));
+    QVERIFY(writeMarker(storage2 + QLatin1String("/Cookies")));
+
+    const QString idLive = create();
+    QWebEngineProfile *live = manager->profileFor(idLive);
+    QVERIFY(live);
+    QVERIFY(QDir().mkpath(live->persistentStoragePath()
+                          + QLatin1String("/cont05-live-marker")));
+
+    manager->clearUnmaterializedStorage(false, true, false, false);
+    QVERIFY(!QDir(storage + QLatin1String("/Local Storage")).exists());
+    QVERIFY(!QDir(storage + QLatin1String("/IndexedDB")).exists());
+    QVERIFY(QFile::exists(storage + QLatin1String("/Cookies")));
+    QVERIFY(QFile::exists(storage + QLatin1String("/Visited Links")));
+    QVERIFY(QDir(cache).exists());
+    QVERIFY(!QDir(storage2 + QLatin1String("/Local Storage")).exists());
+    QVERIFY(QFile::exists(storage2 + QLatin1String("/Cookies")));
+
+    manager->clearUnmaterializedStorage(true, false, true, true);
+    QVERIFY(!QFile::exists(storage + QLatin1String("/Cookies")));
+    QVERIFY(!QFile::exists(storage + QLatin1String("/Network/Cookies")));
+    QVERIFY(!QFile::exists(storage + QLatin1String("/Visited Links")));
+    QVERIFY(!QDir(cache).exists());
+
+    // The materialized container's trees were skipped throughout.
+    QVERIFY(QDir(live->persistentStoragePath()
+                 + QLatin1String("/cont05-live-marker")).exists());
+
+    // The clear-all-on-exit counterpart removes every derived tree
+    // outright — the registry entry survives, only profile data goes.
+    const QString id3 = create();
+    const QString storage3 = manager->storagePath(id3);
+    const QString cache3 = manager->cachePathFor(id3);
+    const QString dflt3 = manager->defaultDataPathFor(id3);
+    QVERIFY(QDir().mkpath(storage3 + QLatin1String("/Network")));
+    QVERIFY(QDir().mkpath(cache3));
+    QVERIFY(QDir().mkpath(dflt3));
+    manager->wipeUnmaterializedStorage();
+    QVERIFY(!QDir(storage3).exists());
+    QVERIFY(!QDir(cache3).exists());
+    QVERIFY(!QDir(dflt3).exists());
+    QVERIFY(manager->isContainerId(id3));
+}
+
+// CONT05: end-to-end through the dialog — every checkbox ticked in
+// Clear Private Data must empty a container that was never opened
+// this session, not just the live profiles.
+void tst_ContainerManager::clearDialogCoversUnmaterialized()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    const QString storage = manager->storagePath(id);
+    const QString cache = manager->cachePathFor(id);
+    QVERIFY(writeMarker(storage + QLatin1String("/Cookies")));
+    QVERIFY(writeMarker(storage + QLatin1String("/Visited Links")));
+    QVERIFY(QDir().mkpath(storage + QLatin1String("/Local Storage")));
+    QVERIFY(QDir().mkpath(cache));
+
+    ClearPrivateData dialog;
+    const QList<QCheckBox*> boxes = dialog.findChildren<QCheckBox*>();
+    QVERIFY(!boxes.isEmpty());
+    for (QCheckBox *box : boxes)
+        box->setChecked(true);
+    dialog.accept();
+
+    QVERIFY(!QFile::exists(storage + QLatin1String("/Cookies")));
+    QVERIFY(!QFile::exists(storage + QLatin1String("/Visited Links")));
+    QVERIFY(!QDir(storage + QLatin1String("/Local Storage")).exists());
+    QVERIFY(!QDir(cache).exists());
+}
+
+// CONT05 (b): history is an application-level store — a container
+// page's visit lands in the same global HistoryManager a default tab
+// feeds.  Deliberate and documented (README "Containers"); the test
+// pins it so a silent behavior change trips a failure.
+void tst_ContainerManager::historyIsGlobalByDesign()
+{
+    const QString id = create();
+    QWebEngineProfile *profile = ContainerManager::instance()->profileFor(id);
+    QVERIFY(profile);
+    const QUrl url = m_server->url(QLatin1String("/cont05-history.html"));
+    {
+        WebPage page(profile);
+        QVERIFY(loadSync(&page, url));
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        HistoryManager::instance()->historyContains(url.toString()), 15000);
 }
 
 QTEST_MAIN(tst_ContainerManager)

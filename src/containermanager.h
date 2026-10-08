@@ -93,8 +93,9 @@ public:
 
     // The container's browsing profile, lazily created and prepared.
     // The default container resolves to BrowserProfile::normalProfile();
-    // unknown ids and tor mode resolve to nullptr — containers never
-    // exist on the tor profile (they are persistent state).
+    // unknown ids, private browsing and tor mode resolve to nullptr —
+    // containers are persistent state and must never be handed to an
+    // off-the-record session (CONT05; isPrivate() covers tor).
     QWebEngineProfile *profileFor(const QString &id);
     // Same lookup without materializing — nullptr until profileFor()
     // has created it (or when it was released/deleted).
@@ -112,6 +113,32 @@ public:
     // <app data dir>/containers/<id> — the profile's persistent
     // storage root.  Only meaningful for registered ids.
     QString storagePath(const QString &id) const;
+
+    // CONT05: the on-disk locations Qt derives from the container's
+    // storage name — <CacheLocation>/QtWebEngine/<storageName> for the
+    // http cache, and the mostly-empty default storage dir
+    // <AppDataLocation>/QtWebEngine/<storageName> Qt creates at profile
+    // construction before persistentStoragePath is overridden.  Both
+    // are computed WITHOUT materializing the profile so deletion and
+    // clear-data paths reach containers never used this session.
+    QString cachePathFor(const QString &id) const;
+    QString defaultDataPathFor(const QString &id) const;
+
+    // CONT05: removes per-class on-disk data for every registered
+    // container whose profile is NOT materialized — the live-profile
+    // paths in ClearPrivateData only reach materialized ones.  Nothing
+    // holds these trees open so removal is immediate (no deferred-wipe
+    // sentinel); visitedLinks also removes Chromium's "Visited Links"
+    // store.  Materialized containers are skipped — they are covered
+    // by the per-profile clears.
+    void clearUnmaterializedStorage(bool cookies, bool siteData,
+                                    bool cache, bool visitedLinks);
+
+    // CONT05: the clear-all-on-exit counterpart — removes every
+    // on-disk tree of every unmaterialized container (storage root,
+    // derived cache dir, derived default-storage dir).  The registry
+    // entries stay; this is profile data only.
+    void wipeUnmaterializedStorage();
 
     // Re-runs BrowserProfile::applySettings on every materialized
     // container profile — called from the settings save paths so a
