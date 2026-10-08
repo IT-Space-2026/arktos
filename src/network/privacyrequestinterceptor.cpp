@@ -46,6 +46,7 @@ static int s_securityLevel = PrivacyRequestInterceptor::Standard;
 static bool s_blockPings = true;
 static bool s_blockRemoteFonts = false;
 static bool s_blockPrefetch = true;
+static bool s_blockThirdPartyWebSockets = false;
 
 // Session-scoped set of hosts whose https main-frame load failed —
 // their http: requests stop being upgraded.  Written from the GUI
@@ -92,6 +93,8 @@ void PrivacyRequestInterceptor::loadSettings()
         settings.value(QLatin1String("blockRemoteFonts"), false).toBool();
     const bool blockPrefetch =
         settings.value(QLatin1String("blockPrefetch"), true).toBool();
+    const bool blockThirdPartyWebSockets =
+        settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
     QSet<QString> persistedHttpAllowed;
     const QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
@@ -110,6 +113,7 @@ void PrivacyRequestInterceptor::loadSettings()
         s_blockPings = blockPings;
         s_blockRemoteFonts = blockRemoteFonts;
         s_blockPrefetch = blockPrefetch;
+        s_blockThirdPartyWebSockets = blockThirdPartyWebSockets;
     }
     {
         const QMutexLocker lock(&s_httpAllowLock);
@@ -188,6 +192,12 @@ bool PrivacyRequestInterceptor::blockPrefetchEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_blockPrefetch;
+}
+
+bool PrivacyRequestInterceptor::blockThirdPartyWebSocketsEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_blockThirdPartyWebSockets;
 }
 
 // SAFE04: remote fonts fingerprint GPU/OS text stacks and ping a
@@ -503,6 +513,25 @@ static bool sameSite(const QString &a, const QString &b)
     return aBase == bBase;
 }
 
+// XSLEAK03: a cross-site WebSocket's connect accept/refuse outcome is
+// an XS-Leak oracle (xsinator's WebSocket vector) — and unlike the
+// response-header leaks, the upgrade request IS visible to the
+// interceptor as ResourceTypeWebSocket, so this is the one reachable
+// app-side mitigation.  Opt-in only: it breaks sites that legitimately
+// open sockets to another site.
+bool PrivacyRequestInterceptor::shouldBlockWebSocket(
+        const QUrl &firstPartyUrl, const QUrl &requestUrl,
+        QWebEngineUrlRequestInfo::ResourceType type)
+{
+    if (type != QWebEngineUrlRequestInfo::ResourceTypeWebSocket)
+        return false;
+    if (!blockThirdPartyWebSocketsEnabled())
+        return false;
+    if (firstPartyUrl.host().isEmpty())
+        return false;
+    return !sameSite(firstPartyUrl.host(), requestUrl.host());
+}
+
 // scheme://host[:port]/ — the "origin" a Referer is trimmed down to.
 static QByteArray refererOrigin(const QUrl &url)
 {
@@ -638,6 +667,19 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     }
 
     const QUrl url = info.requestUrl();
+
+    // XSLEAK03: opt-in third-party WebSocket block (default off) —
+    // the upgrade arrives classified ResourceTypeWebSocket, so this
+    // layer is the one place a cross-site socket can be refused.
+    if (shouldBlockWebSocket(info.firstPartyUrl(), url, resourceType)) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: third-party ws block"
+                 << url << "on" << info.firstPartyUrl();
+#endif
+        info.block(true);
+        return;
+    }
+
     if (httpsFirst
         && info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
         && isUpgradeCandidate(url)) {

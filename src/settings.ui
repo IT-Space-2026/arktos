@@ -1625,6 +1625,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="blockThirdPartyWebSockets">
+            <property name="toolTip">
+             <string>Refuse WebSocket connections to hosts outside the page's own site — whether a cross-site socket connects or is refused leaks state the site can read about you (cross-site leak oracle). Off by default: chat widgets, feeds and other real-time features legitimately open cross-site sockets.</string>
+            </property>
+            <property name="text">
+             <string>Block third-party WebSockets</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="clearOnExit">
             <property name="toolTip">
              <string>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</string>
@@ -2519,6 +2532,7 @@
   <tabstop>blockPings</tabstop>
   <tabstop>blockPrefetch</tabstop>
   <tabstop>blockRemoteFonts</tabstop>
+  <tabstop>blockThirdPartyWebSockets</tabstop>
   <tabstop>clearOnExit</tabstop>
   <tabstop>reportUtcTimezone</tabstop>
   <tabstop>normalizeAcceptLanguage</tabstop>

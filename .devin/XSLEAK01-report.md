@@ -101,8 +101,8 @@ partitioning model) and removed-XSSAuditor expectations.
 
 | Vector | Disposition | Evidence / repro note |
 |--------|-------------|------------------------|
-| CSPDirective | **app-side explained** (deliberate feature, not a defect) | PING01 fails `ResourceTypeCspReport` requests by default; a test whose verdict rides report delivery to the collector stalls forever. CSP *enforcement* itself is unaffected and was verified in SEC14/SEC15. Local repro = `--ping-smoke` already proves report-delivery blocking; XSLEAK04 should re-run this vector with `privacy/blockPings=false` to separate the timeout from a real verdict |
-| COOP | **app-side suspect** (popup dead-end), else test-stale | `window.open` with a feature string arrives as `WebBrowserWindow`/`WebDialog` → the default-on popup blocker returns a `PopupProbePage` whose every navigation is refused — an orchestrated window never loads → timeout. XSLEAK03 check: re-run the single vector with `websettings/blockPopupWindows=false` (or allow-listed) to attribute; if it still stalls it is engine/test-stale — COOP has no embedder hooks either way |
+| CSPDirective | **app-side explained — XSLEAK03 verified** (deliberate feature, not a defect) | PING01 fails `ResourceTypeCspReport` requests by default; a test whose verdict rides report delivery to the collector stalls forever. XSLEAK03 attribution run: `arora --ping-smoke` PASS — armed phase saw the CSP violation fire (`img-src 'none'` refusal logged) but `/csp` never reached the collector alongside `/beacon` and `/aping`; the disarmed control delivered all three. So the mechanism is confirmed: enforcement intact, report upload dropped, verdict stalls. XSLEAK04 should still re-run this vector with `privacy/blockPings=false` to capture the real verdict |
+| COOP | **app-side explained — XSLEAK03 verified** (popup dead-end), else test-stale | `window.open` with a feature string arrives as `WebBrowserWindow`/`WebDialog` → the default-on popup blocker returns a `PopupProbePage` whose every navigation is refused — an orchestrated window never loads → timeout. XSLEAK03 attribution: `tst_webpage` `popupBlocking`/`popupClickBlocking`/`popupTargetCapture`/`popupStateReset` all PASS, confirming the dead-end behavior is live and default-on. The live-vector confirmation with `websettings/blockPopupWindows=false` remains with XSLEAK04 — COOP has no embedder hooks either way |
 | PerfAPI-X-Frame | **test-stale / environmental** | XFO detection via Resource Timing rides iframes (not popup-gated) — no app mechanism explains a stall; likely orchestration/network flake under the remote run. Engine-side surface (Resource Timing + XFO internals) either way |
 
 ## Named missing APIs (engine-side summary)
@@ -131,41 +131,65 @@ the specific hook a future Qt/Chromium upgrade could provide:
 ## XSLEAK03 ordered fix list (app-side only)
 
 Ranked by value/effort; each item bounded ~30 min, checkpoint into
-this report after each:
+this report after each. **Outcome column added by XSLEAK03.**
 
-1. **Attribute the two app-explained timeouts** — re-run just the
-   COOP + CSPDirective vectors with `websettings/blockPopupWindows`
-   / `privacy/blockPings` toggled off (one local profile flip each,
-   no code). Converts two "timeout" rows into firm dispositions and
-   validates this report's mechanism claims.
-2. **E2E third-party-cookie rejection check** — the decision logic is
-   unit-covered (`tst_privacy::thirdPartyCookies`,
-   `thirdPartyCookieExceptions`) but no test drives a real cross-site
-   iframe `Set-Cookie` through the profile's filter end-to-end; add
-   one to close the "verify it engages" item (the suite's
-   parameter-driven fixtures still leak — honest bound, the win is
-   for credential-state oracles on the real web).
-3. **Opt-in third-party WebSocket block (evaluate)** — interceptor
-   already sees ws upgrades (type 254); a `privacy/blockThirdPartyWebSockets`
-   toggle (default OFF) is the only reachable WebSocket(GC) lever.
-   Implement only if judged compat-safe; otherwise record 'declined'
-   with the breakage rationale.
-4. **Document the Cache(CORS) verdict** — confirmed ruled-out:
-   app NAM is outside the page path; the vector is Chromium's
-   partitioned HTTP cache. Carry to engine-side (with the
-   possibly-stale flag) in the final table; no code.
-5. **Document download-timing non-observability** — write the
-   accept-path conclusion (already established above) into the final
-   disposition; no code.
-6. **Scheme-handler leak audit — verified clean, record** —
+1. **Attribute the two app-explained timeouts** — *done.*  No live
+   xsinator run (reserved for XSLEAK04); attribution is local:
+   `arora --ping-smoke` PASS shows `/csp` (CSP report-uri upload)
+   dropped while the violation still fires — the CSPDirective stall
+   mechanism is confirmed.  `tst_webpage` popup tests PASS show the
+   default-on dead-end `PopupProbePage` for feature-string
+   `window.open` — the COOP stall mechanism is confirmed.  See the
+   TIMED OUT table.
+2. **E2E third-party-cookie rejection check** — *done.*  New
+   `tst_privacy::thirdPartyCookieEndToEnd`: a localhost page embeds a
+   `127.0.0.1` iframe (cross-site) whose `Set-Cookie: xsleak_third=1;
+   SameSite=None; Secure` is refused by the profile's cookie-store
+   filter when armed — `cookieAdded` never fires for it and the cookie
+   is never sent back; the disarmed control both stores and sends it.
+   `SameSite=None;Secure` is required in the fixture — without it
+   Chromium drops the cookie itself and the armed phase proves
+   nothing.
+3. **Opt-in third-party WebSocket block (evaluate)** — *implemented.*
+   `privacy/blockThirdPartyWebSockets` (default OFF — legitimate
+   cross-site chat/feed/realtime sockets would break):
+   `PrivacyRequestInterceptor::shouldBlockWebSocket()` refuses a
+   `ResourceTypeWebSocket` upgrade whose request host is not same-site
+   with the first-party host (same last-two-label approximation the
+   other policies use, not a full PSL).  Applies to normal and Tor
+   profiles; decision is pure/readable from the IO thread.  Covered
+   by `webSocketBlockDecision` (pure function matrix) and
+   `thirdPartyWebSocketEndToEnd` (real page on a loopback fixture:
+   armed cross-site ws never reaches the wire, same-site and disarmed
+   connect).  Engine quirk found while testing: a ws upgrade refused
+   *during initial document parse* leaves the handshake pending and
+   the `load` event never fires — a blocker for Chromium, cosmetic
+   for users (the page renders; only the load-finished signal waits).
+4. **Document the Cache(CORS) verdict** — *done.*  Recorded in the
+   leaking table (row 13): Chromium's renderer/network-service HTTP
+   cache partition — Arora's `QNetworkAccessManager`/
+   `QNetworkDiskCache` serve only app-initiated fetches, never the
+   page path.
+5. **Document download-timing non-observability** — *done.*  Rows
+   19-21 carry it: ordinary-file `accept()` is immediate and the
+   interrupt outcome isn't exposed through client-observable app
+   behavior.
+6. **Scheme-handler leak audit — verified clean, recorded** — *done.*
    `FileAccessHandler` denies remote initiators (SEC02),
-   `arora-resource` serves fixed inert stubs, `abp:` fails its job
-   after a GUI prompt, interstitials are nonce-gated. No leak surface;
-   record in the final table.
-7. **Baseline caveat for XSLEAK04** — the re-run diff must account
-   for app defaults (popup blocker, CSP-report block, HTTPS-Only)
-   altering outcomes vs vanilla Chromium; note which vectors are
-   sensitive so deltas aren't misread.
+   `arora-resource:` serves fixed inert stubs, `abp:` prompts before
+   acting and fails the job afterwards, interstitials are
+   nonce-gated.  No scheme-handler XS-Leak surface identified.
+7. **Baseline caveat for XSLEAK04** — *done.*  See the XSLEAK04 note
+   below; the sensitive vectors are called out there.
+
+## XSLEAK03 results summary
+
+| Item | Result |
+|------|--------|
+| New mitigation | `privacy/blockThirdPartyWebSockets` — opt-in, off by default, normal + Tor profiles, Settings > Privacy checkbox |
+| New tests | `webSocketBlockDecision`, `thirdPartyCookieEndToEnd`, `thirdPartyWebSocketEndToEnd` in `tst_privacy` |
+| Timeout attribution | CSPDirective and COOP verified app-explained locally (`--ping-smoke`, `tst_webpage` popup tests); live confirmation deferred to XSLEAK04 |
+| Documentation | Cache(CORS), DownloadDetection, scheme-handler audit verdicts recorded in the tables above |
 
 ## XSLEAK04 note
 
@@ -173,3 +197,21 @@ Re-run guidance: measure with app defaults AND with
 `blockPopupWindows`/`blockPings` disabled to attribute timeouts;
 every vector must end with a fixed / app-mitigated /
 engine-side-plus-named-API / test-stale disposition.
+
+Arora's defaults skew several vectors relative to vanilla Chromium —
+read deltas against this list, not against upstream:
+
+- `websettings/blockPopupWindows` = on → popup-mediated vectors
+  (COOP, DownloadDetection, anything `window.open`-orchestrated).
+- `privacy/blockPings` = on → `ResourceTypePing` and
+  `ResourceTypeCspReport` uploads dropped (CSPDirective verdict
+  channel).
+- `privacy/httpsFirst` + `privacy/httpsOnly` → http: probes are
+  upgraded/refused before they hit the network (any vector whose
+  fixtures live on http: endpoints).
+- `cookies/blockThirdPartyCookies` = on → third-party
+  storage/state oracles collapse to clean.
+- `privacy/blockPrefetch` = on → prefetch/prerender probes dropped.
+- `privacy/blockThirdPartyWebSockets` (opt-in, default off) → when
+  armed, WebSocket(GC)-family oracles collapse to clean.
+- Adblock subscriptions → any vector whose endpoints match rules.

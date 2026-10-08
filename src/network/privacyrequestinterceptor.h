@@ -218,6 +218,19 @@ public:
             QWebEngineUrlRequestInfo::ResourceType type,
             const QHash<QByteArray, QByteArray> &headers);
 
+    // XSLEAK03: the persisted privacy/blockThirdPartyWebSockets toggle
+    // (default off — opt-in: chat widgets, feeds and other real-time
+    // features legitimately open cross-site sockets) as loaded into
+    // the IO-thread snapshot.  shouldBlockWebSocket() is the pure
+    // decision both interceptors consult — true for a ws:/wss: upgrade
+    // whose target host is not same-site with the top-level page.
+    // A request without a first-party context is left alone: there is
+    // no page it could be third-party to.
+    static bool blockThirdPartyWebSocketsEnabled();
+    static bool shouldBlockWebSocket(
+            const QUrl &firstPartyUrl, const QUrl &requestUrl,
+            QWebEngineUrlRequestInfo::ResourceType type);
+
     // SAFE01: HTTPS-Only strict mode (privacy/httpsOnly, default on).
     // A main-frame navigation that is still http: after the
     // https-first upgrade pass is refused and WebPage shows a

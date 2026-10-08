@@ -66,6 +66,15 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         info.block(true);
         return;
     }
+    // XSLEAK03: the opt-in third-party WebSocket block applies in tor
+    // windows too — a cross-site socket's connect outcome is the same
+    // state oracle, and the upgrade is interceptor-visible.
+    if (PrivacyRequestInterceptor::shouldBlockWebSocket(
+            info.firstPartyUrl(), info.requestUrl(),
+            info.resourceType())) {
+        info.block(true);
+        return;
+    }
     // SECLVL: the only http: left here is .onion — Safer drops its
     // script-execution fetches just like on the normal profile.
     if (PrivacyRequestInterceptor::shouldBlockScript(

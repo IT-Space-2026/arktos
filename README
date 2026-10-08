@@ -135,6 +135,11 @@ drops <link rel=prefetch> and speculation-rules prefetch loads —
 pages fetched only because a link pointed at them — and "Block
 remote web fonts" (off by default, opt-in) drops downloadable fonts,
 a fingerprinting vector; local/system fonts are unaffected.
+A third opt-in toggle, "Block third-party WebSockets" (off by
+default), refuses ws:/wss: upgrade requests to hosts that are not
+same-site with the page — a cross-site socket's connect/refuse
+difference is a classic XS-Leak oracle; it stays opt-in because
+legitimate real-time features can use cross-site sockets.
 
 Zero telemetry: a clean launch opens no unsolicited outbound
 connections.  Chromium's background channels (field-trial/variations

@@ -36,16 +36,27 @@
 #include <qtest_arora.h>
 
 #include <acceptlanguagedialog.h>
+#include <adblocknetwork.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
+#include <webpage.h>
 
+#include <qcryptographichash.h>
 #include <qdir.h>
+#include <qhostaddress.h>
+#include <qnetworkcookie.h>
 #include <qsettings.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtemporarydir.h>
 #include <qurl.h>
+#include <qwebenginecookiestore.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
+#include <qwebengineurlrequestinfo.h>
+
+#include <memory>
 
 class tst_Privacy : public QObject
 {
@@ -72,9 +83,12 @@ private slots:
     void securityLevelAttributes();
 
     void resourceBlockToggles();
+    void webSocketBlockDecision();
 
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
+    void thirdPartyCookieEndToEnd();
+    void thirdPartyWebSocketEndToEnd();
 
     void deferredWipe();
     void deferredExitWipe();
@@ -98,6 +112,7 @@ private:
     QVariant m_savedNormalizeLang;
     QVariant m_savedBlockRemoteFonts;
     QVariant m_savedBlockPrefetch;
+    QVariant m_savedBlockThirdPartyWs;
     QVariant m_savedAcceptLanguages;
     bool m_savedTzSet;
     QByteArray m_savedTz;
@@ -137,6 +152,8 @@ void tst_Privacy::initTestCase()
         settings.value(QLatin1String("privacy/blockRemoteFonts"));
     m_savedBlockPrefetch =
         settings.value(QLatin1String("privacy/blockPrefetch"));
+    m_savedBlockThirdPartyWs =
+        settings.value(QLatin1String("privacy/blockThirdPartyWebSockets"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -173,6 +190,7 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("network/acceptLanguages"), m_savedAcceptLanguages);
     restoreSetting(settings, QLatin1String("privacy/blockRemoteFonts"), m_savedBlockRemoteFonts);
     restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
+    restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -194,6 +212,7 @@ void tst_Privacy::init()
                       int(PrivacyRequestInterceptor::Standard));
     settings.setValue(QLatin1String("blockRemoteFonts"), false);
     settings.setValue(QLatin1String("blockPrefetch"), true);
+    settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -670,6 +689,342 @@ void tst_Privacy::thirdPartyCookieExceptions()
     jar.setBlockedCookies(QStringList() << QLatin1String("cdn.needed.com"));
     QVERIFY(!jar.isAllowedForHost(QLatin1String("cdn.needed.com"), true));
     QVERIFY(!jar.isAllowedForHost(QLatin1String("cdn.needed.com"), false));
+}
+
+// XSLEAK03: decision-level coverage for the opt-in third-party
+// WebSocket block; the wire-level half is thirdPartyWebSocketEndToEnd.
+void tst_Privacy::webSocketBlockDecision()
+{
+    typedef QWebEngineUrlRequestInfo I;
+    typedef PrivacyRequestInterceptor P;
+    const QUrl pageUrl(QLatin1String("https://example.com/"));
+    const QUrl sameSiteSocket(QLatin1String("wss://api.example.com/socket"));
+    const QUrl crossSiteSocket(QLatin1String("wss://tracker.io/socket"));
+
+    // Default off — nothing is refused regardless of the parties.
+    QVERIFY(!P::blockThirdPartyWebSocketsEnabled());
+    QVERIFY(!P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
+                                     I::ResourceTypeWebSocket));
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("blockThirdPartyWebSockets"), true);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+
+    QVERIFY(P::blockThirdPartyWebSocketsEnabled());
+    QVERIFY(P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
+                                    I::ResourceTypeWebSocket));
+    // Same-site sockets and non-socket resource types are untouched.
+    QVERIFY(!P::shouldBlockWebSocket(pageUrl, sameSiteSocket,
+                                     I::ResourceTypeWebSocket));
+    QVERIFY(!P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
+                                     I::ResourceTypeXhr));
+    // No first-party context -> nothing to be third-party to.
+    QVERIFY(!P::shouldBlockWebSocket(QUrl(), crossSiteSocket,
+                                     I::ResourceTypeWebSocket));
+
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(!P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
+                                     I::ResourceTypeWebSocket));
+    init();
+}
+
+// XSLEAK03: loopback fixture for the cross-site e2e checks.  One
+// QTcpServer answers both the "localhost" parent page and the
+// "127.0.0.1" endpoints — different hosts are different sites, so a
+// frame on 127.0.0.1 inside a localhost document is genuinely
+// third-party.  The request log is the observable evidence: what the
+// interceptor or the cookie filter refuses never reaches the wire.
+// Every response is marked no-store so Chromium's heuristic cache
+// cannot hide a refetch.
+class LeakProbeServer : public QObject
+{
+    Q_OBJECT
+
+public:
+    LeakProbeServer(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            QTcpSocket *socket = m_server.nextPendingConnection();
+            socket->setParent(&m_server);
+            connect(socket, &QTcpSocket::readyRead, this,
+                    [this, socket]() {
+                if (!socket->peek(8192).contains("\r\n\r\n"))
+                    return;
+                respond(socket, socket->readAll());
+            });
+        });
+    }
+
+    bool start()
+    {
+        // Any covers both stacks — "localhost" may resolve to ::1
+        // while the third-party endpoint is written 127.0.0.1.
+        return m_server.listen(QHostAddress::Any);
+    }
+
+    int port() const
+    {
+        return m_server.serverPort();
+    }
+
+    QString localUrl(const QString &host, const QString &path) const
+    {
+        return QString::fromLatin1("http://%1:%2%3")
+            .arg(host).arg(m_server.serverPort()).arg(path);
+    }
+
+    QStringList requests;                      // every request target
+    QHash<QString, QByteArray> cookieHeaders;  // path -> Cookie header
+
+private:
+    void respond(QTcpSocket *socket, const QByteArray &request)
+    {
+        const QByteArray target = request.split(' ').value(1);
+        requests.append(QString::fromUtf8(target));
+        for (const QByteArray &line : request.split('\n')) {
+            if (line.startsWith("Cookie:"))
+                cookieHeaders[QString::fromUtf8(target)] =
+                    line.mid(7).trimmed();
+        }
+
+        const QByteArray port = QByteArray::number(m_server.serverPort());
+        if (target == "/ws") {
+            // Minimal RFC 6455 accept — the socket is left open so the
+            // page's WebSocket reaches readyState OPEN.
+            QByteArray key;
+            for (const QByteArray &line : request.split('\n')) {
+                if (line.startsWith("Sec-WebSocket-Key:"))
+                    key = line.mid(18).trimmed();
+            }
+            const QByteArray accept = QCryptographicHash::hash(
+                key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
+                QCryptographicHash::Sha1).toBase64();
+            socket->write("HTTP/1.1 101 Switching Protocols\r\n"
+                          "Upgrade: websocket\r\n"
+                          "Connection: Upgrade\r\n"
+                          "Sec-WebSocket-Accept: " + accept + "\r\n\r\n");
+            socket->flush();
+            return;
+        }
+
+        QByteArray extraHeaders;
+        QByteArray body;
+        if (target.startsWith("/parent") || target.startsWith("/wspage"))
+            extraHeaders += "Set-Cookie: xsleak_first=1; Path=/\r\n";
+        if (target.startsWith("/parent")) {
+            body = "<html><body><iframe src=\"http://127.0.0.1:" + port
+                   + "/frame\"></iframe></body></html>";
+        } else if (target.startsWith("/wspage")) {
+            // Plain host page — the test drives WebSocket connects
+            // through runJavaScript once the load settles.  (A ws
+            // upgrade refused during initial parse never resolves
+            // Chromium's pending handshake, so the load event — and
+            // loadFinished — would hang; the post-load connect tests
+            // the same interceptor path without that quirk.)
+            body = "<html><body>ws host page</body></html>";
+        } else if (target.startsWith("/frame")) {
+            // SameSite=None is required because Chromium drops
+            // Lax-by-default third-party cookies on its own — with it,
+            // only Arora's cookie filter can veto this Set-Cookie, so
+            // the armed/disarmed phases isolate the filter's effect.
+            // (Secure rides along because SameSite=None demands it;
+            // Chromium accepts Secure cookies from loopback origins.)
+            extraHeaders += "Set-Cookie: xsleak_third=1; Path=/; "
+                            "SameSite=None; Secure\r\n";
+            body = "<html><body>frame</body></html>";
+        } else {
+            body = "<html><body>probe</body></html>";
+        }
+        socket->write("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                      "Cache-Control: no-store\r\n"
+                      + extraHeaders
+                      + "Content-Length: "
+                      + QByteArray::number(body.size())
+                      + "\r\nConnection: close\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    }
+
+    QTcpServer m_server;
+};
+
+// Spins the event loop until flag flips or the deadline passes —
+// QTest's QTRY_* macros can't live in helpers that return a value.
+static bool waitFor(const std::shared_ptr<bool> &flag, int timeout = 15000)
+{
+    for (int waited = 0; !*flag && waited < timeout; waited += 50)
+        QTest::qWait(50);
+    return *flag;
+}
+
+static bool loadSync(QWebEnginePage *page, const QUrl &url)
+{
+    std::shared_ptr<bool> done(new bool(false));
+    std::shared_ptr<bool> ok(new bool(false));
+    QMetaObject::Connection connection = QObject::connect(
+        page, &QWebEnginePage::loadFinished, page,
+        [done, ok](bool result) { *done = true; *ok = result; });
+    page->load(url);
+    waitFor(done);
+    QObject::disconnect(connection);
+    return *ok;
+}
+
+static QVariant evalSync(QWebEnginePage *page, const QString &script)
+{
+    std::shared_ptr<bool> done(new bool(false));
+    std::shared_ptr<QVariant> result(new QVariant);
+    page->runJavaScript(script,
+                        [done, result](const QVariant &value) {
+        *result = value;
+        *done = true;
+    });
+    waitFor(done);
+    return *result;
+}
+
+// XSLEAK03 fix item (a): prove the PRIV01 third-party cookie block
+// engages end-to-end — a real cross-site iframe Set-Cookie through the
+// profile's cookie-store filter.  The page lives on localhost and the
+// frame on 127.0.0.1: different hosts are different sites, so the
+// frame's cookie is genuinely third-party.
+void tst_Privacy::thirdPartyCookieEndToEnd()
+{
+    LeakProbeServer server;
+    QVERIFY(server.start());
+
+    // A throwaway off-the-record profile — storage works in memory and
+    // nothing persists past the test.
+    QWebEngineProfile *profile = new QWebEngineProfile(this);
+    CookieJar *jar = new CookieJar(profile, this);
+    jar->setBlockedCookies(QStringList());
+    jar->setAllowedCookies(QStringList());
+    jar->setAllowForSessionCookies(QStringList());
+    jar->setAcceptPolicy(CookieJar::AcceptAlways);
+
+    QStringList added;
+    connect(profile->cookieStore(),
+            &QWebEngineCookieStore::cookieAdded, this,
+            [&added](const QNetworkCookie &cookie) {
+        added.append(QString::fromUtf8(cookie.name()));
+    });
+
+    WebPage page(profile);
+    jar->setBlockThirdPartyCookies(true);
+    QVERIFY(loadSync(&page,
+            QUrl(server.localUrl(QLatin1String("localhost"),
+                                 QLatin1String("/parent")))));
+    QTRY_VERIFY(server.requests.contains(QLatin1String("/frame")));
+    QTest::qWait(400);   // the store commit trails the request log
+
+    // Armed: the parent's first-party cookie lands but the cross-site
+    // frame's does not — storage-level proof the filter vetoed it.
+    QVERIFY(added.contains(QLatin1String("xsleak_first")));
+    QVERIFY(!added.contains(QLatin1String("xsleak_third")));
+
+    // A same-site hop on the frame's origin would send the cookie back
+    // had it been stored.
+    QVERIFY(loadSync(&page,
+            QUrl(server.localUrl(QLatin1String("127.0.0.1"),
+                                 QLatin1String("/probe")))));
+    QVERIFY(!server.cookieHeaders.value(QLatin1String("/probe"))
+                 .contains("xsleak_third"));
+
+    // Control: the same fixture with the block off must both store and
+    // send the third-party cookie — otherwise the armed phase proved
+    // nothing.
+    jar->setBlockThirdPartyCookies(false);
+    QVERIFY(loadSync(&page,
+            QUrl(server.localUrl(QLatin1String("localhost"),
+                                 QLatin1String("/parent?off")))));
+    QTRY_VERIFY(server.requests.count(QLatin1String("/frame")) >= 2);
+    QTRY_VERIFY(added.contains(QLatin1String("xsleak_third")));
+    QVERIFY(loadSync(&page,
+            QUrl(server.localUrl(QLatin1String("127.0.0.1"),
+                                 QLatin1String("/probe2")))));
+    QVERIFY(server.cookieHeaders.value(QLatin1String("/probe2"))
+                .contains("xsleak_third=1"));
+}
+
+// XSLEAK03 fix item (e): the opt-in third-party WebSocket block —
+// armed, a ws:// upgrade from a localhost page to 127.0.0.1 is
+// refused inside the interceptor (never reaches the server and the
+// socket never opens); same-site and disarmed sockets connect.
+// The socket is created after the load settles: a ws refused during
+// initial parse leaves Chromium's pending handshake unresolved and the
+// load event never fires, which would test the engine quirk rather
+// than the policy.
+static QString wsProbeScript(const QString &host, int port,
+                             const QString &slot)
+{
+    return QString::fromLatin1(
+        "window.%1='pending';"
+        "window.%1_ws=new WebSocket('ws://%2:%3/ws');"
+        "window.%1_ws.onopen=function(){window.%1='open';};"
+        "window.%1_ws.onerror=window.%1_ws.onclose=function(){"
+        "window.%1=window.%1==='pending'?'fail':window.%1;};'started'")
+        .arg(slot, host).arg(port);
+}
+
+void tst_Privacy::thirdPartyWebSocketEndToEnd()
+{
+    LeakProbeServer server;
+    QVERIFY(server.start());
+
+    QWebEngineProfile *profile = new QWebEngineProfile(this);
+    // The real interceptor path, with an empty adblock matcher — this
+    // test is about the privacy stages, not the rules engine.
+    profile->setUrlRequestInterceptor(new PrivacyRequestInterceptor(
+        new AdBlockNetwork(profile), profile));
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("blockThirdPartyWebSockets"), true);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+
+    WebPage page(profile);
+    QVERIFY(loadSync(&page,
+            QUrl(server.localUrl(QLatin1String("localhost"),
+                                 QLatin1String("/wspage")))));
+
+    // Armed: the cross-site upgrade is refused inside the interceptor —
+    // the wire stays clean and the socket never reaches OPEN.
+    evalSync(&page, wsProbeScript(QLatin1String("127.0.0.1"),
+                                  server.port(),
+                                  QLatin1String("__wsCross")));
+    QTest::qWait(500);   // give a wrongly-passed request time to land
+    QVERIFY(!server.requests.contains(QLatin1String("/ws")));
+    QTRY_VERIFY(evalSync(&page, QLatin1String(
+        "String(window.__wsCross)")).toString() != QLatin1String("open"));
+
+    // Same-site control: localhost -> localhost connects even while
+    // the cross-site block is armed.
+    evalSync(&page, wsProbeScript(QLatin1String("localhost"),
+                                  server.port(),
+                                  QLatin1String("__wsSame")));
+    QTRY_COMPARE(evalSync(&page, QLatin1String(
+        "String(window.__wsSame)")).toString(), QLatin1String("open"));
+    QCOMPARE(server.requests.count(QLatin1String("/ws")), 1);
+
+    // Disarmed: the identical cross-site socket connects.
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    evalSync(&page, wsProbeScript(QLatin1String("127.0.0.1"),
+                                  server.port(),
+                                  QLatin1String("__wsOff")));
+    QTRY_COMPARE(evalSync(&page, QLatin1String(
+        "String(window.__wsOff)")).toString(), QLatin1String("open"));
+    QVERIFY(server.requests.count(QLatin1String("/ws")) >= 2);
+
+    init();
 }
 
 // Seeds a fake profile storage tree with the site-data dirs the wipe
