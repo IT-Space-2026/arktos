@@ -631,10 +631,11 @@ void tst_Dialogs::clearSiteData()
     QTRY_VERIFY(hasSeededCookie());
 
     // Chromium commits localStorage to its leveldb lazily (several
-    // seconds) — wait until the seeded value is actually on disk so
-    // the filesystem wipe is genuinely exercised.
+    // seconds — under a loaded make-check run the commit interval can
+    // stretch well past 20s) — wait until the seeded value is actually
+    // on disk so the filesystem wipe is genuinely exercised.
     bool onDisk = false;
-    for (int ms = 0; ms < 20000 && !onDisk; ms += 250) {
+    for (int ms = 0; ms < 90000 && !onDisk; ms += 250) {
         QTest::qWait(250);
         onDisk = storageTreeContains(storagePath, QByteArrayLiteral("sec12val"));
     }

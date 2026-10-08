@@ -256,6 +256,7 @@ void tst_WebPage::initTestCase()
 
     QDesktopServices::setUrlHandler(QLatin1String("mailto"), this, "openUrl");
     QDesktopServices::setUrlHandler(QLatin1String("ftp"), this, "openUrl");
+    QDesktopServices::setUrlHandler(QLatin1String("aroraext"), this, "openUrl");
 
     // SAFE02: the form-post tests pin the HTTPS policy keys; stash
     // the user's values so nothing leaks past the suite.
@@ -283,6 +284,7 @@ void tst_WebPage::cleanupTestCase()
 {
     QDesktopServices::unsetUrlHandler(QLatin1String("mailto"));
     QDesktopServices::unsetUrlHandler(QLatin1String("ftp"));
+    QDesktopServices::unsetUrlHandler(QLatin1String("aroraext"));
 
     QSettings settings;
     settings.setValue("userAgent", QString());
@@ -396,6 +398,23 @@ void tst_WebPage::acceptNavigationRequest_data()
     QTest::newRow("ftp-1") << Qt::NoButton << Qt::NoModifier << false << QUrl("ftp:foo@bar.com") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << false;
     QTest::newRow("tel-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("tel:+15551234") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
 
+    // SAFE05: the gate keys on the browser-handled set, so ANY other
+    // scheme — vendor handlers included — must prompt, never silently
+    // reach the OS.  Typed omnibox input and redirect hops go through
+    // the same hook.
+    QTest::newRow("magnet-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("magnet:?xt=urn:btih:0123456789abcdef") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
+    QTest::newRow("intent-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("intent://host/#Intent;scheme=https;end") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
+    QTest::newRow("vnc-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("vnc://192.0.2.1:5900") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << true;
+    QTest::newRow("sms-subframe") << Qt::NoButton << Qt::NoModifier << false << QUrl("sms:+15551234?body=x") << QWebEnginePage::NavigationTypeLinkClicked << false << 0 << false;
+    QTest::newRow("mailto-typed") << Qt::NoButton << Qt::NoModifier << true << QUrl("mailto:foo@bar.com") << QWebEnginePage::NavigationTypeTyped << false << 0 << true;
+    QTest::newRow("custom-redirect") << Qt::NoButton << Qt::NoModifier << true << QUrl("weirdproto://open/thing") << QWebEnginePage::NavigationTypeRedirect << false << 0 << true;
+
+    // Registered internal schemes and the built-ins are unaffected —
+    // no prompt, the navigation proceeds to the scheme handler.
+    QTest::newRow("arora-resource-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("arora-resource:/noop.js") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+    QTest::newRow("abp-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("abp:subscribe?location=http://x/list.txt") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+    QTest::newRow("viewsource-0") << Qt::NoButton << Qt::NoModifier << true << QUrl("view-source:http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
+
     QTest::newRow("normal-0") << Qt::NoButton << Qt::NoModifier << false << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 0 << false;
     QTest::newRow("normal-1") << Qt::NoButton << Qt::NoModifier << true << QUrl("http://www.foo.com") << QWebEnginePage::NavigationTypeLinkClicked << true << 1 << false;
 
@@ -473,6 +492,23 @@ void tst_WebPage::externalProtocolPrompt()
     QTest::qWait(300);
     QVERIFY(!QApplication::activeModalWidget());
     QVERIFY(m_openedUrls.count() == 1);
+
+    // SAFE05: a scheme nobody registered still follows the same
+    // consent path — the gate is "browser-handled or prompt", not a
+    // protocol allowlist.  The test-side url handler traps the
+    // QDesktopServices hand-off so nothing reaches the real desktop.
+    const QUrl custom(QStringLiteral("aroraext:thing"));
+    QVERIFY(!page.call_acceptNavigationRequest(custom,
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(answerModal(QMessageBox::Open));
+    QCOMPARE(m_openedUrls.last(), custom);
+
+    // And denying the same custom scheme launches nothing.
+    QVERIFY(!page.call_acceptNavigationRequest(custom,
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(answerModal(QMessageBox::Cancel));
+    QTest::qWait(200);
+    QCOMPARE(m_openedUrls.count(), 2);
 }
 
 // The QtWebKit createPlugin() extension point (NPAPI) has no WebEngine
