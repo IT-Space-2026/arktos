@@ -179,6 +179,10 @@ public slots:
     // the old tab closes (a page's profile is immutable, so the swap
     // is the only possible implementation; history cannot carry).
     void reopenTabInContainer(int index, const QString &containerId);
+    // CONT04: opens url in a fresh tab bound to containerId — the
+    // "always open in this container" diversion path in WebPage hands
+    // ruled navigations here so they land on the right profile.
+    void loadUrlInContainer(const QUrl &url, const QString &containerId);
     // Entry point for container management — the tab context menu and
     // the File menu both land here so CONT03's containers page has a
     // single seam.

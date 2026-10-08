@@ -42,7 +42,9 @@
 #include <qapplication.h>
 #include <qbuffer.h>
 #include <qcryptographichash.h>
+#include <qdebug.h>
 #include <qdesktopservices.h>
+#include <qelapsedtimer.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qhash.h>
@@ -634,6 +636,24 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // CONT04: "Always open this site in <container>" — a main-frame
+    // navigation whose host is ruled into a different container than
+    // this page's cannot commit here; the url is reopened in a tab
+    // bound to the ruled container and the request refused.  Redirect
+    // hops re-enter this hook, so a mid-chain hop onto a ruled host
+    // diverts too.  Private and tor windows have no containers and
+    // never divert.  Placement is ahead of the HTTPS-Only and
+    // insecure-form warnings so those decisions are made by the tab
+    // that will actually load the url.
+    if (isMainFrame
+        && (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"))
+        && !BrowserApplication::isPrivate()
+        && !BrowserApplication::isTorMode()
+        && divertToContainerRule(url)) {
+        return false;
+    }
+
     // Qt WebEngine asks the user about resubmitting POST data itself; the old
     // NavigationTypeFormResubmitted prompt has no equivalent here.
 
@@ -739,6 +759,61 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     }
 
     return accepted;
+}
+
+// CONT04: true when url's host is ruled into a container other than
+// this page's and the navigation has been handed to a tab on the
+// ruled profile — acceptNavigationRequest then refuses the request
+// so nothing commits on the wrong profile.  A form submission that
+// diverts is re-issued as a plain load: the POST body cannot move
+// profiles, and letting it commit here would leak it into the wrong
+// container's storage.
+bool WebPage::divertToContainerRule(const QUrl &url)
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString target = manager->containerIdForHost(url.host());
+    if (target.isEmpty()
+        || target == manager->containerIdForProfile(profile()))
+        return false;
+
+    // Bound the spawn: a cyclic cross-container redirect chain — a
+    // host ruled into A redirecting to one ruled into B redirecting
+    // back — would otherwise open tabs forever.  Eight diversions in
+    // five seconds is far beyond any real chain and kills the cycle;
+    // the refused navigation then loads in the current container.
+    static QElapsedTimer s_diversionWindow;
+    static int s_diversions = 0;
+    if (!s_diversionWindow.isValid()
+        || s_diversionWindow.elapsed() > 5000) {
+        s_diversionWindow.start();
+        s_diversions = 0;
+    }
+    if (++s_diversions > 8) {
+        qWarning() << "WebPage: container-rule diversion rate exceeded;"
+                   << url << "loads in the current container";
+        return false;
+    }
+
+    WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    if (webView) {
+        if (TabWidget *tabs = webView->tabWidget()) {
+            tabs->loadUrlInContainer(url, target);
+            return true;
+        }
+        // A detached view has no tab strip — same fallback
+        // openUrlInTarget uses: a standalone window on the ruled
+        // container's profile.
+        if (QWebEngineProfile *profile = manager->profileFor(target)) {
+            WebView *detached = new WebView(profile);
+            detached->setAttribute(Qt::WA_DeleteOnClose);
+            detached->show();
+            detached->loadUrl(url);
+        }
+    }
+    // A page with no view at all (autotest harness, blocked pop-up
+    // probe) has no chrome to host the diverted load — the navigation
+    // simply cannot commit on the wrong profile.
+    return true;
 }
 
 // POPUP01: the dead-end page a blocked pop-up gets in place of a real

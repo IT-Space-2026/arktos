@@ -159,6 +159,11 @@ private slots:
     void containerEdit();
     void containerRemove();
     void containerSelectionChanged();
+    // CONT04: the per-container "always open here" site rules —
+    // listed per selected container, removable from here or from the
+    // tab context menu.
+    void refreshContainerSites();
+    void containerSiteRemove();
 
 private:
     void stashSearchSuggestions();

@@ -322,6 +322,67 @@ void TabBar::contextMenuRequested(const QPoint &position)
             });
             containersMenu->addAction(tr("&Manage Containers..."),
                 this, [tabWidget]() { tabWidget->manageContainers(); });
+
+            // CONT04: "Always open this site in <container>" — a
+            // host->container rule WebPage enforces at navigation
+            // time.  Only meaningful for host-bearing web pages; a
+            // container tab offers the rule as a checkbox on itself,
+            // a default tab picks the container the site belongs to
+            // (assigning also moves this tab so it lands in the right
+            // context immediately).
+            const WebView *tabView = tabWidget->webView(index);
+            const QString tabScheme = tabView ? tabView->url().scheme()
+                                              : QString();
+            const QString host =
+                (tabScheme == QLatin1String("http")
+                 || tabScheme == QLatin1String("https"))
+                    ? tabView->url().host() : QString();
+            if (!host.isEmpty()) {
+                const QString ruled = manager->containerIdForHost(host);
+                if (!current.isEmpty()) {
+                    menu.addSeparator();
+                    QAction *always = menu.addAction(
+                        tr("Always Open This Site in &This Container"));
+                    always->setCheckable(true);
+                    // Ruled into this container — or anywhere else —
+                    // either way checking it claims the site for the
+                    // current tab's container.
+                    always->setChecked(ruled == current);
+                    connect(always, &QAction::triggered, this,
+                            [host, current](bool on) {
+                        ContainerManager *rules =
+                            ContainerManager::instance();
+                        if (on)
+                            rules->setSiteRule(host, current);
+                        else
+                            rules->removeSiteRule(host);
+                    });
+                } else if (!containers.isEmpty()) {
+                    menu.addSeparator();
+                    QMenu *alwaysMenu = menu.addMenu(
+                        tr("Always Open Site in Con&tainer"));
+                    for (const ContainerManager::Container &container
+                         : containers) {
+                        QAction *entry = alwaysMenu->addAction(
+                            ContainerManager::colorIcon(container.color),
+                            SafeText::menu(container.name));
+                        entry->setCheckable(true);
+                        entry->setChecked(ruled == container.id);
+                        const QString id = container.id;
+                        connect(entry, &QAction::triggered, this,
+                                [this, index, host, id](bool on) {
+                            ContainerManager *rules =
+                                ContainerManager::instance();
+                            if (on) {
+                                rules->setSiteRule(host, id);
+                                emit reopenInContainer(index, id);
+                            } else {
+                                rules->removeSiteRule(host);
+                            }
+                        });
+                    }
+                }
+            }
         }
 
         menu.addSeparator();

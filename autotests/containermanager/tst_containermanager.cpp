@@ -93,6 +93,9 @@ public:
     QStringList cookieHeaders;
     QByteArray indexHtml;
     QByteArray setCookie;
+    // CONT04: target path -> absolute Location for 302 answers, so a
+    // test can drive a mid-chain redirect across hosts.
+    QHash<QString, QString> redirects;
 
 private:
     void respond(QTcpSocket *socket, const QByteArray &request)
@@ -107,6 +110,17 @@ private:
             if (line.startsWith("Cookie:"))
                 cookieHeaders.append(QString::fromUtf8(target + ' '
                                      + line.mid(7).trimmed()));
+        }
+
+        const QByteArray location =
+            redirects.value(QString::fromUtf8(target)).toUtf8();
+        if (!location.isEmpty()) {
+            const QByteArray response = "HTTP/1.0 302 Found\r\nLocation: "
+                + location + "\r\nContent-Length: 0\r\n"
+                + "Connection: close\r\n\r\n";
+            socket->write(response);
+            socket->disconnectFromHost();
+            return;
         }
 
         QByteArray mimeType = "text/plain";
@@ -204,6 +218,13 @@ private slots:
     void sessionRestoresContainers();
     void containerChipIndicator();
 
+    // CONT04: site->container "always open" rules — persistence,
+    // matching, and the navigation-time diversion.
+    void siteRuleCrud();
+    void siteRuleDiversion();
+    void siteRuleRedirectChain();
+    void siteRuleGates();
+
 private:
     QString create(const QString &name = QString())
     {
@@ -250,11 +271,13 @@ void tst_ContainerManager::init()
     m_server->cookieHeaders.clear();
     m_server->indexHtml.clear();
     m_server->setCookie.clear();
+    m_server->redirects.clear();
 }
 
 void tst_ContainerManager::cleanup()
 {
     BrowserApplication::setTorMode(false);
+    BrowserApplication::setPrivate(false);
     // Stage children leave what they seeded/verified alone — the seed
     // child's whole point is handing its container to the next process.
     if (qEnvironmentVariableIsSet("CONT01_STAGE"))
@@ -804,6 +827,230 @@ void tst_ContainerManager::containerChipIndicator()
                      m_server->url(QLatin1String("/cont02-c.html"))));
     QTRY_VERIFY_WITH_TIMEOUT(
         bar->tabToolTip(1).contains(QLatin1String("ChipTest")), 5000);
+}
+
+// CONT04: rule CRUD — set/list/remove/reassign, normalization
+// (case, trailing dot, www fold, public-suffix guard), subdomain
+// matching, persistence across a fresh manager, and rule death
+// alongside the deleted container.
+void tst_ContainerManager::siteRuleCrud()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString idA = create(QLatin1String("RuleA"));
+    const QString idB = create(QLatin1String("RuleB"));
+    QSignalSpy spy(manager, &ContainerManager::siteRulesChanged);
+
+    // Refusals: empty host, non-host input, unknown container ids.
+    QVERIFY(!manager->setSiteRule(QString(), idA));
+    QVERIFY(!manager->setSiteRule(QLatin1String("not a host/"), idA));
+    QVERIFY(!manager->setSiteRule(QLatin1String("example.com"),
+                                 QLatin1String("bogus")));
+    QVERIFY(!manager->removeSiteRule(QLatin1String("example.com")));
+
+    // www folds to the apex: the stored key covers both spellings.
+    QVERIFY(manager->setSiteRule(QLatin1String("WWW.Example.COM."), idA));
+    QCOMPARE(manager->siteRules(idA),
+             QStringList() << QLatin1String("example.com"));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(manager->containerIdForHost(QLatin1String("www.example.com")),
+             idA);
+    // Subdomain coverage — deep names match the apex rule.
+    QCOMPARE(manager->containerIdForHost(QLatin1String("a.b.example.com")),
+             idA);
+    // ...but siblings and lookalikes do not.
+    QCOMPARE(manager->containerIdForHost(QLatin1String("notexample.com")),
+             QString());
+    QCOMPARE(manager->containerIdForHost(QLatin1String("example.com.evil.org")),
+             QString());
+    // A subdomain rule does not claim the apex.
+    QVERIFY(manager->setSiteRule(QLatin1String("sub.example.org"), idA));
+    QCOMPARE(manager->containerIdForHost(QLatin1String("example.org")),
+             QString());
+    QCOMPARE(manager->containerIdForHost(QLatin1String("sub.example.org")),
+             idA);
+    QCOMPARE(manager->containerIdForHost(QLatin1String("deep.sub.example.org")),
+             idA);
+
+    // Reassignment moves the host between containers — the old
+    // owner's list loses it.
+    QVERIFY(manager->setSiteRule(QLatin1String("example.com"), idB));
+    QVERIFY(manager->siteRules(idA).isEmpty()
+            || !manager->siteRules(idA).contains(QLatin1String("example.com")));
+    QCOMPARE(manager->containerIdForHost(QLatin1String("example.com")), idB);
+    QCOMPARE(manager->siteRules(idB),
+             QStringList() << QLatin1String("example.com"));
+
+    // Persistence: a fresh manager (the restart proxy) reads the
+    // rules back from QSettings.
+    ContainerManager fresh;
+    QCOMPARE(fresh.containerIdForHost(QLatin1String("www.example.com")),
+             idB);
+    QCOMPARE(fresh.containerIdForHost(QLatin1String("sub.example.org")),
+             idA);
+
+    // Removal frees the host; the signal fires on every mutation.
+    QVERIFY(manager->removeSiteRule(QLatin1String("example.com")));
+    QCOMPARE(manager->containerIdForHost(QLatin1String("example.com")),
+             QString());
+    QVERIFY(!manager->removeSiteRule(QLatin1String("example.com")));
+
+    // Deleting a container takes its remaining rules with it.
+    QVERIFY(manager->deleteContainer(idA));
+    m_created.removeAll(idA);
+    QCOMPARE(manager->containerIdForHost(QLatin1String("sub.example.org")),
+             QString());
+}
+
+// CONT04: the enforcement path — a navigation to a ruled host on the
+// wrong profile is refused and reopened on the ruled container's
+// profile in a fresh tab; removing the rule restores plain loading.
+void tst_ContainerManager::siteRuleDiversion()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    QWebEngineProfile *containerProfile = manager->profileFor(id);
+    QVERIFY(containerProfile);
+
+    TabWidget widget;
+    widget.newTab();
+    WebView *tab = widget.currentWebView();
+    QVERIFY(tab);
+    QCOMPARE(tab->page()->profile(), BrowserApplication::webEngineProfile());
+
+    // Assign the test server host to the container, then navigate
+    // the default tab — the load diverts instead of committing.
+    QVERIFY(manager->setSiteRule(QLatin1String("127.0.0.1"), id));
+    const QUrl url = m_server->url(QLatin1String("/cont04.html"));
+    tab->load(url);
+
+    QTRY_VERIFY_WITH_TIMEOUT(widget.count() == 2, 15000);
+    WebView *diverted = widget.webView(1);
+    QVERIFY(diverted);
+    QCOMPARE(diverted->page()->profile(), containerProfile);
+    QCOMPARE(widget.containerIdForTab(1), id);
+    // The source tab never committed — its page still sits on the
+    // empty starting document, not the refused url.
+    QVERIFY(tab->url().isEmpty()
+            || tab->url() == QUrl(QLatin1String("about:blank")));
+
+    // The diverted tab loads the url on the right profile and the
+    // server sees exactly one request for it (the refused original
+    // navigation never reached the network).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        m_server->requests.contains(QLatin1String("/cont04.html")),
+        15000);
+    QCOMPARE(m_server->requests.count(QLatin1String("/cont04.html")), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(diverted->url() == url, 15000);
+
+    // Unassigning restores plain loading on the default container.
+    QVERIFY(manager->removeSiteRule(QLatin1String("127.0.0.1")));
+    widget.closeTab(1);
+    QVERIFY(loadSync(tab->page(), m_server->url(QLatin1String("/cont04-b.html"))));
+    QCOMPARE(tab->page()->profile(), BrowserApplication::webEngineProfile());
+    QCOMPARE(widget.count(), 1);
+}
+
+// CONT04: a mid-chain redirect hop onto a differently-ruled host
+// re-diverts — localhost ruled to A serving a 302 to 127.0.0.1 ruled
+// to B must end with the final page living on B's profile.
+void tst_ContainerManager::siteRuleRedirectChain()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString idA = create();
+    const QString idB = create();
+    QWebEngineProfile *profileA = manager->profileFor(idA);
+    QWebEngineProfile *profileB = manager->profileFor(idB);
+    QVERIFY(profileA && profileB && profileA != profileB);
+
+    QVERIFY(manager->setSiteRule(QLatin1String("localhost"), idA));
+    QVERIFY(manager->setSiteRule(QLatin1String("127.0.0.1"), idB));
+
+    const QUrl finalUrl = m_server->url(QLatin1String("/cont04-final.html"));
+    m_server->redirects.insert(QLatin1String("/cont04-hop"),
+                               finalUrl.toString());
+    const QUrl startUrl(QString::fromLatin1(
+        "http://localhost:%1/cont04-hop").arg(finalUrl.port()));
+
+    TabWidget widget;
+    widget.newTab();
+    widget.currentWebView()->load(startUrl);
+
+    // default -> divert localhost -> A tab -> 302 -> divert -> B tab.
+    QTRY_VERIFY_WITH_TIMEOUT(widget.count() == 3, 20000);
+    QCOMPARE(widget.webView(1)->page()->profile(), profileA);
+    QCOMPARE(widget.webView(2)->page()->profile(), profileB);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        m_server->requests.contains(QLatin1String("/cont04-final.html")),
+        15000);
+    QCOMPARE(m_server->requests.count(QLatin1String("/cont04-hop")), 1);
+    QCOMPARE(m_server->requests.count(QLatin1String("/cont04-final.html")), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.webView(2)->url() == finalUrl, 15000);
+}
+
+// CONT04: the diversion gates — private and tor contexts have no
+// containers and load in place; non-http(s) urls are exempt; a page
+// without a tab strip simply refuses instead of loading wrongly.
+void tst_ContainerManager::siteRuleGates()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = create();
+    QWebEngineProfile *containerProfile = manager->profileFor(id);
+    QVERIFY(containerProfile);
+    QVERIFY(manager->setSiteRule(QLatin1String("127.0.0.1"), id));
+
+    // Private mode: the navigation proceeds on the OTR profile — a
+    // persistent container could never take a private tab anyway.
+    BrowserApplication::setPrivate(true);
+    {
+        TabWidget widget;
+        widget.newTab();
+        WebView *tab = widget.currentWebView();
+        QVERIFY(tab);
+        QVERIFY(loadSync(tab->page(),
+                         m_server->url(QLatin1String("/cont04-priv.html"))));
+        QCOMPARE(widget.count(), 1);
+        QVERIFY(tab->page()->profile()->isOffTheRecord());
+    }
+    BrowserApplication::setPrivate(false);
+
+    // about:/data: urls carry no host and never divert.
+    {
+        TabWidget widget;
+        widget.newTab();
+        WebView *tab = widget.currentWebView();
+        QVERIFY(tab);
+        QVERIFY(loadSync(tab->page(),
+                         QUrl(QLatin1String("data:text/plain,hello"))));
+        QCOMPARE(widget.count(), 1);
+    }
+
+    // A bare page on the default profile has no chrome to divert
+    // into — the ruled load refuses instead of committing on the
+    // wrong profile.  The refusal surfaces through the notfound.html
+    // substitution (which itself can finish "successfully"), so the
+    // honest check is on the wire: the request must never leave.
+    {
+        WebPage page(BrowserApplication::webEngineProfile());
+        std::shared_ptr<bool> done(new bool(false));
+        QMetaObject::Connection connection = QObject::connect(
+            &page, &QWebEnginePage::loadFinished, &page,
+            [done](bool) { *done = true; });
+        page.load(m_server->url(QLatin1String("/cont04-refuse.html")));
+        QVERIFY(waitFor(done));
+        QObject::disconnect(connection);
+        QVERIFY(!m_server->requests.contains(
+            QLatin1String("/cont04-refuse.html")));
+    }
+
+    // A page already on the ruled profile commits normally — the
+    // rule only fires across containers.
+    {
+        WebPage page(containerProfile);
+        QVERIFY(loadSync(&page,
+                         m_server->url(QLatin1String("/cont04-here.html"))));
+        QVERIFY(m_server->requests.contains(
+            QLatin1String("/cont04-here.html")));
+    }
 }
 
 QTEST_MAIN(tst_ContainerManager)

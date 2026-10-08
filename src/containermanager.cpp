@@ -22,6 +22,7 @@
 #include "browserapplication.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "twoleveldomains_p.h"
 
 #include <qapplication.h>
 #include <qcoreapplication.h>
@@ -155,11 +156,22 @@ bool ContainerManager::deleteContainer(const QString &id)
     }
     removeRegistry(id);
 
+    // CONT04: site rules die with their container — the persisted
+    // list went away with the registry group, only the hash mirror
+    // needs purging.
+    for (auto it = m_siteRules.begin(); it != m_siteRules.end();) {
+        if (it.value() == id)
+            it = m_siteRules.erase(it);
+        else
+            ++it;
+    }
+
     removeStorageTree(storagePath);
     if (!cachePath.isEmpty())
         removeStorageTree(cachePath);
 
     emit containersChanged();
+    emit siteRulesChanged();
     return true;
 }
 
@@ -309,10 +321,129 @@ QString ContainerManager::createContainerInteractive(QWidget *parent)
     return created.id;
 }
 
+// True when host itself is a public suffix under the bundled
+// two-level TLD heuristic (same list the location bar and the
+// network cookie jar use): a bare TLD, or a <label>.<tld> pair whose
+// tld takes third-level registrations (co.uk and friends).
+static bool hostIsPublicSuffix(const QString &host)
+{
+    const int lastDot = host.lastIndexOf(QLatin1Char('.'));
+    if (lastDot < 0)
+        return true;
+    const QStringView tld = QStringView(host).mid(lastDot + 1);
+    bool twoLevel = false;
+    for (int i = 0; twoLevelDomains[i]; ++i) {
+        if (!tld.compare(QLatin1String(twoLevelDomains[i]),
+                         Qt::CaseInsensitive)) {
+            twoLevel = true;
+            break;
+        }
+    }
+    return twoLevel && host.count(QLatin1Char('.')) < 2;
+}
+
+// Canonical rule key: lowercased, trailing root dot dropped, and one
+// literal "www." prefix folded away — a rule set while standing on
+// www.example.com anchors at example.com so it covers both the apex
+// and the www host (the subdomain walk in containerIdForHost does the
+// rest).  The fold never lands on a public suffix — www.com or
+// www.co.uk keep their full host as the key rather than claiming an
+// entire suffix.  Anything that cannot name a host (empty, or
+// carrying characters a QUrl host never produces) maps to no rule.
+QString ContainerManager::normalizeSiteHost(const QString &host)
+{
+    QString normalized = host.toLower();
+    while (normalized.endsWith(QLatin1Char('.')))
+        normalized.chop(1);
+    if (normalized.startsWith(QLatin1String("www."))) {
+        const QString remainder = normalized.mid(4);
+        if (!hostIsPublicSuffix(remainder))
+            normalized = remainder;
+    }
+    for (const QChar &c : normalized) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('.')
+            && c != QLatin1Char('-') && c != QLatin1Char(':')
+            && c != QLatin1Char('[') && c != QLatin1Char(']'))
+            return QString();
+    }
+    return normalized;
+}
+
+QStringList ContainerManager::siteRules(const QString &id) const
+{
+    QStringList hosts;
+    for (auto it = m_siteRules.constBegin(); it != m_siteRules.constEnd(); ++it) {
+        if (it.value() == id)
+            hosts.append(it.key());
+    }
+    hosts.sort();
+    return hosts;
+}
+
+bool ContainerManager::setSiteRule(const QString &host, const QString &id)
+{
+    const QString key = normalizeSiteHost(host);
+    if (key.isEmpty() || !isContainerId(id))
+        return false;
+    const QString previous = m_siteRules.value(key);
+    if (previous == id)
+        return true;
+    // Reassignment moves the host between containers — both lists
+    // are rewritten so the persisted mirror stays exact.
+    m_siteRules.insert(key, id);
+    if (!previous.isEmpty())
+        saveSiteRules(previous);
+    saveSiteRules(id);
+    emit siteRulesChanged();
+    return true;
+}
+
+bool ContainerManager::removeSiteRule(const QString &host)
+{
+    const QString key = normalizeSiteHost(host);
+    const QString id = m_siteRules.take(key);
+    if (id.isEmpty())
+        return false;
+    saveSiteRules(id);
+    emit siteRulesChanged();
+    return true;
+}
+
+QString ContainerManager::containerIdForHost(const QString &host) const
+{
+    // Exact match first, then the parent-domain walk: a rule on
+    // example.com covers *.example.com, and a rule on
+    // sub.example.com covers deeper names only — the apex is never
+    // claimed by a subdomain rule.
+    QString candidate = normalizeSiteHost(host);
+    while (!candidate.isEmpty()) {
+        const QString id = m_siteRules.value(candidate);
+        if (!id.isEmpty() && isContainerId(id))
+            return id;
+        const int dot = candidate.indexOf(QLatin1Char('.'));
+        if (dot < 0)
+            break;
+        candidate = candidate.mid(dot + 1);
+    }
+    return QString();
+}
+
+void ContainerManager::saveSiteRules(const QString &id) const
+{
+    if (!isContainerId(id))
+        return;
+    QSettings settings;
+    settings.beginGroup(QLatin1String("containers"));
+    settings.beginGroup(id);
+    settings.setValue(QLatin1String("sites"), siteRules(id));
+}
+
 // QSettings "containers" group:
 //   order            QStringList of ids in creation order
 //   <id>/name        user-visible name
 //   <id>/color       QColor
+//   <id>/sites       QStringList of hosts assigned to the container
+//                    (CONT04 "always open in this container" rules)
 // Ids are generated uuids, so they are always safe group names.
 void ContainerManager::loadRegistry()
 {
@@ -332,8 +463,15 @@ void ContainerManager::loadRegistry()
         container.id = id;
         container.name = settings.value(QLatin1String("name")).toString();
         container.color = settings.value(QLatin1String("color")).value<QColor>();
+        const QStringList sites =
+            settings.value(QLatin1String("sites")).toStringList();
         settings.endGroup();
         m_containers.append(container);
+        for (const QString &site : sites) {
+            const QString key = normalizeSiteHost(site);
+            if (!key.isEmpty())
+                m_siteRules.insert(key, id);
+        }
     }
     // Registry hygiene: a container group that never made the order
     // list (interrupted write) is stale — drop it.

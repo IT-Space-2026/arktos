@@ -267,9 +267,21 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             this, &SettingsDialog::containerEdit);
     connect(containerRemoveButton, &QPushButton::clicked,
             this, &SettingsDialog::containerRemove);
+    // CONT04: the same mirror for the per-container site rules.
+    containerSitesList->setItemDelegate(
+        new PlainTextItemDelegate(containerSitesList));
+    connect(containerSitesList, &QListWidget::itemSelectionChanged,
+            this, [this]() {
+        containerSiteRemoveButton->setEnabled(
+            containerSitesList->currentItem() != nullptr);
+    });
+    connect(containerSiteRemoveButton, &QPushButton::clicked,
+            this, &SettingsDialog::containerSiteRemove);
     ContainerManager *containers = ContainerManager::instance();
     connect(containers, &ContainerManager::containersChanged,
             this, &SettingsDialog::refreshContainers);
+    connect(containers, &ContainerManager::siteRulesChanged,
+            this, &SettingsDialog::refreshContainerSites);
     refreshContainers();
 
     // SRCH02: the Search tab mirrors the shared OpenSearchManager —
@@ -2178,6 +2190,43 @@ void SettingsDialog::containerSelectionChanged()
         && !BrowserApplication::isTorMode();
     containerEditButton->setEnabled(usable);
     containerRemoveButton->setEnabled(usable);
+    refreshContainerSites();
+}
+
+void SettingsDialog::refreshContainerSites()
+{
+    const QString selectedHost =
+        containerSitesList->currentItem()
+            ? containerSitesList->currentItem()->text() : QString();
+    containerSitesList->clear();
+    const QString id = selectedContainerId();
+    const QStringList sites = id.isEmpty()
+        ? QStringList()
+        : ContainerManager::instance()->siteRules(id);
+    containerSitesList->addItems(sites);
+    if (!selectedHost.isEmpty()) {
+        const QList<QListWidgetItem*> matches =
+            containerSitesList->findItems(selectedHost,
+                                          Qt::MatchExactly);
+        if (!matches.isEmpty())
+            containerSitesList->setCurrentItem(matches.first());
+    }
+    containerSiteRemoveButton->setEnabled(
+        containerSitesList->currentItem() != nullptr);
+    // The section explains itself when the container has no rules.
+    containerSitesLabel->setText(id.isEmpty()
+        ? tr("Sites that always open in the selected container:")
+        : tr("Sites that always open in this container — assigned "
+             "from a tab's context menu:"));
+}
+
+void SettingsDialog::containerSiteRemove()
+{
+    QListWidgetItem *item = containerSitesList->currentItem();
+    if (!item)
+        return;
+    // siteRulesChanged repopulates the list.
+    ContainerManager::instance()->removeSiteRule(item->text());
 }
 
 void SettingsDialog::containerNew()

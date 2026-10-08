@@ -136,8 +136,23 @@ public:
     // without an explicit color — also the tab-strip chip's fallback.
     static QList<QColor> defaultColors();
 
+    // CONT04: "Always open this site in <container>" — persisted
+    // host->container rules WebPage consults at navigation time.  A
+    // rule on example.com covers every *.example.com subdomain; keys
+    // are normalized (lowercased, one leading "www." and any trailing
+    // dot stripped) so the stored form never duplicates a host.
+    // Rules live inside the container's QSettings group, so deleting
+    // a container takes its assignments with it.
+    QStringList siteRules(const QString &id) const;
+    bool setSiteRule(const QString &host, const QString &id);
+    bool removeSiteRule(const QString &host);
+    // The container a host is ruled into — the default (empty) id
+    // when nothing matches or the ruling container no longer exists.
+    QString containerIdForHost(const QString &host) const;
+
 signals:
     void containersChanged();
+    void siteRulesChanged();
 
 private:
     void loadRegistry();
@@ -145,11 +160,19 @@ private:
     void removeRegistry(const QString &id) const;
     void removeStorageTree(const QString &path) const;
     QString storageNameFor(const QString &id) const;
+    // CONT04: canonical form of a rule key — see the siteRules()
+    // comment for the normalization contract.
+    static QString normalizeSiteHost(const QString &host);
+    // Rewrites containers/<id>/sites from m_siteRules — the hash is
+    // authoritative, the per-container list the persisted mirror.
+    void saveSiteRules(const QString &id) const;
 
     QList<Container> m_containers;
     // Materialized profiles only, keyed by container id.  The default
     // container is never an entry — it lives in BrowserProfile.
     QHash<QString, QWebEngineProfile*> m_profiles;
+    // CONT04: normalized host -> container id.
+    QHash<QString, QString> m_siteRules;
 };
 
 #endif // CONTAINERMANAGER_H

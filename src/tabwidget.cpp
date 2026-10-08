@@ -580,6 +580,17 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
     closeTab(index + 1);
 }
 
+void TabWidget::loadUrlInContainer(const QUrl &url, const QString &containerId)
+{
+    if (!url.isValid())
+        return;
+    // The diversion raised the tab — the user asked to land on the
+    // page, so it takes focus.
+    WebView *webView = makeNewTabInContainer(containerId, true);
+    if (webView)
+        webView->loadUrl(url);
+}
+
 void TabWidget::manageContainers()
 {
     // CONT03: the shared management entry point — the tab context menu

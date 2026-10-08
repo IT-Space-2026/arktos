@@ -177,6 +177,10 @@ private:
     // SAFE02: modal confirmation for a form submission bound for a
     // public http: endpoint; true when the user chose to submit.
     bool confirmInsecureFormPost(const QUrl &url);
+    // CONT04: diverts a main-frame navigation whose host carries a
+    // site->container rule into a tab bound to the ruled container —
+    // true when this page must refuse the request.
+    bool divertToContainerRule(const QUrl &url);
     // SAFE01: HTTPS-Only warning page — shown when an http:
     // main-frame navigation survives the https-first upgrade pass.
     void showHttpWarning(const QUrl &url);

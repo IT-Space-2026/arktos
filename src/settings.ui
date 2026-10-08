@@ -2557,6 +2557,54 @@
         </layout>
        </item>
        <item>
+        <widget class="QLabel" name="containerSitesLabel">
+         <property name="text">
+          <string>Sites that always open in the selected container:</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="containerSitesLayout">
+         <item>
+          <widget class="QListWidget" name="containerSitesList">
+           <property name="accessibleName">
+            <string>Sites assigned to the selected container</string>
+           </property>
+           <property name="selectionMode">
+            <enum>QAbstractItemView::SingleSelection</enum>
+           </property>
+           <property name="uniformItemSizes">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QVBoxLayout" name="containerSitesButtonsLayout">
+           <item>
+            <widget class="QPushButton" name="containerSiteRemoveButton">
+             <property name="enabled">
+              <bool>false</bool>
+             </property>
+             <property name="text">
+              <string>Remove Site</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="containerSitesButtonSpacer">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </item>
+       <item>
         <widget class="QLabel" name="containersDeleteHintLabel">
          <property name="text">
           <string>Deleting a container permanently removes all site data stored in it.</string>
@@ -2665,6 +2713,8 @@
   <tabstop>containerNewButton</tabstop>
   <tabstop>containerEditButton</tabstop>
   <tabstop>containerRemoveButton</tabstop>
+  <tabstop>containerSitesList</tabstop>
+  <tabstop>containerSiteRemoveButton</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>
