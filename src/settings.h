@@ -85,7 +85,8 @@ public:
         ProxyPage,
         AutoFillPage,
         AdvancedPage,
-        ExtensionsPage
+        ExtensionsPage,
+        ContainersPage
     };
 
     SettingsDialog(QWidget *parent = nullptr);
@@ -150,10 +151,20 @@ private slots:
     void credentialPassphraseRemove();
     void credentialStoreLock();
 
+    // CONT03: the Containers page mirrors the ContainerManager
+    // registry — add/edit/delete act on the shared manager
+    // immediately, like the Search page's engine editor.
+    void refreshContainers();
+    void containerNew();
+    void containerEdit();
+    void containerRemove();
+    void containerSelectionChanged();
+
 private:
     void stashSearchSuggestions();
     void populateEngineForm();
     void updateEngineButtonStates();
+    QString selectedContainerId() const;
 
     QFont m_standardFont;
     QFont m_fixedFont;

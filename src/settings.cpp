@@ -66,6 +66,7 @@
 #include "aroraicon.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
+#include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
 #include "containermanager.h"
@@ -109,6 +110,7 @@
 #include <qfiledialog.h>
 #include <qheaderview.h>
 #include <qpixmap.h>
+#include <qpushbutton.h>
 #include <qregularexpression.h>
 #include <qtreewidget.h>
 #include <qboxlayout.h>
@@ -138,6 +140,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         "user-bookmarks",   // AutoFill
         "system-run",       // Advanced
         "list-add",         // Extensions
+        "folder-new",       // Containers
     };
     for (int i = 0;
          i < pagesList->count()
@@ -251,6 +254,23 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(credentialLockButton, &QPushButton::clicked,
             this, &SettingsDialog::credentialStoreLock);
     refreshCredentialUi();
+
+    // CONT03: the Containers page mirrors the ContainerManager
+    // registry.  Container names are user-chosen but still render
+    // literal — a markup-looking name must not mark up the list.
+    containersList->setItemDelegate(new PlainTextItemDelegate(containersList));
+    connect(containersList, &QListWidget::itemSelectionChanged,
+            this, &SettingsDialog::containerSelectionChanged);
+    connect(containerNewButton, &QPushButton::clicked,
+            this, &SettingsDialog::containerNew);
+    connect(containerEditButton, &QPushButton::clicked,
+            this, &SettingsDialog::containerEdit);
+    connect(containerRemoveButton, &QPushButton::clicked,
+            this, &SettingsDialog::containerRemove);
+    ContainerManager *containers = ContainerManager::instance();
+    connect(containers, &ContainerManager::containersChanged,
+            this, &SettingsDialog::refreshContainers);
+    refreshContainers();
 
     // SRCH02: the Search tab mirrors the shared OpenSearchManager —
     // engine add/remove (the Manage dialog edits the same manager) and
@@ -2044,4 +2064,204 @@ void SettingsDialog::credentialStoreLock()
 {
     SecureStore::lock();
     refreshCredentialUi();
+}
+
+// CONT03: the shared name + accent-color prompt behind the Containers
+// page's New/Edit buttons — the palette is the fixed Firefox-style
+// set ContainerManager rotates through.
+static bool editContainer(QWidget *parent, const QString &title,
+                          QString *name, QColor *color)
+{
+    static const char *const colorNames[] = {
+        QT_TRANSLATE_NOOP("SettingsDialog", "Blue"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Turquoise"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Green"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Yellow"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Orange"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Red"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Pink"),
+        QT_TRANSLATE_NOOP("SettingsDialog", "Purple"),
+    };
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    QFormLayout *layout = new QFormLayout(&dialog);
+
+    QLineEdit *nameEdit = new QLineEdit(*name);
+    nameEdit->setAccessibleName(SettingsDialog::tr("Container name"));
+    layout->addRow(SettingsDialog::tr("Name:"), nameEdit);
+
+    QComboBox *colorCombo = new QComboBox;
+    const QList<QColor> palette = ContainerManager::defaultColors();
+    const int colorNameCount = int(sizeof(colorNames) / sizeof(colorNames[0]));
+    for (int i = 0; i < palette.count(); ++i) {
+        colorCombo->addItem(ContainerManager::colorIcon(palette.at(i)),
+            SettingsDialog::tr(colorNames[i % colorNameCount]),
+            palette.at(i));
+    }
+    const int currentColor = colorCombo->findData(*color);
+    if (currentColor >= 0)
+        colorCombo->setCurrentIndex(currentColor);
+    layout->addRow(SettingsDialog::tr("Color:"), colorCombo);
+
+    QDialogButtonBox *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addRow(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted,
+                     &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected,
+                     &dialog, &QDialog::reject);
+    // A container always needs a name — keep Ok dead until one exists.
+    QPushButton *ok = buttons->button(QDialogButtonBox::Ok);
+    ok->setEnabled(!nameEdit->text().trimmed().isEmpty());
+    QObject::connect(nameEdit, &QLineEdit::textChanged, ok,
+                     [ok](const QString &text) {
+        ok->setEnabled(!text.trimmed().isEmpty());
+    });
+
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    *name = nameEdit->text().trimmed();
+    if (name->isEmpty())
+        return false;
+    *color = colorCombo->currentData().value<QColor>();
+    return true;
+}
+
+QString SettingsDialog::selectedContainerId() const
+{
+    QListWidgetItem *item = containersList->currentItem();
+    return item ? item->data(Qt::UserRole).toString() : QString();
+}
+
+void SettingsDialog::refreshContainers()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QList<ContainerManager::Container> containers =
+        manager->containers();
+    // A tor process hands out no containers at all — report that
+    // instead of offering controls that could only fail.
+    const bool tor = BrowserApplication::isTorMode();
+
+    const QString selectedId = selectedContainerId();
+    containersList->clear();
+    for (const ContainerManager::Container &container : containers) {
+        QListWidgetItem *item = new QListWidgetItem(
+            ContainerManager::colorIcon(container.color), container.name);
+        item->setData(Qt::UserRole, container.id);
+        item->setToolTip(container.name);
+        containersList->addItem(item);
+    }
+
+    containersEmptyLabel->setText(tor
+        ? tr("Containers are not available in a Tor window.")
+        : tr("No containers yet. Create one to keep a site's data "
+             "isolated from the rest of your browsing."));
+    containersStack->setCurrentIndex(containers.isEmpty() || tor ? 0 : 1);
+    containerNewButton->setEnabled(!tor);
+
+    if (!selectedId.isEmpty()) {
+        for (int i = 0; i < containersList->count(); ++i) {
+            if (containersList->item(i)->data(Qt::UserRole).toString()
+                == selectedId) {
+                containersList->setCurrentRow(i);
+                break;
+            }
+        }
+    }
+    containerSelectionChanged();
+}
+
+void SettingsDialog::containerSelectionChanged()
+{
+    const bool usable = !selectedContainerId().isEmpty()
+        && !BrowserApplication::isTorMode();
+    containerEditButton->setEnabled(usable);
+    containerRemoveButton->setEnabled(usable);
+}
+
+void SettingsDialog::containerNew()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QList<QColor> palette = ContainerManager::defaultColors();
+    QString name;
+    QColor color = palette.value(manager->containers().count()
+                                 % palette.count());
+    if (!editContainer(this, tr("New Container"), &name, &color))
+        return;
+    const QString id = manager->createContainer(name, color).id;
+    // containersChanged refreshed the list — select the new row.
+    for (int i = 0; i < containersList->count(); ++i) {
+        if (containersList->item(i)->data(Qt::UserRole).toString() == id) {
+            containersList->setCurrentRow(i);
+            break;
+        }
+    }
+}
+
+void SettingsDialog::containerEdit()
+{
+    const QString id = selectedContainerId();
+    if (id.isEmpty())
+        return;
+    ContainerManager *manager = ContainerManager::instance();
+    const ContainerManager::Container container =
+        manager->containerForId(id);
+    QString name = container.name;
+    QColor color = container.color;
+    if (!editContainer(this, tr("Edit Container"), &name, &color))
+        return;
+    manager->renameContainer(id, name);
+    manager->setContainerColor(id, color);
+}
+
+void SettingsDialog::containerRemove()
+{
+    const QString id = selectedContainerId();
+    if (id.isEmpty())
+        return;
+    ContainerManager *manager = ContainerManager::instance();
+    const QString name = manager->containerForId(id).name;
+
+    // deleteContainer() requires every page on the container profile
+    // closed first — count the live tabs across all windows so the
+    // warning can name the collateral.
+    int openTabs = 0;
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        const TabWidget *tabs = qobject_cast<TabWidget*>(widget);
+        if (!tabs)
+            continue;
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->containerIdForTab(i) == id)
+                ++openTabs;
+        }
+    }
+
+    QString text = tr("Delete the container \"%1\"? All site data "
+        "stored in it — cookies, logins, cache and site storage — "
+        "will be permanently removed.").arg(name);
+    if (openTabs > 0)
+        text += QLatin1Char('\n') + tr("%1 open tab(s) use this "
+            "container and will be closed.").arg(openTabs);
+    QMessageBox box(QMessageBox::Warning, tr("Delete Container"), text,
+                    QMessageBox::Yes | QMessageBox::No, this);
+    // The container name is user text — render the message literally.
+    box.setTextFormat(Qt::PlainText);
+    box.setDefaultButton(QMessageBox::No);
+    if (box.exec() != QMessageBox::Yes)
+        return;
+
+    // Close from the back of each tab widget so indices stay valid;
+    // the manager's no-live-pages contract is then satisfied.
+    for (QWidget *widget : widgets) {
+        TabWidget *tabs = qobject_cast<TabWidget*>(widget);
+        if (!tabs)
+            continue;
+        for (int i = tabs->count() - 1; i >= 0; --i) {
+            if (tabs->containerIdForTab(i) == id)
+                tabs->closeTab(i);
+        }
+    }
+    manager->deleteContainer(id);
 }

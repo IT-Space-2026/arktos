@@ -582,14 +582,12 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
 
 void TabWidget::manageContainers()
 {
-    // CONT02: the shared management entry point — CONT03 will land a
-    // dedicated containers page; for now this opens the settings
-    // dialog so the seam and the menus exist.
-    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
-        window->preferences();
-        return;
-    }
-    SettingsDialog dialog(this);
+    // CONT03: the shared management entry point — the tab context menu
+    // and the File menu both land here; open the settings dialog
+    // straight on its Containers page.
+    QWidget *parent = BrowserMainWindow::parentWindow(this);
+    SettingsDialog dialog(parent ? parent : this);
+    dialog.openAtPage(SettingsDialog::ContainersPage);
     dialog.exec();
 }
 

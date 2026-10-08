@@ -85,6 +85,11 @@
          <string>Extensions</string>
         </property>
        </item>
+       <item>
+        <property name="text">
+         <string>Containers</string>
+        </property>
+       </item>
       </widget>
      </item>
      <item>
@@ -2466,6 +2471,103 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="tab_containers">
+      <layout class="QVBoxLayout" name="containersPageLayout">
+       <item>
+        <widget class="QLabel" name="containersHintLabel">
+         <property name="text">
+          <string>Containers keep site data — cookies, logins and storage — isolated per context. Open a container tab from File &gt; New Container Tab or a tab's context menu.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QStackedWidget" name="containersStack">
+         <property name="currentIndex">
+          <number>0</number>
+         </property>
+         <widget class="QLabel" name="containersEmptyLabel">
+          <property name="text">
+           <string>No containers yet. Create one to keep a site's data isolated from the rest of your browsing.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+         <widget class="QListWidget" name="containersList">
+          <property name="accessibleName">
+           <string>Containers</string>
+          </property>
+          <property name="selectionMode">
+           <enum>QAbstractItemView::SingleSelection</enum>
+          </property>
+          <property name="uniformItemSizes">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="containersButtonLayout">
+         <item>
+          <widget class="QPushButton" name="containerNewButton">
+           <property name="text">
+            <string>New Container...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="containerEditButton">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="text">
+            <string>Edit...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="containerRemoveButton">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="text">
+            <string>Delete</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="containersButtonSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="containersDeleteHintLabel">
+         <property name="text">
+          <string>Deleting a container permanently removes all site data stored in it.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
      </widget>
      </item>
     </layout>
@@ -2559,6 +2661,10 @@
   <tabstop>userScriptsList</tabstop>
   <tabstop>userScriptsOpenButton</tabstop>
   <tabstop>userScriptsReloadButton</tabstop>
+  <tabstop>containersList</tabstop>
+  <tabstop>containerNewButton</tabstop>
+  <tabstop>containerEditButton</tabstop>
+  <tabstop>containerRemoveButton</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>

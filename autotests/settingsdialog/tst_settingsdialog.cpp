@@ -32,6 +32,7 @@
 #include "settings.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "containermanager.h"
 #include "cookiejar.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
@@ -62,7 +63,41 @@ private slots:
     void subDialogButtons();
     void setHomeToCurrentPage();
     void popupExceptions();
+    void containersPage();
 };
+
+// CONT03: fills the container editor's Name field and accepts — the
+// editor exec()s synchronously inside the button click, so the driver
+// keeps re-arming until the modal appears.
+static void fillContainerEditor(const QString &name, int attempts = 150)
+{
+    QTimer::singleShot(20, qApp, [name, attempts]() {
+        QDialog *dialog = qobject_cast<QDialog *>(
+            QApplication::activeModalWidget());
+        if (dialog) {
+            if (QLineEdit *edit = dialog->findChild<QLineEdit *>())
+                edit->setText(name);
+            dialog->accept();
+        } else if (attempts > 0) {
+            fillContainerEditor(name, attempts - 1);
+        }
+    });
+}
+
+// Same re-arming driver for the delete confirmation QMessageBox.
+static void answerNextBox(QMessageBox::StandardButton button,
+                          int attempts = 150)
+{
+    QTimer::singleShot(20, qApp, [button, attempts]() {
+        QMessageBox *box = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (box && box->button(button)) {
+            box->button(button)->click();
+        } else if (attempts > 0) {
+            answerNextBox(button, attempts - 1);
+        }
+    });
+}
 
 void tst_SettingsDialog::initTestCase()
 {
@@ -667,7 +702,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 9);
+        QCOMPARE(dialog.pagesList->count(), 10);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -683,6 +718,8 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("General"));
         QCOMPARE(dialog.pagesList->item(8)->text(),
                  QStringLiteral("Extensions"));
+        QCOMPARE(dialog.pagesList->item(9)->text(),
+                 QStringLiteral("Containers"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -715,7 +752,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 9);
+    QCOMPARE(dialog.tabWidget->count(), 10);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));
@@ -882,6 +919,102 @@ void tst_SettingsDialog::popupExceptions()
     for (int i = 0; i < dialog.permissionsTree->topLevelItemCount(); ++i) {
         QVERIFY(dialog.permissionsTree->topLevelItem(i)->text(0)
                 != QLatin1String("popups.example"));
+    }
+}
+
+// CONT03: the Containers page mirrors the ContainerManager registry —
+// the empty state swaps the list for a label, New/Edit run through a
+// name+color editor, Delete confirms before wiping the profile's
+// storage, and open tabs on the dying profile are closed first.
+void tst_SettingsDialog::containersPage()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    QVERIFY(manager->containers().isEmpty());
+
+    {
+        SettingsDialog dialog;
+        dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ContainersPage));
+
+        // Empty state: only New is usable.
+        QCOMPARE(dialog.containersStack->currentWidget(),
+                 static_cast<QWidget *>(dialog.containersEmptyLabel));
+        QVERIFY(!dialog.containersList->isVisibleTo(dialog.containersStack));
+        QVERIFY(dialog.containerNewButton->isEnabled());
+        QVERIFY(!dialog.containerEditButton->isEnabled());
+        QVERIFY(!dialog.containerRemoveButton->isEnabled());
+
+        // Cancelling the editor creates nothing.
+        rejectModal();
+        dialog.containerNewButton->click();
+        QVERIFY(manager->containers().isEmpty());
+
+        // Accepting with a name creates + selects the row.
+        fillContainerEditor(QLatin1String("Work"));
+        dialog.containerNewButton->click();
+        QCOMPARE(manager->containers().count(), 1);
+        QCOMPARE(dialog.containersList->count(), 1);
+        QCOMPARE(dialog.containersList->item(0)->text(),
+                 QLatin1String("Work"));
+        QCOMPARE(dialog.containersStack->currentWidget(),
+                 static_cast<QWidget *>(dialog.containersList));
+        QCOMPARE(dialog.containersList->currentRow(), 0);
+        QVERIFY(dialog.containerEditButton->isEnabled());
+        QVERIFY(dialog.containerRemoveButton->isEnabled());
+
+        const QString id = dialog.containersList->item(0)
+            ->data(Qt::UserRole).toString();
+        QVERIFY(manager->isContainerId(id));
+
+        // Edit renames and recolors through the shared manager.
+        fillContainerEditor(QLatin1String("Work Renamed"));
+        dialog.containerEditButton->click();
+        QCOMPARE(manager->containerForId(id).name,
+                 QLatin1String("Work Renamed"));
+        QCOMPARE(manager->containerForId(id).color,
+                 ContainerManager::defaultColors().first());
+        QCOMPARE(dialog.containersList->item(0)->text(),
+                 QLatin1String("Work Renamed"));
+
+        // A registry write from outside re-syncs the open page.
+        manager->renameContainer(id, QLatin1String("Outside"));
+        QCOMPARE(dialog.containersList->item(0)->text(),
+                 QLatin1String("Outside"));
+
+        // Declining the confirmation keeps the container.
+        answerNextBox(QMessageBox::No);
+        dialog.containerRemoveButton->click();
+        QVERIFY(manager->isContainerId(id));
+
+        // Confirming deletes it and the empty state comes back.
+        answerNextBox(QMessageBox::Yes);
+        dialog.containerRemoveButton->click();
+        QVERIFY(!manager->isContainerId(id));
+        QVERIFY(manager->containers().isEmpty());
+        QCOMPARE(dialog.containersList->count(), 0);
+        QCOMPARE(dialog.containersStack->currentWidget(),
+                 static_cast<QWidget *>(dialog.containersEmptyLabel));
+    }
+
+    // The registry is empty for a fresh manager too.
+    ContainerManager fresh;
+    QVERIFY(fresh.containers().isEmpty());
+
+    // Delete also drops the materialized profile's on-disk storage.
+    const QString id = manager->createContainer(
+        QLatin1String("Storage"), QColor(Qt::blue)).id;
+    QWebEngineProfile *profile = manager->profileFor(id);
+    QVERIFY(profile);
+    const QString storagePath = profile->persistentStoragePath();
+    QVERIFY(QDir(storagePath).exists());
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.containersList->count(), 1);
+        dialog.containersList->setCurrentRow(0);
+        answerNextBox(QMessageBox::Yes);
+        dialog.containerRemoveButton->click();
+        QVERIFY(!manager->isContainerId(id));
+        QVERIFY(manager->profileIfCreated(id) == nullptr);
+        QVERIFY(!QDir(storagePath).exists());
     }
 }
 
