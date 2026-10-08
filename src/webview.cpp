@@ -69,6 +69,7 @@
 #include "addbookmarkdialog.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "containermanager.h"
 #include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
@@ -167,6 +168,16 @@ TabWidget *WebView::tabWidget() const
         widget = widget->parent();
     }
     return nullptr;
+}
+
+// CONT02: a tab's container is a property of its page's profile —
+// bound at WebView construction and fixed for the view's lifetime.
+QString WebView::containerId() const
+{
+    if (!m_page)
+        return ContainerManager::defaultContainerId();
+    return ContainerManager::instance()
+        ->containerIdForProfile(m_page->profile());
 }
 
 void WebView::contextMenuEvent(QContextMenuEvent *event)

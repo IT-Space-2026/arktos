@@ -65,6 +65,7 @@
 
 #include <qtabbar.h>
 
+#include "containermanager.h"
 #include "tabwidget.h"
 
 /*
@@ -82,6 +83,9 @@ signals:
     void reloadTab(int index);
     void reloadAllTabs();
     void loadUrl(const QUrl &url, TabWidget::OpenUrlIn tab);
+    // CONT02: reopen the tab at index bound to another container —
+    // TabWidget::reopenTabInContainer performs the swap.
+    void reopenInContainer(int index, const QString &containerId);
 
 public:
     TabBar(QWidget *parent = nullptr);
@@ -105,6 +109,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
     QSize tabSizeHint(int index) const override;
     void tabInserted(int position) override;
     void tabRemoved(int position) override;
@@ -125,6 +130,13 @@ private:
     void installCloseButton(int index);
     void updateHoveredTab(const QPoint &pos);
     void updateCloseButtonVisibility();
+    // CONT02: the container chip — resolves the registry entry behind
+    // the tab at index (empty id when the tab is in the default
+    // container), the font the chip text uses, and the extra size the
+    // chip needs in this bar's shape.
+    ContainerManager::Container containerForTab(int index) const;
+    QFont containerChipFont() const;
+    QSize containerChipSize(int index) const;
     friend class TabWidget;
 
     QPoint m_dragStartPos;

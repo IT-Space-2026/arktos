@@ -26,7 +26,9 @@
 #include <qobject.h>
 #include <qstring.h>
 
+class QIcon;
 class QWebEngineProfile;
+class QWidget;
 
 /*!
     Firefox-style containers — named, isolated browsing contexts.
@@ -122,6 +124,17 @@ public:
     // same data.  Same no-live-pages contract as deleteContainer();
     // used by deleteContainer and by tests simulating a restart.
     void releaseProfileFor(const QString &id);
+
+    // CONT02 UI helpers shared by the File menu and the tab context
+    // menu: a small rounded swatch carrying a container's color for
+    // menu entries, and the quick "name a new container" prompt
+    // (returns the new container's id, empty when cancelled or in
+    // tor mode).
+    static QIcon colorIcon(const QColor &color);
+    QString createContainerInteractive(QWidget *parent);
+    // The accent palette containers rotate through when created
+    // without an explicit color — also the tab-strip chip's fallback.
+    static QList<QColor> defaultColors();
 
 signals:
     void containersChanged();

@@ -69,6 +69,7 @@
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "containermanager.h"
 #include "history.h"
 #include "historycompleter.h"
 #include "historymanager.h"
@@ -77,6 +78,7 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "safetext.h"
+#include "settings.h"
 #include "streamingutils.h"
 #include "tabbar.h"
 #include "toolbarsearch.h"
@@ -136,6 +138,8 @@ TabWidget::TabWidget(QWidget *parent)
     connect(m_tabBar, QOverload<int>::of(&TabBar::closeOtherTabs), this, &TabWidget::closeOtherTabs);
     connect(m_tabBar, QOverload<int>::of(&TabBar::reloadTab), this, &TabWidget::reloadTab);
     connect(m_tabBar, &TabBar::reloadAllTabs, this, &TabWidget::reloadAllTabs);
+    connect(m_tabBar, &TabBar::reopenInContainer,
+            this, &TabWidget::reopenTabInContainer);
     setTabBar(m_tabBar);
     m_tabBar->setAccessibleName(tr("Tabs"));
     setDocumentMode(true);
@@ -199,6 +203,14 @@ TabWidget::TabWidget(QWidget *parent)
     connect(BrowserApplication::historyManager(), &HistoryManager::historyCleared,
         this, &TabWidget::historyCleared);
 
+    // CONT02: a container rename/recolor/delete must repaint the tab
+    // strip's chips and recompute the size hints the chip feeds.
+    connect(ContainerManager::instance(), &ContainerManager::containersChanged,
+            m_tabBar, [this]() {
+        m_tabBar->updateGeometry();
+        m_tabBar->update();
+    });
+
     // Initialize Actions' labels
     retranslate();
     loadSettings();
@@ -207,6 +219,8 @@ TabWidget::TabWidget(QWidget *parent)
 void TabWidget::historyCleared()
 {
     m_recentlyClosedTabs.clear();
+    m_recentlyClosedTabsHistory.clear();
+    m_recentlyClosedTabsContainers.clear();
     m_recentlyClosedTabsAction->setEnabled(false);
 }
 
@@ -214,6 +228,8 @@ void TabWidget::clear()
 {
     // clear the recently closed tabs
     m_recentlyClosedTabs.clear();
+    m_recentlyClosedTabsHistory.clear();
+    m_recentlyClosedTabsContainers.clear();
     m_recentlyClosedTabsAction->setEnabled(false);
     // clear the line edit history
     for (int i = 0; i < m_locationBars->count(); ++i) {
@@ -377,6 +393,22 @@ void TabWidget::newTab()
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)
 {
+    // CONT02: child-tab inheritance — the new tab stays in the
+    // current tab's container ("" when the strip is empty or the
+    // current tab is in the default container).
+    return makeNewTabInContainer(containerIdForTab(currentIndex()), makeCurrent);
+}
+
+QString TabWidget::containerIdForTab(int index) const
+{
+    WebView *view = webView(index);
+    if (!view)
+        return ContainerManager::defaultContainerId();
+    return view->containerId();
+}
+
+WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeCurrent)
+{
     // line edit
     LocationBar *locationBar = new LocationBar;
     if (!m_lineEditCompleter) {
@@ -457,12 +489,22 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
     }
 #endif
 
-    // webview — created on the application profile (BrowserProfile's
-    // named "arora" profile, or the off-the-record profile while
-    // private browsing is on).  BrowserApplication::webEngineProfile()
-    // is a static accessor, so this is also safe under autotests that
-    // never instantiate the application object.
-    WebView *webView = new WebView(BrowserApplication::webEngineProfile());
+    // webview — bound to the container's profile (CONT02).  The
+    // default container and private browsing both resolve to
+    // BrowserApplication::webEngineProfile() (the normal "arora"
+    // profile, or the off-the-record profile while private browsing
+    // is on) — containers are persistent state and can never take
+    // over a private tab, and ContainerManager::profileFor() refuses
+    // outright under tor or for unknown/deleted ids.  The accessor is
+    // static, so this is also safe under autotests that never
+    // instantiate the application object.
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+    if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
+        if (QWebEngineProfile *containerProfile =
+                ContainerManager::instance()->profileFor(containerId))
+            profile = containerProfile;
+    }
+    WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
     connect(webView, &QWebEngineView::loadStarted,
             this, &TabWidget::webViewLoadStarted);
@@ -501,6 +543,54 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
         currentChanged(currentIndex());
     emit tabsChanged();
     return webView;
+}
+
+void TabWidget::reopenTabInContainer(int index, const QString &containerId)
+{
+    if (index < 0 || index >= count())
+        return;
+    WebView *tab = webView(index);
+    if (!tab)
+        return;
+    if (containerIdForTab(index) == containerId)
+        return;
+    // A private tab must never move onto a persistent container
+    // profile — that would write the session to disk (SEC07), and
+    // tor refuses containers entirely.  Unknown/deleted ids likewise
+    // leave the tab alone.
+    if (BrowserApplication::isPrivate() || BrowserApplication::isTorMode())
+        return;
+    if (!containerId.isEmpty()
+        && !ContainerManager::instance()->isContainerId(containerId))
+        return;
+
+    const QUrl url = tab->url();
+    WebView *newTab = makeNewTabInContainer(containerId, true);
+    if (!newTab)
+        return;
+    // The fresh tab appended at the end; slide it into the old tab's
+    // slot (moveTab emits tabMoved, which keeps m_locationBars in
+    // sync) so the strip order survives the swap.
+    const int appendedIndex = count() - 1;
+    if (appendedIndex > index)
+        m_tabBar->moveTab(appendedIndex, index);
+    if (!url.isEmpty() && url.isValid())
+        newTab->loadUrl(url);
+    // The old tab is now one slot past the new one's position.
+    closeTab(index + 1);
+}
+
+void TabWidget::manageContainers()
+{
+    // CONT02: the shared management entry point — CONT03 will land a
+    // dedicated containers page; for now this opens the settings
+    // dialog so the seam and the menus exist.
+    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
+        window->preferences();
+        return;
+    }
+    SettingsDialog dialog(this);
+    dialog.exec();
 }
 
 void TabWidget::reloadAllTabs()
@@ -642,9 +732,13 @@ void TabWidget::closeTab(int index)
         m_recentlyClosedTabsAction->setEnabled(true);
         m_recentlyClosedTabs.prepend(tab->url());
         m_recentlyClosedTabsHistory.prepend(serializePageHistory(tab->history()));
+        // CONT02: the container id rides with the entry so "reopen
+        // closed tab" returns to the same browsing context.
+        m_recentlyClosedTabsContainers.prepend(containerIdForTab(index));
         if (m_recentlyClosedTabs.size() >= TabWidget::m_recentlyClosedTabsSize) {
             m_recentlyClosedTabs.removeLast();
             m_recentlyClosedTabsHistory.removeLast();
+            m_recentlyClosedTabsContainers.removeLast();
         }
     }
     QWidget *lineEdit = m_locationBars->widget(index);
@@ -769,7 +863,16 @@ void TabWidget::webViewTitleChanged(const QString &title)
     // tab label and markup would render in the tooltip (tooltips are
     // always rich-text capable).
     setTabText(index, SafeText::menu(tabTitle));
-    setTabToolTip(index, SafeText::escaped(tabTitle));
+    // CONT02: a container tab's tooltip names its container.
+    QString toolTip = tabTitle;
+    const QString containerId = containerIdForTab(index);
+    if (!containerId.isEmpty()) {
+        const QString name = ContainerManager::instance()
+            ->containerForId(containerId).name;
+        if (!name.isEmpty())
+            toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
+    }
+    setTabToolTip(index, SafeText::escaped(toolTip));
     if (currentIndex() == index)
         emit setCurrentTitle(title);
     // History title updates are handled by WebPage::init (MIG06).
@@ -791,10 +894,12 @@ void TabWidget::openLastTab()
         return;
     QUrl url = m_recentlyClosedTabs.takeFirst();
     QByteArray historyState = m_recentlyClosedTabsHistory.takeFirst();
+    const QString containerId = m_recentlyClosedTabsContainers.isEmpty()
+        ? QString() : m_recentlyClosedTabsContainers.takeFirst();
     if (!historyState.isEmpty())
-        createTab(historyState, NewTab);
-    else
-        loadUrl(url, NewTab);
+        createTab(historyState, NewTab, containerId);
+    else if (WebView *view = makeNewTabInContainer(containerId, true))
+        view->loadUrl(url);
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
 }
 
@@ -804,9 +909,21 @@ void TabWidget::aboutToShowRecentTabsMenu()
     for (int i = 0; i < m_recentlyClosedTabs.count(); ++i) {
         QAction *action = new QAction(m_recentlyClosedTabsMenu);
         action->setData(m_recentlyClosedTabsHistory.at(i));
+        QString label = m_recentlyClosedTabs.at(i).toString();
+        // CONT02: the container id rides as an action property —
+        // data() already carries the serialized history blob — and
+        // the container name prefixes the label.
+        const QString containerId = m_recentlyClosedTabsContainers.value(i);
+        if (!containerId.isEmpty()) {
+            action->setProperty("aroraContainerId", containerId);
+            const QString name = ContainerManager::instance()
+                ->containerForId(containerId).name;
+            if (!name.isEmpty())
+                label = QStringLiteral("[%1] %2").arg(name, label);
+        }
         QIcon icon = BrowserApplication::icon(m_recentlyClosedTabs.at(i));
         action->setIcon(icon);
-        action->setText(SafeText::menu(m_recentlyClosedTabs.at(i).toString()));
+        action->setText(SafeText::menu(label));
         m_recentlyClosedTabsMenu->addAction(action);
     }
 }
@@ -818,7 +935,8 @@ void TabWidget::aboutToShowRecentTriggeredAction(QAction *action)
 
     QByteArray historyState = action->data().toByteArray();
     if (!historyState.isEmpty())
-        createTab(historyState, NewTab);
+        createTab(historyState, NewTab,
+                  action->property("aroraContainerId").toString());
 }
 
 void TabWidget::retranslate()
@@ -1112,7 +1230,13 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
                 detachedView->show();
                 webView = detachedView;
             } else {
-                BrowserMainWindow *newMainWindow = application->newMainWindow();
+                // CONT02: a window opened from a container tab keeps
+                // the opener's container — the new window's first tab
+                // binds to the same container profile.
+                BrowserMainWindow *newMainWindow =
+                    application->newMainWindowInContainer(
+                        currentView ? currentView->containerId()
+                                    : ContainerManager::defaultContainerId());
                 webView = newMainWindow->currentTab();
             }
             webView->setFocus();
@@ -1170,7 +1294,7 @@ static const qint32 TabWidgetMagic = 0xaa;
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 1;
+    int version = 2; // CONT02: v2 tails the stream with container ids
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -1179,6 +1303,7 @@ QByteArray TabWidget::saveState() const
 
     QStringList tabs;
     QList<QByteArray> tabsHistory;
+    QStringList tabContainers;
     // Private tabs live on the off-the-record profile — their urls and
     // history are never written into the saved session (SEC07).  The
     // current index is remapped onto the filtered list.
@@ -1196,17 +1321,18 @@ QByteArray TabWidget::saveState() const
             tabsHistory.append(serializePageHistory(tab->history()));
         else
             tabsHistory.append(QByteArray());
+        tabContainers.append(containerIdForTab(i));
     }
     stream << tabs;
     stream << savedCurrentIndex;
     stream << tabsHistory;
+    stream << tabContainers;
 
     return data;
 }
 
 bool TabWidget::restoreState(const QByteArray &state)
 {
-    int version = 1;
     QByteArray sd = state;
     QDataStream stream(&sd, QIODevice::ReadOnly);
     if (stream.atEnd())
@@ -1216,7 +1342,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v != version)
+    if (marker != TabWidgetMagic || v < 1 || v > 2)
         return false;
 
     QStringList openTabs;
@@ -1226,9 +1352,19 @@ bool TabWidget::restoreState(const QByteArray &state)
     stream >> currentTab;
     QList<QByteArray> tabHistory;
     StreamingUtils::readBoundedList(stream, tabHistory);
+    QStringList tabContainers;
+    // CONT02: v2 tails the stream with each tab's container id; a v1
+    // session (or a truncated blob) restores to the default container.
+    if (v >= 2)
+        StreamingUtils::readBoundedList(stream, tabContainers);
     if (stream.status() != QDataStream::Ok)
         return false;
 
+    // The empty placeholder tab a fresh window comes with is only a
+    // fit for the first saved tab when its container matches — reusing
+    // it for a container tab would put the restored page on the wrong
+    // profile, so it is closed after the loop instead.
+    bool leftoverPlaceholder = false;
     for (int i = 0; i < openTabs.count(); ++i) {
         QUrl url = QUrl::fromEncoded(openTabs.at(i).toUtf8());
         const QByteArray historyState = tabHistory.value(i);
@@ -1241,12 +1377,27 @@ bool TabWidget::restoreState(const QByteArray &state)
             if (historyUrl.isValid())
                 url = historyUrl;
         }
-        const TabWidget::OpenUrlIn tab = i == 0
-            && (!currentWebView() || currentWebView()->url() == QUrl())
-            ? CurrentTab : NewTab;
-        if (WebView *webView = getView(tab, currentWebView()))
+        // A container the registry no longer knows (deleted between
+        // sessions) degrades to the default container — the tab is
+        // never dropped.
+        QString containerId = tabContainers.value(i);
+        if (!containerId.isEmpty()
+            && !ContainerManager::instance()->isContainerId(containerId))
+            containerId = ContainerManager::defaultContainerId();
+        const bool reusePlaceholder = i == 0
+            && currentWebView() && currentWebView()->url() == QUrl()
+            && containerIdForTab(currentIndex()) == containerId;
+        if (i == 0 && !reusePlaceholder
+            && currentWebView() && currentWebView()->url() == QUrl())
+            leftoverPlaceholder = true;
+        WebView *webView = reusePlaceholder
+            ? currentWebView()
+            : makeNewTabInContainer(containerId, false);
+        if (webView)
             webView->loadUrl(url);
     }
+    if (leftoverPlaceholder && count() > 1)
+        closeTab(0);
     // The saved index is only selectable once the restored tabs exist —
     // setting it before creating them is a no-op against the single
     // placeholder tab.
@@ -1255,7 +1406,8 @@ bool TabWidget::restoreState(const QByteArray &state)
     return true;
 }
 
-void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab)
+void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab,
+                          const QString &containerId)
 {
     // Qt WebEngine cannot inject a serialized back/forward stack into a
     // page (there is no QDataStream << QWebEngineHistory), so only the
@@ -1263,7 +1415,19 @@ void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn t
     QUrl url = currentSerializedHistoryUrl(historyState);
     if (!url.isValid())
         return;
-    if (WebView *webView = getView(tab, currentWebView()))
+    WebView *webView = nullptr;
+    switch (tab) {
+    case NewNotSelectedTab:
+    case NewSelectedTab:
+        // CONT02: an explicit container ("" = default) — the recently
+        // closed entry's own, not whatever the current tab uses.
+        webView = makeNewTabInContainer(containerId, tab == NewSelectedTab);
+        break;
+    default:
+        webView = getView(tab, currentWebView());
+        break;
+    }
+    if (webView)
         webView->loadUrl(url);
 }
 

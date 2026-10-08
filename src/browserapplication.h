@@ -154,6 +154,13 @@ public:
     bool event(QEvent *event);
 #endif
 
+    // CONT02: like newMainWindow(), but the window's first tab is
+    // bound to the given container's profile — a window spawned from
+    // a container tab (window.open, ctrl+alt+click) stays in the
+    // opener's container.  The default id, private browsing and tor
+    // mode just produce a normal window.
+    BrowserMainWindow *newMainWindowInContainer(const QString &containerId);
+
 public slots:
     BrowserMainWindow *newMainWindow();
     bool restoreLastSession();

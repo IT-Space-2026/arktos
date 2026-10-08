@@ -76,6 +76,7 @@
 #include "bookmarkstoolbar.h"
 #include "browserapplication.h"
 #include "clearprivatedata.h"
+#include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
 #include "history.h"
@@ -508,6 +509,16 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::fileNew);
     m_fileMenu->addAction(m_fileNewWindowAction);
     m_fileMenu->addAction(m_tabWidget->newTabAction());
+
+    // CONT02: container tabs — the submenu lists the registry and is
+    // repopulated on open (containers are runtime-editable).  Tor
+    // windows hide it — a tor process has no containers.
+    m_fileNewContainerTabMenu = new QMenu(m_fileMenu);
+    connect(m_fileNewContainerTabMenu, &QMenu::aboutToShow,
+            this, &BrowserMainWindow::populateNewContainerTabMenu);
+    m_fileNewContainerTabMenu->menuAction()->setVisible(
+        !BrowserApplication::isTorMode());
+    m_fileMenu->addMenu(m_fileNewContainerTabMenu);
 
     m_fileOpenFileAction = new QAction(m_fileMenu);
     m_fileOpenFileAction->setShortcut(QKeySequence::Open);
@@ -1007,6 +1018,7 @@ void BrowserMainWindow::retranslate()
 {
     m_fileMenu->setTitle(tr("&File"));
     m_fileNewWindowAction->setText(tr("&New Window"));
+    m_fileNewContainerTabMenu->setTitle(tr("New &Container Tab"));
     m_fileOpenFileAction->setText(tr("&Open File..."));
     m_fileOpenLocationAction->setText(tr("Open &Location..."));
     m_fileSaveAsAction->setText(tr("&Save As..."));
@@ -1618,6 +1630,47 @@ void BrowserMainWindow::loadProgress(int progress)
         connect(m_stopReloadAction, &QAction::triggered, m_viewReloadAction, &QAction::trigger);
         updateStopReloadActionText(false);
     }
+}
+
+// CONT02: File ▸ New Container Tab — the registry (plus the explicit
+// "No Container" escape, useful when the current tab is already in a
+// container) and the management entries.  Private windows can't make
+// container tabs: a container is persistent storage, the antithesis
+// of off-the-record.
+void BrowserMainWindow::populateNewContainerTabMenu()
+{
+    m_fileNewContainerTabMenu->clear();
+    if (BrowserApplication::isPrivate()) {
+        QAction *unavailable = m_fileNewContainerTabMenu->addAction(
+            tr("Unavailable in private windows"));
+        unavailable->setEnabled(false);
+        return;
+    }
+    ContainerManager *manager = ContainerManager::instance();
+    m_fileNewContainerTabMenu->addAction(tr("&No Container"), this, [this]() {
+        m_tabWidget->makeNewTabInContainer(
+            ContainerManager::defaultContainerId(), true);
+    });
+    const QList<ContainerManager::Container> containers =
+        manager->containers();
+    for (const ContainerManager::Container &container : containers) {
+        QAction *entry = m_fileNewContainerTabMenu->addAction(
+            ContainerManager::colorIcon(container.color),
+            SafeText::menu(container.name));
+        const QString id = container.id;
+        connect(entry, &QAction::triggered, this, [this, id]() {
+            m_tabWidget->makeNewTabInContainer(id, true);
+        });
+    }
+    m_fileNewContainerTabMenu->addSeparator();
+    m_fileNewContainerTabMenu->addAction(tr("New &Container..."), this, [this]() {
+        const QString id = ContainerManager::instance()
+            ->createContainerInteractive(this);
+        if (!id.isEmpty())
+            m_tabWidget->makeNewTabInContainer(id, true);
+    });
+    m_fileNewContainerTabMenu->addAction(tr("&Manage Containers..."),
+        m_tabWidget, &TabWidget::manageContainers);
 }
 
 void BrowserMainWindow::aboutToShowBackMenu()

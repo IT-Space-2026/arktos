@@ -36,6 +36,7 @@
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "clearprivatedata.h"
+#include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
@@ -1675,7 +1676,7 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
-        "referer-smoke",
+        "referer-smoke", "container-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
@@ -1956,6 +1957,92 @@ int main(int argc, char **argv)
             application.exit(pass ? 0 : 1);
         });
         cookiePoll->start(500);
+    }
+
+    // Headless verification for CONT02: a real BrowserMainWindow's
+    // TabWidget must bind a container tab to the container's profile,
+    // a plain new tab must inherit the current tab's container,
+    // reopen-in-container must swap the profile in place, and the
+    // session blob must round-trip the binding.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--container-smoke"))) {
+        ContainerManager *manager = ContainerManager::instance();
+        const QString cid = manager->createContainer(
+            QLatin1String("container-smoke"), QColor(0xff, 0x61, 0x3d)).id;
+        bool ok = true;
+        auto expect = [&ok](bool condition, const char *what) {
+            if (!condition) {
+                ok = false;
+                qInfo() << "container-smoke: FAIL" << what;
+            }
+        };
+        auto pumpEvents = [](int ms) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < ms)
+                QCoreApplication::processEvents();
+        };
+
+        BrowserMainWindow *window = application.newMainWindow();
+        TabWidget *tabs = window->tabWidget();
+        QWebEngineProfile *containerProfile = manager->profileFor(cid);
+        expect(containerProfile != nullptr, "container profile resolves");
+
+        WebView *first = tabs->currentWebView();
+        expect(first
+               && first->webPage()->profile() == BrowserApplication::webEngineProfile()
+               && tabs->containerIdForTab(0).isEmpty(),
+               "default binding");
+        WebView *containerTab = tabs->makeNewTabInContainer(cid, true);
+        expect(containerTab
+               && containerTab->webPage()->profile() == containerProfile
+               && tabs->containerIdForTab(1) == cid,
+               "container binding");
+
+        // Child-tab inheritance: a plain new tab opened from the
+        // container tab stays inside the container.
+        WebView *child = tabs->makeNewTab(true);
+        const int childIndex = tabs->webViewIndex(child);
+        expect(child
+               && child->webPage()->profile() == containerProfile,
+               "child inheritance");
+
+        // Reopen in container — back to default, then into the
+        // container — swaps the profile at the same strip index and
+        // carries the url.
+        const QUrl url(QStringLiteral("data:text/plain,container-smoke"));
+        child->loadUrl(url);
+        pumpEvents(500);
+        tabs->reopenTabInContainer(childIndex, QString());
+        WebView *reopened = tabs->webView(childIndex);
+        expect(reopened
+               && reopened->webPage()->profile() == BrowserApplication::webEngineProfile(),
+               "reopen to default");
+        expect(tabs->count() == 3, "reopen keeps tab count");
+        pumpEvents(500);
+        expect(reopened->url() == url
+               || reopened->webPage()->requestedUrl() == url,
+               "reopen carries url");
+        tabs->reopenTabInContainer(childIndex, cid);
+        expect(tabs->containerIdForTab(childIndex) == cid
+               && tabs->webView(childIndex)->webPage()->profile() == containerProfile,
+               "reopen into container");
+
+        // Session round-trip — the container ids ride in the blob.
+        const QByteArray state = tabs->saveState();
+        TabWidget *fresh = new TabWidget;
+        expect(fresh->restoreState(state), "restoreState parses");
+        expect(fresh->count() == 3, "restored count");
+        for (int i = 0; i < fresh->count(); ++i)
+            expect(fresh->containerIdForTab(i) == tabs->containerIdForTab(i),
+                   "restored container binding");
+
+        delete fresh;
+        delete window;
+        // Registry + on-disk storage cleanup — the window is gone, so
+        // no live pages pin the container profile.
+        expect(manager->deleteContainer(cid), "container cleanup");
+        qInfo() << "container-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
     }
 
     // Headless verification for PRIV01: a loopback e2e over two

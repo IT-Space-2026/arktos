@@ -881,6 +881,21 @@ BrowserMainWindow *BrowserApplication::newMainWindow()
     return browser;
 }
 
+BrowserMainWindow *BrowserApplication::newMainWindowInContainer(const QString &containerId)
+{
+    BrowserMainWindow *browser = newMainWindow();
+    if (containerId.isEmpty() || isPrivate() || isTorMode())
+        return browser;
+    TabWidget *tabs = browser->tabWidget();
+    // The window constructor already made a default (inheriting) first
+    // tab — a non-default container swaps it for a bound one rather
+    // than threading a profile through the window's whole setup.
+    if (tabs->containerIdForTab(tabs->currentIndex()) != containerId
+        && tabs->makeNewTabInContainer(containerId, true))
+        tabs->closeTab(0);
+    return browser;
+}
+
 BrowserMainWindow *BrowserApplication::mainWindow()
 {
     clean();

@@ -100,6 +100,10 @@ public:
     inline int progress() const { return m_progress; }
     inline int currentZoom() const { return m_currentZoom; }
     TabWidget *tabWidget() const;
+    // CONT02: the container this view's page is bound to — the empty
+    // (default) container id for the normal and off-the-record
+    // profiles, the container's id for container profiles.
+    QString containerId() const;
     // JSCTL: whether the current page's scripts are blocked.
     bool isJavaScriptBlocked() const;
 

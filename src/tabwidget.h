@@ -137,7 +137,21 @@ public:
     WebViewSearch *webViewSearch(int index) const;
     QLineEdit *locationBar(int index) const;
     int webViewIndex(WebView *webView) const;
+    // Child-tab inheritance (CONT02): a plain new tab is bound to the
+    // CURRENT tab's container — Firefox's rule — so tabs opened out
+    // of a container stay inside it.  An explicit container comes
+    // through makeNewTabInContainer().
     WebView *makeNewTab(bool makeCurrent = false);
+    // Creates a tab bound to containerId's profile; the empty
+    // (default) container id selects the shared browsing context.
+    // Private browsing and tor windows always produce an
+    // off-the-record tab — a persistent container profile would leak
+    // the session — and unknown/deleted ids degrade to the default
+    // container.
+    WebView *makeNewTabInContainer(const QString &containerId, bool makeCurrent = false);
+    // The container the tab at index belongs to — the default
+    // container id for normal and off-the-record pages.
+    QString containerIdForTab(int index) const;
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
@@ -158,7 +172,17 @@ public slots:
     void loadStringFromUntrustedSource(const QString &string, OpenUrlIn tab = CurrentTab);
     void loadUrlFromUser(const QUrl &url, const QString &title = QString());
     void loadUrl(const QUrl &url, TabWidget::OpenUrlIn tab = CurrentTab, const QString &title = QString());
-    void createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab = CurrentTab);
+    void createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab = CurrentTab,
+                   const QString &containerId = QString());
+    // CONT02: reopen the tab at index bound to a different container —
+    // a fresh tab on the target profile takes its slot and url, then
+    // the old tab closes (a page's profile is immutable, so the swap
+    // is the only possible implementation; history cannot carry).
+    void reopenTabInContainer(int index, const QString &containerId);
+    // Entry point for container management — the tab context menu and
+    // the File menu both land here so CONT03's containers page has a
+    // single seam.
+    void manageContainers();
     void newTab();
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
@@ -201,6 +225,9 @@ private:
     static const int m_recentlyClosedTabsSize = 10;
     QList<QUrl> m_recentlyClosedTabs;
     QList<QByteArray> m_recentlyClosedTabsHistory;
+    // CONT02: parallel to m_recentlyClosedTabs — reopening a closed
+    // tab returns it to the container it was closed in.
+    QList<QString> m_recentlyClosedTabsContainers;
     QList<WebActionMapper*> m_actions;
 
     QCompleter *m_lineEditCompleter;

@@ -86,6 +86,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --settings-smoke --autofill-smoke --find-smoke --source-smoke
 --adblock-smoke --adblock-list-smoke --extension-smoke --ua-smoke
+--container-smoke
 --icons-smoke --fingerprint-smoke --ping-smoke --httpsonly-smoke --telemetry-smoke
 --tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke"
 for flag in $SMOKE_FLAGS; do

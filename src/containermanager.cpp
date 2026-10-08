@@ -26,6 +26,11 @@
 #include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qdir.h>
+#include <qicon.h>
+#include <qinputdialog.h>
+#include <qlineedit.h>
+#include <qpainter.h>
+#include <qpixmap.h>
 #include <qsettings.h>
 #include <qthread.h>
 #include <quuid.h>
@@ -260,6 +265,48 @@ void ContainerManager::reapplySettings()
 void ContainerManager::releaseProfileFor(const QString &id)
 {
     delete m_profiles.take(id);
+}
+
+// Firefox's container accent palette — blue, turquoise, green,
+// yellow, orange, red, pink, purple.
+QList<QColor> ContainerManager::defaultColors()
+{
+    return { QColor(0x37, 0xad, 0xff), QColor(0x00, 0xc7, 0x9a),
+             QColor(0x51, 0xcd, 0x00), QColor(0xff, 0xcb, 0x00),
+             QColor(0xff, 0x9f, 0x00), QColor(0xff, 0x61, 0x3d),
+             QColor(0xff, 0x4b, 0xda), QColor(0xaf, 0x51, 0xf5) };
+}
+
+QIcon ContainerManager::colorIcon(const QColor &color)
+{
+    if (!color.isValid())
+        return QIcon();
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(color);
+    painter.setPen(color.darker(160));
+    painter.drawRoundedRect(QRectF(1.5, 1.5, 13, 13), 4, 4);
+    return QIcon(pixmap);
+}
+
+QString ContainerManager::createContainerInteractive(QWidget *parent)
+{
+    // Tor mode hands out no containers — the prompt would create a
+    // registry entry nothing could ever use.
+    if (BrowserApplication::isTorMode())
+        return QString();
+    bool ok = false;
+    const QString name = QInputDialog::getText(parent, tr("New Container"),
+        tr("Container name:"), QLineEdit::Normal, QString(), &ok);
+    const QString trimmed = name.trimmed();
+    if (!ok || trimmed.isEmpty())
+        return QString();
+    const QList<QColor> palette = defaultColors();
+    const Container created = createContainer(trimmed,
+        palette.value(m_containers.count() % palette.count()));
+    return created.id;
 }
 
 // QSettings "containers" group:

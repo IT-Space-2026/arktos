@@ -27,6 +27,7 @@
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
 #include <qbuffer.h>
+#include <qdatastream.h>
 #include <qdir.h>
 #include <qimage.h>
 #include <qprocess.h>
@@ -52,8 +53,11 @@
 #include "opensearchmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
+#include "tabbar.h"
+#include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpage.h"
+#include "webview.h"
 
 // Minimal HTTP responder that records every request target — blocked
 // requests never appear here — and answers 200.  setCookie, when set,
@@ -95,9 +99,14 @@ private:
     {
         const QByteArray target = request.split(' ').value(1);
         requests.append(QString::fromUtf8(target));
+        // CONT02: cookie headers are recorded "<target> <cookie>" so a
+        // test can attribute each one to the request that carried it —
+        // an in-flight favicon fetch must not be mistaken for the
+        // request under test.
         for (const QByteArray &line : request.split('\n')) {
             if (line.startsWith("Cookie:"))
-                cookieHeaders.append(QString::fromUtf8(line.mid(7).trimmed()));
+                cookieHeaders.append(QString::fromUtf8(target + ' '
+                                     + line.mid(7).trimmed()));
         }
 
         QByteArray mimeType = "text/plain";
@@ -187,6 +196,13 @@ private slots:
     void torModeRefuses();
     void reapplySettingsCoversContainers();
     void adblockAppliesOnContainerProfile();
+
+    // CONT02: tab<->container binding and its UI surface.
+    void tabContainerBinding();
+    void reopenInContainer();
+    void tabCookieIsolation();
+    void sessionRestoresContainers();
+    void containerChipIndicator();
 
 private:
     QString create(const QString &name = QString())
@@ -551,6 +567,243 @@ void tst_ContainerManager::adblockAppliesOnContainerProfile()
     QVERIFY(!m_server->requests.contains(QLatin1String("/cont01-blocked.png")));
 
     manager->removeSubscription(subscription);
+}
+
+// CONT02: a container tab binds its page to the container's profile,
+// a plain new tab inherits the CURRENT tab's container, and unknown
+// ids degrade to the default container.
+void tst_ContainerManager::tabContainerBinding()
+{
+    const QString id = create();
+    ContainerManager *manager = ContainerManager::instance();
+    QWebEngineProfile *containerProfile = manager->profileFor(id);
+    QVERIFY(containerProfile);
+
+    TabWidget widget;
+    widget.newTab();
+    WebView *defaultTab = widget.currentWebView();
+    QVERIFY(defaultTab);
+    QCOMPARE(defaultTab->page()->profile(),
+             BrowserApplication::webEngineProfile());
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QCOMPARE(defaultTab->containerId(), QString());
+
+    WebView *containerTab = widget.makeNewTabInContainer(id, true);
+    QVERIFY(containerTab);
+    QCOMPARE(containerTab->page()->profile(), containerProfile);
+    QCOMPARE(containerTab->containerId(), id);
+    QCOMPARE(widget.containerIdForTab(1), id);
+
+    // Child-tab inheritance — a plain new tab from inside the
+    // container stays inside it.
+    WebView *child = widget.makeNewTab(true);
+    QVERIFY(child);
+    QCOMPARE(child->page()->profile(), containerProfile);
+    QCOMPARE(child->containerId(), id);
+
+    // The explicit default id escapes the current tab's container.
+    WebView *escape = widget.makeNewTabInContainer(
+        ContainerManager::defaultContainerId(), true);
+    QVERIFY(escape);
+    QCOMPARE(escape->page()->profile(), BrowserApplication::webEngineProfile());
+    QCOMPARE(escape->containerId(), QString());
+
+    // Unknown/deleted ids degrade to the default container.
+    WebView *bogus = widget.makeNewTabInContainer(QLatin1String("bogus"), false);
+    QVERIFY(bogus);
+    QCOMPARE(bogus->page()->profile(), BrowserApplication::webEngineProfile());
+}
+
+// CONT02: reopen-in-container swaps the tab's profile in place —
+// same strip index, same count, url carried over — and no-op or
+// invalid targets leave the tab alone.
+void tst_ContainerManager::reopenInContainer()
+{
+    const QString id = create();
+    ContainerManager *manager = ContainerManager::instance();
+
+    TabWidget widget;
+    widget.newTab();
+    WebView *tab = widget.currentWebView();
+    QVERIFY(loadSync(tab->page(), m_server->url(QLatin1String("/cont02.html"))));
+    const QUrl url = tab->url();
+    QCOMPARE(widget.count(), 1);
+
+    // Into the container: new page, new profile, same slot.
+    widget.reopenTabInContainer(0, id);
+    QCOMPARE(widget.count(), 1);
+    WebView *moved = widget.webView(0);
+    QVERIFY(moved);
+    QVERIFY(moved != tab);
+    QCOMPARE(moved->page()->profile(), manager->profileFor(id));
+    QCOMPARE(widget.containerIdForTab(0), id);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        moved->url() == url || moved->page()->requestedUrl() == url, 15000);
+
+    // And back out to the default container.
+    widget.reopenTabInContainer(0, QString());
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.webView(0)->page()->profile(),
+             BrowserApplication::webEngineProfile());
+    QCOMPARE(widget.containerIdForTab(0), QString());
+
+    // Same-container and bogus targets are no-ops.
+    WebView *stable = widget.webView(0);
+    widget.reopenTabInContainer(0, QString());
+    widget.reopenTabInContainer(0, QLatin1String("bogus"));
+    widget.reopenTabInContainer(-1, id);
+    widget.reopenTabInContainer(7, id);
+    QCOMPARE(widget.webView(0), stable);
+    QCOMPARE(widget.count(), 1);
+}
+
+// CONT02: two live tabs in different containers keep cookies apart —
+// the container tab's request never carries the other container's
+// cookie over the wire.
+void tst_ContainerManager::tabCookieIsolation()
+{
+    const QString idA = create();
+    const QString idB = create();
+    ContainerManager *manager = ContainerManager::instance();
+
+    TabWidget widget;
+    WebView *tabA = widget.makeNewTabInContainer(idA, true);
+    WebView *tabB = widget.makeNewTabInContainer(idB, false);
+    QVERIFY(tabA && tabB);
+    QVERIFY(tabA->page()->profile() != tabB->page()->profile());
+
+    // The jars must exist before the loads — a jar created afterwards
+    // races the cookie store's commit (its loadAllCookies snapshot can
+    // run before the network-set cookie lands and the cookieAdded
+    // signal it missed is never replayed).
+    CookieJar *jarA = CookieJar::instance(manager->profileFor(idA));
+    CookieJar *jarB = CookieJar::instance(manager->profileFor(idB));
+
+    const QString cookieName = QLatin1String("cont02-marker");
+    m_server->setCookie = cookieName.toUtf8() + "=1; Path=/";
+    QVERIFY(loadSync(tabA->page(),
+                     m_server->url(QLatin1String("/cont02-a.html"))));
+    QTRY_VERIFY(hasCookie(jarA, cookieName));
+
+    // The same url loaded from the other container's tab must not see
+    // the cookie — neither on the wire nor in its jar.  setCookie is
+    // cleared first so B's own response can't legitimately seed jar B,
+    // and the wire check looks only at B's request line — an in-flight
+    // favicon fetch on A's profile may still carry the marker.
+    m_server->setCookie.clear();
+    m_server->cookieHeaders.clear();
+    QVERIFY(loadSync(tabB->page(),
+                     m_server->url(QLatin1String("/cont02-b.html"))));
+    QTest::qWait(300);
+    const QString marker = QLatin1String("/cont02-b.html ")
+        + cookieName;
+    QVERIFY(!m_server->cookieHeaders.join(QLatin1Char(';'))
+             .contains(marker));
+    QVERIFY(!hasCookie(jarB, cookieName));
+}
+
+// CONT02: the session blob records each tab's container id (format
+// v2) and restoreState binds restored tabs to the same containers; a
+// v1 blob still restores into the default container.
+void tst_ContainerManager::sessionRestoresContainers()
+{
+    const QString id = create();
+    ContainerManager *manager = ContainerManager::instance();
+
+    QByteArray state;
+    {
+        TabWidget widget;
+        widget.newTab();
+        QVERIFY(loadSync(widget.webView(0)->page(),
+                         m_server->url(QLatin1String("/cont02-s0.html"))));
+        WebView *containerTab = widget.makeNewTabInContainer(id, true);
+        QVERIFY(loadSync(containerTab->page(),
+                         m_server->url(QLatin1String("/cont02-s1.html"))));
+        // A plain new tab inherits the container — the saved blob must
+        // carry that binding too.
+        widget.newTab();
+        QVERIFY(loadSync(widget.webView(2)->page(),
+                         m_server->url(QLatin1String("/cont02-s2.html"))));
+        QCOMPARE(widget.count(), 3);
+        state = widget.saveState();
+    }
+
+    TabWidget restored;
+    QVERIFY(restored.restoreState(state));
+    QCOMPARE(restored.count(), 3);
+    QCOMPARE(restored.containerIdForTab(0), QString());
+    QCOMPARE(restored.containerIdForTab(1), id);
+    QCOMPARE(restored.containerIdForTab(2), id);
+    QCOMPARE(restored.webView(1)->page()->profile(),
+             manager->profileFor(id));
+    QCOMPARE(restored.webView(2)->page()->profile(),
+             manager->profileFor(id));
+    QCOMPARE(restored.webView(0)->page()->profile(),
+             BrowserApplication::webEngineProfile());
+
+    // Backward compatibility — a hand-serialized v1 blob (no container
+    // tail) restores into the default container.
+    QByteArray v1;
+    {
+        QDataStream out(&v1, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(1);
+        out << (QStringList() << QLatin1String("data:text/plain,v1"));
+        out << qint32(0);
+        QList<QByteArray> noHistory;
+        noHistory << QByteArray();
+        out << noHistory;
+    }
+    TabWidget legacy;
+    QVERIFY(legacy.restoreState(v1));
+    QCOMPARE(legacy.count(), 1);
+    QCOMPARE(legacy.containerIdForTab(0), QString());
+}
+
+// CONT02: the tab-strip indicator — a container tab reserves chip
+// height in its size hint, paints the container's accent color, and
+// names the container in the tab tooltip.  The widget is deliberately
+// never shown: an offscreen show() pulls a container-profile WebView
+// into the compositor's GL path, which traps headless — tabRect and
+// grab() lay out and render the bar without it.
+void tst_ContainerManager::containerChipIndicator()
+{
+    const QString id = create(QLatin1String("ChipTest"));
+    ContainerManager::instance()->setContainerColor(
+        id, QColor(0x12, 0x34, 0x56));
+
+    TabWidget widget;
+    widget.newTab();
+    TabBar *bar = widget.tabBar();
+    widget.resize(400, 60);
+    const int plainHeight = bar->tabRect(0).height();
+    QVERIFY(plainHeight > 0);
+
+    WebView *containerTab = widget.makeNewTabInContainer(id, false);
+    QVERIFY(containerTab);
+
+    // QTabBar lays out every tab at the strip's max height, so the
+    // chip reservation shows as the whole strip growing taller once
+    // the container tab lands.
+    QVERIFY(bar->tabRect(1).isValid());
+    QVERIFY(bar->tabRect(1).height() > plainHeight);
+    QCOMPARE(bar->sizeHint().height(), bar->tabRect(1).height());
+
+    // The accent strip lands in the painted output.
+    const QImage image = bar->grab().toImage();
+    bool accentFound = false;
+    for (int y = 0; y < image.height() && !accentFound; ++y) {
+        for (int x = 0; x < image.width() && !accentFound; ++x) {
+            if (image.pixelColor(x, y) == QColor(0x12, 0x34, 0x56))
+                accentFound = true;
+        }
+    }
+    QVERIFY(accentFound);
+
+    // The container name rides the tab tooltip.
+    QVERIFY(loadSync(containerTab->page(),
+                     m_server->url(QLatin1String("/cont02-c.html"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar->tabToolTip(1).contains(QLatin1String("ChipTest")), 5000);
 }
 
 QTEST_MAIN(tst_ContainerManager)

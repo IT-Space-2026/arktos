@@ -63,6 +63,9 @@
 #include "tabbar.h"
 
 #include "aroraicon.h"
+#include "browserapplication.h"
+#include "containermanager.h"
+#include "safetext.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -72,8 +75,10 @@
 #include <qcursor.h>
 #include <qdrag.h>
 #include <qevent.h>
+#include <qfontmetrics.h>
 #include <qmenu.h>
 #include <qmimedata.h>
+#include <qpainter.h>
 #include <qstyle.h>
 #include <qtoolbutton.h>
 #include <qurl.h>
@@ -278,6 +283,47 @@ void TabBar::contextMenuRequested(const QPoint &position)
                                          this, QOverload<>::of(&TabBar::cloneTab));
         action->setData(index);
 
+        // CONT02: "Reopen in Container" moves the tab's page onto
+        // another container's profile.  Off-the-record windows hide
+        // the submenu — a private tab can never move to persistent
+        // storage (and tor has no containers at all).
+        if (!BrowserApplication::isPrivate()
+            && !BrowserApplication::isTorMode()) {
+            QMenu *containersMenu = menu.addMenu(tr("Reopen in Con&tainer"));
+            const QString current = tabWidget->containerIdForTab(index);
+            ContainerManager *manager = ContainerManager::instance();
+            QAction *entry = containersMenu->addAction(tr("&No Container"),
+                this, [this, index]() {
+                emit reopenInContainer(index, QString());
+            });
+            entry->setCheckable(true);
+            entry->setChecked(current.isEmpty());
+            const QList<ContainerManager::Container> containers =
+                manager->containers();
+            for (const ContainerManager::Container &container : containers) {
+                entry = containersMenu->addAction(
+                    ContainerManager::colorIcon(container.color),
+                    SafeText::menu(container.name));
+                entry->setCheckable(true);
+                entry->setChecked(container.id == current);
+                const QString id = container.id;
+                connect(entry, &QAction::triggered, this,
+                        [this, index, id]() {
+                    emit reopenInContainer(index, id);
+                });
+            }
+            containersMenu->addSeparator();
+            containersMenu->addAction(tr("New &Container..."),
+                this, [this, index]() {
+                const QString id = ContainerManager::instance()
+                    ->createContainerInteractive(this);
+                if (!id.isEmpty())
+                    emit reopenInContainer(index, id);
+            });
+            containersMenu->addAction(tr("&Manage Containers..."),
+                this, [tabWidget]() { tabWidget->manageContainers(); });
+        }
+
         menu.addSeparator();
 
         action = menu.addAction(tr("&Close Tab"), QKeySequence::Close,
@@ -457,6 +503,117 @@ void TabBar::dropEvent(QDropEvent *event)
     QTabBar::dropEvent(event);
 }
 
+// CONT02: the container a tab belongs to, resolved through the page's
+// profile — the registry entry for a container tab, an empty struct
+// for the default container / off-the-record pages / when the bar is
+// not hosted by a TabWidget.
+ContainerManager::Container TabBar::containerForTab(int index) const
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || index < 0 || index >= count())
+        return ContainerManager::Container();
+    return ContainerManager::instance()->containerForId(
+        tabWidget->containerIdForTab(index));
+}
+
+// A compact bold face for the chip text — the chip band is ~12px.
+QFont TabBar::containerChipFont() const
+{
+    QFont chipFont = font();
+    chipFont.setBold(true);
+    if (chipFont.pointSizeF() > 0)
+        chipFont.setPointSizeF(qMax(6.5, chipFont.pointSizeF() * 0.7));
+    else if (chipFont.pixelSize() > 0)
+        chipFont.setPixelSize(qMax(8, chipFont.pixelSize() * 2 / 3));
+    return chipFont;
+}
+
+// The extra size a container chip reserves for the tab at index —
+// the values match the geometry paintEvent() draws: the 3px outer-edge
+// strip plus the name chip's height (vertical bars grow wider for the
+// side strip and taller for the chip across the tab's top).
+QSize TabBar::containerChipSize(int index) const
+{
+    const ContainerManager::Container c = containerForTab(index);
+    if (c.id.isEmpty())
+        return QSize();
+    const int chipHeight = QFontMetrics(containerChipFont()).height() + 4;
+    if (verticalTabShape(shape()))
+        return QSize(3, chipHeight + 2);
+    return QSize(0, chipHeight + 3);
+}
+
+// CONT02: after the style paints the tab, container tabs get their
+// accent — a strip on the tab's outer edge (top for a horizontal bar,
+// the free side for a vertical one) plus a name chip just inside it.
+void TabBar::paintEvent(QPaintEvent *event)
+{
+    QTabBar::paintEvent(event);
+
+    const QFont chipFont = containerChipFont();
+    const int chipHeight = QFontMetrics(chipFont).height() + 4;
+    const int strip = 3;
+
+    QPainter painter(this);
+    for (int index = 0; index < count(); ++index) {
+        const ContainerManager::Container container = containerForTab(index);
+        if (container.id.isEmpty())
+            continue;
+        const QColor accent = container.color.isValid()
+            ? container.color : palette().color(QPalette::Highlight);
+        const QRect rect = tabRect(index);
+
+        QRect chip;
+        switch (shape()) {
+        case QTabBar::RoundedSouth:
+        case QTabBar::TriangularSouth:
+            painter.fillRect(rect.left(), rect.bottom() - strip + 1,
+                             rect.width(), strip, accent);
+            chip = QRect(rect.left() + 4, rect.bottom() - chipHeight - strip,
+                         rect.width() - 8, chipHeight);
+            break;
+        case QTabBar::RoundedWest:
+        case QTabBar::TriangularWest:
+            painter.fillRect(rect.left(), rect.top(),
+                             strip, rect.height(), accent);
+            chip = QRect(rect.left() + strip + 2, rect.top() + 2,
+                         rect.width() - strip - 4, chipHeight);
+            break;
+        case QTabBar::RoundedEast:
+        case QTabBar::TriangularEast:
+            painter.fillRect(rect.right() - strip + 1, rect.top(),
+                             strip, rect.height(), accent);
+            chip = QRect(rect.left() + 2, rect.top() + 2,
+                         rect.width() - strip - 4, chipHeight);
+            break;
+        default:
+            painter.fillRect(rect.left(), rect.top(),
+                             rect.width(), strip, accent);
+            chip = QRect(rect.left() + 4, rect.top() + strip,
+                         rect.width() - 8, chipHeight);
+            break;
+        }
+
+        // The name chip — a rounded pill in the container color.  On a
+        // very narrow tab only the strip shows (the accent still
+        // identifies the container).
+        if (chip.width() >= 24 && !container.name.isEmpty()) {
+            painter.save();
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setBrush(accent);
+            painter.setPen(accent.darker(130));
+            painter.drawRoundedRect(chip, 3, 3);
+            painter.setFont(chipFont);
+            painter.setPen(accent.lightness() > 140 ? Qt::black : Qt::white);
+            const QString elided = painter.fontMetrics().elidedText(
+                container.name, Qt::ElideRight, chip.width() - 8);
+            painter.drawText(chip.adjusted(4, 0, -4, 0),
+                             Qt::AlignCenter | Qt::AlignVCenter, elided);
+            painter.restore();
+        }
+    }
+}
+
 QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
@@ -465,13 +622,15 @@ QSize TabBar::tabSizeHint(int index) const
     // QTabBar::tabSizeHint returns a transposed size for vertical
     // shapes — bound the tab's long axis either way so a long title
     // can't stretch the whole strip, and floor the strip's thickness so
-    // tabs keep modern breathing room (UIP01).
+    // tabs keep modern breathing room (UIP01).  CONT02: container tabs
+    // reserve their chip's extent on top of that.
     const int thickness = fm.height() + 10;
+    const QSize chip = containerChipSize(index);
     if (verticalTabShape(shape()))
-        return QSize(qMax(sizeHint.width(), thickness),
-                     qMin(sizeHint.height(), extent));
+        return QSize(qMax(sizeHint.width(), thickness) + chip.width(),
+                     qMin(sizeHint.height(), extent) + chip.height());
     return QSize(qMin(sizeHint.width(), extent),
-                 qMax(sizeHint.height(), thickness));
+                 qMax(sizeHint.height(), thickness) + chip.height());
 }
 
 void TabBar::reloadTab()

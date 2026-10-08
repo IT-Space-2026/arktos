@@ -108,6 +108,7 @@ public slots:
     void goHome();
     void privacyChanged(bool isPrivate);
     void zoomTextOnlyChanged(bool textOnly);
+    void preferences();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -123,8 +124,6 @@ private slots:
     void loadProgress(int);
     void updateStatusbar(const QString &string);
     void updateWindowTitle(const QString &title = QString());
-
-    void preferences();
 
     void fileNew();
     void fileOpen();
@@ -159,6 +158,9 @@ private slots:
     void aboutToShowForwardMenu();
     void aboutToShowViewMenu();
     void aboutToShowWindowMenu();
+    // CONT02: the File menu's "New Container Tab" submenu repopulates
+    // on open because the container registry is runtime-editable.
+    void populateNewContainerTabMenu();
     void aboutToShowTextEncodingMenu();
     void openActionUrl(QAction *action);
     void showWindow();
@@ -176,6 +178,7 @@ private:
 private:
     QMenu *m_fileMenu;
     QAction *m_fileNewWindowAction;
+    QMenu *m_fileNewContainerTabMenu;
     QAction *m_fileOpenFileAction;
     QAction *m_fileOpenLocationAction;
     QAction *m_fileSaveAsAction;
