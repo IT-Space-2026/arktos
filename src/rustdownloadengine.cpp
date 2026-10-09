@@ -19,13 +19,22 @@
 
 #include "rustdownloadengine.h"
 
+#include "adblockmanager.h"
+#include "adblocknetwork.h"
+#include "adblockrequestinterceptor.h"
+#include "browserapplication.h"
 #include "browserpaths.h"
+#include "privacyrequestinterceptor.h"
 
 #include <qjsonobject.h>
 #include <qjsondocument.h>
+#include <qnetworkproxy.h>
 #include <qsettings.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+
+#include <cstring>
+#include <mutex>
 
 /*!
     Poll cadence: the spec's ~2 progress updates per second.  The FFI
@@ -33,6 +42,172 @@
     timer staying this fast while RUNNING is fine.
  */
 static const int s_pollIntervalMs = 500;
+
+// ---- DLACC04 policy gate --------------------------------------------------
+// The Rust engine's per-hop policy verdicts come from this side: the
+// FFI callback below is a thin byte-shuffle over gateCheck(), which
+// composes the same decisions the normal engine's request
+// interceptors make — SEC17 tracking-param strip, SAFE01 https-first
+// upgrade and https-only veto, SEC18 domain blocklist, the adblock
+// matcher, and the private/LAN boundary — so a download can't slip a
+// rule a same-origin resource fetch would hit.  Everything it touches
+// is a lock-guarded snapshot or a mutex-guarded set, so it is safe on
+// the Rust worker threads.
+
+RustDownloadEngine::GateDecision RustDownloadEngine::gateCheck(
+        const QUrl &url, const QUrl &prev, const QUrl &firstParty,
+        const QString &scope, AdBlockNetwork *network)
+{
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http") && scheme != QLatin1String("https"))
+        return {GateBlock, QString(),
+                QStringLiteral("download scheme refused: %1").arg(scheme)};
+
+    // SSRF boundary: the interceptor exempts private/LAN targets from
+    // https policy because user-initiated LAN traffic is legitimate —
+    // but a redirect hop that crosses public -> private is an open-
+    // redirect attack (a public URL must not make the browser fetch
+    // http://192.168.x.x/ or the user's localhost).  The first hop
+    // (prev empty) is exempt, matching interceptor semantics; so is
+    // private -> private LAN-internal chaining.  Runs before any
+    // rewrite: no step below may change the host.
+    const bool local =
+        PrivacyRequestInterceptor::isPrivateOrLocalHost(url.host());
+    if (local && !prev.isEmpty() && prev.host() != url.host()
+            && !PrivacyRequestInterceptor::isPrivateOrLocalHost(prev.host()))
+        return {GateBlock, QString(),
+                QStringLiteral("redirect into a private address refused: %1")
+                    .arg(url.host())};
+
+    if (PrivacyRequestInterceptor::shouldBlockDomain(url))
+        return {GateBlock, QString(),
+                QStringLiteral("download host on the blocklist: %1")
+                    .arg(url.host())};
+
+    // Same folding as PrivacyRequestInterceptor::interceptRequest():
+    // SEC17 strip, then https-first on what remains — the toggle is
+    // the caller's check; isUpgradeCandidate only answers "can this
+    // host take the upgrade".
+    QUrl target = PrivacyRequestInterceptor::strippedUrl(url);
+    if (scheme == QLatin1String("http")
+            && PrivacyRequestInterceptor::httpsFirstEnabled()
+            && PrivacyRequestInterceptor::isUpgradeCandidate(url, scope))
+        target.setScheme(QStringLiteral("https"));
+    if (target != url)
+        return {GateRewrite, QString::fromUtf8(target.toEncoded()),
+                QString()};
+
+    if (scheme == QLatin1String("http")
+            && PrivacyRequestInterceptor::shouldWarnHttp(url, scope))
+        return {GateBlock, QString(),
+                QStringLiteral("insecure http:// download refused: %1")
+                    .arg(url.host())};
+
+    // Adblock/tracking rules — the same match() the request
+    // interceptor consults.  A download maps to no meaningful
+    // Chromium ResourceType, so it is gated as "no type": generic and
+    // domain rules still hit it, type-scoped rules ($image, $script…)
+    // neither block nor except it — no channel through which it
+    // could dodge a rule its URL alone would trip.
+    if (network) {
+        const AdBlockDecision d = network->match(url, firstParty, -1);
+        if (d.action == AdBlockDecision::Block)
+            return {GateBlock, QString(),
+                    QStringLiteral("blocked by content rules: %1")
+                        .arg(url.host())};
+        if (d.action == AdBlockDecision::Redirect) {
+            const QString redir = d.redirectUrl;
+            if (redir.startsWith(QLatin1String("http")))
+                return {GateRewrite, redir, QString()};
+            // A $redirect to a stub resource (data:, native
+            // transparent pixel) has no file to download — block
+            // rather than hand the crate a scheme it must refuse.
+            return {GateBlock, QString(),
+                    QStringLiteral("blocked by content rules: %1")
+                        .arg(url.host())};
+        }
+        if (!d.removeParams.isEmpty()) {
+            QUrl cleaned = url;
+            if (AdBlockRequestInterceptor::stripQueryParams(
+                        &cleaned, d.removeParams))
+                return {GateRewrite,
+                        QString::fromUtf8(cleaned.toEncoded()), QString()};
+        }
+    }
+    return {GateAllow, QString(), QString()};
+}
+
+namespace {
+
+// The reqwest-style proxy URL the download must ride — the configured
+// application proxy in a normal process, the managed SOCKS listener
+// in a tor process (the application proxy IS that listener there:
+// TorManager installs it process-wide).  Null when the fetch may go
+// direct; a tor download never reaches dl_start without a proxy —
+// canHandle() refuses it first and the item falls back to the
+// engine-mediated path.
+QString proxySpecForDownload()
+{
+    const QNetworkProxy ap = QNetworkProxy::applicationProxy();
+    QString scheme;
+    switch (ap.type()) {
+    case QNetworkProxy::Socks5Proxy:
+        // socks5h — name resolution happens at the SOCKS peer.  In a
+        // tor process a local lookup would be a leak all by itself.
+        scheme = QStringLiteral("socks5h");
+        break;
+    case QNetworkProxy::HttpProxy:
+    case QNetworkProxy::HttpCachingProxy:
+        scheme = QStringLiteral("http");
+        break;
+    default:
+        return QString();
+    }
+    QString auth;
+    if (!ap.user().isEmpty())
+        auth = QString::fromUtf8(QUrl::toPercentEncoding(ap.user()))
+            + QLatin1Char(':')
+            + QString::fromUtf8(QUrl::toPercentEncoding(ap.password()))
+            + QLatin1Char('@');
+    QString host = ap.hostName();
+    if (host.contains(QLatin1Char(':')))
+        host = QLatin1Char('[') + host + QLatin1Char(']');
+    return scheme + QLatin1String("://") + auth + host
+        + QLatin1Char(':') + QString::number(ap.port());
+}
+
+// Byte-shuffle adapter between the crate's C callback and
+// gateCheck().  Runs on Rust worker threads — everything it reaches
+// is a snapshot or lock-guarded, never live GUI state.
+int rustdlGateTrampoline(const char *urlUtf8, const char *prevUtf8,
+        const char *firstPartyUtf8, const char *scopeUtf8,
+        char *outUrl, size_t outUrlCap, char *outReason,
+        size_t outReasonCap, void *ctx)
+{
+    const QUrl url = QUrl::fromEncoded(QByteArray(urlUtf8 ? urlUtf8 : ""));
+    const QUrl prev = QUrl::fromEncoded(QByteArray(prevUtf8 ? prevUtf8 : ""));
+    const QUrl firstParty =
+        QUrl::fromEncoded(QByteArray(firstPartyUtf8 ? firstPartyUtf8 : ""));
+    const RustDownloadEngine::GateDecision d =
+        RustDownloadEngine::gateCheck(
+            url, prev, firstParty,
+            QString::fromUtf8(scopeUtf8 ? scopeUtf8 : ""),
+            static_cast<AdBlockNetwork*>(ctx));
+    const QByteArray payload = d.action == RustDownloadEngine::GateRewrite
+        ? d.url.toUtf8() : d.reason.toUtf8();
+    char *dst = d.action == RustDownloadEngine::GateRewrite
+        ? outUrl : outReason;
+    const size_t cap = d.action == RustDownloadEngine::GateRewrite
+        ? outUrlCap : outReasonCap;
+    if (dst && cap > 1 && !payload.isEmpty()) {
+        const size_t n = qMin<size_t>(cap - 1, size_t(payload.size()));
+        memcpy(dst, payload.constData(), n);
+        dst[n] = '\0';
+    }
+    return int(d.action);
+}
+
+} // namespace
 
 RustDownloadEngine::RustDownloadEngine(QWebEnginePage *page, const QUrl &url,
                                        const QString &suggestedFileName,
@@ -77,6 +252,21 @@ bool RustDownloadEngine::isSelected()
         || v.toInt() == 1;
 }
 
+bool RustDownloadEngine::canHandle(const QUrl &url)
+{
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http") && scheme != QLatin1String("https"))
+        return false;
+    if (BrowserApplication::isTorMode()) {
+        // The hard rule of DLACC04: in a tor process a download exits
+        // via the managed SOCKS listener or via Chromium's own
+        // proxied network path — never direct from this engine.
+        return QNetworkProxy::applicationProxy().type()
+            == QNetworkProxy::Socks5Proxy;
+    }
+    return true;
+}
+
 void RustDownloadEngine::accept()
 {
     if (m_handle || m_dir.isEmpty())
@@ -102,17 +292,51 @@ void RustDownloadEngine::accept()
     settings.beginGroup(QLatin1String("downloadmanager"));
     const int connections = settings.value(QLatin1String("connections"), 0).toInt();
 
-    // Header parity seed (DLACC04 owns the full policy): the engine
-    // presents the profile's UA so downloads are not a fingerprint
-    // diff.  No cookies are exported yet — DLACC05 wires the per-host
-    // Netscape file; until then authenticated sites fall back
-    // naturally on the server side (403 -> Interrupted, retryable).
+    // DLACC04: install the policy gate once.  The callback is pure
+    // (settings snapshots + lock-guarded blocklist state only), so it
+    // is safe for the Rust worker threads to invoke it on every hop.
+    static std::once_flag s_gateOnce;
+    std::call_once(s_gateOnce, []() {
+        dl_set_gate(&rustdlGateTrampoline,
+                    AdBlockManager::instance()->network());
+    });
+
+    // Header/policy parity (DLACC04): profile UA so downloads are not
+    // a fingerprint diff; the page URL as first_party + referer
+    // source; the REF01 referer policy (tor enforces at least
+    // Trimmed); the SAFE07 downgrade scope the page's profile gates
+    // under; the proxy the fetch must ride.  No cookies are exported
+    // yet — DLACC05 wires the per-host Netscape file; until then
+    // authenticated sites fall back naturally on the server side
+    // (403 -> Interrupted, retryable).
     QJsonObject options;
     if (m_page && m_page->profile()) {
         const QString ua = m_page->profile()->httpUserAgent();
         if (!ua.isEmpty())
             options.insert(QLatin1String("user_agent"), ua);
+        options.insert(QLatin1String("scope"),
+            PrivacyRequestInterceptor::downgradeScope(m_page->profile()));
     }
+    const QUrl firstParty = m_page ? m_page->url() : QUrl();
+    const QString fpScheme = firstParty.scheme();
+    if (fpScheme == QLatin1String("http") || fpScheme == QLatin1String("https"))
+        options.insert(QLatin1String("first_party"),
+            QString::fromUtf8(firstParty.toEncoded()));
+    int refererPolicy = PrivacyRequestInterceptor::storedRefererPolicy();
+    if (BrowserApplication::isTorMode())
+        // TorRequestInterceptor floor — tor never sends the page's
+        // chosen EngineDefault lower than Trimmed.
+        refererPolicy = qMax(refererPolicy,
+            int(PrivacyRequestInterceptor::RefererTrimmed));
+    options.insert(QLatin1String("referer_policy"), refererPolicy);
+    const QString proxy = proxySpecForDownload();
+    if (!proxy.isEmpty())
+        options.insert(QLatin1String("proxy"), proxy);
+    // Second belt under canHandle(): if the proxy vanished between
+    // selection and start, the crate fails closed instead of opening
+    // a direct socket in a tor process.
+    options.insert(QLatin1String("require_proxy"),
+                   BrowserApplication::isTorMode());
 
     const QByteArray u = m_url.toString().toUtf8();
     const QByteArray d = m_dir.toUtf8();

@@ -4,9 +4,10 @@
 //! back to the browser engine, per the DLACC03 decision).
 //!
 //! Redirects are followed manually (reqwest's automatic policy is
-//! off): every hop re-validates the scheme, and Cookie/Referer are
-//! rebuilt per hop so credentials never leak cross-origin — the seed
-//! of DLACC04's redirect re-gating.
+//! off): every hop re-runs the DLACC04 policy gate (the Qt-side
+//! interceptor pipeline — https-first/HTTPS-Only, url-strip, domain
+//! blocklist, adblock, public->private redirect refusal) and rebuilds
+//! Cookie/Referer per hop so credentials never leak cross-origin.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -21,6 +22,7 @@ use reqwest::Method;
 
 use crate::cookies;
 use crate::error::{self, DlStatus, Fail};
+use crate::gate;
 use crate::sanitize;
 
 /// Progress states — mirrors DlState in rustdl.h.
@@ -46,12 +48,26 @@ const SEGMENT_ATTEMPTS: usize = 3;
 const COPY_BUF: usize = 64 * 1024;
 
 /// JSON options accepted in dl_start — the open-ended slot DLACC04
-/// fills in (proxy, referer, UA parity).
+/// fills in (proxy, referer, UA parity, gate context).
 #[derive(Default)]
 pub struct Options {
     pub user_agent: Option<String>,
-    pub referer: Option<String>,
+    /// Document URL the download was initiated from — the adblock
+    /// first-party context AND the REF01 referer source.  A download
+    /// with no page (typed URL) sends no Referer at all.
+    pub first_party: Option<String>,
+    /// The requesting profile's HTTPS-First downgrade scope
+    /// (PrivacyRequestInterceptor::downgradeScope) — handed to the
+    /// gate verbatim.
+    pub scope: Option<String>,
+    /// PrivacyRequestInterceptor::RefererPolicy value (0-3); the
+    /// engine replays rewrittenReferer() per hop.
+    pub referer_policy: i32,
     pub proxy: Option<String>,
+    /// Tor windows: refuse to run rather than fall back to a direct
+    /// socket — a clearnet fetch from a tor process is a
+    /// de-anonymization bug (release-blocking per DLACC04).
+    pub require_proxy: bool,
 }
 
 pub struct Job {
@@ -211,38 +227,111 @@ fn domain_key(url: &reqwest::Url) -> String {
 /// Extra per-request inputs the redirect loop rebuilds per hop.
 struct ReqCtx {
     user_agent: Option<String>,
-    referer: Option<String>,
+    /// Parsed first_party option — the REF01 referer source.
+    referer_source: Option<reqwest::Url>,
+    referer_policy: i32,
     cookie_file: Option<PathBuf>,
-    /// URL the Referer header is scoped to — stripped when a hop
-    /// leaves its domain.
-    referer_origin: Option<String>,
+    /// Gate arguments: the originating document URL and the profile's
+    /// downgrade scope ("" when unknown — a valid scope).
+    first_party: String,
+    scope: String,
+}
+
+/// scheme://host[:port]/ — the origin a trimmed Referer carries.
+fn origin_of(url: &reqwest::Url) -> String {
+    let mut s = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+    if let Some(port) = url.port() {
+        s.push_str(&format!(":{port}"));
+    }
+    s.push('/');
+    s
+}
+
+/// Mirrors PrivacyRequestInterceptor::rewrittenReferer (REF01) — the
+/// Referer value for a request to `target` initiated from document
+/// `source`, under the persisted policy level.  The same
+/// last-two-labels approximation the Qt side uses decides
+/// same-site-ness (domain_key); documented divergence from a real
+/// public-suffix list stands.
+///
+///   0 EngineDefault — Chromium strict-origin-when-cross-origin:
+///     same-site sends the full source URL, cross-site the source
+///     origin, https->http nothing.
+///   1 Trimmed  — same-site: source origin; cross-site: the TARGET's
+///     own origin (uBO referrer-spoof — the destination only sees
+///     itself).  https->http still nothing.
+///   2 Strict   — same-site: source origin; cross-site: nothing.
+///   3 Never    — nothing, ever.
+fn referer_for(
+    policy: i32,
+    source: &reqwest::Url,
+    target: &reqwest::Url,
+) -> Option<String> {
+    if policy >= 3 {
+        return None; // RefererNever
+    }
+    // strict-origin's downgrade rule applies at every level: an https
+    // origin is never revealed inside a plaintext http request.
+    if source.scheme() == "https" && target.scheme() == "http" {
+        return None;
+    }
+    let same_site = domain_key(source) == domain_key(target);
+    match policy {
+        // EngineDefault: strict-origin-when-cross-origin.
+        0 => Some(if same_site {
+            source.as_str().to_string()
+        } else {
+            origin_of(source)
+        }),
+        // Trimmed: target-origin spoof cross-site.
+        1 => Some(if same_site {
+            origin_of(source)
+        } else {
+            origin_of(target)
+        }),
+        // Strict (and any unknown level — fail closed toward less
+        // leakage, not more).
+        _ => {
+            if same_site {
+                Some(origin_of(source))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 impl ReqCtx {
-    fn headers(&self, url: &reqwest::Url) -> HeaderMap {
+    /// Headers for one hop.  `prev` is the URL that redirected here —
+    /// the Cookie header rides only same-domain hops (DLACC04's
+    /// cross-origin strip), and the jar lookup additionally scopes to
+    /// the hop's own host so a previous host's cookies can never
+    /// follow the chain.  Authorization is never set — there is no
+    /// source for one — so a redirect can never forward it.
+    fn headers(&self, url: &reqwest::Url, prev: Option<&reqwest::Url>) -> HeaderMap {
         let mut h = HeaderMap::new();
         if let Some(ua) = &self.user_agent {
             if let Ok(v) = HeaderValue::from_str(ua) {
                 h.insert(header::USER_AGENT, v);
             }
         }
-        if let Some(r) = &self.referer {
-            if self
-                .referer_origin
-                .as_deref()
-                .map(|o| o == domain_key(url))
-                .unwrap_or(false)
-            {
-                if let Ok(v) = HeaderValue::from_str(r) {
+        if let Some(src) = &self.referer_source {
+            if let Some(r) = referer_for(self.referer_policy, src, url) {
+                if let Ok(v) = HeaderValue::from_str(&r) {
                     h.insert(header::REFERER, v);
                 }
             }
         }
-        if let Some(jar) = &self.cookie_file {
-            if let (Some(host), Some(path)) = (url.host_str(), Some(url.path())) {
-                if let Some(v) = cookies::header_for(jar, host, path, url.scheme() == "https") {
-                    if let Ok(v) = HeaderValue::from_str(&v) {
-                        h.insert(header::COOKIE, v);
+        let same_domain_as_prev = prev
+            .map(|p| domain_key(p) == domain_key(url))
+            .unwrap_or(true);
+        if same_domain_as_prev {
+            if let Some(jar) = &self.cookie_file {
+                if let (Some(host), Some(path)) = (url.host_str(), Some(url.path())) {
+                    if let Some(v) = cookies::header_for(jar, host, path, url.scheme() == "https") {
+                        if let Ok(v) = HeaderValue::from_str(&v) {
+                            h.insert(header::COOKIE, v);
+                        }
                     }
                 }
             }
@@ -252,8 +341,11 @@ impl ReqCtx {
 }
 
 /// One request plus manual redirect following.  Each hop re-runs the
-/// header build (cookies/referer scoped to the hop's host) and refuses
-/// non-http(s) locations outright.
+/// DLACC04 policy gate (upgrade/veto/blocklist/adblock/SSRF rules —
+/// Chromium never re-runs its interceptor on download redirects; this
+/// engine deliberately does), rebuilds the headers scoped to the
+/// hop's host, and refuses non-http(s) locations outright.  Gate
+/// rewrites and wire redirects share the hop cap.
 fn send(
     client: &Client,
     method: Method,
@@ -262,8 +354,38 @@ fn send(
     range: Option<(i64, i64)>,
 ) -> Result<Response, Fail> {
     let mut url = url.clone();
+    let mut prev: Option<reqwest::Url> = None;
     for _hop in 0..=MAX_REDIRECTS {
-        let mut headers = ctx.headers(&url);
+        match gate::check(
+            url.as_str(),
+            prev.as_ref().map(|u| u.as_str()),
+            &ctx.first_party,
+            &ctx.scope,
+        ) {
+            gate::Decision::Allow => {}
+            gate::Decision::Block(reason) => {
+                return Err(Fail {
+                    status: DlStatus::Blocked,
+                    msg: reason,
+                });
+            }
+            gate::Decision::Rewrite(target) => {
+                let next = reqwest::Url::parse(&target).map_err(|_| Fail {
+                    status: DlStatus::Blocked,
+                    msg: format!("bad gate rewrite for {}", redact(&url)),
+                })?;
+                if next.scheme() != "http" && next.scheme() != "https" {
+                    return error::fail(
+                        DlStatus::Blocked,
+                        format!("gate rewrite to {} refused", next.scheme()),
+                    );
+                }
+                prev = Some(url);
+                url = next;
+                continue;
+            }
+        }
+        let mut headers = ctx.headers(&url, prev.as_ref());
         if let Some((a, b)) = range {
             if let Ok(v) = HeaderValue::from_str(&format!("bytes={a}-{b}")) {
                 headers.insert(header::RANGE, v);
@@ -296,6 +418,7 @@ fn send(
                 format!("refused redirect to {} from {}", next.scheme(), redact(&url)),
             );
         }
+        prev = Some(url);
         url = next;
     }
     error::fail(DlStatus::Network, "too many redirects")
@@ -584,6 +707,17 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
         );
     }
 
+    // DLACC04 hard rule: a tor-mode download must NEVER go direct.
+    // require_proxy refuses the job outright when no proxy made it
+    // into the options — the Qt side normally refuses earlier (the
+    // selector falls back to the engine path), this is the backstop.
+    if job.options.require_proxy && job.options.proxy.is_none() {
+        return error::fail(
+            DlStatus::Blocked,
+            "proxy required for this download but none configured",
+        );
+    }
+
     let mut builder = Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none());
@@ -591,19 +725,37 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
         builder = builder.user_agent(ua.clone());
     }
     if let Some(p) = &job.options.proxy {
-        let proxy = reqwest::Proxy::all(p).map_err(|_| Fail {
+        let mut proxy = reqwest::Proxy::all(p).map_err(|_| Fail {
             status: DlStatus::InvalidArgument,
             msg: "bad proxy url".into(),
         })?;
+        if !job.options.require_proxy {
+            // Chromium bypasses the configured proxy for loopback;
+            // mirror that for a normal-mode proxy.  Under
+            // require_proxy (tor) NOTHING bypasses — even localhost
+            // must traverse the SOCKS listener.
+            proxy = proxy.no_proxy(reqwest::NoProxy::from_string(
+                "localhost,127.0.0.1,::1",
+            ));
+        }
         builder = builder.proxy(proxy);
     }
     let client = builder.build().map_err(error::Fail::from)?;
 
+    let referer_source = job
+        .options
+        .first_party
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|s| reqwest::Url::parse(s).ok())
+        .filter(|u| u.scheme() == "http" || u.scheme() == "https");
     let ctx = ReqCtx {
         user_agent: job.options.user_agent.clone(),
-        referer: job.options.referer.clone(),
-        referer_origin: job.options.referer.as_ref().map(|_| domain_key(&url)),
+        referer_source,
+        referer_policy: job.options.referer_policy,
         cookie_file: job.cookie_file.clone(),
+        first_party: job.options.first_party.clone().unwrap_or_default(),
+        scope: job.options.scope.clone().unwrap_or_default(),
     };
 
     dl.set_state(DlState::Probing);
@@ -821,6 +973,43 @@ mod tests {
             domain_key(&reqwest::Url::parse("https://localhost/x").unwrap()),
             "localhost"
         );
+    }
+
+    #[test]
+    fn referer_policies() {
+        let src = reqwest::Url::parse("https://page.example/deep/path?q=1").unwrap();
+        let same = reqwest::Url::parse("https://cdn.page.example/f.bin").unwrap();
+        let cross = reqwest::Url::parse("https://other.org/f.bin").unwrap();
+        let plain = reqwest::Url::parse("http://other.org/f.bin").unwrap();
+
+        // EngineDefault — strict-origin-when-cross-origin.
+        assert_eq!(referer_for(0, &src, &same).as_deref(), Some(src.as_str()));
+        assert_eq!(
+            referer_for(0, &src, &cross).as_deref(),
+            Some("https://page.example/")
+        );
+        // Trimmed — same-site: source origin; cross-site: target-origin
+        // spoof (the destination only ever sees itself).
+        assert_eq!(
+            referer_for(1, &src, &same).as_deref(),
+            Some("https://page.example/")
+        );
+        assert_eq!(
+            referer_for(1, &src, &cross).as_deref(),
+            Some("https://other.org/")
+        );
+        // Strict — same-site: source origin; cross-site: nothing.
+        assert_eq!(
+            referer_for(2, &src, &same).as_deref(),
+            Some("https://page.example/")
+        );
+        assert_eq!(referer_for(2, &src, &cross), None);
+        // Never — nothing anywhere.
+        assert_eq!(referer_for(3, &src, &same), None);
+        // The https->http downgrade withholds at every level.
+        assert_eq!(referer_for(0, &src, &plain), None);
+        assert_eq!(referer_for(1, &src, &plain), None);
+        assert_eq!(referer_for(2, &src, &plain), None);
     }
 
     #[test]

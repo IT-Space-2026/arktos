@@ -996,9 +996,11 @@ void DownloadManager::download(QWebEnginePage *page, const QUrl &url, bool reque
 #ifdef ARORA_RUSTDL
     // DLACC06: the accelerated engine claims http(s) downloads when
     // the DLACC01 selector picked it — no Chromium request is issued.
+    // DLACC04: canHandle() applies the tor rule — without a managed
+    // SOCKS proxy a download stays on the engine-mediated path rather
+    // than ever going direct.
     if (RustDownloadEngine::isSelected()
-        && (url.scheme() == QLatin1String("http")
-            || url.scheme() == QLatin1String("https"))) {
+        && RustDownloadEngine::canHandle(url)) {
         auto *engine = new RustDownloadEngine(page, url, QString(), QString());
         DownloadItem *item = new DownloadItem(engine, requestFileName, this);
         addItem(item);
@@ -1055,8 +1057,7 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
     // here; both sides read the same downloadmanager/engine key.
     const QUrl url = download->url();
     if (RustDownloadEngine::isSelected()
-        && (url.scheme() == QLatin1String("http")
-            || url.scheme() == QLatin1String("https"))) {
+        && RustDownloadEngine::canHandle(url)) {
         auto *engine = new RustDownloadEngine(download->page(), url,
                                               download->suggestedFileName(),
                                               download->mimeType());

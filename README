@@ -41,7 +41,15 @@ HTTP(S) files as parallel ranged GETs — 4–16 connections, default 8 —
 merged atomically on completion, with a single-stream fallback when a
 server does not accept ranges.  The built-in Chromium engine stays the
 default; without the flag the selector simply does not offer the Rust
-engine.
+engine.  The accelerated path holds the same privacy guarantees as the
+built-in one: every request and each redirect hop is vetted by the same
+interceptor pipeline (HTTPS-first upgrade, HTTPS-Only veto, tracking-
+parameter strip, domain blocklist, adblock rules, public-to-private
+redirect refusal), cookies/Authorization never ride a cross-domain hop,
+the profile's User-Agent and Referer policy apply, the application
+proxy is honored, and inside a tor window a download exits only via the
+managed SOCKS listener — otherwise it falls back to the built-in engine
+rather than ever opening a direct connection.
 
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,

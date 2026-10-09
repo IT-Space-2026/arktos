@@ -319,6 +319,13 @@ public:
     static bool stripTrackingParamsEnabled();
     static QUrl strippedUrl(const QUrl &url);
 
+    // DLACC04: the loopback/private/LAN/.onion classifier behind the
+    // https-first/https-only exemptions, shared with the rustdl
+    // download gate where it doubles as the SSRF boundary — a
+    // public->private redirect hop is refused while a user-initiated
+    // LAN download stands.  Pure; safe on any thread.
+    static bool isPrivateOrLocalHost(const QString &host);
+
     // SEC18: local anti-phishing/malware domain blocklist — the
     // rustcore blocklist module answers every lookup locally (vendored
     // seed ∪ <data dir>/blocklist-domains.txt, exact + parent-suffix

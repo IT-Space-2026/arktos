@@ -24,6 +24,9 @@ pub enum DlStatus {
     Unavailable = 6,
     /// Terminal state already reached — nothing left to cancel.
     Busy = 7,
+    /// The DLACC04 policy gate refused the request (adblock hit,
+    /// HTTPS-Only veto, hostile redirect, missing tor proxy...).
+    Blocked = 8,
 }
 
 #[derive(Debug)]

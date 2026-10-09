@@ -32,6 +32,7 @@
 #include <qwebengineurlrequestinterceptor.h>
 
 class AdBlockNetwork;
+class QUrl;
 class QWebEngineUrlRequestInfo;
 
 // Profile-level request interceptor: the only request-blocking surface
@@ -68,6 +69,11 @@ public:
     // and an adblock redirect target matching the same rule again
     // spins the redirect chain.
     static bool isWebRequestScheme(const QString &scheme);
+
+    // DLACC04: the $removeparam rewriter, shared with the rustdl
+    // download gate — applies the specs to *url, true when the URL
+    // changed.  Pure; safe on any thread.
+    static bool stripQueryParams(QUrl *url, const QStringList &specs);
 
 private:
     static void noteBlockedRequest(const QUrl &firstPartyUrl);

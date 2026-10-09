@@ -407,7 +407,7 @@ bool PrivacyRequestInterceptor::shouldBlockResource(
 // printers, NAS boxes are overwhelmingly http-only), .localhost/.local
 // and .onion are left alone.  Failed upgrades would just bounce the
 // user onto the error page for no benefit.
-static bool isPrivateOrLocalHost(const QString &host)
+bool PrivacyRequestInterceptor::isPrivateOrLocalHost(const QString &host)
 {
     if (host.isEmpty())
         return true;
