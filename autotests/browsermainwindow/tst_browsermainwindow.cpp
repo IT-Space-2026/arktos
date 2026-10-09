@@ -241,8 +241,20 @@ void tst_BrowserMainWindow::dialogSlots()
     acceptModal(); // ClearPrivateData
     QVERIFY(QMetaObject::invokeMethod(window, "clearPrivateData"));
 
-    acceptModal(); // SettingsDialog
+    // PREFS01: preferences() opens the settings page as a tab, not a
+    // modal — single-instance: a second call only refocuses it.
+    const int tabsBeforePrefs = window->tabWidget()->count();
     QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    int prefsIndex = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        if (window->tabWidget()->widget(i)->inherits("SettingsDialog"))
+            prefsIndex = i;
+    }
+    QVERIFY(prefsIndex >= 0);
+    QCOMPARE(window->tabWidget()->currentIndex(), prefsIndex);
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    QCOMPARE(window->tabWidget()->count(), tabsBeforePrefs + 1);
+    window->tabWidget()->closeTab(prefsIndex);
 
     // PTAB01: "New Private Tab" opens an off-the-record tab in the
     // same window — no prompt, and the process-global flag stays off.

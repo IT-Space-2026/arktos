@@ -63,7 +63,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-#include <qdialog.h>
+#include <qwidget.h>
 #include <qhash.h>
 #include <qlist.h>
 #include <qset.h>
@@ -71,7 +71,13 @@
 #include "ui_settings.h"
 
 class QTreeWidgetItem;
-class SettingsDialog : public QDialog, public Ui_Settings
+// PREFS01: despite the historical name this is a QWidget — the
+// settings page is hosted inside a browser tab (see
+// BrowserMainWindow::showSettingsPage), not exec()ed as a dialog.
+// The OK/Cancel box survives inside the page: accept() applies and
+// asks the host to close, reject()/tab-close discards — the same
+// semantics the modal dialog had.
+class SettingsDialog : public QWidget, public Ui_Settings
 {
     Q_OBJECT
 
@@ -92,13 +98,27 @@ public:
     };
 
     SettingsDialog(QWidget *parent = nullptr);
-    void accept() override;
     void openAtPage(Page page);
+    // Opens the settings page in the ancestor window's Preferences
+    // tab; with no BrowserMainWindow ancestor (autotests, detached
+    // widgets) it is shown as a standalone modeless window so the
+    // deep link still lands somewhere.
+    static void openPage(QWidget *context, Page page);
     // CMD01: display names for the sidebar pages, kept in enum order —
     // the command palette deep-links to sections without constructing
     // the dialog.  Must match settings.ui's pagesList order.
     static int pageCount();
     static QString pageTitle(Page page);
+
+signals:
+    // Emitted by accept() (after the settings were applied) and by
+    // reject() — the host closes the tab (or standalone window) on it.
+    // Closing the tab directly discards exactly like the old Cancel.
+    void closeRequested();
+
+public slots:
+    void accept();
+    void reject();
 
 protected:
     void showEvent(QShowEvent *event) override;

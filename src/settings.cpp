@@ -119,9 +119,16 @@
 #include <qwebenginesettings.h>
 
 SettingsDialog::SettingsDialog(QWidget *parent)
-    : QDialog(parent)
+    : QWidget(parent)
 {
     setupUi(this);
+
+    // PREFS01: the page is tab-hosted, so the button box connects by
+    // hand — the .ui can't target accept()/reject() on a QWidget root.
+    connect(buttonBox, &QDialogButtonBox::accepted,
+            this, &SettingsDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected,
+            this, &SettingsDialog::reject);
 
     // UIP03: Vivaldi-style sidebar navigation — pagesList rows mirror
     // the order the QStackedWidget pages had as QTabWidget tabs, and
@@ -432,7 +439,7 @@ QString SettingsDialog::pageTitle(Page page)
 
 void SettingsDialog::showEvent(QShowEvent *event)
 {
-    QDialog::showEvent(event);
+    QWidget::showEvent(event);
     // UIP06: never open larger than ~90% of the screen — the wrapped
     // pages scroll to cover the overflow so OK/Cancel stay reachable.
     QScreen *screen = this->screen();
@@ -1076,7 +1083,31 @@ void SettingsDialog::accept()
     // SRCH05: flush a still-focused engine field before persisting.
     commitEngineEdits();
     saveToSettings();
-    QDialog::accept();
+    emit closeRequested();
+}
+
+void SettingsDialog::reject()
+{
+    // Discard: pending widget state dies when the host closes the tab
+    // (or standalone window) in response — same as the dialog's Cancel.
+    emit closeRequested();
+}
+
+// static
+void SettingsDialog::openPage(QWidget *context, Page page)
+{
+    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(context)) {
+        window->showSettingsPage(int(page));
+        return;
+    }
+    // No window to host the tab — show the page as a standalone
+    // modeless window (autotests, widgets with no browser ancestor).
+    SettingsDialog *dialog = new SettingsDialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    QObject::connect(dialog, &SettingsDialog::closeRequested,
+                     dialog, &QWidget::close);
+    dialog->openAtPage(page);
+    dialog->show();
 }
 
 void SettingsDialog::resetSearchSettings()

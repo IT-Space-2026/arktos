@@ -6933,23 +6933,19 @@ int main(int argc, char **argv)
             return -1;
         };
 
-        // Modal auto-dismisser — Clear Private Data and the
-        // Preferences pages exec() QDialogs.  What it closed is
-        // recorded so the checks can assert the right dialog actually
-        // opened.
+        // Modal auto-dismisser — Clear Private Data still exec()s a
+        // QDialog (Preferences is a tab since PREFS01, so the
+        // deep-link check inspects the tab widget directly).  What it
+        // closed is recorded so the checks can assert the right
+        // dialog actually opened.
         int sawClearData = 0;
-        int sawSettingsAtPage = -1;
         QTimer dismisser;
         QObject::connect(&dismisser, &QTimer::timeout, &application,
                          [&]() {
             QWidget *modal = QApplication::activeModalWidget();
             if (!modal)
                 return;
-            if (SettingsDialog *dialog =
-                       qobject_cast<SettingsDialog*>(modal)) {
-                sawSettingsAtPage = dialog->tabWidget->currentIndex();
-                dialog->reject();
-            } else if (QDialog *dialog = qobject_cast<QDialog*>(modal)) {
+            if (QDialog *dialog = qobject_cast<QDialog*>(modal)) {
                 if (qobject_cast<ClearPrivateData*>(modal))
                     ++sawClearData;
                 dialog->reject();
@@ -7059,7 +7055,7 @@ int main(int argc, char **argv)
         bookmarks->removeBookmark(smokeBookmark);
 
         // 7. Settings sections deep-link: "privacy" opens the
-        //    Preferences dialog on the Privacy page.
+        //    Preferences tab on the Privacy page (PREFS01 — no modal).
         palette->openPalette();
         palette->setQuery(QLatin1String("privacy"));
         const int privacyRow =
@@ -7070,8 +7066,16 @@ int main(int argc, char **argv)
             palette->executeRow(privacyRow);
             pump();
         }
-        check(sawSettingsAtPage == int(SettingsDialog::PrivacyPage),
-              "settings page deep-link executes");
+        SettingsDialog *settingsTab = nullptr;
+        for (int i = 0; i < tabWidget->count(); ++i) {
+            if (SettingsDialog *tab =
+                    qobject_cast<SettingsDialog*>(tabWidget->widget(i)))
+                settingsTab = tab;
+        }
+        check(settingsTab && tabWidget->currentWidget() == settingsTab
+                  && settingsTab->tabWidget->currentIndex()
+                         == int(SettingsDialog::PrivacyPage),
+              "settings page deep-link opens the Preferences tab");
 
         // 8. Keyboard: Down moves the selection, Return executes the
         //    current row, Escape dismisses.  Events go through

@@ -526,9 +526,7 @@ void CommandPalette::executeItem(const Item &item)
         } else if (!item.url.isEmpty()) {
             window->tabWidget()->loadUrlFromUser(item.url, item.text);
         } else if (item.settingsPage >= 0) {
-            SettingsDialog dialog(window);
-            dialog.openAtPage(SettingsDialog::Page(item.settingsPage));
-            dialog.exec();
+            window->showSettingsPage(item.settingsPage);
         }
     });
 }

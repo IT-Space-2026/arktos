@@ -159,9 +159,7 @@ void PopupBlockerButton::rebuildMenu()
     QAction *settingsAction = m_menu->addAction(
         tr("Pop-up Settings..."));
     connect(settingsAction, &QAction::triggered, this, [this]() {
-        SettingsDialog dialog(this);
-        dialog.openAtPage(SettingsDialog::PrivacyPage);
-        dialog.exec();
+        SettingsDialog::openPage(this, SettingsDialog::PrivacyPage);
     });
 }
 

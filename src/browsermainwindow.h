@@ -121,6 +121,10 @@ public slots:
     void privacyChanged(bool isPrivate);
     void zoomTextOnlyChanged(bool textOnly);
     void preferences();
+    // PREFS01: opens the window's single Preferences tab, focusing the
+    // existing one on repeat calls.  page is a SettingsDialog::Page
+    // index that deep-links a section; -1 keeps the persisted page.
+    void showSettingsPage(int page = -1);
     void showCommandPalette();
     // POL02: Ctrl+Shift+A tab search — the palette in tabs-only mode.
     void showTabSearch();

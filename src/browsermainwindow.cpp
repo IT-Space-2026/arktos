@@ -1471,8 +1471,37 @@ void BrowserMainWindow::fileSaveAs()
 
 void BrowserMainWindow::preferences()
 {
-    SettingsDialog settingsDialog(this);
-    settingsDialog.exec();
+    showSettingsPage();
+}
+
+void BrowserMainWindow::showSettingsPage(int page)
+{
+    // PREFS01: Preferences is a tab, not a modal dialog — one per
+    // window.  A second invocation focuses the existing tab instead
+    // of stacking another.
+    SettingsDialog *settings = nullptr;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        settings = qobject_cast<SettingsDialog*>(m_tabWidget->widget(i));
+        if (settings)
+            break;
+    }
+    if (!settings) {
+        settings = new SettingsDialog(m_tabWidget);
+        // The page's OK applies + closes; its Cancel — and the tab's
+        // own close — discard, exactly the dialog's old semantics.
+        connect(settings, &SettingsDialog::closeRequested,
+                this, [this, settings]() {
+            const int index = m_tabWidget->indexOf(settings);
+            if (index >= 0)
+                m_tabWidget->closeTab(index);
+        });
+        m_tabWidget->addWidgetTab(settings, tr("Preferences"),
+                                  AroraIcon::get(QLatin1String("preferences-system")));
+    }
+    if (page >= 0)
+        settings->openAtPage(SettingsDialog::Page(page));
+    m_tabWidget->setCurrentWidget(settings);
+    settings->setFocus();
 }
 
 CommandPalette *BrowserMainWindow::commandPalette()
