@@ -20,15 +20,87 @@
 #include <QtTest/QtTest>
 #include "qtest_arora.h"
 
+#include <browserpaths.h>
 #include <historymanager.h>
 #include <history.h>
 #include <historycompleter.h>
 #include <modeltest.h>
 #include <webpage.h>
 
+#include <qbuffer.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qwebengineprofile.h>
 
 #include <algorithm>
+
+// Minimal HTTP responder for the favicon end-to-end test: serves an
+// html page that links a png icon, and the icon itself.
+class LocalIconServer : public QObject
+{
+    Q_OBJECT
+
+public:
+    LocalIconServer(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            QTcpSocket *socket = m_server.nextPendingConnection();
+            socket->setParent(&m_server);
+            connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
+                if (!socket->peek(4096).contains("\r\n\r\n"))
+                    return;
+                respond(socket, socket->readAll());
+            });
+        });
+    }
+
+    bool start() { return m_server.listen(QHostAddress::LocalHost); }
+
+    QUrl url(const QString &path) const
+    {
+        return QUrl(QString::fromLatin1("http://127.0.0.1:%1%2")
+                    .arg(m_server.serverPort()).arg(path));
+    }
+
+private:
+    void respond(QTcpSocket *socket, const QByteArray &request)
+    {
+        const QByteArray target = request.split(' ').value(1);
+
+        QByteArray mimeType = "text/html";
+        QByteArray body =
+            "<html><head><title>icon test</title>"
+            "<link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">"
+            "</head><body>ok</body></html>";
+        if (target.contains(".png")) {
+            mimeType = "image/png";
+            body = pngBody();
+        }
+
+        const QByteArray response = "HTTP/1.0 200 OK\r\nContent-Type: " + mimeType
+            + "\r\nContent-Length: " + QByteArray::number(body.size())
+            + "\r\nConnection: close\r\n\r\n" + body;
+        socket->write(response);
+        socket->disconnectFromHost();
+    }
+
+    static QByteArray pngBody()
+    {
+        static const QByteArray body = []() {
+            QImage image(8, 8, QImage::Format_ARGB32);
+            image.fill(QColor(0, 200, 0));
+            QByteArray out;
+            QBuffer buffer(&out);
+            buffer.open(QIODevice::WriteOnly);
+            image.save(&buffer, "PNG");
+            return out;
+        }();
+        return body;
+    }
+
+    QTcpServer m_server;
+};
 
 class tst_HistoryManager : public QObject
 {
@@ -57,6 +129,8 @@ private slots:
     void setHistory();
     void saveload_data();
     void saveload();
+    void icons();
+    void iconsFromPage();
 
     // TODO move to their own tests
     void big();
@@ -442,6 +516,101 @@ void tst_HistoryManager::saveload()
         SubHistory history;
         QCOMPARE(history.history(), post);
     }
+}
+
+static QImage iconImage(const QIcon &icon)
+{
+    return icon.pixmap(8).toImage().convertToFormat(QImage::Format_ARGB32);
+}
+
+void tst_HistoryManager::icons()
+{
+    // HIST01: favicons are keyed by host and persisted under the data
+    // dir's icons/, so they survive restarts and apply to every
+    // history entry of the site.
+    const QString iconPath = BrowserPaths::dataFilePath(
+        QLatin1String("icons")) + QLatin1String("/icons-test.example.png");
+    QFile::remove(iconPath);
+
+    QPixmap pixmap(8, 8);
+    pixmap.fill(Qt::red);
+    const QIcon favicon(pixmap);
+    const QImage faviconImage = iconImage(favicon);
+    const QIcon generic(QLatin1String(":graphics/defaulticon.png"));
+    const QImage genericImage = iconImage(generic);
+
+    const QUrl page1(QStringLiteral("http://icons-test.example/one"));
+    const QUrl page2(QStringLiteral("http://icons-test.example/two"));
+    const QUrl otherHost(QStringLiteral("http://other.example/"));
+
+    {
+        SubHistory history;
+        history.setHistory(HistoryList()
+            << HistoryEntry(page1.toString(), QDateTime::currentDateTime())
+            << HistoryEntry(page2.toString(), QDateTime::currentDateTime())
+            << HistoryEntry(otherHost.toString(), QDateTime::currentDateTime()));
+
+        QCOMPARE(iconImage(history.icon(page1)), genericImage);
+
+        QSignalSpy updated(&history, SIGNAL(entryUpdated(int)));
+        history.setIcon(page1, favicon);
+        // both same-host entries get a live refresh
+        QCOMPARE(updated.count(), 2);
+
+        // a different path on the same host shares the icon
+        QCOMPARE(iconImage(history.icon(page2)), faviconImage);
+        QVERIFY(QFile::exists(iconPath));
+        // unrelated hosts keep the generic icon
+        QCOMPARE(iconImage(history.icon(otherHost)), genericImage);
+    }
+
+    {
+        // a fresh manager (the "restart") lazily loads the host icon
+        SubHistory history;
+        QCOMPARE(iconImage(history.icon(page2)), faviconImage);
+        QCOMPARE(iconImage(history.icon(otherHost)), genericImage);
+
+        history.clearIcons();
+        QVERIFY(!QFile::exists(iconPath));
+        QCOMPARE(iconImage(history.icon(page2)), genericImage);
+    }
+    QFile::remove(iconPath);
+}
+
+void tst_HistoryManager::iconsFromPage()
+{
+    // HIST01 end-to-end: QWebEnginePage::iconChanged must actually
+    // deliver the favicon on Qt 6, feed the store and persist it.
+    LocalIconServer server;
+    QVERIFY(server.start());
+
+    HistoryManager *manager = HistoryManager::instance();
+    const QUrl url = server.url(QStringLiteral("/page.html"));
+    manager->clearIcons();
+    manager->setHistory(HistoryList());
+
+    QWebEngineProfile profile(QStringLiteral("arora-historyicontest"));
+    WebPage page(&profile);
+    QSignalSpy iconSpy(&page, &QWebEnginePage::iconChanged);
+    page.load(url);
+    QTRY_VERIFY_WITH_TIMEOUT(iconSpy.count() >= 1, 15000);
+
+    const QIcon generic(QLatin1String(":graphics/defaulticon.png"));
+    QVERIFY(iconImage(manager->icon(url)) != iconImage(generic));
+
+    const QString iconPath = BrowserPaths::dataFilePath(
+        QLatin1String("icons")) + QLatin1String("/127.0.0.1.png");
+    QVERIFY(QFile::exists(iconPath));
+
+    {
+        // restart: a fresh manager lazily loads the persisted icon
+        SubHistory restarted;
+        QVERIFY(iconImage(restarted.icon(url)) != iconImage(generic));
+    }
+
+    manager->clearIcons();
+    manager->setHistory(HistoryList());
+    QVERIFY(!QFile::exists(iconPath));
 }
 
 void tst_HistoryManager::big()
