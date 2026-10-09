@@ -406,7 +406,7 @@ void tst_AdBlockRequestInterceptor::mainFrameBlock()
 }
 
 // ADB05: intercepted requests bump the per-first-party-host tally the
-// location-bar AdBlockButton diffs against its load-start baseline —
+// location-bar site shield diffs against its load-start baseline —
 // plain blocks and stub redirects count, allowed requests do not.
 void tst_AdBlockRequestInterceptor::blockedCountTracking()
 {

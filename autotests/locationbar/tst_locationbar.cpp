@@ -26,7 +26,10 @@
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qboxlayout.h>
+#include <qcheckbox.h>
 #include <qlabel.h>
+#include <qpushbutton.h>
+#include <qtoolbutton.h>
 #include <qmimedata.h>
 #include <qstyleoption.h>
 #include <qtooltip.h>
@@ -36,10 +39,10 @@
 #include "locationbar.h"
 #include "locationbarsiteicon.h"
 #include "privacyindicator.h"
-#include "adblockbutton.h"
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "clearbutton.h"
+#include "sitepanel.h"
 #include "siteshield.h"
 #include "webview.h"
 #include "bookmarknode.h"
@@ -132,7 +135,7 @@ private slots:
     void dropUrl();
     void siteIcon();
     void privacyIndicator();
-    void adBlockButton();
+    void contentBlockingShield();
     void omniboxSuggestions();
     void omniboxScopedCompletions();
     void domainEmphasis_data();
@@ -161,9 +164,14 @@ void tst_LocationBar::widgets()
     TestLocationBar bar;
     QVERIFY(bar.findChild<LocationBarSiteIcon*>());
     QVERIFY(bar.findChild<SiteShieldButton*>());
-    QVERIFY(bar.findChild<AdBlockButton*>());
     QVERIFY(bar.findChild<PrivacyIndicator*>());
     QVERIFY(bar.findChild<ClearButton*>());
+    // SHLD02: one shield only — the separate content-blocker button
+    // was merged into the site shield.
+    const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
+    for (QToolButton *button : buttons)
+        QVERIFY(button->accessibleName()
+                != QLatin1String("Content Blocker"));
     QVERIFY(!bar.webView());
 }
 
@@ -335,41 +343,36 @@ void tst_LocationBar::privacyIndicator()
     QVERIFY(!BrowserApplication::isPrivate());
 }
 
-// ADB05 + UIP05: the content-blocker button anchors the right-side
-// cluster while the site shield sits on the opposite side — leftmost
-// of the leading site-info zone beside the site icon.  The button
-// tracks the tab's page, greys while the blocker is disabled and its
-// popup exposes the count line, the enable toggle and the settings
-// entry point.
-void tst_LocationBar::adBlockButton()
+// SHLD02 + UIP05: the merged site shield — the standalone
+// content-blocker button is gone from the right cluster; the left
+// shield's panel hosts the global toggle, the per-page blocked count
+// and the settings entry, and the shield icon itself carries the
+// blocked-count badge and the disabled/whitelisted states.
+void tst_LocationBar::contentBlockingShield()
 {
     TestLocationBar bar;
-    AdBlockButton *button = bar.findChild<AdBlockButton*>();
-    QVERIFY(button);
-    QVERIFY(button->isHidden()); // nothing to report without a view
 
     SiteShieldButton *shield = bar.findChild<SiteShieldButton*>();
     LocationBarSiteIcon *siteIcon = bar.findChild<LocationBarSiteIcon*>();
     QVERIFY(shield);
     QVERIFY(siteIcon);
-    // Left and right clusters are different SideWidget containers:
-    // the shield shares the site icon's, the blocker does not.
-    QCOMPARE(shield->parentWidget(), siteIcon->parentWidget());
-    QVERIFY(button->parentWidget() != shield->parentWidget());
+    QVERIFY(shield->isHidden()); // nothing to report without a view
+    // One shield only — the right cluster has no blocker button.
+    const QList<QToolButton*> buttons = bar.findChildren<QToolButton*>();
+    for (QToolButton *candidate : buttons)
+        QVERIFY(candidate->accessibleName()
+                != QLatin1String("Content Blocker"));
 
     WebView view(BrowserApplication::webEngineProfile());
     bar.setWebView(&view);
-    QVERIFY(!button->isHidden());
     QVERIFY(!shield->isHidden());
 
     // Vivaldi order on the left — shield, then site icon, then the
-    // url text; the blocker stays at the right end.
+    // url text.
     bar.show();
     QTRY_VERIFY_WITH_TIMEOUT(
         shield->mapTo(&bar, QPoint(0, 0)).x()
-            < siteIcon->mapTo(&bar, QPoint(0, 0)).x()
-        && shield->mapTo(&bar, QPoint(0, 0)).x()
-            < button->mapTo(&bar, QPoint(0, 0)).x(), 3000);
+            < siteIcon->mapTo(&bar, QPoint(0, 0)).x(), 3000);
 
     // The panel popup still anchors under the shield at its new spot.
     // showMenu() runs the menu's nested exec() loop, so a timer
@@ -385,33 +388,43 @@ void tst_LocationBar::adBlockButton()
     QVERIFY(qAbs(menuPos.x()
             - shield->mapToGlobal(QPoint(0, shield->height())).x()) < 16);
 
-    QVERIFY(button->menu());
-    QAction *toggle = nullptr;
-    QAction *configure = nullptr;
-    for (QAction *action : button->menu()->actions()) {
-        if (action->isCheckable())
-            toggle = action;
-        else if (action->text().contains(QLatin1String("Settings")))
-            configure = action;
-    }
-    QVERIFY(toggle);
+    // The merged panel exposes the global toggle, the per-site row,
+    // the live count and the settings entry.
+    SitePanel *panel = shield->panel();
+    QVERIFY(panel);
+    QCheckBox *global = panel->findChild<QCheckBox*>(
+        QLatin1String("siteContentBlocking"));
+    QCheckBox *perSite = panel->findChild<QCheckBox*>(
+        QLatin1String("siteBlockContent"));
+    QLabel *count = panel->findChild<QLabel*>(
+        QLatin1String("siteBlockedCount"));
+    QPushButton *configure = panel->findChild<QPushButton*>(
+        QLatin1String("siteAdBlockSettings"));
+    QVERIFY(global);
+    QVERIFY(perSite);
+    QVERIFY(count);
     QVERIFY(configure);
 
     AdBlockManager *manager = AdBlockManager::instance();
     const bool wasEnabled = manager->isEnabled();
     manager->setEnabled(false);
-    QVERIFY(button->toolTip().contains(QLatin1String("disabled"),
+    panel->refresh();
+    QVERIFY(!global->isChecked());
+    QVERIFY(count->text().contains(QLatin1String("disabled"),
+                                   Qt::CaseInsensitive));
+    QVERIFY(shield->toolTip().contains(QLatin1String("disabled"),
                                      Qt::CaseInsensitive));
 
-    // The popup's checkable row drives AdBlockManager::setEnabled —
-    // trigger() on a checkable action flips its state first.
-    toggle->trigger();
+    // The global row drives AdBlockManager::setEnabled both ways.
+    global->setChecked(true);
     QVERIFY(manager->isEnabled());
-    QVERIFY(!button->toolTip().contains(QLatin1String("disabled"),
+    QVERIFY(!shield->toolTip().contains(QLatin1String("disabled"),
                                       Qt::CaseInsensitive));
+    // No page host yet — the count line degrades gracefully.
+    QVERIFY(!count->text().isEmpty());
 
-    // The settings entry opens the shared non-modal AdBlockDialog.
-    configure->trigger();
+    // The settings button opens the shared non-modal AdBlockDialog.
+    configure->click();
     AdBlockDialog *dialog = nullptr;
     const QWidgetList widgets = qApp->allWidgets();
     for (QWidget *widget : widgets) {

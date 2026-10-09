@@ -32,6 +32,9 @@ class WebView;
 // click-outside dismissal come for free) and reflects the site's
 // protection state: normal while content blocking applies, greyed
 // when the site is whitelisted or blocking is off globally.
+// SHLD02: with the separate AdBlockButton gone this is the single
+// shield — it also carries the uBO-style badge counting requests
+// blocked on the current page load.
 class SiteShieldButton : public QToolButton
 {
     Q_OBJECT

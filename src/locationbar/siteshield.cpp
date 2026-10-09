@@ -73,6 +73,15 @@ void SiteShieldButton::setWebView(WebView *webView)
                 this, [this](const QUrl &) { refreshIcon(); });
         connect(webView, &WebView::javaScriptBlockedChanged,
                 this, [this](bool) { refreshIcon(); });
+        // Interceptor blocks arrive on the IO thread with no signal —
+        // the count badge follows the load's progress/finish beats
+        // and the panel recomputes live on popup open.
+        connect(webView, &QWebEngineView::loadStarted,
+                this, [this]() { refreshIcon(); });
+        connect(webView, &QWebEngineView::loadProgress,
+                this, [this](int) { refreshIcon(); });
+        connect(webView, &QWebEngineView::loadFinished,
+                this, [this](bool) { refreshIcon(); });
     }
     setVisible(webView != nullptr);
     refreshIcon();
@@ -104,20 +113,46 @@ void SiteShieldButton::refreshIcon()
         tip = tr("Site privacy and permissions");
     }
 
-    // JSCTL: badge the shield when the current page's scripts are
-    // blocked — a per-site rule, the Safer/Safest tier or the global
-    // setting — so the restriction is visible without opening the
-    // panel.
-    if (m_webView->isJavaScriptBlocked()) {
+    // SHLD02: the uBO-style blocked-count badge the removed
+    // AdBlockButton used to carry, now on the single shield; the
+    // panel owns the load-start baseline the count diffs against.
+    const int blocked = m_panel->blockedSinceLoad();
+    const bool jsBlocked = m_webView->isJavaScriptBlocked();
+    if (blocked > 0 || jsBlocked) {
         QPixmap pixmap = icon.pixmap(QSize(16, 16));
         QPainter painter(&pixmap);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(palette().color(QPalette::Accent));
-        painter.setPen(palette().color(QPalette::Base));
-        painter.drawEllipse(QRectF(9.5, 9.5, 6.0, 6.0));
+        if (blocked > 0) {
+            const QString text = blocked > 999
+                ? QStringLiteral("…") : QString::number(blocked);
+            QFont font = painter.font();
+            font.setPixelSize(8);
+            font.setBold(true);
+            painter.setFont(font);
+            const int w = qMin(15,
+                painter.fontMetrics().horizontalAdvance(text) + 4);
+            const QRect badge(16 - w, 7, w, 9);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(palette().color(QPalette::Accent));
+            painter.drawRoundedRect(badge, 2, 2);
+            painter.setPen(palette().color(QPalette::HighlightedText));
+            painter.drawText(badge, Qt::AlignCenter, text);
+            tip += tr(" — %1 requests blocked").arg(blocked);
+        }
+        // JSCTL: badge the shield when the current page's scripts are
+        // blocked — a per-site rule, the Safer/Safest tier or the
+        // global setting — so the restriction is visible without
+        // opening the panel.  It slides to the left corner when the
+        // count badge occupies the right one.
+        if (jsBlocked) {
+            const qreal x = blocked > 0 ? 0.5 : 9.5;
+            painter.setBrush(palette().color(QPalette::Accent));
+            painter.setPen(palette().color(QPalette::Base));
+            painter.drawEllipse(QRectF(x, 9.5, 6.0, 6.0));
+            tip += tr(" — JavaScript blocked");
+        }
         painter.end();
         icon = QIcon(pixmap);
-        tip += tr(" — JavaScript blocked");
     }
     setIcon(icon);
     setToolTip(tip);

@@ -289,6 +289,19 @@ void tst_SitePanel::panelWithoutPage()
     QVERIFY(block);
     QVERIFY(!block->isEnabled());
 
+    // SHLD02: the merged content-blocking section — the global switch
+    // needs no site, the count and settings entry are always present.
+    QCheckBox *global = panel.findChild<QCheckBox*>(
+        QLatin1String("siteContentBlocking"));
+    QVERIFY(global);
+    QVERIFY(global->isEnabled());
+    QLabel *blockedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteBlockedCount"));
+    QVERIFY(blockedCount);
+    QVERIFY(!blockedCount->text().isEmpty());
+    QVERIFY(panel.findChild<QPushButton*>(
+                QLatin1String("siteAdBlockSettings")));
+
     // POPUP01: no site means nothing to scope a pop-up exception to.
     QCheckBox *popups = panel.findChild<QCheckBox*>(
         QLatin1String("siteAllowPopups"));
@@ -370,6 +383,28 @@ void tst_SitePanel::panelForSite()
     QVERIFY(!block->isChecked());
     block->setChecked(true);
     QVERIFY(!adblock->isSiteWhitelisted(host));
+
+    // SHLD02: the panel's global switch drives AdBlockManager — off
+    // greys the per-site row and reports on the count line, back on
+    // restores both.
+    QCheckBox *global = panel.findChild<QCheckBox*>(
+        QLatin1String("siteContentBlocking"));
+    QLabel *blockedCount = panel.findChild<QLabel*>(
+        QLatin1String("siteBlockedCount"));
+    QVERIFY(global);
+    QVERIFY(blockedCount);
+    global->setChecked(false);
+    QVERIFY(!adblock->isEnabled());
+    QVERIFY(!block->isEnabled());
+    QVERIFY(blockedCount->text().contains(QLatin1String("disabled"),
+                                         Qt::CaseInsensitive));
+    global->setChecked(true);
+    QVERIFY(adblock->isEnabled());
+    QVERIFY(block->isEnabled());
+    QVERIFY(blockedCount->text().contains(QLatin1String("blocked"),
+                                         Qt::CaseInsensitive));
+    QVERIFY(panel.findChild<QPushButton*>(
+                QLatin1String("siteAdBlockSettings")));
     adblock->setEnabled(enabled);
 
     // POPUP01: the pop-up toggle writes the PopupBlocker exception —

@@ -41,6 +41,10 @@ class WebView;
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an
 //     @@||host^$document whitelist exception in AdBlockManager,
+//     flanked (SHLD02) by the global content-blocking switch, a
+//     live count of requests blocked on this page and the entry
+//     point to the Ad Block settings — the merged successor of the
+//     old right-side AdBlockButton popup,
 //   - a POPUP01 "allow pop-ups on this site" toggle writing the
 //     PopupBlocker per-host exception list,
 //   - a SAFE01 "always allow HTTP" toggle writing the HTTPS-Only
@@ -63,6 +67,12 @@ public:
     void setWebView(WebView *webView);
     WebView *webView() const;
 
+    // SHLD02: requests the blocker stopped on the current page load —
+    // the shield button badges its icon with this.  The cumulative
+    // interceptor tally is diffed against a baseline captured at
+    // load start / url change.
+    int blockedSinceLoad() const;
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
@@ -74,6 +84,8 @@ private:
     CookieJar *siteCookieJar() const;
     void applyCookieRule(int index);
     void toggleContentBlocking(bool checked);
+    void toggleGlobalBlocking(bool checked);
+    int blockedTotal() const;
     void applyJavaScriptRule(int index);
     void togglePopups(bool checked);
     void toggleHttpAllowance(bool checked);
@@ -85,7 +97,9 @@ private:
     QLabel *m_securityLabel;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
+    QCheckBox *m_contentBlocking;
     QCheckBox *m_blockContent;
+    QLabel *m_blockedCount;
     QComboBox *m_javaScriptRule;
     QLabel *m_javaScriptState;
     QCheckBox *m_allowPopups;
@@ -93,6 +107,8 @@ private:
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;
+    QPushButton *m_adBlockSettings;
+    int m_blockedBaseline;
     bool m_refreshing;
 };
 
