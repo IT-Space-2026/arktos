@@ -1,0 +1,83 @@
+<!doctype html>
+<!-- PIP01: internal Picture-in-Picture player document.  PipWindow
+     loads it via setHtml() with the __PIP_CONFIG__ marker replaced by
+     a JSON video descriptor (src, time, paused, rate, volume, muted,
+     loop, poster).  Playback state is pushed back to C++ over the
+     page's own QWebChannel ("aroraPipPlayer") so closing the window
+     can hand the position back to the source tab. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+video { width: 100%; height: 100%; display: block; background: #000; }
+</style>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+<video id="v" controls disablepictureinpicture></video>
+<script>
+window.__PIP_CONFIG__ = null;
+/*__PIP_CONFIG__*/
+(function () {
+    var v = document.getElementById('v');
+    var cfg = window.__PIP_CONFIG__ || {};
+    var bridge = null;
+    var lastPush = 0;
+
+    function push(force) {
+        if (!bridge)
+            return;
+        var now = Date.now();
+        if (!force && now - lastPush < 400)
+            return;
+        lastPush = now;
+        bridge.reportState(v.currentTime || 0, v.paused, v.ended,
+                           v.duration || 0);
+    }
+
+    if (window.qt && qt.webChannelTransport
+        && typeof QWebChannel !== 'undefined') {
+        new QWebChannel(qt.webChannelTransport, function (channel) {
+            bridge = channel.objects.aroraPipPlayer;
+            if (bridge)
+                bridge.notifyReady();
+            push(true);
+        });
+    }
+
+    ['timeupdate', 'play', 'pause', 'seeked', 'ended',
+     'volumechange', 'ratechange'].forEach(function (name) {
+        v.addEventListener(name, function () {
+            push(name !== 'timeupdate');
+        });
+    });
+    v.addEventListener('error', function () {
+        if (bridge)
+            bridge.notifyError(v.error ? v.error.code : 0);
+    });
+
+    if (cfg.src)
+        v.src = cfg.src;
+    if (cfg.poster)
+        v.poster = cfg.poster;
+    if (cfg.time > 0) {
+        var seek = function () {
+            try { v.currentTime = cfg.time; } catch (e) {}
+        };
+        if (v.readyState >= 1)
+            seek();
+        else
+            v.addEventListener('loadedmetadata', seek, { once: true });
+    }
+    v.playbackRate = cfg.rate || 1;
+    if (typeof cfg.volume === 'number')
+        v.volume = Math.min(1, Math.max(0, cfg.volume));
+    v.muted = !!cfg.muted;
+    v.loop = !!cfg.loop;
+    if (cfg.paused === false)
+        v.play().catch(function () { /* autoplay refused: stay paused */ });
+}())
+</script>
+</body>
+</html>

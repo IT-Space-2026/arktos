@@ -70,6 +70,7 @@
 
 class QWebEngineProfile;
 class BrowserMainWindow;
+class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
@@ -109,6 +110,10 @@ public:
     bool isJavaScriptBlocked() const;
     // READ01: reader-mode controller for this view (never null).
     ReaderMode *readerMode() const { return m_readerMode; }
+    // PIP01: Picture-in-Picture controller for this view (never
+    // null).  QtWebEngine has no PiP delegate — the video pops out
+    // into an app-side floating window.
+    PictureInPicture *pictureInPicture() const { return m_pip; }
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
@@ -170,6 +175,7 @@ private:
     WebPage *m_page;
     ScriptBlockInfoBar *m_scriptBlockBar;
     ReaderMode *m_readerMode;
+    PictureInPicture *m_pip;
 };
 
 #endif

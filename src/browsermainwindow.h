@@ -223,6 +223,7 @@ private:
     QAction *m_viewZoomOutAction;
     QAction *m_viewZoomTextOnlyAction;
     QAction *m_viewReaderAction;
+    QAction *m_viewPipAction;
     QAction *m_viewSourceAction;
     QAction *m_viewFullScreenAction;
     QAction *m_viewTextEncodingAction;

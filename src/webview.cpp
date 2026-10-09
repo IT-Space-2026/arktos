@@ -73,6 +73,7 @@
 #include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pictureinpicture.h"
 #include "readermode.h"
 #include "safetext.h"
 #include "scriptblockinfobar.h"
@@ -138,6 +139,14 @@ void WebView::init()
     // bar text.
     m_readerMode = new ReaderMode(this);
     connect(m_readerMode, &ReaderMode::message,
+            this, [this](const QString &message) {
+        emit statusBarMessage(message);
+    });
+
+    // PIP01: Picture-in-Picture — pops the page's video into an
+    // app-owned floating window (QtWebEngine ships no PiP delegate).
+    m_pip = new PictureInPicture(this);
+    connect(m_pip, &PictureInPicture::message,
             this, [this](const QString &message) {
         emit statusBarMessage(message);
     });
@@ -250,6 +259,19 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                 this, &WebView::imageSearchRequested);
             imageSearchAction->setData(request->mediaUrl());
         }
+    }
+
+    // PIP01: right-click on a <video> offers the pop-out.  The
+    // element itself is resolved in-page (click point + media url).
+    if (request->mediaType() == QWebEngineContextMenuRequest::MediaTypeVideo) {
+        if (!menu->isEmpty())
+            menu->addSeparator();
+        const QUrl mediaUrl = request->mediaUrl();
+        const QPoint position = request->position();
+        menu->addAction(tr("Picture-in-Picture"), this,
+                [this, mediaUrl, position]() {
+            m_pip->popOutContext(mediaUrl, position);
+        });
     }
 
     if (!request->selectedText().isEmpty()) {

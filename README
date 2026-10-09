@@ -54,6 +54,18 @@ executes, Esc dismisses; recently used entries rank first, so e.g.
 "clear history" reaches Clear Private Data and a tab title switches
 straight to that tab.
 
+Picture-in-Picture: right-click a video and choose "Picture-in-Picture"
+(or View → "Picture-in-Picture", or a site's own PiP button) to pop the
+video into a small frameless, always-on-top player window that keeps
+playing on top of other windows — drag to move it, "return to tab" puts
+the video back with its playback position. Qt WebEngine exposes no
+native PiP negotiation, so the window is application-side: pages' own
+PiP buttons work through a bundled compatibility shim (still requiring
+a real user gesture), and sources that cannot be replayed — DRM or some
+blob/MSE streams — restore the original player with a status message
+rather than failing silently. `./arora --pip-smoke` verifies the whole
+flow headlessly.
+
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
 the preferences dialog loads unpacked folders or installs .zip packages.

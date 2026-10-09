@@ -51,6 +51,8 @@
 #include "opensearchmanager.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
+#include "pictureinpicture.h"
+#include "pipwindow.h"
 #include "plaintexteditsearch.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
@@ -138,6 +140,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <memory>
 
 #if defined(Q_OS_UNIX)
@@ -1617,6 +1620,17 @@ int main(int argc, char **argv)
                      " --site-per-process";
             qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
         }
+        if (arg == "--pip-smoke") {
+            // PIP01: the PiP player document starts the video with a
+            // scripted play() — the pop-out gesture lives on the
+            // source page, not in the new document, so autoplay must
+            // not require a gesture for the assertion to hold.
+            QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+            if (!flags.isEmpty())
+                flags += ' ';
+            flags += "--autoplay-policy=no-user-gesture-required";
+            qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+        }
     }
     if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
@@ -1815,7 +1829,7 @@ int main(int argc, char **argv)
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
         "xsleak-smoke", "xsleak-open",
-        "sleep-smoke", "palette-smoke",
+        "sleep-smoke", "palette-smoke", "pip-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -5480,6 +5494,462 @@ int main(int argc, char **argv)
         // closing brace, so falling through to main's shared exec()
         // would leave every stage lambda dereferencing dead stack.
         view->loadUrl(articleUrl);
+        return application.exec();
+    }
+
+    // Headless verification for PIP01 (Picture-in-Picture): a fixture
+    // page with a real playable <video> (in-codec WAV — Chromium's
+    // FFmpeg demuxer accepts it in a video element) is popped out via
+    // the menu path, observed playing in the floating window's own
+    // page, returned to the tab with its position restored, then the
+    // page-side shim is exercised both ways: a bare call must hit the
+    // user-gesture gate (NotAllowedError), a synthesized click on the
+    // fixture's PiP button must resolve and open the window, and
+    // document.exitPictureInPicture() must tear it down again.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--pip-smoke"))) {
+        const QDir fixtureDir(
+            QDir::temp().filePath(QLatin1String("arora-pip-smoke")));
+        if (!fixtureDir.mkpath(QLatin1String("."))) {
+            qInfo() << "pip-smoke: FAIL (cannot make fixture dir)";
+            return 1;
+        }
+        // Minimal PCM WAV — a 4 s mono sine, long enough that the
+        // decode poll can't observe a natural stream end.
+        const QString tonePath =
+            fixtureDir.filePath(QLatin1String("tone.wav"));
+        {
+            QByteArray pcm;
+            const int rate = 8000;
+            const int samples = rate * 4;
+            pcm.resize(samples * 2);
+            qint16 *data = reinterpret_cast<qint16*>(pcm.data());
+            for (int i = 0; i < samples; ++i)
+                data[i] = qint16(12000.0
+                    * std::sin(2.0 * M_PI * 440.0 * i / rate));
+            QFile tone(tonePath);
+            if (!tone.open(QIODevice::WriteOnly)) {
+                qInfo() << "pip-smoke: FAIL (cannot write wav)";
+                return 1;
+            }
+            QByteArray header;
+            QDataStream ds(&header, QIODevice::WriteOnly);
+            ds.setByteOrder(QDataStream::LittleEndian);
+            ds.writeRawData("RIFF", 4);
+            ds << quint32(36 + pcm.size());
+            ds.writeRawData("WAVEfmt ", 8);
+            ds << quint32(16) << quint16(1) << quint16(1)
+               << quint32(rate) << quint32(rate * 2)
+               << quint16(2) << quint16(16);
+            ds.writeRawData("data", 4);
+            ds << quint32(pcm.size());
+            tone.write(header);
+            tone.write(pcm);
+        }
+        const QString pagePath =
+            fixtureDir.filePath(QLatin1String("video.html"));
+        {
+            QFile fixture(pagePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "pip-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write(
+                "<html><body>"
+                "<video id=\"v\" src=\"tone.wav\" controls"
+                " style=\"width:340px;height:200px\"></video>"
+                "<button id=\"pop\" style=\"display:block;"
+                "width:200px;height:40px\">PiP</button>"
+                "<script>"
+                "window.__pipPromise='none';"
+                "window.__pipEntered=0;window.__pipLeft=0;"
+                "var v=document.getElementById('v');"
+                "v.addEventListener('enterpictureinpicture',"
+                "  function(){window.__pipEntered++;});"
+                "v.addEventListener('leavepictureinpicture',"
+                "  function(){window.__pipLeft++;});"
+                "document.getElementById('pop').addEventListener("
+                "  'click',function(){"
+                "    window.__uaAtClick=navigator.userActivation?"
+                "      navigator.userActivation.isActive:'none';"
+                "    window.__pipPromise='pending';"
+                "    v.requestPictureInPicture()"
+                "     .then(function(){window.__pipPromise='resolved';})"
+                "     .catch(function(e){"
+                "        window.__pipPromise='rejected:'+e.name;});"
+                "  });"
+                "</script></body></html>");
+        }
+        const QUrl pageUrl = QUrl::fromLocalFile(pagePath);
+        PictureInPicture *pip = view->pictureInPicture();
+        // The smoke returns before main()'s window.show() — an
+        // unshown view has no geometry and Chromium drops the
+        // synthesized click that the gesture-gate stage needs.
+        view->window()->resize(1280, 800);
+        view->window()->show();
+
+        auto fail = [&application](const char *stage) {
+            qInfo() << "pip-smoke: FAIL at" << stage;
+            application.exit(1);
+        };
+        auto pollUntil = [](std::function<bool()> condition,
+                            std::function<void(bool)> finished) {
+            auto ticks = std::make_shared<int>(0);
+            QTimer *poll = new QTimer(qApp);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [condition, finished, ticks, poll]() {
+                if (condition() || ++*ticks > 240) {
+                    poll->stop();
+                    poll->deleteLater();
+                    finished(condition());
+                }
+            });
+            poll->start(50);
+        };
+        auto evalJs = [&](const QString &script,
+                          std::function<void(const QVariant &)> cb) {
+            view->webPage()->runJavaScript(script,
+                [cb](const QVariant &result) { cb(result); });
+        };
+        auto evalPipJs = [&](const QString &script,
+                             std::function<void(const QVariant &)> cb) {
+            PipWindow *w = pip->window();
+            if (!w) {
+                cb(QVariant());
+                return;
+            }
+            w->playerView()->page()->runJavaScript(script,
+                [cb](const QVariant &result) { cb(result); });
+        };
+        auto settle = [](int ms, std::function<void()> fn) {
+            QTimer::singleShot(ms, qApp, fn);
+        };
+
+        // Mutually-referencing tail stages are declared before use.
+        std::function<void()> stageGestureGate;
+        std::function<void()> stagePageRequest;
+
+        // Stage: a bare requestPictureInPicture() — no transient
+        // activation behind a script eval — must be rejected by the
+        // shim's gesture gate.
+        stageGestureGate = [&]() {
+            evalJs(QLatin1String(
+                "window.__pipPromise='pending';"
+                "document.getElementById('v').requestPictureInPicture()"
+                ".then(function(){window.__pipPromise='resolved';})"
+                ".catch(function(e){"
+                "  window.__pipPromise='rejected:'+e.name;});"
+                "'armed';"),
+                [](const QVariant &) {});
+            // Poll the JS-visible result directly.
+            auto state = std::make_shared<QString>();
+            auto pollJs = std::make_shared<int>(0);
+            QTimer *jsPoll = new QTimer(qApp);
+            QObject::connect(jsPoll, &QTimer::timeout, qApp,
+                [&, state, pollJs, jsPoll]() {
+                evalJs(QLatin1String("window.__pipPromise;"),
+                    [&, state, pollJs, jsPoll](const QVariant &r) {
+                    *state = r.toString();
+                    if (state->startsWith(QLatin1String("rejected"))
+                        || *state == QLatin1String("resolved")
+                        || ++*pollJs > 60) {
+                        jsPoll->stop();
+                        jsPoll->deleteLater();
+                        const bool pass = *state
+                            == QLatin1String("rejected:NotAllowedError");
+                        qInfo() << "pip-smoke: gesture gate" << *state
+                                << (pass ? "PASS" : "FAIL");
+                        if (!pass) {
+                            fail("gesture-gate");
+                            return;
+                        }
+                        stagePageRequest();
+                    }
+                });
+            });
+            jsPoll->start(60);
+        };
+
+        // Stage: a synthesized click on the fixture's PiP button is a
+        // real gesture — the shim must resolve, pop the window, and
+        // exitPictureInPicture() must close it.
+        stagePageRequest = [&]() {
+            evalJs(QLatin1String(
+                "(function(){var r=document.getElementById('pop')"
+                ".getBoundingClientRect();"
+                "return {x:r.x+r.width/2,y:r.y+r.height/2};}())"),
+                [&](const QVariant &result) {
+                const QVariantMap rect = result.toMap();
+                const QPoint pos(
+                    int(rect[QLatin1String("x")].toDouble()),
+                    int(rect[QLatin1String("y")].toDouble()));
+                QWidget *proxy = view->focusProxy()
+                    ? view->focusProxy() : view;
+                QMouseEvent press(QEvent::MouseButtonPress, pos,
+                                  proxy->mapToGlobal(pos),
+                                  Qt::LeftButton, Qt::LeftButton,
+                                  Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, pos,
+                                    proxy->mapToGlobal(pos),
+                                    Qt::LeftButton, Qt::NoButton,
+                                    Qt::NoModifier);
+                QCoreApplication::sendEvent(proxy, &press);
+                QCoreApplication::sendEvent(proxy, &release);
+                pollUntil([&]() { return pip->isActive(); },
+                    [&](bool active) {
+                    qInfo() << "pip-smoke: page request opens window"
+                            << (active ? "PASS" : "FAIL");
+                    if (!active) {
+                        evalJs(QLatin1String(
+                            "({promise:window.__pipPromise,"
+                            "chan:typeof window.__aroraChannel,"
+                            "uaAtClick:window.__uaAtClick,"
+                            "tagged:document.querySelectorAll("
+                            "'video[data-arora-pip]').length});"),
+                            [&, fail](const QVariant &r) {
+                            qInfo() << "pip-smoke: page-request diag"
+                                    << r.toMap();
+                            fail("page-request");
+                        });
+                        return;
+                    }
+                    // The window is up but the promise resolves a few
+                    // async hops later (ready -> detach ->
+                    // popOutResolved over the channel); poll it.
+                    auto promise = std::make_shared<QString>();
+                    auto tries = std::make_shared<int>(0);
+                    QTimer *jsPoll = new QTimer(qApp);
+                    QObject::connect(jsPoll, &QTimer::timeout, qApp,
+                        [&, promise, tries, jsPoll]() {
+                        evalJs(QLatin1String("window.__pipPromise;"),
+                            [&, promise, tries, jsPoll](
+                                    const QVariant &r) {
+                            *promise = r.toString();
+                            if (*promise != QLatin1String("pending")
+                                && ++*tries <= 120)
+                                return;
+                            jsPoll->stop();
+                            jsPoll->deleteLater();
+                            evalJs(QLatin1String(
+                        "({promise:window.__pipPromise,"
+                        "entered:window.__pipEntered,"
+                        "pipEl:document.pictureInPictureElement"
+                        "  ===document.getElementById('v')});"),
+                        [&](const QVariant &r) {
+                        const QVariantMap m = r.toMap();
+                        const bool pass =
+                            m.value(QLatin1String("promise")).toString()
+                                == QLatin1String("resolved")
+                            && m.value(QLatin1String("entered")).toInt() >= 1
+                            && m.value(QLatin1String("pipEl")).toBool();
+                        qInfo() << "pip-smoke: shim resolve+events"
+                                << m << (pass ? "PASS" : "FAIL");
+                        if (!pass) {
+                            fail("shim-resolve");
+                            return;
+                        }
+                        // document.exitPictureInPicture() tears it down.
+                        evalJs(QLatin1String(
+                            "document.exitPictureInPicture()"
+                            ".then(function(){window.__pipPromise='exited';})"
+                            ".catch(function(e){window.__pipPromise="
+                            "'exitrejected:'+e.name;});'armed';"),
+                            [&](const QVariant &) {
+                            pollUntil([&]() { return !pip->isActive(); },
+                                [&](bool closed) {
+                                qInfo() << "pip-smoke: exitPictureInPicture"
+                                        << (closed ? "PASS" : "FAIL");
+                                if (!closed) {
+                                    fail("exit-pip");
+                                    return;
+                                }
+                                evalJs(QLatin1String(
+                                    "({left:window.__pipLeft,"
+                                    "promise:window.__pipPromise});"),
+                                    [&](const QVariant &r2) {
+                                    const QVariantMap m2 = r2.toMap();
+                                    const bool p2 =
+                                        m2.value(QLatin1String("left"))
+                                            .toInt() >= 1
+                                        && m2.value(QLatin1String("promise"))
+                                            .toString()
+                                                == QLatin1String("exited");
+                                    qInfo() << "pip-smoke: leave event+resolve"
+                                            << m2 << (p2 ? "PASS" : "FAIL");
+                                    if (!p2) {
+                                        fail("leave-event");
+                                        return;
+                                    }
+                                    qInfo() << "pip-smoke: DONE";
+                                    application.exit(0);
+                                });
+                            });
+                        });
+                        });
+                    });
+                    });
+                    jsPoll->start(60);
+                });
+            });
+        };
+
+        // Entry: load the fixture, pop the video out via the menu
+        // path, verify the tab side detached and the player is
+        // decoding, then return-to-tab and check the position sync.
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [&](bool ok) {
+            if (!ok || view->url() != pageUrl)
+                return;
+            evalJs(QLatin1String(
+                "({videos:document.querySelectorAll('video').length,"
+                "pipEnabled:document.pictureInPictureEnabled});"),
+                [&](const QVariant &r) {
+                const QVariantMap m = r.toMap();
+                const bool pass =
+                    m.value(QLatin1String("videos")).toInt() == 1
+                    && m.value(QLatin1String("pipEnabled")).toBool();
+                qInfo() << "pip-smoke: shim armed" << m
+                        << (pass ? "PASS" : "FAIL");
+                if (!pass) {
+                    fail("shim-armed");
+                    return;
+                }
+                pip->popOut();
+                pollUntil([&]() {
+                    return pip->window() && pip->window()->isReady();
+                }, [&](bool ready) {
+                    qInfo() << "pip-smoke: window open+ready"
+                            << (ready ? "PASS" : "FAIL");
+                    if (!ready) {
+                        fail("open");
+                        return;
+                    }
+                    evalJs(QLatin1String(
+                        "(function(){var v=document.getElementById('v');"
+                        "return {paused:v.paused,"
+                        "hidden:getComputedStyle(v).display==='none',"
+                        "ph:!!document.querySelector("
+                        "'.arora-pip-placeholder'),"
+                        "pipEl:document.pictureInPictureElement===v};}())"),
+                        [&](const QVariant &r) {
+                        const QVariantMap m = r.toMap();
+                        const bool pass =
+                            m.value(QLatin1String("paused")).toBool()
+                            && m.value(QLatin1String("hidden")).toBool()
+                            && m.value(QLatin1String("ph")).toBool()
+                            && m.value(QLatin1String("pipEl")).toBool();
+                        qInfo() << "pip-smoke: source detached" << m
+                                << (pass ? "PASS" : "FAIL");
+                        if (!pass) {
+                            fail("detach");
+                            return;
+                        }
+                        // The player must actually decode — kick
+                        // play() (the fixture video sits paused), then
+                        // demand HAVE_CURRENT_DATA and a running clock.
+                        evalPipJs(QLatin1String(
+                            "document.getElementById('v').play();'ok'"),
+                            [](const QVariant &) {});
+                        auto probe = std::make_shared<QVariantMap>();
+                        auto evals = std::make_shared<int>(0);
+                        auto replies = std::make_shared<int>(0);
+                        pollUntil([&, probe, evals, replies]() {
+                            evalPipJs(QLatin1String(
+                                "(function(){var v=document."
+                                "getElementById('v');"
+                                "return {rs:v.readyState,"
+                                "err:v.error?v.error.code:0,"
+                                "paused:v.paused,ended:v.ended,"
+                                "t:v.currentTime};}())"),
+                                [probe, replies](const QVariant &r) {
+                                ++*replies;
+                                *probe = r.toMap();
+                            });
+                            ++*evals;
+                            return probe->value(QLatin1String("rs"))
+                                .toInt() >= 2;
+                        }, [&, probe, evals, replies](bool decoding) {
+                            evalPipJs(QLatin1String(
+                                "(function(){var v=document."
+                                "getElementById('v');"
+                                "return {rs:v.readyState,"
+                                "err:v.error?v.error.code:0,"
+                                "paused:v.paused,ended:v.ended,"
+                                "t:v.currentTime};}())"),
+                                [&, decoding](const QVariant &r) {
+                                const QVariantMap m = r.toMap();
+                                const bool pass = decoding
+                                    && m.value(QLatin1String("err"))
+                                            .toInt() == 0
+                                    && (!m.value(QLatin1String("paused"))
+                                            .toBool()
+                                        || m.value(QLatin1String("ended"))
+                                            .toBool());
+                                qInfo() << "pip-smoke: player decoding"
+                                        << m << (pass ? "PASS" : "FAIL");
+                                if (!pass) {
+                                    fail("decode");
+                                    return;
+                                }
+                                // Return to tab: the position must
+                                // come back with the element.
+                                evalPipJs(QLatin1String(
+                                    "document.getElementById('v')"
+                                    ".currentTime=0.6;'seeked';"),
+                                    [&](const QVariant &) {
+                                    settle(700, [&]() {
+                                        PipWindow *w = pip->window();
+                                        if (w)
+                                            w->returnToTabNow();
+                                        pollUntil([&]() {
+                                            return !pip->window();
+                                        }, [&](bool gone) {
+                                            qInfo() << "pip-smoke: return-to-tab closes"
+                                                    << (gone ? "PASS" : "FAIL");
+                                            if (!gone) {
+                                                fail("return-close");
+                                                return;
+                                            }
+                                            evalJs(QLatin1String(
+                                                "(function(){var v=document."
+                                                "getElementById('v');"
+                                                "return {shown:getComputedStyle(v)"
+                                                ".display!=='none',"
+                                                "ph:!!document.querySelector("
+                                                "'.arora-pip-placeholder'),"
+                                                "t:v.currentTime,"
+                                                "left:window.__pipLeft};}())"),
+                                                [&](const QVariant &r) {
+                                                const QVariantMap m = r.toMap();
+                                                const bool pass =
+                                                    m.value(QLatin1String("shown")).toBool()
+                                                    && !m.value(QLatin1String("ph")).toBool()
+                                                    && qAbs(m.value(QLatin1String("t")).toDouble() - 0.6) < 0.8;
+                                                qInfo() << "pip-smoke: tab restored" << m
+                                                        << (pass ? "PASS" : "FAIL");
+                                                if (!pass) {
+                                                    fail("restore");
+                                                    return;
+                                                }
+                                                stageGestureGate();
+                                            });
+                                        });
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        });
+
+        QTimer::singleShot(60000, &application, [&application]() {
+            qInfo() << "pip-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        // exec() INSIDE the block — every local above is captured
+        // [&] by the stage lambdas (same trap as reader-smoke).
+        view->loadUrl(pageUrl);
         return application.exec();
     }
 

@@ -463,6 +463,9 @@ Sleeping tabs (SLEEP01):
 Command palette (CMD01):
     A Ctrl+Shift+P command palette (also in the Tools menu) fuzzy-searches every browser action, open tab, bookmark title and settings section from one keyboard-first overlay: arrows navigate, Enter executes, Esc dismisses, and recently run entries float to the top. Typing "clear history" reaches Clear Private Data, "privacy" jumps straight to that settings page, and tab titles switch tabs; bookmark entries load the page in the current tab.
 
+Picture-in-Picture (PIP01):
+    Videos can now pop out into a small frameless, always-on-top player window: right-click a video and choose "Picture-in-Picture", use the checkable View → "Picture-in-Picture" action for the largest playing video, or click a site's own PiP button — requestPictureInPicture() is shimmed to route through the browser with the same user-gesture requirement Chromium applies, and document.exitPictureInPicture() closes the window again. The window replays the stream on the page's own profile (logins and local files keep working), shows a drag handle plus "return to tab" and close controls, and hands the playback position back to the page element — which sits behind an in-page placeholder while popped out. Navigating away closes the window; sources that cannot be re-attached (DRM or some blob/MSE streams) restore the original player with an explanatory message instead of failing silently. Qt WebEngine ships no PiP delegate — the PiP window manager lives in Chrome's browser layer outside the content API — so this is an application-side implementation rather than the engine's native PiP.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

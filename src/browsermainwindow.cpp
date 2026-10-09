@@ -83,6 +83,7 @@
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "pictureinpicture.h"
 #include "readermode.h"
 #include "safetext.h"
 #include "securestore.h"
@@ -771,6 +772,18 @@ void BrowserMainWindow::setupMenu()
     });
     m_viewMenu->addAction(m_viewReaderAction);
 
+    // PIP01: Picture-in-Picture pops the page's video into a floating
+    // window.  Always enabled with a tab present — popOut() reports
+    // "no video" via the status bar when nothing qualifies.
+    m_viewPipAction = new QAction(m_viewMenu);
+    m_viewPipAction->setCheckable(true);
+    connect(m_viewPipAction, &QAction::triggered,
+            this, [this]() {
+        if (currentTab() && currentTab()->pictureInPicture())
+            currentTab()->pictureInPicture()->popOut();
+    });
+    m_viewMenu->addAction(m_viewPipAction);
+
     m_viewFullScreenAction = new QAction(m_viewMenu);
     m_viewFullScreenAction->setShortcut(Qt::Key_F11);
     connect(m_viewFullScreenAction, &QAction::triggered,
@@ -1012,6 +1025,9 @@ void BrowserMainWindow::updateReaderState()
         if (m_readerWatchedView && m_readerWatchedView->readerMode())
             disconnect(m_readerWatchedView->readerMode(), nullptr,
                        this, nullptr);
+        if (m_readerWatchedView && m_readerWatchedView->pictureInPicture())
+            disconnect(m_readerWatchedView->pictureInPicture(), nullptr,
+                       this, nullptr);
         m_readerWatchedView = view;
         if (view && view->readerMode()) {
             connect(view->readerMode(), &ReaderMode::activeChanged,
@@ -1019,10 +1035,18 @@ void BrowserMainWindow::updateReaderState()
             connect(view->readerMode(), &ReaderMode::availableChanged,
                     this, [this](bool) { updateReaderState(); });
         }
+        if (view && view->pictureInPicture()) {
+            connect(view->pictureInPicture(),
+                    &PictureInPicture::activeChanged,
+                    this, [this](bool) { updateReaderState(); });
+        }
     }
     m_viewReaderAction->setEnabled(view != nullptr);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
+    m_viewPipAction->setEnabled(view != nullptr);
+    m_viewPipAction->setChecked(view && view->pictureInPicture()
+                                && view->pictureInPicture()->isActive());
 }
 
 void BrowserMainWindow::aboutToShowTextEncodingMenu()
@@ -1106,6 +1130,7 @@ void BrowserMainWindow::retranslate()
     m_viewZoomOutAction->setText(tr("Zoom &Out"));
     m_viewZoomTextOnlyAction->setText(tr("Zoom &Text Only"));
     m_viewReaderAction->setText(tr("&Reader Mode"));
+    m_viewPipAction->setText(tr("Picture-&in-Picture"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
     m_viewFullScreenAction->setText(tr("&Full Screen"));

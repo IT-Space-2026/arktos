@@ -264,6 +264,21 @@ void WebPage::init()
             scripts().insert(bootstrap);
         }
 
+        // PIP01: the requestPictureInPicture shim.  QtWebEngine ships
+        // no PiP delegate, so pages calling it would hit an
+        // unimplemented path; the shim routes the request over the
+        // channel (gesture-gated) to PictureInPicture's pop-out.
+        QFile shimFile(QLatin1String(":pip-shim.js"));
+        if (shimFile.open(QIODevice::ReadOnly)) {
+            QWebEngineScript shim;
+            shim.setName(QLatin1String("arora:pip-shim"));
+            shim.setInjectionPoint(QWebEngineScript::DocumentCreation);
+            shim.setWorldId(QWebEngineScript::MainWorld);
+            shim.setRunsOnSubFrames(false);
+            shim.setSourceCode(QString::fromUtf8(shimFile.readAll()));
+            scripts().insert(shim);
+        }
+
         // The "arora" object serves only internal qrc pages (the start
         // page).  It is registered when the main frame commits to a qrc
         // url — before the page's channel handshake — and removed again

@@ -92,6 +92,8 @@ HEADERS += \
     $$PWD/downloadmanager.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
+    $$PWD/pictureinpicture.h \
+    $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
     $$PWD/readermode.h \
@@ -145,6 +147,8 @@ SOURCES += \
     $$PWD/downloadmanager.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
+    $$PWD/pictureinpicture.cpp \
+    $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
     $$PWD/readermode.cpp \
