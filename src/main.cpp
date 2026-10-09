@@ -42,6 +42,7 @@
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
+#include "fingerprintprotector.h"
 #include "history.h"
 #include "historymanager.h"
 #include "historyparser.h"
@@ -3075,6 +3076,7 @@ int main(int argc, char **argv)
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
+        "fingerprint-inject-smoke", "fingerprint-inject-seed",
         "reader-smoke",
         "telemetry-smoke", "telemetry-browse-smoke",
         "telemetry-prefetch-child-smoke",
@@ -10490,6 +10492,270 @@ int main(int argc, char **argv)
         });
         view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
                            .arg(server->serverPort())));
+        return application.exec();
+    }
+
+    // SAFE06: --fingerprint-inject-seed prints the session noise seed
+    // this process would bake into the injected script — the parent
+    // smoke spawns it twice to prove the seed differs run-to-run.
+    if (args.contains(QLatin1String("--fingerprint-inject-seed"))) {
+        const QString source =
+            FingerprintProtector::instance()->scriptSource();
+        const QRegularExpressionMatch match = QRegularExpression(
+            QStringLiteral("var SEED = (\\d+)")).match(source);
+        if (match.hasMatch())
+            printf("%s\n", qPrintable(match.captured(1)));
+        return match.hasMatch() ? 0 : 1;
+    }
+
+    // SAFE06: --fingerprint-inject-smoke drives the countermeasures
+    // end-to-end on the browsing profile: the unprotected baseline,
+    // the armed surface (canvas noise + normalized navigator
+    // values + generic WebGL identity + native-code disguise), a
+    // reload proving the per-session seed keeps one stable identity,
+    // and the per-site exemption restoring the real readouts.
+    if (args.contains(QLatin1String("--fingerprint-inject-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "fingerprint-inject-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        QSettings settings;
+        const QVariant savedToggle = settings.value(
+            QLatin1String("privacy/fingerprintProtection"));
+        FingerprintProtector *protector =
+            FingerprintProtector::instance();
+
+        // The seed is process-lifetime — two fresh children must
+        // embed different values.
+        QStringList seeds;
+        for (int i = 0; i < 2; ++i) {
+            QProcess child;
+            child.start(QCoreApplication::applicationFilePath(),
+                QStringList{QStringLiteral("--fingerprint-inject-seed")});
+            if (child.waitForFinished(30000)
+                && child.exitStatus() == QProcess::NormalExit
+                && child.exitCode() == 0)
+                seeds << QString::fromUtf8(
+                    child.readAllStandardOutput()).trimmed();
+        }
+        check(seeds.count() == 2 && seeds.at(0) != seeds.at(1),
+              QStringLiteral("noise seed differs run-to-run (got %1)")
+                  .arg(seeds.join(QLatin1Char(','))));
+
+        // Exemption bookkeeping — pure C++, no engine needed.
+        protector->clearException(QLatin1String("127.0.0.1"));
+        check(!protector->isExempt(QLatin1String("127.0.0.1")),
+              QLatin1String("exemption list starts clean"));
+        protector->addException(QLatin1String("127.0.0.1"), false);
+        check(protector->isExempt(QLatin1String("127.0.0.1")),
+              QLatin1String("session exemption recorded"));
+        protector->clearException(QLatin1String("127.0.0.1"));
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "fingerprint-inject-smoke: FAIL (listen)"
+                    << server->errorString();
+            if (savedToggle.isValid())
+                settings.setValue(
+                    QLatin1String("privacy/fingerprintProtection"),
+                    savedToggle);
+            else
+                settings.remove(
+                    QLatin1String("privacy/fingerprintProtection"));
+            return 1;
+        }
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                client->readAll();
+                const QByteArray body =
+                    "<html><body>fingerprint</body></html>";
+                client->write("HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+        const QString pageUrl = QStringLiteral(
+            "http://127.0.0.1:%1/page").arg(server->serverPort());
+
+        const QString probeSource = QStringLiteral(
+            "(function(){"
+            "var c=document.createElement('canvas');"
+            "c.width=64;c.height=16;"
+            "var x=c.getContext('2d');x.fillStyle='#f60';"
+            "x.fillRect(0,0,64,16);x.fillStyle='#069';"
+            "x.font='12px sans';x.fillText('fp',4,12);"
+            "var glv=null,glr=null;"
+            "try{var g=document.createElement('canvas')"
+            ".getContext('webgl');"
+            "if(g){var e=g.getExtension('WEBGL_debug_renderer_info');"
+            "if(e){glv=g.getParameter(e.UNMASKED_VENDOR_WEBGL);"
+            "glr=g.getParameter(e.UNMASKED_RENDERER_WEBGL);}}}"
+            "catch(ignore){}"
+            "return JSON.stringify({"
+            "canvas:c.toDataURL(),"
+            "hwc:navigator.hardwareConcurrency,"
+            "devmem:(navigator.deviceMemory||0),"
+            "plugins:navigator.plugins.length,"
+            "glv:glv,glr:glr,"
+            "tostr:CanvasRenderingContext2D.prototype"
+            ".getImageData.toString()});})()");
+
+        auto once = [view](std::function<void(bool)> fn) {
+            auto conn = std::make_shared<QMetaObject::Connection>();
+            *conn = QObject::connect(
+                view, &QWebEngineView::loadFinished, view,
+                [conn, fn](bool ok) {
+                    QObject::disconnect(*conn);
+                    fn(ok);
+                });
+        };
+        auto loadAndProbe = [&application, view, pageUrl, probeSource,
+                             once](std::function<void(const QJsonObject &)> cb) {
+            once([view, probeSource, cb](bool ok) {
+                if (!ok) {
+                    cb(QJsonObject());
+                    return;
+                }
+                view->webPage()->runJavaScript(
+                    probeSource,
+                    [cb](const QVariant &result) {
+                        cb(QJsonDocument::fromJson(
+                               result.toString().toUtf8()).object());
+                    });
+            });
+            view->loadUrl(QUrl(pageUrl));
+        };
+
+        auto finish = [&application, &failures, &settings,
+                       savedToggle, protector]() mutable {
+            if (savedToggle.isValid())
+                settings.setValue(
+                    QLatin1String("privacy/fingerprintProtection"),
+                    savedToggle);
+            else
+                settings.remove(
+                    QLatin1String("privacy/fingerprintProtection"));
+            protector->clearException(QLatin1String("127.0.0.1"));
+            qInfo() << "fingerprint-inject-smoke:"
+                    << (failures == 0 ? "PASS" : "FAIL")
+                    << failures << "failures";
+            application.exit(failures == 0 ? 0 : 1);
+        };
+
+        auto baseline = std::make_shared<QJsonObject>();
+        auto armed = std::make_shared<QJsonObject>();
+
+        // Phase 0: unprotected baseline.
+        settings.setValue(
+            QLatin1String("privacy/fingerprintProtection"), false);
+        BrowserProfile::applySettings(profile);
+        loadAndProbe([&application, check, baseline, armed, &settings,
+                      profile, protector, finish, loadAndProbe](
+                         const QJsonObject &probe) mutable {
+            *baseline = probe;
+            check(!probe.isEmpty()
+                      && !probe.value(QLatin1String("canvas"))
+                          .toString().isEmpty(),
+                  QLatin1String("baseline page loaded + canvas read"));
+
+            // Phase 1: armed — the same fixture under the
+            // countermeasures.
+            settings.setValue(
+                QLatin1String("privacy/fingerprintProtection"), true);
+            BrowserProfile::applySettings(profile);
+            loadAndProbe([&application, check, baseline, armed,
+                          protector, finish, loadAndProbe](
+                             const QJsonObject &probe) mutable {
+                *armed = probe;
+                check(!probe.isEmpty(),
+                      QLatin1String("armed page loaded"));
+                check(!probe.value(QLatin1String("canvas"))
+                          .toString().isEmpty()
+                      && probe.value(QLatin1String("canvas"))
+                             != baseline->value(QLatin1String("canvas")),
+                      QLatin1String("canvas readout differs under protection"));
+                check(probe.value(QLatin1String("hwc")).toInt() == 4,
+                      QStringLiteral(
+                          "navigator.hardwareConcurrency normalized (got %1)")
+                          .arg(probe.value(QLatin1String("hwc")).toInt()));
+                check(probe.value(QLatin1String("devmem")).toInt() == 8,
+                      QStringLiteral(
+                          "navigator.deviceMemory normalized (got %1)")
+                          .arg(probe.value(QLatin1String("devmem")).toInt()));
+                check(probe.value(QLatin1String("plugins")).toInt() == 0,
+                      QStringLiteral(
+                          "navigator.plugins empty (got %1)")
+                          .arg(probe.value(QLatin1String("plugins")).toInt()));
+                if (!probe.value(QLatin1String("glv")).isNull()) {
+                    check(probe.value(QLatin1String("glv")).toString()
+                              == QLatin1String("Google Inc. (Intel)"),
+                          QStringLiteral(
+                              "WebGL vendor masked (got %1)")
+                              .arg(probe.value(QLatin1String("glv"))
+                                       .toString()));
+                    check(probe.value(QLatin1String("glr")).toString()
+                              .startsWith(QLatin1String("ANGLE (Intel")),
+                          QStringLiteral(
+                              "WebGL renderer masked (got %1)")
+                              .arg(probe.value(QLatin1String("glr"))
+                                       .toString()));
+                } else {
+                    qInfo() << "fingerprint-inject-smoke: no WebGL"
+                               " context — vendor/renderer checks"
+                               " skipped";
+                }
+                check(probe.value(QLatin1String("tostr")).toString()
+                          .contains(QLatin1String("[native code]")),
+                      QLatin1String(
+                          "patched natives disguise as [native code]"));
+
+                // Phase 2: one seed per session — a reload must
+                // reproduce the same spoofed readouts (uniform
+                // identity, not a new fingerprint per page).
+                loadAndProbe([&application, check, baseline, armed,
+                              protector, finish, loadAndProbe](
+                                 const QJsonObject &probe) mutable {
+                    check(probe.value(QLatin1String("canvas"))
+                              == armed->value(QLatin1String("canvas")),
+                          QLatin1String(
+                              "canvas readout stable across reload"));
+
+                    // Phase 3: a per-site exemption restores the real
+                    // readouts for that host.
+                    protector->addException(
+                        QLatin1String("127.0.0.1"), false);
+                    protector->reinstallOnProfiles();
+                    loadAndProbe([&application, check, baseline,
+                                  finish](const QJsonObject &probe)
+                                     mutable {
+                        check(probe.value(QLatin1String("canvas"))
+                                  == baseline->value(
+                                      QLatin1String("canvas")),
+                              QLatin1String(
+                                  "exempt host gets real canvas"));
+                        check(probe.value(QLatin1String("plugins"))
+                                  == baseline->value(
+                                      QLatin1String("plugins")),
+                              QLatin1String(
+                                  "exempt host gets real plugins"));
+                        finish();
+                    });
+                });
+            });
+        });
+        QTimer::singleShot(90000, &application, [finish]() mutable {
+            qInfo() << "fingerprint-inject-smoke: FAIL (timeout)";
+            finish();
+        });
         return application.exec();
     }
 

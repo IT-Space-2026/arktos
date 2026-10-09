@@ -21,6 +21,7 @@
 
 #include "acceptlanguagedialog.h"
 #include "browserpaths.h"
+#include "fingerprintprotector.h"
 #include "privacyrequestinterceptor.h"
 
 #include <qapplication.h>
@@ -88,6 +89,11 @@ QWebEngineProfile *torProfile()
         s_torProfile = new QWebEngineProfile(qApp);
         s_torProfile->setHttpCacheType(QWebEngineProfile::MemoryHttpCache);
     }
+    return s_torProfile;
+}
+
+QWebEngineProfile *torProfileIfCreated()
+{
     return s_torProfile;
 }
 
@@ -301,6 +307,40 @@ void installReferrerPolicy(QWebEngineProfile *profile)
     scripts->insert(script);
 }
 
+// SAFE06: anti-fingerprinting injection.  Unlike the referrer meta
+// this has to live in the page's own world — an isolated world's
+// prototypes are invisible to page script, so only a MainWorld
+// DocumentCreation script can present spoofed globals before any
+// site code runs.
+void installFingerprintProtection(QWebEngineProfile *profile)
+{
+    const QString name = QLatin1String("arora:fingerprint");
+    QWebEngineScriptCollection *scripts = profile->scripts();
+    const QList<QWebEngineScript> installed = scripts->toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts->remove(script);
+    }
+
+    // Opt-in per the privacy toggle; the tor profile gets the
+    // countermeasures unconditionally — fingerprint resistance is the
+    // point of that window, and every tor window should look alike.
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    if (!protector->isEnabled() && profile != s_torProfile)
+        return;
+
+    const QString source = protector->scriptSource();
+    if (source.isEmpty())
+        return;
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setRunsOnSubFrames(true);
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setSourceCode(source);
+    scripts->insert(script);
+}
+
 void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
@@ -439,6 +479,10 @@ void applySettings(QWebEngineProfile *profile)
     // REF01: page-level referrer policy for the legs the request
     // interceptor cannot write (redirect follow-ups).
     installReferrerPolicy(profile);
+
+    // SAFE06: canvas/WebGL/navigator spoofing — installed or removed
+    // with the privacy toggle (always on for tor).
+    installFingerprintProtection(profile);
 
     // The app's network cache preference drives both the profile's
     // Chromium cache and (through NetworkAccessManager::loadSettings)

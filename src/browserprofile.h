@@ -53,6 +53,11 @@ QWebEngineProfile *torProfile();
 // re-application).
 QWebEngineProfile *privateProfileIfCreated();
 
+// The tor profile only if it has already been brought up — nullptr
+// otherwise.  Lets per-profile feature checks recognize tor sessions
+// without materializing the profile on normal runs.
+QWebEngineProfile *torProfileIfCreated();
+
 // UA03: the Chrome milestone the default UA presents on the wire.
 // Sites version-sniff "Chrome/<major>" to nag "browser out of date" —
 // honestly reporting the bundled Chromium reads stale as soon as its
@@ -101,6 +106,16 @@ void applySettings(QWebEngineProfile *profile);
 // applySettings() calls it; standalone callers exist for test modes
 // that pin a level after the profile was already prepared.
 void installReferrerPolicy(QWebEngineProfile *profile);
+
+// SAFE06: (re)installs the named "arora:fingerprint" injection script
+// — canvas readout noise, generic WebGL identity and normalized
+// navigator device hints — when privacy/fingerprintProtection is on,
+// unconditionally on the tor profile; removes it otherwise.  The
+// per-site exemption list and the session noise seed are baked into
+// the source by FingerprintProtector::scriptSource.  applySettings()
+// calls it; FingerprintProtector::reinstallOnProfiles re-pushes it
+// after an exemption change.
+void installFingerprintProtection(QWebEngineProfile *profile);
 
 // SEC12: QWebEngineProfile exposes no API for DOM storage —
 // clearHttpCache() only reaches the HTTP cache.  This schedules

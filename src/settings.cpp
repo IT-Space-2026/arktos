@@ -727,6 +727,9 @@ void SettingsDialog::loadFromSettings()
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
     normalizeAcceptLanguage->setChecked(settings.value(QLatin1String("normalizeAcceptLanguage"), false).toBool());
+    // SAFE06: opt-in injection — off by default because the spoofing
+    // is detectable and canvas-heavy sites can break.
+    fingerprintProtection->setChecked(settings.value(QLatin1String("fingerprintProtection"), false).toBool());
     securityLevelCombo->setCurrentIndex(qBound(
         int(PrivacyRequestInterceptor::Standard),
         settings.value(QLatin1String("securityLevel"),
@@ -961,6 +964,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());
+    settings.setValue(QLatin1String("fingerprintProtection"), fingerprintProtection->isChecked());
     settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
     settings.endGroup();
 

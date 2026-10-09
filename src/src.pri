@@ -93,6 +93,7 @@ HEADERS += \
     $$PWD/containermanager.h \
     $$PWD/devtoolswindow.h \
     $$PWD/downloadmanager.h \
+    $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
     $$PWD/pictureinpicture.h \
@@ -153,6 +154,7 @@ SOURCES += \
     $$PWD/containermanager.cpp \
     $$PWD/devtoolswindow.cpp \
     $$PWD/downloadmanager.cpp \
+    $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
     $$PWD/pictureinpicture.cpp \

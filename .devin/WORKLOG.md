@@ -167,3 +167,4 @@
 - 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
 - 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
 - 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
+- 2026-10-09 SAFE06: opt-in anti-fingerprint injection (fingerprint.js via QWebEngineScript/MainWorld@DocumentCreation: seeded canvas noise, generic WebGL vendor/renderer, uniform hwConcurrency/deviceMemory/plugins) + FingerprintProtector (persistent per-site exemptions), Settings>Privacy toggle, Tor auto-on, shield-panel per-site switch — --fingerprint-inject-smoke 14/14 PASS, make check PASS (0 warnings; contcookie flake passes standalone)

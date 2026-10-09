@@ -1777,6 +1777,19 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QCheckBox" name="fingerprintProtection">
+            <property name="toolTip">
+             <string>Inject countermeasures into web pages: canvas read-out noise, a generic WebGL vendor/renderer and normalized device values (cores, memory, plugins). This is opt-in noise, not anonymity — a site can still detect the spoofing and canvas-heavy pages can break; the shield button exempts a site that does. Always on in Tor windows.</string>
+            </property>
+            <property name="text">
+             <string>Spoof canvas/WebGL fingerprints</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

@@ -89,6 +89,7 @@ private:
     void applyJavaScriptRule(int index);
     void togglePopups(bool checked);
     void toggleHttpAllowance(bool checked);
+    void toggleFingerprintSpoof(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
 
@@ -104,6 +105,7 @@ private:
     QLabel *m_javaScriptState;
     QCheckBox *m_allowPopups;
     QCheckBox *m_allowHttp;
+    QCheckBox *m_spoofFingerprint;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;

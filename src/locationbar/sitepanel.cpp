@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "adblockrequestinterceptor.h"
 #include "cookiejar.h"
+#include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
@@ -162,6 +163,17 @@ SitePanel::SitePanel(QWidget *parent)
     connect(m_allowHttp, &QCheckBox::toggled,
             this, &SitePanel::toggleHttpAllowance);
     layout->addWidget(m_allowHttp);
+
+    // SAFE06: per-site exemption from the injected fingerprint
+    // countermeasures — canvas-heavy pages can break under the
+    // readout noise.  The exception list is baked into the script
+    // source, so toggling re-installs it and reloads the page.
+    m_spoofFingerprint = new QCheckBox(
+        tr("Spoof fingerprints on this site"), this);
+    m_spoofFingerprint->setObjectName(QLatin1String("siteFingerprintSpoof"));
+    connect(m_spoofFingerprint, &QCheckBox::toggled,
+            this, &SitePanel::toggleFingerprintSpoof);
+    layout->addWidget(m_spoofFingerprint);
 
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
@@ -370,6 +382,25 @@ void SitePanel::refresh()
     m_allowHttp->setChecked(
         webSite && PrivacyRequestInterceptor::isHttpAllowedHost(site));
 
+    // SAFE06: the row is only meaningful while protection is active
+    // on this page's profile — greyed with an explanation otherwise.
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    const bool protectionOn = webSite
+        && m_webView && m_webView->page()
+        && protector->isActiveForProfile(m_webView->page()->profile());
+    m_spoofFingerprint->setEnabled(protectionOn);
+    m_spoofFingerprint->setChecked(protectionOn
+                                   && !protector->isExempt(site));
+    m_spoofFingerprint->setToolTip(
+        !webSite
+            ? tr("Fingerprint spoofing applies to web sites")
+            : !protectionOn
+                ? tr("Fingerprint spoofing is off — enable it in "
+                     "Settings > Privacy")
+                : tr("Unchecked, this host is exempted from the "
+                     "injected fingerprint countermeasures (takes "
+                     "effect on reload)."));
+
     rebuildPermissionRows();
     m_refreshing = false;
 }
@@ -463,6 +494,30 @@ void SitePanel::toggleHttpAllowance(bool checked)
         PrivacyRequestInterceptor::allowHttpForHost(site, persistent);
     else
         PrivacyRequestInterceptor::clearHttpAllowance(site);
+    refresh();
+}
+
+void SitePanel::toggleFingerprintSpoof(bool checked)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    // Off-the-record pages never write the persistent store — the
+    // exemption lives only for the session.
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    if (checked)
+        protector->clearException(site);
+    else
+        protector->addException(site, persistent);
+    // The exemption list is baked into the injected script — re-push
+    // it onto the live profiles, then reload so this page's document
+    // runs under the new source.
+    protector->reinstallOnProfiles();
+    m_webView->reload();
     refresh();
 }
 
