@@ -211,3 +211,4 @@
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog in this tree (ENG03 servo-spike agent still mid-run) would be overwritten by merge (TOR05 tor status-bar circuit countries deferred again); rust-work even
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog in this tree (agent still mid-run) would be overwritten by merge (TOR05 tor status-bar circuit countries + MENU04 Downloads-to-Tools-menu move deferred); rust-work even
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog in this tree (ENG03 servo-spike agent still mid-run) would be overwritten by merge (TOR05 tor status-bar circuit countries + MENU04 Downloads-to-Tools-menu move deferred); rust-work even
+- 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog in this tree (ENG03 servo-spike agent still mid-run) would be overwritten by merge (TOR05 tor status-bar circuit countries + MENU04 Downloads-to-Tools-menu move deferred); rust-work even
