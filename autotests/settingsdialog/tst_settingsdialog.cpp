@@ -66,6 +66,7 @@ private slots:
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void pagePolishSettings();
     void extensionReview();
 };
 
@@ -1059,6 +1060,53 @@ void tst_SettingsDialog::containersPage()
         QVERIFY(manager->profileIfCreated(id) == nullptr);
         QVERIFY(!QDir(storagePath).exists());
     }
+}
+
+// POL03: Appearance's dark-mode checkbox (off by default) and
+// General's middle-click autoscroll (on by default everywhere but
+// macOS) round-trip through the websettings group.
+void tst_SettingsDialog::pagePolishSettings()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("websettings/forceDarkMode"));
+    settings.remove(QLatin1String("websettings/middleClickAutoscroll"));
+
+#if defined(Q_OS_MACOS)
+    const bool autoscrollDefault = false;
+#else
+    const bool autoscrollDefault = true;
+#endif
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.forceDarkMode->isChecked());
+        QCOMPARE(dialog.middleClickAutoscroll->isChecked(),
+                 autoscrollDefault);
+    }
+
+    {
+        SettingsDialog dialog;
+        dialog.forceDarkMode->setChecked(true);
+        dialog.middleClickAutoscroll->setChecked(!autoscrollDefault);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("websettings/forceDarkMode"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("websettings/middleClickAutoscroll"))
+                 .toBool(), !autoscrollDefault);
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.forceDarkMode->isChecked());
+        QCOMPARE(dialog.middleClickAutoscroll->isChecked(),
+                 !autoscrollDefault);
+        dialog.forceDarkMode->setChecked(false);
+        dialog.middleClickAutoscroll->setChecked(autoscrollDefault);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("websettings/forceDarkMode"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("websettings/middleClickAutoscroll"))
+                 .toBool(), autoscrollDefault);
 }
 
 // EXT02: the permission-review dialog is the consent gate every

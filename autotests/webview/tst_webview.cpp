@@ -26,6 +26,8 @@
 #include <QtNetwork/QtNetwork>
 #include <qwebenginefindtextresult.h>
 #include <qwebenginepage.h>
+#include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 #include <qwebengineview.h>
 #include <qmimedata.h>
 #include <qlineedit.h>
@@ -124,7 +126,9 @@ private slots:
     void dropUrl();
     void dropJavascriptUrl();
     void middleClickPaste();
+    void middleClickAutoscroll();
     void findText();
+    void forceDarkMode();
     void webViewWithSearch();
     void contextMenuLinkActions();
     void contextMenuPageActions();
@@ -382,8 +386,69 @@ void tst_WebView::middleClickPaste()
     QTRY_VERIFY_WITH_TIMEOUT(view.url().toString() == httpUrl, 15000);
 }
 
+// POL03: middle-click autoscroll — pressing the middle button on
+// empty page content and moving the pointer scrolls the document;
+// releasing ends the session.  The Blink feature flag is armed in
+// initTestCase (engine-latched), mirroring the shipping default.
+void tst_WebView::middleClickAutoscroll()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    std::shared_ptr<bool> loaded(new bool(false));
+    QObject::connect(&view, &QWebEngineView::loadFinished, &view,
+                     [loaded](bool) { *loaded = true; });
+    view.setHtml(QStringLiteral(
+        "<html><body style='margin:0;height:4000px'>"
+        "<div style='height:200px'>top</div></body></html>"));
+    QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
+
+    QWidget *proxy = view.focusProxy();
+    QVERIFY(proxy);
+    const QPoint pos(400, 300);
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(pos),
+                      proxy->mapToGlobal(pos), Qt::MiddleButton,
+                      Qt::MiddleButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(proxy, &press);
+    // Autoscroll engages once the pointer leaves the dead zone around
+    // the press point; each step below the origin scrolls further.
+    for (int i = 0; i < 10; ++i) {
+        const QPoint moved = pos + QPoint(0, 15 + i * 15);
+        QMouseEvent move(QEvent::MouseMove, QPointF(moved),
+                         proxy->mapToGlobal(moved), Qt::NoButton,
+                         Qt::MiddleButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(proxy, &move);
+        QTest::qWait(80);
+    }
+    QTest::qWait(800);
+
+    std::shared_ptr<bool> probed(new bool(false));
+    std::shared_ptr<int> scrollY(new int(-1));
+    view.page()->runJavaScript(QLatin1String("window.scrollY"),
+        [probed, scrollY](const QVariant &value) {
+        *scrollY = value.toInt();
+        *probed = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(*probed, 15000);
+    QVERIFY2(*scrollY > 0,
+             qPrintable(QStringLiteral("middle-click autoscroll did not"
+                                       " move the page (scrollY=%1)")
+                        .arg(*scrollY)));
+
+    // A click ends any sticky autoscroll session for later tests.
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(pos),
+                        proxy->mapToGlobal(pos), Qt::MiddleButton,
+                        Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(proxy, &release);
+    QMouseEvent click(QEvent::MouseButtonPress, QPointF(pos),
+                      proxy->mapToGlobal(pos), Qt::LeftButton,
+                      Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(proxy, &click);
+}
+
 // In-page find through WebViewSearch — QWebEnginePage::findText is
-// asynchronous; the "Not Found" label reflects the match count.
+// asynchronous; the n/m indicator reports active match and total,
+// "Not Found" stands in for zero.
 void tst_WebView::findText()
 {
     TestWebView view;
@@ -405,40 +470,95 @@ void tst_WebView::findText()
     QLabel *info = search.findChild<QLabel*>(QLatin1String("searchInfo"));
     QVERIFY(info);
 
-    // Sanity probe straight through QWebEngineView: the async result
-    // reports the document match count.
-    std::shared_ptr<bool> probed(new bool(false));
-    std::shared_ptr<int> matches(new int(-1));
-    view.findText(QLatin1String("arora"), QWebEnginePage::FindFlags(),
-                  [probed, matches](const QWebEngineFindTextResult &r) {
-        *matches = r.numberOfMatches();
-        *probed = true;
-    });
-    QTRY_VERIFY_WITH_TIMEOUT(*probed, 60000);
-    QVERIFY(*matches > 0);
-
-    edit->setText(QLatin1String("arora"));
+    // Two "hello" occurrences — the counter walks n/m as the active
+    // match moves, wrapping past the last one.  This runs before the
+    // raw probe below because every findText() moves the renderer's
+    // active match, which seeds where the next find lands.
+    edit->setText(QLatin1String("hello"));
     search.findNext();
-    QTRY_VERIFY_WITH_TIMEOUT(info->text().isEmpty(), 15000);
-
+    QTRY_VERIFY_WITH_TIMEOUT(info->text() == QLatin1String("1/2"), 15000);
+    search.findNext();
+    QTRY_VERIFY_WITH_TIMEOUT(info->text() == QLatin1String("2/2"), 15000);
     search.findPrevious();
-    QTest::qWait(250);
-    QVERIFY(info->text().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(info->text() == QLatin1String("1/2"), 15000);
 
     edit->setText(QLatin1String("no-such-text-xyz"));
     search.findNext();
     QTRY_VERIFY_WITH_TIMEOUT(
         info->text() == WebViewSearch::tr("Not Found"), 15000);
 
+    // Clearing the field clears the counter along with the highlights.
+    edit->setText(QString());
+    search.findNext();
+    QVERIFY(info->text().isEmpty());
+
     // highlightAll toggles between re-running the find and clearing
-    // highlights.
+    // highlights; switching it off clears the label too.
     QToolButton *highlight = search.findChild<QToolButton*>(
         QLatin1String("highlightAllButton"));
     QVERIFY(highlight);
     edit->setText(QLatin1String("arora"));
     highlight->setChecked(true);
-    QTRY_VERIFY_WITH_TIMEOUT(info->text().isEmpty(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(info->text() == QLatin1String("1/1"), 15000);
     highlight->setChecked(false);
+    QVERIFY(info->text().isEmpty());
+}
+
+// POL03: ForceDarkMode — Chromium's auto-dark inverts light pages.
+// (It does not flip prefers-color-scheme — the media query still
+// follows the OS theme — so the visible check is the composited
+// pixel.)  A scratch off-the-record profile keeps the shared one
+// untouched.
+void tst_WebView::forceDarkMode()
+{
+    const QString whitePage = QStringLiteral(
+        "data:text/html,<html><body style='background:#fff'>x</body></html>");
+
+    // Control: an untouched profile renders the page light.
+    {
+        QWebEngineProfile profile;
+        TestWebView view(&profile);
+        view.resize(800, 600);
+        view.show();
+        std::shared_ptr<bool> loaded(new bool(false));
+        QObject::connect(&view, &QWebEngineView::loadFinished, &view,
+                         [loaded](bool) { *loaded = true; });
+        view.loadUrl(QUrl(whitePage));
+        QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
+        QTest::qWait(500);
+        const QColor pixel = view.grab().toImage().pixelColor(400, 300);
+        QVERIFY2(pixel.lightnessF() > 0.5,
+                 qPrintable(QStringLiteral("control page composited"
+                                           " dark (%1)")
+                            .arg(pixel.name())));
+    }
+
+    QWebEngineProfile profile;
+    QVERIFY(!profile.settings()->testAttribute(
+        QWebEngineSettings::ForceDarkMode));
+    profile.settings()->setAttribute(QWebEngineSettings::ForceDarkMode,
+                                     true);
+    QVERIFY(profile.settings()->testAttribute(
+        QWebEngineSettings::ForceDarkMode));
+
+    TestWebView view(&profile);
+    view.resize(800, 600);
+    view.show();
+    std::shared_ptr<bool> loaded(new bool(false));
+    QObject::connect(&view, &QWebEngineView::loadFinished, &view,
+                     [loaded](bool) { *loaded = true; });
+    view.loadUrl(QUrl(whitePage));
+    QTRY_VERIFY_WITH_TIMEOUT(*loaded, 15000);
+
+    // The inversion is visible output: the white body must composite
+    // as a dark pixel (POL02's software rasterizer keeps offscreen
+    // grabs real).
+    QTest::qWait(500);
+    const QColor pixel = view.grab().toImage().pixelColor(400, 300);
+    QVERIFY2(pixel.lightnessF() < 0.5,
+             qPrintable(QStringLiteral("forced dark mode left the page"
+                                       " light (%1)")
+                        .arg(pixel.name())));
 }
 
 void tst_WebView::webViewWithSearch()
@@ -538,5 +658,25 @@ void tst_WebView::contextMenuPageActions()
     QTRY_VERIFY_WITH_TIMEOUT(dialog.isNull(), 5000);
 }
 
-QTEST_MAIN(tst_WebView)
+int main(int argc, char *argv[])
+{
+    // POL03: Chromium latches QTWEBENGINE_CHROMIUM_FLAGS as the engine
+    // context spins up — that happens during application construction,
+    // so the Blink MiddleClickAutoscroll switch (what
+    // BrowserProfile::applyChromiumFlags() emits for the shipping
+    // default) must be in the environment before the app exists.
+    QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+    if (!flags.contains("MiddleClickAutoscroll")) {
+        if (!flags.isEmpty())
+            flags += ' ';
+        flags += "--enable-blink-features=MiddleClickAutoscroll";
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+    }
+    Q_INIT_RESOURCE(htmls);
+    Q_INIT_RESOURCE(data);
+    BrowserApplication app(argc, argv);
+    tst_WebView tc;
+    return QTest::qExec(&tc, argc, argv);
+}
+
 #include "tst_webview.moc"

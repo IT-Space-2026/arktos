@@ -98,6 +98,7 @@ private slots:
     void deferredWipe();
     void deferredExitWipe();
 
+    void forceDarkMode();
     void chromiumFlags();
     void fingerprintNormalization();
 
@@ -119,6 +120,8 @@ private:
     QVariant m_savedBlockPrefetch;
     QVariant m_savedBlockThirdPartyWs;
     QVariant m_savedAcceptLanguages;
+    QVariant m_savedForceDarkMode;
+    QVariant m_savedAutoscroll;
     bool m_savedTzSet;
     QByteArray m_savedTz;
 };
@@ -153,6 +156,10 @@ void tst_Privacy::initTestCase()
     m_savedUtcTimezone = settings.value(QLatin1String("privacy/reportUtcTimezone"));
     m_savedNormalizeLang = settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
     m_savedAcceptLanguages = settings.value(QLatin1String("network/acceptLanguages"));
+    m_savedForceDarkMode =
+        settings.value(QLatin1String("websettings/forceDarkMode"));
+    m_savedAutoscroll =
+        settings.value(QLatin1String("websettings/middleClickAutoscroll"));
     m_savedBlockRemoteFonts =
         settings.value(QLatin1String("privacy/blockRemoteFonts"));
     m_savedBlockPrefetch =
@@ -193,6 +200,8 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/reportUtcTimezone"), m_savedUtcTimezone);
     restoreSetting(settings, QLatin1String("privacy/normalizeAcceptLanguage"), m_savedNormalizeLang);
     restoreSetting(settings, QLatin1String("network/acceptLanguages"), m_savedAcceptLanguages);
+    restoreSetting(settings, QLatin1String("websettings/forceDarkMode"), m_savedForceDarkMode);
+    restoreSetting(settings, QLatin1String("websettings/middleClickAutoscroll"), m_savedAutoscroll);
     restoreSetting(settings, QLatin1String("privacy/blockRemoteFonts"), m_savedBlockRemoteFonts);
     restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
     restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
@@ -704,6 +713,32 @@ void tst_Privacy::securityLevelAttributes()
     BrowserProfile::applySettings(&profile);
     QVERIFY(engineSettings->testAttribute(QWebEngineSettings::JavascriptEnabled));
     QVERIFY(!engineSettings->testAttribute(QWebEngineSettings::PlaybackRequiresUserGesture));
+}
+
+// POL03: the "Render pages in dark mode" toggle lands on the
+// profile's QWebEngineSettings — applySettings() is the single path
+// every profile (normal, private, Tor, containers) goes through.
+void tst_Privacy::forceDarkMode()
+{
+    QWebEngineProfile profile;
+    QWebEngineSettings *engineSettings = profile.settings();
+
+    QSettings settings;
+    settings.remove(QLatin1String("websettings/forceDarkMode"));
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(!engineSettings->testAttribute(
+                QWebEngineSettings::ForceDarkMode));
+
+    settings.setValue(QLatin1String("websettings/forceDarkMode"), true);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(engineSettings->testAttribute(
+                QWebEngineSettings::ForceDarkMode));
+
+    settings.setValue(QLatin1String("websettings/forceDarkMode"), false);
+    BrowserProfile::applySettings(&profile);
+    QVERIFY(!engineSettings->testAttribute(
+                QWebEngineSettings::ForceDarkMode));
+    settings.remove(QLatin1String("websettings/forceDarkMode"));
 }
 
 // SAFE04: the two resource-type toggles — privacy/blockRemoteFonts
@@ -1314,6 +1349,69 @@ void tst_Privacy::chromiumFlags()
     settings.setValue(QLatin1String("secureDnsMode"), 0);
     settings.endGroup();
     BrowserProfile::applySecureDns();
+
+    // POL03: middle-click autoscroll arms Blink's
+    // MiddleClickAutoscroll feature — on by default everywhere but
+    // macOS.  The entry must MERGE into an operator's
+    // --enable-blink-features switch, never append a shadowing second
+    // occurrence (Chromium's last-switch-wins parse would drop the
+    // operator's list).
+    QSettings().remove(
+        QLatin1String("websettings/middleClickAutoscroll"));
+#if defined(Q_OS_MACOS)
+    const bool autoscrollDefault = false;
+#else
+    const bool autoscrollDefault = true;
+#endif
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+            "--enable-blink-features=SomeOperatorFeature");
+    BrowserProfile::applyChromiumFlags();
+    const QStringList mergedFlags = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS")).split(
+        QLatin1Char(' '), Qt::SkipEmptyParts);
+    int blinkSwitches = 0;
+    QString blinkList;
+    for (const QString &flag : mergedFlags) {
+        if (flag.startsWith(QLatin1String("--enable-blink-features="))) {
+            ++blinkSwitches;
+            blinkList = flag;
+        }
+    }
+    QCOMPARE(blinkSwitches, 1);
+    QVERIFY(blinkList.contains(QLatin1String("SomeOperatorFeature")));
+    QCOMPARE(blinkList.contains(QLatin1String("MiddleClickAutoscroll")),
+             autoscrollDefault);
+
+    // A stored "off" leaves the feature out entirely; a stored "on"
+    // puts it back.  The same merge covers --enable-features:
+    // DnsOverHttps joins the operator's list rather than clobbering
+    // it.
+    QSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
+                         false);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("MiddleClickAutoscroll")));
+
+    QSettings().setValue(QLatin1String("websettings/middleClickAutoscroll"),
+                         true);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=Foo");
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--enable-blink-features=MiddleClickAutoscroll")));
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 3);
+    settings.endGroup();
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=Foo");
+    BrowserProfile::applyChromiumFlags();
+    const QString features = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"));
+    QVERIFY(features.contains(
+        QLatin1String("--enable-features=Foo,DnsOverHttps")));
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 0);
+    settings.endGroup();
+    QSettings().remove(QLatin1String("websettings/middleClickAutoscroll"));
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.

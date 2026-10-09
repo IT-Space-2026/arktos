@@ -604,6 +604,17 @@ void SettingsDialog::loadFromSettings()
     enablePlugins->setChecked(settings.value(QLatin1String("enablePlugins"), enablePlugins->isChecked()).toBool());
     enableImages->setChecked(settings.value(QLatin1String("enableImages"), enableImages->isChecked()).toBool());
     enableLocalStorage->setChecked(settings.value(QLatin1String("enableLocalStorage"), enableLocalStorage->isChecked()).toBool());
+    forceDarkMode->setChecked(settings.value(QLatin1String("forceDarkMode"), false).toBool());
+    // POL03: Chromium's native autoscroll — on everywhere except
+    // macOS, where middle-button scroll is not a platform convention.
+#if defined(Q_OS_MACOS)
+    const bool autoscrollDefault = false;
+#else
+    const bool autoscrollDefault = true;
+#endif
+    middleClickAutoscroll->setChecked(settings.value(
+        QLatin1String("middleClickAutoscroll"),
+        autoscrollDefault).toBool());
     userStyleSheet->setText(QString::fromUtf8(settings.value(QLatin1String("userStyleSheet")).toUrl().toEncoded()));
     int minimumFontSize = settings.value(QLatin1String("minimumFontSize"), 0).toInt();
     minimFontSizeCheckBox->setChecked(minimumFontSize != 0);
@@ -851,6 +862,10 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("enablePlugins"), enablePlugins->isChecked());
     settings.setValue(QLatin1String("enableImages"), enableImages->isChecked());
     settings.setValue(QLatin1String("enableLocalStorage"), enableLocalStorage->isChecked());
+    settings.setValue(QLatin1String("forceDarkMode"), forceDarkMode->isChecked());
+    // Latched by applyChromiumFlags() at engine startup — the tooltip
+    // on the checkbox already tells the user it needs a restart.
+    settings.setValue(QLatin1String("middleClickAutoscroll"), middleClickAutoscroll->isChecked());
     QString userStyleSheetString = userStyleSheet->text();
     if (QFile::exists(userStyleSheetString))
         settings.setValue(QLatin1String("userStyleSheet"), QUrl::fromLocalFile(userStyleSheetString));

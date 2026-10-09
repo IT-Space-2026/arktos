@@ -66,23 +66,38 @@ void WebViewSearch::highlightAll()
     // findNext()/findPrevious() re-highlights either way.
     if (ui.highlightAllButton->isChecked())
         find(QWebEnginePage::FindFlags());
-    else
+    else {
         webView()->findText(QString());
+        ui.searchInfo->setText(QString());
+    }
 }
 
 void WebViewSearch::find(QWebEnginePage::FindFlags flags)
 {
     QString searchString = ui.searchLineEdit->text();
-    if (!webView() || searchString.isEmpty())
+    if (!webView())
         return;
-    // findText answers asynchronously from the render process.
+    // An emptied field clears both the renderer's highlights and the
+    // counter — leaving them stale would claim matches that are gone.
+    if (searchString.isEmpty()) {
+        webView()->findText(QString());
+        ui.searchInfo->setText(QString());
+        return;
+    }
+    // findText answers asynchronously from the render process; the
+    // result carries the total match count and the active ordinal
+    // (verified 1-based on Qt 6.12 — it displays as-is).
     QPointer<WebViewSearch> guard(this);
     webView()->findText(searchString, flags,
                         [guard](const QWebEngineFindTextResult &result) {
-        if (guard) {
-            guard->ui.searchInfo->setText(
-                result.numberOfMatches() > 0 ? QString()
-                                             : WebViewSearch::tr("Not Found"));
+        if (!guard)
+            return;
+        if (result.numberOfMatches() > 0) {
+            guard->ui.searchInfo->setText(WebViewSearch::tr("%1/%2")
+                .arg(result.activeMatch())
+                .arg(result.numberOfMatches()));
+        } else {
+            guard->ui.searchInfo->setText(WebViewSearch::tr("Not Found"));
         }
     });
 }

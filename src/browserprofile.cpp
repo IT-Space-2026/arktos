@@ -337,6 +337,14 @@ void applySettings(QWebEngineProfile *profile)
                                  settings.value(QLatin1String("enableLocalStorage"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
 
+    // POL03: Chromium's auto-dark for web contents — pages that ship
+    // their own dark scheme (prefers-color-scheme: dark) use it, and
+    // light-only pages get a heuristic inversion; images and video
+    // are left alone.  This only ever recolors page CONTENT — Arora's
+    // own widgets keep the desktop palette.
+    engineSettings->setAttribute(QWebEngineSettings::ForceDarkMode,
+        settings.value(QLatin1String("forceDarkMode"), false).toBool());
+
     // SECLVL: Mullvad-style security tiers (privacy/securityLevel).
     // Safer and Safest force click-to-play media; Safest additionally
     // disables JavaScript profile-wide — applied after the
@@ -725,12 +733,46 @@ void applyChromiumFlags()
     settings.endGroup();
     const bool secureDns = secureDnsModeSetting() != 0;
 
+    // POL03: middle-click autoscroll is Chromium's own implementation
+    // (the Blink MiddleClickAutoscroll feature) — it already
+    // distinguishes link drags from empty-area scrolls, draws the
+    // direction marker and respects a page's own middle-click
+    // handlers.  On everywhere but macOS, where the convention does
+    // not exist.  Process-lifetime switch — a settings change applies
+    // at the next launch.
+#if defined(Q_OS_MACOS)
+    const bool autoscrollDefault = false;
+#else
+    const bool autoscrollDefault = true;
+#endif
+    const bool autoscroll = settings.value(
+        QLatin1String("websettings/middleClickAutoscroll"),
+        autoscrollDefault).toBool();
+
     QStringList flags = QString::fromLocal8Bit(
         qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
         .split(QLatin1Char(' '), Qt::SkipEmptyParts);
     const auto addFlag = [&flags](const QString &flag) {
         if (!flags.contains(flag))
             flags.append(flag);
+    };
+    // Comma-list switches (--enable-features, --enable-blink-features)
+    // must MERGE rather than append: Chromium's command line keeps
+    // only the last occurrence of a switch, so a second
+    // --enable-features=… would silently drop the operator's list.
+    const auto addListEntry = [&flags](const QString &name,
+                                       const QString &entry) {
+        const QString prefix = name + QLatin1Char('=');
+        for (QString &flag : flags) {
+            if (!flag.startsWith(prefix))
+                continue;
+            const QStringList entries = flag.mid(prefix.size()).split(
+                QLatin1Char(','), Qt::SkipEmptyParts);
+            if (!entries.contains(entry))
+                flag += QLatin1Char(',') + entry;
+            return;
+        }
+        flags.append(prefix + entry);
     };
 
     // TELEM01: silence the engine's unsolicited background traffic.
@@ -769,7 +811,15 @@ void applyChromiumFlags()
         // is on its known-provider list.  The custom modes (2/3)
         // additionally push their endpoint through
         // QWebEngineGlobalSettings::setDnsMode in applySecureDns().
-        addFlag(QLatin1String("--enable-features=DnsOverHttps"));
+        addListEntry(QLatin1String("--enable-features"),
+                     QLatin1String("DnsOverHttps"));
+    }
+    if (autoscroll) {
+        // POL03: see the default comment above — this arms Blink's
+        // built-in grab-scroll (middle-press on empty content then
+        // move the pointer; releasing or another click cancels it).
+        addListEntry(QLatin1String("--enable-blink-features"),
+                     QLatin1String("MiddleClickAutoscroll"));
     }
     if (strictTlsCiphers) {
         // TLS01: strip the weak suites from the ClientHello — RSA key

@@ -395,6 +395,16 @@
          </item>
         </layout>
        </item>
+       <item row="8" column="0" colspan="3">
+        <widget class="QCheckBox" name="middleClickAutoscroll">
+         <property name="toolTip">
+          <string>Press the middle mouse button on empty page content and move the pointer to scroll. Middle-clicking a link still opens it in a new tab. Takes effect after a restart.</string>
+         </property>
+         <property name="text">
+          <string>Middle-click autoscroll</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
      <widget class="QWidget" name="tab_search">
@@ -1175,7 +1185,17 @@
          </property>
         </widget>
        </item>
-       <item row="4" column="3">
+       <item row="4" column="0" colspan="3">
+        <widget class="QCheckBox" name="forceDarkMode">
+         <property name="toolTip">
+          <string>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora's own windows keep the desktop palette.</string>
+         </property>
+         <property name="text">
+          <string>Render pages in dark mode</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="3">
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

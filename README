@@ -84,6 +84,17 @@ ids, ~50 more) stripped; the same item on plain page content cleans
 the page address.  "Show QR Code for This Page" on any context menu
 renders the current page address as a scannable QR code.
 
+Page polish: the in-page find bar shows a live "n/m" match counter
+("Not Found" when there are none) and clears it together with the
+highlighting when the field is emptied.  Settings → Appearance →
+"Render pages in dark mode" makes Chromium auto-invert light pages —
+only the page content darkens, the browser chrome still follows the
+desktop theme; auto-inversion can misfire on pages that are already
+dark, which is why it stays a toggle.  Settings → General →
+"Middle-click autoscroll" enables Chromium's grab-scroll reader
+(default on for Linux/Windows, off on macOS); it is a startup flag,
+so the change applies at the next launch.
+
 Picture-in-Picture: right-click a video and choose "Picture-in-Picture"
 (or View → "Picture-in-Picture", or a site's own PiP button) to pop the
 video into a small frameless, always-on-top player window that keeps
