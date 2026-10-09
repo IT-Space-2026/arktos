@@ -39,6 +39,7 @@
 //!     bounded decode, opaque per-window/per-tab engine blobs so the
 //!     format survives an engine swap.
 
+mod bidi;
 mod blocklist;
 mod bookmarks;
 mod cred;

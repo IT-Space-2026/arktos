@@ -352,6 +352,36 @@ RcStatus rc_session_decode(const uint8_t *blob, size_t len,
 
 #define RC_SESSION_FILE "session.dat"
 
+/* --- DEVT03 devtools client ----------------------------------------
+ *
+ * Engine-neutral devtools channel: callers speak WebDriver-BiDi-
+ * shaped commands (session.new, session.subscribe,
+ * browsingContext.getTree/navigate, script.evaluate,
+ * storage.getCookies); the WebEngine backend translates them onto
+ * CDP inside the crate (Qt's Chromium ships no BiDi mapper), so a
+ * future Servo backend can swap in a native BiDi transport without
+ * touching callers.
+ *
+ * The callback fires on an internal thread for:
+ *   kind="response"  id=<bidi id>   json={"result":..}|{"error":{..}}
+ *   kind="event"     id=0           json={"method":..,"params":..}
+ *   kind="state"     id=0           json={"state":"closed"}
+ * It must be thread-safe and non-blocking (queue to the GUI thread).
+ *
+ * `path` is the ws path ("/devtools/browser/<guid>"); `origin` is the
+ * per-session allow-origins token arming the debug server. */
+typedef struct RcBidiClient RcBidiClient;
+typedef void (*RcBidiCallback)(void *userdata, const char *kindUtf8,
+                               uint64_t id, const char *jsonUtf8);
+RcBidiClient *rc_bidi_connect(const char *hostUtf8, uint16_t port,
+                              const char *pathUtf8,
+                              const char *originUtf8,
+                              RcBidiCallback cb, void *userdata);
+uint64_t rc_bidi_command(RcBidiClient *client, const char *methodUtf8,
+                         const char *paramsJsonUtf8);
+int rc_bidi_is_alive(const RcBidiClient *client);
+void rc_bidi_free(RcBidiClient *client);
+
 #ifdef __cplusplus
 }
 #endif
