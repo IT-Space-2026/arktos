@@ -3004,6 +3004,19 @@ int main(int argc, char **argv)
         settings.setValue(QLatin1String("privacy/blockPings"), false);
     }
 
+    // SEC20: tor mode is normally discovered in the BrowserApplication
+    // constructor's argv scan — too late for applyChromiumFlags, which
+    // must know it to keep the DnsOverHttps feature switch unarmed for
+    // a tor process.  Decide it from argv here; the constructor's own
+    // scan sets the same flag again (idempotent).
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg(argv[i]);
+        if (arg == "--tor" || arg == "--tor-window-smoke") {
+            BrowserApplication::setTorMode(true);
+            break;
+        }
+    }
+
     // PRIV02: the UTC-timezone normalization is process environment
     // (TZ) and must be in place before ANY engine initialization —
     // the BrowserApplication constructor already brings the browsing

@@ -233,6 +233,13 @@ void applyChromiumFlags();
 // Engine-global and safe to re-call — invoked from applySettings().
 void applySecureDns();
 
+// SEC20: the mode applySecureDns()/applyChromiumFlags() actually act
+// on — the stored privacy/secureDnsMode, except in a tor process where
+// it reads 0: DNS in a tor window resolves remotely through the
+// managed SOCKS proxy, and a local DoH resolver would bypass the
+// tunnel with the whole lookup stream.
+int effectiveSecureDnsMode();
+
 // PRIV02: fingerprint-normalization that works through the process
 // environment rather than a Chromium switch.  When
 // privacy/reportUtcTimezone is on, TZ is forced to UTC before the

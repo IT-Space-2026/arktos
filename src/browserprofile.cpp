@@ -20,6 +20,7 @@
 #include "browserprofile.h"
 
 #include "acceptlanguagedialog.h"
+#include "browserapplication.h"
 #include "browserpaths.h"
 #include "fingerprintprotector.h"
 #include "privacyrequestinterceptor.h"
@@ -749,11 +750,22 @@ static QString secureDnsServerSetting()
     return QLatin1String("https://cloudflare-dns.com/dns-query");
 }
 
+int effectiveSecureDnsMode()
+{
+    // SEC20: a tor process resolves names remotely through the managed
+    // SOCKS proxy — a local DoH resolver would carry the whole lookup
+    // stream around the tunnel.  The stored mode is therefore forced
+    // off for the entire process; it still applies to normal windows.
+    if (BrowserApplication::isTorMode())
+        return 0;
+    return secureDnsModeSetting();
+}
+
 void applySecureDns()
 {
     using QWebEngineGlobalSettings::SecureDnsMode;
     QWebEngineGlobalSettings::DnsMode dnsMode;
-    switch (secureDnsModeSetting()) {
+    switch (effectiveSecureDnsMode()) {
     case 2:
         dnsMode.secureMode = SecureDnsMode::SecureWithFallback;
         dnsMode.serverTemplates << secureDnsServerSetting();
@@ -785,7 +797,7 @@ void applyChromiumFlags()
     const bool strictTlsCiphers =
         settings.value(QLatin1String("tlsStrictCiphers"), true).toBool();
     settings.endGroup();
-    const bool secureDns = secureDnsModeSetting() != 0;
+    const bool secureDns = effectiveSecureDnsMode() != 0;
 
     // POL03: middle-click autoscroll is Chromium's own implementation
     // (the Blink MiddleClickAutoscroll feature) — it already

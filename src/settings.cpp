@@ -279,6 +279,17 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // modes — keep it greyed otherwise.
     connect(secureDnsMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) { secureDnsServer->setEnabled(index >= 2); });
+    if (BrowserApplication::isTorMode()) {
+        // SEC20: a tor process never resolves names locally — the
+        // stored DoH mode is ignored here regardless of the controls.
+        // Disabled rather than blanked so the choice still shows and
+        // keeps applying to normal windows.
+        secureDnsMode->setEnabled(false);
+        secureDnsServer->setEnabled(false);
+        secureDnsMode->setToolTip(tr(
+            "Tor windows resolve names remotely through the Tor proxy "
+            "— local DNS-over-HTTPS would bypass the tunnel."));
+    }
 
     // SEC13: master-passphrase controls for the credential store.
     connect(credentialPassphraseButton, &QPushButton::clicked,

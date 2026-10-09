@@ -37,6 +37,7 @@
 
 #include <acceptlanguagedialog.h>
 #include <adblocknetwork.h>
+#include <browserapplication.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
@@ -108,6 +109,7 @@ private slots:
 
     void forceDarkMode();
     void chromiumFlags();
+    void secureDnsTorGate();
     void fingerprintNormalization();
 
 private:
@@ -1540,6 +1542,44 @@ void tst_Privacy::chromiumFlags()
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.
+    init();
+}
+
+void tst_Privacy::secureDnsTorGate()
+{
+    // SEC20: a tor process resolves names remotely through the managed
+    // SOCKS proxy — local DoH would bypass the tunnel, so the stored
+    // mode is forced off regardless of what normal-window settings
+    // say.  Covers both surfaces that read it: the feature switch in
+    // applyChromiumFlags() and the resolver mode in applySecureDns().
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 3);
+    settings.setValue(QLatin1String("secureDnsServer"),
+                      QLatin1String("https://127.0.0.1:1/dns-query"));
+    settings.endGroup();
+
+    QCOMPARE(BrowserProfile::effectiveSecureDnsMode(), 3);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("DnsOverHttps")));
+
+    // Gather-then-assert: QVERIFY would early-return with s_torMode
+    // still armed, poisoning every later test in this binary.
+    BrowserApplication::setTorMode(true);
+    const int torMode = BrowserProfile::effectiveSecureDnsMode();
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    const QString torFlags = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"));
+    BrowserProfile::applySecureDns();
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(torMode, 0);
+    QVERIFY(!torFlags.contains(QLatin1String("DnsOverHttps")));
+    QCOMPARE(BrowserProfile::effectiveSecureDnsMode(), 3);
+
     init();
 }
 

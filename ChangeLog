@@ -148,6 +148,9 @@ Tor:
 - The status bar of a Tor window shows the live circuit chain
   (guard -> middle -> exit) with the full fingerprints on hover,
   refreshed on daemon circuit events and tab switches (TOR04).
+- A configured DNS-over-HTTPS mode is ignored inside a Tor window —
+  names resolve remotely through the SOCKS proxy, so a local resolver
+  would bypass the tunnel with the whole lookup stream (SEC20).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset
