@@ -12,6 +12,7 @@
 mod cookies;
 mod engine;
 mod error;
+pub mod gate;
 #[cfg(test)]
 mod itest;
 mod sanitize;
@@ -120,6 +121,25 @@ pub unsafe extern "C" fn dl_is_available() -> i32 {
     1
 }
 
+/// Installs (or clears, with null) the process-wide policy gate —
+/// see the DLACC04 contract in rustdl.h.  The hook runs on worker
+/// threads, concurrently when downloads overlap.
+///
+/// # Safety
+/// `f` must be a valid function pointer honoring the DlGateFn
+/// contract, `ctx` an opaque pointer it understands.
+#[no_mangle]
+pub unsafe extern "C" fn dl_set_gate(
+    f: Option<gate::GateFn>,
+    ctx: *mut std::os::raw::c_void,
+) -> DlStatus {
+    catch_unwind(AssertUnwindSafe(|| {
+        gate::set_gate(f, ctx);
+        DlStatus::Ok
+    }))
+    .unwrap_or(DlStatus::Unavailable)
+}
+
 /// Last call-site error on this thread ("" after success).
 /// Free with dl_string_free().
 #[no_mangle]
@@ -142,7 +162,8 @@ pub unsafe extern "C" fn dl_string_free(s: *mut c_char) {
 
 /// Starts a download worker.  `connections` clamps to 1..16 (0 = 8).
 /// `suggested_name`, `cookie_file` and `options_json` may be null;
-/// options_json currently understands {"user_agent","referer","proxy"}.
+/// options_json understands {"user_agent","proxy","first_party",
+/// "scope","referer_policy","require_proxy"} (DLACC04).
 ///
 /// # Safety
 /// All string pointers must be NUL-terminated UTF-8 or null;
@@ -186,14 +207,26 @@ pub unsafe extern "C" fn dl_start(
                 .get("user_agent")
                 .and_then(|x| x.as_str())
                 .map(String::from);
-            options.referer = v
-                .get("referer")
+            options.first_party = v
+                .get("first_party")
+                .and_then(|x| x.as_str())
+                .map(String::from);
+            options.scope = v
+                .get("scope")
                 .and_then(|x| x.as_str())
                 .map(String::from);
             options.proxy = v
                 .get("proxy")
                 .and_then(|x| x.as_str())
                 .map(String::from);
+            options.referer_policy = v
+                .get("referer_policy")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
+            options.require_proxy = v
+                .get("require_proxy")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
         }
 
         let job = engine::Job {

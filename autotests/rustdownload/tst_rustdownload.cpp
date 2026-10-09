@@ -31,6 +31,17 @@
 
 #ifdef ARORA_RUSTDL
 #include "rustdownloadengine.h"
+
+#include <adblockmanager.h>
+#include <adblocknetwork.h>
+#include <adblockrule.h>
+#include <adblocksubscription.h>
+#include <browserapplication.h>
+#include <privacyrequestinterceptor.h>
+
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+#endif
 #endif
 
 class tst_RustDownload : public QObject
@@ -53,6 +64,22 @@ private slots:
     void engineTraversalName();
     void cardCompletes();
     void cardCancelRetry();
+
+    // DLACC04: the policy gate's pure decisions — the verdicts the
+    // Rust engine asks for on every hop.  (The crate-side fixture
+    // matrix proves the hops are re-gated, cookies stripped, proxies
+    // honored; these pin the Qt side's verdicts.)
+    void gateSchemeRefused();
+    void gateHttpsFirstUpgrade();
+    void gateHttpsOnlyBlocks();
+    void gatePrivateExempt();
+    void gateSsrfRedirect();
+    void gateAdblockBlocks();
+    void canHandleTorProxy();
+#if defined(ARORA_RUSTCORE)
+    void gateUrlStrip();
+    void gateDomainBlocklist();
+#endif
 #else
     void noRustBuild();
 #endif
@@ -67,12 +94,33 @@ void tst_RustDownload::init()
 {
     QSettings settings;
     settings.clear();
+#ifdef ARORA_RUSTDL
+    // The gate consults the interceptor's lock-guarded snapshot —
+    // reload it against the cleared settings so defaults apply.
+    PrivacyRequestInterceptor::loadSettings();
+#endif
 }
 
 void tst_RustDownload::cleanup()
 {
     QSettings settings;
     settings.clear();
+#ifdef ARORA_RUSTDL
+    PrivacyRequestInterceptor::loadSettings();
+    BrowserApplication::setTorMode(false);
+    QNetworkProxy::setApplicationProxy(QNetworkProxy());
+    // Drop any subscription a gate test installed — the manager is a
+    // process singleton.
+    AdBlockManager *manager = AdBlockManager::instance();
+    const QList<AdBlockSubscription*> subs = manager->subscriptions();
+    for (AdBlockSubscription *s : subs)
+        manager->removeSubscription(s);
+#if defined(ARORA_RUSTCORE)
+    // Re-arm the vendored urlstrip set in case a test loaded a
+    // synthetic one.
+    rc_urlstrip_reload();
+#endif
+#endif
 }
 
 void tst_RustDownload::availability()
@@ -447,6 +495,226 @@ void tst_RustDownload::cardCancelRetry()
     QVERIFY(f.open(QIODevice::ReadOnly));
     QCOMPARE(f.readAll(), body);
 }
+
+// ---- DLACC04 gate coverage ----------------------------------------
+
+typedef RustDownloadEngine::GateDecision GateDecision;
+
+static GateDecision check(const QUrl &url, const QUrl &prev = QUrl(),
+                          const QUrl &firstParty = QUrl(),
+                          AdBlockNetwork *network = nullptr)
+{
+    return RustDownloadEngine::gateCheck(url, prev, firstParty,
+                                         QLatin1String("test"), network);
+}
+
+void tst_RustDownload::gateSchemeRefused()
+{
+    // Only http(s) may be fetched — a download URL or redirect target
+    // on anything else is refused before it reaches the wire.
+    GateDecision d = check(QUrl("ftp://example.com/file"));
+    QCOMPARE(d.action, RustDownloadEngine::GateBlock);
+    QVERIFY(d.reason.contains(QLatin1String("ftp")));
+    QCOMPARE(check(QUrl("file:///etc/passwd")).action,
+             RustDownloadEngine::GateBlock);
+}
+
+void tst_RustDownload::gateHttpsFirstUpgrade()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), true);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), true);
+    PrivacyRequestInterceptor::loadSettings();
+
+    // The engine-side https-first upgrade is replayed as a gate
+    // rewrite the crate then follows (and re-gates).
+    GateDecision d = check(QUrl("http://example.com/dl.bin?keep=1"));
+    QCOMPARE(d.action, RustDownloadEngine::GateRewrite);
+    QCOMPARE(QUrl(d.url), QUrl("https://example.com/dl.bin?keep=1"));
+}
+
+void tst_RustDownload::gateHttpsOnlyBlocks()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), true);
+    PrivacyRequestInterceptor::loadSettings();
+
+    // With the upgrade pass off, a plain-http download hits the
+    // HTTPS-Only veto the same way a navigation would.
+    GateDecision d = check(QUrl("http://example.com/dl.bin"));
+    QCOMPARE(d.action, RustDownloadEngine::GateBlock);
+    QVERIFY(d.reason.contains(QLatin1String("http")));
+
+    // And the toggle actually gates — disabled, it passes through.
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+    QCOMPARE(check(QUrl("http://example.com/dl.bin")).action,
+             RustDownloadEngine::GateAllow);
+}
+
+void tst_RustDownload::gatePrivateExempt()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), true);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), true);
+    PrivacyRequestInterceptor::loadSettings();
+
+    // The LAN/loopback/.local/.onion carve-out the interceptor makes
+    // applies to downloads too — user-initiated local traffic stands.
+    QCOMPARE(check(QUrl("http://127.0.0.1:9/x")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://localhost:9/x")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://192.168.1.1/router")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://printer.local/x")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://site.onion/f")).action,
+             RustDownloadEngine::GateAllow);
+}
+
+void tst_RustDownload::gateSsrfRedirect()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
+    // First hop to a LAN host stands — the user asked for it.
+    QCOMPARE(check(QUrl("http://192.168.1.1/f")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://127.0.0.1/f")).action,
+             RustDownloadEngine::GateAllow);
+
+    // A redirect hop crossing public -> private is refused: a public
+    // URL must not make the browser fetch the user's LAN/loopback.
+    QCOMPARE(check(QUrl("http://192.168.1.1/f"),
+                   QUrl("http://example.com/x")).action,
+             RustDownloadEngine::GateBlock);
+    QCOMPARE(check(QUrl("http://127.0.0.1/f"),
+                   QUrl("https://example.com/x")).action,
+             RustDownloadEngine::GateBlock);
+    QCOMPARE(check(QUrl("http://10.0.0.2/f"),
+                   QUrl("http://example.com/x")).action,
+             RustDownloadEngine::GateBlock);
+    QCOMPARE(check(QUrl("http://thing.local/f"),
+                   QUrl("http://example.com/x")).action,
+             RustDownloadEngine::GateBlock);
+
+    // LAN -> LAN and LAN -> public chaining stays legal.
+    QCOMPARE(check(QUrl("http://192.168.1.1/f"),
+                   QUrl("http://10.0.0.2/x")).action,
+             RustDownloadEngine::GateAllow);
+    QCOMPARE(check(QUrl("http://example.com/f"),
+                   QUrl("http://192.168.1.1/x")).action,
+             RustDownloadEngine::GateAllow);
+}
+
+void tst_RustDownload::gateAdblockBlocks()
+{
+    // Isolate the adblock step from the https toggles.
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->setEnabled(true);
+    auto *sub = new AdBlockSubscription(QUrl(), manager);
+    sub->setEnabled(true);
+    manager->addSubscription(sub);
+    AdBlockRule rule(QLatin1String("||dltracker.invalid^"));
+    rule.setEnabled(true);
+    sub->addRule(rule);
+    manager->network()->rebuildRules();
+
+    // The same network::match() the request interceptor consults —
+    // a tracker-domain download dies the way the resource fetch
+    // would.
+    GateDecision d = check(QUrl("https://dltracker.invalid/payload.exe"),
+                           QUrl(), QUrl("https://shop.example/cart"),
+                           manager->network());
+    QCOMPARE(d.action, RustDownloadEngine::GateBlock);
+    QVERIFY(d.reason.contains(QLatin1String("content rules")));
+
+    // A host no rule touches still passes.
+    QCOMPARE(check(QUrl("https://cdn.clean.invalid/f"), QUrl(),
+                   QUrl("https://shop.example/cart"),
+                   manager->network()).action,
+             RustDownloadEngine::GateAllow);
+}
+
+void tst_RustDownload::canHandleTorProxy()
+{
+    // Normal mode: http(s) goes to the crate, everything else stays
+    // with the engine path.
+    QVERIFY(RustDownloadEngine::canHandle(QUrl("http://example.com/f")));
+    QVERIFY(RustDownloadEngine::canHandle(QUrl("https://example.com/f")));
+    QVERIFY(!RustDownloadEngine::canHandle(QUrl("ftp://example.com/f")));
+    QVERIFY(!RustDownloadEngine::canHandle(QUrl("file:///etc/passwd")));
+
+    // Tor mode: the release-blocking rule — the crate takes the
+    // download only while a SOCKS5 application proxy exists, so a
+    // tor download can never ride a direct connection.
+    const QNetworkProxy saved = QNetworkProxy::applicationProxy();
+    BrowserApplication::setTorMode(true);
+    QNetworkProxy::setApplicationProxy(
+        QNetworkProxy(QNetworkProxy::NoProxy));
+    QVERIFY(!RustDownloadEngine::canHandle(QUrl("https://example.com/f")));
+    QNetworkProxy::setApplicationProxy(QNetworkProxy(
+        QNetworkProxy::Socks5Proxy, QLatin1String("127.0.0.1"), 9050));
+    QVERIFY(RustDownloadEngine::canHandle(QUrl("https://example.com/f")));
+    BrowserApplication::setTorMode(false);
+    QNetworkProxy::setApplicationProxy(saved);
+}
+
+#if defined(ARORA_RUSTCORE)
+void tst_RustDownload::gateUrlStrip()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
+    const QByteArray rules = QByteArrayLiteral(
+        R"({"version":1,"params":["dl_tok"]})");
+    QCOMPARE(rc_urlstrip_load_rules(
+                 reinterpret_cast<const uint8_t *>(rules.constData()),
+                 size_t(rules.size())),
+             RC_OK);
+
+    // SEC17 on the download path: a tracked-param URL is rewritten,
+    // and the crate re-gates the rewritten target.
+    GateDecision d = check(
+        QUrl("https://shop.example/item?dl_tok=abc&ok=1"));
+    QCOMPARE(d.action, RustDownloadEngine::GateRewrite);
+    QCOMPARE(QUrl(d.url), QUrl("https://shop.example/item?ok=1"));
+
+    rc_urlstrip_reload();
+}
+
+void tst_RustDownload::gateDomainBlocklist()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
+    // SEC18: merge a host into the builtin blocklist — exact and
+    // parent-suffix matches are refused on the download path too.
+    const QByteArray list = QByteArrayLiteral("dlphish.invalid\n");
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(list.constData()),
+                 size_t(list.size())),
+             RC_OK);
+    GateDecision d = check(QUrl("https://dlphish.invalid/f"));
+    QCOMPARE(d.action, RustDownloadEngine::GateBlock);
+    QVERIFY(d.reason.contains(QLatin1String("blocklist")));
+    QCOMPARE(check(QUrl("https://a.dlphish.invalid/f")).action,
+             RustDownloadEngine::GateBlock);
+}
+#endif // ARORA_RUSTCORE
 
 #else // !ARORA_RUSTDL
 

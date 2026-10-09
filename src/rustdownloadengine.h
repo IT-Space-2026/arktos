@@ -67,6 +67,32 @@ public:
     // engine reports available whenever the FFI is present.)
     static bool isAvailable();
 
+    // Whether this engine may fetch `url` at all (DLACC04).  Scheme
+    // must be http(s) — anything else stays with the normal engine.
+    // In a tor process the hard rule applies: the download exits via
+    // the managed SOCKS proxy or it does not run on this engine —
+    // callers fall back to the engine-mediated path rather than let a
+    // download ride a direct connection.
+    static bool canHandle(const QUrl &url);
+
+    // The DLACC04 policy gate, exposed as a public static so the
+    // autotest can probe the decisions directly.  gateCheck() is the
+    // pure verdict the FFI trampoline (dl_set_gate) hands the Rust
+    // worker threads: the same interceptor/adblock/blocklist policy
+    // the normal engine applies, re-evaluated per redirect hop.
+    // `network` is normally AdBlockManager::instance()->network();
+    // null skips the adblock step.
+    enum GateAction { GateAllow = 0, GateBlock = 1, GateRewrite = 2 };
+    struct GateDecision {
+        GateAction action = GateAllow;
+        QString url;    // GateRewrite payload
+        QString reason; // GateBlock payload (host-bearing, query-free)
+    };
+    static GateDecision gateCheck(const QUrl &url, const QUrl &prev,
+                                  const QUrl &firstParty,
+                                  const QString &scope,
+                                  class AdBlockNetwork *network);
+
     // The QWebEngineDownloadRequest-shaped surface DownloadItem uses.
     QUrl url() const { return m_url; }
     QWebEnginePage *page() const { return m_page; }

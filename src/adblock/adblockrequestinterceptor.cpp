@@ -79,7 +79,7 @@ AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QO
 
 // Applies the $removeparam specs to url; returns true when the URL
 // changed.  Runs on the IO thread — keep it allocation-light.
-static bool stripQueryParams(QUrl *url, const QStringList &specs)
+bool AdBlockRequestInterceptor::stripQueryParams(QUrl *url, const QStringList &specs)
 {
     if (specs.isEmpty())
         return false;

@@ -152,8 +152,18 @@ no suggestions).
 The download manager drives QWebEngineDownloadRequest: progress, speed
 and ETA per item, Try Again (re-issues through the page or a hidden
 page), open-folder/open-with actions, server-suggested names sanitized
-and de-duplicated, and an external download-program handoff. A Rust
-reqwest-based multi-connection engine is in development (DLACC tasks).
+and de-duplicated, and an external download-program handoff. An
+optional Rust reqwest-based engine (`CONFIG+=rustdl`) accelerates
+HTTP(S) downloads as parallel ranged GETs and holds the same privacy
+guarantees as the built-in engine: every request and each redirect hop
+is vetted by the same interceptor pipeline (HTTPS-first upgrade,
+HTTPS-Only veto, tracking-parameter strip, domain blocklist, adblock
+rules, public-to-private redirect refusal), cookies and Authorization
+never ride a cross-domain hop, the profile's User-Agent and Referer
+policy apply, the application proxy is honored, and inside a tor
+window a download exits only via the managed SOCKS listener —
+otherwise it falls back to the built-in engine rather than ever
+opening a direct connection.
 
 ### Extensions
 
