@@ -150,3 +150,4 @@
 - 2026-10-09 MERGEWATCH: rust-work merged — no conflicts (DLACC07 audit entry auto-unioned in WORKLOG/task files), build ok
 - 2026-10-09 MERGEWATCH: ui-work merged — no conflicts (HIST01 favicon store; WORKLOG/ChangeLog auto-unioned), build ok
 - 2026-10-09 MENU02: "New Tor Window" moved from the bottom of the File menu into the New-X group directly after New Tab (order now New Window > New Tab > New Tor Window > New Container Tab); tor-binary-missing disabled+tooltip path unchanged; added tst_BrowserMainWindow::fileMenuOrder regression test — verified: fileMenuOrder PASS, tst_browsermainwindow 17/17, make check rc=0 (check-warnings PASS) offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
+- 2026-10-09 MERGEWATCH: ui-work merged — no conflicts (auto-merged WORKLOG/ChangeLog), build ok
