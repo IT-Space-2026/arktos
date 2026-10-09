@@ -914,6 +914,8 @@ void BrowserMainWindow::setupMenu()
     m_historyMenu = new HistoryMenu(this);
     connect(m_historyMenu, &HistoryMenu::openUrl,
             m_tabWidget, &TabWidget::loadUrlFromUser);
+    connect(m_historyMenu, &HistoryMenu::showHistoryPage,
+            this, &BrowserMainWindow::showHistoryPage);
     menuBar()->addMenu(m_historyMenu);
     QList<QAction*> historyActions;
 
@@ -1550,6 +1552,41 @@ void BrowserMainWindow::showSettingsPage(int page)
         settings->openAtPage(SettingsDialog::Page(page));
     m_tabWidget->setCurrentWidget(settings);
     settings->setFocus();
+}
+
+void BrowserMainWindow::showHistoryPage()
+{
+    // HIST02: "Show All History" is a tab, not a floating dialog —
+    // one per window.  A second invocation focuses the existing tab
+    // instead of stacking another.
+    HistoryDialog *history = nullptr;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        history = qobject_cast<HistoryDialog*>(m_tabWidget->widget(i));
+        if (history)
+            break;
+    }
+    if (!history) {
+        history = new HistoryDialog(m_tabWidget);
+        connect(history, &HistoryDialog::closeRequested,
+                this, [this, history]() {
+            const int index = m_tabWidget->indexOf(history);
+            if (index >= 0)
+                m_tabWidget->closeTab(index);
+        });
+        // Entries open in a fresh tab so the history tab stays open;
+        // the dialog records the activating modifiers so Ctrl/Shift
+        // clicks still route through modifyWithUserBehavior.
+        connect(history, &HistoryDialog::openUrl,
+                this, [this](const QUrl &url, const QString &title) {
+            m_tabWidget->loadUrl(url,
+                TabWidget::modifyWithUserBehavior(TabWidget::NewSelectedTab),
+                title);
+        });
+        m_tabWidget->addWidgetTab(history, tr("History"),
+                                  QIcon(QLatin1String(":graphics/history.png")));
+    }
+    m_tabWidget->setCurrentWidget(history);
+    history->setFocus();
 }
 
 CommandPalette *BrowserMainWindow::commandPalette()

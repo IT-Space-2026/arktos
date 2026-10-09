@@ -374,21 +374,12 @@ void HistoryMenu::postPopulated()
 #if !defined(Q_OS_MACOS)
     showAllAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_H));
 #endif
-    connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryDialog);
+    connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryPage);
     addAction(showAllAction);
 
     QAction *clearAction = new QAction(tr("Clear History..."), this);
     connect(clearAction, &QAction::triggered, this, &HistoryMenu::clearHistoryDialog);
     addAction(clearAction);
-}
-
-void HistoryMenu::showHistoryDialog()
-{
-    HistoryDialog *dialog = new HistoryDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &HistoryDialog::openUrl,
-            this, &HistoryMenu::openUrl);
-    dialog->show();
 }
 
 void HistoryMenu::clearHistoryDialog()
@@ -406,12 +397,17 @@ void HistoryMenu::setInitialActions(QList<QAction*> actions)
         addAction(m_initialActions.at(i));
 }
 
-HistoryDialog::HistoryDialog(QWidget *parent, HistoryManager *setHistory) : QDialog(parent)
+HistoryDialog::HistoryDialog(QWidget *parent, HistoryManager *setHistory) : QWidget(parent)
 {
     HistoryManager *history = setHistory;
     if (!history)
         history = HistoryManager::instance();
     setupUi(this);
+    // HIST02: hosted in a tab, so Close asks the host to close the tab
+    // — a plain QWidget::close() would just hide the widget inside its
+    // tab slot.
+    connect(buttonBox, &QDialogButtonBox::rejected,
+            this, &HistoryDialog::closeRequested);
     tree->setUniformRowHeights(true);
     tree->setSelectionBehavior(QAbstractItemView::SelectRows);
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);

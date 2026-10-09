@@ -214,6 +214,9 @@ class HistoryMenu : public ModelMenu
 
 signals:
     void openUrl(const QUrl &url, const QString &title);
+    // HIST02: the history surface is a browser tab now — the menu asks
+    // the owning window to open/focus it rather than spawning a dialog.
+    void showHistoryPage();
 
 public:
     HistoryMenu(QWidget *parent = nullptr);
@@ -225,7 +228,6 @@ protected:
 
 private slots:
     void activated(const QModelIndex &index);
-    void showHistoryDialog();
     void clearHistoryDialog();
 
 private:
@@ -271,19 +273,23 @@ private:
 
 #include "ui_history.h"
 
-class HistoryDialog : public QDialog, public Ui_HistoryDialog
+// HIST02: despite the historical name this is a QWidget — the history
+// manager is hosted in a browser tab via TabWidget::addWidgetTab, not
+// shown as a dialog window.  Close asks the host to close the tab.
+class HistoryDialog : public QWidget, public Ui_HistoryDialog
 {
     Q_OBJECT
 
 signals:
     void openUrl(const QUrl &url, const QString &title);
+    void closeRequested();
 
 public:
     HistoryDialog(QWidget *parent = nullptr, HistoryManager *history = nullptr);
 
 private slots:
     void customContextMenuRequested(const QPoint &pos);
-    void open() override;
+    void open();
     void copy();
 
 };

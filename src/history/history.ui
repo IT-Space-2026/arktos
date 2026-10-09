@@ -1,6 +1,6 @@
 <ui version="4.0" >
  <class>HistoryDialog</class>
- <widget class="QDialog" name="HistoryDialog" >
+ <widget class="QWidget" name="HistoryDialog" >
   <property name="geometry" >
    <rect>
     <x>0</x>
@@ -93,22 +93,5 @@
   </customwidget>
  </customwidgets>
  <resources/>
- <connections>
-  <connection>
-   <sender>buttonBox</sender>
-   <signal>rejected()</signal>
-   <receiver>HistoryDialog</receiver>
-   <slot>close()</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>472</x>
-     <y>329</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>461</x>
-     <y>356</y>
-    </hint>
-   </hints>
-  </connection>
- </connections>
+ <connections/>
 </ui>
