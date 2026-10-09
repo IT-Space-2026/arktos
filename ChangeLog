@@ -57,6 +57,9 @@ Search & location bar:
 - Shortcut nicknames @bookmarks/@history/@tabs (SRCH06).
 - Dedicated search box is opt-in; button mode by default (SRCH03).
 - DuckDuckGo default engine (DENG01).
+- Fixed: a bare term like "hup" could navigate to https://hup/ instead
+  of searching; a missing or broken search engine now falls back to
+  the built-in default instead of a bogus address (SRCH07).
 - Search suggestions off by default, opt-in per engine (SEC11).
 
 Security:

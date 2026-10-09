@@ -918,6 +918,13 @@ void tst_TabWidget::omnibox()
     // 'keyword terms' wins over everything, even address-shaped terms.
     check(QLatin1String("ot hello"), engine->searchUrl(QLatin1String("hello")));
 
+    // SRCH07: a configured engine that produces no usable search url
+    // degrades to the built-in default endpoint instead of emitting a
+    // bogus http://<term> navigation.
+    engine->setSearchUrlTemplate(QString());
+    check(QLatin1String("word"),
+          QUrl(QLatin1String("https://duckduckgo.com/?q=word")));
+
     // Opt-out restores the old bare-http guess for non-address input.
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
     check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));

@@ -2345,7 +2345,7 @@ int main(int argc, char **argv)
     const char *const internalOptions[] = {
         "quit-after-load",
         "nam-smoke", "history-smoke", "download-smoke", "cookie-smoke",
-        "bookmarks-smoke", "search-smoke", "adblock-smoke",
+        "bookmarks-smoke", "search-smoke", "search-guess-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
@@ -2392,6 +2392,153 @@ int main(int argc, char **argv)
             && !args.contains(QLatin1String("--tor-window-smoke"))) {
         application.newMainWindow();
         return application.exec();
+    }
+
+    // Headless verification for SRCH07: the omnibox resolver.  Single
+    // words and multi-word input must route to the configured search
+    // engine, address-shaped input must still navigate, engine
+    // keywords keep first priority, the urlloading/searchEngineFallback
+    // opt-out restores the bare-http guess, and a stale saved engine
+    // name must degrade to the built-in default endpoint instead of a
+    // bogus http://<term> navigation.  Runs before the stub WebView is
+    // created — WebPage's ctor touches the OpenSearchManager
+    // singleton, and the stale-name check needs to seed the
+    // openSearch/engine key before the manager loads.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--search-guess-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass,
+                                 const QUrl &got = QUrl()) {
+            qInfo() << "search-guess-smoke:" << (pass ? "PASS" : "FAIL")
+                    << what << (got.isEmpty() ? QString() : got.toString());
+            ok = ok && pass;
+        };
+        const auto isHttp = [](const QUrl &url) {
+            return url.isValid()
+                && (url.scheme() == QLatin1String("http")
+                    || url.scheme() == QLatin1String("https"));
+        };
+
+        QSettings settings;
+        const QVariant savedEngine =
+            settings.value(QLatin1String("openSearch/engine"));
+        const QVariant savedFallback =
+            settings.value(QLatin1String("urlloading/searchEngineFallback"));
+
+        // Phase 1 — SRCH07(b): a stale saved engine name must not
+        // degrade to a bogus http://<term> navigation.  The seed has
+        // to land before the manager singleton runs load() — the
+        // qApp-parented instance is detected via findChild so a
+        // startup path that constructs it earlier skips cleanly.
+        // load() itself heals the stale name to an available engine;
+        // either way the resolver has to emit a real search url.
+        const bool managerPreloaded =
+            qApp->findChild<OpenSearchManager *>() != nullptr;
+        if (!managerPreloaded) {
+            settings.setValue(QLatin1String("openSearch/engine"),
+                              QLatin1String("srch07-stale"));
+        }
+        OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+        if (!managerPreloaded) {
+            const QUrl staleGuess =
+                TabWidget::guessUrlFromString(QLatin1String("hup"));
+            check(QLatin1String("'hup' with stale engine name -> search url"),
+                  isHttp(staleGuess)
+                      && staleGuess.host() != QLatin1String("hup"),
+                  staleGuess);
+        } else {
+            qInfo() << "search-guess-smoke: SKIP stale-engine check"
+                       "(manager already loaded)";
+        }
+
+        // Restore the saved engine choice (compiled default when none).
+        if (savedEngine.isValid())
+            settings.setValue(QLatin1String("openSearch/engine"), savedEngine);
+        else
+            settings.remove(QLatin1String("openSearch/engine"));
+        manager->setCurrentEngineName(
+            savedEngine.isValid() && manager->engineExists(savedEngine.toString())
+                ? savedEngine.toString()
+                : QLatin1String("DuckDuckGo"));
+
+        // Phase 2 — routing.  Whatever engine is configured supplies
+        // the expected search url.
+        OpenSearchEngine *engine = manager->engineForContext(false);
+        const QUrl expectedHup = engine
+            ? engine->searchUrl(QLatin1String("hup"))
+            : QUrl();
+        const QUrl hup = TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("'hup' -> engine search"), isHttp(hup)
+              && (expectedHup.isEmpty()
+                      ? hup.host() == QLatin1String("duckduckgo.com")
+                      : hup == expectedHup),
+              hup);
+        const QUrl twoWords =
+            TabWidget::guessUrlFromString(QLatin1String("two words"));
+        check(QLatin1String("'two words' -> engine search"),
+              isHttp(twoWords)
+                  && (!engine || twoWords == engine->searchUrl(
+                          QLatin1String("two words"))),
+              twoWords);
+
+        const QUrl dotted =
+            TabWidget::guessUrlFromString(QLatin1String("docs.qt.io"));
+        check(QLatin1String("'docs.qt.io' -> address"), isHttp(dotted)
+              && dotted.host() == QLatin1String("docs.qt.io"), dotted);
+        const QUrl localhost =
+            TabWidget::guessUrlFromString(QLatin1String("localhost:8080"));
+        check(QLatin1String("'localhost:8080' -> address"), isHttp(localhost)
+              && localhost.host() == QLatin1String("localhost")
+              && localhost.port() == 8080, localhost);
+        const QUrl explicitUrl = TabWidget::guessUrlFromString(
+            QLatin1String("http://example.com/x"));
+        check(QLatin1String("explicit scheme -> as typed"),
+              explicitUrl == QUrl(QLatin1String("http://example.com/x")),
+              explicitUrl);
+
+        // Phase 3 — engine keyword keeps first priority.
+        OpenSearchEngine *google = manager->engine(QLatin1String("Google"));
+        if (google) {
+            manager->setEngineForKeyword(QLatin1String("sgk"), google);
+            const QUrl keyed =
+                TabWidget::guessUrlFromString(QLatin1String("sgk arora"));
+            check(QLatin1String("'sgk arora' -> keyword engine"),
+                  keyed == google->searchUrl(QLatin1String("arora")),
+                  keyed);
+            manager->setEngineForKeyword(QLatin1String("sgk"), nullptr);
+        } else {
+            qInfo() << "search-guess-smoke: SKIP keyword check"
+                       "(Google engine missing)";
+        }
+
+        // Phase 4 — the opt-out still emits the bare-http guess, and
+        // the key round-trips the settings store.
+        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+        const QUrl optedOut =
+            TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("opt-out 'hup' -> bare http guess"),
+              optedOut == QUrl(QLatin1String("http://hup/"))
+                  || optedOut == QUrl(QLatin1String("http://hup")),
+              optedOut);
+        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+        settings.sync();
+        QSettings verify;
+        check(QLatin1String("searchEngineFallback persists"),
+              verify.value(QLatin1String("urlloading/searchEngineFallback"))
+                      .toBool() == true);
+        const QUrl reenabled =
+            TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("re-enabled 'hup' -> search"),
+              isHttp(reenabled)
+                  && reenabled.host() != QLatin1String("hup"),
+              reenabled);
+        if (savedFallback.isValid())
+            settings.setValue(QLatin1String("urlloading/searchEngineFallback"),
+                              savedFallback);
+        else
+            settings.remove(QLatin1String("urlloading/searchEngineFallback"));
+
+        qInfo() << "search-guess-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
     }
 
     // PERF03: --profile-startup runs the REAL startup path — real

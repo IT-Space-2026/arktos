@@ -109,6 +109,7 @@
 #include <qstyle.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
+#include <qurlquery.h>
 #include <qwebenginehistory.h>
 #include <qwebengineprofile.h>
 
@@ -1892,15 +1893,32 @@ QUrl TabWidget::guessUrlFromString(const QString &string)
     // covers tor mode) — those contexts search through the configured
     // private engine.
     const bool privateContext = BrowserApplication::isPrivate();
-    const auto fallbackUrl = [search, &trimmed, privateContext]() -> QUrl {
+    const auto fallbackUrl = [search, &trimmed, privateContext, manager]() -> QUrl {
         if (search) {
-            if (OpenSearchEngine *engine =
-                    ToolbarSearch::openSearchManager()
-                        ->engineForContext(privateContext)) {
+            OpenSearchEngine *engine =
+                manager->engineForContext(privateContext);
+            // SRCH07: a stale saved engine name or a descriptor that
+            // failed to load leaves engineForContext() with nothing —
+            // degrade to the compiled-in default engine before giving
+            // up on search entirely.
+            if (!engine)
+                engine = manager->engine(QLatin1String("DuckDuckGo"));
+            if (engine) {
                 const QUrl searchUrl = engine->searchUrl(trimmed);
                 if (!searchUrl.isEmpty() && searchUrl.isValid())
                     return searchUrl;
             }
+            // Last resort: emit the default engine's endpoint
+            // directly.  A bare http://<term> could only DNS-fail —
+            // after the HTTPS-first upgrade the user saw the exact
+            // https://<term> error page this guards against.
+            QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
+            QUrlQuery query;
+            query.addQueryItem(QLatin1String("q"), trimmed);
+            lastResort.setQuery(query);
+            qWarning() << "guessUrlFromString: no usable search engine —"
+                          "falling back to" << lastResort;
+            return lastResort;
         }
         const QString urlString = QLatin1String("http://") + trimmed;
         return QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);

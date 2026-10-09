@@ -194,6 +194,10 @@ public:
     static OpenUrlIn modifyWithUserBehavior(OpenUrlIn tab);
     WebView *getView(OpenUrlIn tab, WebView *currentView);
 
+    // The omnibox resolver — public so the smoke harness and autotests
+    // can assert the routing decision directly (SRCH07).
+    static QUrl guessUrlFromString(const QString &url);
+
 protected:
     void changeEvent(QEvent *event) override;
 
@@ -273,7 +277,6 @@ private slots:
     void historyCleared();
 
 private:
-    static QUrl guessUrlFromString(const QString &url);
     QLabel *animationLabel(int index, bool addMovie);
     void retranslate();
     // SLEEP01: idle bookkeeping + the async state-capture half of
