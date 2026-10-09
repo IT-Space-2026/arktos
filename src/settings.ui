@@ -43,6 +43,27 @@
    <item row="0" column="0">
     <layout class="QHBoxLayout" name="pagesLayout">
      <item>
+      <layout class="QVBoxLayout" name="navLayout">
+       <item>
+        <widget class="SearchLineEdit" name="pagesFilter">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="toolTip">
+          <string>Filter settings pages</string>
+         </property>
+         <property name="inactiveText">
+          <string>Filter settings</string>
+         </property>
+         <property name="accessibleName">
+          <string>Filter settings pages</string>
+         </property>
+        </widget>
+       </item>
+       <item>
       <widget class="QListWidget" name="pagesList">
        <property name="accessibleName">
         <string>Settings sections</string>
@@ -107,6 +128,8 @@
         </property>
        </item>
       </widget>
+       </item>
+      </layout>
      </item>
      <item>
       <widget class="QStackedWidget" name="tabWidget">
@@ -3007,7 +3030,15 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>SearchLineEdit</class>
+   <extends>QLineEdit</extends>
+   <header>searchlineedit.h</header>
+  </customwidget>
+ </customwidgets>
  <tabstops>
+  <tabstop>pagesFilter</tabstop>
   <tabstop>pagesList</tabstop>
   <tabstop>startupBehavior</tabstop>
   <tabstop>homeLineEdit</tabstop>

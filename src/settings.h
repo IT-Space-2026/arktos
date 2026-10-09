@@ -195,7 +195,12 @@ private slots:
     void refreshContainerSites();
     void containerSiteRemove();
 
+    // PREFUI03: the nav filter narrows the sidebar to pages whose
+    // title or control labels match the typed terms.
+    void filterPages(const QString &text);
+
 private:
+    void buildPageSearchIndex();
     void stashSearchSuggestions();
     void populateEngineForm();
     void updateEngineButtonStates();
@@ -217,6 +222,9 @@ private:
     // EXT03: distinguishes the button-triggered check (summary box)
     // from the opt-in background check firing while the dialog is up.
     bool m_manualExtensionCheck = false;
+    // PREFUI03: per-page lowercase search text, built lazily on the
+    // first keystroke (after loadFromSettings populated the combos).
+    QStringList m_pageSearchTexts;
 };
 
 #endif // SETTINGS_H

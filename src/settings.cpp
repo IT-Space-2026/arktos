@@ -90,6 +90,7 @@
 #include "webpermissionmanager.h"
 #include "webview.h"
 
+#include <qabstractbutton.h>
 #include <qapplication.h>
 #include <qcombobox.h>
 #include <qdesktopservices.h>
@@ -110,6 +111,7 @@
 #include <qstackedwidget.h>
 #include <qstandardpaths.h>
 #include <qstyle.h>
+#include <qtabwidget.h>
 #include <qfiledialog.h>
 #include <qheaderview.h>
 #include <qpainter.h>
@@ -136,11 +138,42 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // UIP03: Vivaldi-style sidebar navigation — pagesList rows mirror
     // the order the QStackedWidget pages had as QTabWidget tabs, and
     // the two stay in sync both ways so the persisted "currentTab"
-    // index keeps its old meaning.
+    // index keeps its old meaning.  PREFUI03: each row carries its
+    // stacked index in Qt::UserRole — the settings filter hides rows,
+    // so the row number and the page index can diverge.
+    for (int i = 0; i < pagesList->count(); ++i) {
+        if (QListWidgetItem *item = pagesList->item(i))
+            item->setData(Qt::UserRole, i);
+    }
     connect(pagesList, &QListWidget::currentRowChanged,
-            tabWidget, &QStackedWidget::setCurrentIndex);
+            this, [this](int row) {
+        if (QListWidgetItem *item = pagesList->item(row))
+            tabWidget->setCurrentIndex(item->data(Qt::UserRole).toInt());
+    });
     connect(tabWidget, &QStackedWidget::currentChanged,
-            pagesList, QOverload<int>::of(&QListWidget::setCurrentRow));
+            this, [this](int index) {
+        for (int row = 0; row < pagesList->count(); ++row) {
+            QListWidgetItem *item = pagesList->item(row);
+            if (item && item->data(Qt::UserRole).toInt() == index) {
+                pagesList->setCurrentRow(row);
+                break;
+            }
+        }
+    });
+    // PREFUI03: Vivaldi-style settings search — typing narrows the
+    // sidebar to the pages whose title or control labels match;
+    // Enter jumps to the top hit.
+    connect(pagesFilter, &QLineEdit::textChanged,
+            this, &SettingsDialog::filterPages);
+    connect(pagesFilter, &QLineEdit::returnPressed, this, [this]() {
+        for (int row = 0; row < pagesList->count(); ++row) {
+            QListWidgetItem *item = pagesList->item(row);
+            if (item && !item->isHidden()) {
+                pagesList->setCurrentRow(row);
+                break;
+            }
+        }
+    });
     static const char *const pageIcons[] = {
         "go-home",          // General
         "edit-find",        // Search
@@ -497,6 +530,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
 void SettingsDialog::openAtPage(Page page)
 {
+    // A deep link must always land on a listed page — drop any
+    // leftover filter text so the target row can't be hidden.
+    pagesFilter->clear();
     tabWidget->setCurrentIndex(int(page));
 }
 
@@ -523,6 +559,76 @@ QString SettingsDialog::pageTitle(Page page)
     if (index < 0 || index >= int(sizeof(titles) / sizeof(titles[0])))
         return QString();
     return tr(titles[index]);
+}
+
+// PREFUI03: one lowercase haystack per page — its title plus every
+// visible control label — so the filter matches what the user reads
+// ("font", "cookie", "proxy"), not internal widget names.
+void SettingsDialog::buildPageSearchIndex()
+{
+    static const QRegularExpression tagPattern(QStringLiteral("<[^>]*>"));
+    m_pageSearchTexts.clear();
+    m_pageSearchTexts.reserve(tabWidget->count());
+    for (int i = 0; i < tabWidget->count(); ++i) {
+        QString haystack = pageTitle(Page(i));
+        QWidget *surface = tabWidget->widget(i);
+        if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
+            surface = area->widget();
+        if (surface) {
+            for (QLabel *label : surface->findChildren<QLabel *>())
+                haystack += QLatin1Char(' ') + label->text();
+            for (QAbstractButton *button : surface->findChildren<QAbstractButton *>())
+                haystack += QLatin1Char(' ') + button->text();
+            for (QGroupBox *box : surface->findChildren<QGroupBox *>())
+                haystack += QLatin1Char(' ') + box->title();
+            for (QComboBox *combo : surface->findChildren<QComboBox *>()) {
+                for (int j = 0; j < combo->count(); ++j)
+                    haystack += QLatin1Char(' ') + combo->itemText(j);
+            }
+            for (QTabWidget *tabs : surface->findChildren<QTabWidget *>()) {
+                for (int j = 0; j < tabs->count(); ++j)
+                    haystack += QLatin1Char(' ') + tabs->tabText(j);
+            }
+            for (QLineEdit *edit : surface->findChildren<QLineEdit *>())
+                haystack += QLatin1Char(' ') + edit->placeholderText();
+        }
+        haystack.remove(tagPattern);
+        haystack.remove(QLatin1Char('&'));
+        m_pageSearchTexts.append(haystack.toLower());
+    }
+}
+
+void SettingsDialog::filterPages(const QString &text)
+{
+    const QStringList terms = text.toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    if (!terms.isEmpty() && m_pageSearchTexts.isEmpty())
+        buildPageSearchIndex();
+
+    int firstVisible = -1;
+    for (int row = 0; row < pagesList->count(); ++row) {
+        QListWidgetItem *item = pagesList->item(row);
+        if (!item)
+            continue;
+        const QString haystack =
+            m_pageSearchTexts.value(item->data(Qt::UserRole).toInt());
+        bool match = true;
+        for (const QString &term : terms) {
+            if (!haystack.contains(term)) {
+                match = false;
+                break;
+            }
+        }
+        item->setHidden(!match);
+        if (match && firstVisible < 0)
+            firstVisible = row;
+    }
+    // Keep the highlight on a listed row: when the current page is
+    // filtered out, jump to the top hit so the stack always shows a
+    // page the sidebar offers.
+    QListWidgetItem *current = pagesList->currentItem();
+    if (firstVisible >= 0 && (!current || current->isHidden()))
+        pagesList->setCurrentRow(firstVisible);
 }
 
 void SettingsDialog::showEvent(QShowEvent *event)
