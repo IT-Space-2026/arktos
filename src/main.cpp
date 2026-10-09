@@ -35,6 +35,7 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "browsertheme.h"
+#include "bwrapgenerator.h"
 #include "clearprivatedata.h"
 #include "commandpalette.h"
 #include "containermanager.h"
@@ -56,6 +57,8 @@
 #include "plaintexteditsearch.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
+#include "sandboxmanager.h"
+#include "sandboxpolicy.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "settings.h"
@@ -82,12 +85,14 @@
 #include <QtCore/QDebug>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMutex>
 #include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTextStream>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
@@ -96,6 +101,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
+#include <QtCore/QProcessEnvironment>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
@@ -2489,8 +2495,255 @@ static qint64 processTreeRssKb()
 #endif
 }
 
+// SAND01: --sandbox-probe runs INSIDE a bwrap invocation (spawned by
+// --sandbox-smoke, or by hand) and reports what the mounted filesystem
+// looks like from in there.  workdir is the parent-prepared fixture:
+// allowed.txt reads back, deny/ is a masked directory (a tmpfs — empty
+// view, writes land nowhere), secretfile.txt is a masked file
+// (a /dev/null bind — opens but reads empty).  The parent asserts the
+// host-side view afterwards, so the transient write proves the mask.
+static int sandboxProbe(BrowserApplication &application, WebView *view,
+                        const QString &workdir)
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "sandbox-probe:" << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    report(QStringLiteral("env-marker"),
+           qEnvironmentVariable("ARORA_SANDBOXED")
+               == QLatin1String("bwrap"));
+
+    QFile allowed(workdir + QStringLiteral("/allowed.txt"));
+    report(QStringLiteral("read-allowed"),
+           allowed.open(QIODevice::ReadOnly)
+               && allowed.readAll() == "hello-sandbox");
+
+    const QDir deniedDir(workdir + QStringLiteral("/deny"));
+    QFile deniedSecret(
+        deniedDir.filePath(QStringLiteral("secret.txt")));
+    report(QStringLiteral("denied-dir-empty"),
+           deniedDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot)
+                   .isEmpty()
+               && !deniedSecret.open(QIODevice::ReadOnly));
+
+    QFile maskedFile(workdir + QStringLiteral("/secretfile.txt"));
+    const bool maskedOpened = maskedFile.open(QIODevice::ReadOnly);
+    report(QStringLiteral("denied-file-empty"),
+           !maskedOpened || maskedFile.readAll().isEmpty());
+    maskedFile.close();
+
+    QFile written(workdir + QStringLiteral("/written-by-probe"));
+    report(QStringLiteral("write-allowed"),
+           written.open(QIODevice::WriteOnly)
+               && written.write("from-inside") != -1);
+    written.close();
+
+    // Writing into the masked directory succeeds inside the tmpfs —
+    // the parent's host-side check (the file must NOT exist) is what
+    // makes the result meaningful.
+    {
+        QFile transient(
+            deniedDir.filePath(QStringLiteral("evil.txt")));
+        if (transient.open(QIODevice::WriteOnly))
+            transient.write("x");
+    }
+
+    // The probe's own profile check: a file anywhere in $HOME outside
+    // the denylist must be writable — downloads rely on this.
+    const QString homeProbe = QDir::homePath()
+        + QStringLiteral("/.arora-sandbox-probe-write");
+    QFile homeFile(homeProbe);
+    const bool homeOk = homeFile.open(QIODevice::WriteOnly)
+        && homeFile.write("x") != -1;
+    homeFile.close();
+    QFile::remove(homeProbe);
+    report(QStringLiteral("home-write"), homeOk);
+
+    // The page load (about:blank, already navigated by the standalone
+    // harness) proves the engine itself works inside the wrap.
+    QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                     [&application, &ok](bool loaded) {
+        qInfo() << "sandbox-probe: engine-load"
+                << (loaded ? "PASS" : "FAIL");
+        ok = ok && loaded;
+        qInfo() << "sandbox-probe: RESULT" << (ok ? "PASS" : "FAIL");
+        application.exit(ok ? 0 : 1);
+    });
+    QTimer::singleShot(20000, &application, [&application]() {
+        qInfo() << "sandbox-probe: FAIL (timeout)";
+        application.exit(1);
+    });
+    return application.exec();
+}
+
+// SAND01: --sandbox-smoke — the end-to-end verification.  This process
+// stays unwrapped (the flag makes it a standalone run, and only
+// browsing launches self-wrap); it spawns real bwrap children against
+// a fixture directory to prove the denylist hides files and
+// directories, ordinary writes pass through, the engine runs inside
+// the wrap, the real self-reexec path wraps browsing sessions, and a
+// missing bwrap degrades to a warning rather than a failure.
+static int sandboxSmoke()
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "sandbox-smoke:" << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    const QString bwrap =
+        QStandardPaths::findExecutable(QStringLiteral("bwrap"));
+    if (bwrap.isEmpty()) {
+        qInfo() << "sandbox-smoke: SKIP (bwrap not installed)";
+        return 0;
+    }
+
+    const QString program = QCoreApplication::applicationFilePath();
+    QTemporaryDir work;
+    if (!work.isValid()) {
+        report(QStringLiteral("fixture-dir"), false);
+        return 1;
+    }
+    const QString dir = work.path();
+    const auto writeFixture = [](const QString &path,
+                                 const QByteArray &data) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(data) != -1;
+    };
+    QDir().mkpath(dir + QStringLiteral("/deny"));
+    const bool fixture = writeFixture(
+            dir + QStringLiteral("/allowed.txt"), "hello-sandbox")
+        && writeFixture(dir + QStringLiteral("/deny/secret.txt"),
+                        "topsecret")
+        && writeFixture(dir + QStringLiteral("/secretfile.txt"),
+                        "filesecret");
+    report(QStringLiteral("fixture"), fixture);
+
+    const QProcessEnvironment baseEnv =
+        QProcessEnvironment::systemEnvironment();
+    const auto runChild = [](const QString &childProgram,
+                             const QStringList &arguments,
+                             const QProcessEnvironment &environment,
+                             QByteArray *output,
+                             int timeoutMs = 240000) {
+        QProcess child;
+        child.setProgram(childProgram);
+        child.setArguments(arguments);
+        child.setProcessEnvironment(environment);
+        child.start();
+        if (!child.waitForFinished(timeoutMs)) {
+            child.kill();
+            child.waitForFinished(5000);
+        }
+        *output = child.readAllStandardOutput()
+            + child.readAllStandardError();
+        return child.exitStatus() == QProcess::NormalExit
+            && child.exitCode() == 0;
+    };
+
+    // Stage 1: a wrapped probe child with the fixture appended to the
+    // real denylist — the generated argv drives bwrap verbatim.
+    SandboxPolicy policy = SandboxPolicy::defaultPolicy();
+    policy.deniedDirs << dir + QStringLiteral("/deny");
+    policy.deniedFiles << dir + QStringLiteral("/secretfile.txt");
+    QStringList command = BwrapGenerator::commandLine(
+        policy, program,
+        {QStringLiteral("--sandbox-probe=") + dir});
+    command[0] = bwrap;
+    QByteArray out;
+    QProcessEnvironment env = baseEnv;
+    env.remove(QStringLiteral("ARORA_SANDBOXED"));
+    const bool probeOk = runChild(command.takeFirst(), command, env,
+                                  &out)
+        && out.contains("sandbox-probe: RESULT PASS");
+    if (!probeOk)
+        qInfo() << "sandbox-smoke: probe output:\n" << out;
+    report(QStringLiteral("probe-child"), probeOk);
+    report(QStringLiteral("denied-write-hidden"),
+           !QFile::exists(dir + QStringLiteral("/deny/evil.txt")));
+    report(QStringLiteral("write-through"),
+           QFile::exists(dir + QStringLiteral("/written-by-probe")));
+    {
+        QFile secret(dir + QStringLiteral("/deny/secret.txt"));
+        report(QStringLiteral("host-secret-intact"),
+               secret.open(QIODevice::ReadOnly)
+                   && secret.readAll() == "topsecret");
+    }
+
+    // Stage 2: the real self-wrap path — ARORA_SANDBOX_FORCE wraps the
+    // flagged run through maybeReexec(); the wrapped --sandbox-status
+    // reports the marker only a bwrap child can see.
+    env.insert(QStringLiteral("ARORA_SANDBOX_FORCE"),
+               QStringLiteral("1"));
+    const bool selfWrap = runChild(
+        program, {QStringLiteral("--sandbox-status")}, env, &out)
+        && out.contains("this process sandboxed: yes")
+        && out.contains("backend: bwrap");
+    report(QStringLiteral("self-wrap"), selfWrap);
+
+    // Stage 3: a real browsing run inside the wrap.
+    const bool wrappedBrowse = runChild(
+        program, {QStringLiteral("--quit-after-load")}, env, &out);
+    report(QStringLiteral("wrapped-browse"), wrappedBrowse);
+
+    // Stage 4: graceful fallback — bwrap resolution fails and the run
+    // continues unsandboxed with a warning instead of failing.
+    env.insert(QStringLiteral("ARORA_BWRAP"),
+               QStringLiteral("/nonexistent/bwrap"));
+    const bool fallback = runChild(
+        program, {QStringLiteral("--quit-after-load")}, env, &out)
+        && out.contains("running without");
+    report(QStringLiteral("missing-bwrap-fallback"), fallback);
+    env.remove(QStringLiteral("ARORA_BWRAP"));
+
+    // Stage 5: the generated launcher script, executed from a scratch
+    // bindir — it must wrap (status reports the marker) and honour
+    // ARORA_NO_SANDBOX.
+    QDir().mkpath(dir + QStringLiteral("/bin"));
+    const QString binDir = dir + QStringLiteral("/bin");
+    const QString scriptPath = binDir + QStringLiteral("/arora-sandbox");
+    bool scriptOk = QFile::link(program, binDir + QStringLiteral("/arora"));
+    {
+        QFile script(scriptPath);
+        scriptOk = scriptOk && script.open(QIODevice::WriteOnly);
+        if (scriptOk) {
+            script.write(BwrapGenerator::launcherScript().toUtf8());
+            script.close();
+            script.setPermissions(QFile::ReadOwner | QFile::WriteOwner
+                | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup
+                | QFile::ReadOther | QFile::ExeOther);
+        }
+    }
+    env.remove(QStringLiteral("ARORA_SANDBOX_FORCE"));
+    const bool scriptWraps = scriptOk
+        && runChild(scriptPath, {QStringLiteral("--sandbox-status")},
+                    env, &out)
+        && out.contains("this process sandboxed: yes");
+    report(QStringLiteral("launcher-script-wraps"), scriptWraps);
+    env.insert(QStringLiteral("ARORA_NO_SANDBOX"), QStringLiteral("1"));
+    const bool scriptHatch = runChild(
+        scriptPath, {QStringLiteral("--sandbox-status")}, env, &out)
+        && out.contains("this process sandboxed: no");
+    report(QStringLiteral("launcher-script-hatch"), scriptHatch);
+
+    qInfo() << "sandbox-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
+    // SAND01: a browsing launch re-execs itself inside the filesystem
+    // sandbox before anything else happens.  Dev/utility runs (any
+    // --flag except --tor) pass through unwrapped so the harnesses keep
+    // their deterministic environments; --no-sandbox,
+    // ARORA_NO_SANDBOX=1 and the sandbox/enabled settings key are the
+    // escape hatches, and a missing backend degrades to a warning.
+    SandboxManager::maybeReexec(argc, argv);
+
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;
     perfTimer.start();
@@ -2559,6 +2812,11 @@ int main(int argc, char **argv)
             webrtcOffSmoke = true;
         if (arg == "--httpsonly-smoke")
             httpOnlySmoke = true;
+        // SAND01: --sandbox-probe children run inside the harness's
+        // bwrap fixture; test-mode paths keep their writes out of the
+        // user's real profile.
+        if (arg.startsWith("--sandbox-"))
+            smokeRun = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
         if (arg == "--sleep-smoke") {
@@ -2783,6 +3041,25 @@ int main(int argc, char **argv)
             "Open a Tor window: a separate process that routes all "
             "traffic through a managed tor daemon's SOCKS5 listener "
             "on a dedicated off-the-record profile.")));
+    // SAND01: user-facing sandbox controls.  --no-sandbox is the
+    // flag spelling of the ARORA_NO_SANDBOX=1 escape hatch;
+    // --sandbox-status reports the backend and the active policy.
+    parser.addOption(QCommandLineOption(
+        QLatin1String("no-sandbox"),
+        QCoreApplication::translate("main",
+            "Run without the filesystem sandbox (equivalent to "
+            "ARORA_NO_SANDBOX=1).")));
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sandbox-status"),
+        QCoreApplication::translate("main",
+            "Print the sandbox backend, state and active policy, "
+            "then exit.")));
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sandbox-probe"),
+        QCoreApplication::translate("main",
+            "Internal: filesystem probe executed inside the sandbox "
+            "(spawned by --sandbox-smoke)."),
+        QLatin1String("workdir")));
     // Internal development/verification flags.
     const char *const internalOptions[] = {
         "quit-after-load",
@@ -2809,6 +3086,7 @@ int main(int argc, char **argv)
         "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke",
+        "sandbox-smoke", "write-sandbox-launcher",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2826,6 +3104,20 @@ int main(int argc, char **argv)
     // Standalone development harness: a stub window hosting a WebView
     // on the browsing profile drives --quit-after-load and the smokes.
     const QStringList args = application.arguments();
+
+    // SAND01: pure diagnostics exit before the engine spins up.
+    if (args.contains(QLatin1String("--sandbox-status"))) {
+        QTextStream out(stdout);
+        out << SandboxManager::statusReport() << '\n';
+        return 0;
+    }
+    if (args.contains(QLatin1String("--write-sandbox-launcher"))) {
+        QTextStream out(stdout);
+        out << BwrapGenerator::launcherScript();
+        return 0;
+    }
+    if (args.contains(QLatin1String("--sandbox-smoke")))
+        return sandboxSmoke();
 
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
@@ -3088,6 +3380,13 @@ int main(int argc, char **argv)
         QTimer::singleShot(15000, &application,
                            [&application]() { application.exit(1); });
     }
+
+    // SAND01: filesystem probe executed inside the harness's bwrap —
+    // --sandbox-smoke is the parent that orchestrates and asserts the
+    // host-side view.
+    if (parser.isSet(QLatin1String("sandbox-probe")))
+        return sandboxProbe(application, view,
+                            parser.value(QLatin1String("sandbox-probe")));
 
     // START01: fifty consecutive qrc:/startpage.html loads under
     // hostile adblock rules — every one must finish and resolve its

@@ -83,6 +83,22 @@ browsing profile:
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
+- **Filesystem sandbox** — browsing sessions re-exec inside a
+  permissive bubblewrap sandbox on Linux: credential stores (`~/.ssh`,
+  `~/.gnupg`, keyrings, CLI/cloud config) and other browsers' profile
+  data are masked (a tmpfs over directories, a `/dev/null` bind over
+  files), `/etc` `/usr` `/boot` are remounted read-only, and the rest
+  of the filesystem — profile and `~/Downloads` included — stays
+  writable. One declarative `SandboxPolicy` drives pure per-platform
+  generators: the bwrap argv + `arora-sandbox` launcher script for
+  Linux, a Seatbelt profile for macOS, an AppContainer manifest for
+  Windows, and an unveil/pledge sequence for OpenBSD (those apply
+  paths are compiled but untested off-Linux; FreeBSD has no Capsicum
+  apply path yet and warns accordingly). Escape hatches:
+  `arora --no-sandbox`, `ARORA_NO_SANDBOX=1`, or `sandbox/enabled=false`
+  in settings. `arora --sandbox-status` prints the backend and the
+  live policy; a missing sandbox tool warns once and continues
+  unsandboxed rather than failing.
 
 ### Tabs, chrome & UI
 
@@ -201,6 +217,9 @@ src/                  application sources (flat layout + subdirs)
   bookmarks/ history/ stores, models, dialogs
   locationbar/        omnibox, shield panel, domain emphasis
   extensions/         MV3 plumbing
+  sandbox/            declarative policy + per-platform generators
+                      (bwrap / Seatbelt / AppContainer / unveil+pledge),
+                      runtime re-exec, arora-sandbox launcher script
   icons/              bundled icon sets (adwaita/breeze/tabler ±dark)
   utils/              shared helpers (SafeText, scope shortcuts, ...)
   rustcore/           shared Rust core crate (credential store, ...)
@@ -245,6 +264,14 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
   `--adblock-smoke`, `--adblock-rust-smoke`, `--telemetry-smoke`,
   `--anon-smoke`, `--badssl-smoke`, `--browseraudit-smoke`,
   `--session-smoke`, `--perf-smoke`, `--sorry-smoke`, and more
+- `./arora --sandbox-smoke` — end-to-end sandbox verification: wraps a
+  probe child in bwrap, asserts the denylist hides files and
+  directories, writes pass through, the engine runs inside the wrap,
+  and a missing bwrap degrades gracefully
+- `./arora --sandbox-status` — sandbox backend, whether this process
+  is wrapped, and the resolved policy
+- `./arora --write-sandbox-launcher` — print the `arora-sandbox`
+  launcher script (used to regenerate src/sandbox/arora-sandbox)
 - `./arora --profile-startup` — millisecond startup timeline
 
 GUI binaries always run headless in tests (`QT_QPA_PLATFORM=offscreen`

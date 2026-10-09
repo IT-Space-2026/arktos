@@ -55,6 +55,7 @@ include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
+include(sandbox/sandbox.pri)          # SAND01 done
 include(rustcore/rustcore.pri)        # RCORE01 — CONFIG+=rustcore gate
 include(rustdl/rustdl.pri)            # DLACC06 — CONFIG+=rustdl gate
 include(tor/tor.pri)                  # TOR01 done

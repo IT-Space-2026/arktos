@@ -38,6 +38,7 @@ SUBDIRS  = \
     qrcode \
     rustdownload \
     safetext \
+    sandbox \
     schemehandlers \
     scriptcontrol \
     securestore \

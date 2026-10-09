@@ -111,6 +111,17 @@ Security:
   caused is now pinned by a 50-load hostile-rules regression harness
   (START01).
 - WebChannel console noise eliminated (CHAN01).
+- Cross-platform sandbox layer (SAND01): browsing launches re-exec
+  inside a permissive bubblewrap filesystem sandbox on Linux —
+  credential stores and other browsers' profile paths are masked
+  (tmpfs over directories, /dev/null over files), /etc /usr /boot are
+  remounted read-only, the rest of the filesystem stays writable.
+  Seatbelt (macOS), AppContainer manifest (Windows) and
+  unveil/pledge (OpenBSD) generators ship from the same declarative
+  policy, marked untested-on-target; `arora-sandbox` is the packaged
+  launcher script, `--no-sandbox`/`ARORA_NO_SANDBOX=1`/the
+  sandbox/enabled setting are the escape hatches, and
+  `--sandbox-status` reports the live backend and policy.
 
 Containers:
 - Isolated container profiles (CONT01).
