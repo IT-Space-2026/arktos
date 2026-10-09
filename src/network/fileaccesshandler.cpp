@@ -19,6 +19,8 @@
 
 #include "fileaccesshandler.h"
 
+#include "browsertheme.h"
+
 #include <qapplication.h>
 #include <qbuffer.h>
 #include <qcryptographichash.h>
@@ -193,6 +195,9 @@ void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
     }
 
     html = html.arg(classes).arg(dirlist).arg(tr("Show Hidden Files"));
+    // THEME01: follow the chrome palette — the listing is generated
+    // chrome, not web content.
+    BrowserTheme::decorateInternalPage(html);
 
     // The job takes ownership of the buffer.
     QBuffer *buffer = new QBuffer(job);

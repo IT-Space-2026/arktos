@@ -36,6 +36,7 @@
 #include "settings.h"
 #include "aroraicon.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "extensionreviewdialog.h"
 #include "browserprofile.h"
 #include "containermanager.h"
@@ -69,6 +70,7 @@ private slots:
     void sidebarSettings();
     void settingsFilter();
     void iconThemeSelector();
+    void themeSelector();
     void uniformSidebarIcons();
     void scrollablePages();
     void densityAndFooter();
@@ -934,6 +936,82 @@ void tst_SettingsDialog::iconThemeSelector()
             != strips.value(QLatin1String("tabler")));
     QVERIFY(strips.value(QLatin1String("adwaita"))
             != strips.value(QLatin1String("breeze")));
+}
+
+// THEME01: the Appearance Theme combo persists browser/colorScheme
+// and applies live — accept() flips the palette mid-session; picking
+// System again restores the captured platform palette even though the
+// offscreen QPA reports Qt::ColorScheme::Unknown.
+void tst_SettingsDialog::themeSelector()
+{
+    // Sits on the Appearance page (sidebar row 2), next to the
+    // page-content forceDarkMode checkbox it must not be confused
+    // with — the note label underneath keeps the split honest.
+    {
+        SettingsDialog dialog;
+        QWidget *host = dialog.themeCombo;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+        QCOMPARE(dialog.themeCombo->count(), 3);
+        QCOMPARE(dialog.themeCombo->itemText(0),
+                 QStringLiteral("System default"));
+        QCOMPARE(dialog.themeLabel->buddy(),
+                 static_cast<QWidget *>(dialog.themeCombo));
+        QVERIFY(!dialog.themeNoteLabel->text().isEmpty());
+        // Default with no stored key is System.
+        QCOMPARE(dialog.themeCombo->currentIndex(), 0);
+    }
+
+    const QColor platformWindow =
+        QApplication::palette().color(QPalette::Window);
+
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("dark"));
+    QVERIFY(BrowserTheme::paletteIsForced());
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Reloaded dialog shows the stored pick; Light applies live too.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.themeCombo->currentIndex(), 2);
+        dialog.themeCombo->setCurrentIndex(1);   // Light
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("light"));
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Dark once more, then back to System — offscreen reports Unknown,
+    // so this exercises the forced-palette teardown on the no-opinion
+    // path rather than an explicit Light.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        dialog.accept();
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("system"));
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
 }
 
 // ICONS02: the sidebar, the theme-preview combo and the engine list

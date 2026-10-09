@@ -25,6 +25,7 @@
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "browsertheme.h"
 #include "containermanager.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
@@ -150,6 +151,11 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
     connect(ToolbarSearch::openSearchManager(),
             &OpenSearchManager::currentEngineChanged,
             this, &JavaScriptAroraObject::currentEngineNameChanged);
+    // THEME01: same for darkChrome — a mid-session Theme flip fires
+    // the notifier, which the qrc start page listens to.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, &JavaScriptAroraObject::darkChromeChanged);
 }
 
 QString JavaScriptAroraObject::translate(const QString &string)
@@ -178,6 +184,11 @@ QString JavaScriptAroraObject::currentEngineName() const
 {
     OpenSearchEngine *engine = contextEngine();
     return engine ? engine->name() : QString();
+}
+
+bool JavaScriptAroraObject::darkChrome() const
+{
+    return qApp && BrowserTheme::isDarkPalette(qApp->palette());
 }
 
 QString JavaScriptAroraObject::searchUrl(const QString &string) const
@@ -1175,6 +1186,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
                      "the rest of this session."))
             + QLatin1String("</li></ul>"));
     }
+    BrowserTheme::decorateInternalPage(html);
     ++m_pendingErrorPages;   // SAFE07: the setHtml commit reports a
                              // LoadSucceeded for errorUrl — not real
                              // TLS evidence, don't self-heal on it.
@@ -1318,6 +1330,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
                     QLatin1String("<li>") + errorInfo + QLatin1String("</li>"),
                     certInfo,
                     buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 
@@ -1500,6 +1513,7 @@ QString WebPage::httpWarningHtml(const QUrl &target)
                  "by a network attacker.")
             + QLatin1String("</li>"),
         buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 
@@ -1612,6 +1626,7 @@ QString WebPage::domainBlockWarningHtml(const QUrl &target)
                  "session.")
             + QLatin1String("</li>"),
         buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 

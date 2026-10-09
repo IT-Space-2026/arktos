@@ -72,3 +72,21 @@ body {
 #footer a:hover {
     text-decoration: underline;
 }
+
+/* THEME01: the start page adds the arora-dark class on <html> from
+   the arora channel's darkChrome property — the app chrome palette,
+   not the OS's prefers-color-scheme. */
+html.arora-dark body {
+    background: linear-gradient(to bottom, #2a2a30 0%, #1e1e23 50%, #1e1e23 100%);
+    color: #e4e4e8;
+}
+html.arora-dark #search {
+    background: linear-gradient(to right, #2e3440 0%, #39404f 50%, #2e3440 100%);
+    color: #e4e4e8;
+}
+html.arora-dark #footer {
+    color: #8a8a93;
+}
+html.arora-dark #footer a {
+    color: #a9a9c0;
+}

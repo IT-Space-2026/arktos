@@ -97,6 +97,10 @@ UI:
   labels inside each page ("font" finds Appearance, "cookie" finds
   Privacy). Clicking or pressing Enter opens the top hit, and
   clearing the field restores the full list (PREFUI03).
+- Theme selector on Preferences' Appearance page — System default /
+  Light / Dark applies live without a restart, and Arora's own error
+  pages, directory listings and start page follow the app palette in
+  dark mode (THEME01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
