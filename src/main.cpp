@@ -142,6 +142,7 @@
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
 #include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
@@ -9974,6 +9975,37 @@ int main(int argc, char **argv)
             return application.exec();
         }
 
+        // TOR03: a real tor-mode window must not carry the dedicated
+        // search box — a divergent-engine field is a leakage wart and
+        // the collapsed button sliver wastes splitter width.  The
+        // widget stays constructed (the recent-search sweep and the
+        // Ctrl+K fallback still reach it) but is hidden outright.
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        if (!torWindow->toolbarSearch()
+                || !torWindow->toolbarSearch()->isHidden()) {
+            torWinFail(QLatin1String("tor window still shows the search box"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: search box hidden in tor window";
+
+        // TOR04: the circuit-chain indicator is a permanent
+        // status-bar citizen on tor windows — it must exist already
+        // in a pre-ready state ("Tor: connecting...") and pick up the
+        // parsed hop chain once the daemon's circuit-status answers.
+        QLabel *circuitLabel = torWindow->findChild<QLabel *>(
+            QLatin1String("torCircuitLabel"));
+        if (!circuitLabel
+                || circuitLabel->parentWidget()
+                       != static_cast<QWidget *>(torWindow->statusBar())
+                || !circuitLabel->text().startsWith(
+                       QLatin1String("Tor:"))) {
+            torWinFail(QLatin1String(
+                "tor window missing the circuit status label"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: circuit label present:" 
+                << circuitLabel->text();
+
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
         // tor profile is not even registered for user scripts and
@@ -10005,7 +10037,8 @@ int main(int argc, char **argv)
             qInfo() << "tor:" << line;
         });
         auto onReady = [torManager, &application, networkAccessManager,
-                        view, probeUrl, torWinFail](const QNetworkProxy &) {
+                        view, probeUrl, torWinFail,
+                        circuitLabel](const QNetworkProxy &) {
             const QNetworkProxy applied = QNetworkProxy::applicationProxy();
             if (applied.type() != QNetworkProxy::Socks5Proxy
                     || applied.port() != torManager->socksPort()) {
@@ -10020,7 +10053,7 @@ int main(int argc, char **argv)
                 QNetworkRequest(probeUrl));
             QObject::connect(reply, &QNetworkReply::finished, &application,
                              [&application, reply, view, probeUrl,
-                              torWinFail]() {
+                              torWinFail, circuitLabel]() {
                 const QByteArray body = reply->readAll();
                 qInfo() << "tor-window-smoke: api/ip via NAM:"
                         << reply->error() << body.left(120);
@@ -10042,7 +10075,7 @@ int main(int argc, char **argv)
                 QObject::connect(view, &QWebEngineView::loadFinished,
                                  &application,
                                  [&application, view, pageUrl, probeUrl,
-                                  torWinFail](bool ok) {
+                                  torWinFail, circuitLabel](bool ok) {
                     if (!ok || view->url() != pageUrl)
                         return;
                     view->page()->runJavaScript(
@@ -10054,7 +10087,8 @@ int main(int argc, char **argv)
                             "catch(e){return 'XHRERR:'+e+' :: '"
                             "+document.documentElement.innerText"
                             ".slice(0,300);}})()"),
-                        [&application, pageUrl, probeUrl, torWinFail](
+                        [&application, pageUrl, probeUrl, torWinFail,
+                         circuitLabel](
                             const QVariant &result) {
                         const QString body = result.toString();
                         qInfo() << "tor-window-smoke: api/ip via WebEngine:"
@@ -10078,6 +10112,18 @@ int main(int argc, char **argv)
                         if (historyLeaked) {
                             torWinFail(QLatin1String(
                                 "tor page recorded in history"));
+                            return;
+                        }
+                        // TOR04: two real circuit-carrying probes
+                        // have run by now — the status-bar chain must
+                        // show the hops ("guard -> middle -> exit").
+                        qInfo() << "tor-window-smoke: circuit label:"
+                                << circuitLabel->text();
+                        if (!circuitLabel->text().contains(
+                                QLatin1String(" -> "))) {
+                            torWinFail(QLatin1String(
+                                "circuit label never rendered the "
+                                "hop chain"));
                             return;
                         }
                         qInfo() << "tor-window-smoke: PASS"

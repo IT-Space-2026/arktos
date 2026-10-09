@@ -178,7 +178,9 @@ File → "New Tor Window" (or `arora --tor`) opens a Tor-browsing window
 backed by a managed tor daemon (bundled or system): SOCKS5 egress
 only, a dedicated off-the-record profile, .onion reachability, and
 Tor-aware rules (no direct-connection fallbacks, no extension loads,
-no suggestions).
+no suggestions, no dedicated search box — the omnibox covers it).
+The status bar shows the live circuit's hop chain
+(guard -> middle -> exit, fingerprints on hover).
 
 ### Downloads
 

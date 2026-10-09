@@ -112,6 +112,14 @@ def main():
             except OSError:
                 return
         state["progress"] = 100
+        # A circuit event arriving after bootstrap exercises the
+        # debounced circuit-status refresh path (TOR04).
+        try:
+            reply('650 CIRC 4 BUILT '
+                  '$EE44EE44EE44EE44EE44EE44EE44EE44EE44EE44~LoneHop '
+                  'PURPOSE=GENERAL\r\n')
+        except OSError:
+            return
 
     events_started = False
     while True:
@@ -150,6 +158,27 @@ def main():
                 reply('250-net/listeners/socks="127.0.0.1:%d"\r\n'
                       % sport)
                 reply("250 OK\r\n")
+            elif cmd.startswith("GETINFO circuit-status"):
+                reply("250+circuit-status=\r\n")
+                reply("3 BUILT "
+                      "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
+                      "~GuardOne,"
+                      "$BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22"
+                      "=MiddleTwo,"
+                      "$CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33"
+                      "~ExitThree "
+                      "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
+                      "TIME_CREATED=2026-10-09T00:00:00.000000\r\n")
+                reply("5 EXTENDED "
+                      "$DD55DD55DD55DD55DD55DD55DD55DD55DD55DD55"
+                      "~SoloHop PURPOSE=HS_CLIENT_HSDIR\r\n")
+                reply(".\r\n250 OK\r\n")
+            elif cmd.startswith("GETINFO stream-status"):
+                reply("250+stream-status=\r\n")
+                reply("8 SUCCEEDED 3 127.0.0.1:80\r\n")
+                reply("9 SUCCEEDED 3 127.0.0.1:443\r\n")
+                reply("10 NEW 5 127.0.0.1:80\r\n")
+                reply(".\r\n250 OK\r\n")
             elif cmd == "SIGNAL SHUTDOWN":
                 reply("250 OK\r\n250 closing connection\r\n")
                 sys.exit(0)

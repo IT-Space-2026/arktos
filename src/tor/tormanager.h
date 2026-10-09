@@ -30,6 +30,24 @@ class QProcess;
 class QTimer;
 class TorControl;
 
+// TOR04: one parsed line of GETINFO circuit-status — the path column
+// is the hop chain (guard -> middle -> exit).  ServerIDs arrive as
+// "$FP~Nick" / "$FP=Nick" / "$FP" / bare nickname; the '$' is
+// stripped into fingerprint.
+struct TorCircuitHop
+{
+    QString fingerprint;   // 40-hex, without the leading '$'
+    QString nickname;      // may be empty
+};
+
+struct TorCircuit
+{
+    int id = -1;               // CircID
+    QString status;            // LAUNCHED/EXTENDED/BUILT/FAILED/CLOSED
+    QString purpose;           // PURPOSE= value, empty when absent
+    QList<TorCircuitHop> hops;
+};
+
 // TOR01: lifecycle manager for a `tor` child daemon.
 //
 // QtWebEngine has no per-tab/per-profile proxy API (verified in the
@@ -100,9 +118,26 @@ public:
     QNetworkProxy socksProxy() const;          // valid when Ready
     quint16 socksPort() const;                 // 0 until known
 
+    // TOR04: last parsed circuit-status snapshot (populated by
+    // requestCircuitInfo(); the control connection also fires a
+    // debounced refresh on every 650 CIRC event).
+    QList<TorCircuit> circuits() const;
+    // Parses a circuit-status reply — tolerates the "key=" header and
+    // the trailing "OK" the reply collector includes.  Static for
+    // unit tests.
+    static QList<TorCircuit> parseCircuitStatus(const QStringList &lines);
+    // The circuit the UI should surface: the BUILT circuit carrying
+    // the most streams, else the newest BUILT PURPOSE=GENERAL, else
+    // the newest BUILT at all; -1 when none qualify.
+    int displayCircuitId() const;
+
 public slots:
     void start();
     void stop();    // SIGNAL SHUTDOWN -> terminate -> kill, all bounded
+    // TOR04: queues GETINFO circuit-status + stream-status on the
+    // control connection (serialized with everything else — no second
+    // connection); coalesced while a query is in flight.
+    void requestCircuitInfo();
 
 signals:
     void stateChanged(TorManager::State state);
@@ -111,6 +146,7 @@ signals:
     void failed(const QString &reason);
     void stopped();
     void logLine(const QString &line);         // notice-level tor output
+    void circuitsChanged(const QList<TorCircuit> &circuits);
 
 private:
     void setState(State state);
@@ -131,9 +167,17 @@ private:
     QHostAddress m_socksHost;
     quint16 m_socksPort;
 
+    QList<TorCircuit> m_circuits;
+    int m_streamCircuitId;          // busiest attached circuit, -1
+    bool m_circuitQueryInFlight;
+    QTimer *m_circuitRefreshTimer;  // debounces bursts of 650 CIRC lines
+
     QProcess *m_process;
     TorControl *m_control;
     QTimer *m_portFileTimer;
 };
+
+Q_DECLARE_METATYPE(TorCircuit)
+Q_DECLARE_METATYPE(QList<TorCircuit>)
 
 #endif // TORMANAGER_H
