@@ -1906,6 +1906,53 @@
         </widget>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="suspendTabsLayout">
+         <item>
+          <widget class="QCheckBox" name="suspendTabs">
+           <property name="text">
+            <string>Suspend inactive tabs after</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="suspendTabsMinutes">
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>1440</number>
+           </property>
+           <property name="value">
+            <number>30</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="suspendTabsMinutesLabel">
+           <property name="text">
+            <string>minutes idle to save memory</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="suspendTabsSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
         <widget class="QGroupBox" name="openLinksGroupBox">
          <property name="title">
           <string>Opening links</string>
@@ -2909,6 +2956,22 @@
     <hint type="destinationlabel">
      <x>569</x>
      <y>276</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>suspendTabs</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>suspendTabsMinutes</receiver>
+   <slot>setEnabled(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>79</x>
+     <y>330</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>230</x>
+     <y>330</y>
     </hint>
    </hints>
   </connection>

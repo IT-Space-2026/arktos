@@ -86,6 +86,9 @@ signals:
     // CONT02: reopen the tab at index bound to another container —
     // TabWidget::reopenTabInContainer performs the swap.
     void reopenInContainer(int index, const QString &containerId);
+    // SLEEP01: the tab context menu's Sleep/Wake entries.
+    void sleepTab(int index);
+    void wakeTab(int index);
 
 public:
     TabBar(QWidget *parent = nullptr);

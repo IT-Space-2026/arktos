@@ -1427,6 +1427,109 @@ static void restoreAdBlockStateOnExit()
     qAddPostRoutine(&restoreAdBlockState);
 }
 
+// SLEEP01: /proc helpers for the sleeping-tabs smoke — the RSS and
+// renderer counters below read this process plus its whole child
+// subtree (QtWebEngineProcess renderers/gpu/utility are children), so
+// a discard sweep's reclaimed memory is observable.  Linux only; the
+// counters return -1 elsewhere so the caller can skip the check.
+// Child-pid map of /proc — shared by the RSS and renderer counters.
+static QHash<int, QList<int>> processChildren()
+{
+    QHash<int, QList<int>> children;
+#if defined(Q_OS_LINUX)
+    const QDir proc(QStringLiteral("/proc"));
+    const QStringList entries = proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &entry : entries) {
+        bool ok = false;
+        const int pid = entry.toInt(&ok);
+        if (!ok)
+            continue;
+        QFile statFile(QStringLiteral("/proc/%1/stat").arg(pid));
+        if (!statFile.open(QIODevice::ReadOnly))
+            continue;
+        const QByteArray stat = statFile.readAll();
+        // comm may itself contain ')' — the fields begin after the
+        // LAST one, so scan from the end.
+        const int rparen = stat.lastIndexOf(')');
+        if (rparen < 0)
+            continue;
+        const QList<QByteArray> fields =
+            stat.mid(rparen + 1).simplified().split(' ');
+        // fields[0] = state, fields[1] = ppid.
+        if (fields.size() < 2)
+            continue;
+        children[fields[1].toInt()].append(pid);
+    }
+#endif
+    return children;
+}
+
+static QList<int> processTreePids()
+{
+    QList<int> tree;
+#if defined(Q_OS_LINUX)
+    const QHash<int, QList<int>> children = processChildren();
+    QList<int> queue{int(::getpid())};
+    QSet<int> seen{int(::getpid())};
+    while (!queue.isEmpty()) {
+        const int pid = queue.takeFirst();
+        tree.append(pid);
+        const QList<int> kids = children.value(pid);
+        for (const int child : kids) {
+            if (!seen.contains(child)) {
+                seen.insert(child);
+                queue.append(child);
+            }
+        }
+    }
+#endif
+    return tree;
+}
+
+// QtWebEngineProcess children running with --type=renderer — each
+// discarded site should retire one.
+static int rendererProcessCount()
+{
+#if defined(Q_OS_LINUX)
+    int count = 0;
+    const QList<int> tree = processTreePids();
+    for (const int pid : tree) {
+        QFile cmdlineFile(QStringLiteral("/proc/%1/cmdline").arg(pid));
+        if (!cmdlineFile.open(QIODevice::ReadOnly))
+            continue;
+        if (cmdlineFile.readAll().contains("--type=renderer"))
+            ++count;
+    }
+    return count;
+#else
+    return -1;
+#endif
+}
+
+static qint64 processTreeRssKb()
+{
+#if defined(Q_OS_LINUX)
+    const QList<int> tree = processTreePids();
+    qint64 total = 0;
+    for (const int pid : tree) {
+        QFile statusFile(QStringLiteral("/proc/%1/status").arg(pid));
+        if (!statusFile.open(QIODevice::ReadOnly))
+            continue;
+        const QList<QByteArray> lines = statusFile.readAll().split('\n');
+        for (const QByteArray &line : lines) {
+            if (line.startsWith("VmRSS:")) {
+                total += line.mid(6).trimmed()
+                             .split(' ').first().toLongLong();
+                break;
+            }
+        }
+    }
+    return total;
+#else
+    return -1;
+#endif
+}
+
 int main(int argc, char **argv)
 {
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
@@ -1496,6 +1599,18 @@ int main(int argc, char **argv)
             httpOnlySmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
+        if (arg == "--sleep-smoke") {
+            // SLEEP01: the audio-exemption fixture runs a WebAudio
+            // oscillator — autoplay must not need a user gesture —
+            // and strict site isolation gives each heavy tab its own
+            // renderer so the discard's RSS win is unambiguous.
+            QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+            if (!flags.isEmpty())
+                flags += ' ';
+            flags += "--autoplay-policy=no-user-gesture-required"
+                     " --site-per-process";
+            qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+        }
     }
     if (smokeRun)
         QStandardPaths::setTestModeEnabled(true);
@@ -1694,6 +1809,7 @@ int main(int argc, char **argv)
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
         "xsleak-smoke", "xsleak-open",
+        "sleep-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -5488,6 +5604,384 @@ int main(int argc, char **argv)
             application.exit(1);
         });
         tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
+    }
+
+    // Headless verification for SLEEP01: a real BrowserMainWindow
+    // grows six tabs — a light CURRENT tab, an AUDIO tab (WebAudio
+    // oscillator; autoplay is unflagged for this run), three HEAVY
+    // tabs (fat JS heaps on three different sites so site-per-process
+    // gives them dedicated renderers) and one DIRTY-FORM tab.
+    // suspendIdleTabs(0) must discard exactly the three heavy tabs,
+    // leave current/audio/form untouched, and the discarded
+    // renderers must surface as a real RSS drop in the process tree.
+    // Reactivating a slept tab reloads it and restores scroll; the
+    // manual Sleep/Wake API the context menu wires gets exercised
+    // too.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--sleep-smoke"))) {
+        // Dual-stack listen: localhost/ip6-localhost resolve to ::1,
+        // 127.0.0.1 arrives IPv4-mapped — three distinct site names
+        // on the one socket.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::Any)) {
+            qInfo() << "sleep-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                const QByteArray request = client->readAll();
+                QString path;
+                const QList<QByteArray> lines = request.split('\n');
+                for (const QByteArray &line : lines) {
+                    if (line.startsWith("GET ")) {
+                        path = QString::fromLatin1(
+                            line.mid(4, line.indexOf(" HTTP/") - 4)
+                                .trimmed());
+                        break;
+                    }
+                }
+                QByteArray body;
+                if (path.startsWith(QLatin1String("/heavy"))) {
+                    body = "<html><head><title>sleep-heavy</title></head>"
+                        "<body><div id=top>top</div>"
+                        "<div id=bottom "
+                        "style=\"position:absolute;top:60000px\">bottom</div>"
+                        "<script>window._big=[];"
+                        "for(var i=0;i<48;i++)"
+                        "window._big.push("
+                        "new Uint8Array(1048576).fill(i%251));"
+                        "</script></body></html>";
+                } else if (path.startsWith(QLatin1String("/audio"))) {
+                    body = "<html><head><title>sleep-audio</title></head>"
+                        "<body><script>"
+                        "var ctx=new (window.AudioContext||"
+                        "window.webkitAudioContext)();"
+                        "var o=ctx.createOscillator();"
+                        "var g=ctx.createGain();g.gain.value=0.01;"
+                        "o.connect(g);g.connect(ctx.destination);"
+                        "o.start();</script></body></html>";
+                } else if (path.startsWith(QLatin1String("/form"))) {
+                    body = "<html><head><title>sleep-form</title></head>"
+                        "<body><form><input id=f></form>"
+                        "</body></html>";
+                } else {
+                    body = "<html><head><title>sleep-light</title></head>"
+                        "<body>light</body></html>";
+                }
+                client->write(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+
+        // The third heavy tab is a file:// page — its own site, hence
+        // its own renderer under --site-per-process, without leaning
+        // on a third loopback hostname.
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-sleep-heavy.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "sleep-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><head><title>sleep-heavy</title></head>"
+                "<body><div id=top>top</div>"
+                "<div id=bottom "
+                "style=\"position:absolute;top:60000px\">bottom</div>"
+                "<script>window._big=[];"
+                "for(var i=0;i<48;i++)"
+                "window._big.push(new Uint8Array(1048576).fill(i%251));"
+                "</script></body></html>");
+        }
+
+        BrowserMainWindow *browserWindow = new BrowserMainWindow();
+        browserWindow->show();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+        if (!tabWidget || tabWidget->count() != 1) {
+            qInfo() << "sleep-smoke: FAIL (window construction)";
+            delete browserWindow;
+            return 1;
+        }
+
+        const QString base =
+            QStringLiteral("http://127.0.0.1:%1").arg(port);
+        const QList<QUrl> urls = {
+            QUrl(base + QLatin1String("/light")),       // 0: current
+            QUrl(base + QLatin1String("/audio")),       // 1: audible
+            QUrl(QStringLiteral("http://localhost:%1/heavy/1")
+                     .arg(port)),                       // 2: heavy
+            QUrl(QStringLiteral("http://ip6-localhost:%1/heavy/2")
+                     .arg(port)),                       // 3: heavy
+            QUrl::fromLocalFile(fixturePath),           // 4: heavy
+            QUrl(base + QLatin1String("/form")),        // 5: dirty form
+        };
+
+        auto fail = [&application, browserWindow](const char *stage) {
+            qInfo() << "sleep-smoke: FAIL at" << stage;
+            delete browserWindow;
+            application.exit(1);
+        };
+        auto pollUntil = [](std::function<bool()> condition,
+                            std::function<void(bool)> finished,
+                            int maxTicks = 300) {
+            auto ticks = std::make_shared<int>(0);
+            QTimer *poll = new QTimer(qApp);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [condition, finished, ticks, poll, maxTicks]() {
+                if (condition() || ++*ticks > maxTicks) {
+                    poll->stop();
+                    poll->deleteLater();
+                    finished(condition());
+                }
+            });
+            poll->start(50);
+        };
+
+        auto loaded = std::make_shared<QSet<WebView *>>();
+        for (int i = 1; i < urls.size(); ++i) {
+            WebView *view = tabWidget->makeNewTab(false);
+            if (!view) {
+                fail("makeNewTab");
+                return 1;
+            }
+            QObject::connect(view, &QWebEngineView::loadFinished,
+                             &application,
+                             [loaded, view](bool) { loaded->insert(view); });
+            view->loadUrl(urls.at(i));
+        }
+        WebView *firstView = tabWidget->webView(0);
+        QObject::connect(firstView, &QWebEngineView::loadFinished,
+                         &application,
+                         [loaded, firstView](bool) {
+            loaded->insert(firstView);
+        });
+        tabWidget->setCurrentIndex(0);
+        tabWidget->loadUrl(urls.at(0), TabWidget::CurrentTab);
+
+        // Stage declarations — the chain is a flat sequence of poll
+        // lambdas so a stage's captures outlive exec().
+        std::function<void()> stageSweep;
+        std::function<void()> stageMemory;
+        std::function<void()> stageWake;
+        std::function<void()> stageManual;
+        auto rssBefore = std::make_shared<qint64>(-1);
+
+        // Stage 1 — everything loaded, then dirty the form tab and
+        // scroll heavy tab 2 so the wake stage has state to restore.
+        auto stagePrep = std::make_shared<std::function<void()>>();
+        *stagePrep = [&]() {
+            WebView *formView = tabWidget->webView(5);
+            WebView *heavy2 = tabWidget->webView(2);
+            WebView *audioView = tabWidget->webView(1);
+            formView->page()->runJavaScript(
+                QLatin1String("document.getElementById('f').value='x';"));
+            heavy2->page()->runJavaScript(
+                QLatin1String("window.scrollTo(0, 5000);"));
+            // recentlyAudible latches a few seconds of playback —
+            // wait for it before the sweep so the exemption is live.
+            pollUntil([audioView]() {
+                return audioView->page()
+                    && audioView->page()->recentlyAudible();
+            }, [&, stageSweep](bool audible) {
+                qInfo() << "sleep-smoke: audio tab audible"
+                        << (audible ? "PASS" : "FAIL");
+                if (!audible) {
+                    fail("audible");
+                    return;
+                }
+                stageSweep();
+            }, 400);
+        };
+
+        // Stage 2 — the idle sweep: exactly tabs 2,3,4 discard.
+        stageSweep = [&]() {
+            *rssBefore = processTreeRssKb();
+            tabWidget->suspendIdleTabs(0);
+            pollUntil([tabWidget]() {
+                return tabWidget->sleepingTabCount() == 3;
+            }, [&, stageMemory](bool slept) {
+                const bool right =
+                    tabWidget->isTabSleeping(2)
+                    && tabWidget->isTabSleeping(3)
+                    && tabWidget->isTabSleeping(4)
+                    && !tabWidget->isTabSleeping(0)
+                    && !tabWidget->isTabSleeping(1)
+                    && !tabWidget->isTabSleeping(5);
+                qInfo() << "sleep-smoke: sweep discards heavy three"
+                        << ((slept && right) ? "PASS" : "FAIL")
+                        << "sleeping:" << tabWidget->sleepingTabCount();
+                if (!slept || !right) {
+                    for (int i = 0; i < tabWidget->count(); ++i)
+                        qInfo() << "sleep-smoke:   tab" << i
+                                << tabWidget->sleepBlockReason(i);
+                    fail("sweep");
+                    return;
+                }
+                // The form tab's dirty latch lands in the same async
+                // capture callback the heavies used — give it a beat
+                // before reading the reason.
+                pollUntil([tabWidget]() {
+                    return !tabWidget->sleepBlockReason(5).isEmpty()
+                        && tabWidget->sleepBlockReason(5)
+                               != QLatin1String("inflight");
+                }, [&, stageMemory](bool settled) {
+                    const QString reason0 =
+                        tabWidget->sleepBlockReason(0);
+                    const QString reason1 =
+                        tabWidget->sleepBlockReason(1);
+                    const QString reason5 =
+                        tabWidget->sleepBlockReason(5);
+                    const bool exemptions = settled
+                        && reason0 == QLatin1String("current")
+                        && (reason1 == QLatin1String("audible")
+                            || reason1.isEmpty())
+                        && reason5 == QLatin1String("form");
+                    qInfo() << "sleep-smoke: exemptions"
+                            << (exemptions ? "PASS" : "FAIL")
+                            << "current:" << reason0
+                            << "audio:" << reason1
+                            << "form:" << reason5;
+                    if (!exemptions) {
+                        fail("exemptions");
+                        return;
+                    }
+                    stageMemory();
+                });
+            });
+        };
+
+        // Stage 3 — the discarded WebContents must show up either as
+        // reclaimed RSS or as retired renderer processes once the
+        // engine finishes the teardown.
+        stageMemory = [&]() {
+            const int renderersBefore = rendererProcessCount();
+            QTimer::singleShot(6000, qApp, [&, stageWake,
+                                            renderersBefore]() {
+                const qint64 after = processTreeRssKb();
+                const int renderersAfter = rendererProcessCount();
+                bool memoryOk = true;
+                if (*rssBefore > 0 && after > 0) {
+                    memoryOk = after < *rssBefore - 10 * 1024
+                        || (renderersBefore > 0
+                            && renderersAfter < renderersBefore);
+                    qInfo() << "sleep-smoke: RSS"
+                            << (memoryOk ? "PASS" : "FAIL")
+                            << "before(KB):" << *rssBefore
+                            << "after(KB):" << after
+                            << "delta(KB):" << *rssBefore - after
+                            << "renderers:" << renderersBefore
+                            << "->" << renderersAfter;
+                } else {
+                    qInfo() << "sleep-smoke: RSS SKIP"
+                            << "(proc tree unavailable)";
+                }
+                if (!memoryOk) {
+                    fail("memory");
+                    return;
+                }
+                stageWake();
+            });
+        };
+
+        // Stage 4 — clicking the slept tab wakes it: the engine
+        // reloads, the lifecycle flips back to Active and the
+        // captured scroll position is re-applied.
+        stageWake = [&]() {
+            WebView *heavy2 = tabWidget->webView(2);
+            tabWidget->setCurrentIndex(2);
+            pollUntil([heavy2]() {
+                return heavy2->page()
+                    && !heavy2->page()->isLoading()
+                    && heavy2->page()->lifecycleState()
+                           == QWebEnginePage::LifecycleState::Active;
+            }, [&, heavy2, stageManual](bool woke) {
+                qInfo() << "sleep-smoke: wake reloads page"
+                        << (woke ? "PASS" : "FAIL");
+                if (!woke) {
+                    fail("wake");
+                    return;
+                }
+                heavy2->page()->runJavaScript(
+                    QLatin1String("JSON.stringify({"
+                                  "y:window.scrollY,"
+                                  "title:document.title})"),
+                    [&, heavy2, stageManual](const QVariant &result) {
+                    const QJsonObject state = QJsonDocument::fromJson(
+                        result.toString().toUtf8()).object();
+                    const bool restored =
+                        qAbs(state.value(QLatin1String("y")).toDouble()
+                             - 5000) < 40
+                        && state.value(QLatin1String("title")).toString()
+                               == QLatin1String("sleep-heavy");
+                    qInfo() << "sleep-smoke: scroll+title restored"
+                            << (restored ? "PASS" : "FAIL")
+                            << result.toString();
+                    if (!restored) {
+                        fail("restore");
+                        return;
+                    }
+                    stageManual();
+                });
+            });
+        };
+
+        // Stage 5 — the manual Sleep/Wake path the tab context menu
+        // calls: manual sleep overrides the audio exemption.
+        stageManual = [&]() {
+            WebView *audioView = tabWidget->webView(1);
+            tabWidget->sleepTab(1);
+            pollUntil([tabWidget]() {
+                return tabWidget->isTabSleeping(1);
+            }, [&, audioView](bool slept) {
+                qInfo() << "sleep-smoke: manual sleep over audio"
+                        << (slept ? "PASS" : "FAIL");
+                if (!slept) {
+                    fail("manual-sleep");
+                    return;
+                }
+                tabWidget->wakeTab(1);
+                pollUntil([audioView]() {
+                    return audioView->page()
+                        && audioView->page()->lifecycleState()
+                               == QWebEnginePage::LifecycleState::Active;
+                }, [&](bool woke) {
+                    qInfo() << "sleep-smoke: manual wake"
+                            << (woke ? "PASS" : "FAIL");
+                    qInfo() << "sleep-smoke:"
+                            << (woke ? "PASS" : "FAIL");
+                    QFile::remove(fixturePath);
+                    delete browserWindow;
+                    application.exit(woke ? 0 : 1);
+                });
+            });
+        };
+
+        // Kick off once all six tabs have reported a finished load.
+        pollUntil([loaded, urls]() {
+            return loaded->size() == urls.size();
+        }, [&, stagePrep](bool all) {
+            qInfo() << "sleep-smoke: all tabs loaded"
+                    << (all ? "PASS" : "FAIL");
+            if (all)
+                (*stagePrep)();
+            else
+                application.exit(1);
+        }, 600);
+
+        QTimer::singleShot(120000, &application,
+                           [&application, browserWindow]() {
+            qInfo() << "sleep-smoke: FAIL (timeout)";
+            delete browserWindow;
+            application.exit(1);
+        });
+        return application.exec();
     }
 
     // Headless verification for EXT01: the QWebEngineExtensionManager

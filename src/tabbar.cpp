@@ -385,6 +385,23 @@ void TabBar::contextMenuRequested(const QPoint &position)
             }
         }
 
+        // SLEEP01: Sleep/Wake — the engine discards the page while
+        // the slot keeps its title and favicon.  Sleeping the visible
+        // tab is impossible, so the entry disables on the current
+        // index; Wake shows in its place on a suspended tab.
+        const bool sleeping = tabWidget->isTabSleeping(index);
+        QAction *sleepAction = menu.addAction(
+            sleeping ? tr("Wake Tab") : tr("Sleep Tab"));
+        sleepAction->setEnabled(sleeping
+                                || index != tabWidget->currentIndex());
+        connect(sleepAction, &QAction::triggered, this,
+                [this, index, sleeping]() {
+            if (sleeping)
+                emit wakeTab(index);
+            else
+                emit sleepTab(index);
+        });
+
         menu.addSeparator();
 
         action = menu.addAction(tr("&Close Tab"), QKeySequence::Close,
@@ -671,6 +688,34 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.drawText(chip.adjusted(4, 0, -4, 0),
                              Qt::AlignCenter | Qt::AlignVCenter, elided);
             painter.restore();
+        }
+    }
+
+    // SLEEP01: suspended tabs carry a small "zZ" badge at the tab's
+    // inner edge (the title itself is dimmed by the TabWidget).  The
+    // badge sits against the close-button side on horizontal bars and
+    // at the bottom on vertical ones.
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (tabWidget) {
+        QFont badgeFont = containerChipFont();
+        badgeFont.setItalic(true);
+        painter.setFont(badgeFont);
+        painter.setPen(palette().color(QPalette::Disabled,
+                                       QPalette::WindowText));
+        const QString badge = QLatin1String("zZ");
+        for (int index = 0; index < count(); ++index) {
+            if (!tabWidget->isTabSleeping(index))
+                continue;
+            const QRect rect = tabRect(index);
+            QRect badgeRect;
+            if (verticalTabShape(shape()))
+                badgeRect = QRect(rect.left() + 2, rect.bottom() - chipHeight,
+                                  rect.width() - 4, chipHeight);
+            else
+                badgeRect = QRect(rect.left() + 4, rect.top() + 2,
+                                  rect.width() - 8, chipHeight);
+            painter.drawText(badgeRect,
+                             Qt::AlignRight | Qt::AlignVCenter, badge);
         }
     }
 }

@@ -70,6 +70,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "containermanager.h"
+#include "downloadmanager.h"
 #include "history.h"
 #include "historycompleter.h"
 #include "historymanager.h"
@@ -89,16 +90,21 @@
 
 #include <qabstractproxymodel.h>
 #include <qcompleter.h>
+#include <qdatetime.h>
 #include <qdir.h>
 #include <qevent.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qlistview.h>
 #include <qmenu.h>
 #include <qmessagebox.h>
 #include <qmovie.h>
+#include <qpointer.h>
 #include <qregularexpression.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
 #include <qstyle.h>
+#include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qwebenginehistory.h>
 #include <qwebengineprofile.h>
@@ -140,6 +146,8 @@ TabWidget::TabWidget(QWidget *parent)
     connect(m_tabBar, &TabBar::reloadAllTabs, this, &TabWidget::reloadAllTabs);
     connect(m_tabBar, &TabBar::reopenInContainer,
             this, &TabWidget::reopenTabInContainer);
+    connect(m_tabBar, &TabBar::sleepTab, this, &TabWidget::sleepTab);
+    connect(m_tabBar, &TabBar::wakeTab, this, &TabWidget::wakeTab);
     setTabBar(m_tabBar);
     m_tabBar->setAccessibleName(tr("Tabs"));
     setDocumentMode(true);
@@ -295,6 +303,12 @@ void TabWidget::currentChanged(int index)
         WebActionMapper *mapper = m_actions[i];
         mapper->updateCurrent(webView->page());
     }
+    // SLEEP01: the outgoing tab's idle clock starts now; activating a
+    // suspended tab wakes it (the engine reloads the page).
+    markTabActivity(oldWebView);
+    markTabActivity(webView);
+    if (isTabSleeping(index))
+        wakeTab(index);
     emit setCurrentTitle(webView->title());
     m_locationBars->setCurrentIndex(index);
     emit loadProgress(webView->progress());
@@ -530,6 +544,11 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
 
     WebViewWithSearch *webViewWithSearch = new WebViewWithSearch(webView, this);
     addTab(webViewWithSearch, tr("Untitled"));
+    // SLEEP01: the idle clock starts at creation — a freshly opened
+    // background tab is not immediately suspendable.  A fresh record
+    // also drops any state a recycled pointer might have inherited.
+    m_sleepStates.insert(webView, TabSleepState());
+    markTabActivity(webView);
     if (makeCurrent)
         setCurrentWidget(webViewWithSearch);
 
@@ -600,6 +619,215 @@ void TabWidget::manageContainers()
     SettingsDialog dialog(parent ? parent : this);
     dialog.openAtPage(SettingsDialog::ContainersPage);
     dialog.exec();
+}
+
+// SLEEP01 — sleeping tabs -------------------------------------------------
+//
+// A "sleeping" tab keeps its slot on the strip (title + favicon stay
+// put) while its QWebEnginePage is discarded — the engine tears down
+// the WebContents and reclaims the renderer memory.  Reactivating the
+// tab reloads the page; the scroll position captured at sleep time is
+// re-applied on the next loadFinished.  Back/forward history survives
+// on the page object, but in-page form state does not — tabs with
+// unsaved form input are refused.
+
+void TabWidget::markTabActivity(WebView *webView)
+{
+    if (!webView)
+        return;
+    m_sleepStates[webView].lastActiveMs = QDateTime::currentMSecsSinceEpoch();
+}
+
+void TabWidget::updateSleepTimer()
+{
+    if (m_suspendIdleMs > 0) {
+        if (!m_sleepTimer) {
+            m_sleepTimer = new QTimer(this);
+            connect(m_sleepTimer, &QTimer::timeout, this, [this]() {
+                suspendIdleTabs(m_suspendIdleMs);
+            });
+        }
+        m_sleepTimer->start(15000);
+    } else if (m_sleepTimer) {
+        m_sleepTimer->stop();
+    }
+}
+
+bool TabWidget::isTabSleeping(int index) const
+{
+    WebView *view = const_cast<TabWidget*>(this)->webView(index);
+    return view && m_sleepStates.value(view).sleeping;
+}
+
+int TabWidget::sleepingTabCount() const
+{
+    int count = 0;
+    for (const TabSleepState &state : m_sleepStates) {
+        if (state.sleeping)
+            ++count;
+    }
+    return count;
+}
+
+QString TabWidget::sleepBlockReason(int index) const
+{
+    if (index < 0 || index >= count())
+        return QLatin1String("invalid");
+    if (index == currentIndex())
+        return QLatin1String("current");
+    WebView *view = const_cast<TabWidget*>(this)->webView(index);
+    if (!view || !view->page() || view->url().isEmpty())
+        return QLatin1String("empty");
+    const TabSleepState state = m_sleepStates.value(view);
+    if (state.sleeping
+        || view->page()->lifecycleState()
+               == QWebEnginePage::LifecycleState::Discarded)
+        return QLatin1String("sleeping");
+    if (state.sleepInFlight)
+        return QLatin1String("inflight");
+    if (state.formDirty)
+        return QLatin1String("form");
+    if (view->page()->isLoading())
+        return QLatin1String("loading");
+    if (view->page()->recentlyAudible())
+        return QLatin1String("audible");
+    if (DownloadManager::instance()->hasActiveDownloadForPage(view->page()))
+        return QLatin1String("download");
+    return QString();
+}
+
+void TabWidget::suspendIdleTabs(qint64 idleMs)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (int i = 0; i < count(); ++i) {
+        WebView *view = webView(i);
+        if (!view)
+            continue;
+        const qint64 last = m_sleepStates.value(view).lastActiveMs;
+        // No recorded activity (tab predates the bookkeeping) counts
+        // as active now, never as long-idle.
+        if (last == 0 || now - last < idleMs)
+            continue;
+        beginTabSleep(i, true);
+    }
+}
+
+void TabWidget::sleepTab(int index)
+{
+    if (index < 0)
+        index = currentIndex();
+    beginTabSleep(index, false);
+}
+
+void TabWidget::wakeTab(int index)
+{
+    if (index < 0)
+        index = currentIndex();
+    WebView *view = webView(index);
+    if (!view || !view->page())
+        return;
+    auto it = m_sleepStates.find(view);
+    if (it == m_sleepStates.end() || !it->sleeping)
+        return;
+    it->sleeping = false;
+    markTabActivity(view);
+    // Active out of Discarded makes the engine rebuild the
+    // WebContents and reload the page's current entry.
+    if (view->page()->lifecycleState()
+        == QWebEnginePage::LifecycleState::Discarded)
+        view->page()->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+    applySleepVisuals(index, false);
+}
+
+// The one async round trip before a discard: grab the scroll
+// position and probe for unsaved form input in a single evaluation.
+// The result lands in finishTabSleepCapture.
+void TabWidget::beginTabSleep(int index, bool automatic)
+{
+    if (index < 0 || index >= count() || index == currentIndex())
+        return;
+    WebView *view = webView(index);
+    if (!view || !view->page() || view->url().isEmpty())
+        return;
+    TabSleepState &state = m_sleepStates[view];
+    if (state.sleeping || state.sleepInFlight)
+        return;
+    // The explicit "Sleep Tab" menu entry skips the idle exemptions —
+    // putting an audio/download tab to sleep is a valid way to stop
+    // it — but the unsaved-form refusal applies to both paths (the
+    // data loss would be silent and unrecoverable either way).
+    if (state.formDirty
+        || (automatic && !sleepBlockReason(index).isEmpty()))
+        return;
+    state.sleepInFlight = true;
+    const QString capture = QLatin1String(
+        "(function(){var d=false;try{"
+        "var els=document.querySelectorAll('input,textarea,select');"
+        "for(var i=0;i<els.length;i++){var e=els[i];"
+        "var t=(e.type||'').toLowerCase();"
+        "if(e.disabled||e.readOnly)continue;"
+        "if(t==='hidden'||t==='submit'||t==='button'||t==='reset'"
+        "||t==='image'||t==='file')continue;"
+        "if(t==='checkbox'||t==='radio'){if(e.checked!==e.defaultChecked)"
+        "{d=true;break}}"
+        "else if(e.value!==e.defaultValue){d=true;break}}}catch(x){}"
+        "return JSON.stringify({x:window.scrollX||0,y:window.scrollY||0,"
+        "dirty:d});})()");
+    QPointer<WebView> guard(view);
+    view->page()->runJavaScript(capture,
+        [this, guard, automatic](const QVariant &result) {
+        if (guard)
+            finishTabSleepCapture(guard.data(), automatic, result);
+    });
+}
+
+void TabWidget::finishTabSleepCapture(WebView *webView, bool automatic,
+                                    const QVariant &result)
+{
+    auto it = m_sleepStates.find(webView);
+    if (it == m_sleepStates.end())
+        return;
+    it->sleepInFlight = false;
+    const int index = webViewIndex(webView);
+    if (index < 0 || index == currentIndex() || it->sleeping
+        || !webView->page())
+        return;
+
+    const QJsonObject captured = QJsonDocument::fromJson(
+        result.toString().toUtf8()).object();
+    if (captured.value(QLatin1String("dirty")).toBool()) {
+        // Latched until the next navigation — a dirty form survives
+        // every later sweep without re-running the probe.
+        it->formDirty = true;
+        if (!automatic)
+            emit showStatusBarMessage(
+                tr("Tab was not suspended: it has unsaved form input"));
+        return;
+    }
+    // The async round trip gave the page time to start playing audio
+    // or kick off a download — re-check the live exemptions.
+    if (automatic && !sleepBlockReason(index).isEmpty())
+        return;
+    it->scrollX = captured.value(QLatin1String("x")).toDouble();
+    it->scrollY = captured.value(QLatin1String("y")).toDouble();
+    it->restoreScroll = it->scrollX != 0 || it->scrollY != 0;
+    it->sleeping = true;
+    webView->page()->setLifecycleState(
+        QWebEnginePage::LifecycleState::Discarded);
+    applySleepVisuals(index, true);
+}
+
+// Dim the title and flag the tab so the bar can paint its "zZ"
+// badge; undo both on wake.
+void TabWidget::applySleepVisuals(int index, bool sleeping)
+{
+    if (index < 0 || index >= count())
+        return;
+    const QPalette::ColorGroup group = sleeping ? QPalette::Disabled
+                                                : QPalette::Active;
+    m_tabBar->setTabTextColor(index,
+        m_tabBar->palette().color(group, QPalette::WindowText));
+    m_tabBar->update();
 }
 
 void TabWidget::reloadAllTabs()
@@ -756,6 +984,7 @@ void TabWidget::closeTab(int index)
 
     QWidget *webViewWithSearch = widget(index);
     removeTab(index);
+    m_sleepStates.remove(tab);
     webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
 
@@ -793,6 +1022,12 @@ void TabWidget::webViewLoadStarted()
 {
     WebView *webView = qobject_cast<WebView*>(sender());
     int index = webViewIndex(webView);
+    // SLEEP01: a navigation both counts as activity and clears the
+    // unsaved-form latch — the page that held the input is gone.
+    markTabActivity(webView);
+    auto sleepIt = m_sleepStates.find(webView);
+    if (sleepIt != m_sleepStates.end())
+        sleepIt->formDirty = false;
     if (-1 != index) {
         QLabel *label = animationLabel(index, true);
         if (label->movie())
@@ -821,6 +1056,17 @@ void TabWidget::webViewLoadFinished(bool ok)
 {
     WebView *webView = qobject_cast<WebView*>(sender());
     int index = webViewIndex(webView);
+
+    // SLEEP01: fresh activity + the scroll restore a waking tab asked
+    // for — re-applied once after the reload finishes.
+    markTabActivity(webView);
+    auto sleepIt = m_sleepStates.find(webView);
+    if (sleepIt != m_sleepStates.end() && sleepIt->restoreScroll && ok) {
+        sleepIt->restoreScroll = false;
+        webView->page()->runJavaScript(QStringLiteral(
+            "window.scrollTo(%1, %2);")
+            .arg(sleepIt->scrollX).arg(sleepIt->scrollY));
+    }
 
     if (-1 != index) {
         QLabel *label = animationLabel(index, true);
@@ -863,6 +1109,7 @@ void TabWidget::webViewTitleChanged(const QString &title)
 {
     WebView *webView = qobject_cast<WebView*>(sender());
     int index = webViewIndex(webView);
+    markTabActivity(webView);
     if (-1 == index)
         return;
     QString tabTitle = title;
@@ -891,6 +1138,7 @@ void TabWidget::webViewUrlChanged(const QUrl &url)
 {
     WebView *webView = qobject_cast<WebView*>(sender());
     int index = webViewIndex(webView);
+    markTabActivity(webView);
     if (-1 == index)
         return;
     m_tabBar->setTabData(index, url);
@@ -1158,6 +1406,15 @@ void TabWidget::loadSettings()
     // UIP02: per-tab close buttons appear on the current + hovered
     // tab; the single corner close button remains the opt-out.
     m_tabBar->setPerTabCloseButtons(!oneCloseButton);
+
+    // SLEEP01: opt-in idle suspend — disabled unless the user turns
+    // it on in Settings > Tabs.
+    const bool suspend =
+        settings.value(QLatin1String("suspendTabs"), false).toBool();
+    const int suspendMinutes =
+        settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
+    m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
+    updateSleepTimer();
 }
 
 /*

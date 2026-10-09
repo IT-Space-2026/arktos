@@ -745,6 +745,18 @@ int DownloadManager::activeDownloads() const
     return count;
 }
 
+bool DownloadManager::hasActiveDownloadForPage(QWebEnginePage *page) const
+{
+    if (!page)
+        return false;
+    for (DownloadItem *item : m_downloads) {
+        if (item->downloading() && item->m_download
+            && item->m_download->page() == page)
+            return true;
+    }
+    return false;
+}
+
 bool DownloadManager::allowQuit()
 {
     if (activeDownloads() >= 1) {

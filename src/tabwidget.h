@@ -74,6 +74,7 @@ class QLabel;
 class QLineEdit;
 class QMenu;
 class QStackedWidget;
+class QTimer;
 QT_END_NAMESPACE
 
 class BrowserMainWindow;
@@ -187,6 +188,23 @@ public slots:
     // the File menu both land here so CONT03's containers page has a
     // single seam.
     void manageContainers();
+    // SLEEP01: sleeping tabs.  A slept tab's page is discarded by the
+    // engine (its renderer memory is reclaimed) while the tab slot,
+    // title and favicon stay on the strip; activating the tab reloads
+    // the page and restores the scroll position.
+    void sleepTab(int index = -1);
+    void wakeTab(int index = -1);
+    bool isTabSleeping(int index) const;
+    int sleepingTabCount() const;
+    // Why a tab cannot be auto-slept right now — "current",
+    // "sleeping", "inflight", "loading", "audible", "download",
+    // "form", "empty" — or an empty string when it is eligible.  Used
+    // by the idle sweep and exposed for the smoke test.
+    QString sleepBlockReason(int index) const;
+    // Auto-suspend sweep: sleep every background tab idle for at
+    // least idleMs milliseconds.  The settings-driven timer calls
+    // this; the smoke test drives it directly.
+    void suspendIdleTabs(qint64 idleMs);
     void newTab();
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
@@ -217,6 +235,15 @@ private:
     static QUrl guessUrlFromString(const QString &url);
     QLabel *animationLabel(int index, bool addMovie);
     void retranslate();
+    // SLEEP01: idle bookkeeping + the async state-capture half of
+    // beginTabSleep (scroll position and the dirty-form probe come
+    // back together from one runJavaScript round trip).
+    void markTabActivity(WebView *webView);
+    void beginTabSleep(int index, bool automatic);
+    void finishTabSleepCapture(WebView *webView, bool automatic,
+                             const QVariant &result);
+    void applySleepVisuals(int index, bool sleeping);
+    void updateSleepTimer();
 
     QAction *m_recentlyClosedTabsAction;
     QAction *m_newTabAction;
@@ -240,6 +267,23 @@ private:
     TabBar *m_tabBar;
     QToolButton *addTabButton;
     QToolButton *closeTabButton;
+
+    // SLEEP01: per-tab suspend bookkeeping, keyed on the view so tab
+    // drags never disturb it.  formDirty latches the unsaved-input
+    // exemption until the next navigation; scrollX/Y are the captured
+    // position restored after the wake reload.
+    struct TabSleepState {
+        bool sleeping = false;
+        bool sleepInFlight = false;
+        bool formDirty = false;
+        bool restoreScroll = false;
+        double scrollX = 0;
+        double scrollY = 0;
+        qint64 lastActiveMs = 0;
+    };
+    QHash<WebView *, TabSleepState> m_sleepStates;
+    QTimer *m_sleepTimer = nullptr;
+    qint64 m_suspendIdleMs = 0;
 };
 
 #endif // TABWIDGET_H

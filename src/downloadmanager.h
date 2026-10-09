@@ -164,6 +164,10 @@ public:
     static DownloadManager *instance();
 
     int activeDownloads() const;
+    // SLEEP01: true while any in-flight download was initiated by
+    // this page — the sleeping-tabs sweep skips such tabs so a
+    // suspend can never orphan a stream.
+    bool hasActiveDownloadForPage(QWebEnginePage *page) const;
     bool allowQuit();
 
     RemovePolicy removePolicy() const;

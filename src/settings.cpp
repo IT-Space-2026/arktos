@@ -711,6 +711,9 @@ void SettingsDialog::loadFromSettings()
     confirmClosingMultipleTabs->setChecked(settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool());
     oneCloseButton->setChecked(settings.value(QLatin1String("oneCloseButton"),false).toBool());
     quitAsLastTabClosed->setChecked(settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool());
+    suspendTabs->setChecked(settings.value(QLatin1String("suspendTabs"), false).toBool());
+    suspendTabsMinutes->setValue(settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt());
+    suspendTabsMinutes->setEnabled(suspendTabs->isChecked());
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
     openLinksFromAppsIn->setCurrentIndex(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
     settings.endGroup();
@@ -966,6 +969,8 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("confirmClosingMultipleTabs"), confirmClosingMultipleTabs->isChecked());
     settings.setValue(QLatin1String("oneCloseButton"), oneCloseButton->isChecked());
     settings.setValue(QLatin1String("quitAsLastTabClosed"), quitAsLastTabClosed->isChecked());
+    settings.setValue(QLatin1String("suspendTabs"), suspendTabs->isChecked());
+    settings.setValue(QLatin1String("suspendTabsMinutes"), suspendTabsMinutes->value());
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.endGroup();
