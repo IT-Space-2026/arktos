@@ -29,6 +29,7 @@ trust it with anything you cannot afford to lose.
 - [Building](#building)
 - [Testing & diagnostics](#testing--diagnostics)
 - [Packaging](#packaging)
+- [Third-party components](#third-party-components)
 - [License](#license)
 
 ## Feature tour
@@ -322,6 +323,39 @@ runtime, resources, plugins, freedesktop metadata and the
 `arora-sandbox` launcher — runs on a system with no Qt installed.
 `make check-bundle` verifies self-containment in a bubblewrap sandbox
 with the dev Qt hidden.
+
+## Third-party components
+
+Arora is built on, bundles, or talks to these projects — thank you to
+their authors:
+
+**Framework & engine**
+
+- **Qt 6** (LGPL-3.0/GPL) — the UI toolkit; **QtWebEngine** embeds
+  **Chromium** (Blink/V8, BSD-3-Clause and others — see Chromium's
+  `LICENSE`/`about:credits`) as the rendering engine.
+- Bundled icon themes: **Tabler icons** (MIT), **KDE Breeze icons**
+  (LGPL-3.0), **GNOME Adwaita icons** (CC-BY-SA-3.0/LGPL) under
+  `src/icons/` alongside the original Arora legacy set.
+
+**Rust crates** (see `src/rustcore`, `src/rustdl`, `src/adblock/rust`)
+
+- `aes-gcm` + `argon2` + `zeroize` — credential/autofill encryption
+- `quick-xml` + `serde_json` — memory-safe parsing of untrusted XML/JSON
+- `rusqlite` (bundled **SQLite**) — history store
+- `reqwest` (rustls) + `tempfile` — the accelerated download engine
+- Brave's **`adblock`** crate (adblock-rust, MPL-2.0) — optional matcher
+- Supply chain pinned + vetted via `cargo deny` (`src/rustcore/deny.toml`)
+
+**Data feeds** (downloaded at runtime, consent-gated)
+
+- **URLhaus** (abuse.ch) + **OpenPhish** — the local phishing/malware
+  domain blocklist; **ClearURLs-derived** tracking-parameter rules
+  (vendored as `urlstrip-rules.json`).
+
+**Planned**: PDFium/`pdfium-render` for the shell-owned PDF view
+(PDF02), `lopdf` for the sanitize pass (PDF01), libservo for the
+selectable engine (ENG03-gated). Queued, not yet shipped.
 
 ## License
 
