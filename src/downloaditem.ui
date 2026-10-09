@@ -61,6 +61,150 @@
        </property>
       </widget>
      </item>
+     <item>
+      <widget class="QWidget" name="detailsWidget" native="1" >
+       <property name="visible" >
+        <bool>false</bool>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_4" >
+        <item>
+         <widget class="SqueezeLabel" native="1" name="sourceLabel" >
+          <property name="sizePolicy" >
+           <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text" stdset="0" >
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="SqueezeLabel" native="1" name="destinationLabel" >
+          <property name="sizePolicy" >
+           <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text" stdset="0" >
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="timestampsLayout" >
+          <item>
+           <widget class="QLabel" name="startedLabel" >
+            <property name="text" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="timestampsSpacer" >
+            <property name="orientation" >
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0" >
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="finishedLabel" >
+            <property name="text" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="statsLayout" >
+          <item>
+           <widget class="QLabel" name="sizeLabel" >
+            <property name="text" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="statsSpacer" >
+            <property name="orientation" >
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0" >
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="speedLabel" >
+            <property name="text" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="DownloadGraph" name="downloadGraph" native="1" >
+          <property name="minimumSize" >
+           <size>
+            <width>0</width>
+            <height>48</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="cardButtonsLayout" >
+          <item>
+           <widget class="QPushButton" name="restartButton" >
+            <property name="enabled" >
+             <bool>false</bool>
+            </property>
+            <property name="text" >
+             <string>Restart</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="showInFolderButton" >
+            <property name="enabled" >
+             <bool>false</bool>
+            </property>
+            <property name="text" >
+             <string>Show in File Manager</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="cardButtonsSpacer" >
+            <property name="orientation" >
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0" >
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>
@@ -77,6 +221,22 @@
         </size>
        </property>
       </spacer>
+     </item>
+     <item>
+      <widget class="QToolButton" name="expandButton" >
+       <property name="toolTip" >
+        <string>Show download details</string>
+       </property>
+       <property name="checkable" >
+        <bool>true</bool>
+       </property>
+       <property name="autoRaise" >
+        <bool>true</bool>
+       </property>
+       <property name="arrowType" >
+        <enum>Qt::RightArrow</enum>
+       </property>
+      </widget>
      </item>
      <item>
       <widget class="QPushButton" name="tryAgainButton" >
@@ -124,6 +284,11 @@
    <class>SqueezeLabel</class>
    <extends>QWidget</extends>
    <header>squeezelabel.h</header>
+  </customwidget>
+  <customwidget>
+   <class>DownloadGraph</class>
+   <extends>QWidget</extends>
+   <header>downloadgraph.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

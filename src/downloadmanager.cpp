@@ -70,6 +70,7 @@
 #include <qfiledialog.h>
 #include <qfileiconprovider.h>
 #include <qheaderview.h>
+#include <qlocale.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qmimedata.h>
@@ -103,25 +104,42 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     , m_canceledByUser(false)
     , m_awaitingRetry(false)
     , m_offTheRecord(false)
+    , m_lastSampleMs(0)
+    , m_lastSampleBytes(0)
+    , m_restoredTotalBytes(-1)
+    , m_finalSpeed(-1.0)
+    , m_expanded(false)
 {
     setupUi(this);
     // Server-supplied file names may contain markup-looking text;
     // the labels must always render it literally.
     fileNameLabel->setTextFormat(Qt::PlainText);
     downloadInfoLabel->setTextFormat(Qt::PlainText);
+    sourceLabel->setTextFormat(Qt::PlainText);
+    destinationLabel->setTextFormat(Qt::PlainText);
     // UIP01: secondary text — a hardcoded darkGray is unreadable under
     // a dark palette; PlaceholderText adapts to the active scheme.
     QPalette p = downloadInfoLabel->palette();
     p.setColor(QPalette::Text, p.color(QPalette::PlaceholderText));
     downloadInfoLabel->setPalette(p);
+    for (QLabel *label : {static_cast<QLabel*>(sourceLabel),
+                          static_cast<QLabel*>(destinationLabel),
+                          startedLabel, finishedLabel,
+                          sizeLabel, speedLabel})
+        label->setPalette(p);
     progressBar->setMaximum(0);
     // UIP02: this row packs three compact buttons — exempt it from the
     // dialog-wide minimum button width/height polish.
     setProperty("aroraNoButtonPolish", true);
     tryAgainButton->hide();
+    expandButton->setAccessibleName(tr("Show download details"));
+    connect(expandButton, &QToolButton::toggled, this, &DownloadItem::setExpanded);
+    connect(restartButton, &QPushButton::clicked, this, &DownloadItem::restart);
+    connect(showInFolderButton, &QPushButton::clicked, this, &DownloadItem::showInFolder);
     connect(stopButton, &QPushButton::clicked, this, &DownloadItem::stop);
     connect(openButton, &QPushButton::clicked, this, &DownloadItem::open);
     connect(tryAgainButton, &QPushButton::clicked, this, &DownloadItem::tryAgain);
+    updateDetails();
 
     if (!requestFileName) {
         QSettings settings;
@@ -167,6 +185,17 @@ void DownloadItem::init()
     m_bytesReceived = 0;
     m_offTheRecord = page()
         && page()->profile()->isOffTheRecord();
+
+    // Reset the card state for the fresh attempt.
+    m_speedSamples.clear();
+    m_lastSampleMs = 0;
+    m_lastSampleBytes = 0;
+    m_startedTime = QDateTime::currentDateTime();
+    m_finishedTime = QDateTime();
+    m_finalSpeed = -1.0;
+    downloadGraph->setSamples(QVector<double>());
+    downloadGraph->setVisible(true);
+    updateDetails();
 
     openButton->setEnabled(false);
     stopButton->setEnabled(true);
@@ -230,7 +259,9 @@ void DownloadItem::getFileName()
             ))
         return;
 
-    DownloadManager *manager = qobject_cast<DownloadManager*>(parent());
+    // The item is re-parented to the view's viewport by
+    // setIndexWidget — window() still resolves the manager.
+    DownloadManager *manager = qobject_cast<DownloadManager*>(window());
     QString downloadDirectory = manager->downloadDirectory();
 
     QString defaultFileName = saveFileName(downloadDirectory);
@@ -299,6 +330,7 @@ void DownloadItem::getFileName()
 
     fileNameLabel->setText(info.fileName());
     setAccessibleName(info.fileName());
+    updateDetails();
 }
 
 QString DownloadItem::sanitizeFileName(const QString &suggestedName)
@@ -497,7 +529,9 @@ QString DownloadItem::saveFileName(const QString &directory) const
     const auto nameInUse = [this](const QString &path) {
         if (QFile::exists(path))
             return true;
-        const DownloadManager *manager = qobject_cast<const DownloadManager*>(parent());
+        // The item is re-parented to the view's viewport by
+        // setIndexWidget — window() still resolves the manager.
+        const DownloadManager *manager = qobject_cast<const DownloadManager*>(window());
         if (!manager)
             return false;
         for (const DownloadItem *item : manager->m_downloads) {
@@ -549,15 +583,33 @@ void DownloadItem::tryAgain()
 {
     if (!tryAgainButton->isEnabled())
         return;
+    restartDownload();
+}
+
+void DownloadItem::restart()
+{
+    if (!restartButton->isEnabled())
+        return;
+    restartDownload();
+}
+
+void DownloadItem::restartDownload()
+{
+    if (m_url.isEmpty() || downloading())
+        return;
 
 #ifdef ARORA_RUSTDL
     if (m_engine) {
         // The engine object survives — restart() rewinds it and the
         // normal filename/accept flow in init() re-issues dl_start.
         // Drop the previous attempt's staging file first so the retry
-        // does not dedup itself onto a "-N" name.
+        // does not dedup itself onto a "-N" name — but only when the
+        // previous attempt did not complete: a completed file is a
+        // keep, and the re-issued download dedups onto a fresh name.
         tryAgainButton->setEnabled(false);
-        removePartialFile();
+        restartButton->setEnabled(false);
+        if (!downloadedSuccessfully())
+            removePartialFile();
         m_engine->restart();
         init();
         return;
@@ -567,18 +619,81 @@ void DownloadItem::tryAgain()
     QWebEnginePage *page = this->page();
     if (!page) {
         // The page that started the download is gone (or this item was
-        // restored from disk); use a hidden page to re-issue it.
-        DownloadManager *manager = qobject_cast<DownloadManager*>(parent());
+        // restored from disk); use a hidden page to re-issue it.  The
+        // item lives on the view's viewport, not the manager itself.
+        DownloadManager *manager = qobject_cast<DownloadManager*>(window());
         page = manager->retryPage(m_offTheRecord);
     }
     if (!page)
         return;
 
     tryAgainButton->setEnabled(false);
+    restartButton->setEnabled(false);
     // DownloadManager::handleDownloadRequested re-attaches the fresh
     // request for this url to this item.
     m_awaitingRetry = true;
     page->download(m_url);
+}
+
+void DownloadItem::showInFolder()
+{
+    if (m_outputFileName.isEmpty())
+        return;
+    // Reveal the containing folder (xdg-open on Linux); selecting the
+    // file itself is file-manager specific and not portable.
+    const QFileInfo info(m_outputFileName);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+}
+
+void DownloadItem::setExpanded(bool expanded)
+{
+    if (m_expanded == expanded)
+        return;
+    m_expanded = expanded;
+    // Keep the chevron in sync when the state is set programmatically.
+    expandButton->setChecked(expanded);
+    expandButton->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    detailsWidget->setVisible(expanded);
+    updateGeometry();
+    emit expandedChanged();
+}
+
+void DownloadItem::sampleSpeed()
+{
+    // Ring buffer of instantaneous speed for the card's sparkline —
+    // ~2 samples/sec, keeping roughly the last 60s.  currentSpeed() is
+    // a cumulative average and cannot serve the graph.
+    const qint64 elapsed = m_downloadTime.elapsed();
+    const qint64 deltaMs = elapsed - m_lastSampleMs;
+    if (deltaMs < 500)
+        return;
+    const double speed = (m_bytesReceived - m_lastSampleBytes) * 1000.0 / deltaMs;
+    m_speedSamples.append(speed);
+    while (m_speedSamples.count() > 120)
+        m_speedSamples.removeFirst();
+    m_lastSampleMs = elapsed;
+    m_lastSampleBytes = m_bytesReceived;
+    downloadGraph->setSamples(m_speedSamples);
+}
+
+void DownloadItem::freezeSpeedSeries()
+{
+    // Fold the tail segment after the last regular sample into a final
+    // point so the graph ends at the true finish speed, then freeze —
+    // a completed/interrupted item keeps its recorded shape.
+    const qint64 elapsed = m_downloadTime.isValid() ? m_downloadTime.elapsed() : 0;
+    const qint64 deltaMs = elapsed - m_lastSampleMs;
+    if (deltaMs > 0) {
+        const double speed = (m_bytesReceived - m_lastSampleBytes) * 1000.0 / deltaMs;
+        m_speedSamples.append(speed);
+        while (m_speedSamples.count() > 120)
+            m_speedSamples.removeFirst();
+        m_lastSampleMs = elapsed;
+        m_lastSampleBytes = m_bytesReceived;
+        downloadGraph->setSamples(m_speedSamples);
+    }
+    if (elapsed > 0)
+        m_finalSpeed = m_bytesReceived * 1000.0 / elapsed;
 }
 
 void DownloadItem::downloadStateChanged(QWebEngineDownloadRequest::DownloadState state)
@@ -600,6 +715,8 @@ void DownloadItem::downloadStateChanged(QWebEngineDownloadRequest::DownloadState
                 ))
             break;
         m_finishedDownloading = true;
+        m_finishedTime = QDateTime::currentDateTime();
+        freezeSpeedSeries();
         if (state == QWebEngineDownloadRequest::DownloadInterrupted) {
             QString reason;
             if (m_download)
@@ -616,6 +733,7 @@ void DownloadItem::downloadStateChanged(QWebEngineDownloadRequest::DownloadState
         stopButton->setVisible(false);
         tryAgainButton->setEnabled(true);
         tryAgainButton->setVisible(true);
+        updateDetails();
         emit statusChanged();
         emit downloadFinished();
         break;
@@ -654,7 +772,9 @@ void DownloadItem::downloadProgressUpdate()
     progressBar->setMaximum(totalValue);
 
     emit progress(currentValue, totalValue);
+    sampleSpeed();
     updateInfoLabel();
+    updateDetails();
 }
 
 qint64 DownloadItem::bytesTotal() const
@@ -735,6 +855,53 @@ void DownloadItem::updateInfoLabel()
     downloadInfoLabel->setText(info);
 }
 
+void DownloadItem::updateDetails()
+{
+    // Source and destination are untrusted text (the sourceLabel and
+    // destinationLabel paint them as plain text and elide the middle).
+    const QString source = m_url.isEmpty() ? tr("unknown") : m_url.toString();
+    sourceLabel->setText(tr("Source: %1").arg(source));
+    sourceLabel->setToolTip(source);
+    const QString destination = m_outputFileName.isEmpty()
+        ? tr("not saved yet") : m_outputFileName;
+    destinationLabel->setText(tr("Destination: %1").arg(destination));
+    destinationLabel->setToolTip(destination);
+
+    const QLocale locale;
+    startedLabel->setText(m_startedTime.isValid()
+        ? tr("Started: %1").arg(locale.toString(m_startedTime, QLocale::ShortFormat))
+        : tr("Started: -"));
+    finishedLabel->setText(m_finishedTime.isValid()
+        ? tr("Finished: %1").arg(locale.toString(m_finishedTime, QLocale::ShortFormat))
+        : tr("Finished: -"));
+
+    qint64 total = bytesTotal();
+    if (total <= 0)
+        total = m_restoredTotalBytes;
+    if (total <= 0)
+        total = m_bytesReceived;
+    sizeLabel->setText(total > 0
+        ? tr("Size: %1").arg(DownloadManager::dataString(total))
+        : tr("Size: unknown"));
+
+    if (downloading()) {
+        // The freshest ring-buffer reading is the live speed; before
+        // the first sample falls back to the cumulative average.
+        const double speed = m_speedSamples.isEmpty()
+            ? currentSpeed() : m_speedSamples.constLast();
+        speedLabel->setText(tr("Speed: %1/s")
+            .arg(DownloadManager::dataString(static_cast<qint64>(speed))));
+    } else if (m_finalSpeed >= 0.0) {
+        speedLabel->setText(tr("Average speed: %1/s")
+            .arg(DownloadManager::dataString(static_cast<qint64>(m_finalSpeed))));
+    } else {
+        speedLabel->setText(tr("Speed: -"));
+    }
+
+    restartButton->setEnabled(!m_url.isEmpty() && !downloading());
+    showInFolderButton->setEnabled(!m_outputFileName.isEmpty());
+}
+
 bool DownloadItem::downloading() const
 {
     return currentState() == QWebEngineDownloadRequest::DownloadInProgress;
@@ -812,6 +979,8 @@ void DownloadItem::finished()
     if (m_finishedDownloading)
         return;
     m_finishedDownloading = true;
+    m_finishedTime = QDateTime::currentDateTime();
+    freezeSpeedSeries();
     if (m_download) {
         m_bytesReceived = m_download->receivedBytes();
         // A completed download should never arrive user-executable.
@@ -828,6 +997,7 @@ void DownloadItem::finished()
     stopButton->hide();
     openButton->setEnabled(true);
     updateInfoLabel();
+    updateDetails();
     emit statusChanged();
     emit downloadFinished();
 }
@@ -1104,6 +1274,17 @@ void DownloadManager::addItem(DownloadItem *item)
 {
     connect(item, &DownloadItem::statusChanged, this, [this]() { updateRow(); });
     connect(item, &DownloadItem::downloadFinished, this, &DownloadManager::finished);
+    // The detail card changes the row's preferred height both ways.
+    connect(item, &DownloadItem::expandedChanged, this, [this, item]() {
+        const int row = m_downloads.indexOf(item);
+        if (row == -1)
+            return;
+        // Child visibility invalidation is delivered lazily — force a
+        // synchronous relayout so the size hint reflects the card's
+        // new visibility before the row is resized.
+        item->layout()->activate();
+        downloadsView->setRowHeight(row, item->sizeHint().height());
+    });
     int row = m_downloads.count();
     m_model->beginInsertRows(QModelIndex(), row, row);
     m_downloads.append(item);
@@ -1205,6 +1386,11 @@ void DownloadManager::save() const
         settings.setValue(key + QLatin1String("url"), m_downloads[i]->m_url);
         settings.setValue(key + QLatin1String("location"), m_downloads[i]->m_outputFileName);
         settings.setValue(key + QLatin1String("done"), m_downloads[i]->downloadedSuccessfully());
+        settings.setValue(key + QLatin1String("started"), m_downloads[i]->m_startedTime);
+        settings.setValue(key + QLatin1String("finished"), m_downloads[i]->m_finishedTime);
+        settings.setValue(key + QLatin1String("size"),
+                          qMax(m_downloads[i]->bytesTotal(),
+                               m_downloads[i]->m_bytesReceived));
     }
     int i = saved;
     QString key = QString(QLatin1String("download_%1_")).arg(i);
@@ -1212,6 +1398,9 @@ void DownloadManager::save() const
         settings.remove(key + QLatin1String("url"));
         settings.remove(key + QLatin1String("location"));
         settings.remove(key + QLatin1String("done"));
+        settings.remove(key + QLatin1String("started"));
+        settings.remove(key + QLatin1String("finished"));
+        settings.remove(key + QLatin1String("size"));
         key = QString(QLatin1String("download_%1_")).arg(++i);
     }
 }
@@ -1242,11 +1431,18 @@ void DownloadManager::load()
             item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
             item->setAccessibleName(item->fileNameLabel->text());
             item->m_url = url;
+            item->m_startedTime = settings.value(key + QLatin1String("started")).toDateTime();
+            item->m_finishedTime = settings.value(key + QLatin1String("finished")).toDateTime();
+            item->m_restoredTotalBytes = settings.value(key + QLatin1String("size"), -1).toLongLong();
             item->stopButton->setVisible(false);
             item->stopButton->setEnabled(false);
             item->tryAgainButton->setVisible(!done);
             item->tryAgainButton->setEnabled(!done);
             item->progressBar->setVisible(false);
+            // A restored card shows what is known but has no live
+            // speed series — omit the graph outright.
+            item->downloadGraph->setVisible(false);
+            item->updateDetails();
             addItem(item);
         }
         key = QString(QLatin1String("download_%1_")).arg(++i);
