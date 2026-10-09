@@ -1,327 +1,241 @@
-Arora web browser
+# Arora — a Qt 6 / QtWebEngine web browser (experimental)
 
-Arora is a cross platform web browser built using Qt and WebEngine
-(QtWebKit is being ported away — see ChangeLog, "Qt 6 port").
+**Arora** is an experimental cross-platform web browser built on **Qt 6
+and QtWebEngine** (Chromium). It continues the 2009 Qt/WebKit Arora as a
+maintained fork: the original WebKit stack is fully replaced by
+WebEngine, and the shell has been rebuilt around privacy hardening,
+containers, Tor support and a modernized UI.
 
-Building:
-Arora uses the qmake build system.  If you already have Qt 6 on your system building is as easy as running the command 'qmake' and then 'make' or 'nmake' on Windows.
-For more detailed information see https://github.com/Arora/arora/wiki/BeginnerStepByStepInstructions
+**Status: experimental.** Arora is a work in progress and an
+experimental tool — it is provided **as is, without warranty of any
+kind**, under the terms of the **GNU General Public License v2 or
+later** (see COPYING). It is not yet a daily-driver replacement: expect
+rough edges, unfinished features and occasional crashes, and do not
+trust it with anything you cannot afford to lose.
 
-Optional adblock engine: the built-in C++ matcher is the default.  A
-Brave adblock-rust backed engine can be enabled instead — build the
-FFI static library with `cargo build --release` in src/adblock/rust
-(needs a user-local Rust toolchain), then run `qmake CONFIG+=adblock_rust`
-and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
-fixed probe set.
+## Table of contents
 
-Performance: `./arora --perf-smoke` runs headless (with
-QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
-tab-open, large-history-load, menu-open and profile permission-sweep
-timings.  `./arora --profile-startup` (or ARORA_PROFILE_STARTUP=1 on a
-normal launch) prints a millisecond timeline of the startup stages to
-stderr.
+- [Feature tour](#feature-tour)
+  - [Privacy & security](#privacy--security)
+  - [Tabs, chrome & UI](#tabs-chrome--ui)
+  - [Search](#search)
+  - [AdBlock](#adblock)
+  - [Containers](#containers)
+  - [Tor](#tor)
+  - [Downloads](#downloads)
+  - [Extensions](#extensions)
+  - [Credentials & autofill](#credentials--autofill)
+- [Source structure](#source-structure)
+- [Building](#building)
+- [Testing & diagnostics](#testing--diagnostics)
+- [Packaging](#packaging)
+- [License](#license)
 
-Appearance: Arora follows the desktop light/dark preference (Qt 6.5+
-color-scheme reporting).  On desktops that do not report a scheme —
-or to force a look — set ARORA_COLOR_SCHEME=dark or light.
+## Feature tour
 
-Icons: the toolbar/menu chrome resolves freedesktop icon names through
-the desktop theme by default; the "Icons:" selector on the General
-preferences page can instead pin a bundled Adwaita, Breeze or Tabler
-set (each ships light + dark variants, applied live).  The original
-2009 artwork remains the final fallback for names a set does not cover.
+### Privacy & security
 
-Search: the address bar doubles as a search box (omnibox) — text that
-is not an address goes to the default search engine (DuckDuckGo unless
-you pick another), while urls,
-localhost/host:port and dotted names navigate directly.  Its dropdown
-can show live suggestions above history matches, but only for engines
-explicitly opted in (search button menu or the dedicated Search page
-in Settings, which also picks the default engine); nothing is sent to
-a suggest endpoint otherwise.  The dedicated search box next to the
-address bar can be a full text field or a compact engine button
-(Search settings page — the same preference the "Show dedicated
-search box" checkbox on the General page toggles).  Button mode is
-the default; Ctrl+K opens its engine menu with a search prompt, or
-selects the field's text in field mode.  The Search page can also
-assign separate engines to private/Tor windows and to image searches
-(the image context menu's "Search Image" entry).
+The application layer is hardened around a request interceptor on the
+browsing profile:
 
-Command palette: Ctrl+Shift+P (or Tools → "Command Palette") opens a
-keyboard-first overlay that fuzzy-searches every menu action, open
-tab, bookmark title and settings section.  Arrows navigate, Enter
-executes, Esc dismisses; recently used entries rank first, so e.g.
-"clear history" reaches Clear Private Data and a tab title switches
-straight to that tab.
+- **HTTPS-First / HTTPS-Only** — public http: navigations upgrade to
+  https automatically; in HTTPS-Only mode a plain-HTTP destination is
+  refused and swapped for a warning interstitial (with per-site
+  exceptions and "proceed anyway"). Downgraded hosts are remembered per
+  session only after a real TLS failure — aborted or blocked loads
+  never poison a site.
+- **Third-party cookie blocking**, plus a "Connections & Storage"
+  group on the Privacy page: referrer levels, prefetch blocking,
+  remote-font blocking, tracking ping/beacon blocking, third-party
+  WebSocket blocking (opt-in) and per-origin storage grants.
+- **Per-site JavaScript control** — allow/block rules by host with a
+  shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
+  allow", and three Mullvad-style security tiers (Standard / Safer /
+  Safest) for script and media handling on insecure pages.
+- **Fingerprint resistance** — opt-in countermeasures plus the honest
+  caveat that they are noise, not anonymity.
+- **Zero telemetry, verified** — launch produces no unsolicited
+  connections; Chromium's background networking, component updates,
+  domain reliability, metrics and sync are disabled, and a capture-
+  proxy smoke proves it.
+- **Consent gates** — external protocol launches (mailto:, magnet:,
+  custom schemes) ask first; adblock-list downloads are opt-in;
+  command-line URLs are treated as untrusted input.
+- **TLS hardening** — weak cipher suites removed from the ClientHello,
+  a proper certificate-error interstitial, and verified WebRTC/DNS leak
+  behavior.
+- **Encrypted credential storage** — AES-256-GCM store with optional
+  Argon2id master passphrase; a Rust implementation (rustcore) is
+  available behind `CONFIG+=rustcore`, byte-compatible with the C++
+  store.
+- **Hardened parsers** — OpenSearch descriptions are size-capped and
+  DTD-free, download file names are fully sanitized, and page-controlled
+  strings cannot inject markup into chrome.
 
-Tab groups: tabs can be organized into named, color-coded groups —
-right-click a tab to create a group, add it to an existing one, rename
-or recolor it, or ungroup; dragging a tab onto a group member joins
-that group and dragging a grouped tab away ungroups it.  A group's
-tabs stay contiguous behind a colored header chip, and "Collapse
-Group" folds the run down to just the chip (tabs stay loaded) until
-it is expanded again.  Groups survive session save/restore.
+### Tabs, chrome & UI
 
-Tab search & hover previews: Ctrl+Shift+A (or Window → "Search
-Tabs...") opens a tabs-only variant of the command palette — a fuzzy
-filter over every open tab, where Enter switches straight to the
-match.  Resting the pointer on a tab pops a small card with the
-page's title, address and a live thumbnail; sleeping or never-loaded
-tabs show their favicon instead.  The card is passive — it never
-takes focus and vanishes when the pointer leaves the strip.
+- **Tab bar positions** — Top/Bottom/Left/Right, live-applied per
+  window.
+- **Tab groups** — named, color-coded groups on the strip.
+- **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
+  history, downloads, notes), lazily built and off by default.
+- **Tab search** — Ctrl+Shift+A fuzzy dropdown over all open tabs,
+  with hover previews.
+- **Sleeping tabs** — suspend tabs to reclaim memory without losing
+  their place.
+- **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
+- **Command palette** — Ctrl+Shift+P fuzzy search over browser
+  commands.
+- **Sharing** — "Copy Clean Link" strips tracking parameters;
+  "Show QR" renders a link as a QR code.
+- **Preferences** — Vivaldi-style vertical sidebar navigation,
+  scrollable pages capped to the screen so buttons never clip,
+  dedicated Search and Containers pages.
+- **Look & feel** — follows the desktop light/dark scheme
+  (`ARORA_COLOR_SCHEME` override), selectable bundled icon sets
+  (Adwaita/Breeze/Tabler, light+dark variants), status-bar load
+  indicator and zoom control, domain-emphasized anti-phishing address
+  bar with IDN punycode display.
 
-Sidebar: View → "Sidebar" (F4, or the toolbar button) opens an optional
-side panel, off by default — the window is unchanged until it is
-switched on.  It hosts four tabs over the shared data: Bookmarks,
-History, Downloads and a Notes pad that saves automatically, and it
-docks left or right (Settings → General → "Show sidebar" /
-"Sidebar position").  Visibility, dock side, the active tab and notes
-are remembered across sessions.
+### Search
 
-Link sharing: right-click a link and choose "Copy Clean Link" to copy
-it with tracking parameters (utm_*, fbclid, gclid, marketing-automation
-ids, ~50 more) stripped; the same item on plain page content cleans
-the page address.  "Show QR Code for This Page" on any context menu
-renders the current page address as a scannable QR code.
+- **Omnibox** — address-shaped input navigates, everything else
+  searches the default engine (DuckDuckGo by default).
+- **Engine management** — a dedicated Search settings page with an
+  inline engine editor (name, nickname, search/suggest/image URLs, POST
+  params), per-context engine choices (default / private-window /
+  image search) and shortcut nicknames (@bookmarks, @history, @tabs).
+- **Suggestions opt-in per engine** — nothing is sent to a suggest
+  endpoint unless the user enables it for that engine.
 
-Page polish: the in-page find bar shows a live "n/m" match counter
-("Not Found" when there are none) and clears it together with the
-highlighting when the field is emptied.  Settings → Appearance →
-"Render pages in dark mode" makes Chromium auto-invert light pages —
-only the page content darkens, the browser chrome still follows the
-desktop theme; auto-inversion can misfire on pages that are already
-dark, which is why it stays a toggle.  Settings → General →
-"Middle-click autoscroll" enables Chromium's grab-scroll reader
-(default on for Linux/Windows, off on macOS); it is a startup flag,
-so the change applies at the next launch.
+### AdBlock
 
-Picture-in-Picture: right-click a video and choose "Picture-in-Picture"
-(or View → "Picture-in-Picture", or a site's own PiP button) to pop the
-video into a small frameless, always-on-top player window that keeps
-playing on top of other windows — drag to move it, "return to tab" puts
-the video back with its playback position. Qt WebEngine exposes no
-native PiP negotiation, so the window is application-side: pages' own
-PiP buttons work through a bundled compatibility shim (still requiring
-a real user gesture), and sources that cannot be replayed — DRM or some
-blob/MSE streams — restore the original player with a status message
-rather than failing silently. `./arora --pip-smoke` verifies the whole
-flow headlessly.
+- **uBlock-Origin-tier rule engine** — resource types,
+  third-party/domain restrictions, $important/$badfilter/$removeparam,
+  $redirect to bundled stubs, cosmetic extended selectors and a
+  scriptlet subset.
+- **Optional Brave adblock-rust engine** — `qmake
+  CONFIG+=adblock_rust` after `cargo build --release` in
+  src/adblock/rust; the built-in matcher stays the default.
+- **Subscription-centric UI** — preset filter-list catalog, per-list
+  enable/update, custom rules editor, toolbar blocker button with
+  per-page counts and per-site toggle.
 
-Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
-WebEngine's (tech preview) extension manager — the Extensions page in
-the preferences dialog loads unpacked folders or installs .zip packages.
-Every load or install first shows a permission-review screen listing the
-extension's requested access in plain language plus which declared
-chrome.* APIs Qt does not serve; nothing installs without consent.
-Extensions never run in private windows or Tor windows — the engine
-itself refuses off-the-record profiles, and Tor additionally keeps the
-profile detached from the extension system entirely.  Plain user scripts
-(any *.js file in the "userscripts" data directory) are injected into
-every page at document-ready, private windows included.
+### Containers
 
-Tor: File → "New Tor Window" (or `arora --tor`) opens a separate Arora
-process whose tabs all route through a managed Tor daemon — the web
-engine's proxy is process-global, so Tor cannot be a per-tab feature.
-Tor windows run a dedicated off-the-record profile (nothing persisted),
-arm a fail-closed proxy until bootstrap completes, harden the surface
-(no extensions, WebChannel bridges, autofill or search suggestions) and
-carry a violet accent, "Tor" badge and "(Tor)" title marker.  Needs a
-`tor` binary: system tor, the ARORA_TOR_BINARY env var, or the bundled
-Expert Bundle via BuildProcess/fetch-tor.sh.  `./arora --tor-smoke` and
-`./arora --tor-window-smoke` verify the daemon layer and the end-to-end
-window routing headlessly.
+Firefox-style isolated containers: each container is a separate
+WebEngine profile with its own cookies, storage and cache. Tabs bind
+to a container (new tabs inherit their opener's), a Settings page
+manages them, sites can be pinned to always open in a given container,
+and the isolation boundary is audited end to end.
 
-Containers: Firefox-style persistent containers separate a site's
-state per purpose (Work, Shopping, ...).  Each named container runs
-on its own persistent QWebEngineProfile (storage name
-"arora-container-<id>", data under <app data>/containers/<id>/), so
-cookies, localStorage/IndexedDB and the other DOM stores, service
-workers and the Cache API, the http cache, the http-auth credential
-cache, permissions and the visited-links database are partitioned per
-container and per the default (non-container) profile — container tabs
-log into the same site independently.  The partition is verified
-against a loopback fixture in autotests/containermanager (cookie,
-localStorage, IndexedDB, service-worker, http-auth and http-cache
-checks).  Deliberately shared, application-level surfaces: browsing
-history and the icon store are one global database — a container visit
-is recorded like any other (private/Tor visits still record nothing);
-download history and the autofill/password stores are global too, and
-every container profile receives the same privacy interceptor, adblock
-rules, settings and scheme handlers as the normal profile.  Honest
-engine bound: Chromium's network service is shared process-wide, so
-sub-profile state it owns — DNS resolution caches, socket pools and
-TLS session resumption — may be shared between containers; containers
-isolate *storage and identity*, not the transport layer (the Tor
-window is the answer for traffic-level separation).  Containers cannot
-be used in private or Tor windows — those run single off-the-record
-profiles and persistent container state would defeat their purpose —
-and site rules ("always open this site in container X") never fire
-there either.
+### Tor
 
-Privacy: the "Connections & Storage" group on the Privacy preferences
-page carries the hardening toggles, all defaulting to the private
-choice.  Plain-http page loads are upgraded to https where a secure
-endpoint plausibly exists (loopback, LAN addresses and .onion are
-skipped); a main-frame navigation that still resolves to plain
-http — a site whose https attempt failed with a real connection or
-TLS error (downgrade marks are per profile, expire after ~30 minutes,
-and clear as soon as https succeeds again), or every http link with
-the upgrade off — shows an HTTPS-Only warning page instead of
-loading insecurely, offering "Proceed anyway" (remembered for the
-session) and "Always allow HTTP on this site" (persisted per host,
-also togglable from the site panel).  The "Warn before loading a
-site over plain HTTP" checkbox switches that strict mode off.  The
-"Referer header"
-selector controls what other parties see: "Trimmed" (the default)
-sends cross-site requests the destination's own origin — nothing
-about the page you came from, navigations and subresources alike —
-and same-site requests just the origin, never the full path or
-query; "Strict" sends nothing to other sites; "Never" withholds the
-header everywhere.  Pages that deliberately withhold their referer
-(noreferrer links, stricter site policies, insecure downgrades)
-always stay silent, and a site redirecting you to a different origin
-reveals at most the origin you came from — the one leg the engine
-recomputes past our control.  WebRTC traffic is confined to
-proxied/public interfaces
-so voice/video sites cannot discover local or real IP addresses —
-verified headlessly: ./arora --webrtc-smoke enumerates a real
-RTCPeerConnection's ICE candidates and asserts none carry an IP
-(--webrtc-off-smoke is the unprotected control).
-Third-party cookies are rejected (per-site exceptions still apply),
-and an opt-in "Clear browsing data when Arora exits" wipes history,
-cookies, caches and site storage at quit — Chromium's on-disk trees
-are removed at the next start, never under a running browser.  An
-opt-in secure-DNS setting controls DNS-over-HTTPS: off (system
-resolver), Chromium's automatic upgrade for resolvers on its
-known-provider list, or a custom DoH endpoint (default
-https://cloudflare-dns.com/dns-query) either with system-DNS
-fallback or strict — strict fails resolution rather than leaking a
-lookup to plain DNS when the endpoint is unreachable.  Honest bound:
-with secure DNS off or in automatic mode the browser's lookups go to
-the system resolver and are visible to the local network — only a
-strict custom endpoint or the Tor window (whose SOCKS5 route tunnels
-DNS too) hides them, and a system VPN/DoH resolver is the whole-OS
-answer.  TLS
-connections advertise only forward-secret AEAD cipher suites: the
-RSA key-exchange and CBC suites are stripped from the ClientHello
-(a toggle, on by default — a site that only supports the removed
-suites will not load; takes effect after a restart).  Sites that ask
-for a TLS client certificate get one only if you installed it: drop a
-.pem (leaf certificate first, then the private key) or an unencrypted
-.p12/.pfx bundle into the clientcertificates directory under the
-application data directory, and when a site requests a certificate
-Arora asks which to send — the choice is remembered for that site on
-that page, and canceling continues without identifying yourself.  The
-Tor window never offers client certificates.  The opt-in
-"Fingerprint Resistance"
-group reports UTC as the timezone to every site (JavaScript Date and
-Intl reads) and a generic "en-US, en" language list instead of the
-configured one; the Tor window's profile always normalizes both.
-Honest bounds: an observer can still
-see destination IPs, connection timing and the usual browser
-fingerprinting surface — the Tor window is the answer for hiding
-traffic endpoints, and QtWebEngine cannot reach Tor-Browser-level
-fingerprint resistance.  CNAME-cloaked trackers (first-party aliases
-that resolve to a tracking service) are not uncloaked: that needs
-DNS-response inspection and QtWebEngine exposes no DNS-response hook
-to the adblock engine.  Page-requested tracking uploads —
-navigator.sendBeacon beacons, <a ping> link audits and CSP violation
-reports — are dropped at the request layer (a "Block tracking pings
-and beacons" toggle, on by default; CSP still enforces, only its
-telemetry reports are suppressed, so sites lose the telemetry and
-users lose the tracking channel).  `./arora --ping-smoke` proves
-all three vectors against a loopback fixture.  Two sibling toggles
-ride the same interceptor: "Block prefetch requests" (on by default)
-drops <link rel=prefetch> and speculation-rules prefetch loads —
-pages fetched only because a link pointed at them — and "Block
-remote web fonts" (off by default, opt-in) drops downloadable fonts,
-a fingerprinting vector; local/system fonts are unaffected.
-A third opt-in toggle, "Block third-party WebSockets" (off by
-default), refuses ws:/wss: upgrade requests to hosts that are not
-same-site with the page — a cross-site socket's connect/refuse
-difference is a classic XS-Leak oracle; it stays opt-in because
-legitimate real-time features can use cross-site sockets.
+File → "New Tor Window" (or `arora --tor`) opens a Tor-browsing window
+backed by a managed tor daemon (bundled or system): SOCKS5 egress
+only, a dedicated off-the-record profile, .onion reachability, and
+Tor-aware rules (no direct-connection fallbacks, no extension loads,
+no suggestions).
 
-Zero telemetry: a clean launch opens no unsolicited outbound
-connections.  Chromium's background channels (field-trial/variations
-fetches, component updater, domain-reliability reports, metrics,
-sync, first-run pings) are disabled at startup.  The seeded adblock
-filter lists (EasyList, EasyPrivacy, uBlock filters) stay dormant
-until consent: first launch asks once, and subscribing via an
-abp: link, ticking a list in the "Preset Filter Lists" catalog,
-pressing "Update Subscription", or enabling the blocker
-grants it.  There is no update checker or phone-home code.  Search
-suggestions stay opt-in per engine (SEC11).  `./arora
---telemetry-smoke` watches a clean launch for 30s through a loopback
-capture proxy plus a /proc socket scan and fails on any outbound
-attempt.
+### Downloads
 
-The shield button at the left end of the address bar (beside the
-site icon) opens a per-site privacy panel:
-the page's security state, a per-site cookie exception (allow, block
-or session-only) with the count of stored cookies, a content-blocking
-toggle that whitelists the site (the icon greys while it is exempt),
-a per-site JavaScript rule (site default, always allow, always block)
-with the page's current script state, an "Allow pop-ups on this site"
-toggle, the remembered permission
-grants for the origin with revoke controls, and a clear-site-data
-action.  The shield icon carries a small badge while JavaScript is
-blocked on the current page.
+The download manager drives QWebEngineDownloadRequest: progress, speed
+and ETA per item, Try Again (re-issues through the page or a hidden
+page), open-folder/open-with actions, server-suggested names sanitized
+and de-duplicated, and an external download-program handoff. A Rust
+reqwest-based multi-connection engine is in development (DLACC tasks).
 
-The address bar itself is an anti-phishing aid: for a displayed url it
-dims the scheme, subdomains, port and path and keeps the registrable
-domain full-strength, so the real owner of a link like
-paypal.com.evil.tld is impossible to miss.  Hosts written in a
-non-ascii alphabet stay in their punycode (xn--) spelling rather than
-the confusable glyphs — hovering the bar shows the Unicode form as a
-tooltip.  Focusing or editing the bar shows the plain url text.
+### Extensions
 
-A content-blocker button at the right end of the address bar shows a
-per-page blocked-request count (as an icon badge, and in its popup),
-toggles content blocking on or off globally, and opens the AdBlock
-settings dialog.  The icon greys while blocking is disabled or the
-site is whitelisted.
+Chrome Manifest-V3 extensions via Qt WebEngine's tech-preview API:
+install always stops at a permission-review screen, `update_url`
+checks are supported, and extensions are verified not to run in
+private or Tor windows.
 
-"Block Popup Windows" (Privacy settings, on by default) is a real
-pop-up blocker: window.open calls that request a window shape are
-refused inside the browser rather than merely suppressed when they
-lack a user gesture, so click-triggered pop-ups are covered too.
-While a page has refused pop-ups a small indicator appears at the
-right end of the address bar with a count badge; its menu offers
-each captured destination for "Open once", an "Always allow pop-ups"
-exception for the site, and a shortcut to the settings.  Exceptions
-apply to the site showing the pop-up (a rule for example.com covers
-its subdomains), persist between sessions, and can also be managed
-from the site panel or the Privacy page's remembered-permissions
-list.  Tab-shaped opens (target=_blank links) are unaffected — they
-follow the "open target-blank links in" preference.
+### Credentials & autofill
 
-A "Security Level" selector at the top of the Privacy settings page
-offers three Mullvad-style tiers.  Standard (the default) is the
-current behavior.  Safer blocks external scripts, workers and service
-workers on pages loaded over insecure http and makes media
-click-to-play — inline scripts on http pages can still run, and pages
-served from this machine (localhost) keep their scripts because
-Chromium treats them as secure contexts.  Safest disables JavaScript
-on every site, which many websites will not survive.
+Saved-password prompts, per-site "never" rules and a form-passwords
+dialog; an injected script fills stored credentials after page load
+and reports submits over a hardened WebChannel bridge. The store is
+encrypted at rest and can be master-passphrase protected.
 
-A page whose scripts are blocked — by a per-site rule, by Safer on an
-insecure http page, or by Safest — shows a slim bar across the top of
-the page ("Scripts blocked on <host>") offering "Allow once"
-(remembered until the browser closes) and "Always allow" (persisted;
-on private-browsing pages it is session-scoped too).  An explicit
-allow grant beats the tier in both directions, so a granted site runs
-JavaScript even under Safest — including its external script fetches,
-which the Safer http block would otherwise drop.  Rules are keyed by
-host, a parent-domain rule covers subdomains, and the most specific
-matching rule wins; the persistent rules are listed (and removable)
-under Settings > Privacy > Site Permissions next to the other
-per-origin grants.
+## Source structure
 
-Self-contained Linux bundle: `make bundle` (BuildProcess/bundle-linux.sh)
-packs the binary, the whole Qt/WebEngine runtime (Qt libs, icu,
-QtWebEngineProcess, webengine resources, plugins incl. qtwayland) and the
-freedesktop metadata into dist/Arora-<ver>-linux-<arch>/ — a relocatable
-directory that runs on a system with no Qt installed via ./arora.
-`make check-bundle` verifies self-containment plus offscreen and native
-Wayland startup in a bubblewrap sandbox with the dev Qt install hidden.
+```
+src/                  application sources (flat layout + subdirs)
+  browserapplication/browsermainwindow — app object, windows, menus
+  webpage, webview, tabwidget, tabbar — the browsing stack
+  adblock/            rule engine + optional adblock-rust FFI crate
+  network/            request interceptor, proxy, NAM
+  tor/                managed tor daemon, control, SOCKS5 plumbing
+  containers/         container manager + profile isolation
+  opensearch/         OpenSearch engine store + editor backend
+  bookmarks/ history/ stores, models, dialogs
+  locationbar/        omnibox, shield panel, domain emphasis
+  extensions/         MV3 plumbing
+  icons/              bundled icon sets (adwaita/breeze/tabler ±dark)
+  utils/              shared helpers (SafeText, scope shortcuts, ...)
+  rustcore/           shared Rust core crate (credential store, ...)
+  data/ htmls/ locale/ icons and bundled pages, translations
+autotests/            qtest suite (make check)
+tools/                bundled CLI tools + sanitizer/coverage scripts
+BuildProcess/         bundling + fetch scripts (bundle-linux.sh, ...)
+.devin/               task queue, task loops, reports (dev tooling)
+```
+
+## Building
+
+Arora uses the **qmake** build system against Qt 6 (developed on Qt
+6.12, user-local install — see `.devin/qt-env.sh`):
+
+```sh
+qmake && make -j$(nproc)
+```
+
+Optional build flags:
+
+- `CONFIG+=adblock_rust` — Brave adblock-rust filter engine (needs a
+  user-local Rust toolchain: `cargo build --release` in
+  `src/adblock/rust` first)
+- `CONFIG+=rustcore` — Rust credential store backend (same toolchain;
+  falls back to the C++ store without it)
+- `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
+  suite
+
+On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
+
+## Testing & diagnostics
+
+- `make check` — the qtest suite (offscreen-safe)
+- `make check-coverage` / `check-static` / `check-leaks` — coverage,
+  static analysis and sanitizer-leak gates
+- `./arora --*-smoke` — a family of headless harnesses:
+  `--adblock-smoke`, `--adblock-rust-smoke`, `--telemetry-smoke`,
+  `--anon-smoke`, `--badssl-smoke`, `--browseraudit-smoke`,
+  `--session-smoke`, `--perf-smoke`, `--sorry-smoke`, and more
+- `./arora --profile-startup` — millisecond startup timeline
+
+GUI binaries always run headless in tests (`QT_QPA_PLATFORM=offscreen`
+or `xvfb-run`).
+
+## Packaging
+
+`make bundle` produces a **self-contained relocatable directory**
+(`dist/Arora-<ver>-linux-<arch>/`) packing the binary, the Qt/WebEngine
+runtime, resources, plugins and freedesktop metadata — runs on a system
+with no Qt installed. `make check-bundle` verifies self-containment in
+a bubblewrap sandbox with the dev Qt hidden.
+
+## License
+
+Arora is **free software under the GNU General Public License,
+version 2 or later** — see COPYING for the full text.
+
+Arora is **experimental software provided "as is"** — the license text
+governs, but in plain terms: there is **no warranty**, no guarantee of
+fitness for any purpose, and no liability accepted for data loss,
+security failures or any other damage. Use it for testing, hacking and
+learning; treat it as a research browser, not a promise.
+
+Original Arora: Benjamin C. Meyer (icefox) and contributors, 2007–2011.
+Qt 6 port + continued development: see AUTHORS and git history.
