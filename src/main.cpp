@@ -9208,6 +9208,19 @@ int main(int argc, char **argv)
             return application.exec();
         }
 
+        // TOR03: a real tor-mode window must not carry the dedicated
+        // search box — a divergent-engine field is a leakage wart and
+        // the collapsed button sliver wastes splitter width.  The
+        // widget stays constructed (the recent-search sweep and the
+        // Ctrl+K fallback still reach it) but is hidden outright.
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        if (!torWindow->toolbarSearch()
+                || !torWindow->toolbarSearch()->isHidden()) {
+            torWinFail(QLatin1String("tor window still shows the search box"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: search box hidden in tor window";
+
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
         // tor profile is not even registered for user scripts and

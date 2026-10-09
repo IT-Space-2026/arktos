@@ -105,6 +105,7 @@ private slots:
     void closeConfirm();
     void chromeMetrics();
     void searchBoxVisibility();
+    void torSearchBoxHidden();
     void statusBarWidgets();
     void sidebarPanel();
 };
@@ -538,6 +539,58 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     closeWindow(shown);
 
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+}
+
+// TOR03: a tor window never carries the dedicated search box — even
+// collapsed to a button it is a divergent-engine leakage surface.
+// The widget stays constructed but hidden, the showSearchBox
+// preference cannot resurrect it, and the webSearch shortcut falls
+// back to the omnibox location bar instead of stranding focus on an
+// invisible widget.
+void tst_BrowserMainWindow::torSearchBoxHidden()
+{
+    // Collect state first and assert after cleanup — a mid-test
+    // QVERIFY abort would otherwise leave tor mode armed for the
+    // remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->show();
+    window->activateWindow();
+    QApplication::processEvents();
+
+    ToolbarSearch *search = window->toolbarSearch();
+    QLineEdit *bar = window->tabWidget()->currentLocationBar();
+    if (!search || !bar) {
+        closeWindow(window);
+        BrowserApplication::setTorMode(false);
+        QFAIL("tor window missing toolbarSearch/locationBar");
+    }
+    const bool hiddenAtConstruction = search->isHidden();
+
+    // The opt-in field preference must not resurrect it in tor mode.
+    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    window->applySearchBoxVisibility();
+    const bool hiddenAfterPref = search->isHidden();
+
+    const bool invoked =
+        QMetaObject::invokeMethod(window, "webSearch");
+    // Focus must not land on the invisible widget; when the platform
+    // grants the window activation it falls through to the omnibox.
+    const QWidget *focus = QApplication::focusWidget();
+    const bool focusOnSearch = focus == search;
+    const bool focusOnBar = focus == bar;
+    const bool wasActive = window->isActiveWindow();
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+
+    QVERIFY(hiddenAtConstruction);
+    QVERIFY(hiddenAfterPref);
+    QVERIFY(invoked);
+    QVERIFY(!focusOnSearch);
+    if (wasActive)
+        QVERIFY(focusOnBar);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a

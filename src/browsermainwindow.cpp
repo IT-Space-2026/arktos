@@ -114,6 +114,7 @@
 #include <qstatusbar.h>
 #include <qtoolbar.h>
 #include <qinputdialog.h>
+#include <qlineedit.h>
 #include <qsplitter.h>
 
 #include <qurl.h>
@@ -1313,6 +1314,17 @@ void BrowserMainWindow::setupToolBar()
 // tracking are all unchanged.
 void BrowserMainWindow::applySearchBoxVisibility()
 {
+    // TOR03: tor windows never carry the dedicated search box — a
+    // divergent-engine field is a deanonymization wart and even the
+    // collapsed button sliver wastes splitter width; the location
+    // bar's omnibox search covers the same job.  The widget stays
+    // constructed (search wiring, setWebView() tracking, and the
+    // clearPrivateData widget sweep all still reach it) but is
+    // hidden outright, so the location bar gets the full width.
+    if (BrowserApplication::isTorMode()) {
+        m_toolbarSearch->setVisible(false);
+        return;
+    }
     QSettings settings;
     const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
@@ -1765,6 +1777,16 @@ void BrowserMainWindow::goHome()
 
 void BrowserMainWindow::webSearch()
 {
+    // TOR03: a hidden search box (tor windows) has nothing to focus —
+    // the shortcut falls back to the omnibox, which runs the same
+    // engines.
+    if (m_toolbarSearch->isHidden()) {
+        if (QLineEdit *bar = m_tabWidget->currentLocationBar()) {
+            bar->selectAll();
+            bar->setFocus();
+        }
+        return;
+    }
     // SRCH04: in button mode there is no field to focus — the
     // shortcut opens the engines menu, which leads with a "Search..."
     // prompt.
