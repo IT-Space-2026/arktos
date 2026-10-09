@@ -89,7 +89,7 @@ fn corrupt<T>(msg: impl Into<String>) -> RcResult<T> {
 // token pair Qt produces, so the transliterations stay literal.
 // ------------------------------------------------------------------
 
-enum Ev {
+pub(crate) enum Ev {
     Start {
         /// Qualified name (prefix:local).
         name: String,
@@ -109,19 +109,19 @@ enum Ev {
     Other,
 }
 
-struct Scan<'a> {
+pub(crate) struct Scan<'a> {
     reader: Reader<&'a [u8]>,
     buf: Vec<u8>,
     /// Open-element depth — quick-xml does not flag unclosed elements
     /// at Eof, so this backs the premature-end check Qt performs.
-    depth: usize,
+    pub depth: usize,
 }
 
 /// Qt auto-detects UTF-16 via BOM; quick-xml's `encoding` support
 /// covers the single-byte encodings only, so BOM'd input is
 /// transcoded up front (a UTF-16 document without a BOM is invalid
 /// XML anyway — the parser reports it downstream).
-fn bom_transcode(data: &[u8]) -> RcResult<std::borrow::Cow<'_, [u8]>> {
+pub(crate) fn bom_transcode(data: &[u8]) -> RcResult<std::borrow::Cow<'_, [u8]>> {
     use std::borrow::Cow;
     let (units, big_endian) = if data.starts_with(&[0xFF, 0xFE]) {
         (&data[2..], false)
@@ -151,7 +151,7 @@ fn bom_transcode(data: &[u8]) -> RcResult<std::borrow::Cow<'_, [u8]>> {
 }
 
 impl<'a> Scan<'a> {
-    fn new(data: &'a [u8]) -> Scan<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Scan<'a> {
         let mut reader = Reader::from_reader(data);
         reader.config_mut().expand_empty_elements = true;
         Scan {
@@ -161,7 +161,7 @@ impl<'a> Scan<'a> {
         }
     }
 
-    fn next(&mut self) -> RcResult<Ev> {
+    pub(crate) fn next(&mut self) -> RcResult<Ev> {
         self.buf.clear();
         match self.reader.read_event_into(&mut self.buf) {
             Ok(Event::Start(e)) => {
@@ -225,7 +225,7 @@ impl<'a> Scan<'a> {
 
 /// The local part of a qualified name — QXmlStreamReader::name()
 /// semantics (prefix stripped while namespace processing is on).
-fn local(name: &str) -> &str {
+pub(crate) fn local(name: &str) -> &str {
     match name.rfind(':') {
         Some(i) => &name[i + 1..],
         None => name,
@@ -234,21 +234,21 @@ fn local(name: &str) -> &str {
 
 /// First attribute whose LOCAL name matches — QXmlStreamAttributes::
 /// value() semantics.  Present-but-empty counts as present.
-fn attr<'a>(attrs: &'a [(String, String)], want: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(attrs: &'a [(String, String)], want: &str) -> Option<&'a str> {
     attrs
         .iter()
         .find(|(k, _)| local(k) == want)
         .map(|(_, v)| v.as_str())
 }
 
-fn attr_or_empty<'a>(attrs: &'a [(String, String)], want: &str) -> &'a str {
+pub(crate) fn attr_or_empty<'a>(attrs: &'a [(String, String)], want: &str) -> &'a str {
     attr(attrs, want).unwrap_or("")
 }
 
 /// Resolves the entity references legal in a DTD-less document — the
 /// five predefined names plus decimal/hex character refs, matching
 /// what QXmlStreamReader resolves itself.
-fn resolve_entity(name: &str) -> Option<String> {
+pub(crate) fn resolve_entity(name: &str) -> Option<String> {
     match name {
         "amp" => Some("&".into()),
         "lt" => Some("<".into()),
@@ -269,7 +269,7 @@ fn resolve_entity(name: &str) -> Option<String> {
 
 /// readElementText(): character data until the element's End.  A
 /// nested start tag is an unexpected-element error, same as Qt.
-fn read_element_text(scan: &mut Scan) -> RcResult<String> {
+pub(crate) fn read_element_text(scan: &mut Scan) -> RcResult<String> {
     let mut out = String::new();
     loop {
         match scan.next()? {

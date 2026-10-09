@@ -31,8 +31,12 @@ main-frame navigations to listed domains behind a warning
 interstitial with a session-only proceed.  The crate also parses
 untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
 extension update manifests and suggestion replies are schema-checked
-behind the FFI before Qt sees them, and bookmark XBEL files get a
-Rust structural gate ahead of the Qt tree reader.
+behind the FFI before Qt sees them.  With the flag set the crate is
+also the canonical bookmark + history store: bookmarks.xbel stays the
+on-disk format but is parsed and emitted in Rust (queried lazily, one
+node handle per call — no bulk tree marshal), and history lives in a
+SQLite history.db (visits plus per-host favicons that persist across
+restarts) that imports the legacy QDataStream file on first run.
 
 Optional accelerated downloads: `qmake CONFIG+=rustdl` builds
 src/rustdl (reqwest + std::thread behind a C ABI, cargo run by qmake)

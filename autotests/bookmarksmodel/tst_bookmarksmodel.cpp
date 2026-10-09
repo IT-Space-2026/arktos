@@ -38,6 +38,9 @@ private slots:
     void mime();
     void dropUrls();
     void indexForNode();
+#ifdef ARORA_RUSTCORE
+    void rustPersistence();
+#endif
 };
 
 static BookmarkNode *makeBookmark(const QString &title, const QString &url)
@@ -303,6 +306,34 @@ void tst_BookmarksModel::indexForNode()
     // The root has no index.
     QCOMPARE(model->index(manager.bookmarks()), QModelIndex());
 }
+
+#ifdef ARORA_RUSTCORE
+// RCORE02: edits write through to the Rust XBEL store; a fresh
+// manager reloads them from bookmarks.xbel (atomic Rust write).
+void tst_BookmarksModel::rustPersistence()
+{
+    {
+        BookmarksManager manager;
+        manager.addBookmark(manager.menu(),
+            makeBookmark(QLatin1String("Persist"),
+                         QLatin1String("https://persist.example.com")));
+    }   // dtor flushes the pending autosave
+    {
+        BookmarksManager manager;
+        bool found = false;
+        const QList<BookmarkNode *> children = manager.menu()->children();
+        for (BookmarkNode *node : children) {
+            if (node->url == QLatin1String("https://persist.example.com")) {
+                QCOMPARE(node->title, QLatin1String("Persist"));
+                found = true;
+            }
+        }
+        QVERIFY(found);
+        // Leave the persisted file clean for the next manager.
+        clearFolder(manager, manager.menu());
+    }
+}
+#endif // ARORA_RUSTCORE
 
 QTEST_MAIN(tst_BookmarksModel)
 #include "tst_bookmarksmodel.moc"

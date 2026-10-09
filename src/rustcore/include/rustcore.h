@@ -208,6 +208,74 @@ RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
 RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
                           RcBuffer *outJson);
 
+/* --- bookmark store (RCORE02a) ---------------------------------------
+ * The canonical bookmark tree.  Nodes are addressed by uint64
+ * handles; 0 is the null handle and rc_bm_root() is the root.
+ * Children are enumerated one node per call — there is deliberately
+ * no bulk tree marshal, so models stay O(touched-rows).
+ *
+ * Node JSON (rc_bm_get / rc_bm_create):
+ *   {"type":0..3,"title","url","desc","expanded":bool,"tags":[...]}
+ *   type: 0 Root, 1 Folder, 2 Bookmark, 3 Separator (the
+ *   BookmarkNode::Type ordinals).
+ *
+ * detach() unlinks a subtree but keeps it addressable until attach()
+ * or destroy() — the undo stack's resurrect path.  Mutations emit the
+ * "bookmarks" change topic. */
+uint64_t rc_bm_root(void);
+/* Missing file = empty store (first run), not an error. */
+RcStatus rc_bm_load(const char *pathUtf8);
+RcStatus rc_bm_load_mem(const uint8_t *xbel, size_t len);
+/* Atomic temp + fsync + rename. */
+RcStatus rc_bm_save(const char *pathUtf8);
+int64_t rc_bm_child_count(uint64_t node);      /* -1 on bad handle */
+uint64_t rc_bm_child_at(uint64_t node, int64_t row);
+uint64_t rc_bm_parent(uint64_t node);
+char *rc_bm_get(uint64_t node);                /* JSON; rc_string_free */
+uint64_t rc_bm_create(uint64_t parent, int64_t row,
+                      const char *jsonUtf8);   /* 0 on error */
+RcStatus rc_bm_attach(uint64_t parent, int64_t row, uint64_t node);
+RcStatus rc_bm_detach(uint64_t node);
+RcStatus rc_bm_destroy(uint64_t node);
+RcStatus rc_bm_set_title(uint64_t node, const char *valueUtf8);
+RcStatus rc_bm_set_url(uint64_t node, const char *valueUtf8);
+RcStatus rc_bm_set_desc(uint64_t node, const char *valueUtf8);
+RcStatus rc_bm_set_expanded(uint64_t node, int expanded);
+/* JSON string array replaces the tag list. */
+RcStatus rc_bm_set_tags(uint64_t node, const char *jsonUtf8);
+/* Exact-url dedup lookup: first matching bookmark handle, or 0. */
+uint64_t rc_bm_find(const char *urlUtf8);
+
+/* --- history store (RCORE02b) -----------------------------------------
+ * rusqlite-backed visit log + per-host icon table; every mutation
+ * writes through, so the database is always current.  Default path
+ * <data dir>/history.db (rc_set_data_dir); an explicit path override
+ * exists for tests.
+ *
+ * The listing collapses consecutive rows identical in
+ * (url,title,ts) — the legacy file parser's dedup rule.  Mutations
+ * emit the "history" change topic. */
+RcStatus rc_hist_open(const char *pathOrNullUtf8);
+/* Existence check without opening — gates the legacy-file import. */
+int rc_hist_exists(const char *pathOrNullUtf8);
+int64_t rc_hist_count(void);                   /* -1 when not open */
+/* {"url","title","ts"} of deduped row, newest first; rc_string_free */
+char *rc_hist_entry_at(int64_t row);
+RcStatus rc_hist_add(const char *urlUtf8, const char *titleUtf8,
+                     int64_t tsMs);
+RcStatus rc_hist_update_title(const char *urlUtf8,
+                              const char *titleUtf8);
+RcStatus rc_hist_remove(const char *urlUtf8, const char *titleUtf8,
+                        int64_t tsMs);
+RcStatus rc_hist_clear(void);
+
+/* Per-host favicons (the HIST01 persistence folded into the core):
+ * PNG blobs keyed by host. */
+RcStatus rc_hist_icon_set(const char *hostUtf8,
+                          const uint8_t *png, size_t len);
+RcStatus rc_hist_icon_get(const char *hostUtf8, RcBuffer *out);
+RcStatus rc_hist_icon_clear(void);
+
 #ifdef __cplusplus
 }
 #endif

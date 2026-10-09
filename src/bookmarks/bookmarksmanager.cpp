@@ -87,6 +87,42 @@
 
 #include <qdebug.h>
 
+#ifdef ARORA_RUSTCORE
+#include "rustcorebridge.h"
+
+#include <rustcore.h>
+
+// Direct field writes bypass the undo commands (and BookmarkNode's
+// attach-time resync), so wherever the manager rewrites a field
+// itself the store copy has to be pushed explicitly.
+static void rustSyncTitle(BookmarkNode *node)
+{
+    if (node->handle())
+        rc_bm_set_title(node->handle(), node->title.toUtf8().constData());
+}
+
+static void rustSyncUrl(BookmarkNode *node)
+{
+    if (node->handle())
+        rc_bm_set_url(node->handle(), node->url.toUtf8().constData());
+}
+
+// `expanded` is written straight on the node by the dialog/toolbar —
+// no undo command — so the store learns it here at save time.  Only
+// materialized subtrees are walked; untouched ones still hold what
+// the Rust parser read.
+static void rustSyncExpanded(const BookmarkNode *node)
+{
+    if (node->handle())
+        rc_bm_set_expanded(node->handle(), node->expanded ? 1 : 0);
+    if (node->childrenLoaded()) {
+        const QList<BookmarkNode *> children = node->children();
+        for (BookmarkNode *child : children)
+            rustSyncExpanded(child);
+    }
+}
+#endif // ARORA_RUSTCORE
+
 #define BOOKMARKBAR QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Bar")
 #define BOOKMARKMENU QT_TRANSLATE_NOOP("BookmarksManager", "Bookmarks Menu")
 
@@ -104,6 +140,18 @@ BookmarksManager::BookmarksManager(QObject *parent)
             m_saveTimer, &AutoSaver::changeOccurred);
     connect(this, &BookmarksManager::entryChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
+#ifdef ARORA_RUSTCORE
+    if (QCoreApplication::instance()) {
+        // Rust-side writers announce themselves through the queued
+        // callback->signal bridge; the topic marks the store dirty so
+        // their changes reach the on-disk XBEL like local edits do.
+        connect(RustCoreBridge::instance(), &RustCoreBridge::storeChanged,
+                this, [this](const QString &topic) {
+            if (topic == QLatin1String("bookmarks"))
+                m_saveTimer->changeOccurred();
+        });
+    }
+#endif
 }
 
 BookmarksManager *BookmarksManager::instance()
@@ -133,6 +181,42 @@ void BookmarksManager::load()
     StartupProfile::Scope profileScope("bookmarks xbel load");
 
     QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
+
+#ifdef ARORA_RUSTCORE
+    // The Rust store owns parsing and the canonical tree; the C++
+    // nodes below are a lazily materialized view over its handles.
+    rustCoreEnsureDataDir();
+    RcStatus st = RC_OK;
+    if (QFile::exists(bookmarkFile))
+        st = rc_bm_load(bookmarkFile.toUtf8().constData());
+    if (st != RC_OK || !QFile::exists(bookmarkFile)) {
+        // First run, or a document the safe parser refused: fall back
+        // to the bundled defaults like the Qt reader did, then warn.
+        bool ok = false;
+        QFile defaults(QLatin1String(":defaultbookmarks.xbel"));
+        if (defaults.open(QIODevice::ReadOnly)) {
+            const QByteArray xbel = defaults.readAll();
+            ok = rc_bm_load_mem(
+                    reinterpret_cast<const uint8_t *>(xbel.constData()),
+                    size_t(xbel.size())) == RC_OK;
+        }
+        if (!ok) {
+            // Last resort: an empty root can never fail to parse.
+            static const char kEmptyXbel[] = "<xbel version=\"1.0\"/>";
+            rc_bm_load_mem(reinterpret_cast<const uint8_t *>(kEmptyXbel),
+                           sizeof(kEmptyXbel) - 1);
+        }
+        if (st != RC_OK) {
+            char *err = rc_last_error_message();
+            QMessageBox::warning(nullptr, QLatin1String("Loading Bookmark"),
+                tr("Error when loading bookmarks: %1")
+                    .arg(QString::fromUtf8(err ? err : "")));
+            rc_string_free(err);
+        }
+    }
+    m_bookmarkRootNode.reset(new BookmarkNode(BookmarkNode::Root));
+    m_bookmarkRootNode->setHandle(rc_bm_root());
+#else
     if (!QFile::exists(bookmarkFile))
         bookmarkFile = QLatin1String(":defaultbookmarks.xbel");
 
@@ -143,6 +227,7 @@ void BookmarksManager::load()
             tr("Error when loading bookmarks on line %1, column %2:\n"
                "%3").arg(reader.lineNumber()).arg(reader.columnNumber()).arg(reader.errorString()));
     }
+#endif
 
     QList<BookmarkNode*> others;
     for (int i = m_bookmarkRootNode->children().count() - 1; i >= 0; --i) {
@@ -152,6 +237,9 @@ void BookmarksManager::load()
             if ((node->title == tr("Toolbar Bookmarks")
                  || node->title == QLatin1String(BOOKMARKBAR)) && !m_toolbar) {
                 node->title = tr(BOOKMARKBAR);
+#ifdef ARORA_RUSTCORE
+                rustSyncTitle(node);
+#endif
 
                 m_toolbar = node;
             }
@@ -160,6 +248,9 @@ void BookmarksManager::load()
             if ((node->title == tr("Menu")
                  || node->title == QLatin1String(BOOKMARKMENU)) && !m_menu) {
                 node->title = tr(BOOKMARKMENU);
+#ifdef ARORA_RUSTCORE
+                rustSyncTitle(node);
+#endif
                 m_menu = node;
             }
         } else {
@@ -171,6 +262,9 @@ void BookmarksManager::load()
     if (!m_toolbar) {
         m_toolbar = new BookmarkNode(BookmarkNode::Folder, m_bookmarkRootNode.get());
         m_toolbar->title = tr(BOOKMARKBAR);
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_toolbar);
+#endif
     } else {
         m_bookmarkRootNode->add(m_toolbar);
     }
@@ -178,6 +272,9 @@ void BookmarksManager::load()
     if (!m_menu) {
         m_menu = new BookmarkNode(BookmarkNode::Folder, m_bookmarkRootNode.get());
         m_menu->title = tr(BOOKMARKMENU);
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_menu);
+#endif
     } else {
         m_bookmarkRootNode->add(m_menu);
     }
@@ -191,23 +288,41 @@ void BookmarksManager::save() const
     if (!m_loaded)
         return;
 
-    XbelWriter writer;
     QString bookmarkFile = BrowserPaths::dataFilePath(QLatin1String("bookmarks.xbel"));
     // Save root folder titles in English (i.e. not localized)
     m_menu->title = QLatin1String(BOOKMARKMENU);
     m_toolbar->title = QLatin1String(BOOKMARKBAR);
+#ifdef ARORA_RUSTCORE
+    rustCoreEnsureDataDir();
+    rustSyncTitle(m_menu);
+    rustSyncTitle(m_toolbar);
+    rustSyncExpanded(m_bookmarkRootNode.get());
+    // The store serializes and installs the file atomically itself.
+    if (rc_bm_save(bookmarkFile.toUtf8().constData()) != RC_OK)
+        qWarning() << "BookmarkManager: error saving to" << bookmarkFile;
+#else
+    XbelWriter writer;
     if (!writer.write(bookmarkFile, m_bookmarkRootNode.get()))
         qWarning() << "BookmarkManager: error saving to" << bookmarkFile;
+#endif
     // Restore localized titles
     retranslate();
 }
 
 void BookmarksManager::retranslate() const
 {
-    if (m_menu)
+    if (m_menu) {
         m_menu->title = tr(BOOKMARKMENU);
-    if (m_toolbar)
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_menu);
+#endif
+    }
+    if (m_toolbar) {
         m_toolbar->title = tr(BOOKMARKBAR);
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_toolbar);
+#endif
+    }
 }
 
 void BookmarksManager::addBookmark(BookmarkNode *parent, BookmarkNode *node, int row)
@@ -411,19 +526,33 @@ ChangeBookmarkCommand::ChangeBookmarkCommand(BookmarksManager *m_bookmarkManagae
 
 void ChangeBookmarkCommand::undo()
 {
-    if (m_title)
+    if (m_title) {
         m_node->title = m_oldValue;
-    else
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_node);
+#endif
+    } else {
         m_node->url = m_oldValue;
+#ifdef ARORA_RUSTCORE
+        rustSyncUrl(m_node);
+#endif
+    }
     emit m_bookmarkManagaer->entryChanged(m_node);
 }
 
 void ChangeBookmarkCommand::redo()
 {
-    if (m_title)
+    if (m_title) {
         m_node->title = m_newValue;
-    else
+#ifdef ARORA_RUSTCORE
+        rustSyncTitle(m_node);
+#endif
+    } else {
         m_node->url = m_newValue;
+#ifdef ARORA_RUSTCORE
+        rustSyncUrl(m_node);
+#endif
+    }
     emit m_bookmarkManagaer->entryChanged(m_node);
 }
 

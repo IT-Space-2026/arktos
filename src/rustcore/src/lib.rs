@@ -28,10 +28,18 @@
 //!     document formats — OpenSearch descriptors, gupdate extension
 //!     manifests, suggestions replies and the XBEL structural gate.
 //!     Qt XML/JSON only ever sees this crate's own output.
+//!   * bookmarks (RCORE02a): the canonical bookmark tree — XBEL on
+//!     disk, handle-addressed nodes, CRUD + lazy per-node queries
+//!     (no bulk tree marshaling) and atomic saves.
+//!   * history (RCORE02b): the canonical history store — rusqlite
+//!     visits + per-host icon tables in <data dir>/history.db,
+//!     write-through so the file is always current.
 
 mod blocklist;
+mod bookmarks;
 mod cred;
 mod error;
+mod history;
 mod notify;
 mod parsers;
 mod store;
@@ -701,6 +709,509 @@ pub unsafe extern "C" fn rc_suggest_parse(
         buffer_out(out, json);
         Ok(())
     })
+}
+
+// ---- bookmark store (RCORE02a) -------------------------------------
+//
+// The canonical bookmark tree lives here; the Qt side keeps
+// BookmarkNode proxies bound to node handles.  Models enumerate
+// children one node per call — there is deliberately no bulk
+// tree-marshaling entry point.
+
+/// The root node handle — always valid once the store exists.
+/// Handle 0 is the null handle everywhere below.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_root() -> u64 {
+    catch_unwind(AssertUnwindSafe(|| bookmarks::with(|b| b.root()))).unwrap_or(0)
+}
+
+/// Loads (replaces) the tree from an XBEL file; a missing file is an
+/// empty store, not an error.  RC_CORRUPT on malformed input — the
+/// previous tree stays untouched then.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_load(path: *const c_char) -> RcStatus {
+    let st = status_of(|| {
+        let p = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        bookmarks::with(|b| b.load_path(std::path::Path::new(p)))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// Loads the tree from an in-memory XBEL document — for content Qt
+/// owns (the bundled :defaultbookmarks.xbel resource, test fixtures).
+///
+/// # Safety
+/// `xbel` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_load_mem(xbel: *const u8, len: usize) -> RcStatus {
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(xbel, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad document pointer".into(),
+        })?;
+        bookmarks::with(|b| b.load_bytes(data))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// Serializes the tree to `path` atomically (temp + fsync + rename).
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_save(path: *const c_char) -> RcStatus {
+    status_of(|| {
+        let p = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        bookmarks::with(|b| b.save_path(std::path::Path::new(p)))
+    })
+}
+
+/// Child count of `node`, or -1 on a bad handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_child_count(node: u64) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        bookmarks::with(|b| b.child_count(node).map(|c| c as i64).unwrap_or(-1))
+    }))
+    .unwrap_or(-1)
+}
+
+/// Handle of `node`'s child at `row`, or 0.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_child_at(node: u64, row: i64) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        bookmarks::with(|b| b.child_at(node, row).unwrap_or(0))
+    }))
+    .unwrap_or(0)
+}
+
+/// Parent handle of `node`, or 0 (root / detached / bad handle).
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_parent(node: u64) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        bookmarks::with(|b| b.parent_of(node).unwrap_or(0))
+    }))
+    .unwrap_or(0)
+}
+
+/// JSON description of `node`:
+/// {"type","title","url","desc","expanded","tags":[...]}.
+/// Free with rc_string_free(); NULL on a bad handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_get(node: u64) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        bookmarks::with(|b| match b.get_json(node) {
+            Some(j) => util::to_c_string(j),
+            None => ptr::null_mut(),
+        })
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Creates a node from a JSON description (same shape as rc_bm_get)
+/// and links it under `parent` at `row` (-1 / past-the-end appends).
+/// Returns the new handle, 0 on error (rc_last_error_message).
+///
+/// # Safety
+/// `json` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_create(
+    parent: u64,
+    row: i64,
+    json: *const c_char,
+) -> u64 {
+    match catch_unwind(AssertUnwindSafe(|| {
+        let text = match unsafe { util::cstr(json) } {
+            Some(t) => t,
+            None => {
+                error::set_error("bad json pointer");
+                return 0;
+            }
+        };
+        let v: serde_json::Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("bad node json: {e}"));
+                return 0;
+            }
+        };
+        match bookmarks::with(|b| b.create(parent, row, &v)) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                0
+            }
+        }
+    })) {
+        Ok(h) => {
+            if h != 0 {
+                notify::emit("bookmarks");
+            }
+            h
+        }
+        Err(_) => {
+            error::set_error("panic inside rustcore");
+            0
+        }
+    }
+}
+
+/// Links a detached node under `parent` at `row`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_attach(parent: u64, row: i64, node: u64) -> RcStatus {
+    let st = status_of(|| bookmarks::with(|b| b.attach(parent, row, node)));
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// Unlinks `node` from its parent; the subtree stays alive until
+/// attach() or destroy() (this is what undo re-links).
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_detach(node: u64) -> RcStatus {
+    let st = status_of(|| bookmarks::with(|b| b.detach(node)));
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// Frees a detached subtree for good.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_destroy(node: u64) -> RcStatus {
+    let st = status_of(|| bookmarks::with(|b| b.destroy(node)));
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// # Safety
+/// `value` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_set_title(node: u64, value: *const c_char) -> RcStatus {
+    bm_set_str(node, value, "title")
+}
+
+/// # Safety
+/// `value` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_set_url(node: u64, value: *const c_char) -> RcStatus {
+    bm_set_str(node, value, "url")
+}
+
+/// # Safety
+/// `value` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_set_desc(node: u64, value: *const c_char) -> RcStatus {
+    bm_set_str(node, value, "desc")
+}
+
+unsafe fn bm_set_str(node: u64, value: *const c_char, field: &'static str) -> RcStatus {
+    let st = status_of(|| {
+        let v = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad value pointer".into(),
+        })?;
+        bookmarks::with(|b| b.set_str(node, field, v))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_set_expanded(node: u64, expanded: i32) -> RcStatus {
+    let st = status_of(|| bookmarks::with(|b| b.set_expanded(node, expanded != 0)));
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// Replaces the node's tag list from a JSON string array.
+///
+/// # Safety
+/// `json` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_set_tags(node: u64, json: *const c_char) -> RcStatus {
+    let st = status_of(|| {
+        let text = unsafe { util::cstr(json) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad tags pointer".into(),
+        })?;
+        let v: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("bad tags json: {e}"),
+            })?;
+        let tags = v
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .ok_or_else(|| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: "tags must be a json array".into(),
+            })?;
+        bookmarks::with(|b| b.set_tags(node, tags))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("bookmarks");
+    }
+    st
+}
+
+/// First bookmark handle whose url matches exactly — the "is this
+/// page bookmarked" dedup query.  0 when absent.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_find(url: *const c_char) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(url) } {
+            Some(u) => bookmarks::with(|b| b.find_url(u).unwrap_or(0)),
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+// ---- history store (RCORE02b) ----------------------------------------
+//
+// rusqlite-backed visit log + per-host icon table in
+// <data dir>/history.db (explicit path override for tests).  Every
+// mutation writes through — there is no save() call.
+
+/// Opens the history database at `path_or_null`; NULL resolves to
+/// <data dir>/history.db (requires rc_set_data_dir).  Reopening the
+/// same path is a no-op.
+///
+/// # Safety
+/// `path_or_null` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_open(path_or_null: *const c_char) -> RcStatus {
+    status_of(|| {
+        let p = if path_or_null.is_null() {
+            None
+        } else {
+            Some(unsafe { util::cstr(path_or_null) }.ok_or_else(|| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: "bad path pointer".into(),
+            })?)
+        };
+        history::with(|h| h.open(p))
+    })
+}
+
+/// Whether a history database exists on disk at `path_or_null`
+/// (NULL = the default <data dir> path) without opening it — the Qt
+/// side's "does the legacy file still need importing" check.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_exists(path_or_null: *const c_char) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let p = if path_or_null.is_null() {
+            None
+        } else {
+            unsafe { util::cstr(path_or_null) }
+        };
+        match p {
+            Some(p) => history::HistoryStore::exists_on_disk(Some(p)) as i32,
+            None => history::HistoryStore::exists_on_disk(None) as i32,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// Entry count of the deduped listing, -1 when the store is not open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_count() -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        history::with(|h| h.count().unwrap_or(-1))
+    }))
+    .unwrap_or(-1)
+}
+
+/// JSON {"url","title","ts"} for row `row` of the deduped
+/// newest-first listing.  NULL out of range or on error.
+/// Free with rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_entry_at(row: i64) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        history::with(|h| match h.entry_at(row) {
+            Ok(Some(j)) => util::to_c_string(j),
+            Ok(None) => ptr::null_mut(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        })
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Appends a visit (ts_ms = QDateTime::toMSecsSinceEpoch).  Duplicates
+/// are stored — dedup is a listing property, like the legacy file.
+///
+/// # Safety
+/// `url`/`title` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_add(
+    url: *const c_char,
+    title: *const c_char,
+    ts_ms: i64,
+) -> RcStatus {
+    let st = status_of(|| {
+        let u = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad url pointer".into(),
+        })?;
+        let t = unsafe { util::cstr(title) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad title pointer".into(),
+        })?;
+        history::with(|h| h.add(u, t, ts_ms))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Sets the title on the newest visit to `url`.
+///
+/// # Safety
+/// `url`/`title` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_update_title(
+    url: *const c_char,
+    title: *const c_char,
+) -> RcStatus {
+    let st = status_of(|| {
+        let u = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad url pointer".into(),
+        })?;
+        let t = unsafe { util::cstr(title) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad title pointer".into(),
+        })?;
+        history::with(|h| h.update_title(u, t))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Removes the newest row exactly matching (url, title, ts_ms).
+///
+/// # Safety
+/// `url`/`title` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_remove(
+    url: *const c_char,
+    title: *const c_char,
+    ts_ms: i64,
+) -> RcStatus {
+    let st = status_of(|| {
+        let u = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad url pointer".into(),
+        })?;
+        let t = unsafe { util::cstr(title) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad title pointer".into(),
+        })?;
+        history::with(|h| h.remove(u, t, ts_ms))
+    });
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Drops every visit (icons are kept — clearIcons is separate,
+/// matching HistoryManager::clear() vs clearIcons()).
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_clear() -> RcStatus {
+    let st = status_of(|| history::with(|h| h.clear()));
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Stores/updates the favicon PNG for `host` (per-host keying — the
+/// HIST01 icon store folded into the core).
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8; `png` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_icon_set(
+    host: *const c_char,
+    png: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let h = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        let data = unsafe { util::bytes(png, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon pointer".into(),
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        history::with(|s| s.icon_set(h, data, now))
+    })
+}
+
+/// Fetches the stored favicon PNG for `host`; RC_NOT_FOUND when the
+/// host has none.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8; `out` receives a buffer to
+/// release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_icon_get(host: *const c_char, out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        let h = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        let png = history::with(|s| s.icon_get(h))?;
+        buffer_out(out, png);
+        Ok(())
+    })
+}
+
+/// Drops every stored favicon.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_icon_clear() -> RcStatus {
+    status_of(|| history::with(|s| s.icon_clear()))
 }
 
 #[cfg(test)]

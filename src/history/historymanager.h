@@ -136,8 +136,9 @@ public:
 
     // Favicon lookup for the history models (replaces
     // BrowserApplication::icon() / the WebKit icon database).  Pages
-    // feed entries via setIcon(); the cache is memory-only — WebEngine
-    // has no app-visible on-disk icon store.
+    // feed entries via setIcon().  Under rustcore icons persist as
+    // per-host PNG blobs in history.db (the HIST01 store folded into
+    // the Rust core); otherwise the cache is memory-only.
     QIcon icon(const QUrl &url) const;
     void setIcon(const QUrl &url, const QIcon &icon);
     // QWebSettings::clearIconDatabase() replacement: drops the
@@ -165,6 +166,10 @@ private:
     void load();
     QString atomicString(const QString &string);
     void startFrecencyTimer();
+#ifdef ARORA_RUSTCORE
+    void importLegacyHistory();
+    void rustReplaceAll();
+#endif
 
     AutoSaver *m_saveTimer;
     int m_daysToExpire;

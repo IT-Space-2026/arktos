@@ -66,6 +66,11 @@
 #include <qlist.h>
 #include <qstringlist.h>
 
+#ifdef ARORA_RUSTCORE
+#include <stdint.h>
+#include <qbytearray.h>
+#endif
+
 class BookmarkNode
 {
 public:
@@ -93,7 +98,28 @@ public:
     QString desc;
     bool expanded;
 
+#ifdef ARORA_RUSTCORE
+    // rustcore store handle (RCORE02); 0 means "not backed by the
+    // Rust tree" — freshly created or imported nodes get a handle
+    // when add() uploads them.  children() materializes lazily from
+    // the store, one handle query per node: there is no bulk tree
+    // marshal, so model work stays O(touched rows).
+    uint64_t handle() const { return m_handle; }
+    void setHandle(uint64_t h) { m_handle = h; m_childrenLoaded = false; }
+    // False while the Rust children sit unmaterialized — the save
+    // path's expanded-flag sync only walks loaded subtrees.
+    bool childrenLoaded() const { return m_childrenLoaded; }
+#endif
+
 private:
+#ifdef ARORA_RUSTCORE
+    void materializeChildren();
+    void rustUpload(uint64_t parent, int64_t row);
+    void pushNodeFields() const;
+    QByteArray rustJson() const;
+    uint64_t m_handle = 0;
+    bool m_childrenLoaded = true;
+#endif
     BookmarkNode *m_parent;
     Type m_type;
     QList<BookmarkNode*> m_children;
