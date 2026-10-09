@@ -304,7 +304,16 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     for (QAction *action : toolsMenu->actions()) {
         QVERIFY2(!action->text().contains(QLatin1String("Search")),
                  qPrintable(action->text()));
+        // MENU03: Preferences moved to the File menu — nothing named
+        // Options/Preferences may linger in Tools.
+        QVERIFY2(!action->text().contains(QLatin1String("Options")),
+                 qPrintable(action->text()));
+        QVERIFY2(!action->text().contains(QLatin1String("Preferences")),
+                 qPrintable(action->text()));
     }
+    // The separator that used to precede Options... went with it.
+    QVERIFY(!toolsMenu->actions().isEmpty());
+    QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
     // The Ctrl+K carrier detached from the menu onto the window.
     QAction *webSearch = nullptr;
@@ -370,6 +379,8 @@ void tst_BrowserMainWindow::fileMenuOrder()
         entries.indexOf(QLatin1String("Private Browsing..."));
     const int closeWindowIndex =
         entries.indexOf(QLatin1String("Close Window"));
+    const int preferencesIndex =
+        entries.indexOf(QLatin1String("Preferences..."));
     QVERIFY(newWindow != -1 && newTab != -1 && newPrivateTab != -1
             && newTor != -1);
     QVERIFY(newWindow < newTab);
@@ -377,6 +388,21 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QVERIFY(newPrivateTab < newTor);
     QCOMPARE(privateBrowsing, -1);
     QVERIFY(newTor < closeWindowIndex);
+
+    // MENU03: Preferences sits directly above Close Window in the
+    // File menu's bottom group, keeping the Ctrl+, shortcut and the
+    // PreferencesRole platform hint.
+    QCOMPARE(preferencesIndex, closeWindowIndex - 1);
+    QAction *prefsAction = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Preferences..."))
+            prefsAction = action;
+    }
+    QVERIFY(prefsAction);
+    QCOMPARE(prefsAction->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+,")));
+    QCOMPARE(prefsAction->menuRole(), QAction::PreferencesRole);
 
     // The action fires the tab widget's private-tab slot and carries
     // the incognito-style shortcut (Ctrl+Shift+P is the palette).

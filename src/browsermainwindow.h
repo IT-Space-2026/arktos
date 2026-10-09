@@ -214,6 +214,7 @@ private:
     QAction *m_filePrintAction;
     QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
+    QAction *m_filePreferencesAction;
     QAction *m_fileCloseWindow;
     QAction *m_fileQuit;
 
@@ -270,7 +271,6 @@ private:
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
     QAction *m_toolsEnableInspectorAction;
-    QAction *m_toolsPreferencesAction;
     UserAgentMenu *m_toolsUserAgentMenu;
     QAction *m_adBlockDialogAction;
 
