@@ -155,6 +155,29 @@ RcStatus rc_urlstrip_load_rules(const uint8_t *jsonUtf8, size_t len);
  * previous ruleset stays active. */
 RcStatus rc_urlstrip_reload(void);
 
+/* --- domain blocklist (SEC18) ----------------------------------------
+ * Local anti-phishing/malware domain list — a lookup never leaves the
+ * machine.  The active set is the vendored seed (compiled in) unioned
+ * with "<data dir>/blocklist-domains.txt", which the Qt-side
+ * DomainBlocklist updater writes from remote feeds before calling
+ * rc_blocklist_reload().  Matching is exact + suffix: a listed
+ * "dom.ain" blocks "dom.ain" and every "*.dom.ain".
+ *
+ * rc_blocklist_check returns 1 when host is listed, 0 otherwise
+ * (bad pointers and malformed hosts read as "not listed" — the check
+ * never blocks on an FFI hiccup). */
+int rc_blocklist_check(const char *hostUtf8);
+
+/* Swap in a caller-supplied list body — plain domains, hostfile rows
+ * and URL rows all parse (update/test seam).  RC_CORRUPT when the
+ * body yields no usable entries; the previous list stays active. */
+RcStatus rc_blocklist_load(const uint8_t *textUtf8, size_t len);
+
+/* Re-run the seed-union-override merge.  RC_CORRUPT when an override
+ * exists but yields no usable entries — previous list stays active. */
+RcStatus rc_blocklist_reload(void);
+size_t rc_blocklist_count(void);
+
 #ifdef __cplusplus
 }
 #endif

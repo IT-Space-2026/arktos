@@ -21,7 +21,11 @@
 //!   * urlstrip (SEC17): ClearURLs-style tracking-parameter rules —
 //!     vendored JSON ruleset + data-dir override, strip over C FFI for
 //!     the request interceptors.
+//!   * blocklist (SEC18): local anti-phishing/malware domain list —
+//!     vendored seed + merged data-dir override, exact+suffix host
+//!     matching for the request interceptors.  No remote lookups.
 
+mod blocklist;
 mod cred;
 mod error;
 mod notify;
@@ -545,6 +549,64 @@ pub unsafe extern "C" fn rc_urlstrip_load_rules(
 #[no_mangle]
 pub unsafe extern "C" fn rc_urlstrip_reload() -> RcStatus {
     status_of(|| urlstrip::reload())
+}
+
+// ---- domain blocklist (SEC18) ----------------------------------------
+
+/// True when `host` equals a listed domain or sits beneath one.
+/// Never fails on content — a bad pointer or malformed host reads as
+/// "not listed", and a no-data-dir core answers from the vendored
+/// seed.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_blocklist_check(host: *const c_char) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => blocklist::check(h) as i32,
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// Replaces the active list with the given text body (plain domains,
+/// hostfile rows, URL rows — see the module docs).  RC_CORRUPT when
+/// the body yields no usable entries; the previous list stays active.
+///
+/// # Safety
+/// `text` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_blocklist_load(
+    text: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(text, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad blocklist pointer".into(),
+        })?;
+        let body = std::str::from_utf8(data).map_err(|_| error::Fail {
+            status: RcStatus::Corrupt,
+            msg: "blocklist: not UTF-8".into(),
+        })?;
+        blocklist::load(body)
+    })
+}
+
+/// Re-runs the vendored-seed ∪ `<data dir>/blocklist-domains.txt`
+/// merge.  RC_CORRUPT when an override exists but yields zero usable
+/// entries — the previous list stays active.
+#[no_mangle]
+pub unsafe extern "C" fn rc_blocklist_reload() -> RcStatus {
+    status_of(|| blocklist::reload())
+}
+
+/// Entry count of the active list — diagnostics/tests.
+#[no_mangle]
+pub unsafe extern "C" fn rc_blocklist_count() -> usize {
+    catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@
 #include "adblockschemeaccesshandler.h"
 #include "adblocksubscription.h"
 #include "browserpaths.h"
+#include "domainblocklist.h"
 #include "networkaccessmanager.h"
 
 #include <qdatetime.h>
@@ -141,6 +142,9 @@ void AdBlockManager::grantRemoteLists()
             continue;
         subscription->updateNow();
     }
+    // SEC18: consent freshly granted — the domain blocklist rides
+    // the same gate, so kick its (staleness-checked) fetch too.
+    DomainBlocklist::instance()->updateIfStale();
 }
 
 void AdBlockManager::maybePromptForListConsent(QWidget *parent)

@@ -24,7 +24,11 @@ stays the default when the flag is off.  The crate also carries a
 ClearURLs-style tracking-parameter stripper (vendored
 urlstrip-rules.json, reloadable from a data-dir override); with the
 flag set the privacy request interceptor redirects GET/HEAD requests
-to the stripped URL.
+to the stripped URL.  The crate also carries the local
+anti-phishing/malware domain blocklist (vendored seed merged with a
+consent-gated URLhaus+OpenPhish download); flagged builds refuse
+main-frame navigations to listed domains behind a warning
+interstitial with a session-only proceed.
 
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,

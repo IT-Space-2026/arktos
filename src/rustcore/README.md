@@ -64,6 +64,32 @@ wins over the builtin, a malformed override keeps the previous set.
 directly (update/test seam).  Without `CONFIG+=rustcore` the strip
 stage simply isn't there — the interceptors degrade to no-strip.
 
+## Domain blocklist (SEC18)
+
+`rc_blocklist_check(host)` is the local anti-phishing/malware domain
+probe the interceptors consult before a main-frame navigation leaves —
+the "poor man's Safe Browsing": every answer comes from a shipped,
+updatable list, so no URL or hash ever leaves the machine for a lookup.
+The list parser accepts every common feed row shape verbatim (bare
+domains, `ip domain` hostfile rows like URLhaus, `scheme://host/path`
+URL rows like OpenPhish, `||dom^`/ `*.dom` decorations); comments and
+junk are skipped, entries are validated as conservative DNS names and
+stored lowercase.
+
+Matching is exact + suffix: a listed `evil.example` blocks itself and
+every subdomain, a listed subdomain never reaches up, and label-boundary
+matching means `notevil.example` is never caught; IP literals only
+exact-match.  The active set is the union of the vendored seed
+(`data/blocklist-domains.txt`, embedded via `include_str!`) and
+`<data dir>/blocklist-domains.txt` written by the Qt-side
+DomainBlocklist updater, which then calls `rc_blocklist_reload()` —
+updates can only *add* coverage, a malformed or missing override falls
+back to the seed.  `rc_blocklist_load` swaps in a caller-supplied body
+(update/test seam); `rc_blocklist_count` reports the merged size.  The
+Rust side never touches the network — fetching is entirely Qt-side and
+consent-gated like remote filter lists.  Without `CONFIG+=rustcore` the
+whole feature is absent and nothing is ever blocked.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

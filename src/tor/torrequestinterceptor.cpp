@@ -41,6 +41,17 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
             info.requestUrl().scheme()))
         return;
     const QUrl url = info.requestUrl();
+    // SEC18: the anti-phishing/malware domain blocklist applies in
+    // tor windows too — a listed host is refused before any redirect
+    // stage; the recorded refusal lets WebPage swap in the warning
+    // interstitial.  (.onion hosts can't appear on a domain list, so
+    // this costs one hash probe per navigation.)
+    if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
+        && PrivacyRequestInterceptor::shouldBlockDomain(url)) {
+        PrivacyRequestInterceptor::recordBlockedDomainNav(url);
+        info.block(true);
+        return;
+    }
     // SEC17: tracking-param stripping applies in tor windows too — a
     // click identifier is a cross-site identifier regardless of the
     // exit path.  Folded into the http->https upgrade below so a

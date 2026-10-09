@@ -55,6 +55,23 @@ static bool s_blockRemoteFonts = false;
 static bool s_blockPrefetch = true;
 static bool s_blockThirdPartyWebSockets = false;
 static bool s_stripTrackingParams = true;
+static bool s_domainBlocklist = true;
+
+// SEC18: "proceed" choices on the anti-phishing/malware warning are
+// remembered for the session — deliberately nothing is persisted:
+// a durable bypass of a listed hostile domain is a foot-gun SAFE01's
+// plain-http exception can afford to be and this list cannot.
+// Written on the GUI thread, read on the IO thread.
+static QMutex s_domainBlockLock;
+static QSet<QString> s_sessionBlockedAllowed;
+static const int maxBlockedAllowedHosts = 256;
+
+// SEC18: main-frame http(s) URLs the interceptor just refused under
+// the domain blocklist.  Same consume-once contract as
+// s_blockedHttpNavs — WebPage swaps the recorded refusal for the
+// warning interstitial.
+static QSet<QString> s_blockedDomainNavs;
+static const int maxBlockedDomainNavs = 64;
 
 // SAFE07: hosts whose https main-frame load failed with a genuine
 // connection/TLS error — their http: requests stop being upgraded.
@@ -112,6 +129,8 @@ void PrivacyRequestInterceptor::loadSettings()
         settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
     const bool stripTrackingParams =
         settings.value(QLatin1String("stripTrackingParams"), true).toBool();
+    const bool domainBlocklist =
+        settings.value(QLatin1String("domainBlocklist"), true).toBool();
     QSet<QString> persistedHttpAllowed;
     const QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
@@ -132,6 +151,7 @@ void PrivacyRequestInterceptor::loadSettings()
         s_blockPrefetch = blockPrefetch;
         s_blockThirdPartyWebSockets = blockThirdPartyWebSockets;
         s_stripTrackingParams = stripTrackingParams;
+        s_domainBlocklist = domainBlocklist;
     }
     {
         const QMutexLocker lock(&s_httpAllowLock);
@@ -222,6 +242,101 @@ bool PrivacyRequestInterceptor::stripTrackingParamsEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_stripTrackingParams;
+}
+
+// SEC18: the list-membership half of the block decision — the match
+// itself runs in rustcore (exact + parent-suffix over the merged
+// seed ∪ updated set, all memory-safe).  Fail-open like strippedUrl:
+// an FFI hiccup or a no-rust build reads as "not listed", never as a
+// block.
+bool PrivacyRequestInterceptor::isDomainBlocked(const QString &host)
+{
+#if defined(ARORA_RUSTCORE)
+    if (host.isEmpty())
+        return false;
+    return rc_blocklist_check(host.toUtf8().constData()) == 1;
+#else
+    Q_UNUSED(host);
+    return false;
+#endif
+}
+
+bool PrivacyRequestInterceptor::domainBlocklistEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_domainBlocklist;
+}
+
+// The pure decision — safe on the IO thread (lock-guarded snapshots +
+// mutex-guarded sets + the FFI call only).
+bool PrivacyRequestInterceptor::shouldBlockDomain(const QUrl &url)
+{
+    {
+        QReadLocker lock(&s_policyLock);
+        if (!s_domainBlocklist)
+            return false;
+    }
+    const QString scheme = url.scheme();
+    if (scheme != QLatin1String("http") && scheme != QLatin1String("https"))
+        return false;
+    const QString host = url.host().toLower();
+    if (host.isEmpty())
+        return false;
+    {
+        const QMutexLocker lock(&s_domainBlockLock);
+        if (s_sessionBlockedAllowed.contains(host))
+            return false;
+    }
+    return isDomainBlocked(host);
+}
+
+bool PrivacyRequestInterceptor::isBlockedDomainAllowed(const QString &host)
+{
+    const QMutexLocker lock(&s_domainBlockLock);
+    return s_sessionBlockedAllowed.contains(host.toLower());
+}
+
+void PrivacyRequestInterceptor::allowBlockedDomain(const QString &host)
+{
+    const QString lowered = host.toLower();
+    if (lowered.isEmpty())
+        return;
+    const QMutexLocker lock(&s_domainBlockLock);
+    if (s_sessionBlockedAllowed.size() < maxBlockedAllowedHosts)
+        s_sessionBlockedAllowed.insert(lowered);
+}
+
+void PrivacyRequestInterceptor::clearBlockedDomainAllowance(
+        const QString &host)
+{
+    const QMutexLocker lock(&s_domainBlockLock);
+    s_sessionBlockedAllowed.remove(host.toLower());
+}
+
+void PrivacyRequestInterceptor::clearBlockedDomainAllowances()
+{
+    const QMutexLocker lock(&s_domainBlockLock);
+    s_sessionBlockedAllowed.clear();
+    s_blockedDomainNavs.clear();
+}
+
+void PrivacyRequestInterceptor::recordBlockedDomainNav(const QUrl &url)
+{
+    const QMutexLocker lock(&s_domainBlockLock);
+    if (s_blockedDomainNavs.size() >= maxBlockedDomainNavs) {
+        // A flooded set cannot keep the interstitial mapping — the
+        // block still happens, the page just falls back to the
+        // generic error.  Same conservative direction as the
+        // HTTPS-Only registry.
+        return;
+    }
+    s_blockedDomainNavs.insert(QString::fromUtf8(url.toEncoded()));
+}
+
+bool PrivacyRequestInterceptor::takeBlockedDomainNav(const QUrl &url)
+{
+    const QMutexLocker lock(&s_domainBlockLock);
+    return s_blockedDomainNavs.remove(QString::fromUtf8(url.toEncoded()));
 }
 
 // SEC17: the strip decision the interceptors redirect through.  The
@@ -879,6 +994,23 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         qDebug() << "PrivacyRequestInterceptor: third-party ws block"
                  << url << "on" << info.firstPartyUrl();
 #endif
+        info.block(true);
+        return;
+    }
+
+    // SEC18: anti-phishing/malware domain blocklist — a listed host
+    // is stopped before the strip/upgrade stages (no point paying a
+    // redirect into a domain the next hop would refuse anyway, and
+    // the recorded refusal keeps the originally requested URL for
+    // WebPage's interstitial swap).  Redirect follow-ups re-enter
+    // this whole pipeline, so a mid-chain hop onto a listed domain
+    // is caught identically.
+    if (resourceType == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
+        && shouldBlockDomain(url)) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: domain block" << url;
+#endif
+        recordBlockedDomainNav(url);
         info.block(true);
         return;
     }

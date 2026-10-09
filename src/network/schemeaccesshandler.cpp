@@ -131,6 +131,9 @@ void SchemeAccessHandler::installInterstitialHandlers(QWebEngineProfile *profile
     profile->installUrlSchemeHandler(
             QByteArrayLiteral("arora-http-warning"),
             new InterstitialSchemeHandler(profile));
+    profile->installUrlSchemeHandler(
+            QByteArrayLiteral("arora-site-block"),
+            new InterstitialSchemeHandler(profile));
     installed.insert(profile);
     QObject::connect(profile, &QObject::destroyed, profile, [profile]() {
         installed.remove(profile);
@@ -175,6 +178,17 @@ void SchemeAccessHandler::registerUrlSchemes()
     httpWarningScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
     httpWarningScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
     QWebEngineUrlScheme::registerScheme(httpWarningScheme);
+
+    // SEC18: arora-site-block: carries the anti-phishing/malware
+    // domain-block warning interstitial from the same nonce registry;
+    // its action links are proceed (allow this host for the session)
+    // / back — there is deliberately no "always": a persisted bypass
+    // of a listed hostile domain is a foot-gun.
+    QWebEngineUrlScheme siteBlockScheme(
+        QByteArrayLiteral("arora-site-block"));
+    siteBlockScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+    siteBlockScheme.setFlags(QWebEngineUrlScheme::SecureScheme);
+    QWebEngineUrlScheme::registerScheme(siteBlockScheme);
 }
 
 void SchemeAccessHandler::installAll(QWebEngineProfile *profile, QObject *parent)

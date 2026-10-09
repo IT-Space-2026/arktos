@@ -319,6 +319,33 @@ public:
     static bool stripTrackingParamsEnabled();
     static QUrl strippedUrl(const QUrl &url);
 
+    // SEC18: local anti-phishing/malware domain blocklist — the
+    // rustcore blocklist module answers every lookup locally (vendored
+    // seed ∪ <data dir>/blocklist-domains.txt, exact + parent-suffix
+    // match; no remote lookups ever).  A main-frame navigation to a
+    // listed host is refused and WebPage shows the
+    // arora-site-block: warning interstitial; "proceed" remembers the
+    // host for the session only (the choice is logged, nothing is
+    // persisted — a durable bypass of a listed hostile domain is a
+    // foot-gun SAFE01's http exception can afford to be and this list
+    // cannot).  privacy/domainBlocklist (default on) is the toggle;
+    // no-rust builds never block.
+    static bool domainBlocklistEnabled();
+    // The pure decisions — safe on the IO thread.  isDomainBlocked is
+    // the FFI half (list membership only); shouldBlockDomain is the
+    // full policy (toggle + scheme + session-proceed + membership).
+    static bool isDomainBlocked(const QString &host);
+    static bool shouldBlockDomain(const QUrl &url);
+    static bool isBlockedDomainAllowed(const QString &host);
+    static void allowBlockedDomain(const QString &host);
+    static void clearBlockedDomainAllowance(const QString &host);
+    static void clearBlockedDomainAllowances();  // test cleanup
+    // Same consume-once blocked-navigation registry as the HTTPS-Only
+    // one — the interceptor records, WebPage takes and swaps in the
+    // warning.
+    static void recordBlockedDomainNav(const QUrl &url);
+    static bool takeBlockedDomainNav(const QUrl &url);
+
 private:
     AdBlockRequestInterceptor *m_adBlock;
     QString m_scope;   // SAFE07: downgradeScope() of the owning profile

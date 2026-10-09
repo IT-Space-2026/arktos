@@ -17,6 +17,7 @@ SUBDIRS  = \
     csp \
     devtools \
     dialogs \
+    domainblock \
     downloadmanager \
     historyfiltermodel \
     historymanager \

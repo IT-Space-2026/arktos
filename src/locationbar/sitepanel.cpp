@@ -232,6 +232,9 @@ void SitePanel::refresh()
     else if (scheme == QLatin1String("arora-http-warning"))
         m_securityLabel->setText(
             tr("Blocked by HTTPS-Only mode — the site is not secure"));
+    else if (scheme == QLatin1String("arora-site-block"))
+        m_securityLabel->setText(
+            tr("Blocked — the domain is on the phishing/malware list"));
     else if (scheme == QLatin1String("https"))
         m_securityLabel->setText(tr("Connection is secure (HTTPS)"));
     else if (scheme == QLatin1String("http"))

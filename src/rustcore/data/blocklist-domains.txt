@@ -1,0 +1,52 @@
+# Arora SEC18 domain blocklist — vendored seed.
+#
+# Local anti-phishing/malware list: matched as exact-host + suffix
+# (a listed "dom.ain" blocks "dom.ain" and "*.dom.ain").  This seed
+# ships with the binary so blocking works fully offline; the updater
+# (consent-gated, TELEM01) merges fresh feeds into
+# <data dir>/blocklist-domains.txt, and the runtime set is the UNION
+# of this file plus the override — an update can only add coverage,
+# never quietly unblock a seed domain.
+#
+# Row shapes the parser accepts (upstream feeds drop in unchanged):
+#   plain.example                     bare domain
+#   127.0.0.1<TAB>dom.ain             hostfile rows (URLhaus)
+#   https://dom.ain/path?query        URL rows (OpenPhish)
+#   ||dom.ain^  /  *.dom.ain          adblock-style decorations
+#
+# Update sources:
+#   https://urlhaus.abuse.ch/downloads/hostfile/   (malware, abuse.ch)
+#   https://openphish.com/feed.txt                  (phishing, community)
+#
+# testsafebrowsing.appspot.com is Google's own Safe-Browsing probe
+# domain — designed to be flagged, so it doubles as the manual
+# end-to-end fixture for this feature.
+testsafebrowsing.appspot.com
+#
+# Malware/phishing seed (abuse.ch URLhaus class — long-lived C2,
+# dropper and phish-kit hosts).
+198-macros.com
+argon-client.com
+checkfivem.com
+debugify.net
+donutclients.st
+donutclientsmods.xyz
+donutsmpclient.com
+embedone.com
+floppaclient.com
+hitman-pro.ru
+ikovrsps.com
+local-update.com
+meteorclients.com
+meteorrejects.net
+odinclient.st
+opsecmod.st
+phantom-client.com
+polarclient.net
+polinexclient.org
+prestigeclient.st
+reauthenticator.com
+sayosay.cc
+screenconnect.pro
+skyblock-addons.com
+windowsdiagnostics.st
