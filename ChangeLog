@@ -62,6 +62,10 @@ UI:
   Cancel or closing the tab discards, and settings deep links (Search
   engines, pop-up settings, Containers, command palette) open the tab
   on the right section (PREFS01).
+- Preferences icons are a uniform size: the sidebar sections, the
+  icon-theme picker previews and the engine list are all pinned to
+  the style's small-icon metric, so mixed theme assets no longer
+  render at different heights (ICONS02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

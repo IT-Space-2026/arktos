@@ -108,6 +108,7 @@
 #include <qsettings.h>
 #include <qstackedwidget.h>
 #include <qstandardpaths.h>
+#include <qstyle.h>
 #include <qfiledialog.h>
 #include <qheaderview.h>
 #include <qpixmap.h>
@@ -156,6 +157,17 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         if (QListWidgetItem *item = pagesList->item(i))
             item->setIcon(AroraIcon::get(QLatin1String(pageIcons[i])));
     }
+    // ICONS02: with no explicit iconSize the view paints each icon at
+    // whatever nominal size the resolved asset carries — themes ship
+    // mixed 16/22/32 assets, so rows render unevenly and the label
+    // baselines drift.  Pin the extent at the widget level (never in
+    // the theme files) so every current and future set is uniform;
+    // it's widget state, so a runtime AroraIcon::setTheme re-resolve
+    // can't regrow it.
+    const int chromeIconExtent =
+        style()->pixelMetric(QStyle::PM_SmallIconSize);
+    pagesList->setIconSize(QSize(chromeIconExtent, chromeIconExtent));
+    pagesList->setUniformItemSizes(true);
     // Fixed-width nav column sized to the longest translated label.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
                              + 2 * pagesList->frameWidth() + 8);
@@ -180,6 +192,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
     // the id, each option previews its own view-refresh glyph.
+    // ICONS02: each set's preview resolves at its own canvas size —
+    // pin it so the combo rows stay uniform.
+    iconThemeCombo->setIconSize(QSize(chromeIconExtent, chromeIconExtent));
     for (const QString &id : AroraIcon::themeIds()) {
         const int row = iconThemeCombo->count();
         iconThemeCombo->addItem(AroraIcon::themeDisplayName(id), id);
@@ -367,6 +382,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // m_engineFieldsDirty until editingFinished or the next action
     // commits them.
     engineTree->setItemDelegate(new PlainTextItemDelegate(engineTree));
+    // ICONS02: favicon sources aren't uniform either — same pin.
+    engineTree->setIconSize(QSize(chromeIconExtent, chromeIconExtent));
     engineTree->header()->setStretchLastSection(false);
     engineTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     connect(engineTree, &QTreeWidget::itemSelectionChanged,

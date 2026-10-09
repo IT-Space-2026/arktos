@@ -27,9 +27,11 @@
 #include <QtGui/QtGui>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
+#include <qstyle.h>
 #include <qwebengineprofile.h>
 
 #include "settings.h"
+#include "aroraicon.h"
 #include "browserapplication.h"
 #include "extensionreviewdialog.h"
 #include "browserprofile.h"
@@ -62,6 +64,7 @@ private slots:
     void resetSearchSettings();
     void sidebarNavigation();
     void sidebarSettings();
+    void uniformSidebarIcons();
     void scrollablePages();
     void subDialogButtons();
     void setHomeToCurrentPage();
@@ -815,6 +818,47 @@ void tst_SettingsDialog::sidebarSettings()
              false);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::LeftDockWidgetArea));
+}
+
+// ICONS02: the sidebar, the theme-preview combo and the engine list
+// all pin iconSize at the style's small-icon metric — without it the
+// delegate paints each icon at the resolved asset's own nominal size
+// and rows render unevenly.  A runtime theme switch must not regrow
+// the pin.
+void tst_SettingsDialog::uniformSidebarIcons()
+{
+    const QString originalTheme = AroraIcon::theme();
+    SettingsDialog dialog;
+
+    const int extent =
+        dialog.style()->pixelMetric(QStyle::PM_SmallIconSize);
+    const QSize iconExtent(extent, extent);
+
+    QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
+    QVERIFY(dialog.pagesList->uniformItemSizes());
+    QCOMPARE(dialog.iconThemeCombo->iconSize(), iconExtent);
+    QCOMPARE(dialog.engineTree->iconSize(), iconExtent);
+
+    const auto checkRows = [&dialog]() {
+        const int height = dialog.pagesList->sizeHintForRow(0);
+        QVERIFY(height > 0);
+        for (int row = 0; row < dialog.pagesList->count(); ++row) {
+            QCOMPARE(dialog.pagesList->sizeHintForRow(row), height);
+            QVERIFY(!dialog.pagesList->item(row)->icon().isNull());
+        }
+    };
+    checkRows();
+
+    // Re-resolving under each bundled set keeps the pinned extent and
+    // uniform row heights.
+    for (const QString &id : AroraIcon::themeIds()) {
+        if (id == QLatin1String("native"))
+            continue;
+        AroraIcon::setTheme(id);
+        QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
+        checkRows();
+    }
+    AroraIcon::setTheme(originalTheme);
 }
 
 // UIP06: every stacked page lives inside a scroll area so a page
