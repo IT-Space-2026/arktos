@@ -24,7 +24,9 @@
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
 #include <QtNetwork/QtNetwork>
+#include <qwebenginecontextmenurequest.h>
 #include <qwebenginefindtextresult.h>
+#include <qwebenginedownloadrequest.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -132,6 +134,11 @@ private slots:
     void webViewWithSearch();
     void contextMenuLinkActions();
     void contextMenuPageActions();
+    void contextMenuImageActions();
+    void contextMenuImageLinkActions();
+    void contextMenuCanvasActions();
+    void contextMenuVideoPosterActions();
+    void contextMenuBlobImage();
 };
 
 // POL01 helpers — the context menu is exec()d inside the right-button
@@ -656,6 +663,329 @@ void tst_WebView::contextMenuPageActions()
     QVERIFY(dialog);
     dialog->close();
     QTRY_VERIFY_WITH_TIMEOUT(dialog.isNull(), 5000);
+}
+
+// CTX01 helpers — 'Open Image in New Tab/Window' lands in a detached
+// top-level WebView when the source has no TabWidget (openUrlInTarget's
+// fallback), so the tests locate it among the application's top-levels.
+static WebView *findDetachedView(WebView *source)
+{
+    const QWidgetList tops = QApplication::topLevelWidgets();
+    for (QWidget *top : tops) {
+        WebView *candidate = qobject_cast<WebView *>(top);
+        if (candidate && candidate != source)
+            return candidate;
+    }
+    return nullptr;
+}
+
+// Waits for a detached view whose committed url has the given scheme,
+// then returns it (still alive) or nullptr on timeout.
+static WebView *awaitDetachedView(WebView *source,
+                                  const QString &scheme)
+{
+    WebView *detached = nullptr;
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + 15000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+        detached = findDetachedView(source);
+        if (detached
+            && detached->url().scheme() == scheme)
+            return detached;
+        QTest::qWait(50);
+    }
+    return nullptr;
+}
+
+static void closeDetached(WebView *view)
+{
+    QPointer<WebView> guard(view);
+    if (view)
+        view->close();
+    QTRY_VERIFY_WITH_TIMEOUT(guard.isNull(), 5000);
+}
+
+// CTX01: a plain <img> offers the full image block; 'Open Image in
+// New Tab' loads the mediaUrl in a detached view.  The img source is
+// itself a data: url — covering the data: open path at the same time.
+void tst_WebView::contextMenuImageActions()
+{
+    const QString imageSrc = QStringLiteral(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA"
+        "AfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body><img src='%1' "
+        "style='position:fixed;left:0;top:0;width:200px;height:200px'>"
+        "</body></html>").arg(imageSrc)));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    bool opened = false;
+    bool sawSave = false;
+    bool sawCopy = false;
+    bool sawCopyLocation = false;
+    bool sawBlock = false;
+    const bool popped = driveRightClick(&view, QPoint(40, 40),
+                                        [&](QMenu *menu) {
+        sawSave = findMenuAction(
+            menu, QStringLiteral("Save Image")) != nullptr;
+        sawCopy = findMenuAction(
+            menu, QStringLiteral("Copy Image")) != nullptr;
+        sawCopyLocation = findMenuAction(
+            menu, QStringLiteral("Copy Image Location")) != nullptr;
+        sawBlock = findMenuAction(
+            menu, QStringLiteral("Block Image")) != nullptr;
+        if (QAction *open = findMenuAction(
+                menu, QStringLiteral("Open Image in New Tab"))) {
+            opened = true;
+            open->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on image right-click");
+    QVERIFY(opened);
+    QVERIFY(sawSave);
+    QVERIFY(sawCopy);
+    QVERIFY(sawCopyLocation);
+    QVERIFY(sawBlock);
+
+    WebView *detached = awaitDetachedView(&view, QLatin1String("data"));
+    QVERIFY2(detached, "open-in-new-tab produced no data: view");
+    QCOMPARE(detached->url(), QUrl(imageSrc));
+    closeDetached(detached);
+}
+
+// CTX01: an image that is also a link keeps BOTH menu blocks — the
+// link actions and the image actions.
+void tst_WebView::contextMenuImageLinkActions()
+{
+    const QString imageSrc = QStringLiteral(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA"
+        "AfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body><a href='https://example.com/x'>"
+        "<img src='%1' style='position:fixed;left:0;top:0;width:200px;"
+        "height:200px'></a></body></html>").arg(imageSrc)));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    bool sawLinkOpen = false;
+    bool sawCopyLink = false;
+    bool sawImageOpen = false;
+    bool sawCopyImageLocation = false;
+    const bool popped = driveRightClick(&view, QPoint(40, 40),
+                                        [&](QMenu *menu) {
+        sawLinkOpen = findMenuAction(
+            menu, QStringLiteral("Open in New Tab")) != nullptr;
+        sawCopyLink = findMenuAction(
+            menu, QStringLiteral("Copy Link Location")) != nullptr;
+        sawImageOpen = findMenuAction(
+            menu, QStringLiteral("Open Image in New Tab")) != nullptr;
+        sawCopyImageLocation = findMenuAction(
+            menu, QStringLiteral("Copy Image Location")) != nullptr;
+    });
+    QVERIFY2(popped, "no context menu on linked image right-click");
+    QVERIFY(sawLinkOpen);
+    QVERIFY(sawCopyLink);
+    QVERIFY(sawImageOpen);
+    QVERIFY(sawCopyImageLocation);
+}
+
+// CTX01: <canvas> has no mediaUrl — the menu must still offer image
+// actions resolved through the in-page serializer (contextimage.js).
+// Open lands a data: png in a detached view, Copy puts the pixels on
+// the clipboard, Save issues a data: download on the profile.
+void tst_WebView::contextMenuCanvasActions()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body style='margin:0'>"
+        "<canvas id='c' width='160' height='120' "
+        "style='position:fixed;left:0;top:0'></canvas><script>"
+        "var x=document.getElementById('c').getContext('2d');"
+        "x.fillStyle='#e02040';x.fillRect(0,0,160,120);"
+        "</script></body></html>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    // Let the paint script run before the menu is built.
+    QTest::qWait(300);
+
+    bool sawOpenTab = false;
+    bool sawOpenWindow = false;
+    bool sawSave = false;
+    bool sawCopy = false;
+    const bool popped = driveRightClick(&view, QPoint(40, 40),
+                                        [&](QMenu *menu) {
+        sawOpenTab = findMenuAction(
+            menu, QStringLiteral("Open Image in New Tab")) != nullptr;
+        sawOpenWindow = findMenuAction(
+            menu, QStringLiteral("Open Image in New Window"))
+            != nullptr;
+        sawSave = findMenuAction(
+            menu, QStringLiteral("Save Image")) != nullptr;
+        if (QAction *copy = findMenuAction(
+                menu, QStringLiteral("Copy Image"))) {
+            sawCopy = true;
+            copy->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on canvas right-click");
+    QVERIFY(sawOpenTab);
+    QVERIFY(sawOpenWindow);
+    QVERIFY(sawSave);
+    QVERIFY(sawCopy);
+
+    // Copy decodes the serialized png onto the clipboard.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !QApplication::clipboard()->image().isNull(), 10000);
+    const QImage copied = QApplication::clipboard()->image();
+    QCOMPARE(copied.width(), 160);
+    QCOMPARE(copied.height(), 120);
+
+    // 'Open Image in New Tab' resolves the canvas to a png data url.
+    const bool poppedOpen = driveRightClick(&view, QPoint(40, 40),
+                                            [&](QMenu *menu) {
+        if (QAction *open = findMenuAction(
+                menu, QStringLiteral("Open Image in New Tab")))
+            open->trigger();
+    });
+    QVERIFY(poppedOpen);
+    WebView *detached = awaitDetachedView(&view, QLatin1String("data"));
+    QVERIFY2(detached, "canvas open produced no data: view");
+    QVERIFY(detached->url().toString().startsWith(
+        QLatin1String("data:image/png")));
+    closeDetached(detached);
+
+    // 'Save Image' issues a real download request for the data url on
+    // the page's profile.
+    QList<QUrl> requested;
+    QObject::connect(view.page()->profile(),
+            &QWebEngineProfile::downloadRequested, &view,
+            [&requested](QWebEngineDownloadRequest *download) {
+        requested.append(download->url());
+        download->cancel();
+    });
+    const bool poppedSave = driveRightClick(&view, QPoint(40, 40),
+                                            [&](QMenu *menu) {
+        if (QAction *save = findMenuAction(
+                menu, QStringLiteral("Save Image")))
+            save->trigger();
+    });
+    QVERIFY(poppedSave);
+    QTRY_VERIFY_WITH_TIMEOUT(!requested.isEmpty(), 15000);
+    QVERIFY(requested.first().toString().startsWith(
+        QLatin1String("data:image/png")));
+}
+
+// CTX01: a <video>'s poster frame is offered for opening — the
+// request only carries the stream url, so the poster attribute is
+// resolved in-page.
+void tst_WebView::contextMenuVideoPosterActions()
+{
+    const QString posterSrc = QStringLiteral(
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA"
+        "AfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body style='margin:0'>"
+        "<video poster='%1' src='data:video/mp4;base64,AAAA' "
+        "style='position:fixed;left:0;top:0;width:240px;height:160px'>"
+        "</video></body></html>").arg(posterSrc)));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    QTest::qWait(300);
+
+    // NOTE: Chromium only reports MediaTypeVideo when the element has
+    // a loadable absolute src — a src-less <video> is MediaTypeNone.
+    bool sawPoster = false;
+    const bool popped = driveRightClick(&view, QPoint(40, 40),
+                                        [&](QMenu *menu) {
+        if (QAction *poster = findMenuAction(
+                menu, QStringLiteral("Open Poster in New Tab"))) {
+            sawPoster = true;
+            poster->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on video right-click");
+    QVERIFY(sawPoster);
+
+    WebView *detached = awaitDetachedView(&view, QLatin1String("data"));
+    QVERIFY2(detached, "open-poster produced no data: view");
+    QCOMPARE(detached->url(), QUrl(posterSrc));
+    closeDetached(detached);
+}
+
+// CTX01: blob: media urls resolve inside the creating profile — a
+// page-generated blob image must still open in a new tab on the same
+// profile while the source document lives.
+void tst_WebView::contextMenuBlobImage()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body style='margin:0'>"
+        "<img id='i' style='position:fixed;left:0;top:0;width:120px;"
+        "height:120px'><script>"
+        "var c=document.createElement('canvas');c.width=c.height=8;"
+        "c.getContext('2d').fillRect(0,0,8,8);"
+        "c.toBlob(function(b){"
+        "document.getElementById('i').src=URL.createObjectURL(b);});"
+        "</script></body></html>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    // Wait until the blob url is actually assigned to the img.
+    std::shared_ptr<bool> probed(new bool(false));
+    std::shared_ptr<QString> src(new QString);
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + 15000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline
+           && !src->startsWith(QLatin1String("blob:"))) {
+        view.page()->runJavaScript(
+            QLatin1String("document.getElementById('i').src"),
+            [probed, src](const QVariant &result) {
+                *src = result.toString();
+                *probed = true;
+            });
+        QTRY_VERIFY_WITH_TIMEOUT(*probed, 5000);
+        *probed = false;
+        if (!src->startsWith(QLatin1String("blob:")))
+            QTest::qWait(100);
+    }
+    QVERIFY2(src->startsWith(QLatin1String("blob:")),
+             qPrintable(QStringLiteral("img src never became blob: %1")
+                        .arg(*src)));
+
+    bool opened = false;
+    const bool popped = driveRightClick(&view, QPoint(40, 40),
+                                        [&](QMenu *menu) {
+        if (QAction *open = findMenuAction(
+                menu, QStringLiteral("Open Image in New Tab"))) {
+            opened = true;
+            open->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on blob image right-click");
+    QVERIFY(opened);
+
+    WebView *detached = awaitDetachedView(&view, QLatin1String("blob"));
+    QVERIFY2(detached, "blob: image did not open in a detached view");
+    QVERIFY(detached->url().toString().startsWith(
+        QLatin1String("blob:")));
+    closeDetached(detached);
 }
 
 int main(int argc, char *argv[])

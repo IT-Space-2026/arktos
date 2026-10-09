@@ -66,6 +66,8 @@
 
 #include <qwebengineview.h>
 
+#include <functional>
+
 #include "tabwidget.h"
 
 class QWebEngineProfile;
@@ -149,6 +151,18 @@ private:
     void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
     void updateScriptBlockBar(bool blocked);
     void allowScriptsOnThisSite(bool persistent);
+    // CTX01: context-menu shapes Chromium's request cannot express —
+    // <canvas> pixels (no url), <video> posters and <img>s whose
+    // mediaUrl arrived empty are resolved in-page through
+    // contextimage.js.  grabContextImage reports the content as a url
+    // (a png data url for canvas), poster through
+    // openContextPosterInTarget.
+    void runContextImageScript(const QString &call,
+            const std::function<void(const QVariant &)> &callback);
+    void grabContextImage(const QPoint &viewPos, bool canvas,
+            const std::function<void(const QUrl &resolved)> &callback);
+    void openContextPosterInTarget(const QPoint &viewPos,
+            TabWidget::OpenUrlIn target);
 
 private slots:
     void setProgress(int progress);

@@ -489,6 +489,10 @@ Page polish (POL03):
     Settings → Appearance gains "Render pages in dark mode": Chromium's auto-dark mode inverts light pages site-by-site while the browser's own chrome keeps the desktop theme. Note the auto-inversion can mangle pages that are already dark or carry deliberate light branding — it is a convenience toggle, not a guaranteed readable result; turning it off restores the page instantly.
     Middle-click autoscroll is on by default on Linux/Windows and off on macOS (Settings → General → "Middle-click autoscroll"): pressing the middle button on a page enters Chromium's native grab-scroll reader. The toggle takes effect at next launch — the Blink feature flag is process-lifetime — and merges into any user-supplied --enable-blink-features list instead of clobbering it.
 
+Image context menu completion (CTX01):
+    The image context menu now covers the content shapes Chromium's context-menu request cannot express. Right-clicking a <canvas> offers "Open Image in New Window/Tab", "Save Image" and "Copy Image" — the pixels are serialized in-page to a PNG and opened or copied as an image (a canvas tainted by cross-origin content reports that it cannot be read instead of silently failing). A <video> element additionally offers "Open Poster in New Window/Tab" for its poster frame, and an <img> whose media URL never reached the request (for example a <picture> source pick or a broken-src placeholder) resolves its live source in-page so the same open/save/copy/block items still work.
+    "Open Image in New Tab" now also opens data: and blob: media URLs, not just http(s): data: images open as image documents and blob: URLs resolve because the new tab or window shares the page's profile — a blob URL is scoped to its storage partition, so it still dies with the source document. Plain http(s) images keep the Referer-header load they had before, and the javascript: refusal on untrusted input is unchanged.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

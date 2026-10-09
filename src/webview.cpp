@@ -86,14 +86,20 @@
 #include <qapplication.h>
 #include <qclipboard.h>
 #include <qdebug.h>
+#include <qfile.h>
+#include <qimage.h>
 #include <qmenubar.h>
 #include <qevent.h>
 #include <qmenu.h>
 #include <qmimedata.h>
+#include <qpointer.h>
 #include <qsettings.h>
+#include <qtimer.h>
+#include <qvariant.h>
 #include <qwebenginecontextmenurequest.h>
 #include <qwebenginehttprequest.h>
 #include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 
 WebView::WebView(QWidget *parent)
     : QWebEngineView(parent)
@@ -237,8 +243,12 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         cleanLinkAction->setData(request->linkUrl());
     }
 
-    if (request->mediaType() == QWebEngineContextMenuRequest::MediaTypeImage
-        && !request->mediaUrl().isEmpty()) {
+    const bool isImage = request->mediaType()
+            == QWebEngineContextMenuRequest::MediaTypeImage;
+    const bool isCanvas = request->mediaType()
+            == QWebEngineContextMenuRequest::MediaTypeCanvas;
+
+    if (isImage && !request->mediaUrl().isEmpty()) {
         if (!menu->isEmpty())
             menu->addSeparator();
         QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
@@ -264,6 +274,83 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                 this, &WebView::imageSearchRequested);
             imageSearchAction->setData(request->mediaUrl());
         }
+    } else if (isImage || isCanvas) {
+        // CTX01: a <canvas> reports no mediaUrl (its pixels only exist
+        // in page memory) and an <img> occasionally arrives with an
+        // empty one — resolve the content under the click point
+        // in-page via contextimage.js.  Canvas grabs hand back a png
+        // data: url, so open/save can share the url-based paths; a
+        // canvas has no location to copy or block rule to write.
+        if (!menu->isEmpty())
+            menu->addSeparator();
+        const QPoint position = request->position();
+        menu->addAction(tr("Open Image in New &Window"), this,
+                [this, position, isCanvas]() {
+            grabContextImage(position, isCanvas,
+                    [this](const QUrl &resolved) {
+                openUrlInTarget(resolved, TabWidget::NewWindow);
+            });
+        });
+        menu->addAction(tr("Open Image in New &Tab"), this,
+                [this, position, isCanvas]() {
+            grabContextImage(position, isCanvas,
+                    [this](const QUrl &resolved) {
+                openUrlInTarget(resolved, TabWidget::NewNotSelectedTab);
+            });
+        });
+        menu->addSeparator();
+        menu->addAction(tr("&Save Image"), this,
+                [this, position, isCanvas]() {
+            grabContextImage(position, isCanvas,
+                    [this](const QUrl &resolved) {
+                if (!resolved.isEmpty())
+                    m_page->download(resolved);
+            });
+        });
+        if (isCanvas) {
+            // The pixels serialize to a png data url — decode it into
+            // the clipboard image rather than the page's copy action
+            // (Chromium offers no canvas copy equivalent).
+            menu->addAction(tr("&Copy Image"), this,
+                    [this, position]() {
+                grabContextImage(position, true,
+                        [this](const QUrl &resolved) {
+                    const QString data = resolved.toString();
+                    const int comma = data.indexOf(QLatin1Char(','));
+                    const QImage image = QImage::fromData(
+                        QByteArray::fromBase64(
+                            data.mid(comma + 1).toLatin1()));
+                    if (!image.isNull()) {
+                        QApplication::clipboard()->setImage(image);
+                    } else {
+                        setStatusBarText(tr(
+                            "Could not decode the canvas image."));
+                    }
+                });
+            });
+        } else {
+            // The renderer still holds the pixels even when mediaUrl
+            // came through empty — the stock copy action reaches them.
+            menu->addAction(tr("&Copy Image"), this,
+                    &WebView::copyImageToClipboard);
+            menu->addAction(tr("C&opy Image Location"), this,
+                    [this, position]() {
+                grabContextImage(position, false,
+                        [](const QUrl &resolved) {
+                    QApplication::clipboard()->setText(
+                        resolved.toString());
+                });
+            });
+            menu->addSeparator();
+            menu->addAction(tr("Block Image"), this,
+                    [this, position]() {
+                grabContextImage(position, false,
+                        [](const QUrl &resolved) {
+                    AdBlockManager::instance()->showDialog()
+                        ->addCustomRule(resolved.toString());
+                });
+            });
+        }
     }
 
     // PIP01: right-click on a <video> offers the pop-out.  The
@@ -276,6 +363,17 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         menu->addAction(tr("Picture-in-Picture"), this,
                 [this, mediaUrl, position]() {
             m_pip->popOutContext(mediaUrl, position);
+        });
+        // CTX01: the poster frame is the video's image — the request
+        // carries only the stream url, so the poster attribute is
+        // resolved in-page (contextimage.js).
+        menu->addAction(tr("Open &Poster in New Window"), this,
+                [this, position]() {
+            openContextPosterInTarget(position, TabWidget::NewWindow);
+        });
+        menu->addAction(tr("Open Poster in New &Tab"), this,
+                [this, position]() {
+            openContextPosterInTarget(position, TabWidget::NewNotSelectedTab);
         });
     }
 
@@ -411,9 +509,22 @@ void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
         newView->setAttribute(Qt::WA_DeleteOnClose);
         newView->show();
     }
-    QWebEngineHttpRequest request(linkUrl);
-    request.setHeader("Referer", url().toEncoded());
-    newView->load(request);
+    // CTX01: keep the request-based load for http(s) — the Referer
+    // header preserves hotlink-protection behavior.  Everything else
+    // (data: canvas dumps, blob: media, file:, view-source:) has no
+    // use for the header and QWebEngineHttpRequest only applies extra
+    // headers to http(s) anyway; the plain url load keeps javascript:
+    // refused through isUrlAllowedOnUntrustedInput (SEC02).
+    const QString scheme = linkUrl.scheme();
+    if (scheme == QLatin1String("http")
+        || scheme == QLatin1String("https")) {
+        QWebEngineHttpRequest request(linkUrl);
+        request.setHeader("Referer", url().toEncoded());
+        newView->load(request);
+        return;
+    }
+    if (isUrlAllowedOnUntrustedInput(linkUrl))
+        newView->loadUrl(linkUrl);
 }
 
 void WebView::downloadImageToDisk()
@@ -733,4 +844,122 @@ void WebView::resizeEvent(QResizeEvent *event)
                 m_scriptBlockBar->sizeHint().height());
         m_scriptBlockBar->raise();
     }
+}
+
+// CTX01: the contextimage.js resolver, loaded once and concatenated
+// ahead of each call (the fetchLinks.js / pip.js convention).
+static QString contextImageBundle()
+{
+    static const QString bundle = [] {
+        QFile file(QLatin1String(":contextimage.js"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qWarning() << "WebView: Unable to open :contextimage.js";
+            return QString();
+        }
+        return QString::fromUtf8(file.readAll());
+    }();
+    return bundle;
+}
+
+void WebView::runContextImageScript(
+        const QString &call,
+        const std::function<void(const QVariant &)> &callback)
+{
+    const QString program = contextImageBundle()
+        + QLatin1Char('\n') + call;
+    if (m_page->settings()->testAttribute(
+            QWebEngineSettings::JavascriptEnabled)) {
+        m_page->runJavaScript(program, callback);
+        return;
+    }
+    // JSCTL/SECLVL: runJavaScript is silently dropped while
+    // JavascriptEnabled is off, but a video poster or canvas content
+    // is still rendered — the click is an explicit gesture on it, so
+    // lift the attribute for the injection window the same way
+    // PictureInPicture::runPageJs does (page scripts blocked at parse
+    // time do not retro-run while the flag is up).
+    m_page->settings()->setAttribute(
+        QWebEngineSettings::JavascriptEnabled, true);
+    QPointer<WebPage> livePage(m_page);
+    QTimer::singleShot(700, this, [livePage, program, callback]() {
+        if (!livePage)
+            return;
+        livePage->runJavaScript(program,
+                [callback, livePage](const QVariant &result) {
+            callback(result);
+            QTimer::singleShot(400, qApp, [livePage]() {
+                if (livePage) {
+                    livePage->settings()->setAttribute(
+                        QWebEngineSettings::JavascriptEnabled, false);
+                }
+            });
+        });
+    });
+    QTimer::singleShot(5000, this, [livePage]() {
+        if (livePage) {
+            livePage->settings()->setAttribute(
+                QWebEngineSettings::JavascriptEnabled, false);
+        }
+    });
+}
+
+// Resolves the image content under a context-menu click point:
+// canvas=true serializes the <canvas> to a png data url, canvas=false
+// resolves the <img>'s live source (currentSrc covers <picture> and
+// blob: sources).  Failures surface as a status-bar message.
+void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
+        const std::function<void(const QUrl &)> &callback)
+{
+    // The request's position is in view pixels; elementFromPoint wants
+    // CSS pixels (same conversion PictureInPicture applies).
+    qreal zoom = m_page->zoomFactor();
+    if (zoom <= 0)
+        zoom = 1.0;
+    const QString call = QStringLiteral("__aroraCtxImage.%1(%2,%3);")
+        .arg(QLatin1String(canvas ? "canvasData" : "imageUrl"))
+        .arg(viewPos.x() / zoom)
+        .arg(viewPos.y() / zoom);
+    QPointer<WebView> self(this);
+    runContextImageScript(call,
+            [self, canvas, callback](const QVariant &result) {
+        if (!self)
+            return;
+        const QVariantMap map = result.toMap();
+        if (map.value(QLatin1String("ok")).toBool()) {
+            callback(QUrl(map.value(QLatin1String(
+                canvas ? "dataUrl" : "url")).toString()));
+            return;
+        }
+        const QString reason =
+            map.value(QLatin1String("reason")).toString();
+        self->setStatusBarText(reason == QLatin1String("tainted")
+            ? tr("This canvas cannot be read — it is tainted by "
+                 "cross-origin content.")
+            : tr("No image found at that position."));
+    });
+}
+
+void WebView::openContextPosterInTarget(const QPoint &viewPos,
+        TabWidget::OpenUrlIn target)
+{
+    qreal zoom = m_page->zoomFactor();
+    if (zoom <= 0)
+        zoom = 1.0;
+    const QString call = QStringLiteral("__aroraCtxImage.posterUrl(%1,%2);")
+        .arg(viewPos.x() / zoom)
+        .arg(viewPos.y() / zoom);
+    QPointer<WebView> self(this);
+    runContextImageScript(call,
+            [self, target](const QVariant &result) {
+        if (!self)
+            return;
+        const QVariantMap map = result.toMap();
+        if (map.value(QLatin1String("ok")).toBool()) {
+            self->openUrlInTarget(
+                QUrl(map.value(QLatin1String("url")).toString()),
+                target);
+            return;
+        }
+        self->setStatusBarText(tr("This video has no poster image."));
+    });
 }

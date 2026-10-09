@@ -5,6 +5,7 @@
     <file>arora.svg</file>
     <file>defaultbookmarks.xbel</file>
     <file>fetchLinks.js</file>
+    <file>contextimage.js</file>
     <file>autofill.js</file>
     <file>Readability.js</file>
     <file>Readability-readerable.js</file>
