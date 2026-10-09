@@ -23,6 +23,14 @@
 
 #include <qiodevice.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#endif
+
 /*!
     \class OpenSearchReader
     \brief A class reading a search engine description from an external source
@@ -91,12 +99,84 @@ OpenSearchEngine *OpenSearchReader::read(QIODevice *device)
         return new OpenSearchEngine();
     }
 
-    addData(data);
-    return read();
+    return read(data);
 }
 
-OpenSearchEngine *OpenSearchReader::read()
+#if defined(ARORA_RUSTCORE)
+// SEC19: the descriptor bytes are parsed by memory-safe Rust; Qt XML
+// only ever sees the small JSON document the crate produced
+// (rc_opensearch_parse — field names are documented in rustcore.h).
+// Reader contract is unchanged: parse errors arrive via raiseError()
+// so error()/hasError()/errorString() behave exactly as before.
+OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
 {
+    OpenSearchEngine *engine = new OpenSearchEngine();
+
+    RcBuffer out{};
+    const RcStatus status = rc_opensearch_parse(
+        reinterpret_cast<const uint8_t *>(data.constData()),
+        size_t(data.size()), &out);
+    if (status != RC_OK) {
+        char *message = rc_last_error_message();
+        raiseError(message ? QString::fromUtf8(message)
+                           : QObject::tr("The OpenSearch description is invalid."));
+        rc_string_free(message);
+        return engine;
+    }
+    const QByteArray json(reinterpret_cast<const char *>(out.data),
+                          qsizetype(out.len));
+    rc_buffer_free(out);
+
+    const QJsonObject root = QJsonDocument::fromJson(json).object();
+    engine->setName(root.value(QLatin1String("name")).toString());
+    engine->setDescription(root.value(QLatin1String("description")).toString());
+    engine->setImageUrl(root.value(QLatin1String("imageUrl")).toString());
+
+    const auto parametersOf = [](const QJsonObject &slot) {
+        OpenSearchEngine::Parameters parameters;
+        const QJsonArray pairs =
+            slot.value(QLatin1String("params")).toArray();
+        for (const QJsonValue &pair : pairs) {
+            const QJsonArray kv = pair.toArray();
+            if (kv.size() == 2)
+                parameters.append(OpenSearchEngine::Parameter(
+                    kv.at(0).toString(), kv.at(1).toString()));
+        }
+        return parameters;
+    };
+
+    const QJsonObject search = root.value(QLatin1String("search")).toObject();
+    if (!search.isEmpty()) {
+        engine->setSearchUrlTemplate(
+            search.value(QLatin1String("template")).toString());
+        engine->setSearchParameters(parametersOf(search));
+        engine->setSearchMethod(
+            search.value(QLatin1String("method")).toString());
+    }
+    const QJsonObject suggestions =
+        root.value(QLatin1String("suggestions")).toObject();
+    if (!suggestions.isEmpty()) {
+        engine->setSuggestionsUrlTemplate(
+            suggestions.value(QLatin1String("template")).toString());
+        engine->setSuggestionsParameters(parametersOf(suggestions));
+        engine->setSuggestionsMethod(
+            suggestions.value(QLatin1String("method")).toString());
+    }
+    const QJsonObject image = root.value(QLatin1String("image")).toObject();
+    if (!image.isEmpty()) {
+        engine->setImageSearchUrlTemplate(
+            image.value(QLatin1String("template")).toString());
+        engine->setImageSearchParameters(parametersOf(image));
+        engine->setImageSearchMethod(
+            image.value(QLatin1String("method")).toString());
+    }
+    return engine;
+}
+#else
+OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
+{
+    addData(data);
+
     OpenSearchEngine *engine = new OpenSearchEngine();
 
     // Reject DTDs outright: no legitimate OpenSearch document carries
@@ -208,4 +288,5 @@ OpenSearchEngine *OpenSearchReader::read()
 
     return engine;
 }
+#endif // ARORA_RUSTCORE
 

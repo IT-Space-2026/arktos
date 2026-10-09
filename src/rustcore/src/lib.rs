@@ -24,11 +24,16 @@
 //!   * blocklist (SEC18): local anti-phishing/malware domain list —
 //!     vendored seed + merged data-dir override, exact+suffix host
 //!     matching for the request interceptors.  No remote lookups.
+//!   * parsers (SEC19): memory-safe parsing of attacker-influenced
+//!     document formats — OpenSearch descriptors, gupdate extension
+//!     manifests, suggestions replies and the XBEL structural gate.
+//!     Qt XML/JSON only ever sees this crate's own output.
 
 mod blocklist;
 mod cred;
 mod error;
 mod notify;
+mod parsers;
 mod store;
 mod urlstrip;
 mod util;
@@ -607,6 +612,95 @@ pub unsafe extern "C" fn rc_blocklist_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_blocklist_count() -> usize {
     catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
+}
+
+// ---- untrusted-document parsers (SEC19) ----------------------------
+
+/// Parses an OpenSearch 1.1 description document (<= 1 MiB) into a
+/// JSON field map — see parsers.rs for the schema.  The Qt reader
+/// raises the returned error verbatim; malformed input is RC_CORRUPT.
+///
+/// # Safety
+/// `xml` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_opensearch_parse(
+    xml: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(xml, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad document pointer".into(),
+        })?;
+        let json = parsers::opensearch(data)?;
+        buffer_out(out, json);
+        Ok(())
+    })
+}
+
+/// Parses a gupdate extension-update manifest (<= 1 MiB) into
+/// {"offers":[[appid,status,codebase,version],...]}.  RC_CORRUPT on
+/// malformed XML — the caller keeps all policy decisions.
+///
+/// # Safety
+/// Same contract as rc_opensearch_parse.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updatemanifest_parse(
+    xml: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(xml, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad manifest pointer".into(),
+        })?;
+        let json = parsers::update_manifest(data)?;
+        buffer_out(out, json);
+        Ok(())
+    })
+}
+
+/// Structural gate for XBEL bookmark documents (<= 64 MiB):
+/// well-formed, <xbel> root with absent/"1.0" version, nesting within
+/// the reader's bound.  RC_OK lets Qt parse; RC_CORRUPT refuses.
+///
+/// # Safety
+/// `xml` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_xbel_check(xml: *const u8, len: usize) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(xml, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad document pointer".into(),
+        })?;
+        parsers::xbel_check(data)
+    })
+}
+
+/// Parses an OpenSearch suggestions reply into a JSON array of
+/// strings.  RC_CORRUPT on malformed input or a reply that is not the
+/// [term, [...]] shape — the caller emits nothing either way.
+///
+/// # Safety
+/// Same contract as rc_opensearch_parse.
+#[no_mangle]
+pub unsafe extern "C" fn rc_suggest_parse(
+    json_in: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json_in, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad reply pointer".into(),
+        })?;
+        let json = parsers::suggestions(data)?;
+        buffer_out(out, json);
+        Ok(())
+    })
 }
 
 #[cfg(test)]

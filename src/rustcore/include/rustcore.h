@@ -178,6 +178,36 @@ RcStatus rc_blocklist_load(const uint8_t *textUtf8, size_t len);
 RcStatus rc_blocklist_reload(void);
 size_t rc_blocklist_count(void);
 
+/* --- untrusted-document parsers (SEC19) ------------------------------
+ * The Qt side passes the raw attacker-controlled bytes and receives
+ * a JSON document it maps onto its existing types — Qt's XML/JSON
+ * parsers only ever see output the crate produced.  All inputs are
+ * bounded on both sides; RC_CORRUPT means the document was rejected
+ * (rc_last_error_message carries the reader-style reason).
+ *
+ * rc_opensearch_parse: OpenSearch 1.1 descriptor -> JSON field map
+ *   {"name","description","imageUrl",
+ *    "search"|"suggestions"|"image":
+ *        {"template","method","params":[["k","v"],...]}}
+ *   A slot key is absent when no matching <Url> was accepted.
+ *
+ * rc_updatemanifest_parse: gupdate manifest ->
+ *   {"offers":[[appid,status,codebase,version],...]}
+ *
+ * rc_suggest_parse: OpenSearch suggestions reply -> JSON string array.
+ *   RC_CORRUPT when the reply is not the [term, [...]] shape.
+ *
+ * rc_xbel_check: structural gate for XBEL bookmark documents —
+ *   RC_OK means Qt may parse, RC_CORRUPT refuses (wrong root, wrong
+ *   version, malformed, oversized, nested beyond the reader bound). */
+RcStatus rc_opensearch_parse(const uint8_t *xml, size_t len,
+                             RcBuffer *outJson);
+RcStatus rc_updatemanifest_parse(const uint8_t *xml, size_t len,
+                                 RcBuffer *outJson);
+RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
+RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
+                          RcBuffer *outJson);
+
 #ifdef __cplusplus
 }
 #endif

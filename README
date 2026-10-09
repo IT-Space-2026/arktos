@@ -28,7 +28,11 @@ to the stripped URL.  The crate also carries the local
 anti-phishing/malware domain blocklist (vendored seed merged with a
 consent-gated URLhaus+OpenPhish download); flagged builds refuse
 main-frame navigations to listed domains behind a warning
-interstitial with a session-only proceed.
+interstitial with a session-only proceed.  The crate also parses
+untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
+extension update manifests and suggestion replies are schema-checked
+behind the FFI before Qt sees them, and bookmark XBEL files get a
+Rust structural gate ahead of the Qt tree reader.
 
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,

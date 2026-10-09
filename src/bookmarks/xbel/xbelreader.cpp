@@ -64,6 +64,10 @@
 
 #include <qfile.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+#endif
+
 #include "bookmarknode.h"
 
 XbelReader::XbelReader()
@@ -113,6 +117,24 @@ BookmarkNode *XbelReader::read(QIODevice *device)
     // Qt6 removed QXmlStreamEntityResolver: expand the entities the old
     // XmlEntityResolver resolved (just &nbsp;) before parsing.
     data.replace("&nbsp;", " ");
+#if defined(ARORA_RUSTCORE)
+    // SEC19: a structural gate in memory-safe Rust proves the
+    // document is well-formed, rooted at <xbel> and within the depth
+    // bound before Qt's parser sees a byte.  It only rejects what
+    // this reader would reject anyway; the error text rides the same
+    // raiseError() channel (line/column are Qt-parser details and
+    // read as 0 here).
+    const RcStatus checked = rc_xbel_check(
+        reinterpret_cast<const uint8_t *>(data.constData()),
+        size_t(data.size()));
+    if (checked != RC_OK) {
+        char *message = rc_last_error_message();
+        raiseError(message ? QString::fromUtf8(message)
+                           : QObject::tr("The XBEL document is invalid."));
+        rc_string_free(message);
+        return root;
+    }
+#endif
     addData(data);
     while (!atEnd()) {
         readNext();

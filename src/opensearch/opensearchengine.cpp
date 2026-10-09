@@ -21,6 +21,10 @@
 
 #include "opensearchenginedelegate.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+#endif
+
 #include <qbuffer.h>
 #include <qcoreapplication.h>
 #include <qjsonarray.h>
@@ -613,6 +617,28 @@ void OpenSearchEngine::suggestionsObtained()
     if (response.isEmpty())
         return;
 
+#if defined(ARORA_RUSTCORE)
+    // SEC19: remote JSON is parsed by memory-safe Rust; the reply
+    // schema ([term, [s1, ...]]) is enforced there and a corrupt
+    // reply simply yields no suggestions, like the old early returns.
+    RcBuffer out{};
+    const RcStatus parsed = rc_suggest_parse(
+        reinterpret_cast<const uint8_t *>(response.constData()),
+        size_t(response.size()), &out);
+    if (parsed != RC_OK)
+        return;
+    const QByteArray json(reinterpret_cast<const char *>(out.data),
+                          qsizetype(out.len));
+    rc_buffer_free(out);
+
+    QStringList suggestionsList;
+    const QJsonArray suggestionsArray =
+        QJsonDocument::fromJson(json).array();
+    for (const QJsonValue &value : suggestionsArray)
+        suggestionsList.append(value.toString());
+
+    emit suggestions(suggestionsList);
+#else
     // The suggestions response is a JSON array: ["term", ["sug1", ...]].
     const QJsonDocument document = QJsonDocument::fromJson(response);
     if (!document.isArray())
@@ -628,6 +654,7 @@ void OpenSearchEngine::suggestionsObtained()
         suggestionsList.append(value.toString());
 
     emit suggestions(suggestionsList);
+#endif // ARORA_RUSTCORE
 }
 
 /*!

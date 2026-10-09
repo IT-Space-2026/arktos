@@ -509,6 +509,9 @@ Phishing and malware domain blocklist (SEC18):
     When built with `CONFIG+=rustcore`, main-frame navigations to domains on a local anti-phishing/malware list are refused before the page loads — a "poor man's Safe Browsing" with no per-URL lookups ever leaving the machine. The matcher lives in the Rust core (memory-safe over attacker-controlled hostnames) over a vendored seed list merged with an updatable copy; a listed domain blocks itself and every subdomain but never a lookalike, and listed IPs exact-match only. Blocked navigations show a warning interstitial naming the domain, with "Back to safety" and a session-only "Proceed anyway" — no persisted bypass of a listed hostile domain by design.
     The list refreshes through the same consent-gated, HTTPS-only machinery as the adblock filter lists (URLhaus hostfile + OpenPhish feeds, weekly cadence, atomic write, seed-merged reload so a poisoned download can never shrink coverage). The privacy/domainBlocklist setting (default on) toggles the feature; no-Rust builds behave exactly as before.
 
+Memory-safe parsers for untrusted input (SEC19):
+    When built with `CONFIG+=rustcore`, the XML and JSON Arora accepts from remote servers is now parsed in the Rust core instead of Qt's C++ parsers: OpenSearch descriptors fetched from arbitrary sites, extension update manifests, and OpenSearch suggestion replies all cross the FFI as size-capped, schema-checked structures — malformed, oversized, DTD-bearing or truncated documents are rejected in memory-safe Rust before they can exercise any C++ parsing path. Bookmark files are guarded by a Rust structural check before Qt builds the bookmark tree. The C++ interfaces and all behavior on valid documents are unchanged, and no-Rust builds keep the existing Qt parsers.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
