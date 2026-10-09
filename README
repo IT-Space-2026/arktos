@@ -70,6 +70,12 @@ docks left or right (Settings → General → "Show sidebar" /
 "Sidebar position").  Visibility, dock side, the active tab and notes
 are remembered across sessions.
 
+Link sharing: right-click a link and choose "Copy Clean Link" to copy
+it with tracking parameters (utm_*, fbclid, gclid, marketing-automation
+ids, ~50 more) stripped; the same item on plain page content cleans
+the page address.  "Show QR Code for This Page" on any context menu
+renders the current page address as a scannable QR code.
+
 Picture-in-Picture: right-click a video and choose "Picture-in-Picture"
 (or View → "Picture-in-Picture", or a site's own PiP button) to pop the
 video into a small frameless, always-on-top player window that keeps

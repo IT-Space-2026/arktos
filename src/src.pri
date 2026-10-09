@@ -96,6 +96,8 @@ HEADERS += \
     $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
+    $$PWD/qrcodedialog.h \
+    $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
     $$PWD/scriptblockinfobar.h \
     $$PWD/scriptcontrolmanager.h \
@@ -113,6 +115,7 @@ HEADERS += \
     $$PWD/tabbar.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
+    $$PWD/urlcleaner.h \
     $$PWD/webactionmapper.h \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
@@ -152,6 +155,8 @@ SOURCES += \
     $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
+    $$PWD/qrcodedialog.cpp \
+    $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
     $$PWD/scriptblockinfobar.cpp \
     $$PWD/scriptcontrolmanager.cpp \
@@ -167,6 +172,7 @@ SOURCES += \
     $$PWD/tabbar.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
+    $$PWD/urlcleaner.cpp \
     $$PWD/webactionmapper.cpp \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \

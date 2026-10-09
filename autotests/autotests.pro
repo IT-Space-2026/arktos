@@ -34,6 +34,7 @@ SUBDIRS  = \
     popupblocker \
     privatebrowsing \
     privacy \
+    qrcode \
     safetext \
     schemehandlers \
     scriptcontrol \
@@ -46,6 +47,7 @@ SUBDIRS  = \
     tabwidget \
     toolbarsearch \
     tormanager \
+    urlcleaner \
     utils \
     webactionmapper \
     webpage \

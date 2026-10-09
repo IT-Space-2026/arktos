@@ -74,11 +74,13 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "pictureinpicture.h"
+#include "qrcodedialog.h"
 #include "readermode.h"
 #include "safetext.h"
 #include "scriptblockinfobar.h"
 #include "scriptcontrolmanager.h"
 #include "toolbarsearch.h"
+#include "urlcleaner.h"
 #include "webpage.h"
 
 #include <qapplication.h>
@@ -230,6 +232,9 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
             menu->addAction(pageAction(QWebEnginePage::Copy));
         QAction *copyLinkAction = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
         copyLinkAction->setData(request->linkUrl());
+        // POL01: same copy but with tracking query parameters removed.
+        QAction *cleanLinkAction = menu->addAction(tr("Copy &Clean Link"), this, &WebView::copyCleanLinkToClipboard);
+        cleanLinkAction->setData(request->linkUrl());
     }
 
     if (request->mediaType() == QWebEngineContextMenuRequest::MediaTypeImage
@@ -306,6 +311,20 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
     if (!menu->isEmpty())
         menu->addSeparator();
+    // POL01: page-level share helpers.  On a link menu 'Copy Clean
+    // Link' was already added against the link URL above; here it
+    // cleans the page address itself.  The QR action is always for
+    // the current page.
+    if (request->linkUrl().isEmpty()) {
+        menu->addAction(tr("Copy &Clean Link"), this, [this]() {
+            QApplication::clipboard()->setText(
+                UrlCleaner::cleanedUrl(url()).toString());
+        });
+    }
+    menu->addAction(tr("Show &QR Code for This Page"), this,
+            [this]() { QrCodeDialog::showForUrl(url(), this); });
+    menu->addSeparator();
+
     // The bare page action is a no-op until a devToolsPage is bound —
     // route it through the shared inspector host (DVT01).  Triggering
     // InspectElement still uses the stored context-menu position, so
@@ -357,6 +376,15 @@ void WebView::copyLinkToClipboard()
 {
     if (QAction *action = qobject_cast<QAction*>(sender()))
         QApplication::clipboard()->setText(action->data().toUrl().toString());
+}
+
+// POL01: 'Copy Clean Link' — the clicked link minus its tracking
+// query parameters (utm_*, fbclid, ...).
+void WebView::copyCleanLinkToClipboard()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        QApplication::clipboard()->setText(
+            UrlCleaner::cleanedUrl(action->data().toUrl()).toString());
 }
 
 void WebView::openActionUrlInNewTab()

@@ -158,6 +158,7 @@ private slots:
     void openActionUrlInNewWindow();
     void downloadLinkToDisk();
     void copyLinkToClipboard();
+    void copyCleanLinkToClipboard();
     void downloadImageToDisk();
     void copyImageToClipboard();
     void copyImageLocationToClipboard();

@@ -31,7 +31,12 @@
 #include <qlineedit.h>
 #include <qlabel.h>
 #include <qtoolbutton.h>
+#include <qmenu.h>
+#include <qclipboard.h>
+#include <qpointer.h>
+#include <qdialog.h>
 
+#include <functional>
 #include <memory>
 
 #include "webview.h"
@@ -121,7 +126,68 @@ private slots:
     void middleClickPaste();
     void findText();
     void webViewWithSearch();
+    void contextMenuLinkActions();
+    void contextMenuPageActions();
 };
+
+// POL01 helpers — the context menu is exec()d inside the right-button
+// press delivery, so a repeating timer has to find the popup inside
+// the nested loop and drive it there.
+static QAction *findMenuAction(QMenu *menu, const QString &text)
+{
+    const QList<QAction *> actions = menu->actions();
+    for (QAction *action : actions) {
+        if (action->text().remove(QLatin1Char('&')) == text)
+            return action;
+    }
+    return nullptr;
+}
+
+// Sends a real right-click at pos (view coordinates) through the
+// render delegate so Chromium issues a genuine context-menu request,
+// then calls inspect() on the popped QMenu.  Returns whether a popup
+// appeared.  inspect() may trigger() an action — it runs inside the
+// menu's nested exec loop, so record verdicts, don't QVERIFY there.
+static bool driveRightClick(WebView *view, const QPoint &pos,
+                            const std::function<void(QMenu *)> &inspect)
+{
+    QWidget *proxy = view->focusProxy() ? view->focusProxy() : view;
+    bool seen = false;
+    QTimer timer;
+    timer.setInterval(30);
+    QObject::connect(&timer, &QTimer::timeout, qApp, [&]() {
+        if (seen)
+            return;
+        QMenu *menu = qobject_cast<QMenu *>(
+            QApplication::activePopupWidget());
+        if (!menu)
+            return;
+        seen = true;
+        inspect(menu);
+        // The menu may already be closed-and-deleted when inspect()
+        // triggered an action — QPointer guards the check.
+        if (QPointer<QMenu>(menu))
+            menu->close();
+    });
+    timer.start();
+    // Chromium raises the context menu on press (Linux) or release —
+    // cover both while the timer is armed.
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(pos),
+                      proxy->mapToGlobal(pos),
+                      Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(proxy, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(pos),
+                        proxy->mapToGlobal(pos),
+                        Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(proxy, &release);
+    // The engine posts the context-menu request asynchronously — keep
+    // pumping until the popup shows (its exec() runs the timer inside
+    // a nested loop) or the cap elapses.
+    for (int waited = 0; !seen && waited < 5000; waited += 50)
+        QTest::qWait(50);
+    timer.stop();
+    return seen;
+}
 
 void tst_WebView::initTestCase()
 {
@@ -384,6 +450,92 @@ void tst_WebView::webViewWithSearch()
     QCOMPARE(withSearch.m_webView, static_cast<WebView*>(view));
     QVERIFY(withSearch.m_webViewSearch);
     QVERIFY(withSearch.layout());
+}
+
+// POL01: a real right-click on a link must offer 'Copy Clean Link'
+// (which strips tracking parameters) and the page QR share action.
+void tst_WebView::contextMenuLinkActions()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+
+    const QString html = QStringLiteral(
+        "<html><body><a href='https://example.com/path"
+        "?utm_source=news&amp;fbclid=zz&amp;id=42' "
+        "style='position:fixed;left:0;top:0;display:block;"
+        "width:300px;height:60px'>link</a></body></html>");
+    const QUrl url(QStringLiteral("data:text/html,")
+        + QString::fromUtf8(QUrl::toPercentEncoding(html)));
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(url);
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    bool foundClean = false;
+    bool foundQr = false;
+    const bool popped = driveRightClick(&view, QPoint(30, 30),
+                                        [&](QMenu *menu) {
+        if (QAction *clean = findMenuAction(
+                menu, QStringLiteral("Copy Clean Link"))) {
+            foundClean = true;
+            clean->trigger();
+        }
+        foundQr = findMenuAction(
+            menu, QStringLiteral("Show QR Code for This Page"))
+            != nullptr;
+    });
+    QVERIFY2(popped, "no context menu on link right-click");
+    QVERIFY(foundClean);
+    QVERIFY(foundQr);
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("https://example.com/path?id=42"));
+}
+
+// POL01: right-clicking plain page content gets the stock menu plus
+// the page-level 'Copy Clean Link' (cleans the page address) and
+// 'Show QR Code for This Page' — the latter pops the QR dialog.
+void tst_WebView::contextMenuPageActions()
+{
+    TestWebView view;
+    view.resize(800, 600);
+    view.show();
+
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(QUrl(QStringLiteral(
+        "data:text/html,<html><body><p>plain page</p></body></html>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    bool foundClean = false;
+    bool foundQr = false;
+    const bool popped = driveRightClick(&view, QPoint(400, 300),
+                                        [&](QMenu *menu) {
+        foundClean = findMenuAction(
+            menu, QStringLiteral("Copy Clean Link")) != nullptr;
+        if (QAction *qr = findMenuAction(
+                menu, QStringLiteral("Show QR Code for This Page"))) {
+            foundQr = true;
+            qr->trigger();
+        }
+    });
+    QVERIFY2(popped, "no context menu on page right-click");
+    QVERIFY(foundClean);
+    QVERIFY(foundQr);
+
+    // The QR action opens a non-modal QrCodeDialog for the page URL.
+    QPointer<QDialog> dialog;
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QWidgetList tops = QApplication::topLevelWidgets();
+        for (QWidget *top : tops) {
+            if (top->inherits("QrCodeDialog")) {
+                dialog = qobject_cast<QDialog *>(top);
+                return true;
+            }
+        }
+        return false;
+    }(), 5000);
+    QVERIFY(dialog);
+    dialog->close();
+    QTRY_VERIFY_WITH_TIMEOUT(dialog.isNull(), 5000);
 }
 
 QTEST_MAIN(tst_WebView)

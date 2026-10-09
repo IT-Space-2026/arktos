@@ -119,7 +119,18 @@ GPL-2+ distribution; the adblock crate is file-level copyleft (MPL-2.0),
 satisfied by shipping this source tree.
 
 ----------------------------------------------------------------------
-7. Adblock filter subscriptions — fetched at runtime, NOT bundled
+7. src/qrcodegen.{hpp,cpp} — MIT
+----------------------------------------------------------------------
+
+Copyright (c) Project Nayuki. MIT License.
+
+QR Code generator library, vendored unmodified from
+github.com/nayuki/QR-Code-generator (the C++ implementation). Used by
+QrCodeDialog for "Show QR Code for This Page". The full MIT permission
+notice is preserved in each file's header.
+
+----------------------------------------------------------------------
+8. Adblock filter subscriptions — fetched at runtime, NOT bundled
 ----------------------------------------------------------------------
 
 The default subscription list (src/adblock/adblockmanager.cpp) points at
@@ -133,7 +144,7 @@ the user's browser at runtime; no rules are shipped in this repository.
     (https://github.com/uBlockOrigin/uAssets)
 
 ----------------------------------------------------------------------
-8. Search engine descriptors — src/data/searchengines/
+9. Search engine descriptors — src/data/searchengines/
 ----------------------------------------------------------------------
 
 OpenSearch 1.1 XML descriptors for Google, Google I'm Feeling Lucky,
@@ -143,7 +154,7 @@ any favicons fetched via their <Image> URLs at runtime are trademarks /
 assets of their respective owners.
 
 ----------------------------------------------------------------------
-9. Bundled icon themes — src/icons/
+10. Bundled icon themes — src/icons/
 ----------------------------------------------------------------------
 
 Curated subsets (35 freedesktop-named icons each, plus mechanically
@@ -163,7 +174,7 @@ directory carries its own LICENSE file; summary:
     fallback for names the newer sets do not cover.
 
 ----------------------------------------------------------------------
-10. Runtime dependencies (NOT vendored into this repository)
+11. Runtime dependencies (NOT vendored into this repository)
 ----------------------------------------------------------------------
 
   * Qt 6 — GNU LGPL v3 / GPL v3 / commercial (The Qt Company). Arora is
@@ -180,14 +191,14 @@ directory carries its own LICENSE file; summary:
     QLibrary for AES-256-GCM; Arora does not link or ship OpenSSL.
 
 ----------------------------------------------------------------------
-11. Translations — src/locale/
+12. Translations — src/locale/
 ----------------------------------------------------------------------
 
 The .ts/.qm translations are community contributions under the project
 license; per-language maintainers are listed in src/locale/maintainers.
 
 ----------------------------------------------------------------------
-12. Test fixtures
+13. Test fixtures
 ----------------------------------------------------------------------
 
 tools/htmlToXBel/tests/{firefox3,opera9,ie7}-bookmarks.html are bookmark
@@ -197,7 +208,7 @@ fuzz/ seed corpus entries derived from it are XBEL test data. None ship
 in installed or bundled builds.
 
 ----------------------------------------------------------------------
-13. Everything else
+14. Everything else
 ----------------------------------------------------------------------
 
 All remaining source, .ui files, src/htmls/ pages, src/data/autofill.js
