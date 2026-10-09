@@ -281,9 +281,10 @@ or `xvfb-run`).
 
 `make bundle` produces a **self-contained relocatable directory**
 (`dist/Arora-<ver>-linux-<arch>/`) packing the binary, the Qt/WebEngine
-runtime, resources, plugins and freedesktop metadata — runs on a system
-with no Qt installed. `make check-bundle` verifies self-containment in
-a bubblewrap sandbox with the dev Qt hidden.
+runtime, resources, plugins, freedesktop metadata and the
+`arora-sandbox` launcher — runs on a system with no Qt installed.
+`make check-bundle` verifies self-containment in a bubblewrap sandbox
+with the dev Qt hidden.
 
 ## License
 

@@ -126,7 +126,8 @@ Security:
   policy, marked untested-on-target; `arora-sandbox` is the packaged
   launcher script, `--no-sandbox`/`ARORA_NO_SANDBOX=1`/the
   sandbox/enabled setting are the escape hatches, and
-  `--sandbox-status` reports the live backend and policy.
+  `--sandbox-status` reports the live backend and policy. The
+  self-contained bundle now also ships `arora-sandbox` (SAND03).
 
 Containers:
 - Isolated container profiles (CONT01).

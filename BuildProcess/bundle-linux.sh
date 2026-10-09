@@ -4,6 +4,8 @@
 # Produces:
 #   dist/Arora-<ver>-linux-<arch>/
 #     arora                     wrapper (sets LD_LIBRARY_PATH, execs bin/arora)
+#     arora-sandbox             SAND01 bwrap launcher; at the bundle root its
+#                               $bindir/arora resolves to the wrapper above
 #     bin/arora + bin/qt.conf   real binary; qt.conf anchors Qt paths at ".."
 #     lib/                      every libQt6*/libicu* dep (ldd-resolved)
 #     libexec/QtWebEngineProcess
@@ -41,6 +43,10 @@ mkdir -p "$OUT/bin" "$OUT/lib" "$OUT/libexec" "$OUT/plugins" "$OUT/resources" \
 
 # --- binary -------------------------------------------------------------
 install -m0755 "$SRCROOT/arora" "$OUT/bin/arora"
+# The SAND01 sandbox launcher must sit at the bundle root, not in bin/:
+# it execs "$bindir/arora", which from the root is the wrapper that sets
+# LD_LIBRARY_PATH before exec'ing the real binary inside the wrap.
+install -m0755 "$SRCROOT/src/sandbox/arora-sandbox" "$OUT/arora-sandbox"
 
 # --- plugins (allowlist — no designer/help/qml tooling) ------------------
 PLUGIN_DIRS="platforms platforminputcontexts platformthemes imageformats \
