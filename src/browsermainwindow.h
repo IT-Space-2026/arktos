@@ -126,6 +126,10 @@ public slots:
     // existing one on repeat calls.  page is a SettingsDialog::Page
     // index that deep-links a section; -1 keeps the persisted page.
     void showSettingsPage(int page = -1);
+    // HIST02: opens the window's single History tab, focusing the
+    // existing one on repeat calls — the same pattern as
+    // showSettingsPage() above.
+    void showHistoryPage();
     void showCommandPalette();
     // POL02: Ctrl+Shift+A tab search — the palette in tabs-only mode.
     void showTabSearch();

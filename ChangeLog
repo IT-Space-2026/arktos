@@ -72,6 +72,11 @@ UI:
 - The "Icons" theme picker moved from the General page to the
   Appearance page of Preferences, and each option now previews a
   strip of the set's own icons instead of a single swatch (ICONS03).
+- "Show All History" (Ctrl+H) now opens as a tab inside the window
+  instead of a floating dialog — re-opening focuses the existing tab,
+  double-clicking an entry opens it in a new tab, and the search,
+  Remove and context-menu actions work live against the shared
+  history model (HIST02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

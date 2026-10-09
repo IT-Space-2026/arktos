@@ -47,6 +47,7 @@
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "history.h"
 #include "sidebarpanel.h"
 #include "statusbarwidgets.h"
 #include "tabwidget.h"
@@ -98,6 +99,7 @@ private slots:
     void viewToggles();
     void menuPopulation();
     void dialogSlots();
+    void historyTab();
     void toolsMenuDedup();
     void fileMenuOrder();
     void stateSerialization();
@@ -282,6 +284,60 @@ void tst_BrowserMainWindow::dialogSlots()
             BrowserApplication::downloadManager()))
         downloads->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    closeWindow(window);
+}
+
+// HIST02: "Show All History" hosts the history manager in a tab of the
+// current window — repeat calls refocus the one tab, entries open into
+// a fresh tab beside it, and the page's Close button closes the tab.
+void tst_BrowserMainWindow::historyTab()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    const int tabsBefore = window->tabWidget()->count();
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
+
+    HistoryDialog *page = nullptr;
+    int historyIndex = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        if (HistoryDialog *candidate = qobject_cast<HistoryDialog *>(
+                    window->tabWidget()->widget(i))) {
+            page = candidate;
+            historyIndex = i;
+        }
+    }
+    QVERIFY(page);
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QCOMPARE(window->tabWidget()->currentIndex(), historyIndex);
+    QCOMPARE(window->tabWidget()->tabText(historyIndex),
+             QLatin1String("History"));
+
+    // It is a tab page, not a floating window.
+    for (QWidget *topLevel : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<HistoryDialog *>(topLevel));
+
+    // Single-instance: invoking again only refocuses the same tab.
+    window->tabWidget()->setCurrentIndex(0);
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QCOMPARE(window->tabWidget()->currentIndex(), historyIndex);
+
+    // An activated entry opens in a NEW tab; the history tab survives.
+    emit page->openUrl(QUrl(QLatin1String("about:blank")),
+                       QLatin1String("Blank"));
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 2);
+    QCOMPARE(window->tabWidget()->indexOf(page), historyIndex);
+
+    // The page's Close button asks the host to close its tab.
+    QAbstractButton *close =
+        page->buttonBox->button(QDialogButtonBox::Close);
+    QVERIFY(close);
+    close->click();
+    QCOMPARE(window->tabWidget()->indexOf(page), -1);
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
     closeWindow(window);
 }
 
