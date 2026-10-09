@@ -97,7 +97,7 @@ for flag in $SMOKE_FLAGS; do
         echo "check-coverage: smoke $flag exit=$? (tolerated)"
     fi
 done
-if timeout 240 ./arora --download-smoke "file://$BUILD/README" >/dev/null 2>&1; then
+if timeout 240 ./arora --download-smoke "file://$BUILD/README.md" >/dev/null 2>&1; then
     echo "check-coverage: smoke --download-smoke PASS"
 else
     echo "check-coverage: smoke --download-smoke exit=$? (tolerated)"

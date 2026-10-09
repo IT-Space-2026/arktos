@@ -97,7 +97,7 @@ for flag in $SMOKE_FLAGS; do
         echo "check-sanitize: smoke $flag exit=$rc (tolerated)"
     fi
 done
-timeout 240 ./arora --download-smoke "file://$BUILD/README" \
+timeout 240 ./arora --download-smoke "file://$BUILD/README.md" \
     >"$LOGDIR/smoke-downloadsmoke.log" 2>&1 \
     && echo "check-sanitize: smoke --download-smoke PASS" \
     || echo "check-sanitize: smoke --download-smoke exit=$? (tolerated)"
