@@ -118,4 +118,29 @@ The table rows are truncated in the read output. Let me check the Status column 
 [2026-10-09 16:41:47] <<< devin exited rc=143 (task DLACC04)
 [2026-10-09 16:41:47] task DLACC04 still unfinished (rc=143) — attempt bumped, restarting in 10s
 [2026-10-09 16:41:58] >>> starting run for task DLACC04 (attempt 2, tree mem cap 2048MB, timeout 3600s)
-I'll start by reading the task queue for the Rust lane.The working tree has uncommitted changes that look like DLACC04 work-in-progress (`gate.rs`, interceptor parity changes). Let me see DLACC04's full row and status.The work is substantial and real. Now I'll re-verify before committing. Checking toolchain and build state.Toolchain is present and the crate has an existing build. Running the Rust test suite to re-verify.Already configured with `CONFIG+=rustdl CONFIG+=rustcore`. Running incremental build then the rustdownload autotest.Build is clean. Running the rustdownload autotest.Autotest passes 20/20. Now running `make check` for the full verification (matches the acceptance bar).`check-warnings` passed; test programs are still running. Waiting for completion.README documents the engine but not the parity guarantees — worth one sentence. Finishing up: flip the row to done, update README/WORKLOG, commit.Now append the WORKLOG entry and commit.
+I'll start by reading the task queue for the Rust lane.The working tree has uncommitted changes that look like DLACC04 work-in-progress (`gate.rs`, interceptor parity changes). Let me see DLACC04's full row and status.The work is substantial and real. Now I'll re-verify before committing. Checking toolchain and build state.Toolchain is present and the crate has an existing build. Running the Rust test suite to re-verify.Already configured with `CONFIG+=rustdl CONFIG+=rustcore`. Running incremental build then the rustdownload autotest.Build is clean. Running the rustdownload autotest.Autotest passes 20/20. Now running `make check` for the full verification (matches the acceptance bar).`check-warnings` passed; test programs are still running. Waiting for completion.README documents the engine but not the parity guarantees — worth one sentence. Finishing up: flip the row to done, update README/WORKLOG, commit.Now append the WORKLOG entry and commit.Done. This run continued **DLACC04** (custom-engine privacy parity), which was `in_progress` with ~1400 lines of uncommitted work from an interrupted previous run.
+
+**What I did:**
+- Audited the tree: the work was complete but never committed — `gate.rs` (Rust-side C gate hook), `dl_set_gate` FFI, `RustDownloadEngine::gateCheck`/`canHandle`, shared interceptor helpers, fixture tests, and ChangeLog notes were all present.
+- Re-verified rather than trusting the notes:
+  - `cargo test` (rustdl): **30/30** — per-hop re-gating, cross-domain cookie strip, socks5h routing, `require_proxy` fail-closed, UA/referer parity
+  - `tst_rustdownload`: **20/20** — gate matrix (httpsFirst upgrade, httpsOnly block, private exemptions, SSRF redirect refusal, adblock, urlstrip, blocklist, tor cases)
+  - `check-warnings`: PASS
+  - `make check`: all programs 0 failed except one `tst_dialogs::clearSiteData` localStorage-flush timing flake — passes standalone, unrelated to this change
+  - No-rust builds unaffected: all new call sites are `ARORA_RUSTDL`-gated; `rustdownloadengine.cpp` only compiles under `CONFIG+=rustdl`
+- Marked the row `done` with the verification note, appended the WORKLOG line, added the parity guarantees to README's accelerated-downloads paragraph.
+- Committed `bd16ba5` and pushed to `rust-work`.
+
+Stopping here — the next run picks up DLACC07/DLACC05.
+[2026-10-09 16:52:53] <<< devin exited rc=0 (task DLACC04)
+[2026-10-09 16:52:53] task DLACC04 finished (next: DLACC07)
+[2026-10-09 16:52:56] >>> starting run for task DLACC07 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+The task file view truncated some rows. Let me extract the Status column for each row precisely.Feasibility confirmed: cargo/rustup and Qt 6.12 are present, and DLACC04 is `done` — so this is the clean-completion audit path, not a cap-out recovery. Marking DLACC07 in_progress.That edit was wrong — it added a stray `|| dummy |` line. Let me revert it and make the correct edit.Now the correct edit — flip DLACC07 to in_progress and bump Attempts.Gate code looks solid. Now the Qt-side gate trampoline and `canHandle` tor rule.Qt side is complete. Now checking the crate's redirect loop for per-hop re-gating, header stripping, hop cap, and referer logic.The engine implementation covers every spec point. Let me check the remaining audit items: the CONFIG gate in the .pri (truncated earlier), autotest gating, and the current build state.cargo test 30/30 PASS. Now build the tree and run the Qt-side autotest.Build is clean. Running the rustdownload autotest headless.DLACC03's row shows the precedent: the continuation slice adds a pointer note to the parent's Notes. The audit found no gaps — all deliverables verified. Closing out:
+
+- **(a) Policy gate**: `dl_set_gate` + `gateCheck()` compose scheme refusal, SEC18 blocklist, SEC17 strip, https-first/https-only, adblock match — verified
+- **(b) Redirects**: manual loop re-gates every hop, refuses non-http(s) targets and gate rewrites, cap=10, Cookie scoped to same-domain hops, Authorization never sent
+- **(c) Header parity**: profile UA + `referer_for` mirrors REF01 levels incl. https→http suppression
+- **(d) Tor**: socks5h + `require_proxy` fail-closed, `canHandle()` falls back to engine path
+- **(e) SSRF**: public→private redirect refusal via shared `isPrivateOrLocalHost`
+
+Re-verified now: cargo test 30/30, tst_rustdownload 20/20, build clean under `CONFIG+=rustdl CONFIG+=rustcore`. Updating the task file, worklog, then committing.Now the WORKLOG entry, then commit and push.
