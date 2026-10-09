@@ -123,6 +123,9 @@ Tor:
 - New Tor Window / `arora --tor` (TOR02).
 - Tor windows drop the dedicated toolbar search box entirely — the
   omnibox covers search and Ctrl+K focuses the location bar (TOR03).
+- The status bar of a Tor window shows the live circuit chain
+  (guard -> middle -> exit) with the full fingerprints on hover,
+  refreshed on daemon circuit events and tab switches (TOR04).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

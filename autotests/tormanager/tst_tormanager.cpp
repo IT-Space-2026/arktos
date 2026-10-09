@@ -45,8 +45,10 @@ private slots:
     void binaryResolution();
     void failsWithoutBinary();
     void controlProtocol();
+    void circuitStatusParsing();
     void socks5RejectsBadGreeting();
     void fakeDaemonLifecycle();
+    void circuitInfo();
     void realDaemonLifecycle();
 
 private:
@@ -182,6 +184,117 @@ void tst_TorManager::controlProtocol()
     QTRY_VERIFY_WITH_TIMEOUT(asyncSpy.count() >= 1, 5000);
     QVERIFY(asyncSpy.takeFirst().first().toString().startsWith(
         QLatin1String("STATUS_CLIENT")));
+}
+
+// TOR04: the circuit-status parser on captured reply text — the
+// "circuit-status=" data-block header and trailing "OK" the reply
+// collector includes are skipped, "$FP~Nick" / "$FP=Nick" / "$FP"
+// ServerIDs split out, and keyword fields like PURPOSE= are kept off
+// the hop list.
+void tst_TorManager::circuitStatusParsing()
+{
+    const QStringList lines = {
+        QStringLiteral("circuit-status="),
+        QStringLiteral(
+            "17 BUILT $7BE683E65D48141321C5ED92F075C55364AC7123~GuardOne,"
+            "$BE2E0F2E1F52A24110E79D52D32FB42F46805DBA=MiddleTwo,"
+            "$ABCDEF0123456789ABCDEF0123456789ABCDEF01~ExitThree "
+            "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
+            "TIME_CREATED=2026-10-09T00:00:00.000000"),
+        QStringLiteral("3 LAUNCHED PURPOSE=GENERAL"),
+        QStringLiteral("9 BUILT "
+            "$1111111111111111111111111111111111111111 "
+            "PURPOSE=HS_CLIENT_HSDIR"),
+        QStringLiteral("OK"),
+    };
+    const QList<TorCircuit> circuits =
+        TorManager::parseCircuitStatus(lines);
+    QCOMPARE(circuits.size(), 3);
+
+    QCOMPARE(circuits.at(0).id, 17);
+    QCOMPARE(circuits.at(0).status, QLatin1String("BUILT"));
+    QCOMPARE(circuits.at(0).purpose, QLatin1String("GENERAL"));
+    QCOMPARE(circuits.at(0).hops.size(), 3);
+    QCOMPARE(circuits.at(0).hops.at(0).nickname,
+             QLatin1String("GuardOne"));
+    QCOMPARE(circuits.at(0).hops.at(0).fingerprint,
+             QLatin1String("7BE683E65D48141321C5ED92F075C55364AC7123"));
+    // "=Nick" marks a name derived from the fingerprint — same split.
+    QCOMPARE(circuits.at(0).hops.at(1).nickname,
+             QLatin1String("MiddleTwo"));
+    QCOMPARE(circuits.at(0).hops.at(1).fingerprint,
+             QLatin1String("BE2E0F2E1F52A24110E79D52D32FB42F46805DBA"));
+    QCOMPARE(circuits.at(0).hops.at(2).nickname,
+             QLatin1String("ExitThree"));
+
+    // LAUNCHED carries no path — the PURPOSE= field must not leak
+    // into the hop list.
+    QCOMPARE(circuits.at(1).id, 3);
+    QCOMPARE(circuits.at(1).status, QLatin1String("LAUNCHED"));
+    QVERIFY(circuits.at(1).hops.isEmpty());
+    QCOMPARE(circuits.at(1).purpose, QLatin1String("GENERAL"));
+
+    // A bare "$FP" hop yields a fingerprint with no nickname.
+    QCOMPARE(circuits.at(2).id, 9);
+    QCOMPARE(circuits.at(2).hops.size(), 1);
+    QCOMPARE(circuits.at(2).hops.at(0).fingerprint,
+             QLatin1String("1111111111111111111111111111111111111111"));
+    QVERIFY(circuits.at(2).hops.at(0).nickname.isEmpty());
+    QCOMPARE(circuits.at(2).purpose, QLatin1String("HS_CLIENT_HSDIR"));
+
+    QVERIFY(TorManager::parseCircuitStatus(QStringList()).isEmpty());
+    QVERIFY(TorManager::parseCircuitStatus(
+        { QStringLiteral("OK") }).isEmpty());
+}
+
+// TOR04: requestCircuitInfo() queues circuit-status + stream-status on
+// the one control connection; circuitsChanged emits the parsed
+// snapshot and displayCircuitId prefers the stream-bearing BUILT
+// circuit.  The fake's post-bootstrap 650 CIRC event must also drive a
+// debounced refresh on its own.
+void tst_TorManager::circuitInfo()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    QSignalSpy circuitsSpy(&manager, &TorManager::circuitsChanged);
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+
+    // Ready itself queues the first refresh.
+    QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 1, 10000);
+    QCOMPARE(manager.circuits().size(), 2);
+
+    const TorCircuit *built = nullptr;
+    for (const TorCircuit &circuit : manager.circuits()) {
+        if (circuit.id == 3)
+            built = &circuit;
+    }
+    QVERIFY(built);
+    QCOMPARE(built->status, QLatin1String("BUILT"));
+    QCOMPARE(built->hops.size(), 3);
+    QCOMPARE(built->hops.at(0).nickname, QLatin1String("GuardOne"));
+
+    // stream-status gave circuit 3 the most attached streams, and it
+    // is BUILT — it wins the display slot.
+    QCOMPARE(manager.displayCircuitId(), 3);
+
+    // The fixture's 650 CIRC after bootstrap triggers the debounced
+    // refresh without another explicit request.
+    QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 2, 10000);
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
 }
 
 // A bogus greeting answer must fail the handshake cleanly rather than

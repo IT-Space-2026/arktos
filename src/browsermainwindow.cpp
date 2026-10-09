@@ -167,6 +167,40 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
         badge->setToolTip(tr("This window browses through the Tor network"));
         m_navigationBar->addWidget(badge);
+
+        // TOR04: the live circuit chain — a permanent status-bar
+        // label fed by TorManager (GETINFO circuit-status refreshed
+        // on 650 CIRC events, the Ready transition, and tab
+        // switches).  Added before the load indicator/zoom control so
+        // it anchors the permanent group; never created for
+        // non-tor windows.
+        m_torCircuitLabel = new QLabel(this);
+        m_torCircuitLabel->setObjectName(
+            QLatin1String("torCircuitLabel"));
+        statusBar()->addPermanentWidget(m_torCircuitLabel);
+        BrowserApplication *app = BrowserApplication::instance();
+        TorManager *tor = app ? app->torManager() : nullptr;
+        if (tor) {
+            connect(tor, &TorManager::circuitsChanged,
+                    this, [this](const QList<TorCircuit> &) {
+                updateTorCircuitLabel();
+            });
+            connect(tor, &TorManager::stateChanged,
+                    this, [this](TorManager::State) {
+                updateTorCircuitLabel();
+            });
+            connect(tor, &TorManager::bootstrapProgressChanged,
+                    this, [this](int, const QString &) {
+                updateTorCircuitLabel();
+            });
+            connect(m_tabWidget, &QTabWidget::currentChanged,
+                    this, [this, tor](int) {
+                updateTorCircuitLabel();
+                tor->requestCircuitInfo();
+            });
+            tor->requestCircuitInfo();
+        }
+        updateTorCircuitLabel();
     }
 
     QWidget *centralWidget = new QWidget(this);
@@ -1536,6 +1570,74 @@ void BrowserMainWindow::showTabSearch()
 void BrowserMainWindow::updateStatusbar(const QString &string)
 {
     statusBar()->showMessage(string, 2000);
+}
+
+// TOR04: renders the circuit chain ("Tor: guard -> middle -> exit")
+// on the tor window's status-bar label.  Hop labels prefer the relay
+// nickname and fall back to a short fingerprint; the tooltip carries
+// the full chain, circuit id, status and purpose.
+void BrowserMainWindow::updateTorCircuitLabel()
+{
+    if (!m_torCircuitLabel)
+        return;
+    BrowserApplication *app = BrowserApplication::instance();
+    TorManager *tor = app ? app->torManager() : nullptr;
+    if (!tor) {
+        m_torCircuitLabel->setText(tr("Tor: daemon off"));
+        m_torCircuitLabel->setToolTip(
+            tr("The managed Tor daemon is not running."));
+        return;
+    }
+    switch (tor->state()) {
+    case TorManager::Failed:
+        m_torCircuitLabel->setText(tr("Tor: failed"));
+        m_torCircuitLabel->setToolTip(tor->errorString());
+        return;
+    case TorManager::Ready:
+        break;
+    default: {
+        const int progress = tor->bootstrapProgress();
+        m_torCircuitLabel->setText(progress >= 0
+            ? tr("Tor: connecting %1%").arg(progress)
+            : tr("Tor: connecting..."));
+        m_torCircuitLabel->setToolTip(tor->bootstrapSummary());
+        return;
+    }
+    }
+
+    const TorCircuit *circuit = nullptr;
+    const QList<TorCircuit> circuits = tor->circuits();
+    for (const TorCircuit &candidate : circuits) {
+        if (candidate.id == tor->displayCircuitId()) {
+            circuit = &candidate;
+            break;
+        }
+    }
+    if (!circuit || circuit->hops.isEmpty()) {
+        m_torCircuitLabel->setText(tr("Tor: no circuit"));
+        m_torCircuitLabel->setToolTip(
+            tr("No traffic-bearing Tor circuit yet."));
+        return;
+    }
+    QStringList names;
+    QStringList detail;
+    for (const TorCircuitHop &hop : circuit->hops) {
+        names << (hop.nickname.isEmpty()
+                      ? hop.fingerprint.left(8)
+                      : hop.nickname);
+        detail << (hop.nickname.isEmpty()
+                       ? hop.fingerprint
+                       : QStringLiteral("%1 (%2)")
+                             .arg(hop.nickname, hop.fingerprint));
+    }
+    m_torCircuitLabel->setText(
+        tr("Tor: %1").arg(names.join(QLatin1String(" -> "))));
+    QString tooltip = tr("Circuit %1 (%2): %3")
+        .arg(circuit->id)
+        .arg(circuit->status, detail.join(QLatin1String(" -> ")));
+    if (!circuit->purpose.isEmpty())
+        tooltip += tr(" — purpose %1").arg(circuit->purpose);
+    m_torCircuitLabel->setToolTip(tooltip);
 }
 
 void BrowserMainWindow::updateWindowTitle(const QString &title)

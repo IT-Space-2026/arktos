@@ -70,6 +70,7 @@ class AutoSaver;
 class BookmarksToolBar;
 class CommandPalette;
 class QDockWidget;
+class QLabel;
 class QWebEnginePage;
 class SidebarPanel;
 class TabWidget;
@@ -143,6 +144,9 @@ private slots:
     void loadProgress(int);
     void updateStatusbar(const QString &string);
     void updateWindowTitle(const QString &title = QString());
+    // TOR04: re-renders the tor window's status-bar circuit label
+    // from TorManager state + circuit snapshot.  No-op off tor.
+    void updateTorCircuitLabel();
 
     void fileNew();
     void fileOpen();
@@ -294,6 +298,8 @@ private:
     // UIP04: permanent status-bar widgets bound to the current tab.
     LoadingIndicator *m_loadingIndicator;
     ZoomControl *m_zoomControl;
+    // TOR04: permanent status-bar circuit chain — tor windows only.
+    QLabel *m_torCircuitLabel = nullptr;
 
     AutoSaver *m_autoSaver;
     QPointer<CommandPalette> m_commandPalette;

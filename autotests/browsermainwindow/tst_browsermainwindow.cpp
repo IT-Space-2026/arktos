@@ -106,6 +106,7 @@ private slots:
     void chromeMetrics();
     void searchBoxVisibility();
     void torSearchBoxHidden();
+    void torCircuitStatusLabel();
     void statusBarWidgets();
     void sidebarPanel();
 };
@@ -591,6 +592,40 @@ void tst_BrowserMainWindow::torSearchBoxHidden()
     QVERIFY(!focusOnSearch);
     if (wasActive)
         QVERIFY(focusOnBar);
+}
+
+// TOR04: a tor window carries a permanent status-bar label that shows
+// the live circuit chain; a normal window must not get one.  (No
+// daemon is armed in the autotest build — the label renders its
+// daemon-off state; chain rendering itself is covered by
+// tst_tormanager::circuitInfo + --tor-window-smoke.)
+void tst_BrowserMainWindow::torCircuitStatusLabel()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(!window->findChild<QLabel *>(
+                QLatin1String("torCircuitLabel")));
+    closeWindow(window);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QLabel *label = torWindow->findChild<QLabel *>(
+        QLatin1String("torCircuitLabel"));
+    const bool parented = label
+        && label->parentWidget()
+               == static_cast<QWidget *>(torWindow->statusBar());
+    const QString text = label ? label->text() : QString();
+    const QString tooltip = label ? label->toolTip() : QString();
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(label);
+    QVERIFY(parented);
+    QVERIFY(text.startsWith(QLatin1String("Tor:")));
+    QVERIFY(!tooltip.isEmpty());
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a
