@@ -110,6 +110,10 @@ public:
     // The profile pages are created on: the default profile normally, an
     // off-the-record profile while private browsing is enabled (MIG03).
     static QWebEngineProfile *webEngineProfile();
+    // PTAB01: the prepared off-the-record profile regardless of the
+    // global private flag — a private TAB inside a normal window needs
+    // it while webEngineProfile() still hands out the normal profile.
+    static QWebEngineProfile *privateWebEngineProfile();
     // Attaches the app-level services to a profile the first time it
     // is seen: cookie jar, custom scheme handlers, persisted settings,
     // download manager, the adblock + privacy request interceptors and

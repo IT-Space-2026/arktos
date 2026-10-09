@@ -51,6 +51,19 @@ OmniboxSuggestions::OmniboxSuggestions(OmniboxCompletionModel *model,
     currentEngineChanged();
 }
 
+void OmniboxSuggestions::setPrivateContextProvider(
+    const std::function<bool()> &provider)
+{
+    m_privateContextProvider = provider;
+    currentEngineChanged();
+}
+
+bool OmniboxSuggestions::privateContext() const
+{
+    return BrowserApplication::isPrivate()
+        || (m_privateContextProvider && m_privateContextProvider());
+}
+
 bool OmniboxSuggestions::enabled() const
 {
     // TOR02: a tor window must never stream keystrokes to a suggest
@@ -66,10 +79,11 @@ bool OmniboxSuggestions::enabled() const
 
 void OmniboxSuggestions::currentEngineChanged()
 {
-    // SRCH04: private windows suggest through the configured private
-    // engine, falling back to the default when unset.
+    // SRCH04/PTAB01: private contexts suggest through the configured
+    // private engine, falling back to the default when unset — the
+    // context is per-tab now, resolved through the provider.
     m_engine = ToolbarSearch::openSearchManager()
-        ->engineForContext(BrowserApplication::isPrivate());
+        ->engineForContext(privateContext());
     m_model->setEngineName(m_engine ? m_engine->name() : QString());
     updateSuggestionsEnabled();
 }
@@ -118,11 +132,17 @@ void OmniboxSuggestions::requestSuggestions()
 
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
 
-    // SRCH04: resolve the engine this input actually targets.  In the
-    // keyword-only mode anything that does not start with a registered
-    // engine keyword stays silent; when it does, the request goes to
-    // that keyword's engine instead of the context engine.
-    OpenSearchEngine *target = m_engine;
+    // SRCH04/PTAB01: resolve the engine this input actually targets —
+    // re-resolved per request because the private context follows the
+    // tab being edited, not the app flag.  In the keyword-only mode
+    // anything that does not start with a registered engine keyword
+    // stays silent; when it does, the request goes to that keyword's
+    // engine instead of the context engine.
+    OpenSearchEngine *target = manager->engineForContext(privateContext());
+    if (m_engine != target) {
+        m_engine = target;
+        m_model->setEngineName(target ? target->name() : QString());
+    }
     QString query = text;
     const int split = text.indexOf(QLatin1Char(' '));
     OpenSearchEngine *keywordEngine = split > 0

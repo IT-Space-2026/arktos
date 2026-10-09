@@ -7388,11 +7388,10 @@ int main(int argc, char **argv)
             return -1;
         };
 
-        // Modal auto-dismisser — Private Browsing exec()s a
-        // QMessageBox, Clear Private Data and the Preferences pages
-        // exec() QDialogs.  What it closed is recorded so the checks
-        // can assert the right dialog actually opened.
-        int sawMessageBox = 0;
+        // Modal auto-dismisser — Clear Private Data and the
+        // Preferences pages exec() QDialogs.  What it closed is
+        // recorded so the checks can assert the right dialog actually
+        // opened.
         int sawClearData = 0;
         int sawSettingsAtPage = -1;
         QTimer dismisser;
@@ -7401,10 +7400,7 @@ int main(int argc, char **argv)
             QWidget *modal = QApplication::activeModalWidget();
             if (!modal)
                 return;
-            if (QMessageBox *box = qobject_cast<QMessageBox*>(modal)) {
-                ++sawMessageBox;
-                box->reject();
-            } else if (SettingsDialog *dialog =
+            if (SettingsDialog *dialog =
                        qobject_cast<SettingsDialog*>(modal)) {
                 sawSettingsAtPage = dialog->tabWidget->currentIndex();
                 dialog->reject();
@@ -7446,21 +7442,23 @@ int main(int argc, char **argv)
         check(tabWidget->count() == tabsBefore + 1,
               "New Tab command executes");
 
-        // 3. "private" reaches Private Browsing; executing it opens
-        //    the confirmation prompt (auto-rejected — the window must
-        //    stay non-private).
+        // 3. "private" reaches New Private Tab (PTAB01); executing it
+        //    opens an off-the-record tab in the same window — no
+        //    prompt, and the global flag stays off.
         palette->openPalette();
         palette->setQuery(QLatin1String("private"));
         const int privateRow =
-            findRow(QLatin1String("Private Browsing"));
-        check(privateRow >= 0, "'private' query finds Private Browsing");
+            findRow(QLatin1String("New Private Tab"));
+        check(privateRow >= 0, "'private' query finds New Private Tab");
+        const int prePrivateCount = tabWidget->count();
         if (privateRow >= 0) {
             palette->executeRow(privateRow);
             pump();
         }
-        check(sawMessageBox > 0
-                  && !BrowserApplication::isPrivate(),
-              "Private Browsing executes (prompt dismissed)");
+        check(tabWidget->count() == prePrivateCount + 1
+                  && !BrowserApplication::isPrivate()
+                  && tabWidget->isTabPrivate(tabWidget->currentIndex()),
+              "New Private Tab opens an off-the-record tab");
 
         // 4. "clear history" reaches Clear Private Data through the
         //    keyword tail (the action's name never says 'history').

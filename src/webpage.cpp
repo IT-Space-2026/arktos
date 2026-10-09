@@ -688,14 +688,16 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // bound to the ruled container and the request refused.  Redirect
     // hops re-enter this hook, so a mid-chain hop onto a ruled host
     // diverts too.  Private and tor windows have no containers and
-    // never divert.  Placement is ahead of the HTTPS-Only and
-    // insecure-form warnings so those decisions are made by the tab
-    // that will actually load the url.
+    // never divert — PTAB01: the gate is the page's profile, so a
+    // private TAB inside a normal window is covered too (diverting it
+    // would record the visit on a persistent container profile).
+    // Placement is ahead of the HTTPS-Only and insecure-form warnings
+    // so those decisions are made by the tab that will actually load
+    // the url.
     if (isMainFrame
         && (scheme == QLatin1String("http")
             || scheme == QLatin1String("https"))
-        && !BrowserApplication::isPrivate()
-        && !BrowserApplication::isTorMode()
+        && !profile()->isOffTheRecord()
         && divertToContainerRule(url)) {
         return false;
     }

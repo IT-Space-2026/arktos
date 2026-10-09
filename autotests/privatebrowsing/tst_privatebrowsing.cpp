@@ -193,6 +193,7 @@ private slots:
     void cleanup();
 
     void privateProfileSelection();
+    void privateTabInNormalWindow();
     void otrPageDoesNotFeedHistory();
     void otrTabsExcludedFromSaveState();
     void otrTabSkippedByRecentlyClosed();
@@ -244,25 +245,92 @@ void tst_PrivateBrowsing::cleanup()
 }
 
 // Private browsing hands out a dedicated off-the-record profile; tabs
-// created while it is on live there, tabs created after do not.
+// created while it is on live there, tabs created from a normal tab
+// after the flag drops do not.  (PTAB01: a new tab inherits its
+// parent's context — the post-flag tab below is therefore opened from
+// the normal first tab, not the private one.)
 void tst_PrivateBrowsing::privateProfileSelection()
 {
     QVERIFY(!BrowserApplication::webEngineProfile()->isOffTheRecord());
+
+    TabWidget widget;
+    widget.newTab();
+    QVERIFY(!widget.webView(0)->page()->profile()->isOffTheRecord());
 
     BrowserApplication::setPrivate(true);
     QWebEngineProfile *otr = BrowserApplication::webEngineProfile();
     QVERIFY(otr->isOffTheRecord());
     QCOMPARE(otr, BrowserProfile::privateProfile());
 
-    TabWidget widget;
-    widget.newTab();
-    QVERIFY(widget.webView(0));
-    QVERIFY(widget.webView(0)->page()->profile()->isOffTheRecord());
-
-    BrowserApplication::setPrivate(false);
     widget.newTab();
     QVERIFY(widget.webView(1));
-    QVERIFY(!widget.webView(1)->page()->profile()->isOffTheRecord());
+    QVERIFY(widget.webView(1)->page()->profile()->isOffTheRecord());
+
+    BrowserApplication::setPrivate(false);
+    widget.setCurrentIndex(0);
+    widget.newTab();
+    QVERIFY(widget.webView(2));
+    QVERIFY(!widget.webView(2)->page()->profile()->isOffTheRecord());
+}
+
+// PTAB01: private tabs coexist with normal tabs in one window — the
+// tab lands on the shared off-the-record profile without flipping the
+// process-global flag, carries the private marker, and leaves no
+// history while its normal sibling still records.
+void tst_PrivateBrowsing::privateTabInNormalWindow()
+{
+    TabWidget widget;
+    QVERIFY(!BrowserApplication::isPrivate());
+
+    // A normal tab first, then the private one beside it.
+    widget.newTab();
+    QVERIFY(!widget.isTabPrivate(0));
+    const QUrl normalUrl = m_server->url(QLatin1String("/ptab01-normal.html"));
+    widget.loadUrl(normalUrl, TabWidget::CurrentTab);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), normalUrl, 15000);
+    QTRY_VERIFY(HistoryManager::instance()
+                    ->historyContains(normalUrl.toString()));
+
+    widget.newPrivateTab();
+    const int privateIndex = widget.count() - 1;
+    QVERIFY(widget.isTabPrivate(privateIndex));
+    QVERIFY(widget.webView(privateIndex));
+    QWebEnginePage *privatePage = widget.webView(privateIndex)->page();
+    QVERIFY(privatePage->profile()->isOffTheRecord());
+    QCOMPARE(privatePage->profile(), BrowserProfile::privateProfile());
+    // The window and app stay normal — only the tab is off-the-record.
+    QVERIFY(!BrowserApplication::isPrivate());
+
+    // The tab advertises its private status.
+    QVERIFY(widget.tabToolTip(privateIndex)
+                .contains(QLatin1String("Private")));
+
+    // A private load never reaches the history store — its sibling's
+    // entry is untouched.
+    const QUrl otrUrl = m_server->url(QLatin1String("/ptab01-private.html"));
+    widget.loadUrl(otrUrl, TabWidget::CurrentTab);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        widget.webView(privateIndex)->url(), otrUrl, 15000);
+    QTest::qWait(200);
+    QVERIFY(!HistoryManager::instance()
+                 ->historyContains(otrUrl.toString()));
+    QVERIFY(HistoryManager::instance()
+                ->historyContains(normalUrl.toString()));
+
+    // A child tab opened from a private page inherits the profile.
+    widget.setCurrentIndex(privateIndex);
+    widget.newTab();
+    const int childIndex = widget.currentIndex();
+    QVERIFY(widget.isTabPrivate(childIndex));
+    QVERIFY(widget.webView(childIndex)->page()->profile()
+                ->isOffTheRecord());
+    widget.closeTab(childIndex);
+
+    // Closing the private tab must not queue it for reopen.
+    widget.closeTab(privateIndex);
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+    QVERIFY(HistoryManager::instance()
+                ->historyContains(normalUrl.toString()));
 }
 
 // The app-side history feed in WebPage::init is only wired for pages

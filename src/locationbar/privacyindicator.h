@@ -21,6 +21,7 @@
 #define PRIVACYINDICATOR_H
 
 #include <qtoolbutton.h>
+#include <qpointer.h>
 
 class WebView;
 class PrivacyIndicator : public QToolButton
@@ -31,6 +32,8 @@ public:
     PrivacyIndicator(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
 
+private:
+    QPointer<WebView> m_webView;
 };
 
 #endif // PRIVACYINDICATOR_H

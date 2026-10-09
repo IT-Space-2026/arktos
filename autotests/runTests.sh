@@ -6,6 +6,12 @@
 # trees are reported but not treated as failures.
 cd "$(dirname "$0")" || exit 1
 
+# The suite always runs headless, and Qt 6.12's WebEngine compositor
+# traps (SIGTRAP) in the GPU path when the middle-click autoscroll
+# overlay is exercised offscreen — force software compositing for every
+# test process so `make check` stays green.
+export QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu${QTWEBENGINE_CHROMIUM_FLAGS:+ $QTWEBENGINE_CHROMIUM_FLAGS}"
+
 listed() {
     dir=$1
     parent=${dir%/*}
