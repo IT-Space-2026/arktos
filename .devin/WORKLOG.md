@@ -166,3 +166,4 @@
 - 2026-10-09 MERGEWATCH: rust-work merged — README modify/delete (folded rustcore bookmark+history store paragraph into README.md, kept README deleted); historymanager.{h,cpp} unioned (rustcore icon store under #ifdef ARORA_RUSTCORE, C++ host-png store in #else, shared entryUpdated refresh); tst_historymanager unioned (master HIST01 file-store tests under #ifndef, lane iconPersistence/legacyImport under #else); WORKLOG/ChangeLog/task-table auto-unioned, build ok
 - 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
 - 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
+- 2026-10-09 MERGEWATCH: ui-work skipped — dirty src/main.cpp in this tree blocked merge (agent mid-run fingerprint-protector edits); rust-work even
