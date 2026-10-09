@@ -49,6 +49,8 @@ UI:
 - Picture-in-Picture on videos (PIP01).
 - About dialog updated; Tools menu deduplicated (ABOUT01, MENU01).
 - Accessible names on every chrome control (A11Y01).
+- History entries show real site favicons that persist across restarts
+  (host-keyed icon store under the data dir; HIST01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
