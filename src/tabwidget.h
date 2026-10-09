@@ -152,9 +152,19 @@ public:
     // the session — and unknown/deleted ids degrade to the default
     // container.
     WebView *makeNewTabInContainer(const QString &containerId, bool makeCurrent = false);
+    // PTAB01: a private TAB inside a normal window — the page lives on
+    // the shared off-the-record profile while the process stays
+    // non-private.  In tor mode every tab is already off-the-record
+    // on the dedicated tor profile; this just makes a normal new tab
+    // there (the shared private profile is NOT tor-hardened).
+    WebView *makeNewPrivateTab(bool makeCurrent = false);
     // The container the tab at index belongs to — the default
     // container id for normal and off-the-record pages.
     QString containerIdForTab(int index) const;
+    // PTAB01: true when the tab's page browses off-the-record — the
+    // tab marker, the menu gates and the child-tab inheritance all
+    // key on the page profile, not the window-global private flag.
+    bool isTabPrivate(int index) const;
 
     // TABGRP01 — named, color-coded tab groups (Chrome/Vivaldi style).
     // Membership is keyed on the tab's WebView so drags never lose it;
@@ -195,8 +205,11 @@ public:
     WebView *getView(OpenUrlIn tab, WebView *currentView);
 
     // The omnibox resolver — public so the smoke harness and autotests
-    // can assert the routing decision directly (SRCH07).
+    // can assert the routing decision directly (SRCH07).  The two-arg
+    // form takes the target tab's private context (PTAB01); the one-arg
+    // form resolves it from the process-global private flag.
     static QUrl guessUrlFromString(const QString &url);
+    static QUrl guessUrlFromString(const QString &url, bool privateContext);
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -251,6 +264,7 @@ public slots:
     // cached while the tab was last current is returned.
     QPixmap tabThumbnail(int index);
     void newTab();
+    void newPrivateTab();
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
     void closeOtherTabs(int index);
@@ -279,6 +293,13 @@ private slots:
 private:
     QLabel *animationLabel(int index, bool addMovie);
     void retranslate();
+    // The shared body of makeNewTabInContainer()/makeNewPrivateTab():
+    // a location bar plus a WebView bound to the resolved profile.
+    WebView *makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCurrent);
+    // Child-tab inheritance for the container AND the private context
+    // of source (the current tab for Ctrl+T, the opener page for
+    // window.open / open-in-new-tab).
+    WebView *makeNewTabLike(WebView *source, bool makeCurrent);
     // SLEEP01: idle bookkeeping + the async state-capture half of
     // beginTabSleep (scroll position and the dirty-form probe come
     // back together from one runJavaScript round trip).

@@ -326,11 +326,13 @@ void TabBar::contextMenuRequested(const QPoint &position)
         action->setData(index);
 
         // CONT02: "Reopen in Container" moves the tab's page onto
-        // another container's profile.  Off-the-record windows hide
-        // the submenu — a private tab can never move to persistent
-        // storage (and tor has no containers at all).
+        // another container's profile.  Off-the-record tabs hide the
+        // submenu — a private tab (window-global or PTAB01's per-tab
+        // kind) can never move to persistent storage, and tor has no
+        // containers at all.
         if (!BrowserApplication::isPrivate()
-            && !BrowserApplication::isTorMode()) {
+            && !BrowserApplication::isTorMode()
+            && !tabWidget->isTabPrivate(index)) {
             QMenu *containersMenu = menu.addMenu(tr("Reopen in Con&tainer"));
             const QString current = tabWidget->containerIdForTab(index);
             ContainerManager *manager = ContainerManager::instance();

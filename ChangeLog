@@ -53,6 +53,10 @@ UI:
   (host-keyed icon store under the data dir; HIST01).
 - File menu: "New Tor Window" moved up next to New Window/New Tab
   instead of sitting at the bottom (MENU02).
+- Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
+  opens an off-the-record tab beside normal ones — mask-badged tab
+  icon, no history/cookies/icons/session/recently-closed writes, and
+  child tabs inherit the private context (PTAB01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

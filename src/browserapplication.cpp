@@ -958,6 +958,13 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
     return profile;
 }
 
+QWebEngineProfile *BrowserApplication::privateWebEngineProfile()
+{
+    QWebEngineProfile *profile = BrowserProfile::privateProfile();
+    prepareProfile(profile);
+    return profile;
+}
+
 DownloadManager *BrowserApplication::downloadManager()
 {
     // MIG11: the dialog owns its application-wide singleton now.

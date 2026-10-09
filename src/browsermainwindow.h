@@ -144,7 +144,6 @@ private slots:
     void fileOpen();
     void filePrintPreview();
     void filePrint();
-    void privateBrowsing();
     void fileSaveAs();
     void editFind();
     void editFindNext();
@@ -205,7 +204,7 @@ private:
     QAction *m_fileExportBookmarksAction;
     QAction *m_filePrintPreviewAction;
     QAction *m_filePrintAction;
-    QAction *m_filePrivateBrowsingAction;
+    QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
     QAction *m_fileCloseWindow;
     QAction *m_fileQuit;

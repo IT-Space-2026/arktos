@@ -100,6 +100,7 @@
 #include <qmenu.h>
 #include <qmessagebox.h>
 #include <qmovie.h>
+#include <qpainter.h>
 #include <qpixmap.h>
 #include <qpointer.h>
 #include <qquickwidget.h>
@@ -118,6 +119,10 @@
 #include <algorithm>
 
 //#define USERMODIFIEDBEHAVIOR_DEBUG
+
+// Defined near webViewIconChanged() — the tab marker for
+// off-the-record pages (PTAB01).
+static QPixmap privateBadgedPixmap(const QIcon &icon);
 
 TabWidget::TabWidget(QWidget *parent)
     : QTabWidget(parent)
@@ -415,12 +420,35 @@ void TabWidget::newTab()
     makeNewTab(true);
 }
 
+void TabWidget::newPrivateTab()
+{
+    makeNewPrivateTab(true);
+}
+
 WebView *TabWidget::makeNewTab(bool makeCurrent)
 {
     // CONT02: child-tab inheritance — the new tab stays in the
     // current tab's container ("" when the strip is empty or the
     // current tab is in the default container).
-    return makeNewTabInContainer(containerIdForTab(currentIndex()), makeCurrent);
+    return makeNewTabLike(webView(currentIndex()), makeCurrent);
+}
+
+// PTAB01: inheritance covers both context dimensions — a tab spawned
+// from an off-the-record page stays off-the-record (a "normal" child
+// would record the visit, the very leak private browsing avoids), and
+// a tab spawned from a container page keeps the container.  Tor never
+// inherits to the shared private profile: its tabs are already
+// off-the-record on the hardened tor profile.
+WebView *TabWidget::makeNewTabLike(WebView *source, bool makeCurrent)
+{
+    if (source && source->page()
+        && source->page()->profile()->isOffTheRecord()
+        && !BrowserApplication::isTorMode())
+        return makeNewPrivateTab(makeCurrent);
+    const QString containerId = source
+        ? source->containerId()
+        : ContainerManager::defaultContainerId();
+    return makeNewTabInContainer(containerId, makeCurrent);
 }
 
 QString TabWidget::containerIdForTab(int index) const
@@ -431,7 +459,43 @@ QString TabWidget::containerIdForTab(int index) const
     return view->containerId();
 }
 
+bool TabWidget::isTabPrivate(int index) const
+{
+    WebView *view = webView(index);
+    return view && view->page()
+        && view->page()->profile()->isOffTheRecord();
+}
+
+WebView *TabWidget::makeNewPrivateTab(bool makeCurrent)
+{
+    if (BrowserApplication::isTorMode())
+        return makeNewTabInContainer(
+            ContainerManager::defaultContainerId(), makeCurrent);
+    return makeNewTabOnProfile(
+        BrowserApplication::privateWebEngineProfile(), makeCurrent);
+}
+
 WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeCurrent)
+{
+    // webview — bound to the container's profile (CONT02).  The
+    // default container and private browsing both resolve to
+    // BrowserApplication::webEngineProfile() (the normal "arora"
+    // profile, or the off-the-record profile while private browsing
+    // is on) — containers are persistent state and can never take
+    // over a private tab, and ContainerManager::profileFor() refuses
+    // outright under tor or for unknown/deleted ids.  The accessor is
+    // static, so this is also safe under autotests that never
+    // instantiate the application object.
+    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+    if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
+        if (QWebEngineProfile *containerProfile =
+                ContainerManager::instance()->profileFor(containerId))
+            profile = containerProfile;
+    }
+    return makeNewTabOnProfile(profile, makeCurrent);
+}
+
+WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCurrent)
 {
     // line edit
     LocationBar *locationBar = new LocationBar;
@@ -490,6 +554,10 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
         });
         m_omniboxSuggestions = new OmniboxSuggestions(
             omniboxModel, m_lineEditCompleter, this);
+        // PTAB01: the private context is per-tab — suggestions for a
+        // private tab's omnibox resolve to the private engine.
+        m_omniboxSuggestions->setPrivateContextProvider(
+            [this]() { return isTabPrivate(currentIndex()); });
         // Should this be in Qt by default?
         QAbstractItemView *popup = m_lineEditCompleter->popup();
         QListView *listView = qobject_cast<QListView*>(popup);
@@ -513,21 +581,6 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     }
 #endif
 
-    // webview — bound to the container's profile (CONT02).  The
-    // default container and private browsing both resolve to
-    // BrowserApplication::webEngineProfile() (the normal "arora"
-    // profile, or the off-the-record profile while private browsing
-    // is on) — containers are persistent state and can never take
-    // over a private tab, and ContainerManager::profileFor() refuses
-    // outright under tor or for unknown/deleted ids.  The accessor is
-    // static, so this is also safe under autotests that never
-    // instantiate the application object.
-    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
-    if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
-        if (QWebEngineProfile *containerProfile =
-                ContainerManager::instance()->profileFor(containerId))
-            profile = containerProfile;
-    }
     WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
     connect(webView, &QWebEngineView::loadStarted,
@@ -554,6 +607,16 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
 
     WebViewWithSearch *webViewWithSearch = new WebViewWithSearch(webView, this);
     addTab(webViewWithSearch, tr("Untitled"));
+    // PTAB01: mark the private tab immediately — the favicon badge and
+    // the tooltip are refreshed from here on by webViewIconChanged()
+    // and webViewTitleChanged().
+    if (profile->isOffTheRecord()) {
+        const int newIndex = indexOf(webViewWithSearch);
+        if (QLabel *label = animationLabel(newIndex, false))
+            label->setPixmap(privateBadgedPixmap(
+                QIcon(QLatin1String(":graphics/defaulticon.png"))));
+        setTabToolTip(newIndex, tr("Private tab — visits are not recorded"));
+    }
     // SLEEP01: the idle clock starts at creation — a freshly opened
     // background tab is not immediately suspendable.  A fresh record
     // also drops any state a recycled pointer might have inherited.
@@ -585,9 +648,11 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
         return;
     // A private tab must never move onto a persistent container
     // profile — that would write the session to disk (SEC07), and
-    // tor refuses containers entirely.  Unknown/deleted ids likewise
-    // leave the tab alone.
-    if (BrowserApplication::isPrivate() || BrowserApplication::isTorMode())
+    // tor refuses containers entirely.  PTAB01: the check is per-tab —
+    // a private tab inside a normal window is just as off-limits.
+    // Unknown/deleted ids likewise leave the tab alone.
+    if (BrowserApplication::isPrivate() || BrowserApplication::isTorMode()
+        || isTabPrivate(index))
         return;
     if (!containerId.isEmpty()
         && !ContainerManager::instance()->isContainerId(containerId))
@@ -1466,7 +1531,12 @@ void TabWidget::cloneTab(int index)
     QUrl url = webView(index)->url();
     // TABGRP01: a clone stays in the cloned tab's group.
     const QString gid = tabGroupId(index);
-    WebView *tab = makeNewTab();
+    // PTAB01: a clone stays in the cloned tab's context — duplicating
+    // a private tab keeps the copy off-the-record (a normal-profile
+    // clone would record the url it reloads).
+    WebView *tab = isTabPrivate(index)
+        ? makeNewPrivateTab()
+        : makeNewTab();
     if (!gid.isEmpty()) {
         assignTabGroup(tab, gid);
         const int tabIndex = webViewIndex(tab);
@@ -1677,6 +1747,25 @@ void TabWidget::webViewLoadFinished(bool ok)
         emit showStatusBarMessage(tr("Failed to load"));
 }
 
+// PTAB01: a private tab's favicon carries the private mask in the
+// bottom-right corner — the off-the-record marker survives whatever
+// favicon the page resolves to (a private page never stores icons, so
+// the base is usually the default glyph).
+static QPixmap privateBadgedPixmap(const QIcon &icon)
+{
+    QPixmap base = icon.pixmap(16, 16);
+    if (base.isNull()) {
+        base = QPixmap(16, 16);
+        base.fill(Qt::transparent);
+    }
+    const QPixmap badge(QLatin1String(":graphics/private.png"));
+    const int size = base.width() / 2 + 1;
+    QPainter painter(&base);
+    painter.drawPixmap(base.width() - size, base.height() - size,
+                       size, size, badge);
+    return base;
+}
+
 void TabWidget::webViewIconChanged()
 {
     WebView *webView = qobject_cast<WebView*>(sender());
@@ -1688,7 +1777,9 @@ void TabWidget::webViewIconChanged()
         QMovie *movie = label->movie();
         delete movie;
         label->setMovie(nullptr);
-        label->setPixmap(icon.pixmap(16, 16));
+        label->setPixmap(isTabPrivate(index)
+            ? privateBadgedPixmap(icon)
+            : icon.pixmap(16, 16));
 #endif
     }
 }
@@ -1716,6 +1807,9 @@ void TabWidget::webViewTitleChanged(const QString &title)
         if (!name.isEmpty())
             toolTip = QStringLiteral("[%1] %2").arg(name, tabTitle);
     }
+    // PTAB01: the tooltip also names the private context.
+    if (isTabPrivate(index))
+        toolTip = QStringLiteral("[%1] %2").arg(tr("Private"), toolTip);
     setTabToolTip(index, SafeText::escaped(toolTip));
     if (currentIndex() == index)
         emit setCurrentTitle(title);
@@ -1826,7 +1920,12 @@ void TabWidget::loadString(const QString &string, OpenUrlIn tab)
     if (string.isEmpty())
         return;
 
-    QUrl url = guessUrlFromString(string);
+    // PTAB01: the target is the current tab (or a new tab inheriting
+    // its context) — a private tab's typed input resolves through the
+    // private search engine.
+    const bool privateContext = BrowserApplication::isPrivate()
+        || isTabPrivate(currentIndex());
+    QUrl url = guessUrlFromString(string, privateContext);
     loadUrl(url, tab);
 }
 
@@ -1835,7 +1934,9 @@ void TabWidget::loadStringFromUntrustedSource(const QString &string, OpenUrlIn t
     if (string.isEmpty())
         return;
 
-    const QUrl url = guessUrlFromString(string);
+    const bool privateContext = BrowserApplication::isPrivate()
+        || isTabPrivate(currentIndex());
+    const QUrl url = guessUrlFromString(string, privateContext);
     if (!WebView::isUrlAllowedOnUntrustedInput(url)) {
         qWarning() << "TabWidget: refusing url from an untrusted source:" << url;
         return;
@@ -1869,6 +1970,11 @@ static bool looksLikeAddress(const QString &text)
 
 QUrl TabWidget::guessUrlFromString(const QString &string)
 {
+    return guessUrlFromString(string, BrowserApplication::isPrivate());
+}
+
+QUrl TabWidget::guessUrlFromString(const QString &string, bool privateContext)
+{
     const QString trimmed = string.trimmed();
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
 
@@ -1889,10 +1995,9 @@ QUrl TabWidget::guessUrlFromString(const QString &string)
     // opt-out that restores the historic bare-http guess.
     const bool search =
         settings.value(QLatin1String("searchEngineFallback"), true).toBool();
-    // SRCH04: private browsing is app-global in Arora (the flag also
-    // covers tor mode) — those contexts search through the configured
+    // SRCH04/PTAB01: private contexts (the app-global flag, tor mode
+    // and per-tab private browsing) search through the configured
     // private engine.
-    const bool privateContext = BrowserApplication::isPrivate();
     const auto fallbackUrl = [search, &trimmed, privateContext, manager]() -> QUrl {
         if (search) {
             OpenSearchEngine *engine =
@@ -2109,6 +2214,22 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
                         currentView ? currentView->containerId()
                                     : ContainerManager::defaultContainerId());
                 webView = newMainWindow->currentTab();
+                // PTAB01: a window spawned from a private tab browses
+                // privately too — the ctor's fresh first tab is
+                // swapped for an off-the-record one (a page's profile
+                // is fixed at creation, so the swap is the only
+                // way).  Global private/tor windows already produce
+                // off-the-record first tabs.
+                if (webView && currentView && currentView->page()
+                    && currentView->page()->profile()->isOffTheRecord()
+                    && !(webView->page()
+                         && webView->page()->profile()->isOffTheRecord())) {
+                    if (WebView *privateTab =
+                            newMainWindow->tabWidget()->makeNewPrivateTab(true)) {
+                        newMainWindow->tabWidget()->closeTab(0);
+                        webView = privateTab;
+                    }
+                }
             }
             webView->setFocus();
             break;
@@ -2118,7 +2239,7 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
 #ifdef USERMODIFIEDBEHAVIOR_DEBUG
             qDebug() << __FUNCTION__ << "NewSelectedTab";
 #endif
-            webView = makeNewTab(true);
+            webView = makeNewTabLike(currentView, true);
             // TABGRP01: a child tab inherits its opener's group, the
             // same rule the container inheritance follows.
             inheritTabGroup(webView, currentView);
@@ -2130,7 +2251,7 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
 #ifdef USERMODIFIEDBEHAVIOR_DEBUG
             qDebug() << __FUNCTION__ << "NewNotSelectedTab";
 #endif
-            webView = makeNewTab(false);
+            webView = makeNewTabLike(currentView, false);
             inheritTabGroup(webView, currentView);
             break;
         }

@@ -145,11 +145,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     setupMenu();
     setupToolBar();
 
-    m_filePrivateBrowsingAction->setChecked(BrowserApplication::isPrivate());
     if (BrowserApplication::isTorMode()) {
         // TOR02: a tor window is private by construction (dedicated
-        // OTR profile) — the toggle is meaningless and hidden.
-        m_filePrivateBrowsingAction->setVisible(false);
+        // OTR profile) — a "New Private Tab" entry would be a no-op
+        // there, so it is hidden and disabled.
+        m_fileNewPrivateTabAction->setVisible(false);
+        m_fileNewPrivateTabAction->setEnabled(false);
 
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
@@ -541,6 +542,17 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileNewWindowAction);
     m_fileMenu->addAction(m_tabWidget->newTabAction());
 
+    // PTAB01: private browsing is per-tab — the off-the-record page
+    // lives inside this window alongside normal tabs.
+    m_fileNewPrivateTabAction = new QAction(m_fileMenu);
+    // Ctrl+Shift+P is the command palette (CMD01); Ctrl+Shift+N is the
+    // incognito/private shortcut Chrome popularized.
+    m_fileNewPrivateTabAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_N));
+    connect(m_fileNewPrivateTabAction, &QAction::triggered,
+            m_tabWidget, &TabWidget::newPrivateTab);
+    m_fileMenu->addAction(m_fileNewPrivateTabAction);
+
     // TOR02: a Tor window is a separate `arora --tor` process — the
     // application proxy is process-global, so routing cannot be a
     // mode of this window.  Disabled when no tor binary resolves.
@@ -614,13 +626,6 @@ void BrowserMainWindow::setupMenu()
     connect(m_filePrintAction, &QAction::triggered,
             this, &BrowserMainWindow::filePrint);
     m_fileMenu->addAction(m_filePrintAction);
-    m_fileMenu->addSeparator();
-
-    m_filePrivateBrowsingAction = new QAction(m_fileMenu);
-    connect(m_filePrivateBrowsingAction, &QAction::triggered,
-            this, &BrowserMainWindow::privateBrowsing);
-    m_filePrivateBrowsingAction->setCheckable(true);
-    m_fileMenu->addAction(m_filePrivateBrowsingAction);
     m_fileMenu->addSeparator();
 
     m_fileCloseWindow = new QAction(m_fileMenu);
@@ -1154,7 +1159,7 @@ void BrowserMainWindow::retranslate()
     m_fileExportBookmarksAction->setText(tr("&Export Bookmarks..."));
     m_filePrintPreviewAction->setText(tr("P&rint Preview..."));
     m_filePrintAction->setText(tr("&Print..."));
-    m_filePrivateBrowsingAction->setText(tr("Private &Browsing..."));
+    m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
     m_fileCloseWindow->setText(tr("Close Window"));
     m_fileQuit->setText(tr("&Quit"));
@@ -1582,39 +1587,6 @@ void BrowserMainWindow::printRequested(QWebEnginePage *page)
     view->print(printer);
 }
 
-void BrowserMainWindow::privateBrowsing()
-{
-    if (!BrowserApplication::isPrivate()) {
-        QString title = tr("Are you sure you want to turn on private browsing?");
-        QString text1 = tr("When private browsing is turned on, some actions concerning your privacy will be disabled:");
-
-        QStringList actions;
-        actions.append(tr("Webpages are not added to the history."));
-        actions.append(tr("Items are automatically removed from the Downloads window."));
-        actions.append(tr("New cookies are not stored, current cookies can't be accessed."));
-        actions.append(tr("Site icons won't be stored."));
-        actions.append(tr("Session won't be saved."));
-        actions.append(tr("Searches are not added to the pop-up menu in the search box."));
-        actions.append(tr("No new network cache is written to disk."));
-
-        QString text2 = tr("Until you close the window, you can still click the Back and Forward "
-                           "buttons to return to the webpages you have opened.");
-
-        QString message = QString(QLatin1String("<b>%1</b><p>%2</p><ul><li>%3</li></ul><p>%4</p>"))
-                          .arg(title, text1, actions.join(QLatin1String("</li><li>")), text2);
-
-        QMessageBox::StandardButton button = QMessageBox::question(this, tr("Private Browsing"), message,
-                                                                   QMessageBox::Ok | QMessageBox::Cancel,
-                                                                   QMessageBox::Ok);
-        if (button == QMessageBox::Ok)
-            BrowserApplication::setPrivate(true);
-        else
-            m_filePrivateBrowsingAction->setChecked(false);
-    } else {
-        BrowserApplication::setPrivate(false);
-    }
-}
-
 void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)
 {
     m_viewZoomTextOnlyAction->setChecked(textOnly);
@@ -1622,7 +1594,9 @@ void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)
 
 void BrowserMainWindow::privacyChanged(bool isPrivate)
 {
-    m_filePrivateBrowsingAction->setChecked(isPrivate);
+    // PTAB01: private browsing is per-tab now — the global flag still
+    // exists internally (full-private windows, tests), and leaving it
+    // drops the off-the-record per-tab state kept here.
     if (!isPrivate)
         tabWidget()->clear();
 }
