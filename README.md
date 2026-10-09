@@ -146,8 +146,8 @@ browsing profile:
   screen so buttons never clip, dedicated Search and Containers pages.
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
-- **Look & feel** — follows the desktop light/dark scheme
-  (`ARORA_COLOR_SCHEME` override), selectable bundled icon sets
+- **Look & feel** — Theme selector (System default / Light / Dark,
+  `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
   (Adwaita/Breeze/Tabler, light+dark variants), status-bar load
   indicator and zoom control, domain-emphasized anti-phishing address
   bar with IDN punycode display.

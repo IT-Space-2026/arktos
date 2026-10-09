@@ -69,6 +69,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
+#include "browsertheme.h"
 #include "containermanager.h"
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
@@ -793,6 +794,17 @@ void SettingsDialog::loadFromSettings()
     settings.endGroup();
 
     // Appearance
+    // THEME01: chrome color scheme — the combo order is
+    // System default / Light / Dark; anything else falls back to
+    // System.
+    {
+        const QString colorScheme = settings.value(
+            QLatin1String("browser/colorScheme"),
+            QLatin1String("system")).toString();
+        themeCombo->setCurrentIndex(
+            colorScheme == QLatin1String("dark") ? 2
+            : colorScheme == QLatin1String("light") ? 1 : 0);
+    }
     settings.beginGroup(QLatin1String("websettings"));
     m_fixedFont = settings.value(QLatin1String("fixedFont"), m_fixedFont).value<QFont>();
     m_standardFont = settings.value(QLatin1String("standardFont"), m_standardFont).value<QFont>();
@@ -1000,6 +1012,20 @@ void SettingsDialog::saveToSettings()
     // Applies to existing icons live — QIcon theme lookups re-resolve
     // on setThemeName, no widget rewiring needed.
     AroraIcon::setTheme(iconTheme);
+
+    // THEME01: chrome color scheme — persisted under browser/ and
+    // applied live.  applyColorScheme() re-reads the key through
+    // preferredColorScheme(); same-process QSettings instances share
+    // the confFile cache, so the just-written pick is already visible.
+    // The forced-palette machinery restores the captured platform
+    // palette on the way back to Light/System — no restart needed.
+    static const char *const colorSchemeKeys[] = {
+        "system", "light", "dark"
+    };
+    settings.setValue(QLatin1String("browser/colorScheme"),
+        QLatin1String(colorSchemeKeys[
+            qBound(0, themeCombo->currentIndex(), 2)]));
+    BrowserTheme::applyColorScheme();
 
     settings.beginGroup(QLatin1String("downloadmanager"));
     settings.setValue(QLatin1String("alwaysPromptForFileName"), downloadAsk->isChecked());
@@ -2346,7 +2372,10 @@ static int promptNewPassphrase(QWidget *parent, bool change,
     layout->addLayout(form);
 
     QLabel *hint = new QLabel;
-    hint->setStyleSheet(QLatin1String("color: #b00000"));
+    // BrightText is the palette's alert color — readable on light and
+    // forced-dark chrome alike (a hardcoded dark red washes out on the
+    // dark palette).
+    hint->setForegroundRole(QPalette::BrightText);
     layout->addWidget(hint);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(

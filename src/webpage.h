@@ -64,14 +64,21 @@ class JavaScriptAroraObject : public QObject
     // slot of OpenSearchEngine to the page.
     Q_PROPERTY(QString currentEngineName READ currentEngineName
                NOTIFY currentEngineNameChanged)
+    // THEME01: lets the qrc start page follow the chrome palette —
+    // prefers-color-scheme tracks the OS, not the app's forced
+    // palette, so the page reads this at init and re-reads on
+    // darkChromeChanged.
+    Q_PROPERTY(bool darkChrome READ darkChrome NOTIFY darkChromeChanged)
 
 public:
     JavaScriptAroraObject(QObject *parent = nullptr);
 
     QString currentEngineName() const;
+    bool darkChrome() const;
 
 signals:
     void currentEngineNameChanged();
+    void darkChromeChanged();
 
 public slots:
     QString translate(const QString &string);

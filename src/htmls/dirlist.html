@@ -70,6 +70,22 @@ body:not(.showDotFiles) .hidden {
   font-size: 80%;
   padding-left: 48px;
 }
+/* THEME01: follows the app chrome palette — the host tags <html>
+   with class="arora-dark" when the forced dark palette is active. */
+html.arora-dark body {
+  background: #232326;
+  color: #e2e2e6;
+}
+html.arora-dark #box {
+  background: #2b2b30;
+  border-color: #474750;
+}
+html.arora-dark h1, html.arora-dark h2 {
+  border-bottom-color: #474750;
+}
+html.arora-dark hr {
+  color: #474750;
+}
 </style>
 <script type="text/javascript">
 function showHide()

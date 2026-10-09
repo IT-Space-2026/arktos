@@ -139,6 +139,8 @@ private slots:
     void storagePermissions();
     void deferredSiteWipe();
     void colorSchemeApply();
+    void themeSettingPrecedence();
+    void internalPageDarkDecoration();
     void dialogsRenderInBothSchemes();
     void dialogButtonPolish();
 };
@@ -806,6 +808,67 @@ void tst_Dialogs::colorSchemeApply()
     QVERIFY(!BrowserTheme::paletteIsForced());
     QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
     QCOMPARE(QApplication::palette().color(QPalette::Window), platformWindow);
+    qunsetenv("ARORA_COLOR_SCHEME");
+}
+
+// THEME01: the persisted browser/colorScheme pick sits above the env
+// override — an explicit light/dark wins, "system" (or an absent key)
+// falls through to ARORA_COLOR_SCHEME then the platform.
+void tst_Dialogs::themeSettingPrecedence()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("browser/colorScheme"));
+
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
+    // An explicit pick beats the env override both ways.
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("light"));
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("dark"));
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
+    // "system" hands the decision back to env/platform.
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("system"));
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
+
+    settings.remove(QLatin1String("browser/colorScheme"));
+    qunsetenv("ARORA_COLOR_SCHEME");
+}
+
+// THEME01: generated branded pages (error pages, dirlist) are tagged
+// for their dark CSS rules only while the chrome palette is dark —
+// and the notifier fires so live observers (the start page's channel
+// object) see mid-session flips.
+void tst_Dialogs::internalPageDarkDecoration()
+{
+    const QString light =
+        QStringLiteral("<html><body>err</body></html>");
+
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    QString html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QCOMPARE(html, light);
+
+    QSignalSpy schemeSpy(BrowserTheme::themeNotifier(),
+                         &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged);
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    BrowserTheme::applyColorScheme();
+    QCOMPARE(schemeSpy.count(), 1);
+    html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QVERIFY(html.contains(QLatin1String("class=\"arora-dark\"")));
+
+    // Flipping back lights the notifier again and stops the tagging.
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    QCOMPARE(schemeSpy.count(), 2);
+    html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QCOMPARE(html, light);
     qunsetenv("ARORA_COLOR_SCHEME");
 }
 
