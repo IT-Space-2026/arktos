@@ -1,4 +1,4 @@
-0.2 (unreleased) — Qt 6 port + feature rebuild
+0.12 (unreleased) — Qt 6 port + feature rebuild
 Core / Qt 6 port:
 - Complete port from Qt4/WebKit to Qt 6/WebEngine: WebView, WebPage, tab
   widget, browser window, application object (MIG02–MIG15).
