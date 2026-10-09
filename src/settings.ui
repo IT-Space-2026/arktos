@@ -776,10 +776,10 @@
           <item row="0" column="1">
            <widget class="QRadioButton" name="searchButtonRadio">
             <property name="toolTip">
-             <string>Collapse the search field to an engine button; the button's menu offers a search prompt.</string>
+             <string>Hide the search field entirely; web searches go through the location bar.</string>
             </property>
             <property name="text">
-             <string>Show as a Button</string>
+             <string>Hidden</string>
             </property>
            </widget>
           </item>

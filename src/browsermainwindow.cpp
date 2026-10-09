@@ -1342,12 +1342,12 @@ void BrowserMainWindow::setupToolBar()
 }
 
 // SRCH03: the dedicated search box is opt-in — the omnibox location
-// bar (SRCH01) covers the same job.  SRCH04 repurposes the setting
-// into Vivaldi's two display modes: showSearchBox on gives the full
-// text field, off collapses it to just the engine button instead of
-// hiding it outright.  The widget stays constructed either way: the
-// splitter layout, the search signal wiring, and setWebView()
-// tracking are all unchanged.
+// bar (SRCH01) covers the same job.  SRCH08 retires the SRCH04
+// collapsed-button mode entirely: showSearchBox off hides the widget
+// outright so the splitter gives the location bar the full width,
+// on restores the full text field.  The widget stays constructed
+// either way: the splitter layout, the search signal wiring, and
+// setWebView() tracking are all unchanged.
 void BrowserMainWindow::applySearchBoxVisibility()
 {
     // TOR03: tor windows never carry the dedicated search box — a
@@ -1364,8 +1364,8 @@ void BrowserMainWindow::applySearchBoxVisibility()
     QSettings settings;
     const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
-    m_toolbarSearch->setButtonMode(!field);
-    m_toolbarSearch->setVisible(true);
+    m_toolbarSearch->setButtonMode(false);
+    m_toolbarSearch->setVisible(field);
 }
 
 // SIDE01: the panel is built on first show so a hidden sidebar is
@@ -1881,8 +1881,8 @@ void BrowserMainWindow::goHome()
 
 void BrowserMainWindow::webSearch()
 {
-    // TOR03: a hidden search box (tor windows) has nothing to focus —
-    // the shortcut falls back to the omnibox, which runs the same
+    // TOR03/SRCH08: a hidden search box has nothing to focus — the
+    // shortcut falls back to the omnibox, which runs the same
     // engines.
     if (m_toolbarSearch->isHidden()) {
         if (QLineEdit *bar = m_tabWidget->currentLocationBar()) {
@@ -1893,7 +1893,8 @@ void BrowserMainWindow::webSearch()
     }
     // SRCH04: in button mode there is no field to focus — the
     // shortcut opens the engines menu, which leads with a "Search..."
-    // prompt.
+    // prompt.  applySearchBoxVisibility() no longer arms it, but the
+    // ToolbarSearch API still supports it, so keep the path live.
     if (m_toolbarSearch->isButtonMode()) {
         m_toolbarSearch->showEnginesMenu();
         return;
