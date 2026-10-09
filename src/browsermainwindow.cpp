@@ -947,6 +947,18 @@ void BrowserMainWindow::setupMenu()
     // Window
     m_windowMenu = new QMenu(menuBar());
     menuBar()->addMenu(m_windowMenu);
+
+    // POL02: Ctrl+Shift+A opens the palette's tabs-only mode; the
+    // menu entry doubles as the shortcut's discoverable home.  The
+    // extra addAction keeps the shortcut live while the menu bar is
+    // hidden.
+    m_windowTabSearchAction = new QAction(m_windowMenu);
+    m_windowTabSearchAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_A));
+    connect(m_windowTabSearchAction, &QAction::triggered,
+            this, &BrowserMainWindow::showTabSearch);
+    addAction(m_windowTabSearchAction);
+
     connect(m_windowMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowWindowMenu);
     aboutToShowWindowMenu();
@@ -1190,6 +1202,7 @@ void BrowserMainWindow::retranslate()
     m_bookmarksAddFolderAction->setText(tr("Add Folder..."));
 
     m_windowMenu->setTitle(tr("&Window"));
+    m_windowTabSearchAction->setText(tr("Search &Tabs..."));
 
     m_toolsMenu->setTitle(tr("&Tools"));
     m_toolsCommandPaletteAction->setText(tr("Command &Palette..."));
@@ -1467,6 +1480,11 @@ CommandPalette *BrowserMainWindow::commandPalette()
 void BrowserMainWindow::showCommandPalette()
 {
     commandPalette()->openPalette();
+}
+
+void BrowserMainWindow::showTabSearch()
+{
+    commandPalette()->openTabSearch();
 }
 
 void BrowserMainWindow::updateStatusbar(const QString &string)
@@ -1898,6 +1916,7 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     m_windowMenu->clear();
     m_windowMenu->addAction(m_tabWidget->nextTabAction());
     m_windowMenu->addAction(m_tabWidget->previousTabAction());
+    m_windowMenu->addAction(m_windowTabSearchAction);
     m_windowMenu->addSeparator();
     QAction *downloadManagerAction = m_windowMenu->addAction(tr("Downloads"), QKeySequence(tr("Ctrl+Y", "Download Manager")), this, &BrowserMainWindow::downloadManager);
 

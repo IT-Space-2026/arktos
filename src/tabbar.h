@@ -68,6 +68,9 @@
 #include "containermanager.h"
 #include "tabwidget.h"
 
+class QTimer;
+class TabPreview;
+
 /*
     Tab bar with a few more features such as a context menu and shortcuts
  */
@@ -104,6 +107,10 @@ public:
     bool perTabCloseButtons() const;
     void setPerTabCloseButtons(bool enabled);
 
+    // POL02: the hover-preview card, lazily created on the first
+    // dwell — exposed for the smoke test.
+    TabPreview *tabPreview() const;
+
 protected:
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
@@ -113,6 +120,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     QSize tabSizeHint(int index) const override;
     void tabInserted(int position) override;
     void tabRemoved(int position) override;
@@ -133,6 +141,12 @@ private:
     void installCloseButton(int index);
     void updateHoveredTab(const QPoint &pos);
     void updateCloseButtonVisibility();
+    // POL02: hover-preview plumbing — the dwell timer arms on a fresh
+    // hover, retargets instantly once a card is up, and the card drops
+    // whenever the pointer leaves, presses, or the strip mutates.
+    void updatePreviewDwell();
+    void showTabPreview(int index);
+    void hideTabPreview();
     // CONT02: the container chip — resolves the registry entry behind
     // the tab at index (empty id when the tab is in the default
     // container), the font the chip text uses, and the extra size the
@@ -158,6 +172,9 @@ private:
     bool m_showTabBarWhenOneTab;
     bool m_perTabCloseButtons;
     int m_hoveredTab;
+    // POL02: lazily-created hover card + its dwell timer.
+    TabPreview *m_preview;
+    QTimer *m_previewTimer;
 };
 
 

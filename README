@@ -62,6 +62,14 @@ tabs stay contiguous behind a colored header chip, and "Collapse
 Group" folds the run down to just the chip (tabs stay loaded) until
 it is expanded again.  Groups survive session save/restore.
 
+Tab search & hover previews: Ctrl+Shift+A (or Window → "Search
+Tabs...") opens a tabs-only variant of the command palette — a fuzzy
+filter over every open tab, where Enter switches straight to the
+match.  Resting the pointer on a tab pops a small card with the
+page's title, address and a live thumbnail; sleeping or never-loaded
+tabs show their favicon instead.  The card is passive — it never
+takes focus and vanishes when the pointer leaves the strip.
+
 Sidebar: View → "Sidebar" (F4, or the toolbar button) opens an optional
 side panel, off by default — the window is unchanged until it is
 switched on.  It hosts four tabs over the shared data: Bookmarks,

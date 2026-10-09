@@ -66,6 +66,7 @@
 #include "browserapplication.h"
 #include "containermanager.h"
 #include "safetext.h"
+#include "tabpreview.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -82,6 +83,7 @@
 #include <qmimedata.h>
 #include <qpainter.h>
 #include <qstyle.h>
+#include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qurl.h>
 
@@ -110,6 +112,8 @@ TabBar::TabBar(QWidget *parent)
     , m_showTabBarWhenOneTab(true)
     , m_perTabCloseButtons(false)
     , m_hoveredTab(-1)
+    , m_preview(nullptr)
+    , m_previewTimer(nullptr)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
@@ -136,7 +140,25 @@ TabBar::TabBar(QWidget *parent)
     // events only arrive while a mouse button is held.
     setMouseTracking(true);
     connect(this, &QTabBar::currentChanged,
-            this, [this](int) { updateCloseButtonVisibility(); });
+            this, [this](int) {
+        updateCloseButtonVisibility();
+        hideTabPreview();
+    });
+
+    // POL02: resting the pointer on a tab for a beat pops the hover
+    // card.  The card dies when the window goes inactive — a tooltip-
+    // style popup must never float over another application's window.
+    m_previewTimer = new QTimer(this);
+    m_previewTimer->setSingleShot(true);
+    m_previewTimer->setInterval(500);
+    connect(m_previewTimer, &QTimer::timeout, this, [this]() {
+        showTabPreview(m_hoveredTab);
+    });
+    connect(qApp, &QApplication::applicationStateChanged,
+            this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive)
+            hideTabPreview();
+    });
 
     // TABGRP01: while a left-button drag is live, remember where the
     // moved tab lands — on release a middle-of-tab drop stacks it into
@@ -242,6 +264,7 @@ void TabBar::updateHoveredTab(const QPoint &pos)
         return;
     m_hoveredTab = hovered;
     updateCloseButtonVisibility();
+    updatePreviewDwell();
 }
 
 void TabBar::updateCloseButtonVisibility()
@@ -262,6 +285,8 @@ void TabBar::leaveEvent(QEvent *event)
         m_hoveredTab = -1;
         updateCloseButtonVisibility();
     }
+    m_previewTimer->stop();
+    hideTabPreview();
     QTabBar::leaveEvent(event);
 }
 
@@ -287,6 +312,7 @@ void TabBar::selectTabAction()
 
 void TabBar::contextMenuRequested(const QPoint &position)
 {
+    hideTabPreview();
     QMenu menu;
     TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
     if (!tabWidget)
@@ -546,6 +572,8 @@ void TabBar::closeOtherTabs()
 
 void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    m_previewTimer->stop();
+    hideTabPreview();
     if (event->button() == Qt::LeftButton
         && tabAt(event->position().toPoint()) == -1) {
         emit newTab();
@@ -602,6 +630,8 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
 
 void TabBar::mousePressEvent(QMouseEvent *event)
 {
+    m_previewTimer->stop();
+    hideTabPreview();
     if (event->button() == Qt::LeftButton) {
         m_dragStartPos = event->position().toPoint();
         // TABGRP01: a press starts a potential drag — arm the
@@ -713,6 +743,58 @@ void TabBar::dropEvent(QDropEvent *event)
     }
 
     QTabBar::dropEvent(event);
+}
+
+void TabBar::wheelEvent(QWheelEvent *event)
+{
+    // The strip may scroll under the resting pointer — the card's
+    // anchor is stale the moment the tabs move.
+    m_previewTimer->stop();
+    hideTabPreview();
+    QTabBar::wheelEvent(event);
+}
+
+// POL02: hovering a tab dwells for 500ms before the card appears;
+// once a card is up, pointer walks retarget it instantly.  Presses and
+// drags keep it down.
+void TabBar::updatePreviewDwell()
+{
+    if (m_hoveredTab < 0) {
+        m_previewTimer->stop();
+        hideTabPreview();
+        return;
+    }
+    if (m_preview && m_preview->isVisible()) {
+        showTabPreview(m_hoveredTab);
+        return;
+    }
+    if (QApplication::mouseButtons() & Qt::LeftButton)
+        return;
+    m_previewTimer->start();
+}
+
+void TabBar::showTabPreview(int index)
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || index < 0 || index >= count() || !isVisible()
+        || (QApplication::mouseButtons() & Qt::LeftButton)) {
+        hideTabPreview();
+        return;
+    }
+    if (!m_preview)
+        m_preview = new TabPreview(this);
+    m_preview->previewTab(index);
+}
+
+void TabBar::hideTabPreview()
+{
+    if (m_preview)
+        m_preview->hide();
+}
+
+TabPreview *TabBar::tabPreview() const
+{
+    return m_preview;
 }
 
 // CONT02: the container a tab belongs to, resolved through the page's
@@ -1075,6 +1157,11 @@ void TabBar::tabRemoved(int position)
 
 void TabBar::updateVisibility()
 {
+    // Any strip mutation (insert/remove/visibility toggle lands here)
+    // invalidates the card's anchor — drop it and re-arm on the next
+    // hover change.
+    m_previewTimer->stop();
+    hideTabPreview();
     // TABGRP01: a collapsed group can leave a single chip on the strip
     // — the bar must stay reachable so the chip can be re-expanded.
     bool collapsedGroups = false;

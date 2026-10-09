@@ -222,7 +222,21 @@ void CommandPalette::recordMru(const QString &id)
 
 void CommandPalette::openPalette()
 {
+    open(AllItems);
+}
+
+void CommandPalette::openTabSearch()
+{
+    open(TabsOnly);
+}
+
+void CommandPalette::open(Mode mode)
+{
+    m_mode = mode;
     rebuild();
+    m_edit->setPlaceholderText(mode == TabsOnly
+        ? tr("Search open tabs...")
+        : tr("Type a command, tab or bookmark name..."));
     m_edit->clear();
     refilter();
     updateGeometry();
@@ -386,6 +400,10 @@ void CommandPalette::collectSettingsPages()
 void CommandPalette::rebuild()
 {
     m_items.clear();
+    if (m_mode == TabsOnly) {
+        collectTabs();
+        return;
+    }
     collectCommands();
     collectTabs();
     collectBookmarks(BookmarksManager::instance()->bookmarks());

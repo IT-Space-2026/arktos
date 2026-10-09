@@ -93,13 +93,16 @@
 #include <qdatetime.h>
 #include <qdir.h>
 #include <qevent.h>
+#include <qimage.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qlistview.h>
 #include <qmenu.h>
 #include <qmessagebox.h>
 #include <qmovie.h>
+#include <qpixmap.h>
 #include <qpointer.h>
+#include <qquickwidget.h>
 #include <qregularexpression.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
@@ -321,6 +324,9 @@ void TabWidget::currentChanged(int index)
     } else if (!webView->url().isEmpty()) {
         webView->setFocus();
     }
+    // POL02: the tab just became visible — capture its thumbnail once
+    // the compositor presents it.
+    scheduleThumbnailCapture(webView);
 }
 
 QAction *TabWidget::newTabAction() const
@@ -1292,6 +1298,88 @@ void TabWidget::applySleepVisuals(int index, bool sleeping)
     m_tabBar->update();
 }
 
+// POL02: QtWebEngine paints each page into a QQuickWidget delegate
+// inside the view; its framebuffer still holds the last compositor
+// frame where QWidget::grab() on the outer view only yields the
+// widget's blank background (background tabs, offscreen platform).
+static QImage webViewThumbnailFrame(WebView *view)
+{
+    if (QQuickWidget *delegate = view->findChild<QQuickWidget *>()) {
+        const QImage frame = delegate->grabFramebuffer();
+        if (!frame.isNull())
+            return frame;
+    }
+    return view->grab().toImage();
+}
+
+// A frame that is uniformly near-white (or fully transparent) is what
+// the compositor offers when it has nothing real to show — never
+// rendered, evicted, discarded, or no compositing on this platform —
+// so the caller keeps the cached snapshot or the icon fallback.
+// Uniform-but-coloured pages are legitimate frames and pass.
+static bool blankThumbnailFrame(const QImage &image)
+{
+    if (image.isNull())
+        return true;
+    const QImage sample = image.scaled(
+        4, 4, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    for (int y = 0; y < sample.height(); ++y) {
+        for (int x = 0; x < sample.width(); ++x) {
+            const QRgb px = sample.pixel(x, y);
+            if (qAlpha(px) < 16)
+                continue;
+            if (qRed(px) < 240 || qGreen(px) < 240 || qBlue(px) < 240)
+                return false;
+        }
+    }
+    // Either everything was transparent, or everything was near-white.
+    return true;
+}
+
+// Grab the tab's view into the thumbnail cache.  Only the current
+// tab's view is actually visible inside the stack, so the scheduled
+// captures below only ever fire there — request-time grabbing for
+// background tabs lives in tabThumbnail().
+void TabWidget::captureTabThumbnail(int index)
+{
+    WebView *view = webView(index);
+    if (!view || !view->isVisible())
+        return;
+    const QImage frame = webViewThumbnailFrame(view);
+    if (blankThumbnailFrame(frame))
+        return;
+    m_tabThumbnails.insert(view, QPixmap::fromImage(
+        frame.scaledToWidth(384, Qt::SmoothTransformation)));
+}
+
+void TabWidget::scheduleThumbnailCapture(WebView *webView)
+{
+    QPointer<WebView> guard(webView);
+    QTimer::singleShot(300, this, [this, guard]() {
+        if (guard && currentWebView() == guard.data())
+            captureTabThumbnail(currentIndex());
+    });
+}
+
+QPixmap TabWidget::tabThumbnail(int index)
+{
+    WebView *view = webView(index);
+    if (!view)
+        return QPixmap();
+    // A hidden WebEngine view usually still paints its last compositor
+    // frame on grab(), so preview-time grabbing works for background
+    // tabs too — the blank check catches the platforms where it
+    // doesn't and keeps the cached snapshot instead.
+    const QImage frame = webViewThumbnailFrame(view);
+    if (!frame.isNull() && !blankThumbnailFrame(frame)) {
+        const QPixmap thumb = QPixmap::fromImage(
+            frame.scaledToWidth(384, Qt::SmoothTransformation));
+        m_tabThumbnails.insert(view, thumb);
+        return thumb;
+    }
+    return m_tabThumbnails.value(view);
+}
+
 void TabWidget::reloadAllTabs()
 {
     for (int i = 0; i < count(); ++i) {
@@ -1474,6 +1562,7 @@ void TabWidget::closeTab(int index)
     QWidget *webViewWithSearch = widget(index);
     removeTab(index);
     m_sleepStates.remove(tab);
+    m_tabThumbnails.remove(tab);
     // TABGRP01: drop the view's membership; the group record dies with
     // its last member.
     m_tabGroups.remove(tab);
@@ -1572,6 +1661,11 @@ void TabWidget::webViewLoadFinished(bool ok)
 #endif
     }
     webViewIconChanged();
+
+    // POL02: refresh the hover-preview thumbnail once the freshly
+    // loaded page has a frame to show.
+    if (index == currentIndex())
+        scheduleThumbnailCapture(webView);
 
     if (index != currentIndex())
         return;

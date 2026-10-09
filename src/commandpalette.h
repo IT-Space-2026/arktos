@@ -60,6 +60,9 @@ public:
     explicit CommandPalette(BrowserMainWindow *window);
 
     void openPalette();
+    // POL02: Ctrl+Shift+A tab search — the same popup restricted to
+    // the open-tabs item set (all browser windows).
+    void openTabSearch();
 
     // Subsequence score: >= 0 matches (higher is better), -1 no match.
     // Public so tests can pin the ranking rules directly.
@@ -82,6 +85,8 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
+    enum Mode { AllItems, TabsOnly };
+
     struct Item {
         QString text;      // what the row shows
         QString category;  // "Command" / "Tab" / "Bookmark" / "Settings"
@@ -95,6 +100,7 @@ private:
         int settingsPage = -1;
     };
 
+    void open(Mode mode);
     void rebuild();
     void collectMenuActions(const QList<QAction*> &actions,
                             const QString &path, QSet<QAction*> *seen);
@@ -112,6 +118,7 @@ private:
     QLineEdit *m_edit;
     QListWidget *m_list;
     QList<Item> m_items;
+    Mode m_mode = AllItems;
 };
 
 #endif // COMMANDPALETTE_H

@@ -62,6 +62,8 @@
 #include "sourcehighlighter.h"
 #include "sourceviewer.h"
 #include "startupprofile.h"
+#include "tabbar.h"
+#include "tabpreview.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
@@ -103,6 +105,7 @@
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QEventLoop>
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkProxy>
@@ -1829,7 +1832,7 @@ int main(int argc, char **argv)
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
         "xsleak-smoke", "xsleak-open",
-        "sleep-smoke", "palette-smoke", "pip-smoke",
+        "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -6282,6 +6285,239 @@ int main(int argc, char **argv)
         qInfo() << "palette-smoke:"
                 << (failures == 0 ? "PASS" : "FAIL")
                 << "failures:" << failures;
+        delete browserWindow;
+        return failures == 0 ? 0 : 1;
+    }
+
+    // Headless verification for POL02: (a) the Ctrl+Shift+A tab
+    // search opens the command palette in tabs-only mode — every row
+    // is a "Tab" item spanning all open tabs, the fuzzy filter finds
+    // one by title and Enter switches straight to it, and the palette
+    // falls back to the full item set on a normal open.  (b) resting
+    // a synthetic hover on a tab pops the TabPreview card — a live
+    // thumbnail for a loaded tab, the favicon+title fallback for a
+    // blank and a sleeping tab — without ever taking focus.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--tabstrip-smoke"))) {
+        BrowserMainWindow *browserWindow = new BrowserMainWindow();
+        browserWindow->show();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+        TabBar *tabBar = tabWidget->tabBar();
+        CommandPalette *palette = browserWindow->commandPalette();
+
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "tabstrip-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto pump = []() {
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+        };
+        // Real-time waits — the preview's dwell timer and the
+        // thumbnail captures are wall-clock driven.
+        const auto waitMs = [](int ms) {
+            QElapsedTimer elapsed;
+            elapsed.start();
+            while (elapsed.elapsed() < ms)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        };
+        const auto hoverTab = [tabBar](int index) {
+            const QPoint center = tabBar->tabRect(index).center();
+            QMouseEvent move(QEvent::MouseMove, QPointF(center),
+                             tabBar->mapToGlobal(center),
+                             Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(tabBar, &move);
+        };
+
+        tabWidget->newTabAction()->trigger();
+        tabWidget->newTabAction()->trigger();
+        check(tabWidget->count() == 3, "three tabs");
+        tabWidget->setTabText(0, QLatin1String("strip-alpha"));
+        tabWidget->setTabText(1, QLatin1String("strip-beta"));
+        tabWidget->setTabText(2, QLatin1String("strip-gamma"));
+
+        // (a) Ctrl+Shift+A — the discoverable Window-menu action opens
+        //     the palette restricted to Tab items.
+        QAction *searchAction = nullptr;
+        const QList<QAction*> windowActions =
+            browserWindow->findChildren<QAction*>();
+        for (QAction *action : windowActions) {
+            if (action->shortcut()
+                == QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                                | Qt::Key_A))
+                searchAction = action;
+        }
+        check(searchAction != nullptr, "ctrl+shift+a action exists");
+        if (searchAction)
+            searchAction->trigger();
+        // Popup mapping under a bare X server (xvfb, no WM) is racy —
+        // give the frame a chance to be exposed before asserting.
+        waitMs(400);
+        pump();
+        check(palette->isVisible(), "tab search opens");
+        int tabRows = 0;
+        bool onlyTabs = true;
+        for (int i = 0; i < palette->visibleCount(); ++i) {
+            if (palette->itemCategory(i) != QLatin1String("Tab"))
+                onlyTabs = false;
+            ++tabRows;
+        }
+        check(onlyTabs && tabRows == 3, "tabs-only rows (3)");
+
+        palette->setQuery(QLatin1String("strip-beta"));
+        int betaRow = -1;
+        for (int i = 0; i < palette->visibleCount(); ++i) {
+            if (palette->itemText(i).contains(QLatin1String("strip-beta")))
+                betaRow = i;
+        }
+        check(betaRow >= 0, "fuzzy filter finds strip-beta");
+        if (betaRow >= 0) {
+            palette->executeRow(betaRow);
+            pump();
+        }
+        check(tabWidget->currentIndex() == 1, "enter-to-switch lands");
+
+        // The next normal open must carry the full item set again —
+        // tabs-only is a per-open mode, not a sticky filter.
+        palette->openPalette();
+        pump();
+        bool sawCommand = false;
+        for (int i = 0; i < palette->visibleCount(); ++i) {
+            if (palette->itemCategory(i) == QLatin1String("Command"))
+                sawCommand = true;
+        }
+        check(sawCommand, "full palette restored after tab search");
+        palette->hide();
+        pump();
+
+        // (b) hover preview — give tab 0 and tab 2 a real page so a
+        //     live frame exists to snapshot; tab 1 stays blank for
+        //     the icon-fallback check.
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-tabstrip-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "tabstrip-smoke: FAIL (cannot write fixture)";
+                delete browserWindow;
+                return 1;
+            }
+            fixture.write("<html><head><title>tabstrip-fixture</title></head>"
+                          "<body style=\"margin:0\">"
+                          "<div style=\"height:80px;background:#c33\"></div>"
+                          "<div style=\"height:80px;background:#36c\"></div>"
+                          "<div style=\"height:80px;background:#3a3\"></div>"
+                          "<div style=\"height:80px;background:#cc3\"></div>"
+                          "</body></html>");
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+        bool loaded = false;
+        bool loaded2 = false;
+        QObject::connect(tabWidget->webView(0),
+                         &QWebEngineView::loadFinished,
+                         &application,
+                         [&loaded](bool ok) { loaded = ok; });
+        QObject::connect(tabWidget->webView(2),
+                         &QWebEngineView::loadFinished,
+                         &application,
+                         [&loaded2](bool ok) { loaded2 = ok; });
+        tabWidget->setCurrentIndex(0);
+        tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
+        tabWidget->setCurrentIndex(2);
+        tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
+        tabWidget->setCurrentIndex(0);
+        for (int i = 0; i < 200 && (!loaded || !loaded2); ++i)
+            waitMs(50);
+        check(loaded && loaded2, "fixtures loaded");
+        // Let the deferred thumbnail captures land (300ms timers).
+        waitMs(800);
+
+        QWidget *focusBefore = QApplication::focusWidget();
+        hoverTab(0);
+        waitMs(700);
+        TabPreview *preview = tabBar->tabPreview();
+        check(preview && preview->isVisible(), "hover preview shows");
+        if (preview) {
+            check(preview->previewedIndex() == 0,
+                  "preview targets hovered tab");
+            check(preview->titleText()
+                      .contains(QLatin1String("tabstrip-fixture")),
+                  "preview shows page title");
+            check(preview->hasThumbnail(), "live thumbnail captured");
+            check(preview->focusPolicy() == Qt::NoFocus
+                  && preview->testAttribute(Qt::WA_ShowWithoutActivating)
+                  && !preview->isActiveWindow(),
+                  "preview never steals focus");
+        }
+        check(QApplication::focusWidget() == focusBefore,
+              "focus unchanged while preview up");
+
+        // Pointer walks the strip: the card retargets instantly onto
+        // the never-loaded tab — blank page falls back to favicon+title.
+        hoverTab(1);
+        waitMs(100);
+        check(preview && preview->isVisible()
+                  && preview->previewedIndex() == 1
+                  && !preview->hasThumbnail(),
+              "preview retargets, blank tab falls back to icon");
+
+        // Leaving the bar drops the card.
+        {
+            QEvent leaveEvent(QEvent::Leave);
+            QCoreApplication::sendEvent(tabBar, &leaveEvent);
+        }
+        waitMs(100);
+        check(preview && !preview->isVisible(),
+              "preview hides on leave");
+
+        // Sleeping tab: page discarded -> the card takes the
+        // favicon+title fallback and flags the sleeping state.
+        tabWidget->sleepTab(2);
+        for (int i = 0; i < 60 && !tabWidget->isTabSleeping(2); ++i)
+            waitMs(100);
+        check(tabWidget->isTabSleeping(2), "tab slept");
+        hoverTab(2);
+        waitMs(700);
+        check(preview && preview->isVisible()
+                  && preview->previewedIndex() == 2
+                  && !preview->hasThumbnail()
+                  && preview->detailText()
+                         .contains(QLatin1String("Sleeping")),
+              "sleeping tab gets icon fallback card");
+        {
+            QEvent leaveEvent(QEvent::Leave);
+            QCoreApplication::sendEvent(tabBar, &leaveEvent);
+        }
+
+        // Many tabs: the strip scrolls, the search still lists them
+        // all and the preview still resolves.
+        for (int i = 0; i < 10; ++i)
+            tabWidget->newTabAction()->trigger();
+        pump();
+        check(tabWidget->count() == 13, "many tabs (13)");
+        palette->openTabSearch();
+        pump();
+        tabRows = 0;
+        onlyTabs = true;
+        for (int i = 0; i < palette->visibleCount(); ++i) {
+            if (palette->itemCategory(i) != QLatin1String("Tab"))
+                onlyTabs = false;
+            ++tabRows;
+        }
+        check(onlyTabs && tabRows == 13, "tab search covers all tabs");
+        palette->hide();
+        hoverTab(tabWidget->count() - 1);
+        waitMs(700);
+        check(preview && preview->isVisible()
+                  && preview->previewedIndex() == tabWidget->count() - 1,
+              "preview works with many tabs");
+
+        qInfo() << "tabstrip-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL")
+                << "failures:" << failures;
+        QFile::remove(fixturePath);
         delete browserWindow;
         return failures == 0 ? 0 : 1;
     }

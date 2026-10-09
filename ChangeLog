@@ -476,6 +476,10 @@ Link sharing (POL01):
     Right-click menus gain "Copy Clean Link", which copies the link — or the page address when clicked on plain page content — with tracking parameters stripped: utm_*, fbclid, gclid, msclkid, Mailchimp/HubSpot/Marketo identifiers and ~50 more names from a curated blocklist (extendable without a rebuild via the urlcleaner/extraParams settings key). Other query parameters, their order, and the #fragment are preserved; only http(s) URLs are touched.
     Every context menu also offers "Show QR Code for This Page", popping a small dialog that renders the current page address as a scannable QR code (vendored MIT-licensed qrcodegen encoder) with the URL shown selectable underneath.
 
+Tab strip polish (POL02):
+    Ctrl+Shift+A (or Window → "Search Tabs...") opens a tab search: the command palette restricted to the open-tabs list across every window, fuzzy-filtered by title — Enter switches straight to the match. The full palette is unchanged; tabs-only is a per-open mode, not a sticky filter.
+    Resting the pointer on a tab for half a second now pops a hover card showing the page's title, address and a live thumbnail snapshot; sleeping tabs and pages with no captured frame fall back to the favicon + title card, flagged "Sleeping". The card is a passive tooltip-style popup — it never takes focus and drops the moment the pointer leaves the strip, a button is pressed, the strip scrolls, or the window loses activation.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

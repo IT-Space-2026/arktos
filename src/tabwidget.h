@@ -239,6 +239,13 @@ public slots:
     // least idleMs milliseconds.  The settings-driven timer calls
     // this; the smoke test drives it directly.
     void suspendIdleTabs(qint64 idleMs);
+    // POL02: the tab-strip hover preview's thumbnail — the page's
+    // last live render at ~thumbnail scale, or null when the tab
+    // never rendered a capturable frame (never shown, evicted,
+    // blank).  Background tabs re-grab on request where the engine
+    // still holds the last compositor frame; otherwise the frame
+    // cached while the tab was last current is returned.
+    QPixmap tabThumbnail(int index);
     void newTab();
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
@@ -278,6 +285,11 @@ private:
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
     void updateSleepTimer();
+    // POL02: thumbnail plumbing for the hover preview — the deferred
+    // schedule lets the compositor present the freshly shown/loaded
+    // page before the snapshot is taken.
+    void captureTabThumbnail(int index);
+    void scheduleThumbnailCapture(WebView *webView);
 
     // TABGRP01 internals — see the public accessors above.
     QString nextTabGroupId();
@@ -358,6 +370,9 @@ private:
     QHash<WebView *, TabSleepState> m_sleepStates;
     QTimer *m_sleepTimer = nullptr;
     qint64 m_suspendIdleMs = 0;
+    // POL02: per-view thumbnail cache for the hover preview — keyed
+    // on the view like the sleep bookkeeping so drags never lose it.
+    QHash<WebView *, QPixmap> m_tabThumbnails;
 };
 
 #endif // TABWIDGET_H

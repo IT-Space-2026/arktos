@@ -746,6 +746,14 @@ void applyChromiumFlags()
     addFlag(QLatin1String("--disable-sync"));
     addFlag(QLatin1String("--no-first-run"));
 
+    // POL02: the offscreen QPA has no display/GPU to composite on and
+    // Chromium then produces no frames at all — every view grab (tab
+    // hover previews, thumbnails) comes back blank.  Software
+    // rasterizing keeps headless runs fully rendered.
+    if (qEnvironmentVariable("QT_QPA_PLATFORM")
+            == QLatin1String("offscreen"))
+        addFlag(QLatin1String("--disable-gpu"));
+
     if (webrtcProtection) {
         // Strongest WebRTC IP policy Chromium exposes: every ICE
         // transport goes through the configured proxy (SOCKS5 cannot

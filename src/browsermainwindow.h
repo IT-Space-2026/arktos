@@ -122,6 +122,8 @@ public slots:
     void zoomTextOnlyChanged(bool textOnly);
     void preferences();
     void showCommandPalette();
+    // POL02: Ctrl+Shift+A tab search — the palette in tabs-only mode.
+    void showTabSearch();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -253,6 +255,7 @@ private:
     QAction *m_bookmarksAddFolderAction;
 
     QMenu *m_windowMenu;
+    QAction *m_windowTabSearchAction;
 
     QMenu *m_toolsMenu;
     QAction *m_toolsCommandPaletteAction;
