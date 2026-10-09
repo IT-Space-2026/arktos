@@ -89,7 +89,8 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --extension-otr-smoke --extension-update-smoke --ua-smoke
 --container-smoke --palette-smoke --pip-smoke --tabstrip-smoke
 --icons-smoke --fingerprint-smoke --ping-smoke --httpsonly-smoke --telemetry-smoke
---tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke"
+--tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke
+--startpage-smoke"
 for flag in $SMOKE_FLAGS; do
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"

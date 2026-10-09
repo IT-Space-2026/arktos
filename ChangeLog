@@ -95,7 +95,9 @@ Security:
 - browseraudit.com CSP/sandbox audits and fixes (SEC14–SEC16C).
 - badssl.com 72-case matrix baseline + fix pass (BADSSL02/03).
 - XS-Leak baseline and third-party WebSocket block (XSLEAK02–04).
-- Adblock page-load stall fix (STALL01).
+- Adblock page-load stall fix (STALL01); the start-page hang it
+  caused is now pinned by a 50-load hostile-rules regression harness
+  (START01).
 - WebChannel console noise eliminated (CHAN01).
 
 Containers:

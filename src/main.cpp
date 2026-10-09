@@ -1903,6 +1903,9 @@ static const char *const kSmokeFilters[] = {
     "||redir.example/vast.xml$redirect=noop-vast-4.0",
     "||param.example^$removeparam=utm_source",
     "smoke.example##.ad-banner",
+    "*$script,redirect-rule=noopjs",
+    "qwebchannel.js$script",
+    "arora.svg$image",
 };
 
 static void purgeSmokeFilters(AdBlockSubscription *custom)
@@ -1967,6 +1970,175 @@ static void restoreAdBlockStateOnExit()
                                      subscription->allRules(),
                                      subscription->isEnabled()});
     qAddPostRoutine(&restoreAdBlockState);
+}
+
+// START01: the qrc start page must always finish loading AND get a
+// working channel — the regression net for both reported suspects:
+// a stalled qrc subresource in the interceptor path (STALL01's
+// mechanism aimed at the start page's own qrc:///qtwebchannel/
+// qwebchannel.js, qrc:/startpage.css and qrc:/arora.svg fetches —
+// any one of them spinning keeps isLoading() true forever) and the
+// channel-registration ordering ('arora' registers on urlChanged at
+// commit; the page's init() handshake at onload must still resolve
+// it on every load).
+//
+// The shared custom subscription is armed with the same widened uBO
+// shape that produced the original hang — a global $script
+// redirect-rule whose arora-resource: stub re-entered the matcher —
+// plus rules naming the start page's own qrc subresources, so every
+// one of the fifty loads crosses the interceptor with hostile rules
+// live.  Each load must emit loadFinished inside the per-load
+// deadline, then resolve channel.objects.arora — proven by the
+// page's own update() filling document.title and the search button
+// — and answer an explicit searchUrl() round-trip, the call the
+// search box itself makes.
+static int startPageSmoke(BrowserApplication &application, WebView *view)
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    AdBlockSubscription *custom = manager->customRules();
+    purgeSmokeFilters(custom);
+    restoreAdBlockStateOnExit();
+    if (!custom->isEnabled())
+        custom->setEnabled(true);
+    custom->addRule(AdBlockRule(QLatin1String("*$script,redirect-rule=noopjs")));
+    custom->addRule(AdBlockRule(QLatin1String("qwebchannel.js$script")));
+    custom->addRule(AdBlockRule(QLatin1String("arora.svg$image")));
+    // addRule -> rulesChanged -> queued matcher rebuild; force it so
+    // the snapshot is armed before the first load, then confirm it
+    // through the IO-thread view of the rules — a run whose blocker
+    // is off or whose rules parsed inert could not catch the stall
+    // it exists to catch.
+    AdBlockNetwork *network = manager->network();
+    network->rebuildRules();
+    const AdBlockDecision probe = network->match(
+        QUrl(QLatin1String("http://start01.invalid/probe.js")),
+        QUrl(), int(QWebEngineUrlRequestInfo::ResourceTypeScript));
+    if (!manager->isEnabled()
+        || probe.action == AdBlockDecision::Allow) {
+        qInfo() << "startpage-smoke: FAIL (hostile rules not armed:"
+                << "enabled" << manager->isEnabled()
+                << "probe action" << int(probe.action) << ")";
+        return 1;
+    }
+
+    const QUrl startUrl(QLatin1String("qrc:/startpage.html"));
+    const int iterationCount = 50;
+    auto iteration = std::make_shared<int>(0);
+    // phaseDone: true while waiting on loadFinished, false while the
+    // poll below verifies the channel.  Late JS results from an
+    // earlier tick drop out on it.
+    auto phaseDone = std::make_shared<bool>(true);
+    auto verifyTicks = std::make_shared<int>(0);
+
+    // The deadline is the stall tripwire — a poisoned qrc
+    // subresource keeps isLoading() true forever.
+    QTimer *deadline = new QTimer(&application);
+    deadline->setSingleShot(true);
+    QObject::connect(deadline, &QTimer::timeout, &application,
+                     [&application, iteration]() {
+        qInfo() << "startpage-smoke: FAIL (iteration" << *iteration
+                << "stalled)";
+        application.exit(1);
+    });
+
+    // init()'s handshake runs at onload; by loadFinished the channel
+    // client exists iff 'arora' was registered in time.  The probe
+    // reports the whole page-side state so a failure says which
+    // layer broke, and arms a searchUrl() round-trip once the
+    // client is live.
+    const QString probeJs = QStringLiteral(
+        "(function(){"
+        "  var s = document.getElementById('searchButton');"
+        "  var e = document.getElementById('lineEdit');"
+        "  var ready = (typeof arora === 'object' && arora !== null)"
+        "      && document.title.length > 0"
+        "      && !!s && s.value.length > 0"
+        "      && !!e && e.placeholder.length > 0;"
+        "  if (ready && !window.__spArmed) {"
+        "      window.__spArmed = true;"
+        "      window.__spUrl = '';"
+        "      arora.searchUrl('start01probe', function(u) {"
+        "          window.__spUrl = String(u); });"
+        "  }"
+        "  return [(ready ? 1 : 0),"
+        "      (typeof window.__aroraChannel),"
+        "      (arora === null ? 'null' : typeof arora),"
+        "      document.title,"
+        "      (s ? s.value : 'MISSING'),"
+        "      (e ? e.placeholder : 'MISSING'),"
+        "      (window.__spUrl || '')].join('|');"
+        "})()");
+
+    std::function<void()> startLoad;
+    QTimer *poll = new QTimer(&application);
+    QObject::connect(poll, &QTimer::timeout, &application,
+        [view, &application, iteration, phaseDone, verifyTicks, poll,
+         probeJs, &startLoad]() {
+        if (*phaseDone)
+            return;
+        view->webPage()->runJavaScript(probeJs,
+            [view, &application, iteration, phaseDone, verifyTicks,
+             poll, &startLoad](const QVariant &result) {
+            if (*phaseDone)
+                return;
+            const QStringList parts =
+                result.toString().split(QLatin1Char('|'));
+            const bool ready = parts.value(0) == QLatin1String("1");
+            const QString searchUrl = parts.value(6);
+            if (ready && searchUrl.startsWith(QLatin1String("http"))) {
+                *phaseDone = true;
+                poll->stop();
+                qInfo() << "startpage-smoke: load" << *iteration
+                        << "ok —" << parts.value(3)
+                        << "| engine" << parts.value(5)
+                        << "| search" << searchUrl;
+                startLoad();
+                return;
+            }
+            if (++*verifyTicks > 60) {
+                *phaseDone = true;
+                poll->stop();
+                qInfo() << "startpage-smoke: FAIL (iteration"
+                        << *iteration << "channel never resolved:"
+                        << result.toString() << ")";
+                application.exit(1);
+            }
+        });
+    });
+
+    QObject::connect(view, &QWebEngineView::loadFinished, &application,
+        [view, &application, startUrl, iteration, phaseDone,
+         verifyTicks, poll, deadline](bool ok) {
+        // The smoke issues the only navigations, so a finish while
+        // the start page is committed is this iteration's.
+        if (!*phaseDone || view->webPage()->isLoading()
+            || view->url() != startUrl)
+            return;
+        if (!ok) {
+            qInfo() << "startpage-smoke: FAIL (iteration" << *iteration
+                    << "loadFinished false)";
+            application.exit(1);
+            return;
+        }
+        *phaseDone = false;
+        *verifyTicks = 0;
+        deadline->start(8000);
+        poll->start(50);
+    });
+
+    startLoad = [view, startUrl, iteration, phaseDone, deadline,
+                 iterationCount, &application]() {
+        if (++*iteration > iterationCount) {
+            qInfo() << "startpage-smoke: PASS (" << iterationCount
+                    << "loads, channel resolved on every one)";
+            application.exit(0);
+            return;
+        }
+        deadline->start(5000);
+        view->loadUrl(startUrl);
+    };
+    startLoad();
+    return application.exec();
 }
 
 // SLEEP01: /proc helpers for the sleeping-tabs smoke — the RSS and
@@ -2364,6 +2536,7 @@ int main(int argc, char **argv)
         "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
         "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
+        "startpage-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2578,7 +2751,11 @@ int main(int argc, char **argv)
         qWarning() << "Ignoring untrusted argv url:" << firstUrl;
         firstUrl = QUrl(QStringLiteral("about:blank"));
     }
-    view->loadUrl(firstUrl);
+    // START01: --startpage-smoke issues its own loads; skipping the
+    // argv navigation keeps a stale loadFinished from being
+    // miscounted as an iteration's.
+    if (!args.contains(QLatin1String("--startpage-smoke")))
+        view->loadUrl(firstUrl);
 
     // Headless verification for MIG15: exercise the real application
     // path — BrowserApplication brings up the profile and services,
@@ -2639,6 +2816,12 @@ int main(int argc, char **argv)
         QTimer::singleShot(15000, &application,
                            [&application]() { application.exit(1); });
     }
+
+    // START01: fifty consecutive qrc:/startpage.html loads under
+    // hostile adblock rules — every one must finish and resolve its
+    // channel client.
+    if (args.contains(QLatin1String("--startpage-smoke")))
+        return startPageSmoke(application, view);
 
     // SEC15: live-site measurement — runs the complete browseraudit
     // suite on the browsing profile and records per-test outcomes.
