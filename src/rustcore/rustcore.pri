@@ -23,7 +23,7 @@ rustcore {
     cargo_rustcore.target = $$RUSTCORE_LIB
     cargo_rustcore.commands = cd $$PWD && $$CARGO build --release
     cargo_rustcore.depends = $$PWD/Cargo.toml $$PWD/Cargo.lock \
-        $$files($$PWD/src/*.rs, true)
+        $$files($$PWD/src/*.rs, true) $$files($$PWD/data/*)
     QMAKE_EXTRA_TARGETS += cargo_rustcore
     PRE_TARGETDEPS += $$RUSTCORE_LIB
 

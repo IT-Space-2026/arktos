@@ -20,7 +20,11 @@ itself) and moves credential storage — the AES-256-GCM seal/open,
 Argon2id master-passphrase KDF and securestore.key/securestore.kdf file
 handling behind the SecureStore API — into it.  On-disk formats are
 unchanged, so existing stores open either way; the C++ implementation
-stays the default when the flag is off.
+stays the default when the flag is off.  The crate also carries a
+ClearURLs-style tracking-parameter stripper (vendored
+urlstrip-rules.json, reloadable from a data-dir override); with the
+flag set the privacy request interceptor redirects GET/HEAD requests
+to the stripped URL.
 
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,

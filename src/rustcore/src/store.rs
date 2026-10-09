@@ -98,7 +98,7 @@ impl Store {
         Ok(())
     }
 
-    fn dir(&self) -> RcResult<&Path> {
+    pub(crate) fn dir(&self) -> RcResult<&Path> {
         self.data_dir.as_deref().ok_or_else(|| Fail {
             status: RcStatus::NotInitialized,
             msg: "rc_set_data_dir() has not been called".into(),

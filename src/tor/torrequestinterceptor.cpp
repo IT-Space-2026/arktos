@@ -41,11 +41,25 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
             info.requestUrl().scheme()))
         return;
     const QUrl url = info.requestUrl();
+    // SEC17: tracking-param stripping applies in tor windows too — a
+    // click identifier is a cross-site identifier regardless of the
+    // exit path.  Folded into the http->https upgrade below so a
+    // tracked clearnet URL costs one redirect; .onion http: URLs keep
+    // their scheme and still strip.  GET/HEAD only, same as the
+    // privacy interceptor.
+    QUrl target = url;
+    if (PrivacyRequestInterceptor::stripTrackingParamsEnabled()
+        && (info.requestMethod() == QByteArrayLiteral("GET")
+            || info.requestMethod() == QByteArrayLiteral("HEAD")))
+        target = PrivacyRequestInterceptor::strippedUrl(url);
     if (url.scheme() == QLatin1String("http")
         && !url.host().endsWith(QLatin1String(".onion"))) {
-        QUrl https = url;
-        https.setScheme(QLatin1String("https"));
-        info.redirect(https);
+        target.setScheme(QLatin1String("https"));
+        info.redirect(target);
+        return;
+    }
+    if (target != url) {
+        info.redirect(target);
         return;
     }
     // PING01: beacons, <a ping> audits and CSP reports are telemetry

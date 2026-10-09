@@ -33,6 +33,10 @@
 #include <qwebengineprofile.h>
 #include <qwebengineurlrequestinfo.h>
 
+#if defined(ARORA_RUSTCORE)
+#include <rustcore.h>
+#endif
+
 // #define PRIVACYINTERCEPTOR_DEBUG
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
 #include <qdebug.h>
@@ -50,6 +54,7 @@ static bool s_blockPings = true;
 static bool s_blockRemoteFonts = false;
 static bool s_blockPrefetch = true;
 static bool s_blockThirdPartyWebSockets = false;
+static bool s_stripTrackingParams = true;
 
 // SAFE07: hosts whose https main-frame load failed with a genuine
 // connection/TLS error — their http: requests stop being upgraded.
@@ -105,6 +110,8 @@ void PrivacyRequestInterceptor::loadSettings()
         settings.value(QLatin1String("blockPrefetch"), true).toBool();
     const bool blockThirdPartyWebSockets =
         settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
+    const bool stripTrackingParams =
+        settings.value(QLatin1String("stripTrackingParams"), true).toBool();
     QSet<QString> persistedHttpAllowed;
     const QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
@@ -124,6 +131,7 @@ void PrivacyRequestInterceptor::loadSettings()
         s_blockRemoteFonts = blockRemoteFonts;
         s_blockPrefetch = blockPrefetch;
         s_blockThirdPartyWebSockets = blockThirdPartyWebSockets;
+        s_stripTrackingParams = stripTrackingParams;
     }
     {
         const QMutexLocker lock(&s_httpAllowLock);
@@ -208,6 +216,40 @@ bool PrivacyRequestInterceptor::blockThirdPartyWebSocketsEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_blockThirdPartyWebSockets;
+}
+
+bool PrivacyRequestInterceptor::stripTrackingParamsEnabled()
+{
+    QReadLocker lock(&s_policyLock);
+    return s_stripTrackingParams;
+}
+
+// SEC17: the strip decision the interceptors redirect through.  The
+// ruleset match itself runs in rustcore — safe Rust over the
+// attacker-controlled URL — so this wrapper only marshals.  Fail-open
+// everywhere: an FFI hiccup or a cleaned URL that does not re-parse
+// degrades to no-strip, never to a block.
+QUrl PrivacyRequestInterceptor::strippedUrl(const QUrl &url)
+{
+#if defined(ARORA_RUSTCORE)
+    const QString scheme = url.scheme();
+    if (!url.hasQuery()
+        || (scheme != QLatin1String("http")
+            && scheme != QLatin1String("https")))
+        return url;
+    const QByteArray encoded = url.toEncoded();
+    char *out = rc_urlstrip(encoded.constData());
+    if (!out)
+        return url;
+    const QByteArray cleaned(out);
+    rc_string_free(out);
+    if (cleaned.isEmpty() || cleaned == encoded)
+        return url;
+    const QUrl result = QUrl::fromEncoded(cleaned);
+    return result.isValid() ? result : url;
+#else
+    return url;   // no-rust build: the strip stage is absent
+#endif
 }
 
 // SAFE04: remote fonts fingerprint GPU/OS text stacks and ping a
@@ -841,15 +883,40 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         return;
     }
 
+    // SEC17: ClearURLs-style tracking-param strip — when a rustcore
+    // rule fires the request is redirected to the cleaned URL before
+    // it leaves (the re-issued request re-runs this whole pipeline,
+    // so every block stage still applies to it).  GET/HEAD only: a
+    // redirect on a body-carrying method could renegotiate the
+    // method, so POSTs keep their params.  Folded into the
+    // https-first redirect so a tracked http: navigation still costs
+    // one redirect, not two.
+    bool stripParams;
+    {
+        QReadLocker lock(&s_policyLock);
+        stripParams = s_stripTrackingParams;
+    }
+    QUrl target = url;
+    if (stripParams
+        && (info.requestMethod() == QByteArrayLiteral("GET")
+            || info.requestMethod() == QByteArrayLiteral("HEAD")))
+        target = strippedUrl(url);
+
     if (httpsFirst
         && info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
         && isUpgradeCandidate(url, m_scope)) {
-        QUrl https = url;
-        https.setScheme(QLatin1String("https"));
+        target.setScheme(QLatin1String("https"));
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
-        qDebug() << "PrivacyRequestInterceptor: https-first" << url << "->" << https;
+        qDebug() << "PrivacyRequestInterceptor: https-first" << url << "->" << target;
 #endif
-        info.redirect(https);
+        info.redirect(target);
+        return;
+    }
+    if (target != url) {
+#if defined(PRIVACYINTERCEPTOR_DEBUG)
+        qDebug() << "PrivacyRequestInterceptor: strip" << url << "->" << target;
+#endif
+        info.redirect(target);
         return;
     }
 

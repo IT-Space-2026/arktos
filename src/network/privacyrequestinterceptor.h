@@ -308,6 +308,17 @@ public:
     // excepted host is exactly where plaintext posts still flow.
     static bool shouldWarnFormPost(const QUrl &url, const QString &scope);
 
+    // SEC17: ClearURLs-style tracking-param stripping — the ruleset
+    // lives in rustcore behind the C ABI (vendored JSON + a
+    // "<data dir>/urlstrip-rules.json" override, updatable like a
+    // filter list), so the match is memory-safe over attacker
+    // URLs.  strippedUrl() is the pure decision both interceptors
+    // redirect through: the cleaned URL, or `url` unchanged when no
+    // rule fired — and when Arora is built without CONFIG+=rustcore,
+    // or the privacy/stripTrackingParams toggle (default on) is off.
+    static bool stripTrackingParamsEnabled();
+    static QUrl strippedUrl(const QUrl &url);
+
 private:
     AdBlockRequestInterceptor *m_adBlock;
     QString m_scope;   // SAFE07: downgradeScope() of the owning profile

@@ -45,6 +45,25 @@ stores written by either side open on the other and no migration is
 needed.  `credentials.dat` adds the `rc_cred_*` named-credential map
 under the same custody.
 
+## URL stripping (SEC17)
+
+`rc_urlstrip` is the ClearURLs-style tracking-parameter stripper the
+request interceptors redirect through.  The ruleset is a vendored JSON
+file (`data/urlstrip-rules.json`, embedded via `include_str!`):
+`params` is a list of query-parameter names to remove — a trailing
+`*` makes it a prefix rule (`utm_*`); `exceptions` lists hosts where
+stripping is skipped entirely, or partially via a `keep` list, for
+sites whose auth flow breaks when a listed name disappears.  Matching
+is case-insensitive and decodes percent-escapes in names; kept query
+segments pass through byte-for-byte.
+
+Updates land like filter lists: drop a newer `urlstrip-rules.json`
+into the app data dir and call `rc_urlstrip_reload()` — the override
+wins over the builtin, a malformed override keeps the previous set.
+`rc_urlstrip_load_rules` is the same swap with the JSON handed over
+directly (update/test seam).  Without `CONFIG+=rustcore` the strip
+stage simply isn't there — the interceptors degrade to no-strip.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

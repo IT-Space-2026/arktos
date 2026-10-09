@@ -18,11 +18,15 @@
 //!     AES-256-GCM "ARSEC1" blobs, securestore.key file custody,
 //!     Argon2id master passphrase via securestore.kdf, plus the
 //!     rc_cred_* named-credential map in credentials.dat.
+//!   * urlstrip (SEC17): ClearURLs-style tracking-parameter rules —
+//!     vendored JSON ruleset + data-dir override, strip over C FFI for
+//!     the request interceptors.
 
 mod cred;
 mod error;
 mod notify;
 mod store;
+mod urlstrip;
 mod util;
 
 use std::ffi::CString;
@@ -487,6 +491,60 @@ pub unsafe extern "C" fn rc_cred_reseal(from: *const u8, to: *const u8) -> RcSta
         })?;
         store::lock().cred_reseal(from, to)
     })
+}
+
+// ---- URL cleaning (SEC17) --------------------------------------------
+
+/// Returns `url` with tracking query parameters removed, or a copy of
+/// the input when no rule fired.  NULL on argument error — see
+/// rc_last_error_message().  Free with rc_string_free().
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_urlstrip(url: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(url) } {
+            Some(u) => util::to_c_string(urlstrip::strip(u)),
+            None => {
+                error::set_error("bad url pointer");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Replaces the active strip ruleset with the given JSON document —
+/// the update/test seam.  RC_CORRUPT on malformed input; the previous
+/// ruleset stays active then.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_urlstrip_load_rules(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad rules pointer".into(),
+        })?;
+        let text = std::str::from_utf8(data).map_err(|_| error::Fail {
+            status: RcStatus::Corrupt,
+            msg: "urlstrip rules: not UTF-8".into(),
+        })?;
+        urlstrip::load_rules(text)
+    })
+}
+
+/// Re-reads `<data dir>/urlstrip-rules.json` (or the vendored ruleset
+/// when absent).  RC_CORRUPT when an override exists but does not
+/// parse — the previous ruleset stays active.
+#[no_mangle]
+pub unsafe extern "C" fn rc_urlstrip_reload() -> RcStatus {
+    status_of(|| urlstrip::reload())
 }
 
 #[cfg(test)]

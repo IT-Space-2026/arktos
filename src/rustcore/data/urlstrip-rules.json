@@ -1,0 +1,22 @@
+{
+    "version": 1,
+    "name": "arora-builtin",
+    "params": [
+        "utm_*",
+        "gclid", "gbraid", "wbraid", "dclid", "gclsrc",
+        "_ga", "_gl", "_gac", "_bta_*",
+        "fbclid", "fb_action_ids", "fb_action_types", "fb_ref", "fb_source",
+        "msclkid", "yclid", "twclid", "li_fat_id", "ttclid", "s_kwcid",
+        "mc_cid", "mc_eid",
+        "_hsenc", "_hsmi", "hsctatracking", "__hssc", "__hstc", "__hsfp",
+        "mkt_tok", "vero_id", "wickedid", "vero_conv", "wickedsource",
+        "igshid", "igsh",
+        "ref_src", "ref_url", "spm", "scm", "si",
+        "oly_anon_id", "oly_enc_id", "_openstat", "pk_*",
+        "trk", "trkcampaign",
+        "_branch_match_id", "_branch_referrer",
+        "cjevent", "irclickid", "irgwc", "epik", "sccid", "rb_clickid",
+        "sscid", "zanpid"
+    ],
+    "exceptions": []
+}

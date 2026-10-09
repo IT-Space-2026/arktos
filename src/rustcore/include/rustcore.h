@@ -134,6 +134,27 @@ RcStatus rc_cred_change_passphrase(const uint8_t *passUtf8, size_t len);
 /* Re-seal the credential file between explicit keys mid-transition. */
 RcStatus rc_cred_reseal(const uint8_t *from32, const uint8_t *to32);
 
+/* --- URL cleaning (SEC17) --------------------------------------------
+ * ClearURLs-style tracking-parameter stripping.  The ruleset is a
+ * vendored JSON file compiled into the crate, overridable by
+ * "<data dir>/urlstrip-rules.json" — an update drops that file in like
+ * a filter-list refresh and calls rc_urlstrip_reload() to activate it.
+ *
+ * rc_urlstrip returns the URL with tracking query parameters removed,
+ * or a copy of the input when nothing matched (only http(s) URLs can
+ * match).  NULL on error (rc_last_error_message).  Free the result
+ * with rc_string_free(). */
+char *rc_urlstrip(const char *urlUtf8);
+
+/* Swap in a caller-supplied JSON ruleset (update/test seam).
+ * RC_CORRUPT on malformed input — the previous ruleset stays active. */
+RcStatus rc_urlstrip_load_rules(const uint8_t *jsonUtf8, size_t len);
+
+/* Re-read the data-dir override (or the vendored set when absent).
+ * RC_CORRUPT when an override exists but does not parse — the
+ * previous ruleset stays active. */
+RcStatus rc_urlstrip_reload(void);
+
 #ifdef __cplusplus
 }
 #endif
