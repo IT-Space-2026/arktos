@@ -54,6 +54,14 @@ executes, Esc dismisses; recently used entries rank first, so e.g.
 "clear history" reaches Clear Private Data and a tab title switches
 straight to that tab.
 
+Tab groups: tabs can be organized into named, color-coded groups —
+right-click a tab to create a group, add it to an existing one, rename
+or recolor it, or ungroup; dragging a tab onto a group member joins
+that group and dragging a grouped tab away ungroups it.  A group's
+tabs stay contiguous behind a colored header chip, and "Collapse
+Group" folds the run down to just the chip (tabs stay loaded) until
+it is expanded again.  Groups survive session save/restore.
+
 Picture-in-Picture: right-click a video and choose "Picture-in-Picture"
 (or View → "Picture-in-Picture", or a site's own PiP button) to pop the
 video into a small frameless, always-on-top player window that keeps

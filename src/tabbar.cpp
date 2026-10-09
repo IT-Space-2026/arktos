@@ -76,6 +76,8 @@
 #include <qdrag.h>
 #include <qevent.h>
 #include <qfontmetrics.h>
+#include <qinputdialog.h>
+#include <qlineedit.h>
 #include <qmenu.h>
 #include <qmimedata.h>
 #include <qpainter.h>
@@ -84,6 +86,10 @@
 #include <qurl.h>
 
 #include <qdebug.h>
+
+// Defined further down — the TABGRP01 drop-zone check in
+// mouseReleaseEvent needs it too.
+static bool verticalTabShape(QTabBar::Shape shape);
 
 TabShortcut::TabShortcut(int tab, const QKeySequence &key, QWidget *parent)
     : QShortcut(key, parent)
@@ -98,6 +104,8 @@ int TabShortcut::tab()
 
 TabBar::TabBar(QWidget *parent)
     : QTabBar(parent)
+    , m_dragTracking(false)
+    , m_draggedIndex(-1)
     , m_viewTabBarAction(nullptr)
     , m_showTabBarWhenOneTab(true)
     , m_perTabCloseButtons(false)
@@ -129,6 +137,14 @@ TabBar::TabBar(QWidget *parent)
     setMouseTracking(true);
     connect(this, &QTabBar::currentChanged,
             this, [this](int) { updateCloseButtonVisibility(); });
+
+    // TABGRP01: while a left-button drag is live, remember where the
+    // moved tab lands — on release a middle-of-tab drop stacks it into
+    // the target's group instead of staying a plain reorder.
+    connect(this, &QTabBar::tabMoved, this, [this](int, int to) {
+        if (m_dragTracking)
+            m_draggedIndex = to;
+    });
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -402,6 +418,84 @@ void TabBar::contextMenuRequested(const QPoint &position)
                 emit sleepTab(index);
         });
 
+        // TABGRP01: tab groups — an ungrouped tab gets "Add Tab to
+        // Group" (new group or any existing one); a grouped tab gets
+        // the group-level actions plus a way out.
+        const QString groupId = tabWidget->tabGroupId(index);
+        menu.addSeparator();
+        if (groupId.isEmpty()) {
+            QMenu *groupMenu = menu.addMenu(tr("Add Tab to &Group"));
+            groupMenu->addAction(tr("&New Group"), this,
+                                 [tabWidget, index]() {
+                tabWidget->createTabGroup(index);
+            });
+            const QStringList existing = tabWidget->tabGroupIds();
+            if (!existing.isEmpty()) {
+                groupMenu->addSeparator();
+                for (const QString &gid : existing) {
+                    const QString name = tabWidget->tabGroupName(gid);
+                    groupMenu->addAction(
+                        ContainerManager::colorIcon(
+                            tabWidget->tabGroupColor(gid)),
+                        SafeText::menu(name.isEmpty()
+                                       ? tr("Unnamed Group") : name),
+                        this, [tabWidget, index, gid]() {
+                        tabWidget->addTabToGroup(index, gid);
+                    });
+                }
+            }
+        } else {
+            const QString name = tabWidget->tabGroupName(groupId);
+            menu.addAction(tabWidget->tabGroupIsCollapsed(groupId)
+                           ? tr("&Expand Group")
+                           : tr("&Collapse Group"),
+                           this, [tabWidget, groupId]() {
+                const bool collapsed =
+                    tabWidget->tabGroupIsCollapsed(groupId);
+                tabWidget->setTabGroupCollapsed(groupId, !collapsed);
+            });
+            menu.addAction(tr("R&ename Group..."), this,
+                           [this, tabWidget, groupId, name]() {
+                bool ok = false;
+                const QString entered = QInputDialog::getText(
+                    this, tr("Rename Tab Group"), tr("Group &name:"),
+                    QLineEdit::Normal, name, &ok);
+                if (ok)
+                    tabWidget->renameTabGroup(groupId, entered);
+            });
+            QMenu *colorMenu = menu.addMenu(tr("Group &Color"));
+            const QList<QColor> palette =
+                ContainerManager::defaultColors();
+            static const char *const colorNames[] = {
+                QT_TR_NOOP("Blue"), QT_TR_NOOP("Turquoise"),
+                QT_TR_NOOP("Green"), QT_TR_NOOP("Yellow"),
+                QT_TR_NOOP("Orange"), QT_TR_NOOP("Red"),
+                QT_TR_NOOP("Pink"), QT_TR_NOOP("Purple")
+            };
+            const QColor current = tabWidget->tabGroupColor(groupId);
+            for (int i = 0; i < palette.count(); ++i) {
+                QAction *entry = colorMenu->addAction(
+                    ContainerManager::colorIcon(palette.at(i)),
+                    tr(colorNames[i % 8]));
+                entry->setCheckable(true);
+                entry->setChecked(palette.at(i) == current);
+                const QColor color = palette.at(i);
+                connect(entry, &QAction::triggered, this,
+                        [tabWidget, groupId, color]() {
+                    tabWidget->setTabGroupColor(groupId, color);
+                });
+            }
+            menu.addSeparator();
+            menu.addAction(tr("Remove Tab from Group"), this,
+                           [tabWidget, index]() {
+                tabWidget->removeTabFromGroup(index);
+            });
+            menu.addAction(tr("U&ngroup"), this,
+                           [tabWidget, groupId]() {
+                tabWidget->ungroupTabs(groupId);
+            });
+        }
+
         menu.addSeparator();
 
         action = menu.addAction(tr("&Close Tab"), QKeySequence::Close,
@@ -477,13 +571,50 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
         }
     }
 
+    // TABGRP01: a dragged tab released over the middle of another tab
+    // stacks into its group — Chrome's drop-to-group gesture.  The
+    // middle quarter bands at the run's edges still mean "reorder to
+    // this slot" so a drop on a tab's edge is never misread.
+    if (event->button() == Qt::LeftButton && m_dragTracking) {
+        const int dragged = m_draggedIndex;
+        m_dragTracking = false;
+        if (dragged >= 0) {
+            const QPoint pos = event->position().toPoint();
+            const int over = tabAt(pos);
+            if (over != -1 && over != dragged) {
+                const QRect r = tabRect(over);
+                const bool middle = verticalTabShape(shape())
+                    ? (pos.y() > r.top() + r.height() / 4
+                       && pos.y() < r.bottom() - r.height() / 4)
+                    : (pos.x() > r.left() + r.width() / 4
+                       && pos.x() < r.right() - r.width() / 4);
+                if (middle) {
+                    if (TabWidget *tabWidget =
+                            qobject_cast<TabWidget*>(parentWidget()))
+                        tabWidget->groupTabWith(dragged, over);
+                }
+            }
+        }
+    }
+
     QTabBar::mouseReleaseEvent(event);
 }
 
 void TabBar::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton)
+    if (event->button() == Qt::LeftButton) {
         m_dragStartPos = event->position().toPoint();
+        // TABGRP01: a press starts a potential drag — arm the
+        // tabMoved tracker so the release can see where the tab went.
+        m_dragTracking = true;
+        m_draggedIndex = -1;
+        // TABGRP01: clicking a collapsed group's chip expands it.
+        TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+        const int index = tabAt(m_dragStartPos);
+        if (tabWidget && index >= 0 && tabWidget->isTabGroupChip(index))
+            tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
+                                            false);
+    }
     QTabBar::mousePressEvent(event);
 }
 
@@ -543,6 +674,9 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             mimeData->setText(tabText(index));
             mimeData->setData(QLatin1String("action"), "tab-reordering");
             drag->setMimeData(mimeData);
+            // TABGRP01: a tear-off leaves the bar — the in-bar
+            // drop-stack tracking stops here.
+            m_dragTracking = false;
             drag->exec();
         }
     }
@@ -619,6 +753,39 @@ QSize TabBar::containerChipSize(int index) const
     if (verticalTabShape(shape()))
         return QSize(3, chipHeight + 2);
     return QSize(0, chipHeight + 3);
+}
+
+// TABGRP01: the tab's group id, or empty when ungrouped / the bar is
+// not hosted by a TabWidget.
+QString TabBar::groupIdForTab(int index) const
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || index < 0 || index >= count())
+        return QString();
+    return tabWidget->tabGroupId(index);
+}
+
+// The tab opens a contiguous run of its group — the name pill anchors
+// on the run's first member only.
+bool TabBar::isFirstInGroupRun(int index) const
+{
+    const QString gid = groupIdForTab(index);
+    return !gid.isEmpty() && groupIdForTab(index - 1) != gid;
+}
+
+// The label a collapsed group's chip shows — the group name plus the
+// member count, or just the count for an unnamed group.
+QString TabBar::groupChipLabel(int index) const
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    const QString gid = groupIdForTab(index);
+    if (!tabWidget || gid.isEmpty())
+        return QString();
+    const QString name = tabWidget->tabGroupName(gid);
+    const int size = tabWidget->tabGroupSize(gid);
+    return name.isEmpty()
+        ? tr("%1 tabs").arg(size)
+        : tr("%1 (%2)").arg(name).arg(size);
 }
 
 // CONT02: after the style paints the tab, container tabs get their
@@ -718,6 +885,120 @@ void TabBar::paintEvent(QPaintEvent *event)
                              Qt::AlignRight | Qt::AlignVCenter, badge);
         }
     }
+
+    // TABGRP01: group accents — every member carries a rail on the
+    // content-facing edge (bottom for a top bar, the inner side for a
+    // vertical one), a run's first member carries the name pill, and a
+    // collapsed group's chip is painted over as one full pill.
+    if (tabWidget) {
+        for (int index = 0; index < count(); ++index) {
+            const QString gid = tabWidget->tabGroupId(index);
+            if (gid.isEmpty())
+                continue;
+            const QColor accent = tabWidget->tabGroupColor(gid).isValid()
+                ? tabWidget->tabGroupColor(gid)
+                : palette().color(QPalette::Highlight);
+            const QColor textColor = accent.lightness() > 140
+                ? Qt::black : Qt::white;
+            const QRect rect = tabRect(index);
+            const QString name = tabWidget->tabGroupName(gid);
+
+            if (tabWidget->isTabGroupChip(index)) {
+                // Collapsed: the whole tab reads as the group chip.
+                const QRect pill = rect.adjusted(2, 2, -2, -2);
+                painter.save();
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.setBrush(accent);
+                painter.setPen(accent.darker(130));
+                painter.drawRoundedRect(pill, 5, 5);
+                painter.setFont(chipFont);
+                painter.setPen(textColor);
+                const QString elided = painter.fontMetrics().elidedText(
+                    groupChipLabel(index), Qt::ElideRight,
+                    pill.width() - 8);
+                painter.drawText(pill.adjusted(4, 0, -4, 0),
+                                 Qt::AlignCenter | Qt::AlignVCenter,
+                                 elided);
+                painter.restore();
+                continue;
+            }
+
+            switch (shape()) {
+            case QTabBar::RoundedSouth:
+            case QTabBar::TriangularSouth:
+                painter.fillRect(rect.left(), rect.top(),
+                                 rect.width(), strip, accent);
+                break;
+            case QTabBar::RoundedWest:
+            case QTabBar::TriangularWest:
+                painter.fillRect(rect.right() - strip + 1, rect.top(),
+                                 strip, rect.height(), accent);
+                break;
+            case QTabBar::RoundedEast:
+            case QTabBar::TriangularEast:
+                painter.fillRect(rect.left(), rect.top(),
+                                 strip, rect.height(), accent);
+                break;
+            default:
+                painter.fillRect(rect.left(), rect.bottom() - strip + 1,
+                                 rect.width(), strip, accent);
+                break;
+            }
+
+            // The name pill sits just inside the rail on the run's
+            // first member — tabSizeHint() reserved its extent.
+            if (name.isEmpty() || !isFirstInGroupRun(index))
+                continue;
+            const int pillWidth = QFontMetrics(chipFont)
+                .horizontalAdvance(name) + 12;
+            QRect pill;
+            switch (shape()) {
+            case QTabBar::RoundedWest:
+            case QTabBar::TriangularWest: {
+                // A container chip may already own the top band —
+                // the group pill slides under it.
+                const int top = rect.top() + 2
+                    + (containerForTab(index).id.isEmpty()
+                       ? 0 : chipHeight + 2);
+                pill = QRect(rect.left() + 2, top,
+                             rect.width() - strip - 4, chipHeight);
+                break;
+            }
+            case QTabBar::RoundedEast:
+            case QTabBar::TriangularEast: {
+                const int top = rect.top() + 2
+                    + (containerForTab(index).id.isEmpty()
+                       ? 0 : chipHeight + 2);
+                pill = QRect(rect.left() + strip + 2, top,
+                             rect.width() - strip - 4, chipHeight);
+                break;
+            }
+            default:
+                // Horizontal bars: the pill anchors at the leading
+                // edge, vertically centered — the reserved width
+                // pushes the tab's label right of it.
+                pill = QRect(rect.left() + 4,
+                             rect.top() + (rect.height() - chipHeight) / 2,
+                             qMin(pillWidth, rect.width() - 8),
+                             chipHeight);
+                break;
+            }
+            if (pill.width() < 16)
+                continue;
+            painter.save();
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setBrush(accent);
+            painter.setPen(accent.darker(130));
+            painter.drawRoundedRect(pill, 3, 3);
+            painter.setFont(chipFont);
+            painter.setPen(textColor);
+            const QString elided = painter.fontMetrics().elidedText(
+                name, Qt::ElideRight, pill.width() - 8);
+            painter.drawText(pill.adjusted(4, 0, -4, 0),
+                             Qt::AlignCenter | Qt::AlignVCenter, elided);
+            painter.restore();
+        }
+    }
 }
 
 QSize TabBar::tabSizeHint(int index) const
@@ -732,6 +1013,32 @@ QSize TabBar::tabSizeHint(int index) const
     // reserve their chip's extent on top of that.
     const int thickness = fm.height() + 10;
     const QSize chip = containerChipSize(index);
+    // TABGRP01: a collapsed group's chip shrinks to its label instead
+    // of the member's title; the first member of a run widens to carry
+    // the group name pill paintEvent() draws.
+    const QString gid = groupIdForTab(index);
+    if (!gid.isEmpty()) {
+        TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+        if (tabWidget && tabWidget->isTabGroupChip(index)) {
+            const int labelWidth = QFontMetrics(containerChipFont())
+                .horizontalAdvance(groupChipLabel(index)) + 20;
+            if (verticalTabShape(shape()))
+                sizeHint.setHeight(qMin(sizeHint.height(), labelWidth));
+            else
+                sizeHint.setWidth(qMin(sizeHint.width(), labelWidth));
+        } else if (isFirstInGroupRun(index) && tabWidget) {
+            const QString name = tabWidget->tabGroupName(gid);
+            if (!name.isEmpty()) {
+                const int pillWidth = QFontMetrics(containerChipFont())
+                    .horizontalAdvance(name) + 20;
+                if (verticalTabShape(shape()))
+                    sizeHint.setHeight(sizeHint.height()
+                                       + fm.height() + 4);
+                else
+                    sizeHint.setWidth(sizeHint.width() + pillWidth);
+            }
+        }
+    }
     if (verticalTabShape(shape()))
         return QSize(qMax(sizeHint.width(), thickness) + chip.width(),
                      qMin(sizeHint.height(), extent) + chip.height());
@@ -768,7 +1075,12 @@ void TabBar::tabRemoved(int position)
 
 void TabBar::updateVisibility()
 {
-    setVisible((count()) > 1 || m_showTabBarWhenOneTab);
+    // TABGRP01: a collapsed group can leave a single chip on the strip
+    // — the bar must stay reachable so the chip can be re-expanded.
+    bool collapsedGroups = false;
+    if (TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget()))
+        collapsedGroups = tabWidget->hasCollapsedTabGroup();
+    setVisible((count()) > 1 || m_showTabBarWhenOneTab || collapsedGroups);
     bool enabled = (count() == 1);
     if (m_viewTabBarAction->isEnabled() != enabled)
         m_viewTabBarAction->setEnabled(enabled);

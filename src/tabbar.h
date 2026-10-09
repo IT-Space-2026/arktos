@@ -140,9 +140,20 @@ private:
     ContainerManager::Container containerForTab(int index) const;
     QFont containerChipFont() const;
     QSize containerChipSize(int index) const;
+    // TABGRP01: group chip helpers — the tab's group id, whether the
+    // tab opens a contiguous run of its group (the pill anchors there),
+    // and the group label shown on a collapsed group's chip.
+    QString groupIdForTab(int index) const;
+    bool isFirstInGroupRun(int index) const;
+    QString groupChipLabel(int index) const;
     friend class TabWidget;
 
     QPoint m_dragStartPos;
+    // TABGRP01 drop-stacking state: while the left button is held,
+    // tabMoved tracks the dragged tab's index so mouseReleaseEvent can
+    // tell a middle-of-tab drop (stack into a group) from a reorder.
+    bool m_dragTracking;
+    int m_draggedIndex;
     QAction *m_viewTabBarAction;
     bool m_showTabBarWhenOneTab;
     bool m_perTabCloseButtons;

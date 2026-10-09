@@ -86,6 +86,7 @@ private slots:
     void tabBarPositionSetting();
     void omnibox();
     void omniboxTabScope();
+    void tabGroups();
 };
 
 // Subclass that exposes the protected functions.
@@ -106,6 +107,10 @@ public:
 
     void call_tabsChanged()
         { return SubTabWidget::tabsChanged(); }
+
+    // tabBar() is protected; tests drive moves through the real bar so
+    // the tabMoved -> moveTab -> group normalization path runs.
+    TabBar *bar() { return static_cast<TabBar*>(tabBar()); }
 };
 
 // This will be called before the first test function is executed.
@@ -995,6 +1000,146 @@ void tst_TabWidget::omniboxTabScope()
 
     widget.closeTab();
     widget.closeTab();
+}
+
+// TABGRP01: named color-coded tab groups.  Membership is keyed on the
+// WebView so it survives drags; collapsing detaches members into the
+// group's hidden list (the first stays as the "chip"); the v3 session
+// tail carries ids + name + color + collapsed and a v2 blob restores
+// ungrouped.
+void tst_TabWidget::tabGroups()
+{
+    SubTabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 4);
+    WebView *v0 = widget.webView(0);
+    WebView *v1 = widget.webView(1);
+    WebView *v2 = widget.webView(2);
+    WebView *v3 = widget.webView(3);
+    QVERIFY(v0 && v1 && v2 && v3);
+
+    // create + add — adding a tab far from the run slides it next to
+    // the existing member.
+    const QString gid = widget.createTabGroup(0);
+    QVERIFY(!gid.isEmpty());
+    QCOMPARE(widget.tabGroupId(0), gid);
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    QCOMPARE(widget.tabGroupIds(), QStringList() << gid);
+
+    widget.addTabToGroup(3, gid);
+    // strip: [v0, v3, v1, v2]
+    QCOMPARE(widget.webView(1), v3);
+    QCOMPARE(widget.tabGroupId(1), gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+
+    // rename + color
+    widget.renameTabGroup(gid, QStringLiteral("Work"));
+    QCOMPARE(widget.tabGroupName(gid), QStringLiteral("Work"));
+    widget.setTabGroupColor(gid, QColor(Qt::red));
+    QCOMPARE(widget.tabGroupColor(gid), QColor(Qt::red));
+
+    // collapse — only the chip stays on the strip.
+    widget.setTabGroupCollapsed(gid, true);
+    QVERIFY(widget.tabGroupIsCollapsed(gid));
+    QVERIFY(widget.hasCollapsedTabGroup());
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.webView(0), v0);
+    QVERIFY(widget.isTabGroupChip(0));
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 0);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+    QCOMPARE(widget.webView(1), v1);
+
+    // expand restores the members in strip order.
+    widget.setTabGroupCollapsed(gid, false);
+    QVERIFY(!widget.hasCollapsedTabGroup());
+    QCOMPARE(widget.count(), 4);
+    QCOMPARE(widget.webView(0), v0);
+    QCOMPARE(widget.webView(1), v3);
+    QCOMPARE(widget.webView(2), v1);
+    QCOMPARE(widget.webView(3), v2);
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 0 << 1);
+
+    // Drag normalization: an ungrouped tab dropped between two members
+    // joins; a member dropped with no same-group neighbor leaves.
+    widget.bar()->moveTab(2, 1);   // strip [v0, v1, v3, v2]
+    QCOMPARE(widget.tabGroupId(1), gid);
+    widget.bar()->moveTab(1, 3);   // strip [v0, v3, v2, v1]
+    QCOMPARE(widget.tabGroupId(3), QString());
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+
+    // Drop-stacking onto a grouped tab joins that group.
+    widget.groupTabWith(3, 0);     // v1 -> v0's group, moved into run
+    QCOMPARE(widget.tabGroupId(2), gid);
+    QCOMPARE(widget.webView(2), v1);
+
+    widget.removeTabFromGroup(2);
+    QCOMPARE(widget.tabGroupId(2), QString());
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+
+    // Closing a collapsed chip expands the group first so the hidden
+    // members are not stranded off-strip; the group lives on.
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 3);
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.webView(0), v3);
+    QCOMPARE(widget.tabGroupId(0), gid);
+    QVERIFY(!widget.tabGroupIsCollapsed(gid));
+
+    // Ungroup leaves the tabs in place.
+    widget.ungroupTabs(gid);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    QCOMPARE(widget.tabGroupId(0), QString());
+    QCOMPARE(widget.count(), 3);
+
+    // Session round-trip: the v3 tail carries group ids + the group
+    // table (name/color/collapsed), remapped onto fresh ids.
+    {
+        SubTabWidget w2;
+        for (int i = 0; i < 4; ++i)
+            w2.newTab();
+        const QString g2 = w2.createTabGroup(0);
+        w2.addTabToGroup(1, g2);
+        w2.renameTabGroup(g2, QStringLiteral("Persisted"));
+        w2.setTabGroupColor(g2, QColor(QLatin1String("magenta")));
+        w2.setTabGroupCollapsed(g2, true);
+        QCOMPARE(w2.count(), 3);   // chip + two ungrouped tabs
+
+        const QByteArray state = w2.saveState();
+
+        SubTabWidget w3;
+        QVERIFY(w3.restoreState(state));
+        QCOMPARE(w3.count(), 3);
+        const QString rg = w3.tabGroupId(0);
+        QVERIFY(!rg.isEmpty());
+        QCOMPARE(w3.tabGroupName(rg), QStringLiteral("Persisted"));
+        QCOMPARE(w3.tabGroupColor(rg), QColor(QLatin1String("magenta")));
+        QVERIFY(w3.tabGroupIsCollapsed(rg));
+        QCOMPARE(w3.tabGroupSize(rg), 2);
+        QCOMPARE(w3.tabGroupId(1), QString());
+        QCOMPARE(w3.tabGroupId(2), QString());
+
+        w3.setTabGroupCollapsed(rg, false);
+        QCOMPARE(w3.count(), 4);
+        QCOMPARE(w3.tabGroupId(0), rg);
+        QCOMPARE(w3.tabGroupId(1), rg);
+    }
+
+    // A v2-era session blob (no group tail) restores ungrouped.
+    {
+        QByteArray v2blob;
+        QDataStream out(&v2blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(2)
+            << (QStringList() << QStringLiteral("data:text/plain,v2"))
+            << qint32(0)
+            << (QList<QByteArray>() << QByteArray())
+            << (QStringList() << QString());
+        SubTabWidget w4;
+        QVERIFY(w4.restoreState(v2blob));
+        QCOMPARE(w4.count(), 1);
+        QVERIFY(w4.tabGroupIds().isEmpty());
+    }
 }
 
 QTEST_MAIN(tst_TabWidget)

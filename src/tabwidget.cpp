@@ -265,6 +265,9 @@ void TabWidget::moveTab(int fromIndex, int toIndex)
     QWidget *lineEdit = m_locationBars->widget(fromIndex);
     m_locationBars->removeWidget(lineEdit);
     m_locationBars->insertWidget(toIndex, lineEdit);
+    // TABGRP01: after every user drag, reconcile the moved tab's group
+    // membership with where it landed.
+    normalizeTabGroupMove(toIndex);
 }
 
 void TabWidget::addWebAction(QAction *action, QWebEnginePage::WebAction webAction)
@@ -584,6 +587,9 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
         return;
 
     const QUrl url = tab->url();
+    // TABGRP01: the replacement keeps the old tab's group — a
+    // container swap is a re-home, not an ungroup.
+    const QString gid = tabGroupId(index);
     WebView *newTab = makeNewTabInContainer(containerId, true);
     if (!newTab)
         return;
@@ -593,10 +599,18 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
     const int appendedIndex = count() - 1;
     if (appendedIndex > index)
         m_tabBar->moveTab(appendedIndex, index);
+    if (!gid.isEmpty())
+        assignTabGroup(newTab, gid);
     if (!url.isEmpty() && url.isValid())
         newTab->loadUrl(url);
-    // The old tab is now one slot past the new one's position.
+    // The old tab is now one slot past the new one's position.  When
+    // the group was collapsed, closeTab() expands it to expose the
+    // hidden members — collapse it again afterwards.
+    const bool wasCollapsed = !gid.isEmpty()
+        && m_tabGroupInfo.value(gid).collapsed;
     closeTab(index + 1);
+    if (wasCollapsed && m_tabGroupInfo.contains(gid))
+        setTabGroupCollapsed(gid, true);
 }
 
 void TabWidget::loadUrlInContainer(const QUrl &url, const QString &containerId)
@@ -619,6 +633,454 @@ void TabWidget::manageContainers()
     SettingsDialog dialog(parent ? parent : this);
     dialog.openAtPage(SettingsDialog::ContainersPage);
     dialog.exec();
+}
+
+// TABGRP01 — tab groups ---------------------------------------------------
+//
+// A tab group is a membership set over this widget's tabs: named and
+// colored, rendered on the strip as a colored rail plus a name pill on
+// the run's first member.  Membership lives in m_tabGroups keyed on the
+// WebView so a drag never loses it; group metadata lives in
+// m_tabGroupInfo keyed by a per-window id.  A collapsed group detaches
+// every member past the first (the "chip") from both the tab widget and
+// the location-bar stack — the widgets are kept, not destroyed, and
+// re-insert in order on expand.  Groups are deliberately a UI concept:
+// they cross container boundaries freely and never touch profiles.
+
+QString TabWidget::nextTabGroupId()
+{
+    return QStringLiteral("g%1").arg(++m_tabGroupCounter);
+}
+
+QString TabWidget::tabGroupId(int index) const
+{
+    WebView *view = const_cast<TabWidget*>(this)->webView(index);
+    return view ? m_tabGroups.value(view) : QString();
+}
+
+// Group ids in strip order (first member position) — the order context
+// menus present them.
+QStringList TabWidget::tabGroupIds() const
+{
+    QStringList ids;
+    for (int i = 0; i < count(); ++i) {
+        const QString gid = tabGroupId(i);
+        if (!gid.isEmpty() && !ids.contains(gid))
+            ids.append(gid);
+    }
+    return ids;
+}
+
+QString TabWidget::tabGroupName(const QString &groupId) const
+{
+    return m_tabGroupInfo.value(groupId).name;
+}
+
+QColor TabWidget::tabGroupColor(const QString &groupId) const
+{
+    return m_tabGroupInfo.value(groupId).color;
+}
+
+int TabWidget::tabGroupSize(const QString &groupId) const
+{
+    // m_tabGroups covers visible AND collapsed-hidden members.
+    int size = 0;
+    for (auto it = m_tabGroups.constBegin(); it != m_tabGroups.constEnd(); ++it) {
+        if (it.value() == groupId)
+            ++size;
+    }
+    return size;
+}
+
+bool TabWidget::tabGroupIsCollapsed(const QString &groupId) const
+{
+    return m_tabGroupInfo.value(groupId).collapsed;
+}
+
+QList<int> TabWidget::tabGroupMembers(const QString &groupId) const
+{
+    QList<int> members;
+    for (int i = 0; i < count(); ++i) {
+        if (tabGroupId(i) == groupId)
+            members.append(i);
+    }
+    return members;
+}
+
+bool TabWidget::isTabGroupChip(int index) const
+{
+    const QString gid = tabGroupId(index);
+    return !gid.isEmpty() && m_tabGroupInfo.value(gid).collapsed;
+}
+
+bool TabWidget::hasCollapsedTabGroup() const
+{
+    for (const TabGroup &group : m_tabGroupInfo) {
+        if (group.collapsed)
+            return true;
+    }
+    return false;
+}
+
+// Raw membership assignment — no positioning.  Callers that need
+// contiguity (menu adds, drop-stacking) follow with
+// moveTabIntoGroupRun(); the drag-normalize path must not.
+void TabWidget::assignTabGroup(WebView *webView, const QString &groupId)
+{
+    if (!webView)
+        return;
+    if (groupId.isEmpty())
+        m_tabGroups.remove(webView);
+    else if (m_tabGroupInfo.contains(groupId))
+        m_tabGroups.insert(webView, groupId);
+}
+
+QString TabWidget::createTabGroup(int index)
+{
+    WebView *view = webView(index);
+    if (!view)
+        return QString();
+    // The tab may already carry a membership — creating a group for a
+    // collapsed group's chip would strand that group's hidden members.
+    const QString oldGroup = m_tabGroups.value(view);
+    TabGroup group;
+    group.id = nextTabGroupId();
+    // Groups rotate through the container accent palette — same eight
+    // swatches the container UI and the color submenu expose.
+    const QList<QColor> palette = ContainerManager::defaultColors();
+    group.color = palette.value(m_tabGroupInfo.count() % palette.count());
+    m_tabGroupInfo.insert(group.id, group);
+    assignTabGroup(view, group.id);
+    forgetTabGroupIfEmpty(oldGroup);
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+    return group.id;
+}
+
+// Slide the tab next to the rest of its group when it is not already
+// inside the run — membership alone would leave it orphaned at the far
+// end of the strip.
+void TabWidget::moveTabIntoGroupRun(int index)
+{
+    const QString gid = tabGroupId(index);
+    if (gid.isEmpty())
+        return;
+    int first = -1;
+    int last = -1;
+    for (int member : tabGroupMembers(gid)) {
+        if (member == index)
+            continue;
+        if (first < 0)
+            first = member;
+        last = member;
+    }
+    if (first < 0)
+        return;
+    m_groupAdjust = true;
+    if (index > last)
+        m_tabBar->moveTab(index, last + 1);
+    else if (index < first)
+        m_tabBar->moveTab(index, first);
+    m_groupAdjust = false;
+}
+
+void TabWidget::addTabToGroup(int index, const QString &groupId)
+{
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end())
+        return;
+    WebView *view = webView(index);
+    if (!view)
+        return;
+    // Re-assigning a member (drop-stacking a grouped tab, or a
+    // collapsed group's chip) strands the old group without a visible
+    // member — forgetTabGroupIfEmpty re-expands or drops it.
+    const QString oldGroup = m_tabGroups.value(view);
+    assignTabGroup(view, groupId);
+    if (oldGroup != groupId)
+        forgetTabGroupIfEmpty(oldGroup);
+    if (it->collapsed) {
+        // A collapsed group swallows the new member — the chip is the
+        // only tab that stays visible.  A member landing left of the
+        // chip would itself become the first member, so slide it
+        // behind the chip first.
+        QList<int> members = tabGroupMembers(groupId);
+        if (members.count() > 1 && members.first() == index) {
+            m_groupAdjust = true;
+            m_tabBar->moveTab(index, members.at(1));
+            m_groupAdjust = false;
+            index = webViewIndex(view);
+            members = tabGroupMembers(groupId);
+        }
+        if (index == currentIndex() && !members.isEmpty()
+            && members.first() != index)
+            setCurrentIndex(members.first());
+        if (members.count() > 1)
+            detachGroupMember(index);
+    } else {
+        moveTabIntoGroupRun(index);
+    }
+    m_tabBar->updateVisibility();
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+}
+
+void TabWidget::removeTabFromGroup(int index)
+{
+    WebView *view = webView(index);
+    if (!view)
+        return;
+    const QString gid = m_tabGroups.value(view);
+    if (gid.isEmpty())
+        return;
+    m_tabGroups.remove(view);
+    forgetTabGroupIfEmpty(gid);
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+}
+
+void TabWidget::groupTabWith(int index, int targetIndex)
+{
+    if (index == targetIndex || index < 0 || targetIndex < 0
+        || index >= count() || targetIndex >= count())
+        return;
+    QString gid = tabGroupId(targetIndex);
+    if (gid.isEmpty())
+        gid = createTabGroup(targetIndex);
+    if (!gid.isEmpty())
+        addTabToGroup(index, gid);
+}
+
+void TabWidget::renameTabGroup(const QString &groupId, const QString &name)
+{
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end())
+        return;
+    it->name = name.trimmed();
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+}
+
+void TabWidget::setTabGroupColor(const QString &groupId, const QColor &color)
+{
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end())
+        return;
+    it->color = color;
+    m_tabBar->update();
+}
+
+void TabWidget::inheritTabGroup(WebView *webView, WebView *opener)
+{
+    const QString gid = m_tabGroups.value(opener);
+    if (gid.isEmpty() || !webView)
+        return;
+    assignTabGroup(webView, gid);
+    const int index = webViewIndex(webView);
+    if (index < 0)
+        return;
+    if (m_tabGroupInfo.value(gid).collapsed)
+        detachGroupMember(index);
+    else
+        moveTabIntoGroupRun(index);
+}
+
+// Group cleanup after a member left: a collapsed group whose last
+// visible member departed has no chip to click — expand it so the
+// hidden members return to the strip rather than staying invisible
+// forever.  Then drop the record once no view claims it, so group
+// names and colors never outlive their last member.
+void TabWidget::forgetTabGroupIfEmpty(const QString &groupId)
+{
+    if (groupId.isEmpty())
+        return;
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end())
+        return;
+    if (it->collapsed && tabGroupMembers(groupId).isEmpty())
+        setTabGroupCollapsed(groupId, false);
+    if (tabGroupSize(groupId) == 0)
+        m_tabGroupInfo.remove(groupId);
+    m_tabBar->update();
+}
+
+// Detaches the tab at index from both the tab widget and the location
+// bar stack into its (collapsed) group's hidden list.  The widgets are
+// kept — never deleted — and re-inserted in order by expandTabGroup().
+// The group's first visible member is always kept as the chip.
+void TabWidget::detachGroupMember(int index)
+{
+    WebView *view = webView(index);
+    if (!view)
+        return;
+    const QString gid = m_tabGroups.value(view);
+    auto it = m_tabGroupInfo.find(gid);
+    if (it == m_tabGroupInfo.end() || !it->collapsed)
+        return;
+    const QList<int> members = tabGroupMembers(gid);
+    if (members.count() <= 1 || members.first() == index)
+        return;
+    // The chip keeps focus — a member about to be hidden cannot stay
+    // current.
+    if (index == currentIndex())
+        setCurrentIndex(members.first());
+
+    HiddenGroupTab hidden;
+    hidden.tab = widget(index);
+    hidden.bar = m_locationBars->widget(index);
+    hidden.text = tabText(index);
+    hidden.toolTip = tabToolTip(index);
+    hidden.data = m_tabBar->tabData(index);
+    // The transient tab-button widgets (favicon label, close button)
+    // are dropped and re-created on expand through tabInserted() plus
+    // the icon refresh — detaching them first keeps removeTab() from
+    // deleting widgets we still reference.
+    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
+                                               QTabBar::RightSide };
+    for (const QTabBar::ButtonPosition side : sides) {
+        if (QWidget *button = m_tabBar->tabButton(index, side)) {
+            m_tabBar->setTabButton(index, side, nullptr);
+            button->deleteLater();
+        }
+    }
+    m_locationBars->removeWidget(hidden.bar);
+    removeTab(index);
+    it->hidden.append(hidden);
+}
+
+void TabWidget::expandTabGroup(const QString &groupId)
+{
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end())
+        return;
+    const QList<HiddenGroupTab> hidden = it->hidden;
+    it->hidden.clear();
+    if (hidden.isEmpty())
+        return;
+    const QList<int> members = tabGroupMembers(groupId);
+    int insertPos = members.isEmpty() ? count() : members.first() + 1;
+    for (const HiddenGroupTab &entry : hidden) {
+        const int idx = insertTab(insertPos, entry.tab, entry.text);
+        setTabToolTip(idx, entry.toolTip);
+        m_tabBar->setTabData(idx, entry.data);
+        m_locationBars->insertWidget(idx, entry.bar);
+#if !defined(Q_OS_MACOS)
+        // Rebuild the favicon label — the icon is URL-derived so it is
+        // re-resolved rather than snapshotted.
+        if (WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(entry.tab)) {
+            QLabel *label = animationLabel(idx, false);
+            label->setPixmap(BrowserApplication::icon(
+                withSearch->m_webView->url()).pixmap(16, 16));
+        }
+#endif
+        ++insertPos;
+    }
+}
+
+void TabWidget::setTabGroupCollapsed(const QString &groupId, bool collapsed)
+{
+    auto it = m_tabGroupInfo.find(groupId);
+    if (it == m_tabGroupInfo.end() || it->collapsed == collapsed)
+        return;
+    if (!collapsed) {
+        it->collapsed = false;
+        expandTabGroup(groupId);
+    } else {
+        const QList<int> members = tabGroupMembers(groupId);
+        if (members.isEmpty())
+            return;
+        it->collapsed = true;
+        // The chip keeps focus — a member about to be hidden cannot
+        // stay current.
+        if (members.contains(currentIndex())
+            && currentIndex() != members.first())
+            setCurrentIndex(members.first());
+        // Detach in strip order — the hidden list is the expand order,
+        // so it must match what the user saw.  Snapshot the views up
+        // front: each detach shifts the strip, so the captured member
+        // indices would skip tabs if reused directly.
+        QList<WebView*> memberViews;
+        for (int k = 1; k < members.count(); ++k)
+            memberViews.append(webView(members.at(k)));
+        for (WebView *memberView : std::as_const(memberViews)) {
+            const int memberIndex = webViewIndex(memberView);
+            if (memberIndex >= 0)
+                detachGroupMember(memberIndex);
+        }
+    }
+    m_tabBar->updateVisibility();
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+}
+
+void TabWidget::ungroupTabs(const QString &groupId)
+{
+    if (!m_tabGroupInfo.contains(groupId))
+        return;
+    if (m_tabGroupInfo.value(groupId).collapsed)
+        setTabGroupCollapsed(groupId, false);
+    for (auto it = m_tabGroups.begin(); it != m_tabGroups.end();) {
+        if (it.value() == groupId)
+            it = m_tabGroups.erase(it);
+        else
+            ++it;
+    }
+    m_tabGroupInfo.remove(groupId);
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+}
+
+// Post-drag membership normalization, called from moveTab() after the
+// location-bar stack is re-synced: a tab dropped between two members of
+// the same group joins it, a grouped tab dropped with no same-group
+// neighbor left or right leaves its group (Chrome's drag-out rule).
+// Both rules are one-line membership changes — no further moving.
+void TabWidget::normalizeTabGroupMove(int movedIndex)
+{
+    if (m_groupAdjust)
+        return;
+    const QString gid = tabGroupId(movedIndex);
+    const QString left = tabGroupId(movedIndex - 1);
+    const QString right = tabGroupId(movedIndex + 1);
+    if (!left.isEmpty() && left == right && gid != left) {
+        assignTabGroup(webView(movedIndex), left);
+        m_tabBar->updateGeometry();
+        m_tabBar->update();
+    } else if (!gid.isEmpty() && left != gid && right != gid) {
+        assignTabGroup(webView(movedIndex), QString());
+        forgetTabGroupIfEmpty(gid);
+        m_tabBar->update();
+    }
+}
+
+// Strip order with each collapsed group's hidden members spliced in
+// directly after its chip — the order saveState() serializes and
+// restoreState() re-creates.
+QList<WebView*> TabWidget::orderedWebViews() const
+{
+    QList<WebView*> ordered;
+    for (int i = 0; i < count(); ++i) {
+        WebView *view = const_cast<TabWidget*>(this)->webView(i);
+        if (!view)
+            continue;
+        ordered.append(view);
+        const QString gid = m_tabGroups.value(view);
+        if (gid.isEmpty())
+            continue;
+        const TabGroup group = m_tabGroupInfo.value(gid);
+        if (!group.collapsed)
+            continue;
+        const QList<int> members = tabGroupMembers(gid);
+        if (members.isEmpty() || members.first() != i)
+            continue;
+        for (const HiddenGroupTab &hidden : group.hidden) {
+            if (WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(hidden.tab))
+                ordered.append(withSearch->m_webView);
+        }
+    }
+    return ordered;
 }
 
 // SLEEP01 — sleeping tabs -------------------------------------------------
@@ -913,7 +1375,17 @@ void TabWidget::cloneTab(int index)
     if (index < 0 || index >= count())
         return;
     QUrl url = webView(index)->url();
+    // TABGRP01: a clone stays in the cloned tab's group.
+    const QString gid = tabGroupId(index);
     WebView *tab = makeNewTab();
+    if (!gid.isEmpty()) {
+        assignTabGroup(tab, gid);
+        const int tabIndex = webViewIndex(tab);
+        if (m_tabGroupInfo.value(gid).collapsed)
+            detachGroupMember(tabIndex);
+        else
+            moveTabIntoGroupRun(tabIndex);
+    }
     tab->loadUrl(url);
 }
 
@@ -960,6 +1432,23 @@ void TabWidget::closeTab(int index)
     WebView *tab = webView(index);
     bool hasFocus = tab && tab->hasFocus();
 
+    // TABGRP01: the chip is the only visible member of a collapsed
+    // group — closing it expands the group first so its hidden members
+    // re-appear instead of being stranded off-strip.
+    const QString closingGroup = tabGroupId(index);
+    if (!closingGroup.isEmpty()
+        && m_tabGroupInfo.value(closingGroup).collapsed)
+        setTabGroupCollapsed(closingGroup, false);
+    // Expansion re-inserts hidden members right after the group's
+    // first visible tab — when that is not the tab being closed (the
+    // reopen-in-container swap creates exactly this state) the strip
+    // index captured above has shifted, so re-resolve it from the view.
+    if (tab) {
+        index = webViewIndex(tab);
+        if (index < 0 || index >= count())
+            return;
+    }
+
     // A private tab is never queued for reopen: "Open Last Closed Tab"
     // would load the url in a normal-profile page where the visit is
     // recorded — the very trace private browsing avoids (SEC07).
@@ -985,6 +1474,10 @@ void TabWidget::closeTab(int index)
     QWidget *webViewWithSearch = widget(index);
     removeTab(index);
     m_sleepStates.remove(tab);
+    // TABGRP01: drop the view's membership; the group record dies with
+    // its last member.
+    m_tabGroups.remove(tab);
+    forgetTabGroupIfEmpty(closingGroup);
     webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
 
@@ -1514,6 +2007,9 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
             qDebug() << __FUNCTION__ << "NewSelectedTab";
 #endif
             webView = makeNewTab(true);
+            // TABGRP01: a child tab inherits its opener's group, the
+            // same rule the container inheritance follows.
+            inheritTabGroup(webView, currentView);
             webView->setFocus();
             break;
         }
@@ -1523,6 +2019,7 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
             qDebug() << __FUNCTION__ << "NewNotSelectedTab";
 #endif
             webView = makeNewTab(false);
+            inheritTabGroup(webView, currentView);
             break;
         }
 
@@ -1560,7 +2057,7 @@ static const qint32 TabWidgetMagic = 0xaa;
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 2; // CONT02: v2 tails the stream with container ids
+    int version = 3; // TABGRP01: v3 tails with group ids + a group table
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -1570,29 +2067,60 @@ QByteArray TabWidget::saveState() const
     QStringList tabs;
     QList<QByteArray> tabsHistory;
     QStringList tabContainers;
+    QStringList tabGroups;
     // Private tabs live on the off-the-record profile — their urls and
     // history are never written into the saved session (SEC07).  The
     // current index is remapped onto the filtered list.
     int savedCurrentIndex = -1;
-    for (int i = 0; i < count(); ++i) {
-        WebView *tab = webView(i);
+    // orderedWebViews() splices a collapsed group's hidden members in
+    // after its chip so no tab drops out of the serialized session.
+    const QList<WebView*> ordered = orderedWebViews();
+    for (WebView *tab : ordered) {
         if (!tab)
             continue;
         if (tab->page() && tab->page()->profile()->isOffTheRecord())
             continue;
-        if (i == currentIndex())
+        if (tab == currentWebView())
             savedCurrentIndex = tabs.count();
         tabs.append(QString::fromUtf8(tab->url().toEncoded()));
         if (tab->history()->count() != 0)
             tabsHistory.append(serializePageHistory(tab->history()));
         else
             tabsHistory.append(QByteArray());
-        tabContainers.append(containerIdForTab(i));
+        tabContainers.append(tab->containerId());
+        tabGroups.append(m_tabGroups.value(tab));
     }
     stream << tabs;
     stream << savedCurrentIndex;
     stream << tabsHistory;
     stream << tabContainers;
+
+    // TABGRP01: the group table — one record per group that still has a
+    // saved member, ordered by first appearance on the strip.  Orphaned
+    // ids in tabGroups (a record that somehow vanished) degrade to
+    // ungrouped on restore.
+    QList<TabGroup> savedGroups;
+    for (const QString &gid : tabGroups) {
+        if (gid.isEmpty())
+            continue;
+        const auto it = m_tabGroupInfo.constFind(gid);
+        if (it == m_tabGroupInfo.constEnd())
+            continue;
+        bool listed = false;
+        for (const TabGroup &group : savedGroups) {
+            if (group.id == gid) {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+            savedGroups.append(*it);
+    }
+    stream << tabGroups;
+    stream << qint32(savedGroups.count());
+    for (const TabGroup &group : savedGroups)
+        stream << group.id << group.name << group.color
+               << qint32(group.collapsed ? 1 : 0);
 
     return data;
 }
@@ -1608,7 +2136,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 2)
+    if (marker != TabWidgetMagic || v < 1 || v > 3)
         return false;
 
     QStringList openTabs;
@@ -1623,6 +2151,30 @@ bool TabWidget::restoreState(const QByteArray &state)
     // session (or a truncated blob) restores to the default container.
     if (v >= 2)
         StreamingUtils::readBoundedList(stream, tabContainers);
+    // TABGRP01: v3 tails with each tab's group id plus the group table
+    // (name/color/collapsed).  A truncated tail simply leaves the
+    // session ungrouped — the same defensive floor the container tail
+    // established.
+    QStringList savedGroupIds;
+    struct SavedGroup {
+        QString id;
+        QString name;
+        QColor color;
+        bool collapsed;
+    };
+    QList<SavedGroup> savedGroups;
+    if (v >= 3) {
+        StreamingUtils::readBoundedList(stream, savedGroupIds);
+        qint32 groupCount = 0;
+        stream >> groupCount;
+        for (qint32 i = 0; i < groupCount && i < 1024; ++i) {
+            SavedGroup group;
+            qint32 collapsed = 0;
+            stream >> group.id >> group.name >> group.color >> collapsed;
+            group.collapsed = (collapsed != 0);
+            savedGroups.append(group);
+        }
+    }
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -1631,6 +2183,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     // it for a container tab would put the restored page on the wrong
     // profile, so it is closed after the loop instead.
     bool leftoverPlaceholder = false;
+    QList<WebView*> createdViews;
     for (int i = 0; i < openTabs.count(); ++i) {
         QUrl url = QUrl::fromEncoded(openTabs.at(i).toUtf8());
         const QByteArray historyState = tabHistory.value(i);
@@ -1659,16 +2212,59 @@ bool TabWidget::restoreState(const QByteArray &state)
         WebView *webView = reusePlaceholder
             ? currentWebView()
             : makeNewTabInContainer(containerId, false);
+        createdViews.append(webView);
         if (webView)
             webView->loadUrl(url);
     }
     if (leftoverPlaceholder && count() > 1)
         closeTab(0);
+
+    // TABGRP01: rebuild the group table under fresh ids, then attach
+    // each saved tab to its group.  Groups go in expanded — the
+    // collapse pass runs only after all membership is set (collapsing
+    // earlier would hide the chip later members index against, and
+    // setTabGroupCollapsed no-ops if the flag is already latched).
+    QHash<QString, QString> groupIdRemap;
+    QStringList collapsedGroups;
+    for (const SavedGroup &saved : savedGroups) {
+        if (saved.id.isEmpty() || groupIdRemap.contains(saved.id))
+            continue;
+        TabGroup group;
+        group.id = nextTabGroupId();
+        group.name = saved.name;
+        group.color = saved.color;
+        m_tabGroupInfo.insert(group.id, group);
+        groupIdRemap.insert(saved.id, group.id);
+        if (saved.collapsed)
+            collapsedGroups.append(group.id);
+    }
+    for (int i = 0; i < createdViews.count(); ++i) {
+        const QString gid = groupIdRemap.value(savedGroupIds.value(i));
+        if (!gid.isEmpty() && createdViews.at(i))
+            m_tabGroups.insert(createdViews.at(i), gid);
+    }
+    for (const QString &gid : std::as_const(collapsedGroups))
+        setTabGroupCollapsed(gid, true);
+
     // The saved index is only selectable once the restored tabs exist —
     // setting it before creating them is a no-op against the single
-    // placeholder tab.
-    if (currentTab >= 0 && currentTab < count())
-        setCurrentIndex(currentTab);
+    // placeholder tab.  A saved-current tab that ended up hidden inside
+    // a collapsed group selects the group's chip instead.
+    WebView *savedCurrent = (currentTab >= 0 && currentTab < createdViews.count())
+        ? createdViews.at(currentTab) : nullptr;
+    int selectIndex = savedCurrent ? webViewIndex(savedCurrent) : -1;
+    if (selectIndex < 0 && savedCurrent) {
+        const QList<int> members =
+            tabGroupMembers(m_tabGroups.value(savedCurrent));
+        if (!members.isEmpty())
+            selectIndex = members.first();
+    }
+    if (selectIndex < 0 && currentTab >= 0 && currentTab < count())
+        selectIndex = currentTab;
+    if (selectIndex >= 0)
+        setCurrentIndex(selectIndex);
+    m_tabBar->updateVisibility();
+    m_tabBar->update();
     return true;
 }
 

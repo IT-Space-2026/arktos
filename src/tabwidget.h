@@ -65,6 +65,8 @@
 
 #include <qtabwidget.h>
 
+#include <qcolor.h>
+#include <qhash.h>
 #include <qwebenginepage.h>
 #include <qurl.h>
 
@@ -153,6 +155,38 @@ public:
     // The container the tab at index belongs to — the default
     // container id for normal and off-the-record pages.
     QString containerIdForTab(int index) const;
+
+    // TABGRP01 — named, color-coded tab groups (Chrome/Vivaldi style).
+    // Membership is keyed on the tab's WebView so drags never lose it;
+    // a group is a membership SET — normally contiguous, though a drag
+    // may leave two runs that still count as one group.  A collapsed
+    // group keeps only its first member (the "chip") on the strip —
+    // the rest are detached, not destroyed, and re-insert on expand.
+    QString tabGroupId(int index) const;            // "" when ungrouped
+    QStringList tabGroupIds() const;
+    QString tabGroupName(const QString &groupId) const;
+    QColor tabGroupColor(const QString &groupId) const;
+    // Total members including collapsed-hidden ones; 0 for an unknown id.
+    int tabGroupSize(const QString &groupId) const;
+    bool tabGroupIsCollapsed(const QString &groupId) const;
+    // Visible strip indices of the group's members (just the chip while
+    // collapsed).
+    QList<int> tabGroupMembers(const QString &groupId) const;
+    // The tab at index is the only visible member of a collapsed group.
+    bool isTabGroupChip(int index) const;
+    bool hasCollapsedTabGroup() const;
+    // Creates an unnamed group (rotating palette color) holding the tab
+    // — returns the new group id, "" when index has no web view.
+    QString createTabGroup(int index);
+    // Group the tab at index with the tab at targetIndex — joins the
+    // target's group or creates one holding both (drag-drop stacking).
+    void groupTabWith(int index, int targetIndex);
+    void addTabToGroup(int index, const QString &groupId);
+    void removeTabFromGroup(int index);
+    void renameTabGroup(const QString &groupId, const QString &name);
+    void setTabGroupColor(const QString &groupId, const QColor &color);
+    void setTabGroupCollapsed(const QString &groupId, bool collapsed);
+    void ungroupTabs(const QString &groupId);
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
@@ -244,6 +278,46 @@ private:
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
     void updateSleepTimer();
+
+    // TABGRP01 internals — see the public accessors above.
+    QString nextTabGroupId();
+    void assignTabGroup(WebView *webView, const QString &groupId);
+    void moveTabIntoGroupRun(int index);
+    void detachGroupMember(int index);
+    void expandTabGroup(const QString &groupId);
+    void normalizeTabGroupMove(int movedIndex);
+    void forgetTabGroupIfEmpty(const QString &groupId);
+    // Child-tab inheritance: a tab opened from a page joins the
+    // opener's group (and hides itself when that group is collapsed).
+    void inheritTabGroup(WebView *webView, WebView *opener);
+    // Every tab in strip order — with a collapsed group's hidden
+    // members spliced in right after their chip.  Used by saveState so
+    // no tab drops out of the serialized session.
+    QList<WebView*> orderedWebViews() const;
+
+    // A detached member of a collapsed group: its page widget, its
+    // location bar and the tab-strip visuals re-applied on expand.
+    struct HiddenGroupTab {
+        QWidget *tab;
+        QWidget *bar;
+        QString text;
+        QString toolTip;
+        QVariant data;
+    };
+    struct TabGroup {
+        QString id;
+        QString name;
+        QColor color;
+        bool collapsed = false;
+        QList<HiddenGroupTab> hidden;
+    };
+    QHash<QString, TabGroup> m_tabGroupInfo;
+    // view -> group id for every member, hidden or visible.
+    QHash<WebView*, QString> m_tabGroups;
+    int m_tabGroupCounter = 0;
+    // Reentrancy guard: our own membership-driven moveTab() calls feed
+    // back through tabMoved.
+    bool m_groupAdjust = false;
 
     QAction *m_recentlyClosedTabsAction;
     QAction *m_newTabAction;
