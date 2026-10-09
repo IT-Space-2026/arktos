@@ -565,10 +565,8 @@ void ToolbarSearch::showEnginesDialog()
     // manager now (SRCH05's inline editor).  The standalone
     // OpenSearchDialog stays as the fallback for a ToolbarSearch with
     // no BrowserMainWindow ancestor.
-    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
-        SettingsDialog dialog(window);
-        dialog.openAtPage(SettingsDialog::SearchPage);
-        dialog.exec();
+    if (BrowserMainWindow::parentWindow(this)) {
+        SettingsDialog::openPage(this, SettingsDialog::SearchPage);
         return;
     }
     OpenSearchDialog dialog(this);

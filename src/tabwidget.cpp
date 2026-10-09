@@ -250,9 +250,11 @@ void TabWidget::clear()
     m_recentlyClosedTabsAction->setEnabled(false);
     // clear the line edit history
     for (int i = 0; i < m_locationBars->count(); ++i) {
-        QLineEdit *qLineEdit = locationBar(i);
-        qLineEdit->setText(qLineEdit->text());
-        webViewSearch(i)->clear();
+        if (QLineEdit *qLineEdit = locationBar(i))
+            qLineEdit->setText(qLineEdit->text());
+        // Widget tabs (PREFS01) carry no search bar.
+        if (WebViewSearch *search = webViewSearch(i))
+            search->clear();
     }
 }
 
@@ -288,10 +290,6 @@ void TabWidget::addWebAction(QAction *action, QWebEnginePage::WebAction webActio
 
 void TabWidget::currentChanged(int index)
 {
-    WebView *webView = this->webView(index);
-    if (!webView)
-        return;
-
     Q_ASSERT(m_locationBars->count() == count());
 
     WebView *oldWebView = this->webView(m_locationBars->currentIndex());
@@ -302,6 +300,26 @@ void TabWidget::currentChanged(int index)
                    this, &TabWidget::linkHovered);
         disconnect(oldWebView, &QWebEngineView::loadProgress,
                    this, &TabWidget::loadProgress);
+    }
+    // SLEEP01: the outgoing tab's idle clock starts now.
+    markTabActivity(oldWebView);
+    m_locationBars->setCurrentIndex(index);
+
+    WebView *webView = this->webView(index);
+    if (!webView) {
+        // PREFS01: a widget tab (Preferences et al.) has no page —
+        // the chrome actions unbind, the window title comes from the
+        // tab text, and focus lands on the page widget itself.
+        for (int i = 0; i < m_actions.count(); ++i) {
+            WebActionMapper *mapper = m_actions[i];
+            mapper->updateCurrent(nullptr);
+        }
+        emit setCurrentTitle(tabText(index));
+        emit loadProgress(100);
+        emit showStatusBarMessage(QString());
+        if (QWidget *page = widget(index))
+            page->setFocus();
+        return;
     }
 
     connect(webView, &WebView::statusBarMessage,
@@ -315,14 +333,12 @@ void TabWidget::currentChanged(int index)
         WebActionMapper *mapper = m_actions[i];
         mapper->updateCurrent(webView->page());
     }
-    // SLEEP01: the outgoing tab's idle clock starts now; activating a
-    // suspended tab wakes it (the engine reloads the page).
-    markTabActivity(oldWebView);
+    // SLEEP01: activating a suspended tab wakes it (the engine
+    // reloads the page).
     markTabActivity(webView);
     if (isTabSleeping(index))
         wakeTab(index);
     emit setCurrentTitle(webView->title());
-    m_locationBars->setCurrentIndex(index);
     emit loadProgress(webView->progress());
     emit showStatusBarMessage(webView->lastStatusBarText());
     if (webView->url().isEmpty() && webView->hasFocus()) {
@@ -382,7 +398,8 @@ WebView *TabWidget::currentWebView() const
 
 QLineEdit *TabWidget::locationBar(int index) const
 {
-    return qobject_cast<LocationBar*>(m_locationBars->widget(index));
+    // Widget tabs (PREFS01) park a plain read-only QLineEdit here.
+    return qobject_cast<QLineEdit*>(m_locationBars->widget(index));
 }
 
 WebView *TabWidget::webView(int index) const
@@ -637,6 +654,28 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
     return webView;
 }
 
+int TabWidget::addWidgetTab(QWidget *page, const QString &title,
+                            const QIcon &icon, bool makeCurrent)
+{
+    // PREFS01: a non-web page lives in the strip like a
+    // WebViewWithSearch would.  Its location-bar slot is a read-only
+    // echo of the title — the parallel m_locationBars stack must keep
+    // one widget per tab, and a real line edit keeps the chrome's
+    // Ctrl+L focus path working on it.
+    QLineEdit *bar = new QLineEdit(title);
+    bar->setReadOnly(true);
+    m_locationBars->addWidget(bar);
+
+    const int index = addTab(page, icon, title);
+    setTabToolTip(index, title);
+    if (makeCurrent)
+        setCurrentIndex(index);
+    if (count() == 1)
+        currentChanged(currentIndex());
+    emit tabsChanged();
+    return index;
+}
+
 void TabWidget::reopenTabInContainer(int index, const QString &containerId)
 {
     if (index < 0 || index >= count())
@@ -699,12 +738,9 @@ void TabWidget::loadUrlInContainer(const QUrl &url, const QString &containerId)
 void TabWidget::manageContainers()
 {
     // CONT03: the shared management entry point — the tab context menu
-    // and the File menu both land here; open the settings dialog
-    // straight on its Containers page.
-    QWidget *parent = BrowserMainWindow::parentWindow(this);
-    SettingsDialog dialog(parent ? parent : this);
-    dialog.openAtPage(SettingsDialog::ContainersPage);
-    dialog.exec();
+    // and the File menu both land here; open the settings page
+    // straight on its Containers section.
+    SettingsDialog::openPage(this, SettingsDialog::ContainersPage);
 }
 
 // TABGRP01 — tab groups ---------------------------------------------------
@@ -1488,8 +1524,11 @@ void TabWidget::lineEditReturnPressed()
             tab = NewSelectedTab;
 
         loadString(lineEdit->text(), tab);
-        if (m_locationBars->currentWidget() == lineEdit)
-            currentWebView()->setFocus();
+        if (m_locationBars->currentWidget() == lineEdit) {
+            // A widget tab (PREFS01) has no view to focus.
+            if (WebView *view = currentWebView())
+                view->setFocus();
+        }
     }
 }
 
@@ -1528,7 +1567,11 @@ void TabWidget::cloneTab(int index)
         index = currentIndex();
     if (index < 0 || index >= count())
         return;
-    QUrl url = webView(index)->url();
+    // Widget tabs (PREFS01) have no page to clone.
+    WebView *source = webView(index);
+    if (!source)
+        return;
+    QUrl url = source->url();
     // TABGRP01: a clone stays in the cloned tab's group.
     const QString gid = tabGroupId(index);
     // PTAB01: a clone stays in the cloned tab's context — duplicating

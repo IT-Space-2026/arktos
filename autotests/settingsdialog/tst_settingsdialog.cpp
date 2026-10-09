@@ -53,6 +53,7 @@ private slots:
 
     void constructDefaults();
     void saveAndReload();
+    void buttonBoxCloseRequest();
     void searchTab();
     void searchContextControls();
     void suggestionsCheckbox();
@@ -203,6 +204,36 @@ void tst_SettingsDialog::saveAndReload()
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }
+}
+
+// PREFS01: the in-tab button box keeps the modal dialog's contract —
+// OK applies + asks the host to close, Cancel asks to close without
+// applying.  closeRequested replaces QDialog::done().
+void tst_SettingsDialog::buttonBoxCloseRequest()
+{
+    const QString original = QSettings().value(
+        QLatin1String("MainWindow/home")).toString();
+
+    SettingsDialog dialog;
+    QSignalSpy spy(&dialog, &SettingsDialog::closeRequested);
+
+    // Cancel discards the pending edit.
+    dialog.homeLineEdit->setText(QLatin1String("http://discarded.example/"));
+    dialog.buttonBox->button(QDialogButtonBox::Cancel)->click();
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+             original);
+
+    // OK persists the edit + closes.
+    dialog.homeLineEdit->setText(QLatin1String("http://kept.example/"));
+    dialog.buttonBox->button(QDialogButtonBox::Ok)->click();
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+             QLatin1String("http://kept.example/"));
+
+    SettingsDialog restore;
+    restore.homeLineEdit->setText(original);
+    restore.accept();
 }
 
 // SRCH02: the Search tab's engine combo mirrors the OpenSearchManager

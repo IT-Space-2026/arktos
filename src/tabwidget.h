@@ -166,6 +166,16 @@ public:
     // key on the page profile, not the window-global private flag.
     bool isTabPrivate(int index) const;
 
+    // PREFS01: hosts a plain widget (settings page, later the history
+    // manager) in a tab slot.  The page has no WebView, so
+    // webView()/webViewSearch() return nullptr for it — every
+    // dereference site is null-safe — and its companion in the
+    // location-bar stack is a read-only line edit echoing the title
+    // (keeps the parallel stack index-locked and Ctrl+L working).
+    // Returns the new tab's strip index.
+    int addWidgetTab(QWidget *page, const QString &title,
+                     const QIcon &icon, bool makeCurrent = true);
+
     // TABGRP01 — named, color-coded tab groups (Chrome/Vivaldi style).
     // Membership is keyed on the tab's WebView so drags never lose it;
     // a group is a membership SET — normally contiguous, though a drag

@@ -116,9 +116,9 @@ browsing profile:
   commands.
 - **Sharing** — "Copy Clean Link" strips tracking parameters;
   "Show QR" renders a link as a QR code.
-- **Preferences** — Vivaldi-style vertical sidebar navigation,
-  scrollable pages capped to the screen so buttons never clip,
-  dedicated Search and Containers pages.
+- **Preferences** — opens as a tab (one per window), Vivaldi-style
+  vertical sidebar navigation, scrollable pages capped to the screen
+  so buttons never clip, dedicated Search and Containers pages.
 - **Look & feel** — follows the desktop light/dark scheme
   (`ARORA_COLOR_SCHEME` override), selectable bundled icon sets
   (Adwaita/Breeze/Tabler, light+dark variants), status-bar load
