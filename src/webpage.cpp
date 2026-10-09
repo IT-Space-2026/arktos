@@ -48,6 +48,7 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qhash.h>
+#include <qicon.h>
 #include <qinputdialog.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
@@ -1103,8 +1104,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
         return;
     QString title = tr("Error loading page: %1").arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(notFoundErrorFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1228,8 +1228,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
     QString title = tr("Certificate error: %1")
             .arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(certErrorFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1418,8 +1417,7 @@ QString WebPage::httpWarningHtml(const QUrl &target)
     if (!warningFile.open(QIODevice::ReadOnly))
         return QString();
     QString html = QLatin1String(warningFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {

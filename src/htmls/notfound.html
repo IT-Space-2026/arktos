@@ -3,56 +3,69 @@
 <title>%1</title>
 <style>
 body {
-  padding: 3em 0em;
-  background: #eeeeee;
-}
-hr {
-  color: lightgray;
-  width: 100%;
-}
-img {
-  float: left;
-  opacity: .8;
+  margin: 0;
+  padding: 3em 1em;
+  background: linear-gradient(to bottom, #ccd 0%, #f6f6fa 45%, #f6f6fa 100%);
+  font-family: "DejaVu Sans", sans-serif;
+  color: #222;
 }
 #box {
-  background: white;
-  border: 1px solid lightgray;
-  width: 600px;
-  padding: 60px;
+  background: #fff;
+  border: 1px solid #bbc;
+  border-radius: 0.8em;
+  max-width: 640px;
   margin: auto;
+  overflow: hidden;
+  box-shadow: 0 2px 14px rgba(34, 34, 85, 0.15);
 }
-h1 {
-  font-size: 130%;
+#header {
+  background: linear-gradient(to bottom, #228 0%, #66a 90%, #668 100%);
+  color: #fff;
+  padding: 20px 28px;
+}
+#header img {
+  float: right;
+  height: 56px;
+}
+#header h1 {
+  font-size: 1.3em;
   font-weight: bold;
-  border-bottom: 1px solid lightgray;
-  margin-left: 48px;
+  margin: 0.4em 0;
+}
+#content {
+  padding: 22px 28px 26px;
 }
 h2 {
-  font-size: 100%;
+  font-size: 1em;
   font-weight: normal;
-  border-bottom: 1px solid lightgray;
-  margin-left: 48px;
+  color: #445;
+  border-bottom: 1px solid #dde;
+  padding-bottom: 0.8em;
+  margin: 0 0 1em;
 }
 ul {
-  font-size: 80%;
-  padding-left: 48px;
-  margin: 5px 0;
+  font-size: 0.85em;
+  color: #556;
 }
-#reloadButton {
-  padding-left: 48px;
+ul li {
+  margin: 0.35em 0;
 }
 </style>
 </head>
 <body>
   <div id="box">
-    <img src="data:image/png;base64,IMAGE_BINARY_DATA_HERE" width="32" height="32"/>
-    <h1>%2</h1>
-    <h2>%3</h2>
-    <ul>
-      <li>%4</li>
-      <li>%5</li>
-      <li>%6</li>
-    </ul>
+    <div id="header">
+      <img src="data:image/png;base64,IMAGE_BINARY_DATA_HERE" alt="Arora"/>
+      <h1>%2</h1>
+    </div>
+    <div id="content">
+      <h2>%3</h2>
+      <ul>
+        <li>%4</li>
+        <li>%5</li>
+        <li>%6</li>
+      </ul>
+    </div>
   </div>
 </body>
 </html>
