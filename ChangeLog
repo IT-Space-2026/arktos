@@ -223,6 +223,9 @@ Build, tests & tools:
 - Self-contained `make bundle` Linux package (PACK01).
 - THIRD-PARTY-NOTICES audit (LIC01); post-migration cleanup (AUD01).
 - Managed task queue + task loops under .devin/.
+- Docs pass: README documents the user-local aqt Qt install path and
+  records the WebKit->WebEngine deltas vs the Qt 4 series; Doxyfile
+  regenerated for doxygen 1.9+ (DOCS01).
 
 Rust core credential storage (RCORE01):
     A new shared Rust crate (src/rustcore) provides engine-neutral application components behind a stable C ABI — status codes, owned-string/buffer marshaling, a change-notification callback bridged to a Qt signal, and qmake wiring that builds it with cargo when `CONFIG+=rustcore` is set while leaving no-Rust builds untouched.

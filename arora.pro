@@ -7,11 +7,16 @@ SUBDIRS  = src tools autotests
 CONFIG += ordered
 
 unix {
-    # this is an ugly work around to do .PHONY: doc
-    doxygen.target = doc dox
+    # .PHONY: doc — `make doc`/`make dox` builds the doxygen API
+    # reference into doc/ (two separate targets; a space-separated
+    # `doc dox` value emits one target named "doc dox").
+    doxygen.target = doc
     doxygen.commands = doxygen Doxyfile
     doxygen.depends = Doxyfile
-    QMAKE_EXTRA_TARGETS += doxygen
+    dox.target = dox
+    dox.commands = doxygen Doxyfile
+    dox.depends = Doxyfile
+    QMAKE_EXTRA_TARGETS += doxygen dox
 }
 
 # `make check` builds and runs the QtTest suite headless.  The

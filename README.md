@@ -25,6 +25,7 @@ trust it with anything you cannot afford to lose.
   - [Downloads](#downloads)
   - [Extensions](#extensions)
   - [Credentials & autofill](#credentials--autofill)
+- [Differences from Qt 4 Arora](#differences-from-qt-4-arora)
 - [Source structure](#source-structure)
 - [Building](#building)
 - [Testing & diagnostics](#testing--diagnostics)
@@ -252,6 +253,47 @@ dialog; an injected script fills stored credentials after page load
 and reports submits over a hardened WebChannel bridge. The store is
 encrypted at rest and can be master-passphrase protected.
 
+## Differences from Qt 4 Arora
+
+The 2009 codebase was rebuilt on Qt 6 / QtWebEngine (Chromium). What
+that swap means in practice:
+
+- **Engine** — QtWebKit is gone; page content renders in
+  out-of-process Chromium renderers. Everything that used QWebFrame's
+  synchronous DOM API now goes through injected scripts and
+  asynchronous `runJavaScript` — there is no synchronous JS bridge.
+- **Plugins removed** — the NPAPI/Flash machinery (QWebPluginFactory,
+  ClickToFlash) was deleted outright; modern Chromium has no plugin
+  API to port. The remaining "Enable Plugins" setting maps to
+  WebEngine's own `PluginsEnabled`.
+- **Autofill reimplemented** — WebKit's frame-level form hooks have no
+  WebEngine equivalent, so form detection, fill and capture are done
+  by an injected script reporting over a hardened, token-gated
+  WebChannel bridge. Honest deltas: only JS-observable submits are
+  captured (the app cannot see POST bodies), iframe forms are not
+  captured, and a submit racing an immediate navigation can be missed.
+  The store moved from plaintext `autofill.dat` to AES-256-GCM sealed
+  storage with an optional Argon2id master passphrase.
+- **Caching** — page loads cache inside Chromium; the app's
+  QNetworkAccessManager (with its own disk cache) only handles
+  app-side fetches such as search suggestions and blocklist downloads.
+- **Inspector** — WebKit's built-in inspector became a DevTools host
+  window: the inspected page hands its `devToolsPage` to a second
+  QWebEngineView on the same profile.
+- **file:// directory listings** — WebKit rendered them natively; they
+  are now served by a registered `arora-file:` URL scheme handler.
+- **QtScript gone** — OpenSearch suggestions parse JSON natively;
+  user-script, autofill and fingerprint injection use
+  QWebEngineScript. Qt5Compat remains only as a migration bridge.
+- **Self-contained installs** — `make bundle` produces a relocatable
+  directory shipping the Qt/WebEngine runtime, so Arora runs on a
+  system with no Qt installed (see [Packaging](#packaging)).
+- **Privacy-first direction** — everything in the
+  [feature tour](#feature-tour) is new since the Qt 4 series:
+  zero-telemetry launch, HTTPS-Only, per-site JS/cookie/permission
+  controls, containers, a managed-Tor window and an opt-in filesystem
+  sandbox.
+
 ## Source structure
 
 ```
@@ -281,14 +323,41 @@ BuildProcess/         bundling + fetch scripts (bundle-linux.sh, ...)
 
 ## Building
 
-Arora uses the **qmake** build system against Qt 6 (developed on Qt
-6.12, user-local install — see `.devin/qt-env.sh`):
+Arora uses the **qmake** build system against **Qt 6**. The reference
+toolchain is **Qt 6.12** — features such as the extension API and the
+DNS-mode control rely on recent Qt releases, so prefer the newest
+Qt 6 you can install.
+
+### Getting Qt user-locally (no sudo)
+
+A from-source Qt build is not needed — the official binary packages
+install into your home directory with
+[aqtinstall](https://github.com/miurahr/aqtinstall):
 
 ```sh
+python3 -m venv ~/venvs/aqt
+~/venvs/aqt/bin/pip install aqtinstall
+~/venvs/aqt/bin/aqt install-qt linux desktop 6.12.0 gcc_64 -O ~/Qt \
+    -m qtwebengine qtwebchannel qtpositioning qtdeclarative qt5compat \
+       qtsvg qttools qtwayland qttranslations
+```
+
+That lands Qt under `~/Qt/6.12.0/gcc_64`. Then either source the
+env helper and build:
+
+```sh
+source .devin/qt-env.sh   # QTDIR/PATH/LD_LIBRARY_PATH + offscreen default
 qmake && make -j$(nproc)
 ```
 
-Optional build flags:
+or put a `qmake6` symlink onto `~/.local/bin` pointing at
+`$QTDIR/bin/qmake` (what this tree's tooling expects on PATH).
+
+A system-packaged Qt 6 with the same modules works too — make sure
+the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
+*tools/linguist* dev packages are present before running `qmake`.
+
+### Build flags
 
 - `CONFIG+=adblock_rust` — Brave adblock-rust filter engine (needs a
   user-local Rust toolchain: `cargo build --release` in
@@ -322,6 +391,8 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 - `./arora --write-sandbox-launcher` — print the `arora-sandbox`
   launcher script (used to regenerate src/sandbox/arora-sandbox)
 - `./arora --profile-startup` — millisecond startup timeline
+- `make doc` — doxygen API reference into `doc/html` (needs `doxygen`
+  + `dot`; both optional, nothing else uses them)
 
 GUI binaries always run headless in tests (`QT_QPA_PLATFORM=offscreen`
 or `xvfb-run`).
