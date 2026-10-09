@@ -87,6 +87,11 @@ UI:
   boxes are capped at content width instead of stretching, group
   boxes no longer balloon to fill empty space, and each page's
   content packs to the top with consistent row spacing (PREFUI01).
+- Preferences density pass: identical padding on every page and inside
+  every group box (no more dead band under group titles), and the
+  OK/Cancel buttons now sit in a slim right-aligned footer strip
+  separated by a rule line instead of stretching across the window
+  (PREFUI02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

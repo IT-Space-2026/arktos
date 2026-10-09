@@ -25,6 +25,9 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qdir.h>
+#include <qframe.h>
+#include <qgroupbox.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstyle.h>
@@ -67,6 +70,7 @@ private slots:
     void iconThemeSelector();
     void uniformSidebarIcons();
     void scrollablePages();
+    void densityAndFooter();
     void subDialogButtons();
     void setHomeToCurrentPage();
     void popupExceptions();
@@ -989,6 +993,76 @@ void tst_SettingsDialog::scrollablePages()
         }
     }
     QVERIFY(sawScrollablePage);
+    dialog.close();
+}
+
+// PREFUI02: one compact padding rhythm across the whole page —
+// identical insets on every stacked page, identical inner padding in
+// every group box, and a slim right-aligned footer strip (separator
+// line + content-sized button box) instead of the full-width box the
+// style defaults produced.
+void tst_SettingsDialog::densityAndFooter()
+{
+    SettingsDialog dialog;
+
+    for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+        QScrollArea *area = qobject_cast<QScrollArea *>(
+            dialog.tabWidget->widget(i));
+        QVERIFY(area);
+        QWidget *page = area->widget();
+        QVERIFY(page && page->layout());
+        QCOMPARE(page->layout()->contentsMargins(),
+                 QMargins(8, 8, 8, 8));
+    }
+    const QList<QGroupBox *> groups =
+        dialog.findChildren<QGroupBox *>();
+    QVERIFY(!groups.isEmpty());
+    for (QGroupBox *box : groups) {
+        QVERIFY2(box->layout(), qPrintable(box->title()));
+        QCOMPARE(box->layout()->contentsMargins(),
+                 QMargins(9, 6, 9, 9));
+    }
+
+    // Footer strip: a full-width separator line above a button box
+    // pinned to the right edge at content width — the box must no
+    // longer stretch across the window.
+    QFrame *line = dialog.findChild<QFrame *>(
+        QLatin1String("footerLine"));
+    QVERIFY(line);
+    QCOMPARE(line->frameShape(), QFrame::HLine);
+    QCOMPARE(dialog.buttonBox->sizePolicy().horizontalPolicy(),
+             QSizePolicy::Maximum);
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    qApp->processEvents();
+    const int shellRight =
+        dialog.layout()->contentsMargins().right();
+    // geometry().right() is inclusive — +1 is the real edge.
+    QVERIFY(qAbs(dialog.buttonBox->geometry().right() + 1
+                 - (dialog.width() - shellRight)) <= 1);
+    QVERIFY(dialog.buttonBox->geometry().left()
+            > dialog.width() / 2);
+    // The line spans the content width just above the buttons.
+    QVERIFY(line->geometry().bottom()
+            <= dialog.buttonBox->geometry().top());
+    QVERIFY(line->width() >= dialog.width() - shellRight
+            - dialog.layout()->contentsMargins().left());
+
+    // Offscreen page grabs for visual review — set
+    // ARORA_SETTINGS_GRAB_DIR to a directory and each page lands
+    // there as settings-page-<n>.png.
+    const QByteArray grabDir = qgetenv("ARORA_SETTINGS_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+            dialog.tabWidget->setCurrentIndex(i);
+            dialog.pagesList->setCurrentRow(i);
+            qApp->processEvents();
+            dialog.grab().save(QString::fromLocal8Bit(grabDir)
+                + QStringLiteral("/settings-page-%1.png").arg(i));
+        }
+    }
     dialog.close();
 }
 
