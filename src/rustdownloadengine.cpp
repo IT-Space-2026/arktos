@@ -24,17 +24,26 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
+#include "cookiejar.h"
 #include "privacyrequestinterceptor.h"
 
+#include <qdatetime.h>
 #include <qjsonobject.h>
 #include <qjsondocument.h>
+#include <qnetworkcookie.h>
 #include <qnetworkproxy.h>
 #include <qsettings.h>
+#include <qtemporaryfile.h>
+#include <quuid.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
 #include <cstring>
 #include <mutex>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 
 /*!
     Poll cadence: the spec's ~2 progress updates per second.  The FFI
@@ -232,6 +241,109 @@ RustDownloadEngine::~RustDownloadEngine()
         dl_cancel(m_handle);
         dl_free(m_handle);
     }
+    removeCookieFile();
+}
+
+// DLACC05 — per-host cookie export for the engine's cookie_file
+// argument.  The download needs the session's cookies (an
+// authenticated fetch must look exactly like the engine-mediated
+// one would) but never the jar: CookieJar's live store mirror is
+// queried through QNetworkCookieJar's canonical matching, so the
+// file holds ONLY the rows this URL may receive.  The crate
+// re-filters per redirect hop, so a hop to another host can never
+// pull this host's rows onto the wire.
+QString RustDownloadEngine::exportCookieFile() const
+{
+    QWebEngineProfile *profile = m_page && m_page->profile()
+        ? m_page->profile()
+        : QWebEngineProfile::defaultProfile();
+    if (!profile)
+        return QString();
+    CookieJar *jar = CookieJar::instance(profile);
+    if (!jar)
+        return QString();
+    const QList<QNetworkCookie> cookies = jar->cookiesForUrl(m_url);
+    if (cookies.isEmpty())
+        return QString();
+
+    QByteArray rows("# Netscape HTTP Cookie File\n");
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (const QNetworkCookie &cookie : cookies) {
+        const QByteArray name = cookie.name();
+        const QByteArray value = cookie.value();
+        // A field holding the row delimiters cannot be represented —
+        // skip the cookie rather than write a corrupt line.
+        if (name.contains('\t') || name.contains('\n')
+                || value.contains('\t') || value.contains('\n'))
+            continue;
+        QString domain = cookie.domain();
+        if (domain.isEmpty())
+            domain = m_url.host();
+        if (domain.isEmpty())
+            continue;
+        const bool includeSubdomains = domain.startsWith(QLatin1Char('.'));
+        const QString path = cookie.path().isEmpty()
+            ? QStringLiteral("/") : cookie.path();
+        const qint64 expires = cookie.expirationDate().isValid()
+            ? cookie.expirationDate().toSecsSinceEpoch() : 0;
+        if (expires > 0 && expires <= now)
+            continue; // already dead
+        if (cookie.isHttpOnly())
+            domain.prepend(QLatin1String("#HttpOnly_"));
+        rows += domain.toUtf8() + '\t'
+            + (includeSubdomains ? "TRUE" : "FALSE") + '\t'
+            + path.toUtf8() + '\t'
+            + (cookie.isSecure() ? "TRUE" : "FALSE") + '\t'
+            + QByteArray::number(expires) + '\t'
+            + name + '\t' + value + '\n';
+    }
+
+    // cookies-<random> inside the 0700 parts root: the name never
+    // carries the destination file name, and QTemporaryFile's
+    // mkstemp-style create lands 0600 on unix before a byte is
+    // written — fully flushed/fsynced and closed before dl_start.
+    QTemporaryFile file(
+        BrowserPaths::dataFilePath(QLatin1String("downloads-parts"))
+        + QLatin1String("/cookies-XXXXXX"));
+    if (!file.open())
+        return QString();
+    file.setPermissions(QFileDevice::ReadUser | QFileDevice::WriteUser);
+    if (file.write(rows) != rows.size()) {
+        file.setAutoRemove(true);
+        return QString();
+    }
+    file.flush();
+#ifdef Q_OS_UNIX
+    ::fsync(file.handle());
+#endif
+    file.setAutoRemove(false);
+    const QString path = file.fileName();
+    file.close();
+    return path;
+}
+
+// Secure-ish unlink: the file is a few hundred bytes — overwrite the
+// rows before removing so cookie values don't linger in free space.
+void RustDownloadEngine::removeCookieFile()
+{
+    if (m_cookieFile.isEmpty())
+        return;
+    QFile file(m_cookieFile);
+    if (file.open(QIODevice::ReadWrite)) {
+        const QByteArray zeros(4096, '\0');
+        qint64 left = file.size();
+        while (left > 0) {
+            const qint64 n = file.write(zeros.constData(),
+                                        qMin<qint64>(left, zeros.size()));
+            if (n <= 0)
+                break;
+            left -= n;
+        }
+        file.flush();
+        file.close();
+    }
+    QFile::remove(m_cookieFile);
+    m_cookieFile.clear();
 }
 
 bool RustDownloadEngine::isAvailable()
@@ -305,10 +417,8 @@ void RustDownloadEngine::accept()
     // a fingerprint diff; the page URL as first_party + referer
     // source; the REF01 referer policy (tor enforces at least
     // Trimmed); the SAFE07 downgrade scope the page's profile gates
-    // under; the proxy the fetch must ride.  No cookies are exported
-    // yet — DLACC05 wires the per-host Netscape file; until then
-    // authenticated sites fall back naturally on the server side
-    // (403 -> Interrupted, retryable).
+    // under; the proxy the fetch must ride.  Cookies (DLACC05) ride
+    // the scoped export file below — never the whole jar.
     QJsonObject options;
     if (m_page && m_page->profile()) {
         const QString ua = m_page->profile()->httpUserAgent();
@@ -338,6 +448,13 @@ void RustDownloadEngine::accept()
     options.insert(QLatin1String("require_proxy"),
                    BrowserApplication::isTorMode());
 
+    // DLACC05: the cookie export is written, fsynced and closed
+    // before the engine starts; a stale file from a previous accept()
+    // on this object is dropped first.
+    removeCookieFile();
+    m_cookieFile = exportCookieFile();
+    const QByteArray c = m_cookieFile.toUtf8();
+
     const QByteArray u = m_url.toString().toUtf8();
     const QByteArray d = m_dir.toUtf8();
     const QByteArray n = m_fileName.toUtf8();
@@ -345,9 +462,11 @@ void RustDownloadEngine::accept()
     DlHandle handle = 0;
     const DlStatus st = dl_start(u.constData(), d.constData(),
                                  n.isEmpty() ? nullptr : n.constData(),
-                                 connections, nullptr, o.constData(),
-                                 &handle);
+                                 connections,
+                                 c.isEmpty() ? nullptr : c.constData(),
+                                 o.constData(), &handle);
     if (st != DL_OK) {
+        removeCookieFile();
         char *msg = dl_last_error_message();
         const QString reason = msg ? QString::fromUtf8(msg) : QString();
         if (msg)
@@ -383,6 +502,7 @@ void RustDownloadEngine::restart()
         dl_free(m_handle);
         m_handle = 0;
     }
+    removeCookieFile();
     m_timer.stop();
     m_received = 0;
     m_total = -1;
@@ -459,6 +579,7 @@ void RustDownloadEngine::finish(QWebEngineDownloadRequest::DownloadState state,
     if (isFinished())
         return;
     m_timer.stop();
+    removeCookieFile();
     m_error = error;
     m_state = state;
     emit stateChanged(m_state);

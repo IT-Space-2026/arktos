@@ -179,6 +179,27 @@ fn serve(
         }
         return Ok(());
     }
+    // Early-death probe: the HEAD lies about the length, then the GET
+    // writes a fraction of the body and drops the connection — a
+    // failure that lands AFTER the dest-dir staging file exists
+    // (DLACC05: failed transfers must not leave it behind).
+    if path == "/dies" {
+        let total = body.len() as i64;
+        if method == "HEAD" {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nContent-Type: application/octet-stream\r\n\r\n"
+            );
+            stream.write_all(head.as_bytes())?;
+        } else {
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nContent-Type: application/octet-stream\r\n\r\n"
+            );
+            stream.write_all(head.as_bytes())?;
+            stream.write_all(&body[..body.len().min(1000)])?;
+            stream.flush()?;
+        }
+        return Ok(());
+    }
     // Traversal probe: hostile suggested name via Content-Disposition.
     let cd = if path == "/traversal" {
         "Content-Disposition: attachment; filename=\"../../evil.txt\"\r\n"
@@ -599,6 +620,43 @@ fn socks5h_routes_and_ignores_url_port() {
 }
 
 #[test]
+fn segmented_with_cookie_file_and_full_options() {
+    let _g = lock();
+    let cfg = Cfg::new();
+    let body = Arc::new(fill_pattern(2 * 1024 * 1024));
+    let fx = Fixture::start(Arc::clone(&body), true, 4 * 1024);
+    let mut jar = tempfile::NamedTempFile::new().unwrap();
+    writeln!(jar, "127.0.0.1\tFALSE\t/\tFALSE\t0\tsess\tAAA").unwrap();
+    jar.flush().unwrap();
+    // The option surface the Qt side sends with a real page —
+    // UA + first_party + scope + referer policy all at once.
+    let opts = cstr(&format!(
+        r#"{{"user_agent":"AroraTest/1.0","first_party":"http://127.0.0.1:{}/warmup","scope":"","referer_policy":0}}"#,
+        fx.port
+    ));
+    let mut h: DlHandle = 0;
+    assert_eq!(
+        unsafe {
+            dl_start(
+                fx.url("/file").as_ptr(),
+                cstr(cfg.dest.path().to_str().unwrap()).as_ptr(),
+                cstr("ck.bin").as_ptr(),
+                8,
+                cstr(jar.path().to_str().unwrap()).as_ptr(),
+                opts.as_ptr(),
+                &mut h,
+            )
+        },
+        DlStatus::Ok
+    );
+    let p = wait_state(h, &[3, 4], Duration::from_secs(60));
+    assert_eq!(p.state, 3, "download failed: {}", err_string(h));
+    assert_eq!(std::fs::read(cfg.dest.path().join("ck.bin")).unwrap(), *body);
+    assert_eq!(fx.header("/file", "cookie"), "sess=AAA");
+    unsafe { dl_free(h) };
+}
+
+#[test]
 fn header_parity_ua_and_referer() {
     let _g = lock();
     let cfg = Cfg::new();
@@ -814,6 +872,23 @@ fn cancel_cleans_parts() {
     }
     assert_eq!(cfg.tmp_entries(), 0);
     assert!(!cfg.dest.path().join("cancel.bin").exists());
+    // The dest-dir staging file must die with the transfer (DLACC05).
+    assert!(!cfg.dest.path().join(".cancel.bin.ardl").exists());
+    unsafe { dl_free(h) };
+}
+
+#[test]
+fn failed_transfer_removes_staging() {
+    let _g = lock();
+    let cfg = Cfg::new();
+    let body = Arc::new(fill_pattern(1024 * 1024));
+    let fx = Fixture::start(Arc::clone(&body), false, 0);
+    // The server dies mid-body — the commit size check fails AFTER
+    // the staging file exists, so removal is really exercised.
+    let h = cfg.start(&fx.url("/dies"), "d.bin", 2);
+    wait_state(h, &[4], Duration::from_secs(20));
+    assert!(!cfg.dest.path().join(".d.bin.ardl").exists());
+    assert!(!cfg.dest.path().join("d.bin").exists());
     unsafe { dl_free(h) };
 }
 

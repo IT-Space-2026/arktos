@@ -129,6 +129,12 @@ private slots:
 private:
     void finish(QWebEngineDownloadRequest::DownloadState state,
                 const QString &error = QString());
+    // DLACC05: export ONLY the cookies the target URL may receive
+    // into a private Netscape file under the parts dir (0600 in the
+    // 0700 root), handed to dl_start; removed — zeroed first — on
+    // finish/fail/cancel/restart/destruction.
+    QString exportCookieFile() const;
+    void removeCookieFile();
 
     DlHandle m_handle;
     QPointer<QWebEnginePage> m_page;
@@ -139,6 +145,7 @@ private:
     QString m_fileName;
     QString m_error;
     QString m_output;
+    QString m_cookieFile;
     QWebEngineDownloadRequest::DownloadState m_state;
     qint64 m_received;
     qint64 m_total;
