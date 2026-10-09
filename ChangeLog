@@ -82,6 +82,11 @@ UI:
   live speed and a speed-over-time sparkline, plus "Restart" and
   "Show in File Manager" actions — Restart works on completed
   downloads too and re-downloads to a fresh "-N" name (DOWN01).
+- Preferences layout normalized across all ten pages: label/field
+  pairs sit on shared grid columns, "Select…"-style buttons and combo
+  boxes are capped at content width instead of stretching, group
+  boxes no longer balloon to fill empty space, and each page's
+  content packs to the top with consistent row spacing (PREFUI01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
