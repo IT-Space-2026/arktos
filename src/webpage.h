@@ -24,6 +24,7 @@
 
 #include <qlist.h>
 #include <qset.h>
+#include <qsslcertificate.h>
 #include <qwebenginecertificateerror.h>
 #include <qwebenginepage.h>
 
@@ -187,6 +188,11 @@ private:
     QString httpWarningHtml(const QUrl &url);
     void resolveHttpWarningLink(const QUrl &url);
     void showRateLimitNoticeIfNeeded();
+    // BADSSL03: answers the QWebEnginePage::selectClientCertificate
+    // signal — prompts when the profile's client-certificate store
+    // holds a candidate, declines otherwise.
+    void handleClientCertificateSelection(
+            QWebEngineClientCertificateSelection selection);
 
 protected:
     static QString s_userAgent;
@@ -228,6 +234,11 @@ protected:
     // submitting page's url so each page asks once per target host.
     QUrl m_insecureFormApprovalsPage;
     QSet<QString> m_insecureFormApprovedHosts;
+    // BADSSL03: per-page client-certificate decisions, keyed by the
+    // requesting authority (host:port).  A null certificate value
+    // records "send nothing" — a negotiation's repeated challenges
+    // reuse the decision instead of re-prompting.
+    QHash<QString, QSslCertificate> m_clientCertChoices;
 };
 
 #endif // WEBPAGE_H

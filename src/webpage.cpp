@@ -48,6 +48,7 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qhash.h>
+#include <qinputdialog.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qpixmap.h>
@@ -62,6 +63,7 @@
 #include <quuid.h>
 #include <qvariant.h>
 #include <qwebchannel.h>
+#include <qwebengineclientcertificateselection.h>
 #include <qwebenginehistory.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
@@ -351,6 +353,17 @@ void WebPage::init()
     connect(this, &QWebEnginePage::certificateError,
             this, [this](const QWebEngineCertificateError &error) {
         handleCertificateError(error);
+    });
+
+    // BADSSL03: TLS client-certificate requests.  Left unanswered,
+    // Chromium continues without a certificate — matching cert-less
+    // Chrome.  The handler lets installed certificates actually flow
+    // (BrowserProfile loads them into the profile's
+    // clientCertificateStore at bring-up) and still declines when the
+    // store is empty.
+    connect(this, &QWebEnginePage::selectClientCertificate,
+            this, [this](QWebEngineClientCertificateSelection selection) {
+        handleClientCertificateSelection(selection);
     });
 
     // MIG06: feed the app-side history store.  QtWebKit pushed visited
@@ -672,6 +685,38 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // Qt WebEngine asks the user about resubmitting POST data itself; the old
     // NavigationTypeFormResubmitted prompt has no equivalent here.
 
+    // SAFE01/BADSSL03: an https->http redirect hop that returns to the
+    // same address with only the scheme changed is the secure endpoint
+    // bouncing the navigation to plaintext (badssl.com's http tests do
+    // exactly this).  Left alone it loops forever — the interceptor
+    // re-upgrades the hop and the server redirects down again until
+    // Chromium aborts the whole navigation with an ERR_FAILED
+    // attributed to the https: source, landing on the generic error
+    // page instead of the HTTPS-Only warning.  m_requestedUrl is the
+    // last accepted main-frame request — its equality with the hop's
+    // https: form identifies the bounce.  Marking the host downgraded
+    // stops the upgrade claiming the hop, and the ordinary decision
+    // below then applies: HTTPS-Only warns, plain https-first lets the
+    // plaintext page load.  Gate on isUpgradeCandidate so a host the
+    // upgrade already skips (private/local, already marked) is
+    // untouched — and a cross-path bounce (https://h/a -> http://h/b)
+    // still converges after one extra round-trip, when the re-upgraded
+    // https://h/b itself bounces.
+    if (isMainFrame
+        && type == QWebEnginePage::NavigationTypeRedirect
+        && scheme == QLatin1String("http")
+        && m_requestedUrl.scheme() == QLatin1String("https")
+        && !BrowserApplication::isTorMode()) {
+        QUrl httpsForm = url;
+        httpsForm.setScheme(QLatin1String("https"));
+        const QString scope =
+            PrivacyRequestInterceptor::downgradeScope(profile());
+        if (httpsForm == m_requestedUrl
+            && PrivacyRequestInterceptor::httpsFirstEnabled()
+            && PrivacyRequestInterceptor::isUpgradeCandidate(url, scope))
+            PrivacyRequestInterceptor::markDowngraded(url.host(), scope);
+    }
+
     // SAFE01: HTTPS-Only mode — an http: main-frame navigation that
     // the https-first upgrade did not claim (upgradeable hosts were
     // already redirected inside the interceptor; a host surviving here
@@ -988,8 +1033,27 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         showHttpWarning(errorUrl);
         return;
     }
-    if (m_httpWarningPending && errorUrl == m_httpWarningUrl)
-        return;
+    // BADSSL03: a vetoed https->http redirect hop reports its failure
+    // under the https: redirect SOURCE, not the refused http: target
+    // the record names — try the downgraded spelling too.
+    if (errorUrl.scheme() == QLatin1String("https")) {
+        QUrl httpForm = errorUrl;
+        httpForm.setScheme(QLatin1String("http"));
+        if (PrivacyRequestInterceptor::takeBlockedHttpNav(httpForm)) {
+            showHttpWarning(httpForm);
+            return;
+        }
+    }
+    // Same attribution gap for a hop the page vetoed itself: the
+    // pending warning's failure can arrive under the https: form of
+    // the refused http: target.  Suppress it either way — the queued
+    // interstitial load must not be stomped by an error page.
+    if (m_httpWarningPending) {
+        QUrl httpsForm = m_httpWarningUrl;
+        httpsForm.setScheme(QLatin1String("https"));
+        if (errorUrl == m_httpWarningUrl || errorUrl == httpsForm)
+            return;
+    }
 
     if (errorUrl != m_requestedUrl) {
         // PRIV01: the HTTPS-first interceptor upgrades http:
@@ -1250,6 +1314,73 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         else
             page->load(QUrl(QLatin1String("qrc:/startpage.html")));
     });
+}
+
+// BADSSL03: TLS client-certificate requests arrive through the
+// QWebEnginePage::selectClientCertificate signal (Qt5's
+// selectClientCertificate() override is gone).  Declining when the
+// profile's clientCertificateStore holds nothing matching is the
+// same continue-without outcome an unanswered signal produces —
+// e.g. client.badssl.com's HTTP 400, which is also what cert-less
+// Chrome shows.  With candidates installed the user picks once per
+// authority per page; the decision is remembered so a negotiation's
+// repeated challenges don't each raise a dialog.
+void WebPage::handleClientCertificateSelection(
+        QWebEngineClientCertificateSelection selection)
+{
+    const QList<QSslCertificate> certs = selection.certificates();
+    if (certs.isEmpty()) {
+        selection.selectNone();
+        return;
+    }
+    const QString authority = selection.host().authority();
+    const auto remembered = m_clientCertChoices.constFind(authority);
+    if (remembered != m_clientCertChoices.constEnd()) {
+        // A null record is a remembered decline; a recorded cert that
+        // the store no longer offers falls back to declining rather
+        // than re-prompting mid-load.
+        if (!remembered->isNull() && certs.contains(*remembered))
+            selection.select(*remembered);
+        else
+            selection.selectNone();
+        return;
+    }
+
+    // Test hook: --clientcert-smoke cannot drive the picker headless.
+    if (qEnvironmentVariableIsSet("ARORA_CLIENTCERT_AUTOSELECT")) {
+        m_clientCertChoices.insert(authority, certs.first());
+        selection.select(certs.first());
+        return;
+    }
+
+    QWidget *view = QWebEngineView::forPage(this);
+    if (!view) {   // pages with no chrome (autotests, probes) decline
+        selection.selectNone();
+        return;
+    }
+    QStringList items;
+    for (const QSslCertificate &cert : certs) {
+        items << tr("%1 (issued by %2, expires %3)")
+                .arg(cert.subjectDisplayName(),
+                     cert.issuerDisplayName(),
+                     cert.expiryDate().date().toString(Qt::ISODate));
+    }
+    bool ok = false;
+    const QString choice = QInputDialog::getItem(view,
+            tr("Client Certificate Requested"),
+            tr("The site at %1 asks you to identify yourself with a "
+               "certificate.  Pick one to send, or cancel to continue "
+               "without identifying yourself.")
+                .arg(selection.host().host()),
+            items, 0, false, &ok);
+    const int index = items.indexOf(choice);
+    if (ok && index >= 0) {
+        m_clientCertChoices.insert(authority, certs.at(index));
+        selection.select(certs.at(index));
+    } else {
+        m_clientCertChoices.insert(authority, QSslCertificate());
+        selection.selectNone();
+    }
 }
 
 // SAFE01: HTTPS-Only strict mode — the http: target a navigation was

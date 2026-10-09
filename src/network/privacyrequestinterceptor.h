@@ -169,6 +169,18 @@ public:
     static bool noteNavigationFailure(const QUrl &url, int errorDomain,
                                       int errorCode, const QString &scope);
 
+    // BADSSL03: mark host downgraded without a connection failure —
+    // an https->http redirect hop that lands on the same address with
+    // only the scheme changed is the secure endpoint bouncing the
+    // request to plaintext, which the https-first upgrade would
+    // re-upgrade forever (upgrade <-> downgrade redirect loop that
+    // Chromium fails as ERR_FAILED).  Marking the host lets the http:
+    // hop pass to the ordinary HTTPS-Only/plain-http decision.
+    // Session-scoped + TTL'd like the failure marks; a later committed
+    // https load still self-heals it.  No-op for loopback/LAN/local
+    // hosts — they were never upgrade candidates.
+    static void markDowngraded(const QString &host, const QString &scope);
+
     // Whether http: requests to host currently skip the upgrade in
     // scope — either because it was downgraded after a failed https
     // load, or because it was never a candidate

@@ -1,8 +1,9 @@
-# BADSSL01 — badssl.com baseline (BADSSL02)
+# BADSSL01 — badssl.com baseline (BADSSL02) + fix pass (BADSSL03)
 
 Baseline measurement of the full badssl.com test matrix against the
-current Arora build.  Measurement only — no fixes were applied; BADSSL03
-owns the fix pass.
+current Arora build, followed by the BADSSL03 app-level fix pass.
+BADSSL02 was measurement only; every non-pass disposition from the
+baseline was re-visited below in "BADSSL03 fix pass".
 
 - **Date:** 2026-10-09
 - **Engine:** QtWebEngine / Chromium 140.0.7339.225 (Qt 6.12.0, gcc_64)
@@ -12,6 +13,9 @@ owns the fix pass.
   interstitial, the SAFE01 HTTPS-Only warning, load failures, the final
   committed URL, and a post-load DOM probe (title, footer text, image
   widths, body background).  Raw JSON: `/tmp/badssl-baseline.json`.
+  BADSSL03 added `ARORA_CLIENTCERT_FILE`/`ARORA_CLIENTCERT_PASSPHRASE`
+  support so the `client` case can run with a certificate installed
+  (selection auto-armed for the headless run).
 - **Result totals:** 72 cases — 23 loaded, 49 blocked, 0 other.
 
 ## Verdict legend
@@ -29,16 +33,16 @@ owns the fix pass.
 
 | Case | Expected | Observed | Disposition |
 |---|---|---|---|
-| `revoked` | bad → blocked | loaded | **engine-gap** — see below |
+| `revoked` | bad → blocked | loaded | **engine-gap** — see below; re-run in the fix pass still `loaded`, disposition confirmed |
 | `pinning-test` | bad → blocked | loaded | **test-obsolete** — HPKP removed from Chromium in M72; loads in every modern browser |
 | `mixed-script` | bad → blocked | loaded, but insecure script did **not** run | **ok** — Chromium's mixed-content blocker stopped the subresource (page bg stayed gray; the "script ran" red marker absent). The main frame loading is correct; badssl's binary pass/fail can't express subresource blocking. |
 | `mozilla-old` | bad → blocked | loaded | **test-obsolete** — the fixture negotiates TLS 1.3 with a modern client; "supports old TLS" is a server-config property no client can observe by browsing. |
-| `client` | good → loaded | HTTP 400 error page | **app-gap candidate** — see below |
+| `client` | good → loaded | HTTP 400 (cert-less) / loaded (with cert) | **FIXED (BADSSL03)** — see below |
 | `sha384`, `sha512`, `1000-sans`, `extended-validation` | good → loaded | cert interstitial | **ok-stale-fixture** — upstream certs expired Apr 2022 / Oct 2021 / Aug 2022 (verified via openssl). Blocking is correct. |
 | `rsa8192` | dubious | cert interstitial | **ok-stale-fixture** — cert expired Mar 2024. |
 | `10000-sans` | good → loaded | ERR_CONNECTION_RESET | **ok-stale-fixture** — certificate message too large; fails in raw openssl too. Endpoint effectively broken. |
 | `longextendedsubdomain` | good → loaded | ERR_CONNECTION_RESET (first pass) | **transient** — re-run loaded cleanly (`ARORA_BADSSL_ONLY=longextendedsubdomain` → loaded). |
-| `http` family (6 cases) | bad → blocked | error page, ERR_FAILED | **ok + app-gap polish** — blocked correctly, but the generic error page shows instead of the SAFE01 HTTPS-Only warning: the vetoed `https→http` redirect's failure is attributed to the https source URL, so `takeBlockedHttpNav` misses. BADSSL03 could surface the warning page instead. |
+| `http` family (6 cases) | bad → blocked | error page, ERR_FAILED → HTTPS-Only warning | **FIXED (BADSSL03)** — all six cases now surface the SAFE01 warning interstitial; see "BADSSL03 fix pass" |
 
 ### `revoked` — engine-gap detail
 
@@ -51,16 +55,31 @@ neither, so the connection commits.  QtWebEngine exposes no
 enable OCSP/CRLSet enforcement, so there is no embedder-level fix.
 Same as stock QtWebEngine and close to default Chrome for non-EV certs.
 
-### `client` — app-gap candidate detail
+### `client` — FIXED (BADSSL03)
 
 `client.badssl.com` requires a TLS client certificate; without one the
 server returns HTTP 400 — which is also what Chrome does with no client
 cert installed.  Qt 6.12 exposes `QWebEnginePage::selectClientCertificate`
-(and `QWebEngineClientCertificateStore`), which Arora does not handle
-today — the signal goes unanswered and Chromium continues without a
-cert.  A BADSSL03 app-side improvement could wire a cert-selection
-handler so a user-installed badssl fixture cert would actually flow;
-the 400 outcome itself is correct behavior.
+(and `QWebEngineClientCertificateStore`).
+
+BADSSL03 wired both ends:
+
+- `BrowserProfile::addClientCertificateFile()` loads a PEM or
+  PKCS#12/PFX file (encrypted PEM keys and .p12 bundles honour
+  `ARORA_CLIENTCERT_PASSPHRASE`) into
+  `QWebEngineProfile::clientCertificateStore()`.
+- `WebPage` now connects `selectClientCertificate`: it picks a
+  certificate from the offered list (auto-selecting when
+  `ARORA_CLIENTCERT_AUTOSELECT=1`, used by the harness) or
+  `selectNone()` when the store is empty — matching Chromium's
+  continue-without-cert behaviour.
+- Verified: `./arora --clientcert-smoke` with the badssl fixture
+  (badssl.com-client.pem + passphrase `badssl.com`) → **PASS**, page
+  title `client.badssl.com`; and `ARORA_BADSSL_ONLY=client
+  ARORA_CLIENTCERT_FILE=... ./arora --badssl-smoke` → `client: loaded`,
+  `client-cert-missing` still blocked, `revoked` still the engine gap.
+  Cert-less Chrome parity (HTTP 400) is preserved when no cert is
+  configured.
 
 ## Full matrix
 
@@ -222,11 +241,91 @@ All six: `https→http` downgrade redirect vetoed, error page shown
    its wording) when an `https→http` redirect hop is vetoed — currently
    falls through to the generic error page because the failure is
    attributed to the https source URL while `s_blockedHttpNavs` keys on
-   the http URL.
+   the http URL.  → **DONE**, see below.
 2. **app-gap:** consider handling `QWebEnginePage::selectClientCertificate`
    so client-cert flows can work with a user-installed cert.
+   → **DONE**, see `client` section above.
 3. **engine-gap (document only):** revocation checking — no QtWebEngine
-   API; matches stock engine behavior.
+   API; matches stock engine behavior.  → confirmed, still `loaded`.
 4. **test-obsolete (document only):** `pinning-test` (HPKP gone),
-   `mozilla-old` (server-config assertion).
+   `mozilla-old` (server-config assertion).  → confirmed.
 5. Everything else is correct or blocked by stale upstream fixtures.
+
+## BADSSL03 fix pass
+
+### HTTPS-Only warning on downgrade bounce (http family)
+
+Deeper tracing changed the root cause: the http hop is **not** vetoed
+by the interceptor at all.  The sequence is:
+
+1. `http://http.badssl.com/` → https-first interceptor upgrades to https.
+2. The https endpoint 301s back to the *same* http URL (real server
+   behaviour, confirmed with curl).
+3. `acceptNavigationRequest` sees the redirect hop with
+   `NavigationTypeRedirect` and `m_requestedUrl` = the https URL; the
+   interceptor re-upgrades.
+4. Chromium's redirect-loop guard aborts with `ERR_FAILED` attributed
+   to the https URL → `takeBlockedHttpNav` misses → generic error page.
+
+Fix, all in `src/webpage.cpp` + `src/network/privacyrequestinterceptor.*`:
+
+- `PrivacyRequestInterceptor::markDowngraded(host, scope)` records the
+  host in the per-scope downgraded-hosts set (`s_downgradedHosts`,
+  session-scoped + TTL'd like the connection-failure marks), so the
+  https-first upgrade stops re-claiming the hop.
+- `WebPage::acceptNavigationRequest` detects the bounce — a main-frame
+  `NavigationTypeRedirect` hop to `http:` whose https form equals
+  `m_requestedUrl` — calls `markDowngraded`, then lets the ordinary
+  SAFE01 decision
+  below run: HTTPS-Only vetoes and warns, plain https-first loads the
+  plaintext page (Chrome parity).  Gated on `isUpgradeCandidate`, so a
+  host already skipped by the upgrade (private/local, already marked)
+  is untouched.
+- `handleLoadingChanged` also gained an https-attribution fallback:
+  when a vetoed/bounced http hop's failure is reported under the
+  https: redirect source, the downgraded `http:` spelling is consulted
+  too (`takeBlockedHttpNav` + the `m_httpWarningPending` suppression
+  check).
+- `WebPage::handleLoadingChanged` then consumes the recorded URL and
+  swaps in the nonce-bound `arora-http-warning:` interstitial (Back to
+  safety / Proceed once / Always allow for host).
+
+Verified: `ARORA_BADSSL_ONLY=http ./arora --badssl-smoke` → all six
+http cases (`http`, `http-textarea`, `http-password`, `http-login`,
+`http-dynamic-login`, `http-credit-card`) report
+`blocked:http-warning` (`ok-blocked`); `https-everywhere` still
+`loaded`.  `./arora --httpsonly-smoke` → PASS (upgrade, downgrade
+warning, proceed, redirect-hop warning, https unaffected, loopback
+exempt).
+
+### Certificate-error coverage (SEC06)
+
+Re-verified during the fix pass: every untrusted-cert case in the
+matrix lands on the SEC06 `arora-cert-error:` interstitial
+(`handleCertificateError`), which honours `error.isOverridable()` —
+non-overridable errors (e.g. `CertificateKnownRevoked`-class failures
+upstream) get only "Back to safety".  Main-frame errors route through
+the interstitial; subresource certificate failures are rejected
+without a page swap, matching Chromium.
+
+### Re-run results (2026-10-09)
+
+| Check | Result |
+|---|---|
+| `badssl-smoke` http family ×6 | `blocked:http-warning` ×6, `ok-blocked` |
+| `badssl-smoke` `client` (with fixture cert) | `loaded` |
+| `badssl-smoke` `client-cert-missing` | `blocked` |
+| `badssl-smoke` `revoked` | `loaded` — engine gap, documented |
+| `clientcert-smoke` | PASS (title `client.badssl.com`) |
+| `httpsonly-smoke` | PASS (all stages) |
+| clean qmake/make build | PASS |
+| `make check` | PASS |
+
+### New env surface (internal smoke tooling)
+
+| Variable | Purpose |
+|---|---|
+| `ARORA_CLIENTCERT_FILE` | PEM or PKCS#12/PFX file installed into the profile cert store |
+| `ARORA_CLIENTCERT_PASSPHRASE` | Passphrase for encrypted PEM keys / .p12 bundles |
+| `ARORA_CLIENTCERT_URL` | Override the `--clientcert-smoke` target (default `https://client.badssl.com/`) |
+| `ARORA_CLIENTCERT_AUTOSELECT` | `1` → auto-pick a client cert without a UI prompt (headless runs) |

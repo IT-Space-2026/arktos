@@ -161,6 +161,12 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
     DownloadManager::instance()->installOnProfile(profile);
+    if (!BrowserApplication::isTorMode()) {
+        // BADSSL03: TLS client certificates are strong user identity —
+        // re-register the user's installed certs on every prepared
+        // profile except tor's, where they must never be offered.
+        BrowserProfile::loadClientCertificates(profile);
+    }
     // PERF03: install the interceptor with the matcher's first rules
     // snapshot deferred — parsing every subscribed list here delayed
     // the first window.  postLaunch() queues the rebuild once the

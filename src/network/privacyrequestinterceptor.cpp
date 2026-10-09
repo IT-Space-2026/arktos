@@ -421,16 +421,11 @@ bool PrivacyRequestInterceptor::isDowngraded(const QString &host,
     return isMarkedDowngraded(scope, host);
 }
 
-bool PrivacyRequestInterceptor::noteNavigationFailure(const QUrl &url,
-        int errorDomain, int errorCode, const QString &scope)
+// Shared write path for the per-scope downgrade set: refreshes an
+// existing mark (reporting no new downgrade), refuses once the bound
+// is hit, otherwise inserts and returns true.
+static bool markHostDowngraded(const QString &scope, const QString &host)
 {
-    if (!httpsFirstEnabled()
-        || url.scheme() != QLatin1String("https")
-        || !failureImpliesDowngrade(errorDomain, errorCode))
-        return false;
-    const QString host = url.host().toLower();
-    if (host.isEmpty() || isPrivateOrLocalHost(host))
-        return false;
     const QMutexLocker lock(&s_downgradeLock);
     QHash<QString, qint64> &marks = s_downgradedHosts[scope];
     const auto it = marks.find(host);
@@ -447,6 +442,28 @@ bool PrivacyRequestInterceptor::noteNavigationFailure(const QUrl &url,
     }
     marks.insert(host, QDateTime::currentMSecsSinceEpoch());
     return true;
+}
+
+bool PrivacyRequestInterceptor::noteNavigationFailure(const QUrl &url,
+        int errorDomain, int errorCode, const QString &scope)
+{
+    if (!httpsFirstEnabled()
+        || url.scheme() != QLatin1String("https")
+        || !failureImpliesDowngrade(errorDomain, errorCode))
+        return false;
+    const QString host = url.host().toLower();
+    if (host.isEmpty() || isPrivateOrLocalHost(host))
+        return false;
+    return markHostDowngraded(scope, host);
+}
+
+void PrivacyRequestInterceptor::markDowngraded(const QString &host,
+                                               const QString &scope)
+{
+    const QString lowered = host.toLower();
+    if (lowered.isEmpty() || isPrivateOrLocalHost(lowered))
+        return;
+    markHostDowngraded(scope, lowered);
 }
 
 void PrivacyRequestInterceptor::clearDowngradedHost(const QString &host,

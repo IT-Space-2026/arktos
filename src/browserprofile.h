@@ -149,6 +149,31 @@ bool clearDeferredSiteStorage(const QString &storagePath);
 // holds them open.  Do NOT call on a live profile's root.
 bool clearSiteStorageNow(const QString &storagePath);
 
+// BADSSL03: TLS client certificates.  QWebEngineProfile's
+// clientCertificateStore() is in-memory only, so user-installed
+// certificates are re-registered at every profile bring-up from a
+// convention directory:
+//     <AppDataLocation>/clientcertificates/<name>.pem
+// Each PEM file holds the leaf certificate as the first CERTIFICATE
+// block (optionally followed by chain certs) plus the unencrypted
+// private key — the layout `openssl pkcs12 -in client.p12 -nodes
+// -out client.pem` produces.  Unencrypted .p12/.pfx bundles are also
+// picked up.  Installing only makes a cert offerable — WebPage's
+// selectClientCertificate handler still asks before one goes on the
+// wire.  prepareProfile() runs this on the normal and off-the-record
+// profiles; the tor profile is skipped (a client cert is a strong
+// user identity — exactly what tor sessions must not offer).
+void loadClientCertificates(QWebEngineProfile *profile);
+
+// Registers one certificate file on the profile's
+// clientCertificateStore — .pem (leaf cert first, then optional
+// chain, then the private key) or .p12/.pfx with passPhrase.  Shared
+// by loadClientCertificates() and the --clientcert-smoke harness.
+// True when a usable cert+key pair was added.
+bool addClientCertificateFile(QWebEngineProfile *profile,
+                              const QString &path,
+                              const QByteArray &passPhrase = QByteArray());
+
 // PRIV01: appends privacy-motivated Chromium switches to
 // QTWEBENGINE_CHROMIUM_FLAGS for QtWebEngineProcess.  Must run before
 // the first page spawns the process — main() calls it right after the

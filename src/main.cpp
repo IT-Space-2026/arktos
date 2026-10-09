@@ -1266,6 +1266,23 @@ static int badSslSmoke(BrowserApplication &application, WebView *view)
     if (caseTimeoutMs <= 0)
         caseTimeoutMs = 30000;
 
+    // BADSSL03: the client-certificate case only goes green with a
+    // cert in the profile's store — ARORA_CLIENTCERT_FILE (+optional
+    // ARORA_CLIENTCERT_PASSPHRASE) installs one for the run and arms
+    // non-interactive selection.  Unset, the case is recorded on the
+    // cert-less path (HTTP 400 — cert-less Chrome parity).
+    const QString clientCertFile =
+        qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+    if (!clientCertFile.isEmpty()) {
+        if (BrowserProfile::addClientCertificateFile(
+                view->webPage()->profile(), clientCertFile,
+                qgetenv("ARORA_CLIENTCERT_PASSPHRASE")))
+            qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
+        else
+            qInfo() << "badssl-smoke: WARN client cert"
+                    << clientCertFile << "did not install";
+    }
+
     // The smoke dispatch returns before main()'s window.show() —
     // show the stub window so the page is not treated as hidden.
     view->window()->show();
@@ -2262,7 +2279,7 @@ int main(int argc, char **argv)
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
-        "xsleak-smoke", "xsleak-open", "badssl-smoke",
+        "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
     };
     for (const char *option : internalOptions)
@@ -2425,6 +2442,63 @@ int main(int argc, char **argv)
     // block/load outcomes for .devin/BADSSL01-report.md.
     if (args.contains(QLatin1String("--badssl-smoke")))
         return badSslSmoke(application, view);
+
+    // BADSSL03: --clientcert-smoke verifies the TLS client-certificate
+    // path end to end.  ARORA_CLIENTCERT_FILE (.pem key+cert — leaf
+    // first — or a .p12/.pfx bundle; passphrase via
+    // ARORA_CLIENTCERT_PASSPHRASE) is installed into the browsing
+    // profile's in-memory clientCertificateStore, selection is armed
+    // non-interactively (the picker dialog cannot run under offscreen
+    // QPA), and ARORA_CLIENTCERT_URL (default
+    // https://client.badssl.com/) is loaded.  PASS when the page
+    // commits without Arora's error chrome and without the site's
+    // HTTP-400 "No required SSL certificate was sent" fallback body.
+    if (args.contains(QLatin1String("--clientcert-smoke"))) {
+        const QString certFile =
+            qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+        if (certFile.isEmpty()
+            || !BrowserProfile::addClientCertificateFile(
+                    profile, certFile,
+                    qgetenv("ARORA_CLIENTCERT_PASSPHRASE"))) {
+            qInfo() << "clientcert-smoke: FAIL (cannot install"
+                    << certFile << ")";
+            application.exit(1);
+            return application.exec();
+        }
+        qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
+        const QUrl certUrl(qEnvironmentVariable("ARORA_CLIENTCERT_URL",
+                QStringLiteral("https://client.badssl.com/")));
+        view->window()->show();
+        QTimer::singleShot(0, &application,
+                           [view, certUrl]() { view->loadUrl(certUrl); });
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [&application, view](bool ok) {
+            if (!ok) {
+                qInfo() << "clientcert-smoke: FAIL (load)" << view->url();
+                application.exit(1);
+                return;
+            }
+            view->webPage()->runJavaScript(
+                QStringLiteral("document.title + '\\n' + "
+                               "document.body.innerText.slice(0, 400)"),
+                [&application](const QVariant &result) {
+                const QString text = result.toString();
+                const bool accepted =
+                    !text.contains(QLatin1String(
+                            "No required SSL certificate"))
+                    && !text.contains(QLatin1String("400 Bad Request"))
+                    && !text.startsWith(QLatin1String("Error loading"));
+                qInfo() << "clientcert-smoke:"
+                        << (accepted ? "PASS" : "FAIL") << text.left(120);
+                application.exit(accepted ? 0 : 1);
+            });
+        });
+        QTimer::singleShot(60000, &application, [&application]() {
+            qInfo() << "clientcert-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        return application.exec();
+    }
 
     window.show();
 

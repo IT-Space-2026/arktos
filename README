@@ -205,7 +205,14 @@ answer.  TLS
 connections advertise only forward-secret AEAD cipher suites: the
 RSA key-exchange and CBC suites are stripped from the ClientHello
 (a toggle, on by default — a site that only supports the removed
-suites will not load; takes effect after a restart).  The opt-in
+suites will not load; takes effect after a restart).  Sites that ask
+for a TLS client certificate get one only if you installed it: drop a
+.pem (leaf certificate first, then the private key) or an unencrypted
+.p12/.pfx bundle into the clientcertificates directory under the
+application data directory, and when a site requests a certificate
+Arora asks which to send — the choice is remembered for that site on
+that page, and canceling continues without identifying yourself.  The
+Tor window never offers client certificates.  The opt-in
 "Fingerprint Resistance"
 group reports UTC as the timezone to every site (JavaScript Date and
 Intl reads) and a generic "en-US, en" language list instead of the

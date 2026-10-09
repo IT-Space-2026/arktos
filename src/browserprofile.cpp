@@ -20,6 +20,7 @@
 #include "browserprofile.h"
 
 #include "acceptlanguagedialog.h"
+#include "browserpaths.h"
 #include "privacyrequestinterceptor.h"
 
 #include <qapplication.h>
@@ -30,7 +31,10 @@
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <qsslcertificate.h>
+#include <qsslkey.h>
 #include <qurl.h>
+#include <qwebengineclientcertificatestore.h>
 #include <qwebengineclienthints.h>
 #include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
@@ -877,6 +881,60 @@ void applyFingerprintEnvironment()
 #else
     tzset();
 #endif
+}
+
+bool addClientCertificateFile(QWebEngineProfile *profile,
+                              const QString &path,
+                              const QByteArray &passPhrase)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QSslKey key;
+    QSslCertificate cert;
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QLatin1String("p12") || suffix == QLatin1String("pfx")) {
+        if (!QSslCertificate::importPkcs12(&file, &key, &cert, nullptr,
+                                         passPhrase)
+            || cert.isNull() || key.isNull())
+            return false;
+    } else {
+        const QByteArray pem = file.readAll();
+        for (QSsl::KeyAlgorithm algorithm : {
+                QSsl::Rsa, QSsl::Ec, QSsl::Dsa, QSsl::Opaque }) {
+            const QSslKey candidate(pem, algorithm, QSsl::Pem,
+                                    QSsl::PrivateKey, passPhrase);
+            if (!candidate.isNull()) {
+                key = candidate;
+                break;
+            }
+        }
+        const QList<QSslCertificate> certs =
+            QSslCertificate::fromData(pem, QSsl::Pem);
+        // Convention: the leaf is the first CERTIFICATE block — the
+        // layout openssl's pkcs12->pem export produces.
+        if (key.isNull() || certs.isEmpty())
+            return false;
+        cert = certs.first();
+    }
+    profile->clientCertificateStore()->add(cert, key);
+    return true;
+}
+
+void loadClientCertificates(QWebEngineProfile *profile)
+{
+    const QDir dir(BrowserPaths::dataFilePath(
+            QLatin1String("clientcertificates")));
+    const QFileInfoList files = dir.entryInfoList(
+            QStringList() << QStringLiteral("*.pem")
+                          << QStringLiteral("*.p12")
+                          << QStringLiteral("*.pfx"),
+            QDir::Files | QDir::Readable, QDir::Name);
+    for (const QFileInfo &info : files) {
+        if (!addClientCertificateFile(profile, info.absoluteFilePath()))
+            qWarning() << "clientcertificates: skipping unusable file"
+                       << info.fileName();
+    }
 }
 
 } // namespace BrowserProfile
