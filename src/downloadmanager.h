@@ -69,6 +69,9 @@
 
 class QWebEnginePage;
 class QWebEngineProfile;
+#ifdef ARORA_RUSTDL
+class RustDownloadEngine;
+#endif
 
 class DownloadItem : public QWidget, public Ui_DownloadItem
 {
@@ -81,6 +84,12 @@ signals:
 
 public:
     DownloadItem(QWebEngineDownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
+#ifdef ARORA_RUSTDL
+    // Card backed by the rustdl accelerated engine instead of a
+    // Chromium request (DLACC06).  The engine object is re-parented
+    // to the item.
+    DownloadItem(RustDownloadEngine *engine, bool requestFileName, QWidget *parent);
+#endif
     bool downloading() const;
     bool downloadedSuccessfully() const;
 
@@ -121,7 +130,18 @@ private:
 
     QString saveFileName(const QString &directory) const;
 
+    // Backend-neutral accessors — the same card drives a Chromium
+    // request or the rustdl engine behind these.
+    QWebEnginePage *page() const;
+    QString mimeType() const;
+    QString suggestedFileName() const;
+    QWebEngineDownloadRequest::DownloadState currentState() const;
+    bool isFinished() const;
+
     QPointer<QWebEngineDownloadRequest> m_download;
+#ifdef ARORA_RUSTDL
+    QPointer<RustDownloadEngine> m_engine;
+#endif
     bool m_requestFileName;
     qint64 m_bytesReceived;
     QElapsedTimer m_downloadTime;

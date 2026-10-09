@@ -60,6 +60,9 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#ifdef ARORA_RUSTDL
+#include "rustdownloadengine.h"
+#endif
 
 #include <math.h>
 
@@ -129,15 +132,41 @@ DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFile
     init();
 }
 
+#ifdef ARORA_RUSTDL
+DownloadItem::DownloadItem(RustDownloadEngine *engine, bool requestFileName, QWidget *parent)
+    : DownloadItem(static_cast<QWebEngineDownloadRequest*>(nullptr),
+                   requestFileName, parent)
+{
+    m_engine = engine;
+    if (m_engine) {
+        m_engine->setParent(this);
+        // The engine emits the QWebEngineDownloadRequest-shaped signal
+        // surface — the same slots serve both backends.  Connected
+        // once here: the same engine object survives restart() cycles.
+        connect(m_engine, &RustDownloadEngine::stateChanged,
+                this, &DownloadItem::downloadStateChanged);
+        connect(m_engine, &RustDownloadEngine::receivedBytesChanged,
+                this, &DownloadItem::downloadProgressUpdate);
+        connect(m_engine, &RustDownloadEngine::totalBytesChanged,
+                this, &DownloadItem::downloadProgressUpdate);
+    }
+    init();
+}
+#endif
+
 void DownloadItem::init()
 {
-    if (!m_download)
+    bool haveBackend = m_download != nullptr;
+#ifdef ARORA_RUSTDL
+    haveBackend = haveBackend || m_engine != nullptr;
+#endif
+    if (!haveBackend)
         return;
 
     m_finishedDownloading = false;
     m_bytesReceived = 0;
-    m_offTheRecord = m_download->page()
-        && m_download->page()->profile()->isOffTheRecord();
+    m_offTheRecord = page()
+        && page()->profile()->isOffTheRecord();
 
     openButton->setEnabled(false);
     stopButton->setEnabled(true);
@@ -145,14 +174,22 @@ void DownloadItem::init()
     tryAgainButton->setEnabled(false);
     tryAgainButton->setVisible(false);
 
-    // attach to the request
-    m_url = m_download->url();
-    connect(m_download, &QWebEngineDownloadRequest::stateChanged,
-            this, &DownloadItem::downloadStateChanged);
-    connect(m_download, &QWebEngineDownloadRequest::receivedBytesChanged,
-            this, &DownloadItem::downloadProgressUpdate);
-    connect(m_download, &QWebEngineDownloadRequest::totalBytesChanged,
-            this, &DownloadItem::downloadProgressUpdate);
+    // attach to the request — the rustdl engine was connected once in
+    // its ctor (it survives restart() cycles, unlike a request which
+    // is replaced by attach()).
+    if (m_download) {
+        m_url = m_download->url();
+        connect(m_download, &QWebEngineDownloadRequest::stateChanged,
+                this, &DownloadItem::downloadStateChanged);
+        connect(m_download, &QWebEngineDownloadRequest::receivedBytesChanged,
+                this, &DownloadItem::downloadProgressUpdate);
+        connect(m_download, &QWebEngineDownloadRequest::totalBytesChanged,
+                this, &DownloadItem::downloadProgressUpdate);
+    }
+#ifdef ARORA_RUSTDL
+    else if (m_engine)
+        m_url = m_engine->url();
+#endif
 
     // reset info
     downloadInfoLabel->clear();
@@ -166,8 +203,8 @@ void DownloadItem::init()
 
     // catch up on a terminal state that arrived before the signals
     // were connected (instant failure of a tiny request, for example)
-    if (m_download && m_download->isFinished())
-        downloadStateChanged(m_download->state());
+    if (isFinished())
+        downloadStateChanged(currentState());
 }
 
 void DownloadItem::attach(QWebEngineDownloadRequest *download)
@@ -186,7 +223,11 @@ void DownloadItem::attach(QWebEngineDownloadRequest *download)
 
 void DownloadItem::getFileName()
 {
-    if (m_gettingFileName || !m_download)
+    if (m_gettingFileName || (!m_download
+#ifdef ARORA_RUSTDL
+        && !m_engine
+#endif
+            ))
         return;
 
     DownloadManager *manager = qobject_cast<DownloadManager*>(parent());
@@ -236,11 +277,21 @@ void DownloadItem::getFileName()
     }
 
     // Chromium writes the file itself; hand it a directory and a bare
-    // file name (never a path — the suggested name is untrusted).
+    // file name (never a path — the suggested name is untrusted).  The
+    // rustdl engine takes the same split and starts on accept().
     QFileInfo info(m_outputFileName);
-    m_download->setDownloadDirectory(info.absolutePath());
-    m_download->setDownloadFileName(info.fileName());
-    m_download->accept();
+    if (m_download) {
+        m_download->setDownloadDirectory(info.absolutePath());
+        m_download->setDownloadFileName(info.fileName());
+        m_download->accept();
+    }
+#ifdef ARORA_RUSTDL
+    else if (m_engine) {
+        m_engine->setDownloadDirectory(info.absolutePath());
+        m_engine->setDownloadFileName(info.fileName());
+        m_engine->accept();
+    }
+#endif
 
     fileNameLabel->setText(info.fileName());
     setAccessibleName(info.fileName());
@@ -343,7 +394,7 @@ bool DownloadItem::confirmSafeToSave(const QString &fileName)
 {
     const QString name = QFileInfo(fileName).fileName();
     const bool dangerousName = isDangerousExtension(name);
-    const QString mime = m_download ? m_download->mimeType() : QString();
+    const QString mime = mimeType();
     if (!dangerousName && !isExecutableMimeType(mime))
         return true;
 
@@ -397,9 +448,12 @@ void DownloadItem::removePartialFile()
     const QFileInfo info(path);
     if (info.isFile() && !info.isSymLink())
         QFile::remove(path);
-    // QtWebEngine streams to "<name>.download" and renames on completion.
+    // QtWebEngine streams to "<name>.download" and renames on completion;
+    // the rustdl engine stages as ".<name>.ardl" in the same directory.
     QFile::remove(path + QLatin1String(".download"));
     QFile::remove(path + QLatin1String(".crdownload"));
+    QFile::remove(info.dir().absoluteFilePath(
+        QLatin1Char('.') + info.fileName() + QLatin1String(".ardl")));
 }
 
 QString DownloadItem::saveFileName(const QString &directory) const
@@ -407,9 +461,7 @@ QString DownloadItem::saveFileName(const QString &directory) const
     // Chromium already folds the Content-Disposition filename into
     // suggestedFileName; both it and the URL path are untrusted input,
     // so everything goes through sanitizeFileName (SEC01).
-    QString name;
-    if (m_download)
-        name = sanitizeFileName(m_download->suggestedFileName());
+    QString name = sanitizeFileName(suggestedFileName());
     if (name.isEmpty())
         name = sanitizeFileName(m_url.path());
     if (name.isEmpty())
@@ -467,7 +519,13 @@ void DownloadItem::stop()
     if (m_download) {
         // the DownloadCancelled state transition finishes the item
         m_download->cancel();
-    } else {
+    }
+#ifdef ARORA_RUSTDL
+    else if (m_engine) {
+        m_engine->cancel();
+    }
+#endif
+    else {
         emit downloadFinished();
     }
 }
@@ -484,7 +542,21 @@ void DownloadItem::tryAgain()
     if (!tryAgainButton->isEnabled())
         return;
 
-    QWebEnginePage *page = m_download ? m_download->page() : nullptr;
+#ifdef ARORA_RUSTDL
+    if (m_engine) {
+        // The engine object survives — restart() rewinds it and the
+        // normal filename/accept flow in init() re-issues dl_start.
+        // Drop the previous attempt's staging file first so the retry
+        // does not dedup itself onto a "-N" name.
+        tryAgainButton->setEnabled(false);
+        removePartialFile();
+        m_engine->restart();
+        init();
+        return;
+    }
+#endif
+
+    QWebEnginePage *page = this->page();
     if (!page) {
         // The page that started the download is gone (or this item was
         // restored from disk); use a hidden page to re-issue it.
@@ -513,12 +585,23 @@ void DownloadItem::downloadStateChanged(QWebEngineDownloadRequest::DownloadState
         break;
     case QWebEngineDownloadRequest::DownloadCancelled:
     case QWebEngineDownloadRequest::DownloadInterrupted:
-        if (m_finishedDownloading || !m_download)
+        if (m_finishedDownloading || (!m_download
+#ifdef ARORA_RUSTDL
+            && !m_engine
+#endif
+                ))
             break;
         m_finishedDownloading = true;
         if (state == QWebEngineDownloadRequest::DownloadInterrupted) {
+            QString reason;
+            if (m_download)
+                reason = m_download->interruptReasonString();
+#ifdef ARORA_RUSTDL
+            else if (m_engine)
+                reason = m_engine->interruptReasonString();
+#endif
             downloadInfoLabel->setText(tr("Download interrupted: %1")
-                                       .arg(m_download->interruptReasonString()));
+                                       .arg(reason));
         }
         progressBar->setVisible(false);
         stopButton->setEnabled(false);
@@ -535,15 +618,24 @@ void DownloadItem::downloadStateChanged(QWebEngineDownloadRequest::DownloadState
 
 void DownloadItem::downloadProgressUpdate()
 {
-    if (!m_download)
+    if (!m_download
+#ifdef ARORA_RUSTDL
+        && !m_engine
+#endif
+            )
         return;
     if (m_lastProgressTime.isValid() && m_lastProgressTime.elapsed() < 200)
         return;
 
     m_lastProgressTime.start();
 
-    m_bytesReceived = m_download->receivedBytes();
-    qint64 bytesTotal = m_download->totalBytes();
+    if (m_download)
+        m_bytesReceived = m_download->receivedBytes();
+#ifdef ARORA_RUSTDL
+    else if (m_engine)
+        m_bytesReceived = m_engine->receivedBytes();
+#endif
+    qint64 bytesTotal = DownloadItem::bytesTotal();
     qint64 currentValue = 0;
     qint64 totalValue = 0;
     if (bytesTotal > 0) {
@@ -559,7 +651,13 @@ void DownloadItem::downloadProgressUpdate()
 
 qint64 DownloadItem::bytesTotal() const
 {
-    return m_download ? m_download->totalBytes() : 0;
+    if (m_download)
+        return m_download->totalBytes();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->totalBytes();
+#endif
+    return 0;
 }
 
 qint64 DownloadItem::bytesReceived() const
@@ -591,10 +689,14 @@ double DownloadItem::currentSpeed() const
 
 void DownloadItem::updateInfoLabel()
 {
-    if (!m_download)
+    if (!m_download
+#ifdef ARORA_RUSTDL
+        && !m_engine
+#endif
+            )
         return;
 
-    qint64 bytesTotal = m_download->totalBytes();
+    qint64 bytesTotal = this->bytesTotal();
     bool running = !downloadedSuccessfully();
 
     // update info label
@@ -627,14 +729,74 @@ void DownloadItem::updateInfoLabel()
 
 bool DownloadItem::downloading() const
 {
-    return (m_download && m_download->state() == QWebEngineDownloadRequest::DownloadInProgress);
+    return currentState() == QWebEngineDownloadRequest::DownloadInProgress;
 }
 
 bool DownloadItem::downloadedSuccessfully() const
 {
-    if (m_download)
-        return (m_download->state() == QWebEngineDownloadRequest::DownloadCompleted);
+    bool haveBackend = m_download != nullptr;
+#ifdef ARORA_RUSTDL
+    haveBackend = haveBackend || m_engine != nullptr;
+#endif
+    if (haveBackend)
+        return currentState() == QWebEngineDownloadRequest::DownloadCompleted;
     return (stopButton->isHidden() && tryAgainButton->isHidden());
+}
+
+QWebEnginePage *DownloadItem::page() const
+{
+    if (m_download)
+        return m_download->page();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->page();
+#endif
+    return nullptr;
+}
+
+QString DownloadItem::mimeType() const
+{
+    if (m_download)
+        return m_download->mimeType();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->mimeType();
+#endif
+    return QString();
+}
+
+QString DownloadItem::suggestedFileName() const
+{
+    if (m_download)
+        return m_download->suggestedFileName();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->suggestedFileName();
+#endif
+    return QString();
+}
+
+QWebEngineDownloadRequest::DownloadState DownloadItem::currentState() const
+{
+    if (m_download)
+        return m_download->state();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->state();
+#endif
+    // A restored card has no live backend.
+    return QWebEngineDownloadRequest::DownloadRequested;
+}
+
+bool DownloadItem::isFinished() const
+{
+    if (m_download)
+        return m_download->isFinished();
+#ifdef ARORA_RUSTDL
+    if (m_engine)
+        return m_engine->isFinished();
+#endif
+    return true;
 }
 
 void DownloadItem::finished()
@@ -647,6 +809,12 @@ void DownloadItem::finished()
         // A completed download should never arrive user-executable.
         removeExecutableBit(m_outputFileName);
     }
+#ifdef ARORA_RUSTDL
+    else if (m_engine) {
+        m_bytesReceived = m_engine->receivedBytes();
+        removeExecutableBit(m_outputFileName);
+    }
+#endif
     progressBar->hide();
     stopButton->setEnabled(false);
     stopButton->hide();
@@ -750,8 +918,7 @@ bool DownloadManager::hasActiveDownloadForPage(QWebEnginePage *page) const
     if (!page)
         return false;
     for (DownloadItem *item : m_downloads) {
-        if (item->downloading() && item->m_download
-            && item->m_download->page() == page)
+        if (item->downloading() && item->page() == page)
             return true;
     }
     return false;
@@ -822,6 +989,25 @@ void DownloadManager::download(QWebEnginePage *page, const QUrl &url, bool reque
     if (externalDownload(url))
         return;
 
+#ifdef ARORA_RUSTDL
+    // DLACC06: the accelerated engine claims http(s) downloads when
+    // the DLACC01 selector picked it — no Chromium request is issued.
+    if (RustDownloadEngine::isSelected()
+        && (url.scheme() == QLatin1String("http")
+            || url.scheme() == QLatin1String("https"))) {
+        auto *engine = new RustDownloadEngine(page, url, QString(), QString());
+        DownloadItem *item = new DownloadItem(engine, requestFileName, this);
+        addItem(item);
+        if (item->m_canceledByUser)
+            return;
+        if (!isVisible())
+            show();
+        activateWindow();
+        raise();
+        return;
+    }
+#endif
+
     // Consumed by handleDownloadRequested() when the profile reports
     // the request for this download.
     m_requestFileNameNext = requestFileName;
@@ -856,6 +1042,35 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
         download->cancel();
         return;
     }
+
+#ifdef ARORA_RUSTDL
+    // DLACC06: when the selector picked the accelerated engine, the
+    // rustdl crate takes over the transfer — Chromium's own fetch is
+    // cancelled and only its metadata (page, url, suggested name,
+    // mime) carries into the engine.  The DLACC01 routing stub merges
+    // here; both sides read the same downloadmanager/engine key.
+    const QUrl url = download->url();
+    if (RustDownloadEngine::isSelected()
+        && (url.scheme() == QLatin1String("http")
+            || url.scheme() == QLatin1String("https"))) {
+        auto *engine = new RustDownloadEngine(download->page(), url,
+                                              download->suggestedFileName(),
+                                              download->mimeType());
+        download->cancel();
+        DownloadItem *item = new DownloadItem(engine, m_requestFileNameNext, this);
+        m_requestFileNameNext = false;
+        addItem(item);
+
+        if (item->m_canceledByUser)
+            return;
+
+        if (!isVisible())
+            show();
+        activateWindow();
+        raise();
+        return;
+    }
+#endif
 
     DownloadItem *item = new DownloadItem(download, m_requestFileNameNext, this);
     m_requestFileNameNext = false;
@@ -1007,7 +1222,8 @@ void DownloadManager::load()
         QString fileName = settings.value(key + QLatin1String("location")).toString();
         bool done = settings.value(key + QLatin1String("done"), true).toBool();
         if (!url.isEmpty() && !fileName.isEmpty()) {
-            DownloadItem *item = new DownloadItem(nullptr, false, this);
+            DownloadItem *item = new DownloadItem(
+                static_cast<QWebEngineDownloadRequest*>(nullptr), false, this);
             item->m_outputFileName = fileName;
             item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
             item->setAccessibleName(item->fileNameLabel->text());
