@@ -98,6 +98,7 @@
 #include <qfile.h>
 #include <qfontdialog.h>
 #include <qformlayout.h>
+#include <qgroupbox.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qlistwidget.h>
@@ -186,6 +187,28 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         area->setWidgetResizable(true);
         area->setWidget(page);
         tabWidget->insertWidget(i, area);
+    }
+
+    // PREFUI02: density pass — uic leaves every layout at the style's
+    // defaults (an 11px shell inset plus 9px on each page and inside
+    // every group box), which stacks into uneven bands — most visibly
+    // the extra 9px under each group-box title the frame already
+    // clears.  Pin one compact rhythm instead: a 9px shell inset,
+    // 8px page insets, and 9/6/9/9 inside group boxes, so padding is
+    // identical on every page and pages pack tighter (most no longer
+    // need their scroll area at a sane window size).
+    layout()->setContentsMargins(9, 9, 9, 9);
+    for (int i = 0; i < tabWidget->count(); ++i) {
+        QWidget *surface = tabWidget->widget(i);
+        if (QScrollArea *area = qobject_cast<QScrollArea *>(surface))
+            surface = area->widget();
+        if (surface && surface->layout())
+            surface->layout()->setContentsMargins(8, 8, 8, 8);
+    }
+    const QList<QGroupBox *> groups = findChildren<QGroupBox *>();
+    for (QGroupBox *box : groups) {
+        if (QLayout *boxLayout = box->layout())
+            boxLayout->setContentsMargins(9, 6, 9, 9);
     }
 
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
