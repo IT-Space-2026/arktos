@@ -325,9 +325,11 @@ static quint16 startTelemetryCapture()
 // https: half — every target host is recorded (mutex-guarded) so the
 // smoke can prove "the refused request never reached the network".
 // GETs get a canned 200 (redir.test answers a 302 to postredir.test
-// for the redirect-hop case); CONNECTs get a fast 502 — the tunnel
-// attempt itself is the observation, and the failed https then
-// downgrades the host through the PRIV01 path.
+// for the redirect-hop case); CONNECTs are accepted then dropped
+// mid-handshake — a refused CONNECT surfaces as ERR_TUNNEL_CONNECTION_
+// FAILED, which SAFE07 treats as proxy-attributed (not TLS evidence),
+// so the fixture must fail the tunnel's TLS handshake itself to stand
+// in for a host that genuinely cannot be reached over TLS.
 static QMutex s_httpOnlyMutex;
 static QSet<QString> s_httpOnlyGets;
 static QSet<QString> s_httpOnlyConnects;
@@ -368,9 +370,21 @@ static void httpOnlyProxyAcceptLoop(int listenFd)
                 const QMutexLocker lock(&s_httpOnlyMutex);
                 s_httpOnlyConnects.insert(QString::fromLatin1(host));
             }
-            reply = "HTTP/1.1 502 Bad Gateway\r\n"
-                    "Content-Length: 0\r\nConnection: close\r\n\r\n";
-        } else {
+            // Complete the tunnel, read/discard the TLS ClientHello,
+            // then close — the client sees ERR_CONNECTION_CLOSED/RESET
+            // during the handshake, the failure class that still
+            // justifies a downgrade mark.
+            ::send(fd, "HTTP/1.1 200 Connection Established\r\n\r\n",
+                   39, MSG_NOSIGNAL);
+            pollfd hello;
+            hello.fd = fd;
+            hello.events = POLLIN;
+            if (::poll(&hello, 1, 1000) > 0)
+                ::recv(fd, buffer, sizeof(buffer), 0);
+            ::close(fd);
+            continue;
+        }
+        {
             const QString host =
                 QUrl(QString::fromUtf8(target)).host();
             {
@@ -3061,6 +3075,12 @@ int main(int argc, char **argv)
         restoreAdBlockStateOnExit();
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
+        // SAFE07: downgrade marks are per-profile — the smoke asserts
+        // against the scope the stub view's profile owns.
+        const QString viewScope =
+            PrivacyRequestInterceptor::downgradeScope(
+                view->page()->profile());
+
 
         // Loopback fixture for the exemption stage — Chromium never
         // proxies localhost, so this page arrives direct.
@@ -3108,7 +3128,8 @@ int main(int argc, char **argv)
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
                          [view, poll, stage, stageTicks, finishSeen,
-                          finishUrl, advance, finish, localUrl]() {
+                          finishUrl, advance, finish, localUrl,
+                          viewScope]() {
             QSet<QString> gets, connects;
             {
                 const QMutexLocker lock(&s_httpOnlyMutex);
@@ -3126,10 +3147,11 @@ int main(int argc, char **argv)
             switch (*stage) {
             case 0:
                 // http://up.test was issued at block entry — the
-                // interceptor upgrades it to https:, the proxy refuses
-                // the tunnel, and the failed load downgrades the host.
+                // interceptor upgrades it to https:, the fixture drops
+                // the tunnel mid-handshake, and the failed load
+                // downgrades the host.
                 if (!PrivacyRequestInterceptor::isDowngraded(
-                        QStringLiteral("up.test")))
+                        QStringLiteral("up.test"), viewScope))
                     break;
                 if (!connects.contains(QLatin1String("up.test")))
                     return fail("https upgrade never reached the proxy");
@@ -3166,9 +3188,13 @@ int main(int argc, char **argv)
                 // really reaches the proxy, the hop target so its
                 // http: arrival cannot upgrade away and must warn.
                 PrivacyRequestInterceptor::noteNavigationFailure(
-                    QUrl(QLatin1String("https://redir.test/")));
+                    QUrl(QLatin1String("https://redir.test/")),
+                    int(QWebEngineLoadingInfo::ConnectionErrorDomain),
+                    -102, viewScope);
                 PrivacyRequestInterceptor::noteNavigationFailure(
-                    QUrl(QLatin1String("https://postredir.test/")));
+                    QUrl(QLatin1String("https://postredir.test/")),
+                    int(QWebEngineLoadingInfo::ConnectionErrorDomain),
+                    -102, viewScope);
                 view->loadUrl(QUrl(QLatin1String("http://redir.test/")));
                 break;
             case 3:

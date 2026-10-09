@@ -684,7 +684,8 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // exempt .onion and upgrade everything else, so nothing warns
     // there.
     if (isMainFrame && !BrowserApplication::isTorMode()
-        && PrivacyRequestInterceptor::shouldWarnHttp(url)) {
+        && PrivacyRequestInterceptor::shouldWarnHttp(
+            url, PrivacyRequestInterceptor::downgradeScope(profile()))) {
         showHttpWarning(url);
         return false;
     }
@@ -701,7 +702,8 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // Chromium's own prompt).
     if (type == QWebEnginePage::NavigationTypeFormSubmitted
         && !BrowserApplication::isTorMode()
-        && PrivacyRequestInterceptor::shouldWarnFormPost(url)) {
+        && PrivacyRequestInterceptor::shouldWarnFormPost(
+            url, PrivacyRequestInterceptor::downgradeScope(profile()))) {
         // Approvals belong to the document that asked — this->url()
         // is still the submitting page while the hook runs, so a
         // committed navigation re-keys the set lazily on the next
@@ -769,6 +771,12 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         // Same for a pending HTTPS-Only warning — another navigation
         // being accepted means the refused target no longer applies.
         m_httpWarningPending = false;
+        // SAFE07: a real navigation supersedes any uncommitted error
+        // page — its phantom success no longer needs suppressing.
+        // setHtml()'s internal data: commit passes through this hook
+        // too and must NOT disarm it — that commit is the error page.
+        if (url.scheme() != QLatin1String("data"))
+            m_pendingErrorPages = 0;
         m_requestedUrl = url;
         emit aboutToLoadUrl(url);
     }
@@ -933,13 +941,34 @@ void WebPage::noteBlockedPopupTarget(const QUrl &url)
 
 void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
 {
+    const QString downgradeScope =
+        PrivacyRequestInterceptor::downgradeScope(profile());
+
+    // SAFE07: a committed https: main-frame load self-heals — the
+    // host demonstrably serves TLS, so a stale downgrade mark (expired
+    // or about to expire) is dropped before it can gate a future
+    // navigation.  The error page shown for a failed load commits its
+    // generated document under the failed url — swallow those phantom
+    // commits or a mark would be wiped by its own error page.
+    if (loadingInfo.status() == QWebEngineLoadingInfo::LoadSucceededStatus) {
+        if (m_pendingErrorPages > 0)
+            --m_pendingErrorPages;
+        else if (loadingInfo.url().scheme() == QLatin1String("https")
+                 && !loadingInfo.isErrorPage())
+            PrivacyRequestInterceptor::clearDowngradedHost(
+                loadingInfo.url().host(), downgradeScope);
+        return;
+    }
+
     if (loadingInfo.status() != QWebEngineLoadingInfo::LoadFailedStatus)
         return;
 
     // Certificate failures are presented by the interstitial page
     // (handleCertificateError), not by the generic notfound page — and
     // a deferred error that the user rejected via "back to safety"
-    // must not stomp the page the user is navigating to.
+    // must not stomp the page the user is navigating to.  They must
+    // not mark the host downgraded either — a certificate problem is
+    // not evidence the site lacks TLS.
     if (loadingInfo.errorDomain() == QWebEngineLoadingInfo::CertificateErrorDomain)
         return;
 
@@ -967,21 +996,32 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         // navigations inside the network stack — acceptNavigationRequest
         // recorded the http: form in m_requestedUrl, so an upgraded
         // failure arrives under https: and must be matched back to it.
+        // m_requestedUrl tracks each accepted redirect hop, so only
+        // the hop that actually failed can match — a mid-chain abort
+        // or a failure for an unrelated target returns early here and
+        // cannot mark a host it never proved unreachable (SAFE07).
         QUrl downgraded = errorUrl;
         downgraded.setScheme(QLatin1String("http"));
         if (errorUrl.scheme() != QLatin1String("https")
             || downgraded != m_requestedUrl)
             return;
     }
-    // The secure connection failed: let the host be reached over plain
-    // http again for the rest of the session.  The downgrade set is
-    // global, so a direct https: navigation that fails relaxes the
-    // upgrade for that host too — harmless and less confusing than
-    // retrying a request that just refused TLS.
-    const bool downgraded = PrivacyRequestInterceptor::noteNavigationFailure(errorUrl);
+    // SAFE07: mark the host http: only when the failure is genuine
+    // TLS/connectivity evidence (a refused/reset/timed-out connection
+    // or a TLS handshake failure) — vetoes, navigation aborts, DNS
+    // faults and proxy plumbing errors are filtered inside
+    // noteNavigationFailure, and under Tor nothing is marked at all:
+    // every failure there is SOCKS-attributed and the Tor interceptor
+    // never consults the set anyway.  Marks are scoped to this page's
+    // profile and expire — see failureImpliesDowngrade/downgradeScope.
+    const bool downgraded = !BrowserApplication::isTorMode()
+        && PrivacyRequestInterceptor::noteNavigationFailure(
+            errorUrl, int(loadingInfo.errorDomain()),
+            loadingInfo.errorCode(), downgradeScope);
 
     showErrorPage(errorUrl, loadingInfo.errorString(),
-                  downgraded || PrivacyRequestInterceptor::isDowngraded(errorUrl.host()));
+                  downgraded || PrivacyRequestInterceptor::isDowngraded(
+                      errorUrl.host(), downgradeScope));
 }
 
 // PRIV01: the httpsUpgradeFailed flag appends the downgrade notice to
@@ -1030,6 +1070,9 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
                      "the rest of this session."))
             + QLatin1String("</li></ul>"));
     }
+    ++m_pendingErrorPages;   // SAFE07: the setHtml commit reports a
+                             // LoadSucceeded for errorUrl — not real
+                             // TLS evidence, don't self-heal on it.
     setHtml(html, errorUrl);
     // A failed load is normally never recorded (only loadFinished(true)
     // feeds the manager), but a page that loaded and then errored —

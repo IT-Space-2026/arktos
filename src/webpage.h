@@ -204,6 +204,12 @@ protected:
     QUrl m_httpWarningUrl;
     QString m_httpWarningNonce;
     bool m_httpWarningPending = false;
+    // SAFE07: generated error pages shown via showErrorPage() commit
+    // their document under the failed url (setHtml's base) and emit a
+    // LoadSucceeded for it — count them so that phantom success never
+    // self-heals a downgrade mark its own failure just wrote.  Cleared
+    // when a real main-frame navigation is accepted.
+    int m_pendingErrorPages = 0;
     bool m_javaScriptBlocked;
     QString m_javaScriptBlockedHost;
     QUrl m_scheduledScriptUrl;

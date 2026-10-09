@@ -152,7 +152,9 @@ page carries the hardening toggles, all defaulting to the private
 choice.  Plain-http page loads are upgraded to https where a secure
 endpoint plausibly exists (loopback, LAN addresses and .onion are
 skipped); a main-frame navigation that still resolves to plain
-http — a site whose https attempt failed, or every http link with
+http — a site whose https attempt failed with a real connection or
+TLS error (downgrade marks are per profile, expire after ~30 minutes,
+and clear as soon as https succeeds again), or every http link with
 the upgrade off — shows an HTTPS-Only warning page instead of
 loading insecurely, offering "Proceed anyway" (remembered for the
 session) and "Always allow HTTP on this site" (persisted per host,

@@ -29,6 +29,7 @@
 
 #include <qstandardpaths.h>
 #include <qwebchannel.h>
+#include <qwebengineloadinginfo.h>
 
 #include <autofillmanager.h>
 #include <opensearchmanager.h>
@@ -1290,7 +1291,8 @@ void tst_WebPage::insecureFormDecision()
     pinPrivacy(false, false);   // both HTTPS modes off: raw decision
     QFETCH(QString, url);
     QFETCH(bool, warn);
-    QCOMPARE(PrivacyRequestInterceptor::shouldWarnFormPost(QUrl(url)),
+    QCOMPARE(PrivacyRequestInterceptor::shouldWarnFormPost(
+                 QUrl(url), QStringLiteral("test")),
              warn);
 }
 
@@ -1306,11 +1308,14 @@ void tst_WebPage::insecureFormUpgradeInterplay()
     const QUrl https(QStringLiteral("https://upgradeable-form.test/x"));
 
     pinPrivacy(false, true);    // strict veto off, upgrade on
-    QVERIFY(!PrivacyRequestInterceptor::shouldWarnFormPost(http));
-    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http));
+    const QString scope = QStringLiteral("test");
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnFormPost(http, scope));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http, scope));
 
-    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(https));
-    QVERIFY(PrivacyRequestInterceptor::shouldWarnFormPost(http));
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -102, scope));
+    QVERIFY(PrivacyRequestInterceptor::shouldWarnFormPost(http, scope));
     PrivacyRequestInterceptor::clearDowngradedHosts();
 
     pinPrivacy(true, false);    // strict veto on, upgrade off
@@ -1318,10 +1323,10 @@ void tst_WebPage::insecureFormUpgradeInterplay()
     PrivacyRequestInterceptor::allowHttpForHost(allowedHost, false);
     QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(
         QUrl(QStringLiteral("http://") + allowedHost
-             + QLatin1Char('/'))));
+             + QLatin1Char('/')), scope));
     QVERIFY(PrivacyRequestInterceptor::shouldWarnFormPost(
         QUrl(QStringLiteral("http://") + allowedHost
-             + QLatin1String("/form"))));
+             + QLatin1String("/form")), scope));
     PrivacyRequestInterceptor::clearHttpAllowance(allowedHost);
 }
 

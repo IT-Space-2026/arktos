@@ -29,6 +29,7 @@ class AdBlockRequestInterceptor;
 class QByteArray;
 class QString;
 class QUrl;
+class QWebEngineProfile;
 
 // PRIV01: the browsing profile's request interceptor.  A profile
 // accepts exactly one QWebEngineUrlRequestInterceptor, so the privacy
@@ -40,10 +41,16 @@ class QUrl;
 //
 // HTTPS-First: upgrading can break sites that only serve plain http.
 // When an upgraded (or directly requested) https main-frame load
-// fails, WebPage reports it through noteNavigationFailure() and the
-// host joins a session-scoped downgrade set — subsequent http:
-// requests to it pass through un-upgraded, and the error page tells
-// the user.  Nothing is persisted.
+// fails with a genuine connection/TLS error (failureImpliesDowngrade),
+// WebPage reports it through noteNavigationFailure() and the host
+// joins a per-profile downgrade set — subsequent http: requests to it
+// pass through un-upgraded, and the error page tells the user.
+// SAFE07: marks are scoped per downgradeScope() so a private window
+// or container cannot poison another profile's hosts, expire after
+// downgradeTtlMs() (the host gets re-probed) and are cleared when a
+// later https: load commits.  Vetoes, aborts, interrupted redirects,
+// DNS faults and proxy plumbing errors never mark a host.  Nothing is
+// persisted.
 //
 // Referer policy (REF01): Chromium's built-in default is
 // strict-origin-when-cross-origin — same-site requests carry the full
@@ -123,7 +130,10 @@ public:
     };
 
 
-    PrivacyRequestInterceptor(AdBlockNetwork *network, QObject *parent = nullptr);
+    // The profile doubles as the QObject parent and the owner of this
+    // interceptor's downgrade scope (SAFE07) — marks learned through
+    // it apply to its profile only.
+    PrivacyRequestInterceptor(AdBlockNetwork *network, QWebEngineProfile *profile);
 
     void interceptRequest(QWebEngineUrlRequestInfo &info) override;
 
@@ -133,22 +143,54 @@ public:
     // settings-dialog save).
     static void loadSettings();
 
-    // GUI thread: an https main-frame load failed.  Records the host
-    // in the session downgrade set (no-op when https-first is off)
-    // and returns true when this call newly downgraded it.
-    static bool noteNavigationFailure(const QUrl &url);
+    // SAFE07: downgrade marks are keyed by profile identity — the
+    // storageName for named profiles, the pointer for unnamed
+    // (off-the-record) ones whose marks die with the session anyway.
+    static QString downgradeScope(const QWebEngineProfile *profile);
 
-    // Whether http: requests to host currently skip the upgrade —
-    // either because it was downgraded after a failed https load, or
-    // because it was never a candidate (loopback/private/local).
-    static bool isDowngraded(const QString &host);
+    // SAFE07: the error gate behind noteNavigationFailure.  Only
+    // Chromium connection-layer failures (net errors -100..-199,
+    // surfaced as QWebEngineLoadingInfo::ConnectionErrorDomain) say
+    // anything about the origin's TLS — vetoes, aborts and
+    // BLOCKED_BY_CLIENT land in InternalErrorDomain, http status
+    // lines in HttpStatusCodeDomain and resolver faults in
+    // DnsErrorDomain, and none of those may downgrade a host.  Even
+    // inside the connection domain, codes attributed to the local
+    // machine, the resolver, client-certificate/pinning enforcement,
+    // throttling or the proxy are excluded — a proxy refusing a
+    // CONNECT tunnel says nothing about whether the site serves TLS.
+    static bool failureImpliesDowngrade(int errorDomain, int errorCode);
+
+    // GUI thread: an https main-frame load failed.  Records the host
+    // in scope's downgrade set (no-op when https-first is off, when
+    // the failure is not TLS/connectivity evidence, or when a mark is
+    // already live) and returns true when this call newly downgraded
+    // it.
+    static bool noteNavigationFailure(const QUrl &url, int errorDomain,
+                                      int errorCode, const QString &scope);
+
+    // Whether http: requests to host currently skip the upgrade in
+    // scope — either because it was downgraded after a failed https
+    // load, or because it was never a candidate
+    // (loopback/private/local).  Expired marks re-probe: they stop
+    // being downgraded and the next http: navigation silently upgrades
+    // again.
+    static bool isDowngraded(const QString &host, const QString &scope);
+
+    // Self-heal: a committed https: main-frame load proves the host
+    // serves TLS, so a stale mark is removed (WebPage calls this on
+    // every https: LoadSucceeded).
+    static void clearDowngradedHost(const QString &host,
+                                    const QString &scope);
 
     // Test/introspection seam: the static policy decisions.
     static bool httpsFirstEnabled();
     static bool trimRefererEnabled();
     static int refererPolicy();
-    static bool isUpgradeCandidate(const QUrl &url);
-    static void clearDowngradedHosts();  // test cleanup
+    static bool isUpgradeCandidate(const QUrl &url, const QString &scope);
+    static void clearDowngradedHosts();  // all scopes — test cleanup
+    static qint64 downgradeTtlMs();
+    static void setDowngradeTtlMs(qint64 ms);  // test seam
 
     // The persisted level straight from QSettings incl. the
     // trimReferer-bool migration — usable before loadSettings() has
@@ -240,8 +282,9 @@ public:
     // exempt — the same carve-out https-first uses.
     static bool httpsOnlyEnabled();
     // The pure decision — safe on the IO thread (lock-guarded
-    // snapshots + mutex-guarded sets only).
-    static bool shouldWarnHttp(const QUrl &url);
+    // snapshots + mutex-guarded sets only).  scope is the requesting
+    // profile's downgradeScope().
+    static bool shouldWarnHttp(const QUrl &url, const QString &scope);
     static bool isHttpAllowedHost(const QString &host);
     static void allowHttpForHost(const QString &host, bool persistent);
     static void clearHttpAllowance(const QString &host);
@@ -263,10 +306,11 @@ public:
     // TLS before it reaches the wire.  Unlike shouldWarnHttp the
     // HTTPS-Only exception lists do NOT suppress this warning — an
     // excepted host is exactly where plaintext posts still flow.
-    static bool shouldWarnFormPost(const QUrl &url);
+    static bool shouldWarnFormPost(const QUrl &url, const QString &scope);
 
 private:
     AdBlockRequestInterceptor *m_adBlock;
+    QString m_scope;   // SAFE07: downgradeScope() of the owning profile
 };
 
 #endif // PRIVACYREQUESTINTERCEPTOR_H

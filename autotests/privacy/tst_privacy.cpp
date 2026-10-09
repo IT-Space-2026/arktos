@@ -52,6 +52,7 @@
 #include <qtemporarydir.h>
 #include <qurl.h>
 #include <qwebenginecookiestore.h>
+#include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 #include <qwebengineurlrequestinfo.h>
@@ -73,6 +74,10 @@ private slots:
     void upgradeCandidate();
     void downgradeFlow();
     void downgradeBoundaries();
+    void downgradeErrorScoping();
+    void downgradeScopeIsolation();
+    void downgradeExpiry();
+    void downgradeSelfHeal();
     void settingsRoundTrip();
     void refererPolicyMigration();
     void refererRewriteMatrix();
@@ -230,7 +235,13 @@ static void setSecurityLevel(PrivacyRequestInterceptor::SecurityLevel level)
 void tst_Privacy::cleanup()
 {
     PrivacyRequestInterceptor::clearDowngradedHosts();
+    // A test that shrank the TTL must not leak it into the next one.
+    PrivacyRequestInterceptor::setDowngradeTtlMs(30 * 60 * 1000);
 }
+
+// SAFE07: downgrade marks are keyed by profile scope — the pure
+// decision tests share this one.
+static const QString testScope = QStringLiteral("test");
 
 void tst_Privacy::upgradeCandidate_data()
 {
@@ -278,52 +289,173 @@ void tst_Privacy::upgradeCandidate()
     QVERIFY(PrivacyRequestInterceptor::httpsFirstEnabled());
     QFETCH(QString, url);
     QFETCH(bool, candidate);
-    QCOMPARE(PrivacyRequestInterceptor::isUpgradeCandidate(QUrl(url)),
+    QCOMPARE(PrivacyRequestInterceptor::isUpgradeCandidate(QUrl(url),
+                                                         testScope),
              candidate);
 }
 
 void tst_Privacy::downgradeFlow()
 {
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
     const QUrl http("http://neverssl.test/");
-    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http, testScope));
 
     // Only https failures record a downgrade; an http "failure" is
     // not an upgrade candidate's problem.
-    QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(http));
+    QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(
+                http, conn, -102, testScope));
 
-    // A failed https load drops the host from candidacy for the rest
-    // of the session.
+    // A failed https load drops the host from candidacy while the
+    // mark is live.
     QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://neverssl.test/")));
-    QVERIFY(PrivacyRequestInterceptor::isDowngraded(QLatin1String("neverssl.test")));
-    QVERIFY(!PrivacyRequestInterceptor::isUpgradeCandidate(http));
+                QUrl("https://neverssl.test/"), conn, -102, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(
+                QLatin1String("neverssl.test"), testScope));
+    QVERIFY(!PrivacyRequestInterceptor::isUpgradeCandidate(http, testScope));
 
     // Idempotent — the second failure does not "newly" downgrade.
     QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://neverssl.test/other")));
+                QUrl("https://neverssl.test/other"), conn, -102,
+                testScope));
 
     // A different host is unaffected.
     QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(
-                QUrl("http://other.test/")));
+                QUrl("http://other.test/"), testScope));
 }
 
 void tst_Privacy::downgradeBoundaries()
 {
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
     // Private/local hosts are never candidates, so they never join
     // the downgrade set either (isPrivateOrLocalHost gate).
     QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://192.168.1.1/")));
+                QUrl("https://192.168.1.1/"), conn, -102, testScope));
     QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://abc.onion/")));
+                QUrl("https://abc.onion/"), conn, -102, testScope));
     QVERIFY(!PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://localhost/")));
-    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(QLatin1String("localhost")));
+                QUrl("https://localhost/"), conn, -102, testScope));
+    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(
+                QLatin1String("localhost"), testScope));
 
     // Case-insensitive host matching both ways.
     QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
-                QUrl("https://MiXeD.test/")));
-    QVERIFY(PrivacyRequestInterceptor::isDowngraded(QLatin1String("mixed.test")));
-    QVERIFY(PrivacyRequestInterceptor::isDowngraded(QLatin1String("MIXED.TEST")));
+                QUrl("https://MiXeD.test/"), conn, -102, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(
+                QLatin1String("mixed.test"), testScope));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(
+                QLatin1String("MIXED.TEST"), testScope));
+}
+
+// SAFE07: only genuine connection/TLS failures may downgrade a host —
+// vetoes, aborts, interrupted redirects, http status lines, resolver
+// faults and proxy plumbing errors are not evidence the site lacks
+// TLS, and certificate problems take their own interstitial path.
+void tst_Privacy::downgradeErrorScoping()
+{
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    const QUrl https(QStringLiteral("https://errorscope.test/"));
+    const QString host(QStringLiteral("errorscope.test"));
+
+    const auto noMark = [conn, &https](int domain, int code) {
+        return !PrivacyRequestInterceptor::noteNavigationFailure(
+            https, domain, code, testScope);
+    };
+    // InternalErrorDomain: user/navigation aborts, interceptor and
+    // adblock vetoes, superseded requests.
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::InternalErrorDomain), -3));   // ERR_ABORTED
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::InternalErrorDomain), -20));  // ERR_BLOCKED_BY_CLIENT
+    // An http error status is not a TLS failure.
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::HttpStatusCodeDomain), 404));
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::HttpStatusCodeDomain), 503));
+    // Qt's DnsErrorDomain and certificate-domain failures.
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::DnsErrorDomain), -800));
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::CertificateErrorDomain), -200));
+    QVERIFY(noMark(int(QWebEngineLoadingInfo::NoErrorDomain), 0));
+    // In-range codes that still say nothing about the origin's TLS:
+    // resolver faults, proxy/tunnel plumbing, local machine state.
+    QVERIFY(noMark(conn, -105));  // ERR_NAME_NOT_RESOLVED
+    QVERIFY(noMark(conn, -137));  // ERR_NAME_RESOLUTION_FAILED
+    QVERIFY(noMark(conn, -106));  // ERR_INTERNET_DISCONNECTED
+    QVERIFY(noMark(conn, -111));  // ERR_TUNNEL_CONNECTION_FAILED
+    QVERIFY(noMark(conn, -130));  // ERR_PROXY_CONNECTION_FAILED
+    QVERIFY(noMark(conn, -120));  // ERR_SOCKS_CONNECTION_FAILED
+    QVERIFY(noMark(conn, -186));  // ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION
+    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(host, testScope));
+
+    // Genuine reachability/TLS failures do mark.
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -102, testScope));   // ERR_CONNECTION_REFUSED
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(host, testScope));
+    PrivacyRequestInterceptor::clearDowngradedHosts();
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -107, testScope));   // ERR_SSL_PROTOCOL_ERROR
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(host, testScope));
+}
+
+// SAFE07: marks are per-profile — a private window or container cannot
+// teach another profile to bypass the https-first upgrade.
+void tst_Privacy::downgradeScopeIsolation()
+{
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    const QString host(QStringLiteral("isolated.test"));
+    const QUrl https(QStringLiteral("https://") + host + QLatin1Char('/'));
+    const QString scopeA(QStringLiteral("scope-a"));
+    const QString scopeB(QStringLiteral("scope-b"));
+
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -102, scopeA));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(host, scopeA));
+    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(host, scopeB));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(
+                QUrl(QStringLiteral("http://") + host + QLatin1Char('/')),
+                scopeB));
+
+    // OTR profiles key by pointer, named ones by storageName — the
+    // namespaces must not collide.
+    QWebEngineProfile otrA;
+    QWebEngineProfile otrB;
+    QWebEngineProfile named(QStringLiteral("arora-scopetest"));
+    QCOMPARE(PrivacyRequestInterceptor::downgradeScope(&named),
+             QStringLiteral("arora-scopetest"));
+    QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
+            != PrivacyRequestInterceptor::downgradeScope(&otrB));
+    QVERIFY(PrivacyRequestInterceptor::downgradeScope(&otrA)
+            != PrivacyRequestInterceptor::downgradeScope(&named));
+}
+
+// SAFE07: a mark expires after the TTL — the host gets its silent
+// https attempt again instead of staying http-only for the session.
+void tst_Privacy::downgradeExpiry()
+{
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    const QString host(QStringLiteral("ttlhost.test"));
+    const QUrl https(QStringLiteral("https://") + host + QLatin1Char('/'));
+    const QUrl http(QStringLiteral("http://") + host + QLatin1Char('/'));
+
+    PrivacyRequestInterceptor::setDowngradeTtlMs(50);
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -102, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(host, testScope));
+    QTest::qWait(80);
+    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(host, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http, testScope));
+}
+
+// SAFE07: WebPage clears a mark when an https: main-frame load
+// commits — a self-heal for hosts whose TLS recovered.
+void tst_Privacy::downgradeSelfHeal()
+{
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    const QString host(QStringLiteral("heal.test"));
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                QUrl(QStringLiteral("https://") + host + QLatin1Char('/')),
+                conn, -102, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isDowngraded(host, testScope));
+    PrivacyRequestInterceptor::clearDowngradedHost(host, testScope);
+    QVERIFY(!PrivacyRequestInterceptor::isDowngraded(host, testScope));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(
+                QUrl(QStringLiteral("http://") + host + QLatin1Char('/')),
+                testScope));
 }
 
 void tst_Privacy::settingsRoundTrip()

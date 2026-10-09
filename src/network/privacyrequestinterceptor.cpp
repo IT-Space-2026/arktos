@@ -22,12 +22,15 @@
 #include "adblockrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
 
+#include <qdatetime.h>
 #include <qhostaddress.h>
 #include <qmutex.h>
 #include <qreadwritelock.h>
 #include <qset.h>
 #include <qsettings.h>
 #include <qurl.h>
+#include <qwebengineloadinginfo.h>
+#include <qwebengineprofile.h>
 #include <qwebengineurlrequestinfo.h>
 
 // #define PRIVACYINTERCEPTOR_DEBUG
@@ -48,12 +51,19 @@ static bool s_blockRemoteFonts = false;
 static bool s_blockPrefetch = true;
 static bool s_blockThirdPartyWebSockets = false;
 
-// Session-scoped set of hosts whose https main-frame load failed —
-// their http: requests stop being upgraded.  Written from the GUI
-// thread (noteNavigationFailure), read on the IO thread.
+// SAFE07: hosts whose https main-frame load failed with a genuine
+// connection/TLS error — their http: requests stop being upgraded.
+// Marks are keyed by profile scope (downgradeScope()) so a private
+// window or container can never teach another profile to bypass the
+// upgrade, and carry the mark time so a transient outage re-probes
+// after s_downgradeTtlMs instead of condemning the host for the rest
+// of a long session.  Written from the GUI thread
+// (noteNavigationFailure), read on the IO thread.
 static QMutex s_downgradeLock;
-static QSet<QString> s_downgradedHosts;
-// Bound so a hostile page cannot grow the set without limit.
+static QHash<QString, QHash<QString, qint64> > s_downgradedHosts;
+static qint64 s_downgradeTtlMs = 30 * 60 * 1000;
+// Bound (per scope) so a hostile page cannot grow the set without
+// limit.
 static const int maxDowngradedHosts = 256;
 
 // SAFE01: HTTPS-Only host exceptions.  A "proceed once" choice lands
@@ -277,40 +287,175 @@ static bool isPrivateOrLocalHost(const QString &host)
     return false;
 }
 
-bool PrivacyRequestInterceptor::isUpgradeCandidate(const QUrl &url)
+QString PrivacyRequestInterceptor::downgradeScope(
+        const QWebEngineProfile *profile)
+{
+    if (!profile)
+        return QString();
+    if (!profile->isOffTheRecord())
+        return profile->storageName();
+    // Unnamed/off-the-record profiles carry no storageName — the
+    // pointer is the only identity.  Their marks die with the process
+    // anyway, so a pointer key keeps each OTR profile's set private
+    // without persisting anything about it.
+    return QLatin1String("otr:")
+        + QString::number(reinterpret_cast<quintptr>(profile));
+}
+
+bool PrivacyRequestInterceptor::failureImpliesDowngrade(int errorDomain,
+                                                        int errorCode)
+{
+    if (errorDomain != int(QWebEngineLoadingInfo::ConnectionErrorDomain))
+        return false;
+    // Chromium net_error codes inside the connection range (-100..-199)
+    // that say nothing about whether the origin serves TLS:
+    switch (errorCode) {
+    // Name resolution failing for https: fails for http: too —
+    // nothing learned, and a marked host would just hide the real
+    // resolver error behind an http attempt that fails the same way.
+    case -105:  // ERR_NAME_NOT_RESOLVED
+    case -119:  // ERR_HOST_RESOLVER_QUEUE_TOO_LARGE
+    case -137:  // ERR_NAME_RESOLUTION_FAILED
+    case -166:  // ERR_ICANN_NAME_COLLISION
+    // Local machine/socket state, not the origin's fault.
+    case -106:  // ERR_INTERNET_DISCONNECTED
+    case -108:  // ERR_ADDRESS_INVALID
+    case -124:  // ERR_WINSOCK_UNEXPECTED_WRITTEN_BYTES
+    case -138:  // ERR_NETWORK_ACCESS_DENIED
+    case -142:  // ERR_MSG_TOO_BIG
+    case -147:  // ERR_ADDRESS_IN_USE
+    case -160:  // ERR_SOCKET_RECEIVE_BUFFER_SIZE_UNCHANGEABLE
+    case -161:  // ERR_SOCKET_SEND_BUFFER_SIZE_UNCHANGEABLE
+    case -162:  // ERR_SOCKET_RECEIVE_BUFFER_SIZE_UNCHANGEABLE
+    case -163:  // ERR_SOCKET_SEND_BUFFER_SIZE_UNCHANGEABLE
+    case -174:  // ERR_READ_IF_READY_NOT_IMPLEMENTED
+    case -176:  // ERR_NO_BUFFER_SPACE
+    case -189:  // ERR_CONTROL_MSG_TOO_BIG
+    case -190:  // ERR_MULTICAST_NOT_ALLOWED
+    // Retryable throttles/queue limits — transient, not TLS evidence.
+    case -133:  // ERR_PRECONNECT_MAX_SOCKET_LIMIT
+    case -139:  // ERR_TEMPORARILY_THROTTLED
+    case -154:  // ERR_WS_THROTTLE_QUEUE_TOO_LARGE
+    // Client-certificate, pinning and CT enforcement: the TLS stack
+    // itself worked — the site demonstrably does serve https.
+    case -110:  // ERR_SSL_CLIENT_AUTH_CERT_NEEDED
+    case -117:  // ERR_BAD_SSL_CLIENT_AUTH_CERT
+    case -134:  // ERR_SSL_CLIENT_AUTH_PRIVATE_KEY_ACCESS_DENIED
+    case -135:  // ERR_SSL_CLIENT_AUTH_CERT_NO_PRIVATE_KEY
+    case -141:  // ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED
+    case -150:  // ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN
+    case -151:  // ERR_CLIENT_AUTH_CERT_TYPE_UNSUPPORTED
+    case -156:  // ERR_SSL_SERVER_CERT_CHANGED
+    case -164:  // ERR_SSL_CLIENT_AUTH_CERT_BAD_FORMAT
+    case -168:  // ERR_CT_STH_PARSING_FAILED
+    case -169:  // ERR_CT_STH_INCOMPLETE
+    case -171:  // ERR_CT_NO_SCTS_VERIFIED_OK
+    case -177:  // ERR_SSL_CLIENT_AUTH_NO_COMMON_ALGORITHMS
+    // WebSocket protocol faults are not TLS evidence.
+    case -145:  // ERR_WS_PROTOCOL_ERROR
+    case -173:  // ERR_WS_UPGRADE
+    // Early-data rejections — the connection machinery retries; the
+    // surfaced error means retry bookkeeping went astray, not that
+    // TLS is absent.
+    case -178:  // ERR_EARLY_DATA_REJECTED
+    case -179:  // ERR_WRONG_VERSION_ON_EARLY_DATA
+    // The middlebox is broken or refused, not the origin: SOCKS
+    // connect failures, CONNECT tunnel refusals/redirects and proxy
+    // auth/plumbing errors.  A proxy can refuse a tunnel to a site
+    // that serves TLS fine — under Tor every failure looks like this,
+    // which is why marking is skipped there entirely.
+    case -111:  // ERR_TUNNEL_CONNECTION_FAILED
+    case -115:  // ERR_PROXY_AUTH_UNSUPPORTED
+    case -120:  // ERR_SOCKS_CONNECTION_FAILED
+    case -121:  // ERR_SOCKS_CONNECTION_HOST_UNREACHABLE
+    case -127:  // ERR_PROXY_AUTH_REQUESTED
+    case -130:  // ERR_PROXY_CONNECTION_FAILED
+    case -131:  // ERR_MANDATORY_PROXY_CONFIGURATION_FAILED
+    case -136:  // ERR_PROXY_CERTIFICATE_INVALID
+    case -140:  // ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT
+    case -170:  // ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH
+    case -186:  // ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION
+    case -187:  // ERR_PROXY_DELEGATE_CANCELED_CONNECT_REQUEST
+    case -188:  // ERR_PROXY_DELEGATE_CANCELED_CONNECT_RESPONSE
+        return false;
+    }
+    // What is left is real evidence the origin cannot be reached over
+    // TLS: refused/reset/closed/timed-out connections and handshake,
+    // ALPN or protocol errors inside the tunnel.
+    return true;
+}
+
+// Live-mark check: expired entries are lazily dropped, which is what
+// turns the TTL into a re-probe — the host becomes upgradeable again.
+static bool isMarkedDowngraded(const QString &scope, const QString &host)
+{
+    const QMutexLocker lock(&s_downgradeLock);
+    const auto scopeIt = s_downgradedHosts.find(scope);
+    if (scopeIt == s_downgradedHosts.end())
+        return false;
+    const auto hostIt = scopeIt->find(host.toLower());
+    if (hostIt == scopeIt->end())
+        return false;
+    if (QDateTime::currentMSecsSinceEpoch() - hostIt.value()
+            > s_downgradeTtlMs) {
+        scopeIt->erase(hostIt);
+        return false;
+    }
+    return true;
+}
+
+bool PrivacyRequestInterceptor::isUpgradeCandidate(const QUrl &url,
+                                                   const QString &scope)
 {
     if (url.scheme() != QLatin1String("http"))
         return false;
     const QString host = url.host();
     if (isPrivateOrLocalHost(host))
         return false;
-    const QMutexLocker lock(&s_downgradeLock);
-    return !s_downgradedHosts.contains(host.toLower());
+    return !isMarkedDowngraded(scope, host);
 }
 
-bool PrivacyRequestInterceptor::isDowngraded(const QString &host)
+bool PrivacyRequestInterceptor::isDowngraded(const QString &host,
+                                             const QString &scope)
 {
-    const QMutexLocker lock(&s_downgradeLock);
-    return s_downgradedHosts.contains(host.toLower());
+    return isMarkedDowngraded(scope, host);
 }
 
-bool PrivacyRequestInterceptor::noteNavigationFailure(const QUrl &url)
+bool PrivacyRequestInterceptor::noteNavigationFailure(const QUrl &url,
+        int errorDomain, int errorCode, const QString &scope)
 {
-    if (!httpsFirstEnabled() || url.scheme() != QLatin1String("https"))
+    if (!httpsFirstEnabled()
+        || url.scheme() != QLatin1String("https")
+        || !failureImpliesDowngrade(errorDomain, errorCode))
         return false;
     const QString host = url.host().toLower();
     if (host.isEmpty() || isPrivateOrLocalHost(host))
         return false;
     const QMutexLocker lock(&s_downgradeLock);
-    if (s_downgradedHosts.contains(host))
+    QHash<QString, qint64> &marks = s_downgradedHosts[scope];
+    const auto it = marks.find(host);
+    if (it != marks.end()) {
+        // Still failing — restart the re-probe window but do not
+        // report a new downgrade.
+        it.value() = QDateTime::currentMSecsSinceEpoch();
         return false;
-    if (s_downgradedHosts.size() >= maxDowngradedHosts) {
+    }
+    if (marks.size() >= maxDowngradedHosts) {
         // FIFO eviction is not needed — a full set just stops
         // downgrading, which is the conservative direction.
         return false;
     }
-    s_downgradedHosts.insert(host);
+    marks.insert(host, QDateTime::currentMSecsSinceEpoch());
     return true;
+}
+
+void PrivacyRequestInterceptor::clearDowngradedHost(const QString &host,
+                                                    const QString &scope)
+{
+    const QMutexLocker lock(&s_downgradeLock);
+    const auto scopeIt = s_downgradedHosts.find(scope);
+    if (scopeIt != s_downgradedHosts.end())
+        scopeIt->remove(host.toLower());
 }
 
 void PrivacyRequestInterceptor::clearDowngradedHosts()
@@ -319,13 +464,26 @@ void PrivacyRequestInterceptor::clearDowngradedHosts()
     s_downgradedHosts.clear();
 }
 
+qint64 PrivacyRequestInterceptor::downgradeTtlMs()
+{
+    const QMutexLocker lock(&s_downgradeLock);
+    return s_downgradeTtlMs;
+}
+
+void PrivacyRequestInterceptor::setDowngradeTtlMs(qint64 ms)
+{
+    const QMutexLocker lock(&s_downgradeLock);
+    s_downgradeTtlMs = ms;
+}
+
 bool PrivacyRequestInterceptor::httpsOnlyEnabled()
 {
     QReadLocker lock(&s_policyLock);
     return s_httpsOnly;
 }
 
-bool PrivacyRequestInterceptor::shouldWarnHttp(const QUrl &url)
+bool PrivacyRequestInterceptor::shouldWarnHttp(const QUrl &url,
+                                               const QString &scope)
 {
     bool httpsFirst, httpsOnly;
     {
@@ -350,7 +508,7 @@ bool PrivacyRequestInterceptor::shouldWarnHttp(const QUrl &url)
     // it is on, only a host that can no longer be upgraded away
     // (downgraded after a failed https load) still warns.  With the
     // upgrade off, every public http: navigation warns.
-    if (httpsFirst && isUpgradeCandidate(url))
+    if (httpsFirst && isUpgradeCandidate(url, scope))
         return false;
     return true;
 }
@@ -434,7 +592,8 @@ bool PrivacyRequestInterceptor::takeBlockedHttpNav(const QUrl &url)
     return s_blockedHttpNavs.remove(QString::fromUtf8(url.toEncoded()));
 }
 
-bool PrivacyRequestInterceptor::shouldWarnFormPost(const QUrl &url)
+bool PrivacyRequestInterceptor::shouldWarnFormPost(const QUrl &url,
+                                                   const QString &scope)
 {
     if (url.scheme() != QLatin1String("http"))
         return false;
@@ -444,7 +603,7 @@ bool PrivacyRequestInterceptor::shouldWarnFormPost(const QUrl &url)
     // The https-first upgrade claims the request before it goes out —
     // the body then travels over TLS (or the submit fails into the
     // downgrade set, which makes the next attempt warn here).
-    if (httpsFirstEnabled() && isUpgradeCandidate(url))
+    if (httpsFirstEnabled() && isUpgradeCandidate(url, scope))
         return false;
     return true;
 }
@@ -608,9 +767,11 @@ QByteArray PrivacyRequestInterceptor::rewrittenReferer(
     return refererOrigin(source);
 }
 
-PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network, QObject *parent)
-    : QWebEngineUrlRequestInterceptor(parent)
+PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network,
+                                                     QWebEngineProfile *profile)
+    : QWebEngineUrlRequestInterceptor(profile)
     , m_adBlock(new AdBlockRequestInterceptor(network, this))
+    , m_scope(downgradeScope(profile))
 {
 }
 
@@ -682,7 +843,7 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 
     if (httpsFirst
         && info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
-        && isUpgradeCandidate(url)) {
+        && isUpgradeCandidate(url, m_scope)) {
         QUrl https = url;
         https.setScheme(QLatin1String("https"));
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
@@ -701,7 +862,7 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // this block covers every redirect hop and anything that bypasses
     // the page hook.
     if (resourceType == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
-        && shouldWarnHttp(url)) {
+        && shouldWarnHttp(url, m_scope)) {
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
         qDebug() << "PrivacyRequestInterceptor: https-only block" << url;
 #endif

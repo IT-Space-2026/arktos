@@ -30,6 +30,7 @@
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
+#include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
 #include <qtemporarydir.h>
 
@@ -253,7 +254,8 @@ void tst_HttpOnly::warnDecision()
 {
     QFETCH(QString, url);
     QFETCH(bool, warn);
-    QCOMPARE(PrivacyRequestInterceptor::shouldWarnHttp(QUrl(url)), warn);
+    QCOMPARE(PrivacyRequestInterceptor::shouldWarnHttp(
+                 QUrl(url), QStringLiteral("test")), warn);
 }
 
 void tst_HttpOnly::upgradeOrdering()
@@ -267,17 +269,20 @@ void tst_HttpOnly::upgradeOrdering()
     const QUrl http(QStringLiteral("http://") + host + QLatin1Char('/'));
     const QUrl https(QStringLiteral("https://") + host + QLatin1Char('/'));
 
-    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(http));
-    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http));
+    const QString scope = QStringLiteral("test");
+    const int conn = int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(http, scope));
+    QVERIFY(PrivacyRequestInterceptor::isUpgradeCandidate(http, scope));
 
-    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(https));
-    QVERIFY(PrivacyRequestInterceptor::shouldWarnHttp(http));
+    QVERIFY(PrivacyRequestInterceptor::noteNavigationFailure(
+                https, conn, -102, scope));
+    QVERIFY(PrivacyRequestInterceptor::shouldWarnHttp(http, scope));
 
     // A recorded host exception beats the warning again.
     PrivacyRequestInterceptor::allowHttpForHost(host, false);
-    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(http));
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(http, scope));
     PrivacyRequestInterceptor::clearHttpAllowance(host);
-    QVERIFY(PrivacyRequestInterceptor::shouldWarnHttp(http));
+    QVERIFY(PrivacyRequestInterceptor::shouldWarnHttp(http, scope));
 }
 
 void tst_HttpOnly::warningCommits()
@@ -336,7 +341,8 @@ void tst_HttpOnly::proceedAllowsHost()
     QTRY_VERIFY_WITH_TIMEOUT(
         PrivacyRequestInterceptor::isHttpAllowedHost(host), 10000);
     QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(
-        QUrl(QStringLiteral("http://") + host + QLatin1Char('/'))));
+        QUrl(QStringLiteral("http://") + host + QLatin1Char('/')),
+        QStringLiteral("test")));
 
     // Session-scoped: nothing was written to the persisted list.
     QSettings settings;
@@ -538,7 +544,8 @@ void tst_HttpOnly::disabledModeLoadsPlain()
         url, QWebEnginePage::NavigationTypeTyped, true));
     QTest::qWait(500);
     QCOMPARE(warned.count(), 0);
-    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(url));
+    QVERIFY(!PrivacyRequestInterceptor::shouldWarnHttp(
+                url, QStringLiteral("test")));
 }
 
 int main(int argc, char *argv[])
