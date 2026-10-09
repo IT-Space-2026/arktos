@@ -236,6 +236,10 @@ Build, tests & tools:
 - Docs pass: README documents the user-local aqt Qt install path and
   records the WebKit->WebEngine deltas vs the Qt 4 series; Doxyfile
   regenerated for doxygen 1.9+ (DOCS01).
+- Engine-portability groundwork (ENG01): `.devin/ENGINE.md` maps every
+  QtWebEngine touchpoint and specifies an engine-neutral interface for a
+  future non-Chromium backend; `src/engine/` compiles the interface
+  sketch, and a `make check` audit gate keeps the map complete.
 
 Rust core credential storage (RCORE01):
     A new shared Rust crate (src/rustcore) provides engine-neutral application components behind a stable C ABI — status codes, owned-string/buffer marshaling, a change-notification callback bridged to a Qt signal, and qmake wiring that builds it with cargo when `CONFIG+=rustcore` is set while leaving no-Rust builds untouched.

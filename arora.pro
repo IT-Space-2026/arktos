@@ -24,8 +24,16 @@ unix {
 # suite before a single test executes.
 check.target = check
 check.commands = cd autotests && ./runTests.sh
-check.depends = check-warnings check-supplychain sub-src sub-autotests
+check.depends = check-warnings check-supplychain check-engine-audit sub-src sub-autotests
 QMAKE_EXTRA_TARGETS += check
+
+# `make check-engine-audit` is the ENG01 coupling-map gate — every
+# source file naming a QtWebEngine symbol must be documented in
+# .devin/ENGINE.md (or whitelisted there), so the portability audit
+# can't silently drift as the tree changes.  Source-grep only; no build.
+check-engine-audit.target = check-engine-audit
+check-engine-audit.commands = ./.devin/check-engine-audit.sh
+QMAKE_EXTRA_TARGETS += check-engine-audit
 
 # `make check-supplychain` runs the SEC21 Rust supply-chain vetting
 # gate — `cargo deny` (advisories incl. yanked, license allow-list,

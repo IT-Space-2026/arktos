@@ -4280,4 +4280,45 @@ Also swept in: the `0.2 → 0.12` version bump left in the tree by a concurrent 
 [2026-10-09 22:21:55] skipping MAC01 — needs: requirement not met on this host
 [2026-10-09 22:21:55] skipping BSD01 — needs: requirement not met on this host
 [2026-10-09 22:21:56] >>> starting run for task DOCS01 (attempt 1, tree mem cap 2048MB, timeout 3600s)
-The table is long — let me check statuses of the remaining rows precisely.Let me check how the loop itself picks rows, to interpret the note correctly.The Doxyfile is a 1.5.7.1-era config with several tags removed in modern doxygen. Let me check the environment details needed for the README build section.Let me check which Qt modules are installed locally so the aqt instructions are accurate.Now I'll verify the README's claimed build flags and smoke names against the actual build files before writing.Now I have everything. Writing the refreshed Doxyfile first — the 1.5.7.1 config carries multiple tags removed in doxygen 1.9+ and misses the new generated/Rust dirs.Now the README edits — adding the aqt install path and a Qt4→Qt6 delta section.`make doc`/`dox` now resolve correctly. Quick sanity that the top-level graph still works:Build graph is clean. Now updating the task row, WORKLOG, and committing.
+The table is long — let me check statuses of the remaining rows precisely.Let me check how the loop itself picks rows, to interpret the note correctly.The Doxyfile is a 1.5.7.1-era config with several tags removed in modern doxygen. Let me check the environment details needed for the README build section.Let me check which Qt modules are installed locally so the aqt instructions are accurate.Now I'll verify the README's claimed build flags and smoke names against the actual build files before writing.Now I have everything. Writing the refreshed Doxyfile first — the 1.5.7.1 config carries multiple tags removed in doxygen 1.9+ and misses the new generated/Rust dirs.Now the README edits — adding the aqt install path and a Qt4→Qt6 delta section.`make doc`/`dox` now resolve correctly. Quick sanity that the top-level graph still works:Build graph is clean. Now updating the task row, WORKLOG, and committing.DOCS01 complete — committed `bdc6057` and pushed.
+
+## What was done
+
+**Task:** DOCS01 — README + docs rewrite for Qt6 (first pending row in `.devin/Arora-Task.md`).
+
+**Findings:** the README was already feature-current thanks to per-task upkeep, so the work targeted the three pieces the spec called out that were missing or stale:
+
+- **Build instructions** — added a "Getting Qt user-locally" section with the actual aqtinstall recipe (`python3 -m venv ~/venvs/aqt` → `aqt install-qt linux desktop 6.12.0 gcc_64 -O ~/Qt -m qtwebengine …`, matching the installed module set), the `.devin/qt-env.sh`/`qmake6` alternatives, and a distro-package path.
+- **Feature deltas vs Qt 4 Arora** — new "Differences from Qt 4 Arora" section covering the WebKit→WebEngine swap (no sync JS bridge, plugins/NPAPI deleted, autofill reimplemented with honest gaps, Chromium-vs-app caching, devtools host window, arora-file scheme, QtScript removal, self-contained bundle goal, privacy direction).
+- **Doxyfile refresh** — the config was written for doxygen 1.5.7.1 and carried seven tags removed in doxygen 1.9+. Regenerated as a compact modern config: excludes `.moc/.rcc/.obj` + cargo `target/` trees, `QT_AUTOBRIEF`, Qt declaration-macro `PREDEFINED`, `README.md` as mainpage, SVG dot graphs, `INPUT` now covers `tools/`.
+
+**Real bug fixed en route:** `arora.pro`'s `doxygen.target = doc dox` emitted a single target literally named `doc dox` (escaped space), so `make doc` had never resolved — the docs were unreachable through make. Split into two targets; both now resolve.
+
+**Verified:** `make -n doc`/`dox` → `doxygen Doxyfile`, top-level `make -n` graph clean, `doc/` already gitignored, qmake6 regen clean. Doxygen isn't installed on this box (config is KEY=VALUE — any tag a user's older doxygen doesn't know warns rather than fails).
+
+Task row flipped to `done` with verification notes, ChangeLog bullet appended, WORKLOG updated. Stopping here per the one-task-per-run rule.
+[2026-10-09 22:28:24] <<< devin exited rc=0 (task DOCS01)
+[2026-10-09 22:28:24] skipping WIN01 — needs: requirement not met on this host
+[2026-10-09 22:28:24] skipping MAC01 — needs: requirement not met on this host
+[2026-10-09 22:28:24] skipping BSD01 — needs: requirement not met on this host
+[2026-10-09 22:28:24] task DOCS01 finished (next: DEVT02)
+[2026-10-09 22:28:26] skipping WIN01 — needs: requirement not met on this host
+[2026-10-09 22:28:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-09 22:28:26] skipping BSD01 — needs: requirement not met on this host
+[2026-10-09 22:28:27] >>> starting run for task DEVT02 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+I'll start by reading the task file and checking the current state of the repository.The task file continues past line 43. Let me read the rest.The file is 230 lines — I need to see the rest of the table.I've read the full task table. Scanning for the first actionable row:
+
+- **WIN01/MAC01/BSD01** — `pending` but `needs:windows`/`needs:macos`/`needs:freebsd` → skip (Linux box).
+- **DEVT02** — `pending`, `needs:task:DEVT01`; DEVT01 is `blocked` (moved to UI lane) → skip.
+- **DEVT03** — `pending`, continuation of DEVT02 → skip.
+- **ENG01** — `pending`, no `needs:` tag → **first feasible task**: engine-portability audit — enumerate all QtWebEngine touchpoints, write `.devin/ENGINE.md`, add a compiled-but-unused interface header sketch in `src/engine/`, and wire a grep-driven audit check into `make check`.
+
+Feasibility gate: this needs only the Qt toolchain + grep — all local. Let me verify the environment.Row marked `in_progress`. Now let me map the QtWebEngine coupling across the tree.Let me get the complete file lists across src/, tools/, and autotests/.Now let me survey the remaining consumers — checking how key files use the engine APIs, plus the QSettings key surface.Let me check build files and JS/RS references for completeness of the audit scope.I have the full coupling map. Now I'll create the deliverables. First, the interface sketch — `src/engine/engineinterface.h` (pure Qt types, zero QtWebEngine deps), a compile-only `.cpp`, and an `engine.pri` matching the per-module convention.Now wire the new module into `src.pri` alongside the other per-module includes.Now the main deliverable — `.devin/ENGINE.md` with the full coupling map.Now the audit gate script.Now build to verify the interface sketch compiles (including moc).The forward-declared `QSslCertificate` breaks moc's metatype generation — it needs the complete type. Include the real header.The tree needs `CONFIG+=rustcore`/`rustdl` — my plain `qmake6 -r` dropped the flags the prior Makefile was generated with. Let me check how the build was previously configured.Stale objects are gitignored artifacts — safe to wipe. Cleaning and rebuilding.Clean build in progress. Let me wait for it to finish.Build linked cleanly — `engineinterface.o` + `moc_engineinterface.o` are in the binary. Quick offscreen sanity check, then `make check`.`check-warnings` passed; the autotests suite is now rebuilding (I wiped `autotests/.obj` earlier). This will take a while — continuing to wait.Test binaries linking — engine interface objects are included. Continuing to wait.Tests are running — all suites passing so far (0 failed). Continuing.`make check` finished with exit 0. Let me confirm the engine-audit step ran and check the final summary.All 66 test totals show 0 failures. Let me confirm the engine-audit and supplychain steps in the log.All gates pass:
+
+- `check-warnings`: zero compiler warnings
+- `check-supplychain`: all crates clean
+- `check-engine-audit`: PASS — 129 files reference QtWebEngine (43 whitelisted, rest documented)
+- Full autotests suite: 66 totals lines, 0 failures
+- `arora` binary builds and runs headless
+
+Now the bookkeeping. Checking current state and file formats.All verified. Checking where recent entries go in `ChangeLog` (it's a long historical file).The "Build, tests & tools" section is the right home. Now updating the three bookkeeping files.Now appending the WORKLOG entry.Staging and reviewing before commit.
