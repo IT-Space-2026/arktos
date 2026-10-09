@@ -215,6 +215,15 @@ in-flight part/staging files stay 0600, stale dl-*/cookies-* debris
 is swept when the engine arms, and debug output redacts URL queries,
 fragments and userinfo.
 
+Rust supply chain: `make check-supplychain` (also a `make check`
+prerequisite) runs cargo deny + cargo audit over every crate's
+committed Cargo.lock — RustSec advisories, yanked releases, the
+license allow-list and the crates.io-only source policy in each
+crate's deny.toml all fail the build.  Bumping a dependency is
+`cargo update` in the crate directory, re-run the gate, commit
+Cargo.toml and Cargo.lock together.  Machines without
+cargo-deny/cargo-audit skip the gate cleanly.
+
 ### Extensions
 
 Chrome Manifest-V3 extensions via Qt WebEngine's tech-preview API:

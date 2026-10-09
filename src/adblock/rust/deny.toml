@@ -1,0 +1,48 @@
+# cargo-deny policy for the Rust surface (SEC21).  Applies to every
+# crate in the tree; `make check-supplychain` (part of `make check`)
+# runs `cargo deny --locked check` + `cargo audit` over each crate's
+# committed Cargo.lock, or run `cargo deny check` by hand here.
+# Dep bumps: `cargo update`, re-run the gate, commit Cargo.toml +
+# Cargo.lock together.
+
+[advisories]
+# Fail on any unpatched advisory in a dependency we ship.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+[licenses]
+# GPL-incompatible only in the copyleft direction matters here (the
+# browser is GPLv2+): permissive licenses are all fine.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    # webpki-root-certs (Mozilla root store, via rustls) — permissive
+    # data license, the cert-file equivalent of CC0.
+    "CDLA-Permissive-2.0",
+    # Brave's adblock crate — weak file-level copyleft, GPL-compatible
+    # (MPL 2.0 exhibits compatibility with GPL per its own Exhibit B).
+    "MPL-2.0",
+    # the crates in this tree are part of the GPLv2+ browser itself
+    "GPL-2.0-or-later",
+]
+
+[bans]
+# One version per crate — surprises in the transitive tree get
+# reviewed, not silently duplicated.
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+[sources]
+# crates.io only — no git deps or unknown registries in the core.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

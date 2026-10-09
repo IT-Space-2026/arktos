@@ -19,8 +19,18 @@ unix {
 # suite before a single test executes.
 check.target = check
 check.commands = cd autotests && ./runTests.sh
-check.depends = check-warnings sub-src sub-autotests
+check.depends = check-warnings check-supplychain sub-src sub-autotests
 QMAKE_EXTRA_TARGETS += check
+
+# `make check-supplychain` runs the SEC21 Rust supply-chain vetting
+# gate — `cargo deny` (advisories incl. yanked, license allow-list,
+# duplicate/wildcard bans, crates.io-only sources) + `cargo audit`
+# over every crate's committed Cargo.lock.  A vulnerability in a dep
+# we ship fails the build.  Machines without cargo-deny/cargo-audit
+# skip cleanly, same as a no-rust build.
+check-supplychain.target = check-supplychain
+check-supplychain.commands = ./.devin/check-supplychain.sh
+QMAKE_EXTRA_TARGETS += check-supplychain
 
 # `make bundle` produces the self-contained relocatable Linux bundle in
 # dist/ (PACK01). `make check-bundle` rebuilds it in a scratch dir and
