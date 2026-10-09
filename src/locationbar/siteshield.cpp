@@ -37,6 +37,9 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     setAutoRaise(true);
     setCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::ClickFocus);
+    // Slightly larger than the stock 16px chrome icons so the shield
+    // reads clearly at a glance; still well inside the bar's row.
+    setIconSize(QSize(20, 20));
     setAccessibleName(tr("Site Privacy"));
     setAccessibleDescription(
         tr("Opens the privacy and permissions panel for this site."));
@@ -96,16 +99,20 @@ void SiteShieldButton::refreshIcon()
         return;
     }
 
+    // Badge art is authored in 16x16 space; scale it to the button's
+    // icon size so the overlay follows the icon growth.
+    const int px = iconSize().width();
+    const QSize iconPx(px, px);
     AdBlockManager *adblock = AdBlockManager::instance();
     const QString host = m_webView->url().host();
     const bool whitelisted = adblock->isSiteWhitelisted(host);
     QIcon icon;
     QString tip;
     if (!adblock->isEnabled()) {
-        icon = QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled));
+        icon = QIcon(shield.pixmap(iconPx, QIcon::Disabled));
         tip = tr("Site privacy — content blocking is disabled");
     } else if (whitelisted) {
-        icon = QIcon(shield.pixmap(QSize(16, 16), QIcon::Disabled));
+        icon = QIcon(shield.pixmap(iconPx, QIcon::Disabled));
         tip = tr("Site privacy — content blocking is off for %1")
                   .arg(host);
     } else {
@@ -119,9 +126,11 @@ void SiteShieldButton::refreshIcon()
     const int blocked = m_panel->blockedSinceLoad();
     const bool jsBlocked = m_webView->isJavaScriptBlocked();
     if (blocked > 0 || jsBlocked) {
-        QPixmap pixmap = icon.pixmap(QSize(16, 16));
+        QPixmap pixmap = icon.pixmap(iconPx);
         QPainter painter(&pixmap);
         painter.setRenderHint(QPainter::Antialiasing);
+        const qreal s = qreal(pixmap.width()) / 16.0;
+        painter.scale(s, s);
         if (blocked > 0) {
             const QString text = blocked > 999
                 ? QStringLiteral("…") : QString::number(blocked);
