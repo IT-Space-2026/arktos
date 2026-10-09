@@ -192,6 +192,17 @@ bool PrivacyRequestInterceptor::blockPingsEnabled()
     return s_blockPings;
 }
 
+bool PrivacyRequestInterceptor::isPingTelemetryRequest(
+        QWebEngineUrlRequestInfo &info)
+{
+    const QWebEngineUrlRequestInfo::ResourceType type =
+        info.resourceType();
+    return type == QWebEngineUrlRequestInfo::ResourceTypePing
+        || type == QWebEngineUrlRequestInfo::ResourceTypeCspReport
+        || info.httpHeaders().value("Sec-Fetch-Dest")
+               == QByteArrayLiteral("report");
+}
+
 bool PrivacyRequestInterceptor::blockRemoteFontsEnabled()
 {
     QReadLocker lock(&s_policyLock);
@@ -816,13 +827,16 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // CSP report uploads are telemetry-shaped POSTs — page-requested
     // outbound traffic the user never sees.  Drop them at the request
     // layer; CSP enforcement is unaffected (it happens regardless of
-    // whether the report is delivered).
+    // whether the report is delivered).  isPingTelemetryRequest also
+    // trips on the engine-set Sec-Fetch-Dest: report header — a
+    // PING02 tripwire for Reporting-API deliveries (report-to, NEL)
+    // should a future QtWebEngine ever send them: Qt 6.12's build
+    // queues them behind the unserviced
+    // NetworkContextClient::OnCanSendReportingReports consent callback
+    // and never uploads (verified empirically, see .devin/WORKLOG.md).
     const QWebEngineUrlRequestInfo::ResourceType resourceType =
         info.resourceType();
-    if (blockPings
-        && (resourceType == QWebEngineUrlRequestInfo::ResourceTypePing
-            || resourceType
-                   == QWebEngineUrlRequestInfo::ResourceTypeCspReport)) {
+    if (blockPings && isPingTelemetryRequest(info)) {
 #if defined(PRIVACYINTERCEPTOR_DEBUG)
         qDebug() << "PrivacyRequestInterceptor: ping block"
                  << info.requestUrl() << "type" << resourceType;

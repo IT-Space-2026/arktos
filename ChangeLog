@@ -78,7 +78,9 @@ Security:
 - Weak TLS cipher suites removed (TLS01).
 - Per-site JavaScript control + security-level tiers (JSCTL, SECLVL).
 - Referer level selector (REF01).
-- Tracking ping/beacon/CSP-report blocking (PING01).
+- Tracking ping/beacon/CSP-report blocking (PING01); Reporting-API
+  report-to probe — uploads never happen on this engine, plus a
+  Sec-Fetch-Dest: report tripwire in case they ever do (PING02).
 - Real pop-up blocker for shaped window.open (POPUP01).
 - Fingerprint-resistance countermeasures (PRIV02).
 - Third-party-cookie and connection/storage privacy group (PRIV01).

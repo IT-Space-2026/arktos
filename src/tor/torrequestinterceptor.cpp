@@ -51,10 +51,10 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // PING01: beacons, <a ping> audits and CSP reports are telemetry
     // uploads — the shared privacy toggle drops them in tor windows
     // too; a deanonymizing POST is the last thing that should slip.
+    // PING02: isPingTelemetryRequest also trips on Sec-Fetch-Dest:
+    // report for any future Reporting-API delivery path.
     if (PrivacyRequestInterceptor::blockPingsEnabled()
-        && (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypePing
-            || info.resourceType()
-                   == QWebEngineUrlRequestInfo::ResourceTypeCspReport)) {
+        && PrivacyRequestInterceptor::isPingTelemetryRequest(info)) {
         info.block(true);
         return;
     }

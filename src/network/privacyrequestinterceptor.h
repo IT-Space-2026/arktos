@@ -256,6 +256,14 @@ public:
     // report requests are dropped while it is set.  The tor
     // interceptor consults the same toggle.
     static bool blockPingsEnabled();
+    // PING02: the pure request classification both interceptors
+    // share — true for ResourceTypePing (sendBeacon and <a ping> both
+    // arrive as ping), ResourceTypeCspReport (legacy report-uri) and
+    // any request carrying the engine-set Sec-Fetch-Dest: report
+    // metadata header (Reporting-API deliveries — report-to, NEL,
+    // deprecation/intervention — should a future QtWebEngine ever
+    // perform them through an interceptor-visible path).
+    static bool isPingTelemetryRequest(QWebEngineUrlRequestInfo &info);
 
     // SAFE04: the persisted privacy/blockRemoteFonts (default off)
     // and privacy/blockPrefetch (default on) toggles as loaded into

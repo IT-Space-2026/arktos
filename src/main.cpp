@@ -1800,6 +1800,88 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     return application.exec();
 }
 
+// PING02: --pingspotter-smoke re-runs the live ping-spotter
+// (https://armin.dev/apps/ping-spotter/ redirects to
+// https://apps.armin.dev/ping-spotter/) on the real browsing profile.
+// The SPA's "Start test" button fires all three vectors — a <a ping>
+// click, navigator.sendBeacon, and a /csp-frame iframe whose page
+// carries a report-uri CSP — then POSTs /results and renders a
+// "Request sent" / "Request blocked" verdict per vector.  This smoke
+// clicks the button once the SPA mounts it, polls the three verdict
+// cells until none reads "Unknown", and exits 0 only when all three
+// report "Request blocked".  The site uses the legacy report-uri
+// directive (verified from its /csp-frame response headers), which
+// PING01's ResourceTypeCspReport block covers; Reporting-API
+// report-to deliveries do not exist on this engine at all (probed
+// against a SPKI-pinned https collector — see the PING02 task notes).
+// Live-site dependency — deliberately absent from check-coverage's
+// SMOKE_FLAGS.
+static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
+{
+    view->window()->show();
+    const QUrl site(qEnvironmentVariable("ARORA_PINGSPOTTER_URL",
+        QStringLiteral("https://apps.armin.dev/ping-spotter/")));
+    qInfo() << "pingspotter-smoke: loading" << site;
+
+    auto clicked = std::make_shared<bool>(false);
+    QTimer *poller = new QTimer(&application);
+    poller->setInterval(1000);
+    QObject::connect(poller, &QTimer::timeout, &application,
+                     [&application, view, clicked]() {
+        if (!*clicked) {
+            view->page()->runJavaScript(QStringLiteral(
+                "var b = document.querySelector('.start-button');"
+                "if (b) { b.click(); 'clicked'; } else { ''; }"),
+                [clicked](const QVariant &result) {
+                    if (result.toString() == QLatin1String("clicked"))
+                        *clicked = true;
+                });
+            return;
+        }
+        view->page()->runJavaScript(QStringLiteral(
+            "JSON.stringify(Array.prototype.map.call("
+            "  document.querySelectorAll('.request-status-text'),"
+            "  function (e) { return e.textContent.trim(); }))"),
+            [&application](const QVariant &result) {
+                const QJsonArray verdicts = QJsonDocument::fromJson(
+                    result.toString().toUtf8()).array();
+                if (verdicts.size() < 3)
+                    return;
+                QStringList texts;
+                bool unknown = false;
+                for (const QJsonValue &v : verdicts) {
+                    const QString text = v.toString();
+                    texts << text;
+                    if (text.contains(QLatin1String("Unknown"))
+                        || text.isEmpty())
+                        unknown = true;
+                }
+                if (unknown)
+                    return;
+                // Cell order in the SPA: Beacon API, Ping, CSP report.
+                bool pass = true;
+                for (const QString &text : texts) {
+                    if (!text.contains(QLatin1String("blocked")))
+                        pass = false;
+                }
+                qInfo() << "pingspotter-smoke:" << (pass ? "PASS" : "FAIL")
+                        << "beacon:" << texts.value(0)
+                        << "ping:" << texts.value(1)
+                        << "csp:" << texts.value(2);
+                application.exit(pass ? 0 : 1);
+            });
+    });
+    poller->start();
+    view->loadUrl(site);
+
+    QTimer::singleShot(60000, &application, [&application]() {
+        qInfo() << "pingspotter-smoke: FAIL (timeout — site"
+                << "unreachable or test never completed)";
+        application.exit(1);
+    });
+    return application.exec();
+}
+
 // SEC16: the adblock smokes below inject probe filters into the shared
 // test-mode custom subscription and AdBlockManager's AutoSaver
 // persists whatever the subscription still holds when the process
@@ -2280,6 +2362,7 @@ int main(int argc, char **argv)
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
         "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
+        "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
     };
     for (const char *option : internalOptions)
@@ -2442,6 +2525,12 @@ int main(int argc, char **argv)
     // block/load outcomes for .devin/BADSSL01-report.md.
     if (args.contains(QLatin1String("--badssl-smoke")))
         return badSslSmoke(application, view);
+
+    // PING02: live-site measurement — clicks the ping-spotter test
+    // button on the browsing profile and records the site's three
+    // per-vector verdicts (beacon/ping/csp).
+    if (args.contains(QLatin1String("--pingspotter-smoke")))
+        return pingSpotterSmoke(application, view);
 
     // BADSSL03: --clientcert-smoke verifies the TLS client-certificate
     // path end to end.  ARORA_CLIENTCERT_FILE (.pem key+cert — leaf
@@ -3187,10 +3276,10 @@ int main(int argc, char **argv)
         // Reporting-API uploads are batched/deferred well past this
         // fixture's window.
         QObject::connect(server, &QTcpServer::newConnection, &application,
-                         [server, hits]() {
+                         [server, hits, port]() {
             QTcpSocket *client = server->nextPendingConnection();
             QObject::connect(client, &QTcpSocket::readyRead, client,
-                             [client, hits]() {
+                             [client, hits, port]() {
                 const QByteArray request = client->readAll();
                 const int sp = request.indexOf(' ');
                 const int httpAt = request.indexOf(" HTTP/");
@@ -3211,6 +3300,31 @@ int main(int argc, char **argv)
                         "<img src=\"/violated.png\">"
                         "<a id=\"lnk\" href=\"/nav-target\""
                         " ping=\"/aping\">x</a>"
+                        "</body></html>";
+                } else if (path == QLatin1String("/page-report")
+                    || path == QLatin1String("/page-report2")) {
+                    // PING02: Reporting-API arm of the fixture — a
+                    // report-to directive with both endpoint header
+                    // spellings.  Loopback cannot register a usable
+                    // endpoint today (reporting endpoints want a
+                    // secure origin and QtWebEngine never attempts
+                    // delivery at all — verified against a
+                    // SPKI-pinned https collector, see the task
+                    // notes), so a /report hit can only ever mean a
+                    // future engine started uploading: the armed
+                    // phase fails the smoke on it.
+                    const QByteArray base =
+                        "http://127.0.0.1:" + QByteArray::number(port);
+                    head = "Content-Type: text/html\r\n"
+                        "Reporting-Endpoints: default=\"" + base
+                            + "/report\"\r\n"
+                        "Report-To: {\"group\":\"default\","
+                            "\"max_age\":3600,\"endpoints\":[{\"url\":\""
+                            + base + "/report\"}]}\r\n"
+                        "Content-Security-Policy: img-src 'none'; "
+                            "report-to default\r\n";
+                    body = "<html><body>"
+                        "<img src=\"/violated.png\">"
                         "</body></html>";
                 }
                 client->write("HTTP/1.1 200 OK\r\n" + head
@@ -3246,36 +3360,66 @@ int main(int argc, char **argv)
             const bool aping = hits->contains(QLatin1String("/aping"));
             const bool csp = hits->contains(QLatin1String("/csp"));
             const bool nav = hits->contains(QLatin1String("/nav-target"));
-            if (*state == 0) {
-                // A leak is a failure the moment it is observed.
-                if (beacon || aping || csp) {
+            const bool report = hits->contains(QLatin1String("/report"));
+            if (*state == 0 || *state == 2) {
+                // A leak is a failure the moment it is observed —
+                // /report covers the Reporting-API delivery path of
+                // any future engine (PING02): Qt 6.12's build never
+                // sends report-to uploads at all, so zero is today's
+                // truth and a hit means a real regression surfaced.
+                if (beacon || aping || csp || report) {
                     qInfo() << "ping-smoke: phase-1 armed FAIL"
+                            << "state:" << *state
                             << "beacon:" << beacon << "aping:" << aping
-                            << "csp:" << csp;
+                            << "csp:" << csp << "report:" << report;
                     restorePings();
                     application.exit(1);
                     return;
                 }
-                // Wait for the click's navigation to land (proves the
-                // ping vectors fired), then a ~3s settle for any late
-                // upload; no click at all within ~10s means the
-                // fixture broke rather than the block holding.
                 ++*ticks;
-                if (nav && *jsFired)
-                    ++*settleTicks;
-                if (*settleTicks < 12 && *ticks <= 40)
-                    return;
-                qInfo() << "ping-smoke: phase-1 armed nav:" << nav
-                        << "beacon:" << beacon << "aping:" << aping
-                        << "csp:" << csp
-                        << (nav ? "PASS" : "FAIL");
-                if (!nav) {
-                    restorePings();
-                    application.exit(1);
+                if (*state == 0) {
+                    // Wait for the click's navigation to land (proves
+                    // the ping vectors fired), then a ~3s settle for
+                    // any late upload; no click at all within ~10s
+                    // means the fixture broke rather than the block
+                    // holding.
+                    if (nav && *jsFired)
+                        ++*settleTicks;
+                    if (*settleTicks < 12 && *ticks <= 40)
+                        return;
+                    qInfo() << "ping-smoke: phase-1 armed nav:" << nav
+                            << "beacon:" << beacon << "aping:" << aping
+                            << "csp:" << csp
+                            << (nav ? "PASS" : "FAIL");
+                    if (!nav) {
+                        restorePings();
+                        application.exit(1);
+                        return;
+                    }
+                    // Armed Reporting-API probe: still with the block
+                    // on, load the report-to page and watch /report
+                    // for ~4s.  (The real Chromium batching window is
+                    // far longer — this phase exists as a tripwire,
+                    // not a delivery-timing measurement.)
+                    *state = 2;
+                    *jsFired = false;
+                    *settleTicks = 0;
+                    *ticks = 0;
+                    hits->clear();
+                    view->loadUrl(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/page-report").arg(port)));
                     return;
                 }
-                // Phase 2 — control: the toggle off must let all
-                // three vectors through, proving the fixture fires.
+                // state 2: report-to probe settle.
+                if (*ticks <= 16)
+                    return;
+                qInfo() << "ping-smoke: report-to probe clean"
+                        << "(no /report delivery — Qt 6.12 uploads"
+                           " reporting-api reports via a path that"
+                           " never delivers; tripwire stays)";
+                // Phase 3 — control: the toggle off must let all
+                // three classic vectors through, proving the fixture
+                // fires.
                 *state = 1;
                 *jsFired = false;
                 *settleTicks = 0;
