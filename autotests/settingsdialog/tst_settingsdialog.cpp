@@ -64,6 +64,7 @@ private slots:
     void resetSearchSettings();
     void sidebarNavigation();
     void sidebarSettings();
+    void iconThemeSelector();
     void uniformSidebarIcons();
     void scrollablePages();
     void subDialogButtons();
@@ -820,6 +821,53 @@ void tst_SettingsDialog::sidebarSettings()
              int(Qt::LeftDockWidgetArea));
 }
 
+// ICONS03: the icon-theme selector lives on the Appearance page (not
+// General), and every row previews a multi-glyph strip rendered from
+// the set's own artwork — Adwaita/Breeze/Tabler strips must visibly
+// differ from each other.
+void tst_SettingsDialog::iconThemeSelector()
+{
+    SettingsDialog dialog;
+
+    // The combo's top-level page inside the stacked widget is
+    // Appearance (sidebar row 2).
+    QWidget *host = dialog.iconThemeCombo;
+    while (host && host->parentWidget() != dialog.tabWidget)
+        host = host->parentWidget();
+    QVERIFY(host);
+    QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+    QCOMPARE(dialog.pagesList->item(2)->text(), QStringLiteral("Appearance"));
+    QCOMPARE(dialog.iconThemeLabel->parentWidget(),
+             dialog.iconThemeCombo->parentWidget());
+    QCOMPARE(dialog.iconThemeLabel->buddy(),
+             static_cast<QWidget *>(dialog.iconThemeCombo));
+
+    // Every row carries a painted strip, and distinct sets paint
+    // distinct previews.
+    QCOMPARE(dialog.iconThemeCombo->count(),
+             AroraIcon::themeIds().count());
+    QHash<QString, QImage> strips;
+    for (int row = 0; row < dialog.iconThemeCombo->count(); ++row) {
+        const QIcon icon = dialog.iconThemeCombo->itemIcon(row);
+        QVERIFY2(!icon.isNull(),
+                 qPrintable(dialog.iconThemeCombo->itemText(row)));
+        const QImage image =
+            icon.pixmap(dialog.iconThemeCombo->iconSize()).toImage();
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 40)
+                    ++opaque;
+        QVERIFY2(opaque > 0,
+                 qPrintable(dialog.iconThemeCombo->itemText(row)));
+        strips[dialog.iconThemeCombo->itemData(row).toString()] = image;
+    }
+    QVERIFY(strips.value(QLatin1String("adwaita"))
+            != strips.value(QLatin1String("tabler")));
+    QVERIFY(strips.value(QLatin1String("adwaita"))
+            != strips.value(QLatin1String("breeze")));
+}
+
 // ICONS02: the sidebar, the theme-preview combo and the engine list
 // all pin iconSize at the style's small-icon metric — without it the
 // delegate paints each icon at the resolved asset's own nominal size
@@ -836,7 +884,11 @@ void tst_SettingsDialog::uniformSidebarIcons()
 
     QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
     QVERIFY(dialog.pagesList->uniformItemSizes());
-    QCOMPARE(dialog.iconThemeCombo->iconSize(), iconExtent);
+    // ICONS03: the combo's pin is the whole preview strip — N glyph
+    // cells wide, one small-icon extent tall.
+    QCOMPARE(dialog.iconThemeCombo->iconSize().height(), extent);
+    QCOMPARE(dialog.iconThemeCombo->iconSize().width() % extent, 0);
+    QVERIFY(dialog.iconThemeCombo->iconSize().width() > extent);
     QCOMPARE(dialog.engineTree->iconSize(), iconExtent);
 
     const auto checkRows = [&dialog]() {
