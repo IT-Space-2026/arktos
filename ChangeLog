@@ -101,6 +101,10 @@ UI:
   Light / Dark applies live without a restart, and Arora's own error
   pages, directory listings and start page follow the app palette in
   dark mode (THEME01).
+- Reader Mode toggle in the navigation toolbar, right after the
+  reload/stop button — it appears only on article-like pages, shows
+  a filled icon while the reader overlay is up, and stays in sync
+  with View → Reader Mode (Ctrl+Alt+R) (READ02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

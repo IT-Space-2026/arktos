@@ -38,6 +38,7 @@
 #include <qplaintextedit.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
+#include <qsplitter.h>
 #include <qstatusbar.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
@@ -52,6 +53,7 @@
 #include "statusbarwidgets.h"
 #include "tabwidget.h"
 #include "tabbar.h"
+#include "readermode.h"
 #include "webview.h"
 #include "webpage.h"
 #include "webviewsearch.h"
@@ -109,6 +111,7 @@ private slots:
     void searchBoxVisibility();
     void torSearchBoxHidden();
     void torCircuitStatusLabel();
+    void readerModeButton();
     void statusBarWidgets();
     void sidebarPanel();
 };
@@ -726,6 +729,107 @@ void tst_BrowserMainWindow::torCircuitStatusLabel()
     QVERIFY(parented);
     QVERIFY(text.startsWith(QLatin1String("Tor:")));
     QVERIFY(!tooltip.isEmpty());
+}
+
+// READ02: the navigation toolbar carries a reader-mode toggle between
+// stop/reload and the location bar — hidden until the page probes
+// article-like, checked while the overlay is up, and always agreeing
+// with the View-menu action.
+void tst_BrowserMainWindow::readerModeButton()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QToolButton *reader = navBar->findChild<QToolButton *>(
+        QLatin1String("navReaderButton"));
+    QVERIFY(reader);
+    QVERIFY(reader->autoRaise());
+    QVERIFY(reader->isCheckable());
+    // about:blank is not article-like — nothing to read.
+    QVERIFY(reader->isHidden());
+    QVERIFY(!reader->isChecked());
+    QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
+
+    // Slot order in the toolbar's action list: Back, Forward,
+    // Stop/Reload, the reader button, then the location-bar splitter.
+    const QList<QAction *> barActions = navBar->actions();
+    int readerIndex = -1;
+    int splitterIndex = -1;
+    for (int i = 0; i < barActions.size(); ++i) {
+        QWidget *widget = navBar->widgetForAction(barActions.at(i));
+        if (widget == reader)
+            readerIndex = i;
+        else if (widget && qobject_cast<QSplitter *>(widget))
+            splitterIndex = i;
+    }
+    QCOMPARE(readerIndex, 3);
+    QCOMPARE(splitterIndex, readerIndex + 1);
+
+    // The View-menu action shares the same ReaderMode state.
+    QAction *viewAction = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu()
+            || !menuAction->text().contains(QLatin1String("View")))
+            continue;
+        for (QAction *action : menuAction->menu()->actions()) {
+            if (action->text().remove(QLatin1Char('&'))
+                    == QLatin1String("Reader Mode"))
+                viewAction = action;
+        }
+    }
+    QVERIFY(viewAction);
+    QCOMPARE(reader->isChecked(), viewAction->isChecked());
+
+    // A page the Readability heuristic calls readerable flips
+    // availability -> the button appears; click enters reader mode.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QByteArray paragraph =
+        QByteArray("The quick brown fox jumps over the lazy dog. ")
+        .repeated(30);
+    const QByteArray body = QByteArray(
+        "<html><head><title>Article</title></head><body><article>"
+        "<h1>Heading</h1><p>") + paragraph + "</p><p>" + paragraph
+        + "</p><p>" + paragraph + "</p></article></body></html>";
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server, &body]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size())
+                      + "\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    });
+    window->currentTab()->loadUrl(
+        QUrl(QStringLiteral("http://127.0.0.1:%1/article")
+                 .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(reader->isChecked(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(viewAction->isChecked(), 5000);
+
+    // The menu action exits again — the button follows.
+    viewAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!viewAction->isChecked(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isChecked(), 5000);
+
+    // Tab switches re-point the button at the current view: the fresh
+    // tab is no article, switching back shows the toggle again.
+    window->tabWidget()->newTab();
+    QTRY_VERIFY_WITH_TIMEOUT(reader->isHidden(), 10000);
+    window->tabWidget()->setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 10000);
+
+    closeWindow(window);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a
