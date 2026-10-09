@@ -83,7 +83,17 @@ if [ -n "$hits" ]; then
 				id=$2; gsub(/^[ \t]+|[ \t]+$/,"",id);
 				if (id==rid) { s=$4; gsub(/^[ \t]+|[ \t]+$/,"",s); print s; exit }
 			}' "$RUST_TASKS")
-		if [ "$st" = "done" ]; then due="$due $h"; else watch="$watch $h($dep=$st)"; fi
+		if [ "$st" = "done" ]; then
+			# dep is done on the lane — but is its work already on master?
+			# (merge commits and lane commits name the task id)
+			if git -C "$REPO" log --format=%s master --grep "$dep" 2>/dev/null | grep -q "$dep"; then
+				watch="$watch $h($dep=done+merged)"
+			else
+				due="$due $h"
+			fi
+		else
+			watch="$watch $h($dep=$st)"
+		fi
 	done
 	if [ -n "$due" ]; then
 		say "MERGE DUE: main-lane task(s) blocked on landed rust work:$due"
