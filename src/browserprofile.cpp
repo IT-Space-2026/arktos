@@ -339,7 +339,13 @@ void applySettings(QWebEngineProfile *profile)
                                  settings.value(QLatin1String("enableImages"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::LocalStorageEnabled,
                                  settings.value(QLatin1String("enableLocalStorage"), true).toBool());
-    engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
+    // TELEM02: DNS prefetch resolves every hostname a rendered page
+    // merely links to — a stream of browsing hints to the resolver the
+    // user never asked for (and in proxied contexts it leaks the name
+    // outside the tunnel).  Opt-in only; tor pins it off
+    // unconditionally in prepareProfile regardless of this setting.
+    engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled,
+        QSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
 
     // POL03: Chromium's auto-dark for web contents — pages that ship
     // their own dark scheme (prefers-color-scheme: dark) use it, and

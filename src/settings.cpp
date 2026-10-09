@@ -711,6 +711,9 @@ void SettingsDialog::loadFromSettings()
     strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     blockPings->setChecked(settings.value(QLatin1String("blockPings"), true).toBool());
     blockPrefetch->setChecked(settings.value(QLatin1String("blockPrefetch"), true).toBool());
+    // TELEM02: DNS prefetch leaks every linked hostname to the
+    // resolver — opt-in, off by default.
+    dnsPrefetch->setChecked(settings.value(QLatin1String("dnsPrefetch"), false).toBool());
     blockRemoteFonts->setChecked(settings.value(QLatin1String("blockRemoteFonts"), false).toBool());
     blockThirdPartyWebSockets->setChecked(settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
@@ -945,6 +948,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("blockPings"), blockPings->isChecked());
     settings.setValue(QLatin1String("blockPrefetch"), blockPrefetch->isChecked());
+    settings.setValue(QLatin1String("dnsPrefetch"), dnsPrefetch->isChecked());
     settings.setValue(QLatin1String("blockRemoteFonts"), blockRemoteFonts->isChecked());
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), blockThirdPartyWebSockets->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());

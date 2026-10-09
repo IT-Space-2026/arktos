@@ -54,10 +54,12 @@ browsing profile:
   Safest) for script and media handling on insecure pages.
 - **Fingerprint resistance** — opt-in countermeasures plus the honest
   caveat that they are noise, not anonymity.
-- **Zero telemetry, verified** — launch produces no unsolicited
-  connections; Chromium's background networking, component updates,
-  domain reliability, metrics and sync are disabled, and a capture-
-  proxy smoke proves it.
+- **Zero telemetry, verified** — launch *and* real browsing sessions
+  produce no unsolicited connections; Chromium's background networking,
+  component updates, domain reliability, metrics and sync are disabled,
+  and a capture-proxy smoke proves it (idle launch plus a browsing run
+  covering navigation, search and a download). DNS prefetch is off by
+  default — linked hostnames are no longer leaked to the resolver.
 - **Consent gates** — external protocol launches (mailto:, magnet:,
   custom schemes) ask first; adblock-list downloads are opt-in;
   command-line URLs are treated as untrusted input.

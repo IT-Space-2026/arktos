@@ -147,8 +147,13 @@
 #include <memory>
 
 #if defined(Q_OS_UNIX)
+#include <arpa/inet.h>
+#include <atomic>
 #include <cerrno>
+#include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <thread>
@@ -253,15 +258,261 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
 // consent-gated adblock fetches and the engine's flag latch can both
 // happen that early, and QTcpServer cannot exist before the
 // application.  Every accepted connection's first request line is
-// recorded (mutex-guarded) and answered 502 so the caller fails fast.
+// recorded (mutex-guarded); in idle mode it is answered 502 so the
+// caller fails fast, in --telemetry-browse-smoke mode
+// (s_telemetryForward) it is forwarded so real browsing works through
+// the tap and every CONNECT/Host target lands in s_telemetryHosts for
+// the after-session classification.
 static QMutex s_telemetryMutex;
 static QStringList s_telemetryHits;
+static QStringList s_telemetryHosts;
+// ip:port of every upstream the forwarding proxy dialed — the /proc
+// socket scan sees these as process-owned remote sockets, so the
+// browse smoke must not count them as proxy bypasses.
+static QSet<QString> s_telemetryUpstream;
+static std::atomic<bool> s_telemetryForward{false};
+
+static void telemetryRecord(const QByteArray &head, const QString &target)
+{
+    const QMutexLocker lock(&s_telemetryMutex);
+    s_telemetryHits.append(QString::fromLatin1(
+        head.split('\n').first().trimmed()));
+    if (!target.isEmpty() && !s_telemetryHosts.contains(target))
+        s_telemetryHosts.append(target);
+}
+
+// Bidirectional byte pump between the accepted client fd and the
+// upstream connection — dumb relay, half-close aware, idles out after
+// a minute so dead peers cannot pile up detached threads.
+static void telemetryRelay(int clientFd, int upstreamFd)
+{
+    char buffer[16384];
+    pollfd fds[2] = { { clientFd, short(POLLIN), 0 },
+                      { upstreamFd, short(POLLIN), 0 } };
+    int open = 2;
+    while (open == 2) {
+        const int ready = ::poll(fds, 2, 60000);
+        if (ready <= 0)
+            break;
+        for (int i = 0; i < 2 && open == 2; ++i) {
+            const int from = fds[i].fd;
+            const int to = fds[1 - i].fd;
+            if (from < 0
+                || !(fds[i].revents & (POLLIN | POLLERR | POLLHUP)))
+                continue;
+            const ssize_t got = ::recv(from, buffer, sizeof(buffer), 0);
+            if (got <= 0) {
+                // Half-close: the peer may still be replying, so only
+                // signal EOF to the other direction and keep pumping.
+                ::shutdown(to, SHUT_WR);
+                fds[i].fd = -1;
+                --open;
+                if (fds[1 - i].fd < 0)
+                    break;
+                continue;
+            }
+            ssize_t sent = 0;
+            while (sent < got) {
+                const ssize_t n = ::send(to, buffer + sent,
+                                         size_t(got - sent),
+                                         MSG_NOSIGNAL);
+                if (n <= 0) {
+                    open = 0;
+                    break;
+                }
+                sent += n;
+            }
+        }
+    }
+    ::close(clientFd);
+    ::close(upstreamFd);
+}
+
+// Connects to host:port with a bounded timeout.  Returns the fd or -1.
+static int telemetryConnect(const QString &host, quint16 port)
+{
+    addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *results = nullptr;
+    if (::getaddrinfo(host.toUtf8().constData(),
+                      QByteArray::number(port).constData(),
+                      &hints, &results) != 0 || !results)
+        return -1;
+    int fd = -1;
+    for (addrinfo *it = results; it && fd == -1; it = it->ai_next) {
+        const int candidate =
+            ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (candidate == -1)
+            continue;
+        const int flags = ::fcntl(candidate, F_GETFL, 0);
+        ::fcntl(candidate, F_SETFL, flags | O_NONBLOCK);
+        if (::connect(candidate, it->ai_addr, it->ai_addrlen) == 0) {
+            fd = candidate;
+        } else if (errno == EINPROGRESS) {
+            pollfd pfd;
+            pfd.fd = candidate;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (::poll(&pfd, 1, 10000) > 0
+                && ::getsockopt(candidate, SOL_SOCKET, SO_ERROR,
+                                &error, &len) == 0
+                && error == 0)
+                fd = candidate;
+        }
+        if (fd == -1)
+            ::close(candidate);
+        else
+            ::fcntl(fd, F_SETFL, flags);
+    }
+    ::freeaddrinfo(results);
+    if (fd != -1) {
+        sockaddr_storage peer;
+        socklen_t peerLength = sizeof(peer);
+        if (::getpeername(fd, reinterpret_cast<sockaddr *>(&peer),
+                          &peerLength) == 0) {
+            char ip[INET6_ADDRSTRLEN] = {};
+            quint16 peerPort = 0;
+            if (peer.ss_family == AF_INET) {
+                const sockaddr_in *v4 =
+                    reinterpret_cast<const sockaddr_in *>(&peer);
+                ::inet_ntop(AF_INET, &v4->sin_addr, ip, sizeof(ip));
+                peerPort = ntohs(v4->sin_port);
+            } else if (peer.ss_family == AF_INET6) {
+                const sockaddr_in6 *v6 =
+                    reinterpret_cast<const sockaddr_in6 *>(&peer);
+                ::inet_ntop(AF_INET6, &v6->sin6_addr, ip, sizeof(ip));
+                peerPort = ntohs(v6->sin6_port);
+            }
+            if (peerPort != 0 && ip[0] != '\0') {
+                const QMutexLocker lock(&s_telemetryMutex);
+                s_telemetryUpstream.insert(
+                    QString::fromLatin1(ip) + QLatin1Char(':')
+                    + QString::number(peerPort));
+            }
+        }
+    }
+    return fd;
+}
+
+// Serves one captured connection: read the request head, record the
+// request line + normalized host:port, then either refuse (idle mode —
+// a 502 keeps TELEM01's fail-fast semantics) or forward (browse mode —
+// CONNECT gets a 200 tunnel, plain http gets the verbatim head).
+static void telemetryConnection(int fd)
+{
+    static const char replyBadGateway[] =
+        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n";
+    static const char replyTunnel[] =
+        "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+    QByteArray head;
+    head.reserve(4096);
+    char buffer[8192];
+    while (!head.contains("\r\n\r\n") && head.size() < 65536) {
+        pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        if (::poll(&pfd, 1, 10000) <= 0) {
+            ::close(fd);
+            return;
+        }
+        const ssize_t n = ::recv(fd, buffer, sizeof(buffer), 0);
+        if (n <= 0) {
+            ::close(fd);
+            return;
+        }
+        head.append(buffer, int(n));
+    }
+    const int headEnd = head.indexOf("\r\n\r\n");
+    const QByteArray requestHead =
+        head.left(headEnd == -1 ? head.size() : headEnd + 4);
+    const QByteArray extra = head.mid(requestHead.size());
+
+    // Normalize the target: CONNECT carries host:port on the request
+    // line, plain-http requests carry it in the absolute URI or the
+    // Host header.
+    const QList<QByteArray> firstLine =
+        requestHead.split('\n').first().simplified().split(' ');
+    const bool isConnect = firstLine.count() >= 2
+        && firstLine.at(0).toUpper() == "CONNECT";
+    QString host;
+    quint16 port = 80;
+    if (isConnect) {
+        const QByteArray target = firstLine.at(1);
+        const int colon = target.lastIndexOf(':');
+        if (colon != -1) {
+            host = QString::fromUtf8(target.left(colon));
+            port = target.mid(colon + 1).toUShort();
+        } else {
+            host = QString::fromUtf8(target);
+            port = 443;
+        }
+    } else if (firstLine.count() >= 2) {
+        QByteArray authority = firstLine.at(1);
+        if (authority.startsWith("http://"))
+            authority = authority.mid(7);
+        else if (authority.startsWith("https://"))
+            authority = authority.mid(8);
+        else
+            authority.clear();   // origin-form: Host header below
+        authority = authority.left(authority.indexOf('/'));
+        if (authority.isEmpty()) {
+            for (const QByteArray &line : requestHead.split('\n')) {
+                if (line.startsWith("Host:")) {
+                    authority = line.mid(5).trimmed();
+                    break;
+                }
+            }
+        }
+        if (authority.endsWith(":443"))
+            port = 443;
+        const int colon = authority.lastIndexOf(':');
+        if (colon != -1) {
+            host = QString::fromUtf8(authority.left(colon));
+            port = authority.mid(colon + 1).toUShort();
+        } else {
+            host = QString::fromUtf8(authority);
+        }
+    }
+    const QString target = host.isEmpty()
+        ? QString()
+        : host.toLower() + QLatin1Char(':') + QString::number(port);
+    telemetryRecord(requestHead, target);
+
+    if (!s_telemetryForward.load() || host.isEmpty()) {
+        ::send(fd, replyBadGateway, sizeof(replyBadGateway) - 1,
+               MSG_NOSIGNAL);
+        ::close(fd);
+        return;
+    }
+
+    const int upstream = telemetryConnect(host, port);
+    if (upstream == -1) {
+        ::send(fd, replyBadGateway, sizeof(replyBadGateway) - 1,
+               MSG_NOSIGNAL);
+        ::close(fd);
+        return;
+    }
+    if (isConnect) {
+        ::send(fd, replyTunnel, sizeof(replyTunnel) - 1, MSG_NOSIGNAL);
+    } else {
+        ::send(upstream, requestHead.constData(),
+               size_t(requestHead.size()), MSG_NOSIGNAL);
+    }
+    if (!extra.isEmpty())
+        ::send(upstream, extra.constData(), size_t(extra.size()),
+               MSG_NOSIGNAL);
+    telemetryRelay(fd, upstream);
+}
 
 static void telemetryAcceptLoop(int listenFd)
 {
-    static const char reply[] =
-        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
-        "Connection: close\r\n\r\n";
     for (;;) {
         const int fd = ::accept(listenFd, nullptr, nullptr);
         if (fd == -1) {
@@ -269,23 +520,17 @@ static void telemetryAcceptLoop(int listenFd)
                 continue;
             return;
         }
-        char buffer[1024];
-        pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        const ssize_t n =
-            (::poll(&pfd, 1, 3000) > 0)
-                ? ::recv(fd, buffer, sizeof(buffer) - 1, 0) : -1;
-        if (n > 0) {
-            buffer[n] = '\0';
-            const QByteArray firstLine =
-                QByteArray(buffer, n).split('\n').first().trimmed();
-            const QMutexLocker lock(&s_telemetryMutex);
-            s_telemetryHits.append(QString::fromLatin1(firstLine));
-        }
-        ::send(fd, reply, sizeof(reply) - 1, MSG_NOSIGNAL);
-        ::close(fd);
+        std::thread(telemetryConnection, fd).detach();
     }
+}
+
+// Spins the event loop for ms — the smoke polling loop's QTest-free
+// wait (src does not link testlib).
+static void telemetryWait(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 // Opens the capture proxy: binds + listens on an ephemeral loopback
@@ -2274,6 +2519,7 @@ int main(int argc, char **argv)
     // managers.
     bool smokeRun = false;
     bool telemetrySmoke = false;
+    bool telemetryBrowseSmoke = false;
     bool dohSmoke = false;
     bool tlsSmoke = false;
     bool tlsOffSmoke = false;
@@ -2299,6 +2545,8 @@ int main(int argc, char **argv)
             xsleakOpen = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
+        if (arg == "--telemetry-browse-smoke")
+            telemetryBrowseSmoke = true;
         if (arg == "--doh-smoke")
             dohSmoke = true;
         if (arg == "--tls-smoke")
@@ -2435,10 +2683,32 @@ int main(int argc, char **argv)
     // built, and the app-side fetch manager must read the capture
     // proxy settings early because the adblock consent path fetches
     // inside the same constructor.
+    // TELEM02: the browse variant shares the capture socket but
+    // forwards — real page loads must succeed through the tap, and
+    // every CONNECT/Host target is recorded for classification.  The
+    // dns-prefetch and DoH keys are pinned so the measurement does not
+    // depend on the operator's settings (ARORA_TELEMETRY_PREFETCH=1
+    // arms prefetch instead — the differential proves the detector).
     quint16 telemetryProxyPort = 0;
+    QVariant savedDnsPrefetch, savedSecureDnsMode, savedProxyEnabled;
 #if defined(Q_OS_UNIX)
-    if (telemetrySmoke)
+    s_telemetryForward = telemetryBrowseSmoke;
+    if (telemetrySmoke || telemetryBrowseSmoke)
         telemetryProxyPort = startTelemetryCapture();
+    if (telemetryBrowseSmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        savedDnsPrefetch = settings.value(QLatin1String("dnsPrefetch"));
+        savedSecureDnsMode =
+            settings.value(QLatin1String("secureDnsMode"));
+        settings.setValue(QLatin1String("dnsPrefetch"),
+                          qEnvironmentVariableIntValue(
+                              "ARORA_TELEMETRY_PREFETCH") == 1);
+        settings.setValue(QLatin1String("secureDnsMode"), 0);
+        settings.endGroup();
+        savedProxyEnabled =
+            settings.value(QLatin1String("proxy/enabled"));
+    }
 #endif
     if (telemetryProxyPort != 0) {
         const QByteArray endpoint =
@@ -2529,7 +2799,9 @@ int main(int argc, char **argv)
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "reader-smoke",
-        "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
+        "telemetry-smoke", "telemetry-browse-smoke",
+        "telemetry-prefetch-child-smoke",
+        "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
@@ -9384,6 +9656,16 @@ int main(int argc, char **argv)
             torWinFail(QLatin1String("tor profile is not off-the-record"));
             return application.exec();
         }
+        // TELEM02: DNS prefetch on a proxied profile would resolve
+        // names through the system resolver — outside the SOCKS
+        // tunnel.  prepareProfile pins it off unconditionally; a
+        // regression here is a proxy-bypass class bug.
+        if (BrowserApplication::webEngineProfile()->settings()
+                ->testAttribute(QWebEngineSettings::DnsPrefetchEnabled)) {
+            torWinFail(QLatin1String(
+                "DnsPrefetchEnabled is on for the tor profile"));
+            return application.exec();
+        }
         if (!BrowserApplication::isPrivate()) {
             torWinFail(QLatin1String("tor mode does not imply private"));
             return application.exec();
@@ -9906,6 +10188,381 @@ int main(int argc, char **argv)
             finish(false);
         });
         view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                           .arg(server->serverPort())));
+        return application.exec();
+    }
+
+    // TELEM02: --telemetry-browse-smoke drives a real browsing session
+    // through the capture proxy in forwarding mode — page navigation,
+    // a search-engine query and a download — then classifies every
+    // endpoint observed during the session.  The browsed hosts are
+    // content; certificate-validation endpoints (OCSP/CRL) are
+    // documented-essential engine traffic; anything else is a
+    // telemetry suspect that fails the run.  A second phase proves the
+    // DNS-prefetch toggle end-to-end: child runs load a fixture page
+    // linking a unique never-visited hostname and the child's netlog
+    // is searched for a resolver event naming it (off = absent,
+    // on = present — the ON control proves the detector works).
+#if defined(Q_OS_UNIX)
+    if (telemetryBrowseSmoke) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "telemetry-browse-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        if (telemetryProxyPort == 0)
+            qWarning() << "telemetry-browse-smoke: capture proxy"
+                          " unavailable — only the socket scan runs";
+
+        // The app-side fetch manager picked the capture proxy up from
+        // the settings written before the application ctor — reload so
+        // a stale value cannot leak in.
+        networkAccessManager->loadSettings();
+
+        const bool prefetchArmed =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+        check(profile->settings()->testAttribute(
+                  QWebEngineSettings::DnsPrefetchEnabled) == prefetchArmed,
+              QStringLiteral("DnsPrefetchEnabled matches pinned value"));
+
+        // Watch for process-tree sockets that bypass the proxy
+        // (QUIC, direct connects, non-proxied DNS) the whole session.
+        auto socketHits = std::make_shared<QStringList>();
+#if defined(Q_OS_LINUX)
+        QTimer *socketPoll = new QTimer(&application);
+        socketPoll->setInterval(250);
+        QObject::connect(socketPoll, &QTimer::timeout, &application,
+                         [socketHits]() {
+            const QSet<QString> endpoints = processRemoteEndpoints();
+            for (const QString &endpoint : endpoints) {
+                if (!socketHits->contains(endpoint))
+                    socketHits->append(endpoint);
+            }
+        });
+        socketPoll->start();
+#endif
+
+        // Browsed targets: two navigation legs (one single-host site,
+        // one search-engine query) plus a download leg, all over the
+        // tapped proxy.  ARORA_TELEMETRY_URLS overrides the set.
+        QStringList urls{
+            QStringLiteral("https://example.com/"),
+            QStringLiteral("https://html.duckduckgo.com/html/?q=arora"),
+        };
+        const QByteArray envUrls = qgetenv("ARORA_TELEMETRY_URLS");
+        if (!envUrls.isEmpty()) {
+            urls = QString::fromUtf8(envUrls).split(
+                QLatin1Char(','), Qt::SkipEmptyParts);
+        }
+
+        QStringList browsedHosts;
+        const auto noteHost = [&browsedHosts](const QUrl &url) {
+            const QString host = url.host().toLower();
+            if (!host.isEmpty() && !browsedHosts.contains(host))
+                browsedHosts.append(host);
+        };
+        for (const QString &text : urls) {
+            const QUrl url(text);
+            noteHost(url);
+            QEventLoop loop;
+            QTimer::singleShot(30000, &loop,
+                               [&loop]() { loop.exit(1); });
+            QObject::connect(view, &QWebEngineView::loadFinished, &loop,
+                             [&loop](bool ok) { loop.exit(ok ? 0 : 2); });
+            view->loadUrl(url);
+            const int rc = loop.exec();
+            QObject::disconnect(view, &QWebEngineView::loadFinished,
+                                &loop, nullptr);
+            noteHost(view->url());
+            check(rc == 0,
+                  QStringLiteral("load %1 (rc %2, final %3)")
+                      .arg(url.toString(), QString::number(rc),
+                           view->url().toString()));
+        }
+
+        // Download leg — the file lands in a scratch dir, never the
+        // operator's real Downloads.
+        const QString downloadDir = QDir::temp().filePath(
+            QStringLiteral("arora-telemetry-dl"));
+        QDir().mkpath(downloadDir);
+        downloadManager->setDownloadDirectory(downloadDir);
+        {
+            const int before = downloadManager->model()->rowCount();
+            downloadManager->download(view->page(),
+                QUrl(QStringLiteral("https://example.com/")), false);
+            QElapsedTimer deadline;
+            deadline.start();
+            bool completed = false;
+            while (deadline.elapsed() < 20000 && !completed) {
+                for (int row = before;
+                     row < downloadManager->model()->rowCount(); ++row) {
+                    completed = downloadManager->model()->data(
+                        downloadManager->model()->index(row),
+                        DownloadModel::CompletedRole).toBool();
+                    if (completed)
+                        break;
+                }
+                if (completed)
+                    break;
+                telemetryWait(250);
+            }
+            check(completed,
+                  QStringLiteral("download leg completed through the proxy"));
+        }
+
+        // Settle: telemetry often fires on a delay after activity.
+        int settleMs =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_SETTLE_MS");
+        if (settleMs <= 0)
+            settleMs = 15000;
+        telemetryWait(settleMs);
+
+        // Classification — every endpoint the tap observed gets a
+        // verdict.  Content = shares the registrable domain of a
+        // browsed host; essential = engine-managed certificate
+        // validation (OCSP/CRL — refusing it would weaken TLS);
+        // anything else fails the run.
+        const auto domainOf = [](const QString &host) {
+            const QStringList labels = host.split(QLatin1Char('.'));
+            if (labels.count() >= 2)
+                return labels.mid(labels.count() - 2).join(QLatin1Char('.'));
+            return host;
+        };
+        QStringList extraContent;
+        const QByteArray envContent =
+            qgetenv("ARORA_TELEMETRY_CONTENT_HOSTS");
+        for (const QByteArray &entry : envContent.split(',')) {
+            const QString host =
+                QString::fromUtf8(entry).trimmed().toLower();
+            if (!host.isEmpty())
+                extraContent.append(host);
+        }
+        const auto isContent = [&](const QString &host) {
+            for (const QString &browsed : browsedHosts) {
+                if (host == browsed || host.endsWith(QLatin1Char('.') + browsed)
+                    || domainOf(host) == domainOf(browsed))
+                    return true;
+            }
+            for (const QString &extra : extraContent) {
+                if (host == extra
+                    || host.endsWith(QLatin1Char('.') + extra))
+                    return true;
+            }
+            return false;
+        };
+        const auto isEssential = [](const QString &host) {
+            // OCSP/CRL revocation fetches and certificate-transparency
+            // log endpoints — engine-managed on behalf of the user.
+            return host.contains(QLatin1String("ocsp"))
+                || host.contains(QLatin1String("crl"))
+                || host.endsWith(QLatin1String(".pki.goog"));
+        };
+
+        QStringList observedHosts;
+        QSet<QString> upstreams;
+        {
+            const QMutexLocker lock(&s_telemetryMutex);
+            observedHosts = s_telemetryHosts;
+            upstreams = s_telemetryUpstream;
+        }
+        int suspects = 0;
+        for (const QString &endpoint : observedHosts) {
+            const int colon = endpoint.lastIndexOf(QLatin1Char(':'));
+            const QString host = endpoint.left(colon);
+            QString verdict;
+            if (isContent(host))
+                verdict = QStringLiteral("content");
+            else if (isEssential(host))
+                verdict = QStringLiteral("essential:cert-validation");
+            else {
+                verdict = QStringLiteral("NON-CONTENT");
+                ++suspects;
+            }
+            qInfo() << "telemetry-browse-smoke: endpoint" << endpoint
+                    << "->" << verdict;
+        }
+        for (const QString &endpoint : *socketHits) {
+            const int colon = endpoint.lastIndexOf(QLatin1Char(':'));
+            const QString port = endpoint.mid(colon + 1);
+            QString verdict;
+            // The forwarding proxy dials upstreams in-process, so its
+            // own connects show up in the /proc scan; and every
+            // upstream hostname it resolves needs system DNS (:53).
+            // Both are expected plumbing, not bypasses.
+            if (upstreams.contains(endpoint))
+                verdict = QStringLiteral("proxied-upstream");
+            else if (port == QLatin1String("53")
+                     || port == QLatin1String("853"))
+                verdict = QStringLiteral("essential:system-dns");
+            else {
+                verdict = QStringLiteral("NON-CONTENT");
+                ++suspects;
+            }
+            qInfo() << "telemetry-browse-smoke: direct socket"
+                    << endpoint << "->" << verdict;
+        }
+        check(suspects == 0,
+              QStringLiteral("%1 non-content endpoint(s) — every one is"
+                             " unsolicited outbound traffic")
+                  .arg(suspects));
+
+        // DNS-prefetch probe: a child run loads a fixture page whose
+        // only reference to a unique .invalid hostname is a
+        // rel=dns-prefetch link + a plain anchor — a resolver event for
+        // that name in the child's netlog means the engine pre-resolved
+        // a site the user never visited.  Run twice: pinned OFF must
+        // produce nothing, the ON control must — an ON run with no
+        // observation means the netlog detector itself is broken, not
+        // that prefetch is safely off.
+        const QString probeTag = QStringLiteral("telem02-%1")
+            .arg(QCoreApplication::applicationPid());
+        const auto prefetchProbe = [&](bool armed) {
+            const QString probeHost =
+                probeTag + QLatin1String(".invalid");
+            const QString logPath = QDir::temp().filePath(
+                QStringLiteral("arora-telemetry-netlog-%1.json")
+                    .arg(armed ? QLatin1String("on")
+                               : QLatin1String("off")));
+            QFile::remove(logPath);
+
+            QSettings settings;
+            settings.setValue(QLatin1String("privacy/dnsPrefetch"),
+                              armed);
+            settings.sync();
+
+            QProcessEnvironment env =
+                QProcessEnvironment::systemEnvironment();
+            // The inherited env carries this run's --proxy-server —
+            // the child must go direct so its page load cannot poke
+            // the parent's tap.  Its own profile setup re-adds the
+            // privacy kill-flags before the engine latches.
+            env.insert(QStringLiteral("QTWEBENGINE_CHROMIUM_FLAGS"),
+                       QStringLiteral("--log-net-log=%1"
+                                      " --net-log-capture-mode=Everything")
+                           .arg(logPath));
+            env.insert(QStringLiteral("ARORA_TELEMETRY_PROBE_HOST"),
+                       probeHost);
+            env.insert(QStringLiteral("ARORA_TELEMETRY_PREFETCH"),
+                       armed ? QStringLiteral("1")
+                             : QStringLiteral("0"));
+
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.setProcessEnvironment(env);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList{QStringLiteral(
+                            "--telemetry-prefetch-child-smoke")});
+            const bool childOk = child.waitForFinished(90000)
+                && child.exitStatus() == QProcess::NormalExit
+                && child.exitCode() == 0;
+            if (!childOk)
+                return QStringLiteral("child-failed");
+            QFile log(logPath);
+            return (log.open(QIODevice::ReadOnly)
+                    && QString::fromUtf8(log.readAll())
+                           .contains(probeHost))
+                ? QStringLiteral("resolved")
+                : QStringLiteral("not-resolved");
+        };
+        const QString offVerdict = prefetchProbe(false);
+        const QString onVerdict = prefetchProbe(true);
+        qInfo() << "telemetry-browse-smoke: prefetch probe off:"
+                << offVerdict << " on:" << onVerdict;
+        check(offVerdict == QLatin1String("not-resolved"),
+              QStringLiteral("prefetch off: probe host unresolved"
+                             " (got %1)").arg(offVerdict));
+        check(onVerdict == QLatin1String("resolved"),
+              QStringLiteral("prefetch on control: probe host resolved"
+                             " (got %1 — detector broken, not safe)")
+                  .arg(onVerdict));
+
+        // Restore the pinned settings + undo the capture proxy so the
+        // run leaves the operator's store as it found it.
+        {
+            QSettings settings;
+            const auto restore = [&settings](const QString &key,
+                                             const QVariant &saved) {
+                if (saved.isValid())
+                    settings.setValue(key, saved);
+                else
+                    settings.remove(key);
+            };
+            restore(QLatin1String("privacy/dnsPrefetch"),
+                    savedDnsPrefetch);
+            restore(QLatin1String("privacy/secureDnsMode"),
+                    savedSecureDnsMode);
+            restore(QLatin1String("proxy/enabled"),
+                    savedProxyEnabled);
+        }
+        QDir(downloadDir).removeRecursively();
+
+        qInfo() << "telemetry-browse-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL") << failures
+                << "failures";
+        return failures == 0 ? 0 : 1;
+    }
+#endif
+
+    // TELEM02: child half of the DNS-prefetch probe — boots with
+    // privacy/dnsPrefetch pre-pinned by the parent and a netlog path
+    // in QTWEBENGINE_CHROMIUM_FLAGS, serves a fixture page that
+    // references ARORA_TELEMETRY_PROBE_HOST only via rel=dns-prefetch
+    // and a plain anchor, loads it, and waits long enough for a
+    // resolver job to appear in the log before exiting.
+    if (args.contains(QLatin1String("--telemetry-prefetch-child-smoke"))) {
+        const QString probeHost = QString::fromUtf8(
+            qgetenv("ARORA_TELEMETRY_PROBE_HOST"));
+        const bool armed =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+        if (probeHost.isEmpty()) {
+            qInfo() << "telemetry-prefetch-child: FAIL (no probe host)";
+            return 1;
+        }
+        if (profile->settings()->testAttribute(
+                QWebEngineSettings::DnsPrefetchEnabled) != armed) {
+            qInfo() << "telemetry-prefetch-child: FAIL (attribute"
+                    << "mismatch, armed=" << armed << ")";
+            return 1;
+        }
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "telemetry-prefetch-child: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, probeHost]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            const QByteArray body =
+                "<html><head><title>prefetch-probe</title>"
+                "<link rel=\"dns-prefetch\" href=\"//" +
+                probeHost.toUtf8() + "\">"
+                "</head><body><a href=\"https://" +
+                probeHost.toUtf8() + "/x\">probe</a></body></html>";
+            client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                          "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+            client->disconnectFromHost();
+        });
+
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [&application](bool) {
+            // Prefetch is asynchronous to the load — give the resolver
+            // a generous window before the run ends (the netlog file
+            // flushes on exit).
+            QTimer::singleShot(8000, &application,
+                               [&application]() { application.exit(0); });
+        });
+        QTimer::singleShot(30000, &application, [&application]() {
+            qInfo() << "telemetry-prefetch-child: FAIL (load timeout)";
+            application.exit(1);
+        });
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/probe")
                            .arg(server->serverPort())));
         return application.exec();
     }

@@ -1691,6 +1691,19 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="dnsPrefetch">
+            <property name="toolTip">
+             <string>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</string>
+            </property>
+            <property name="text">
+             <string>Prefetch DNS for linked sites</string>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QCheckBox" name="blockRemoteFonts">
             <property name="toolTip">
              <string>Drop downloadable web fonts — font requests fingerprint your GPU/OS text stack and contact third-party hosts on every visit. Local and system fonts still work, but sites relying on icon fonts may render wrong.</string>
@@ -2819,6 +2832,7 @@
   <tabstop>secureDnsServer</tabstop>
   <tabstop>blockPings</tabstop>
   <tabstop>blockPrefetch</tabstop>
+  <tabstop>dnsPrefetch</tabstop>
   <tabstop>blockRemoteFonts</tabstop>
   <tabstop>blockThirdPartyWebSockets</tabstop>
   <tabstop>clearOnExit</tabstop>

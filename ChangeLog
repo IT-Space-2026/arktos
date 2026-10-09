@@ -91,7 +91,11 @@ Security:
 - Real pop-up blocker for shaped window.open (POPUP01).
 - Fingerprint-resistance countermeasures (PRIV02).
 - Third-party-cookie and connection/storage privacy group (PRIV01).
-- Zero telemetry verified by capture proxy (TELEM01).
+- Zero telemetry verified by capture proxy (TELEM01) — extended to a
+  forwarding capture that drives a real browsing session (navigation,
+  search, download) and asserts every connection is content or
+  essential; DNS prefetch is now off by default and pinned off in Tor
+  windows (TELEM02).
 - DNS-over-HTTPS via Qt DNS mode (DOH01).
 - WebRTC/DNS leak verification (LEAK01); anonymity smoke harness
   (ANON01).
