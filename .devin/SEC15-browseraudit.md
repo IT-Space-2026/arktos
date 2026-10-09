@@ -282,3 +282,118 @@ over to SEC16C for the named-missing-API write-ups.
 - Raw captures: `/tmp/browseraudit-app-final.json`,
   `/tmp/browseraudit-bare.json`; bisection JSONs `/tmp/audit-f33-*`,
   `/tmp/audit-c14-*`, `/tmp/audit-c3142-app.json`.
+
+## SEC16C — engine-side named-missing-API register
+
+Every warning that remains ENGINE-SIDE after SEC16B's mitigation pass,
+with the specific embedder-API gap, the bundled-engine version
+(Qt 6.12.0 / Chromium 140.0.7339.225) and an upstream reference.
+App-layer reachability was evaluated in SEC16B — these are the items
+the QtWebEngine API surface genuinely cannot observe or drive.
+
+### 440–447 (manifest-src) — engine never issues the manifest fetch
+
+- **Missing API.** QtWebEngine exposes no manifest machinery at all:
+  no `QWebEngine*` class or signal reports a page's declared manifest,
+  there is no request type for it on `QWebEngineUrlRequestInfo`, and
+  no embedder hook exists to trigger the fetch. In upstream Chromium
+  the `<link rel="manifest">` fetch is driven browser-side by
+  `content::ManifestManagerHost` (implements
+  `blink::mojom::ManifestManager`, see
+  `content/browser/manifest/manifest_manager_host.cc`) as part of the
+  installability/PWA pipeline — the Qt port does not wire this path,
+  so the request is never created and `manifest-src` has nothing to
+  enforce against. Verified locally: zero manifest requests reach the
+  server on either profile (bare + app).
+- **Disposition.** Engine-side, absent feature (not a security
+  regression — an unfetched manifest cannot be abused). Re-check on
+  Qt upgrade: if a future QtWebEngine version surfaces manifest
+  loading, the interceptor automatically sees it as a normal request
+  and CSP enforcement falls out of Chromium itself.
+- **Upstream reference.** `content/browser/manifest/manifest_manager_host.cc`,
+  `third_party/blink/public/mojom/manifest/manifest_manager.mojom`
+  (Chromium 140 tree); the fetch initiator lives in the
+  `chrome/browser/web_applications` installability pipeline, which is
+  outside the `//content` layer QtWebEngine embeds.
+
+### 464 (report-to) — Reporting-API delivery is engine-scheduled
+
+- **Missing API.** CSP `report-to` / `Reporting-Endpoints` reports are
+  delivered by Chromium's `network::ReportingService`
+  (`net/reporting/README.md` in the Chromium tree): reports are
+  cached and sent out-of-band by `ReportingDeliveryAgent` with
+  batching + backoff — Chrome's own documentation states delivery can
+  be delayed "up to a minute" and that there is no way to control the
+  timing. Nothing can arrive inside the suite's 300 ms observation
+  window, and no QtWebEngine API exists to flush or observe queued
+  reports. A Chromium debug switch (`--short-reporting-delay`)
+  shortens the delivery interval, but changing it would not alter the
+  app outcome — PING01 blocks `ResourceTypeCspReport` uploads by
+  privacy policy anyway, so the warning is intentional in-app.
+- **Disposition.** Engine-side (scheduling) + app-intentional
+  (blocked delivery). Whether Reporting-API deliveries reach the
+  interceptor under a different resource type than
+  `ResourceTypeCspReport` is PING02's residual question — tracked
+  there, not here.
+- **Upstream reference.** `net/reporting/README.md` +
+  `net/reporting/reporting_delivery_agent.cc` (Chromium 140 tree);
+  developer.chrome.com Reporting-API docs ("the browser controls when
+  they're sent … up to a minute").
+
+### 391/393 context — no sandbox/opaque-origin attribution on the request surface
+
+- **Missing API.** `QWebEngineCookieStore::FilterRequest` exposes
+  exactly `firstPartyUrl`, `origin` and `thirdParty`
+  (doc.qt.io/qt-6/qwebenginecookiestore-filterrequest.html), and
+  `QWebEngineUrlRequestInfo` exposes URL / resource type /
+  navigation type / first-party URL / headers — neither carries the
+  requesting frame's sandbox flags or an opaque-origin indicator, so
+  the SEC16 cookie-filter lever cannot distinguish a sandboxed iframe's
+  cookie access from a normal subresource one. The attribution data
+  exists engine-side (`network::ResourceRequest` trusted params /
+  render-frame context) but is not plumbed to the embedder.
+- **Disposition.** Engine-side observation gap. SEC14 already proved
+  the underlying behavior spec-correct end-to-end (cookie access
+  allowed under `allow-same-origin`, denied for opaque origins); the
+  391/393 flip-flops are the suite's outer-`load` timing race, so
+  there is additionally no defect to mitigate — the gap only limits
+  *optional stricter* filtering.
+- **Upstream reference.** Qt 6.12 API surface (FilterRequest /
+  UrlRequestInfo docs, above); internally Chromium tracks this via
+  `network::mojom::CookieAccessObserver`-adjacent frame context, not
+  exposed to `QWebEngineUrlRequestInterceptor` implementations.
+
+### 454/456/458 (+450/451/455 shared) — redirect-leg Referer recompute
+
+- **Missing API.** `QWebEngineUrlRequestInfo::setHttpHeader` can
+  rewrite a Referer the request already carries at intercept time, but
+  on redirect hops Chromium recomputes the referrer for the follow-up
+  request inside the network stack
+  (`services/network/redirect_util.cc` — `RedirectUtil::UpdateHttpRequest`
+  re-derives `referer`/`referer_policy` from the redirect response),
+  and the embedder API exposes no per-request referrer-policy override
+  or redirect-attribution hook. This is also why REF01's documented
+  residual (a cross-site redirect *response* leg can reveal the
+  original full URL) cannot be closed from the interceptor.
+- **Disposition.** The 454/456/458 warnings themselves are a harness
+  artifact — verified policy-independent in SEC16B (identical warn
+  sets under `refererPolicy=0` vs Trimmed; the warn subset flip-flops
+  on the bare profile too, since `/set_referer`/`get_referer_policy`
+  are session-global). The redirect-leg blind spot is the real
+  engine-side bound; noted for a future Qt upgrade that surfaces
+  referrer-policy control.
+- **Upstream reference.** `services/network/redirect_util.cc`
+  (`RedirectUtil::UpdateHttpRequest`, Chromium 140 tree);
+  `QWebEngineUrlRequestInfo` API (no referrerPolicy field, Qt 6.12).
+
+### Register summary
+
+| tests | item | missing embedder API | upstream ref |
+|-------|------|----------------------|--------------|
+| 440–447 | manifest-src never evaluated — fetch never issued | manifest fetch/observe hook (`QWebEngine*` manifest API) | `content/browser/manifest/manifest_manager_host.cc`, `blink.mojom.ManifestManager` |
+| 464 | report-to never arrives in-window | Reporting-API flush/observe control | `net/reporting/README.md`, `reporting_delivery_agent.cc` |
+| 391/393 ctx | sandbox cookie attribution unreachable | frame sandbox/opaque-origin flag on `FilterRequest`/`UrlRequestInfo` | Qt 6.12 FilterRequest docs (3 fields only) |
+| 454–458 ctx | redirect-leg Referer recompute past interceptor | per-request referrer policy / redirect-attribution hook | `services/network/redirect_util.cc` `UpdateHttpRequest` |
+
+No engine-side item lacks a specific citation; all four are Qt-6.12 /
+Chromium-140.0.7339.225 API-surface bounds, not generic "can't fix".
