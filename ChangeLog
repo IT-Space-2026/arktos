@@ -51,6 +51,8 @@ UI:
 - Accessible names on every chrome control (A11Y01).
 - History entries show real site favicons that persist across restarts
   (host-keyed icon store under the data dir; HIST01).
+- File menu: "New Tor Window" moved up next to New Window/New Tab
+  instead of sitting at the bottom (MENU02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -99,6 +99,7 @@ private slots:
     void menuPopulation();
     void dialogSlots();
     void toolsMenuDedup();
+    void fileMenuOrder();
     void stateSerialization();
     void events();
     void closeConfirm();
@@ -313,6 +314,46 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     webSearch->trigger();
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    closeWindow(window);
+}
+
+// MENU02: "New Tor Window" rides in the New-X group right after
+// "New Tab" (the slot PTAB01's "New Private Tab" will take), not
+// stranded at the bottom of the File menu next to Close Window.
+void tst_BrowserMainWindow::fileMenuOrder()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *fileMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("File")))
+            fileMenu = menuAction->menu();
+    }
+    QVERIFY(fileMenu);
+
+    QStringList entries;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->isSeparator())
+            continue;
+        QString title = action->menu() ? action->menu()->title()
+                                       : action->text();
+        entries << title.remove(QLatin1Char('&'));
+    }
+
+    const int newWindow = entries.indexOf(QLatin1String("New Window"));
+    const int newTab = entries.indexOf(QLatin1String("New Tab"));
+    const int newTor = entries.indexOf(QLatin1String("New Tor Window"));
+    const int privateBrowsing =
+        entries.indexOf(QLatin1String("Private Browsing..."));
+    const int closeWindowIndex =
+        entries.indexOf(QLatin1String("Close Window"));
+    QVERIFY(newWindow != -1 && newTab != -1 && newTor != -1);
+    QVERIFY(newWindow < newTab);
+    QVERIFY(newTab < newTor);
+    QVERIFY(newTor < privateBrowsing);
+    QVERIFY(newTor < closeWindowIndex);
     closeWindow(window);
 }
 
