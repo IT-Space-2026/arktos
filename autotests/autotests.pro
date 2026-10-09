@@ -26,6 +26,7 @@ SUBDIRS  = \
     locationbar \
     modelmenu \
     modeltoolbar \
+    navigationpolicy \
     networkaccessmanager \
     networkcookiejar \
     opensearchengine \

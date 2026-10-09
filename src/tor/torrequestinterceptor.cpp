@@ -20,9 +20,31 @@
 #include "torrequestinterceptor.h"
 
 #include "adblockrequestinterceptor.h"
+#include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
+#include "scriptcontrolmanager.h"
 
 #include <qwebengineurlrequestinfo.h>
+
+// ENG02: thin adapter — the tor pipeline variant runs inside
+// Engine::NavigationPolicy (tor_mode manifest flag): unconditional
+// clearnet http->https upgrade on every resource type, .onion exempt,
+// shared strip/blocklist/ping/resource/ws/script stages, at least the
+// Trimmed referer policy.  No branching policy logic lives here.
+
+using Engine::HeaderList;
+using Engine::NavigationPolicy;
+using Engine::PolicyRequest;
+using Engine::PolicyVerdict;
+
+static HeaderList toHeaderList(const QHash<QByteArray, QByteArray> &headers)
+{
+    HeaderList list;
+    list.reserve(headers.size());
+    for (auto it = headers.cbegin(); it != headers.cend(); ++it)
+        list.append(qMakePair(it.key(), it.value()));
+    return list;
+}
 
 TorRequestInterceptor::TorRequestInterceptor(AdBlockNetwork *network, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
@@ -33,84 +55,40 @@ TorRequestInterceptor::TorRequestInterceptor(AdBlockNetwork *network, QObject *p
 void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — no GUI state may be touched.
-    //
-    // STALL01: internal/non-web requests (devtools:, chrome:, qrc:,
-    // arora-*:, abp:, ...) pass through untouched, same as in the
-    // privacy and adblock interceptors.
-    if (!AdBlockRequestInterceptor::isWebRequestScheme(
-            info.requestUrl().scheme()))
-        return;
-    const QUrl url = info.requestUrl();
-    // SEC18: the anti-phishing/malware domain blocklist applies in
-    // tor windows too — a listed host is refused before any redirect
-    // stage; the recorded refusal lets WebPage swap in the warning
-    // interstitial.  (.onion hosts can't appear on a domain list, so
-    // this costs one hash probe per navigation.)
-    if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
-        && PrivacyRequestInterceptor::shouldBlockDomain(url)) {
-        PrivacyRequestInterceptor::recordBlockedDomainNav(url);
+    PolicyRequest req;
+    req.url = info.requestUrl();
+    req.firstPartyUrl = info.firstPartyUrl();
+    req.resourceType = static_cast<int>(info.resourceType());
+    req.method = info.requestMethod();
+    req.headers = toHeaderList(info.httpHeaders());
+    req.torMode = true;
+    req.minRefererLevel = PrivacyRequestInterceptor::RefererTrimmed;
+    switch (info.resourceType()) {
+    case QWebEngineUrlRequestInfo::ResourceTypeScript:
+    case QWebEngineUrlRequestInfo::ResourceTypeWorker:
+    case QWebEngineUrlRequestInfo::ResourceTypeSharedWorker:
+    case QWebEngineUrlRequestInfo::ResourceTypeServiceWorker:
+        req.scriptAllowed = ScriptControlManager::isAllowedHostSnapshot(
+            req.firstPartyUrl.host());
+        break;
+    default:
+        break;
+    }
+
+    const PolicyVerdict verdict = NavigationPolicy::evaluate(req);
+    switch (verdict.action) {
+    case PolicyVerdict::Action::Block:
         info.block(true);
         return;
-    }
-    // SEC17: tracking-param stripping applies in tor windows too — a
-    // click identifier is a cross-site identifier regardless of the
-    // exit path.  Folded into the http->https upgrade below so a
-    // tracked clearnet URL costs one redirect; .onion http: URLs keep
-    // their scheme and still strip.  GET/HEAD only, same as the
-    // privacy interceptor.
-    QUrl target = url;
-    if (PrivacyRequestInterceptor::stripTrackingParamsEnabled()
-        && (info.requestMethod() == QByteArrayLiteral("GET")
-            || info.requestMethod() == QByteArrayLiteral("HEAD")))
-        target = PrivacyRequestInterceptor::strippedUrl(url);
-    if (url.scheme() == QLatin1String("http")
-        && !url.host().endsWith(QLatin1String(".onion"))) {
-        target.setScheme(QLatin1String("https"));
-        info.redirect(target);
+    case PolicyVerdict::Action::Redirect:
+        info.redirect(verdict.redirectUrl);
+        return;
+    case PolicyVerdict::Action::Allow:
+        if (verdict.refererSet)
+            info.setHttpHeader("Referer", verdict.refererValue);
+        m_adBlock->interceptRequest(info);
+        return;
+    case PolicyVerdict::Action::Pass:
         return;
     }
-    if (target != url) {
-        info.redirect(target);
-        return;
-    }
-    // PING01: beacons, <a ping> audits and CSP reports are telemetry
-    // uploads — the shared privacy toggle drops them in tor windows
-    // too; a deanonymizing POST is the last thing that should slip.
-    // PING02: isPingTelemetryRequest also trips on Sec-Fetch-Dest:
-    // report for any future Reporting-API delivery path.
-    if (PrivacyRequestInterceptor::blockPingsEnabled()
-        && PrivacyRequestInterceptor::isPingTelemetryRequest(info)) {
-        info.block(true);
-        return;
-    }
-    // SAFE04: prefetch loads connect to sites the user never visited —
-    // the shared privacy toggles apply in tor windows too, where an
-    // unsolicited connection is the most suspicious traffic of all.
-    if (PrivacyRequestInterceptor::shouldBlockResource(
-            info.resourceType(), info.httpHeaders())) {
-        info.block(true);
-        return;
-    }
-    // XSLEAK03: the opt-in third-party WebSocket block applies in tor
-    // windows too — a cross-site socket's connect outcome is the same
-    // state oracle, and the upgrade is interceptor-visible.
-    if (PrivacyRequestInterceptor::shouldBlockWebSocket(
-            info.firstPartyUrl(), info.requestUrl(),
-            info.resourceType())) {
-        info.block(true);
-        return;
-    }
-    // SECLVL: the only http: left here is .onion — Safer drops its
-    // script-execution fetches just like on the normal profile.
-    if (PrivacyRequestInterceptor::shouldBlockScript(
-            info.firstPartyUrl(), info.resourceType())) {
-        info.block(true);
-        return;
-    }
-    // REF01: a tor window must never leak where the user came from —
-    // at least the Trimmed policy applies here even if the normal
-    // profiles run EngineDefault; a stricter user choice still wins.
-    PrivacyRequestInterceptor::applyRefererPolicy(
-        info, PrivacyRequestInterceptor::RefererTrimmed);
-    m_adBlock->interceptRequest(info);
 }

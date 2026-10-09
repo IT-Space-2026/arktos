@@ -309,3 +309,13 @@ I'll start by checking the current state of the repository and fetching from ori
 
 One pass done — stopping here.
 [2026-10-09 22:45:19] merge run exited rc=0
+[2026-10-09 23:20:22] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching.The working tree is dirty — an agent appears mid-run (navigation policy work + log files). Per the rules, I'll only skip a lane if the merge actually conflicts with those dirty files. Let me check lane status.rust-work is at 0 (skip). ui-work is 1 ahead. Let me inspect what that commit changes before merging.Clean merge, no conflicts. Now let me check the build environment and WORKLOG conventions before verifying.The merge auto-resolved cleanly. Now verifying the build (this may take a while — running in background).Build is running in background. Waiting for it to complete.Build succeeded — `arora` linked cleanly. Pushing master now.Push done (`965b6b7..f6bd7b8`). Now appending the MERGEWATCH line to WORKLOG.md.Merge pass complete — stopping here.
+
+**Summary:**
+- **rust-work**: 0 commits ahead — skipped
+- **ui-work**: 1 commit ahead (`THEME01` dark-mode UI switch) — merged cleanly via `ort`, zero conflicts. WORKLOG.md, ChangeLog, README.md, settings.cpp/.ui all auto-merged. No overlap with the dirty working tree (navigationpolicy/rustcore agent work untouched)
+- **Build**: `make -C src -j2` succeeded — `arora` linked cleanly
+- **Push**: `965b6b7..f6bd7b8 master -> master`
+- **WORKLOG**: merge line appended (left dirty alongside the other agent-owned log files, per convention)
+[2026-10-09 23:22:29] merge run exited rc=0

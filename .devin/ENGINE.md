@@ -28,7 +28,11 @@ a thin WebEngine adapter:
 - `src/webpage.h`, `src/webpage.cpp` / `src/webview.h`, `src/webview.cpp` — the page/view pair.
 - `src/browserprofile.h`, `src/browserprofile.cpp` — profile lifecycle + settings apply.
 - `src/network/privacyrequestinterceptor.*`, `src/adblock/adblockrequestinterceptor.*`,
-  `src/tor/torrequestinterceptor.*` — request-policy adapters (ENG02).
+  `src/tor/torrequestinterceptor.*` — request-policy marshaling adapters
+  (ENG02 done: every verdict comes from `Engine::NavigationPolicy` —
+  rustcore `policy.rs` when built, an identical Qt fallback otherwise;
+  `src/engine/navigationpolicy.*` is that engine-neutral seam and holds
+  no WebEngine types).
 - `src/network/schemeaccesshandler.*`, `src/network/fileaccesshandler.*`,
   `src/adblock/adblockresourcehandler.*`, `src/adblock/adblockschemeaccesshandler.*` —
   custom-scheme handlers.
@@ -62,8 +66,8 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/downloadworker.h` | comment only — the sandboxed worker never touches QtWebEngine | comment | Already engine-neutral by design. |
 | `src/devtoolswindow.h`, `src/devtoolswindow.cpp` | `QWebEnginePage::setDevToolsPage` + a second `QWebEngineView` on the same profile | engine-bound | Chromium DevTools have no Servo equivalent — capability `devTools=false` hides the feature; DEVT02's BiDi panel is the portable path. |
 | `src/extensions/extensionmanager.h`, `src/extensions/extensionmanager.cpp`, `src/extensions/extensionreviewdialog.h` | `QWebEngineExtensionManager`/`ExtensionInfo` (MV3 install/enable/uninstall/manifest inspect) + user `QWebEngineScriptCollection` | engine-bound | Chrome extensions are Chromium-only — capability `extensions`; the user-script half maps onto `Profile::insertScript` (wrap). |
-| `src/network/privacyrequestinterceptor.h`, `src/network/privacyrequestinterceptor.cpp` | `QWebEngineUrlRequestInterceptor`, `QWebEngineUrlRequestInfo`, `QWebEngineLoadingInfo`, `QWebEngineProfile`, `QWebEngineSettings` read | wrap | Becomes the `Engine::RequestPolicy` adapter — ENG02 moves the decisions into rustcore `NavigationPolicy`; this file shrinks to marshaling. |
-| `src/tor/torrequestinterceptor.h`, `src/tor/torrequestinterceptor.cpp` | `QWebEngineUrlRequestInterceptor` + `UrlRequestInfo` | wrap | Same adapter shape as the privacy interceptor; Tor stays Chromium per ENG05, so it only ever needs the backend-0 form. |
+| `src/network/privacyrequestinterceptor.h`, `src/network/privacyrequestinterceptor.cpp` | `QWebEngineUrlRequestInterceptor`, `QWebEngineUrlRequestInfo`, `QWebEngineLoadingInfo`, `QWebEngineProfile`, `QWebEngineSettings` read | wrap | Done (ENG02): decisions moved into rustcore `policy.rs` behind `Engine::NavigationPolicy`; this file only marshals `QWebEngineUrlRequestInfo` into the neutral manifest and applies the verdict (adblock matcher stays the tail stage). |
+| `src/tor/torrequestinterceptor.h`, `src/tor/torrequestinterceptor.cpp` | `QWebEngineUrlRequestInterceptor` + `UrlRequestInfo` | wrap | Done (ENG02): same thin-adapter shape as the privacy interceptor — tor mode is a manifest flag the shared policy evaluates; Tor stays Chromium per ENG05, so it only ever needs the backend-0 form. |
 | `src/adblock/adblockrequestinterceptor.h`, `src/adblock/adblockrequestinterceptor.cpp` | `QWebEngineUrlRequestInterceptor` + `UrlRequestInfo` | wrap | Same adapter shape; the matcher is already engine-free. |
 | `src/adblock/adblocknetwork.h`, `src/adblock/adblocknetwork.cpp` | `QWebEngineUrlRequestInfo::ResourceType` + `ResourceTypeWebSocket` constants feeding rule type masks | redesign | Rule type masks key on the engine enum — decouple to `Engine::ResourceType` (the values were copied deliberately so the table already matches). |
 | `src/adblock/adblockrule.h`, `src/adblock/adblockrule.cpp` | `QWebEngineUrlRequestInfo::ResourceType` for `$script`/`$image`/etc option masks | redesign | Same enum decoupling as adblocknetwork. |
@@ -74,7 +78,7 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/adblock/adblockschemeaccesshandler.h`, `src/adblock/adblockschemeaccesshandler.cpp` | `QWebEngineUrlSchemeHandler`/`UrlRequestJob`/`UrlScheme` — `abp:` subscribe endpoint | engine-bound | Same custom-scheme story. |
 | `src/network/schemeaccesshandler.h`, `src/network/schemeaccesshandler.cpp` | `QWebEngineUrlSchemeHandler`/`UrlRequestJob`/`UrlScheme`/`UrlSchemeHandlers` — registered `arora-file:` etc. | engine-bound | Same custom-scheme story. |
 | `src/network/fileaccesshandler.h`, `src/network/fileaccesshandler.cpp` | `QWebEngineUrlSchemeHandler`/`UrlRequestJob` serving `arora-file:` listings + `QWebEngineSettings` read | engine-bound | Same custom-scheme story. |
-| `src/network/cookiejar/cookiejar.h`, `src/network/cookiejar/cookiejar.cpp` | `QWebEngineCookieStore` — `setCookieFilter`, `cookieAdded/Removed` mirror, `deleteAllCookies`, `setCookie` | wrap | `Profile::setCookieFilter` + the storage-policy surface; the mirror/cookie model is engine-neutral. |
+| `src/network/cookiejar/cookiejar.h`, `src/network/cookiejar/cookiejar.cpp` | `QWebEngineCookieStore` — `setCookieFilter`, `cookieAdded/Removed` mirror, `deleteAllCookies`, `setCookie` | wrap | Accept/reject decisions delegated to `Engine::NavigationPolicy::cookieFilter` (ENG02) — only storage/persistence stays here. Port is `Profile::setCookieFilter` + the storage-policy surface; the mirror/cookie model is engine-neutral. |
 | `src/network/cookiejar/cookiejar.pri` | comment referencing `QWebEngineCookieStore` | comment | — |
 | `src/network/networkaccessmanager.cpp` | comments only (cookie store, accept-language, interceptor notes) | comment | The app-side QNAM is already engine-free; comments update at ENG04. |
 | `src/network/networkdiskcache.h` | comment only | comment | — |

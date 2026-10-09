@@ -5,5 +5,7 @@
 INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
-HEADERS += $$PWD/engineinterface.h
-SOURCES += $$PWD/engineinterface.cpp
+HEADERS += $$PWD/engineinterface.h \
+    $$PWD/navigationpolicy.h
+SOURCES += $$PWD/engineinterface.cpp \
+    $$PWD/navigationpolicy.cpp

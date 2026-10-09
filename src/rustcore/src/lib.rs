@@ -46,6 +46,7 @@ mod error;
 mod history;
 mod notify;
 mod parsers;
+mod policy;
 mod session;
 mod store;
 mod urlstrip;
@@ -625,6 +626,115 @@ pub unsafe extern "C" fn rc_blocklist_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_blocklist_count() -> usize {
     catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
+}
+
+// ---- navigation policy (ENG02) ------------------------------------------
+// The engine-agnostic request-policy core.  The Qt interceptors marshal
+// a request manifest in; verdicts come out.  No Qt types cross here.
+
+/// Pushes the policy snapshot (privacy toggles + https-only exceptions)
+/// from the GUI thread.  JSON body, RC_CORRUPT on malformed input.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_load_snapshot(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad snapshot pointer".into(),
+        })?;
+        let manifest = policy::parse_json(data)?;
+        policy::load_snapshot_json(&manifest)
+    })
+}
+
+/// Evaluates one request manifest (JSON) and returns the verdict as a
+/// JSON string: {"action":"pass"|"block"|"redirect"|"allow", ...}.
+/// NULL on malformed input or panic — the adapter must fail open
+/// (treat NULL as "allow", never as a block).
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_evaluate(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => {
+                let verdict = policy::evaluate_json(&manifest);
+                util::to_c_string(verdict.to_string())
+            }
+            None => {
+                error::set_error("bad policy manifest");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Cookie-gate decision: 1 = accept the cookie, 0 = reject,
+/// -1 on malformed input (adapter fails open → accept).
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_cookie_filter(
+    json: *const u8,
+    len: usize,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+            .and_then(|m| policy::cookie_filter_json(&m))
+        {
+            Some(allow) => allow as i32,
+            None => -1,
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Generic granular-policy endpoint — JSON in {"op":..., params},
+/// JSON out.  Covers every historical decision point (downgrade
+/// marks, allowances, referer rewriting, host classifiers, blocked-nav
+/// registries...).  NULL on error — see rc_last_error_message().
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match policy::call_json(&manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad policy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- untrusted-document parsers (SEC19) ----------------------------

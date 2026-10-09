@@ -66,6 +66,7 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#include "navigationpolicy.h"
 
 #include <qcoreapplication.h>
 #include <qdatetime.h>
@@ -94,32 +95,22 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
     loadSettings();
 
     // The filter callback runs on the browser IO thread; it only reads
-    // the lock-guarded policy snapshot.
+    // the lock-guarded policy snapshot.  ENG02: the accept/reject
+    // decision itself is delegated to Engine::NavigationPolicy — the
+    // jar only marshals its rule lists in.
     m_store->setCookieFilter([this](const QWebEngineCookieStore::FilterRequest &request) {
-        QReadLocker lock(&m_policyLock);
-        QString host = request.origin.host();
-        if (host.isEmpty())
-            host = request.firstPartyUrl.host();
-        bool block = isOnDomainList(m_policy.block, host);
-        bool allow = !block && isOnDomainList(m_policy.allow, host);
-        bool allowForSession = !block && !allow && isOnDomainList(m_policy.allowForSession, host);
-        if (block)
-            return false;
-        // PRIV01: third-party rejection sits between the exception
-        // lists and the accept policy — an allow-listed third party
-        // still gets its cookies, a blocked one is already gone.
-        if (request.thirdParty && m_policy.blockThirdPartyCookies
-            && !allow && !allowForSession)
-            return false;
-        switch (m_policy.acceptCookies) {
-        case AcceptAlways:
-            return true;
-        case AcceptNever:
-            return allow || allowForSession;
-        case AcceptOnlyFromSitesNavigatedTo:
-        default:
-            return allow || allowForSession || !request.thirdParty;
-        }
+        const QReadLocker lock(&m_policyLock);
+        Engine::CookieGateInput input;
+        input.host = request.origin.host();
+        if (input.host.isEmpty())
+            input.host = request.firstPartyUrl.host();
+        input.thirdParty = request.thirdParty;
+        input.blockThirdParty = m_policy.blockThirdPartyCookies;
+        input.acceptPolicy = static_cast<int>(m_policy.acceptCookies);
+        input.block = m_policy.block;
+        input.allow = m_policy.allow;
+        input.allowForSession = m_policy.allowForSession;
+        return Engine::NavigationPolicy::cookieFilter(input);
     });
 
     connect(m_store, &QWebEngineCookieStore::cookieAdded,
@@ -337,24 +328,16 @@ QList<QNetworkCookie> CookieJar::cookiesForUrl(const QUrl &url) const
 
 bool CookieJar::isAllowedForHost(const QString &host, bool thirdParty) const
 {
-    bool block = isOnDomainList(m_exceptions_block, host);
-    bool allow = !block && isOnDomainList(m_exceptions_allow, host);
-    bool allowForSession = !block && !allow && isOnDomainList(m_exceptions_allowForSession, host);
-    if (block)
-        return false;
-    // Mirror of the store filter's PRIV01 rule.
-    if (thirdParty && m_blockThirdPartyCookies
-        && !allow && !allowForSession)
-        return false;
-    switch (m_acceptCookies) {
-    case AcceptAlways:
-        return true;
-    case AcceptNever:
-        return allow || allowForSession;
-    case AcceptOnlyFromSitesNavigatedTo:
-    default:
-        return allow || allowForSession || !thirdParty;
-    }
+    // ENG02: same delegated gate as the IO-thread store filter.
+    Engine::CookieGateInput input;
+    input.host = host;
+    input.thirdParty = thirdParty;
+    input.blockThirdParty = m_blockThirdPartyCookies;
+    input.acceptPolicy = static_cast<int>(m_acceptCookies);
+    input.block = m_exceptions_block;
+    input.allow = m_exceptions_allow;
+    input.allowForSession = m_exceptions_allowForSession;
+    return Engine::NavigationPolicy::cookieFilter(input);
 }
 
 bool CookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const QUrl &url)

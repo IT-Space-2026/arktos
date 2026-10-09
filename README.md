@@ -365,8 +365,9 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   `src/adblock/rust` first)
 - `CONFIG+=rustcore` — Rust core crate: credential store backend,
   URL tracking-param stripper, domain blocklist, untrusted-format
-  parsers and the bookmark + history stores (same toolchain; qmake
-  runs cargo; C++ paths stay the default without it)
+  parsers, bookmark + history stores and the navigation/cookie
+  request-policy core (same toolchain; qmake runs cargo; C++ paths
+  stay the default without it)
 - `CONFIG+=rustdl` — Rust accelerated downloader (reqwest +
   std::thread, segmented ranged downloads behind a C ABI)
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test

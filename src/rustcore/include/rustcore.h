@@ -178,6 +178,52 @@ RcStatus rc_blocklist_load(const uint8_t *textUtf8, size_t len);
 RcStatus rc_blocklist_reload(void);
 size_t rc_blocklist_count(void);
 
+/* --- navigation policy (ENG02) ----------------------------------------
+ * The engine-agnostic request-policy core: every branching decision the
+ * interceptors and the cookie gate used to make in C++ lives here as
+ * pure verdict functions over a compact JSON manifest.  The Qt side
+ * only marshals context in and applies verdicts out — no policy
+ * branching remains on the adapter.  Everything fails OPEN on errors:
+ * a NULL verdict reads as "allow", never as a block.
+ *
+ * rc_policy_load_snapshot: pushes the privacy snapshot (toggles +
+ *   https-only exceptions) from the GUI thread.
+ *   JSON {"https_first","https_only","referer_policy","security_level",
+ *   "block_pings","block_remote_fonts","block_prefetch",
+ *   "block_third_party_ws","strip_tracking_params","domain_blocklist",
+ *   "https_only_exceptions":[...]}
+ *
+ * rc_policy_evaluate: request manifest -> verdict JSON.
+ *   in  {"url","first_party_url","resource_type","method",
+ *        "headers":[["k","v"],...],"scope","tor_mode",
+ *        "script_allowed","min_referer_level"}
+ *   out {"action":"pass"}
+ *     | {"action":"block","reason":...}
+ *     | {"action":"redirect","url":...,"reason":...}
+ *     | {"action":"allow","referer":{"op":"keep"|"set","value":...}}
+ *   NULL on malformed input — treat as "allow".  rc_string_free().
+ *
+ * rc_policy_cookie_filter: cookie-gate manifest -> 1 accept / 0 reject
+ *   / -1 malformed (fail open).  in {"host","third_party","block_3p",
+ *   "accept_policy","block":[],"allow":[],"allow_session":[]}
+ *
+ * rc_policy_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: flag, referrer_meta, rewritten_referer,
+ *   referer_apply, upgrade_candidate, warn_http, warn_form_post,
+ *   is_http_allowed, allow_http, clear_http_allowance, http_exceptions,
+ *   is_downgraded, mark_downgraded, clear_downgraded,
+ *   clear_all_downgraded, ttl_get, ttl_set,
+ *   failure_implies_downgrade, note_nav_failure, record_blocked_nav,
+ *   take_blocked_nav, block_domain, is_domain_blocked,
+ *   is_blocked_domain_allowed, allow_blocked_domain,
+ *   clear_blocked_domain_allowance, clear_all_blocked_domain,
+ *   is_ping, block_resource, block_ws, block_script, private_or_local.
+ *   NULL on error — rc_string_free() the result. */
+RcStatus rc_policy_load_snapshot(const uint8_t *jsonUtf8, size_t len);
+char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
+int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
+char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
+
 /* --- untrusted-document parsers (SEC19) ------------------------------
  * The Qt side passes the raw attacker-controlled bytes and receives
  * a JSON document it maps onto its existing types — Qt's XML/JSON
