@@ -1,0 +1,589 @@
+{
+    "chromiumVersion": "140.0.7339.225",
+    "profile": "app",
+    "results": [
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 183,
+            "id": 225,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline <script> with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 93,
+            "id": 226,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline <script> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 419,
+            "id": 227,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline event handler with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 426,
+            "id": 228,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline event handler with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 164,
+            "id": 229,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline <style> with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 122,
+            "id": 230,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline <style> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 175,
+            "id": 231,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline style attribute with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 120,
+            "id": 232,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline style attribute with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 499,
+            "id": 311,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 425,
+            "id": 312,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 473,
+            "id": 313,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 422,
+            "id": 314,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 467,
+            "id": 315,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 466,
+            "id": 316,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 515,
+            "id": 317,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 464,
+            "id": 318,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 468,
+            "id": 319,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 463,
+            "id": 320,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 470,
+            "id": 321,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 470,
+            "id": 322,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 512,
+            "id": 323,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 520,
+            "id": 324,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 571,
+            "id": 325,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 517,
+            "id": 326,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 608,
+            "id": 327,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 425,
+            "id": 328,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 427,
+            "id": 329,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 519,
+            "id": 330,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 426,
+            "id": 331,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 422,
+            "id": 332,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 449,
+            "id": 333,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 467,
+            "id": 334,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 471,
+            "id": 335,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 469,
+            "id": 336,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 472,
+            "id": 337,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 456,
+            "id": 338,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 465,
+            "id": 339,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 467,
+            "id": 340,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 454,
+            "id": 341,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 466,
+            "id": 342,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 450,
+            "id": 343,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 469,
+            "id": 344,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 620,
+            "id": 345,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 516,
+            "id": 346,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 519,
+            "id": 347,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 497,
+            "id": 348,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 521,
+            "id": 349,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 521,
+            "id": 350,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src 'self'"
+        }
+    ],
+    "summary": {
+        "critical": 0,
+        "pass": 48,
+        "skip": 0,
+        "warning": 0
+    },
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+}

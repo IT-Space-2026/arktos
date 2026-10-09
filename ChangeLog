@@ -493,6 +493,10 @@ Image context menu completion (CTX01):
     The image context menu now covers the content shapes Chromium's context-menu request cannot express. Right-clicking a <canvas> offers "Open Image in New Window/Tab", "Save Image" and "Copy Image" — the pixels are serialized in-page to a PNG and opened or copied as an image (a canvas tainted by cross-origin content reports that it cannot be read instead of silently failing). A <video> element additionally offers "Open Poster in New Window/Tab" for its poster frame, and an <img> whose media URL never reached the request (for example a <picture> source pick or a broken-src placeholder) resolves its live source in-page so the same open/save/copy/block items still work.
     "Open Image in New Tab" now also opens data: and blob: media URLs, not just http(s): data: images open as image documents and blob: URLs resolve because the new tab or window shares the page's profile — a blob URL is scoped to its storage partition, so it still dies with the source document. Plain http(s) images keep the Referer-header load they had before, and the javascript: refusal on untrusted input is unchanged.
 
+Faster page loads (SEC16A):
+    Autofill filling and ad-block cosmetic hiding no longer run inside the page's load-finished turn, where they competed with the subresource requests a page schedules right after load (web fonts and other paint-gated fetches could land visibly late). Both now run as per-document user scripts armed at navigation commit that execute at DOMContentLoaded — before the load event — so late-arriving resources are no longer delayed. Verified on the live browseraudit.com suite: the 18 CSP tests that previously warned on late fetches now all pass, identical to a bare engine.
+    No behavior changes: autofill fill/capture, cosmetic filtering and every other load-time feature work exactly as before.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

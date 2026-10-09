@@ -111,10 +111,23 @@ actual security failure fired on either profile.
   turn in which Chromium schedules the paint-gated fetch — it lands
   after the suite's deadline on a real WAN. The individual callees do
   not reproduce on a plain view, so the trigger is the WebView-context
-  `loadFinished` path, not one callee. **SEC16 item:** consider deferring
-  the injection off the load-critical path. Adblock logged zero blocks
+  `loadFinished` path, not one callee. Adblock logged zero blocks
   for these runs (ARORA_DEBUG_BLOCK instrumentation); cookie rotation,
   profile storage, GPU sandboxing all ruled out by the bisect matrix.
+
+  **RESOLVED by SEC16A:** the per-load JS moved off `loadFinished`
+  entirely — `WebPage::schedulePageScripts` now arms the autofill
+  bundle and the adblock cosmetic pass as per-page `QWebEngineScript`s
+  at `DocumentReady` (armed on `urlChanged` while a document load is
+  pending), so the injected work runs at DOMContentLoaded — before the
+  `load` event whose turn schedules the paint-gated fetches.
+  `WebView::loadFinished` retains only GUI-thread bookkeeping
+  (progress reset, icon/badge refresh, history entry). Re-run on the
+  affected categories (14 + 33, 48 tests): app profile 48/48 pass,
+  bare control 48/48 — all 18 latency warnings gone, app now
+  indistinguishable from the bare engine on these categories
+  (`sec15/browseraudit-sec16a-app.json`,
+  `sec15/browseraudit-sec16a-bare.json`).
 
 ### TEST-STALE — the suite predates the spec / its own site config
 
