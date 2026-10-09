@@ -93,6 +93,7 @@ HEADERS += \
     $$PWD/modeltoolbar.h \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
+    $$PWD/readermode.h \
     $$PWD/scriptblockinfobar.h \
     $$PWD/scriptcontrolmanager.h \
     $$PWD/searchbar.h \
@@ -144,6 +145,7 @@ SOURCES += \
     $$PWD/modeltoolbar.cpp \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
+    $$PWD/readermode.cpp \
     $$PWD/scriptblockinfobar.cpp \
     $$PWD/scriptcontrolmanager.cpp \
     $$PWD/searchbar.cpp \

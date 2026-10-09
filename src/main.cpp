@@ -52,6 +52,7 @@
 #include "opensearchwriter.h"
 #include "plaintexteditsearch.h"
 #include "privacyrequestinterceptor.h"
+#include "readermode.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "settings.h"
@@ -92,6 +93,7 @@
 #include <QtCore/QProcess>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
+#include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPixmap>
 #include <QtGui/QStandardItemModel>
@@ -1686,6 +1688,7 @@ int main(int argc, char **argv)
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
+        "reader-smoke",
         "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
@@ -4972,6 +4975,390 @@ int main(int argc, char **argv)
             application.exit(1);
         });
         view->loadUrl(fixtureUrl);
+    }
+
+    // Headless verification for READ01 (Reader Mode): an article-like
+    // fixture is probed, entered, controlled and exited end to end —
+    // overlay presence, article text surviving while clutter drops,
+    // the image kept, in-chrome font/theme controls persisting through
+    // the aroraReader channel bridge, exit restoring the live DOM (no
+    // reload), a JS-side exit reaching C++, a non-article refusal, and
+    // the JavascriptEnabled-lift path that lets the reader work on a
+    // script-blocked page.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--reader-smoke"))) {
+        const QDir fixtureDir(
+            QDir::temp().filePath(QLatin1String("arora-reader-smoke")));
+        if (!fixtureDir.mkpath(QLatin1String("."))) {
+            qInfo() << "reader-smoke: FAIL (cannot make fixture dir)";
+            return 1;
+        }
+        const QString articlePath =
+            fixtureDir.filePath(QLatin1String("article.html"));
+        const QString plainPath =
+            fixtureDir.filePath(QLatin1String("plain.html"));
+        const QString imagePath =
+            fixtureDir.filePath(QLatin1String("pixel.png"));
+        QImage image(16, 16, QImage::Format_RGB32);
+        image.fill(Qt::darkGreen);
+        image.save(imagePath, "PNG");
+        {
+            QFile fixture(articlePath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "reader-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            QString paragraphs;
+            for (int i = 0; i < 6; ++i)
+                paragraphs += QLatin1String(
+                    "<p>READER_MARKER paragraph text that is long enough "
+                    "to look like real article copy. The quick brown fox "
+                    "jumps over the lazy dog repeatedly to build up the "
+                    "content score the extractor looks for.</p>");
+            fixture.write("<html><head><title>Smoke Article Title</title>"
+                          "</head><body>"
+                          "<nav id=\"clutter\"><a href=\"#\">nav one</a>"
+                          "<a href=\"#\">nav two</a></nav>"
+                          "<article><h1>Smoke Article Title</h1>"
+                          + paragraphs.toUtf8() +
+                          "<p><img src=\"pixel.png\"></p>"
+                          "</article></body></html>");
+        }
+        {
+            QFile fixture(plainPath);
+            if (!fixture.open(QIODevice::WriteOnly)) {
+                qInfo() << "reader-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+            fixture.write("<html><head><title>tiny</title></head>"
+                          "<body><p>short</p></body></html>");
+        }
+        const QUrl articleUrl = QUrl::fromLocalFile(articlePath);
+        const QUrl plainUrl = QUrl::fromLocalFile(plainPath);
+
+        ReaderMode *reader = view->readerMode();
+        QObject::connect(view->webPage(),
+                &QWebEnginePage::renderProcessTerminated, qApp,
+                [](QWebEnginePage::RenderProcessTerminationStatus status,
+                   int code) {
+            qInfo() << "reader-smoke: RENDERER DIED" << status << code;
+        });
+
+        // Snapshot the reader prefs the in-overlay controls write so
+        // the run leaves no trace in the live settings.
+        {
+            QSettings settings;
+            const QVariant savedFont =
+                settings.value(QLatin1String("reader/fontSize"));
+            const QVariant savedTheme =
+                settings.value(QLatin1String("reader/theme"));
+            QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                             &application, [savedFont, savedTheme]() {
+                QSettings settings;
+                if (savedFont.isValid())
+                    settings.setValue(QLatin1String("reader/fontSize"),
+                                      savedFont);
+                else
+                    settings.remove(QLatin1String("reader/fontSize"));
+                if (savedTheme.isValid())
+                    settings.setValue(QLatin1String("reader/theme"),
+                                      savedTheme);
+                else
+                    settings.remove(QLatin1String("reader/theme"));
+            });
+            settings.remove(QLatin1String("reader/fontSize"));
+            settings.remove(QLatin1String("reader/theme"));
+        }
+
+        // The whole chain runs inside application.exec(), which must
+        // be called from INSIDE this block: every local below is
+        // captured [&] by the stage lambdas, so the block's scope has
+        // to stay live for the duration of exec() (falling through to
+        // the shared exec at the end of main() destroys them first —
+        // ASan: stack-use-after-scope on `reader`).
+        auto fail = [&application](const char *stage) {
+            qInfo() << "reader-smoke: FAIL at" << stage;
+            application.exit(1);
+        };
+        // Poll a condition until it holds (or ~10s elapse -> done(false)).
+        auto pollUntil = [](std::function<bool()> condition,
+                            std::function<void(bool)> finished) {
+            auto ticks = std::make_shared<int>(0);
+            QTimer *poll = new QTimer(qApp);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [condition, finished, ticks, poll]() {
+                if (condition() || ++*ticks > 200) {
+                    poll->stop();
+                    poll->deleteLater();
+                    finished(condition());
+                }
+            });
+            poll->start(50);
+        };
+        auto evalJs = [&](const QString &script,
+                          std::function<void(const QVariant &)> cb) {
+            view->webPage()->runJavaScript(script,
+                [cb](const QVariant &result) { cb(result); });
+        };
+        auto settle = [](int ms, std::function<void()> fn) {
+            QTimer::singleShot(ms, qApp, fn);
+        };
+
+        // Mutually-referencing tail stages are declared before use.
+        std::function<void()> stageJsBlocked;
+        std::function<void()> stageNonArticle;
+        auto nonArticleMessageSeen = std::make_shared<bool>(false);
+        int overlayFontSizeBefore = 0;
+
+        // Stage: scripts blocked -> reader still enters via the
+        // JavascriptEnabled lift, then the flag is restored.
+        // isActive() alone proves it: enter()'s callback only carries
+        // ok:true when the injection actually ran, and runJavaScript
+        // cannot run while the flag is down (same gate evalJs sits
+        // behind — that's why no JS-side peek happens here).
+        stageJsBlocked = [&]() {
+            view->webPage()->settings()->setAttribute(
+                QWebEngineSettings::JavascriptEnabled, false);
+            reader->enter();
+            pollUntil([&]() { return reader->isActive(); },
+                [&](bool active) {
+                qInfo() << "reader-smoke: js-blocked enter"
+                        << (active ? "PASS" : "FAIL");
+                if (!active) {
+                    fail("jsblocked-enter");
+                    return;
+                }
+                // The restore lands a beat after the callback.
+                pollUntil([&]() {
+                    return !view->settings()->testAttribute(
+                        QWebEngineSettings::JavascriptEnabled);
+                }, [&](bool restored) {
+                    qInfo() << "reader-smoke: js re-disabled"
+                            << (restored ? "PASS" : "FAIL");
+                    if (!restored) {
+                        fail("jsblocked-restore");
+                        return;
+                    }
+                    // Leave scripting on for the last stage so the
+                    // non-article probe runs on the fast path.
+                    view->settings()->setAttribute(
+                        QWebEngineSettings::JavascriptEnabled, true);
+                    settle(600, stageNonArticle);
+                });
+            });
+        };
+
+        // Stage: a stub page must not probe article-like and enter()
+        // must refuse with the "not available" message.
+        stageNonArticle = [&]() {
+            QObject::connect(reader, &ReaderMode::message, qApp,
+                [nonArticleMessageSeen](const QString &) {
+                    *nonArticleMessageSeen = true;
+                });
+            QObject::connect(view, &QWebEngineView::loadFinished, qApp,
+                [&](bool ok) {
+                if (!ok || view->url() != plainUrl)
+                    return;
+                // The post-load probe is async; give it a beat, then
+                // ask the driver directly.
+                settle(600, [&]() {
+                    evalJs(QLatin1String("window.__aroraReader.probe();"),
+                        [&](const QVariant &probe) {
+                        const bool probePass = probe.isValid()
+                            && !probe.toBool()
+                            && !reader->isAvailable();
+                        qInfo() << "reader-smoke: non-article probe"
+                                << (probePass ? "PASS" : "FAIL");
+                        if (!probePass) {
+                            fail("non-article-probe");
+                            return;
+                        }
+                        reader->enter();
+                        pollUntil([&]() {
+                            return *nonArticleMessageSeen
+                                || reader->isActive();
+                        }, [&](bool) {
+                            const bool pass = *nonArticleMessageSeen
+                                && !reader->isActive();
+                            qInfo() << "reader-smoke: non-article refusal"
+                                    << (pass ? "PASS" : "FAIL");
+                            if (!pass) {
+                                fail("non-article-enter");
+                                return;
+                            }
+                            qInfo() << "reader-smoke: DONE";
+                            application.exit(0);
+                        });
+                    });
+                });
+            });
+            view->loadUrl(plainUrl);
+        };
+
+        // Stage: overlay structure — title kept, marker paragraphs
+        // present, clutter nav dropped, image carried over.
+        auto stageVerifyOverlay = [&]() {
+            evalJs(QLatin1String(
+                "(function(){var h=document.getElementById('arora-reader-host');"
+                "if(!h||!h.shadowRoot)return {ok:false};"
+                "var r=h.shadowRoot;var c=r.querySelector('.content');"
+                "return {ok:true,"
+                "title:r.querySelector('.title').textContent,"
+                "text:c.innerText,"
+                "imgs:c.querySelectorAll('img').length,"
+                "clutter:!!r.querySelector('#clutter')};}())"),
+                [&](const QVariant &result) {
+                const QVariantMap m = result.toMap();
+                const bool pass = m.value(QLatin1String("ok")).toBool()
+                    && m.value(QLatin1String("title")).toString()
+                        .contains(QLatin1String("Smoke Article Title"))
+                    && m.value(QLatin1String("text")).toString()
+                        .contains(QLatin1String("READER_MARKER"))
+                    && !m.value(QLatin1String("text")).toString()
+                        .contains(QLatin1String("nav one"))
+                    && m.value(QLatin1String("imgs")).toInt() >= 1
+                    && !m.value(QLatin1String("clutter")).toBool();
+                qInfo() << "reader-smoke: overlay content"
+                        << (pass ? "PASS" : "FAIL");
+                if (!pass) {
+                    fail("overlay");
+                    return;
+                }
+
+                // Stage: the in-overlay controls — A+ bumps the font
+                // and persists through the channel bridge; the theme
+                // button flips to dark.
+                evalJs(QLatin1String(
+                    "getComputedStyle(document.getElementById("
+                    "'arora-reader-host').shadowRoot.querySelector("
+                    "'.wrap')).fontSize;"),
+                    [&](const QVariant &before) {
+                    overlayFontSizeBefore = before.toString()
+                        .remove(QLatin1String("px")).toInt();
+                    evalJs(QLatin1String(
+                        "var h=document.getElementById('arora-reader-host');"
+                        "h.shadowRoot.querySelector('.font-inc').click();"
+                        "h.shadowRoot.querySelector('.theme').click();"
+                        "'clicked';"),
+                        [&](const QVariant &) {
+                        // The bridge round-trip to QSettings is async.
+                        pollUntil([&]() {
+                            QSettings s;
+                            return s.value(QLatin1String("reader/fontSize"))
+                                    .toInt() == overlayFontSizeBefore + 1
+                                && s.value(QLatin1String("reader/theme"))
+                                    .toString() == QLatin1String("dark");
+                        }, [&](bool prefs) {
+                            qInfo() << "reader-smoke: controls+prefs"
+                                    << (prefs ? "PASS" : "FAIL");
+                            if (!prefs) {
+                                fail("controls");
+                                return;
+                            }
+
+                            // Stage: C++ exit removes the overlay and
+                            // the live DOM — the nav node is still
+                            // there, no reload happened.
+                            reader->exit();
+                            pollUntil([&]() { return !reader->isActive(); },
+                                [&](bool) {
+                                evalJs(QLatin1String(
+                                    "({gone:!document.getElementById("
+                                    "'arora-reader-host'),"
+                                    "nav:!!document.getElementById("
+                                    "'clutter')});"),
+                                    [&](const QVariant &r) {
+                                    const QVariantMap m = r.toMap();
+                                    const bool pass =
+                                        m.value(QLatin1String("gone"))
+                                            .toBool()
+                                        && m.value(QLatin1String("nav"))
+                                            .toBool();
+                                    qInfo() << "reader-smoke: exit restores dom"
+                                            << (pass ? "PASS" : "FAIL");
+                                    if (!pass) {
+                                        fail("exit");
+                                        return;
+                                    }
+
+                                    // Stage: re-enter, then the
+                                    // in-overlay Exit button must reach
+                                    // C++ via the bridge.
+                                    reader->enter();
+                                    pollUntil([&]() {
+                                        return reader->isActive();
+                                    }, [&](bool active) {
+                                        if (!active) {
+                                            fail("reenter");
+                                            return;
+                                        }
+                                        evalJs(QLatin1String(
+                                            "document.getElementById("
+                                            "'arora-reader-host').shadowRoot"
+                                            ".querySelector('.exit').click();"
+                                            "'ok';"),
+                                            [&](const QVariant &) {
+                                            pollUntil([&]() {
+                                                return !reader->isActive();
+                                            }, [&](bool exited) {
+                                                qInfo() << "reader-smoke: js-exit"
+                                                        << (exited ? "PASS"
+                                                                   : "FAIL");
+                                                if (!exited) {
+                                                    fail("js-exit");
+                                                    return;
+                                                }
+                                                settle(800,
+                                                       stageJsBlocked);
+                                            });
+                                        });
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        };
+
+        // Entry: load the article, wait for the post-load probe to
+        // mark it available, then enter and verify the overlay.
+        QObject::connect(view, &QWebEngineView::loadFinished, &application,
+            [&](bool ok) {
+            if (!ok || view->url() != articleUrl)
+                return;
+            pollUntil([&]() { return reader->isAvailable(); },
+                [&](bool available) {
+                qInfo() << "reader-smoke: probe"
+                        << (available ? "PASS" : "FAIL");
+                if (!available) {
+                    fail("probe");
+                    return;
+                }
+                reader->enter();
+                pollUntil([&]() { return reader->isActive(); },
+                    [&](bool active) {
+                    qInfo() << "reader-smoke: enter"
+                            << (active ? "PASS" : "FAIL");
+                    if (!active) {
+                        fail("enter");
+                        return;
+                    }
+                    stageVerifyOverlay();
+                });
+            });
+        });
+
+        QTimer::singleShot(60000, &application, [&application]() {
+            qInfo() << "reader-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        // Chain: article -> controls -> exit -> js-side exit ->
+        //        script-blocked enter -> non-article refusal -> DONE.
+        // exec() INSIDE the block — the [&] captures above die at the
+        // closing brace, so falling through to main's shared exec()
+        // would leave every stage lambda dereferencing dead stack.
+        view->loadUrl(articleUrl);
+        return application.exec();
     }
 
     // Headless verification for MIG14: a real BrowserMainWindow must

@@ -8,6 +8,7 @@ HEADERS += \
   $$PWD/omniboxsuggestions.h \
   $$PWD/popupblockerbutton.h \
   $$PWD/privacyindicator.h \
+  $$PWD/readerbutton.h \
   $$PWD/sitepanel.h \
   $$PWD/siteshield.h
 
@@ -18,5 +19,6 @@ SOURCES += \
   $$PWD/omniboxsuggestions.cpp \
   $$PWD/popupblockerbutton.cpp \
   $$PWD/privacyindicator.cpp \
+  $$PWD/readerbutton.cpp \
   $$PWD/sitepanel.cpp \
   $$PWD/siteshield.cpp

@@ -73,6 +73,7 @@
 #include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "readermode.h"
 #include "safetext.h"
 #include "scriptblockinfobar.h"
 #include "scriptcontrolmanager.h"
@@ -131,6 +132,15 @@ void WebView::init()
     // path.
     m_scriptBlockBar = new ScriptBlockInfoBar(this);
     m_scriptBlockBar->hide();
+
+    // READ01: reader mode — a Shadow-DOM article overlay driven by the
+    // bundled Readability.js; extraction failures surface as status
+    // bar text.
+    m_readerMode = new ReaderMode(this);
+    connect(m_readerMode, &ReaderMode::message,
+            this, [this](const QString &message) {
+        emit statusBarMessage(message);
+    });
     connect(m_page, &WebPage::javaScriptBlockedChanged,
             this, &WebView::updateScriptBlockBar);
     connect(m_page, &WebPage::javaScriptBlockedChanged,
@@ -157,6 +167,12 @@ void WebView::init()
 void WebView::loadSettings()
 {
     m_page->loadSettings();
+}
+
+void WebView::toggleReaderMode()
+{
+    if (m_readerMode)
+        m_readerMode->toggle();
 }
 
 TabWidget *WebView::tabWidget() const

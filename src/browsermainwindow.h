@@ -64,6 +64,7 @@
 #define BROWSERMAINWINDOW_H
 
 #include <qmainwindow.h>
+#include <qpointer.h>
 
 class AutoSaver;
 class BookmarksToolBar;
@@ -147,6 +148,9 @@ private slots:
     void viewPageSource();
     void viewFullScreen(bool enable);
     void viewTextEncoding(QAction *action);
+    // READ01: keeps the Reader Mode action's enabled/checked state in
+    // sync with the current tab's ReaderMode.
+    void updateReaderState();
 
     void webSearch();
     void clearPrivateData();
@@ -213,10 +217,12 @@ private:
     QAction *m_viewZoomNormalAction;
     QAction *m_viewZoomOutAction;
     QAction *m_viewZoomTextOnlyAction;
+    QAction *m_viewReaderAction;
     QAction *m_viewSourceAction;
     QAction *m_viewFullScreenAction;
     QAction *m_viewTextEncodingAction;
     QMenu *m_viewTextEncodingMenu;
+    QPointer<WebView> m_readerWatchedView;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;

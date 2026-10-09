@@ -941,9 +941,10 @@ void tst_WebPage::webChannelForgedAutofillReport()
         evalSync(page, QLatin1String("window.__state")).toString(),
         QStringLiteral("done"), 15000);
 
-    // The web-facing object set: no "arora" on an untrusted page.
+    // The web-facing object set: aroraAutofill + aroraReader (READ01)
+    // are deliberately reachable, nothing more.
     QCOMPARE(evalSync(page, QLatin1String("window.__objects")).toString(),
-             QStringLiteral("aroraAutofill,external"));
+             QStringLiteral("aroraAutofill,aroraReader,external"));
 
     // Wait until the injected capture hook is armed (the DocumentReady
     // bundle wraps the prototype submit), then fire one more forged

@@ -82,6 +82,7 @@
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "readermode.h"
 #include "safetext.h"
 #include "securestore.h"
 #include "settings.h"
@@ -241,6 +242,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             this, [this](int) {
         m_loadingIndicator->setWebView(currentTab());
         m_zoomControl->setWebView(currentTab());
+        updateReaderState();
     });
 
     updateWindowTitle();
@@ -752,6 +754,22 @@ void BrowserMainWindow::setupMenu()
                 this, &BrowserMainWindow::zoomTextOnlyChanged);
     m_viewMenu->addAction(m_viewZoomTextOnlyAction);
 
+    // READ01: Reader Mode — a clutter-free article overlay.  The
+    // action is always shown; updateReaderState() keeps it enabled
+    // whenever a tab is present (the extraction itself reports
+    // "not available" on non-article pages) and checked while the
+    // overlay is up.
+    m_viewReaderAction = new QAction(m_viewMenu);
+    m_viewReaderAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::AltModifier | Qt::Key_R));
+    m_viewReaderAction->setCheckable(true);
+    connect(m_viewReaderAction, &QAction::triggered,
+            this, [this]() {
+        if (currentTab())
+            currentTab()->toggleReaderMode();
+    });
+    m_viewMenu->addAction(m_viewReaderAction);
+
     m_viewFullScreenAction = new QAction(m_viewMenu);
     m_viewFullScreenAction->setShortcut(Qt::Key_F11);
     connect(m_viewFullScreenAction, &QAction::triggered,
@@ -971,6 +989,29 @@ void BrowserMainWindow::aboutToShowViewMenu()
     m_viewToolbarAction->setText(m_navigationBar->isVisible() ? tr("Hide Toolbar") : tr("Show Toolbar"));
     m_viewBookmarkBarAction->setText(m_bookmarksToolbar->isVisible() ? tr("Hide Bookmarks Bar") : tr("Show Bookmarks Bar"));
     m_viewStatusbarAction->setText(statusBar()->isVisible() ? tr("Hide Status Bar") : tr("Show Status Bar"));
+    updateReaderState();
+}
+
+void BrowserMainWindow::updateReaderState()
+{
+    WebView *view = currentTab();
+    // Follow the current tab's ReaderMode so the check mark tracks
+    // JS-side exits and probe results, not just our own toggles.
+    if (m_readerWatchedView != view) {
+        if (m_readerWatchedView && m_readerWatchedView->readerMode())
+            disconnect(m_readerWatchedView->readerMode(), nullptr,
+                       this, nullptr);
+        m_readerWatchedView = view;
+        if (view && view->readerMode()) {
+            connect(view->readerMode(), &ReaderMode::activeChanged,
+                    this, [this](bool) { updateReaderState(); });
+            connect(view->readerMode(), &ReaderMode::availableChanged,
+                    this, [this](bool) { updateReaderState(); });
+        }
+    }
+    m_viewReaderAction->setEnabled(view != nullptr);
+    m_viewReaderAction->setChecked(view && view->readerMode()
+                                   && view->readerMode()->isActive());
 }
 
 void BrowserMainWindow::aboutToShowTextEncodingMenu()
@@ -1053,6 +1094,7 @@ void BrowserMainWindow::retranslate()
     m_viewZoomNormalAction->setText(tr("Zoom &Normal"));
     m_viewZoomOutAction->setText(tr("Zoom &Out"));
     m_viewZoomTextOnlyAction->setText(tr("Zoom &Text Only"));
+    m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
     m_viewFullScreenAction->setText(tr("&Full Screen"));

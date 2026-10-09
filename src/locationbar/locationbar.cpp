@@ -24,6 +24,7 @@
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
 #include "privacyindicator.h"
+#include "readerbutton.h"
 #include "searchlineedit.h"
 #include "siteshield.h"
 #include "twoleveldomains_p.h"
@@ -48,6 +49,7 @@ LocationBar::LocationBar(QWidget *parent)
     , m_adBlockButton(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
+    , m_readerButton(nullptr)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);
@@ -82,6 +84,11 @@ LocationBar::LocationBar(QWidget *parent)
     m_privacyIndicator = new PrivacyIndicator(this);
     addWidget(m_privacyIndicator, RightSide);
 
+    // READ01: reader-mode toggle — appears on article-like pages,
+    // left of the privacy indicator (widgets land at index 1).
+    m_readerButton = new ReaderButton(this);
+    addWidget(m_readerButton, RightSide);
+
     // clear button on the right
     ClearButton *m_clearButton = new ClearButton(this);
     connect(m_clearButton, &ClearButton::clicked,
@@ -103,6 +110,7 @@ void LocationBar::setWebView(WebView *webView)
     m_adBlockButton->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
+    m_readerButton->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
             this, &LocationBar::webViewUrlChanged);
     connect(webView, &QWebEngineView::loadProgress,

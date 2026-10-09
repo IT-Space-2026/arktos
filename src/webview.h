@@ -70,6 +70,7 @@
 
 class QWebEngineProfile;
 class BrowserMainWindow;
+class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
 class WebPage;
@@ -106,6 +107,8 @@ public:
     QString containerId() const;
     // JSCTL: whether the current page's scripts are blocked.
     bool isJavaScriptBlocked() const;
+    // READ01: reader-mode controller for this view (never null).
+    ReaderMode *readerMode() const { return m_readerMode; }
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
@@ -122,6 +125,8 @@ public slots:
     void zoomOut();
     void resetZoom();
     void applyZoom();
+    // READ01: enter/exit reader mode on this view.
+    void toggleReaderMode();
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -164,6 +169,7 @@ private:
     QList<int> m_zoomLevels;
     WebPage *m_page;
     ScriptBlockInfoBar *m_scriptBlockBar;
+    ReaderMode *m_readerMode;
 };
 
 #endif
