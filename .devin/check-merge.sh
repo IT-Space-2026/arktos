@@ -41,6 +41,17 @@ rust_done=$(awk -F'|' '/^\|/ && NF>5 {
 
 say "rust lane: $rust_done done, $rust_open open ($rust_active in-flight)"
 
+# already merged? then nothing on the lane is outstanding regardless
+# of the task-file states below.
+if git -C "$REPO" rev-parse --verify rust-work >/dev/null 2>&1 \
+	&& git -C "$REPO" merge-base --is-ancestor rust-work master 2>/dev/null; then
+	ahead=$(git -C "$REPO" rev-list --count master..rust-work 2>/dev/null || echo 0)
+	if [ "$ahead" -eq 0 ]; then
+		say "rust-work is fully merged into master — no merge needed"
+		exit 1
+	fi
+fi
+
 if [ "$rust_open" -eq 0 ] && [ "$rust_done" -gt 0 ]; then
 	say "MERGE DUE: rust lane queue drained — $rust_done task(s) ready on rust-work"
 	exit 0
