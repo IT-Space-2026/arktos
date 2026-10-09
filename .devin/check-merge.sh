@@ -97,5 +97,25 @@ if git -C "$REPO" rev-parse --verify rust-work >/dev/null 2>&1; then
 	ahead=$(git -C "$REPO" rev-list --count master..rust-work 2>/dev/null || echo '?')
 	say "rust-work is $ahead commit(s) ahead of master — lanes independent, no merge needed"
 fi
+
+# --- 4. ui lane: frequent-merge policy -----------------------------------
+# ui-work merges EARLY AND OFTEN — its commits are small UI edits that
+# drift-conflict with main if they pile up. Any commits ahead = due.
+UI_WT="$(dirname "$REPO")/arora-ui"
+UI_TASKS="$UI_WT/.devin/Arora-Task-UI.md"
+if git -C "$REPO" rev-parse --verify ui-work >/dev/null 2>&1; then
+	if [ -f "$UI_TASKS" ]; then
+		ui_done=$(awk -F'|' '/^\|/ && NF>5 {s=$4; gsub(/^[ \t]+|[ \t]+$/,"",s); if (s=="done") n++} END{print n+0}' "$UI_TASKS")
+		ui_open=$(awk -F'|' '/^\|/ && NF>5 {s=$4; gsub(/^[ \t]+|[ \t]+$/,"",s); if (s=="pending"||s=="in_progress") n++} END{print n+0}' "$UI_TASKS")
+		say "ui lane: $ui_done done, $ui_open open"
+	fi
+	uiahead=$(git -C "$REPO" rev-list --count master..ui-work 2>/dev/null || echo 0)
+	if [ "$uiahead" -gt 0 ]; then
+		say "MERGE DUE (frequent-merge lane): ui-work is $uiahead commit(s) ahead of master"
+		exit 0
+	fi
+	say "ui-work is fully merged into master"
+fi
+
 say "no merge needed"
 exit 1
