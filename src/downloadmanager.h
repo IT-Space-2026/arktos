@@ -59,9 +59,9 @@
 #ifndef DOWNLOADMANAGER_H
 #define DOWNLOADMANAGER_H
 
-#include "ui_downloads.h"
 #include "ui_downloaditem.h"
 
+#include <qabstractitemmodel.h>
 #include <qdatetime.h>
 #include <qelapsedtimer.h>
 #include <qpointer.h>
@@ -69,6 +69,7 @@
 #include <qvector.h>
 #include <qwebenginedownloadrequest.h>
 
+class DownloadManager;
 class QWebEnginePage;
 class QWebEngineProfile;
 #ifdef ARORA_RUSTDL
@@ -164,6 +165,10 @@ private:
 #ifdef ARORA_RUSTDL
     QPointer<RustDownloadEngine> m_engine;
 #endif
+    // DOWN02: the owning manager, captured at construction — the item
+    // is reparented into the sidebar's detail pane while displayed, so
+    // a window() lookup can no longer find the manager.
+    QPointer<DownloadManager> m_manager;
     bool m_requestFileName;
     qint64 m_bytesReceived;
     QElapsedTimer m_downloadTime;
@@ -200,7 +205,12 @@ class QFileIconProvider;
 class QMimeData;
 QT_END_NAMESPACE
 
-class DownloadManager : public QDialog, public Ui_DownloadDialog
+// DOWN02: the separate downloads window is gone — the sidebar's
+// Downloads panel is the download surface.  The manager is now a
+// never-shown controller widget: items stay widget children of it so
+// ownership, findChildren and lifetime keep working whether an item
+// is parked here or hosted in a panel's detail pane.
+class DownloadManager : public QWidget
 {
     Q_OBJECT
     Q_PROPERTY(RemovePolicy removePolicy READ removePolicy WRITE setRemovePolicy)
@@ -246,9 +256,12 @@ public:
     QWebEnginePage *retryPage(bool offTheRecord);
 
     // SIDE01: read-only model access for the sidebar downloads page —
-    // rows still render through the dialog's index widgets; secondary
-    // views map the DownloadModel::Roles.
+    // secondary views map the DownloadModel::Roles.
     DownloadModel *model() const { return m_model; }
+
+    // DOWN02: row -> item for secondary views; the sidebar panel hosts
+    // the item's detail card for the selected row.
+    DownloadItem *itemAt(int row) const;
 
     // SEC09: hands the url to the user-configured external download
     // handler (Settings > downloadmanager/externalPath).  The url
@@ -258,6 +271,11 @@ public:
     // the internal download path.  Static so autotests can drive it
     // without a live download.
     static bool externalDownload(const QUrl &url);
+
+signals:
+    // DOWN02: a new download joined the list — download surfaces (the
+    // sidebar panel) use it to reveal their Downloads section.
+    void itemAdded(DownloadItem *item);
 
 public slots:
     // WebEngine downloads can only be initiated from a page; there is no
@@ -274,9 +292,7 @@ private slots:
 
 private:
     void addItem(DownloadItem *item);
-    void updateItemCount();
     void load();
-    void updateActiveItemCount();
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;
@@ -300,14 +316,21 @@ class DownloadModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    // SIDE01: plain-data roles for views that cannot host the
-    // dialog's per-row DownloadItem index widgets (DisplayRole stays
-    // empty so the dialog never paints text under its widgets).
+    // SIDE01: plain-data roles for secondary views (the sidebar
+    // panel).  DisplayRole stays empty — rows paint through delegates,
+    // never as embedded text on an index widget.
     enum Roles {
         FileNameRole = Qt::UserRole + 1,
         OutputFileRole,
         SourceUrlRole,
-        CompletedRole
+        CompletedRole,
+        // DOWN02: sort/filter/detail support for the sidebar panel —
+        // start time, total size, the item's live status line and
+        // whether a transfer is in flight.
+        StartedTimeRole,
+        SizeRole,
+        InfoRole,
+        DownloadingRole
     };
 
     DownloadModel(DownloadManager *downloadManager, QObject *parent = nullptr);

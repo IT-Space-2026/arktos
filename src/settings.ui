@@ -127,6 +127,11 @@
          <string>Containers</string>
         </property>
        </item>
+       <item>
+        <property name="text">
+         <string>Downloads</string>
+        </property>
+       </item>
       </widget>
        </item>
       </layout>
@@ -288,78 +293,6 @@
          <property name="text">
           <string>Show dedicated search box</string>
          </property>
-        </widget>
-       </item>
-       <item row="5" column="0" colspan="3">
-        <widget class="QGroupBox" name="groupBox_2">
-         <property name="title">
-          <string>Downloads</string>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
-          <item>
-           <widget class="QRadioButton" name="downloadAsk">
-            <property name="text">
-             <string>Ask for a destination each time</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="horizontalLayout">
-            <item>
-             <widget class="QRadioButton" name="downloadDestination">
-              <property name="text">
-               <string>Use this destination:</string>
-              </property>
-              <property name="checked">
-               <bool>true</bool>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="downloadsLocation">
-              <property name="layoutDirection">
-               <enum>Qt::LeftToRight</enum>
-              </property>
-              <property name="accessibleName">
-               <string>Download directory</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="downloadDirectoryButton">
-              <property name="text">
-               <string>Choose Directory...</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="horizontalLayout_2">
-            <item>
-             <widget class="QCheckBox" name="externalDownloadButton">
-              <property name="text">
-               <string>Use this external download program:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="externalDownloadPath">
-              <property name="accessibleName">
-               <string>External download program</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="externalDownloadBrowse">
-              <property name="text">
-               <string>Choose Program...</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-         </layout>
         </widget>
        </item>
        <item row="6" column="0" colspan="3">
@@ -3049,6 +2982,101 @@
           <bool>true</bool>
          </property>
         </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_downloads">
+      <layout class="QVBoxLayout" name="downloadsPageLayout">
+       <item>
+        <widget class="QGroupBox" name="groupBox_2">
+         <property name="title">
+          <string>Downloads</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_2">
+          <item>
+           <widget class="QRadioButton" name="downloadAsk">
+            <property name="text">
+             <string>Ask for a destination each time</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout">
+            <item>
+             <widget class="QRadioButton" name="downloadDestination">
+              <property name="text">
+               <string>Use this destination:</string>
+              </property>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="downloadsLocation">
+              <property name="layoutDirection">
+               <enum>Qt::LeftToRight</enum>
+              </property>
+              <property name="accessibleName">
+               <string>Download directory</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="downloadDirectoryButton">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="text">
+               <string>Choose Directory...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout_2">
+            <item>
+             <widget class="QCheckBox" name="externalDownloadButton">
+              <property name="text">
+               <string>Use this external download program:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="externalDownloadPath">
+              <property name="accessibleName">
+               <string>External download program</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="externalDownloadBrowse">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="text">
+               <string>Choose Program...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="downloadsPageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
        </item>
       </layout>
      </widget>

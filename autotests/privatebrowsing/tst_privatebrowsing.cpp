@@ -497,13 +497,13 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
     // A stack manager keeps the items away from the app singleton.
     DownloadManager manager;
     manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-    QTableView *view = manager.findChild<QTableView*>();
-    QVERIFY(view);
+    QAbstractItemModel *model = manager.model();
+    QVERIFY(model);
 
     QWebEnginePage *otrPage = manager.retryPage(true);
     QVERIFY(otrPage->profile()->isOffTheRecord());
     manager.download(otrPage, url);
-    QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 1, 30000);
+    QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
     forceSave(&manager);
     {
@@ -523,7 +523,7 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
     QWebEnginePage *normalPage = manager.retryPage(false);
     QVERIFY(!normalPage->profile()->isOffTheRecord());
     manager.download(normalPage, normalUrl);
-    QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 2, 30000);
+    QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 2, 30000);
 
     forceSave(&manager);
     QSettings settings;

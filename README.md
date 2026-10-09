@@ -158,7 +158,10 @@ fingerprints on hover).
 The download manager drives QWebEngineDownloadRequest: progress, speed
 and ETA per item, Try Again (re-issues through the page or a hidden
 page), open-folder/open-with actions, server-suggested names sanitized
-and de-duplicated, and an external download-program handoff. A Rust
+and de-duplicated, and an external download-program handoff. Downloads
+surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
+Downloads) — filterable, sortable, and each selected row expands into a
+detail card in the panel's bottom pane. A Rust
 reqwest-based multi-connection engine is in development (DLACC tasks).
 
 ### Extensions

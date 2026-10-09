@@ -66,6 +66,7 @@
 
 #include <math.h>
 
+#include <qapplication.h>
 #include <qdesktopservices.h>
 #include <qfiledialog.h>
 #include <qfileiconprovider.h>
@@ -97,6 +98,7 @@
 DownloadItem::DownloadItem(QWebEngineDownloadRequest *download, bool requestFileName, QWidget *parent)
     : QWidget(parent)
     , m_download(download)
+    , m_manager(qobject_cast<DownloadManager*>(parent))
     , m_requestFileName(requestFileName)
     , m_bytesReceived(0)
     , m_finishedDownloading(false)
@@ -259,9 +261,10 @@ void DownloadItem::getFileName()
             ))
         return;
 
-    // The item is re-parented to the view's viewport by
-    // setIndexWidget — window() still resolves the manager.
-    DownloadManager *manager = qobject_cast<DownloadManager*>(window());
+    // DOWN02: the item may be hosted in a sidebar detail pane when a
+    // retry runs — m_manager, not window(), resolves the owner.
+    DownloadManager *manager = m_manager
+        ? m_manager.data() : DownloadManager::instance();
     QString downloadDirectory = manager->downloadDirectory();
 
     QString defaultFileName = saveFileName(downloadDirectory);
@@ -525,12 +528,9 @@ QString DownloadItem::saveFileName(const QString &directory) const
     const auto nameInUse = [this](const QString &path) {
         if (QFile::exists(path))
             return true;
-        // The item is re-parented to the view's viewport by
-        // setIndexWidget — window() still resolves the manager.
-        const DownloadManager *manager = qobject_cast<const DownloadManager*>(window());
-        if (!manager)
+        if (!m_manager)
             return false;
-        for (const DownloadItem *item : manager->m_downloads) {
+        for (const DownloadItem *item : m_manager->m_downloads) {
             if (item != this && item->m_outputFileName == path)
                 return true;
         }
@@ -616,9 +616,10 @@ void DownloadItem::restartDownload()
     if (!page) {
         // The page that started the download is gone (or this item was
         // restored from disk); use a hidden page to re-issue it.  The
-        // item lives on the view's viewport, not the manager itself.
-        DownloadManager *manager = qobject_cast<DownloadManager*>(window());
-        page = manager->retryPage(m_offTheRecord);
+        // item may be hosted in a sidebar detail pane, so window() is
+        // not the manager — m_manager is (DOWN02).
+        if (m_manager)
+            page = m_manager->retryPage(m_offTheRecord);
     }
     if (!page)
         return;
@@ -767,10 +768,12 @@ void DownloadItem::downloadProgressUpdate()
     progressBar->setValue(currentValue);
     progressBar->setMaximum(totalValue);
 
-    emit progress(currentValue, totalValue);
     sampleSpeed();
     updateInfoLabel();
     updateDetails();
+    // Emit after the labels refreshed so views repainting on the
+    // resulting dataChanged read the fresh status line.
+    emit progress(currentValue, totalValue);
 }
 
 qint64 DownloadItem::bytesTotal() const
@@ -999,14 +1002,19 @@ void DownloadItem::finished()
 }
 
 /*!
-    DownloadManager is a Dialog that contains a list of DownloadItems
+    DownloadManager owns the DownloadItem list and its persistence.
 
     It is a basic download manager.  It only downloads the file, doesn't do BitTorrent,
     extract zipped files or anything fancy.
+
+    DOWN02: the standalone downloads dialog is gone — the sidebar's
+    Downloads panel is the user-visible surface.  This object is a
+    widget only so the items keep a stable (never shown) parent; it is
+    never displayed.
   */
 DownloadManager *DownloadManager::instance()
 {
-    // Lazily created top-level dialog.  Not parented on qApp: a QWidget
+    // Lazily created controller.  Not parented on qApp: a QWidget
     // cannot take a non-widget parent, and a static QPointer keeps the
     // lookup cheap without a leak-on-purpose flag.
     static QPointer<DownloadManager> manager;
@@ -1016,7 +1024,7 @@ DownloadManager *DownloadManager::instance()
 }
 
 DownloadManager::DownloadManager(QWidget *parent)
-    : QDialog(parent)
+    : QWidget(parent)
     , m_autoSaver(new AutoSaver(this))
     , m_model(new DownloadModel(this, this))
     , m_iconProvider()
@@ -1025,8 +1033,6 @@ DownloadManager::DownloadManager(QWidget *parent)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
-    setupUi(this);
-
     QSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
     QString defaultLocation = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
@@ -1034,14 +1040,6 @@ DownloadManager::DownloadManager(QWidget *parent)
         defaultLocation = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
     setDownloadDirectory(settings.value(QLatin1String("downloadDirectory"), defaultLocation).toString());
 
-    downloadsView->setShowGrid(false);
-    downloadsView->verticalHeader()->hide();
-    downloadsView->horizontalHeader()->hide();
-    downloadsView->setAlternatingRowColors(true);
-    downloadsView->horizontalHeader()->setStretchLastSection(true);
-    downloadsView->setModel(m_model);
-    connect(cleanupButton, &QPushButton::clicked, this, &DownloadManager::cleanup);
-    connect(buttonBox, &QDialogButtonBox::rejected, this, &DownloadManager::close);
     load();
 }
 
@@ -1101,15 +1099,14 @@ bool DownloadManager::hasActiveDownloadForPage(QWebEnginePage *page) const
 bool DownloadManager::allowQuit()
 {
     if (activeDownloads() >= 1) {
-        int choice = QMessageBox::warning(this, QString(),
+        int choice = QMessageBox::warning(QApplication::activeWindow(),
+                                        QString(),
                                         tr("There are %1 downloads in progress\n"
                                            "Do you want to quit anyway?").arg(activeDownloads()),
                                         QMessageBox::Yes | QMessageBox::No,
                                         QMessageBox::No);
-        if (choice == QMessageBox::No) {
-            show();
+        if (choice == QMessageBox::No)
             return false;
-        }
     }
     return true;
 }
@@ -1174,10 +1171,7 @@ void DownloadManager::download(QWebEnginePage *page, const QUrl &url, bool reque
         addItem(item);
         if (item->m_canceledByUser)
             return;
-        if (!isVisible())
-            show();
-        activateWindow();
-        raise();
+        emit itemAdded(item);
         return;
     }
 #endif
@@ -1206,7 +1200,6 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
             item->m_awaitingRetry = false;
             item->attach(download);
             updateRow(item);
-            updateActiveItemCount();
             m_requestFileNameNext = false;
             return;
         }
@@ -1238,10 +1231,7 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
         if (item->m_canceledByUser)
             return;
 
-        if (!isVisible())
-            show();
-        activateWindow();
-        raise();
+        emit itemAdded(item);
         return;
     }
 #endif
@@ -1253,57 +1243,30 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
     if (item->m_canceledByUser)
         return;
 
-    if (!isVisible())
-        show();
-
-    activateWindow();
-    raise();
+    // DOWN02: no window pops up anymore — surfaces (the sidebar panel,
+    // the window alert) react to the signal instead.
+    emit itemAdded(item);
 }
 
 void DownloadManager::addItem(DownloadItem *item)
 {
     connect(item, &DownloadItem::statusChanged, this, [this]() { updateRow(); });
     connect(item, &DownloadItem::downloadFinished, this, &DownloadManager::finished);
-    // The detail card changes the row's preferred height both ways.
-    connect(item, &DownloadItem::expandedChanged, this, [this, item]() {
-        const int row = m_downloads.indexOf(item);
-        if (row == -1)
-            return;
-        // Child visibility invalidation is delivered lazily — force a
-        // synchronous relayout so the size hint reflects the card's
-        // new visibility before the row is resized.
-        item->layout()->activate();
-        downloadsView->setRowHeight(row, item->sizeHint().height());
+    // DOWN02: secondary views render live status/size text — progress
+    // ticks must reach them as dataChanged.
+    connect(item, &DownloadItem::progress, this, [this, item]() {
+        updateRow(item);
     });
     int row = m_downloads.count();
     m_model->beginInsertRows(QModelIndex(), row, row);
     m_downloads.append(item);
     m_model->endInsertRows();
-    updateItemCount();
-    downloadsView->setIndexWidget(m_model->index(row, 0), item);
-    QIcon icon = style()->standardIcon(QStyle::SP_FileIcon);
-    item->fileIcon->setPixmap(icon.pixmap(48, 48));
-    downloadsView->setRowHeight(row, item->sizeHint().height());
     updateRow(item); //incase download finishes before the constructor returns
-    updateActiveItemCount();
-}
-
-void DownloadManager::updateActiveItemCount()
-{
-    int acCount = activeDownloads();
-    if (acCount > 0) {
-        setWindowTitle(tr("Downloading %1").arg(acCount));
-    } else {
-        setWindowTitle(tr("Downloads"));
-    }
 }
 
 void DownloadManager::finished()
 {
-    updateActiveItemCount();
-    if (isVisible()) {
-        QApplication::alert(this);
-    }
+    QApplication::alert(QApplication::activeWindow());
 }
 
 
@@ -1325,9 +1288,6 @@ void DownloadManager::updateRow(DownloadItem *item)
         icon = style()->standardIcon(QStyle::SP_FileIcon);
     item->fileIcon->setPixmap(icon.pixmap(48, 48));
 
-    int oldHeight = downloadsView->rowHeight(row);
-    downloadsView->setRowHeight(row, qMax(oldHeight, item->minimumSizeHint().height()));
-
     bool remove = false;
     if (!item->downloading() && item->m_offTheRecord)
         remove = true;
@@ -1338,8 +1298,9 @@ void DownloadManager::updateRow(DownloadItem *item)
     }
     if (remove)
         m_model->removeRow(row);
-
-    cleanupButton->setEnabled(m_downloads.count() - activeDownloads() > 0);
+    else
+        emit m_model->dataChanged(m_model->index(row, 0),
+                                  m_model->index(row, 0));
 }
 
 DownloadManager::RemovePolicy DownloadManager::removePolicy() const
@@ -1361,7 +1322,6 @@ void DownloadManager::save() const
     settings.beginGroup(QLatin1String("downloadmanager"));
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     settings.setValue(QLatin1String("removeDownloadsPolicy"), QLatin1String(removePolicyEnum.valueToKey(m_removePolicy)));
-    settings.setValue(QLatin1String("size"), size());
     if (m_removePolicy == Exit)
         return;
 
@@ -1399,9 +1359,6 @@ void DownloadManager::load()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
-    QSize size = settings.value(QLatin1String("size")).toSize();
-    if (size.isValid())
-        resize(size);
     QByteArray value = settings.value(QLatin1String("removeDownloadsPolicy"), QLatin1String("Never")).toByteArray();
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     m_removePolicy = removePolicyEnum.keyToValue(value) == -1 ?
@@ -1437,8 +1394,6 @@ void DownloadManager::load()
         }
         key = QString(QLatin1String("download_%1_")).arg(++i);
     }
-    cleanupButton->setEnabled(m_downloads.count() - activeDownloads() > 0);
-    updateActiveItemCount();
 }
 
 void DownloadManager::cleanup()
@@ -1446,17 +1401,15 @@ void DownloadManager::cleanup()
     if (m_downloads.isEmpty())
         return;
     m_model->removeRows(0, m_downloads.count());
-    updateItemCount();
-    updateActiveItemCount();
     if (m_downloads.isEmpty())
         m_iconProvider.reset();
     m_autoSaver->changeOccurred();
 }
 
-void DownloadManager::updateItemCount()
+DownloadItem *DownloadManager::itemAt(int row) const
 {
-    int count = m_downloads.count();
-    itemCount->setText(tr("%n Download(s)", "", count));
+    return (row >= 0 && row < m_downloads.count())
+        ? m_downloads.at(row) : nullptr;
 }
 
 void DownloadManager::setDownloadDirectory(QString directory)
@@ -1530,8 +1483,32 @@ QVariant DownloadModel::data(const QModelIndex &index, int role) const
         return item->m_url;
     case CompletedRole:
         return item->downloadedSuccessfully();
+    case StartedTimeRole:
+        return item->m_startedTime;
+    case SizeRole: {
+        qint64 total = item->bytesTotal();
+        if (total <= 0)
+            total = item->m_restoredTotalBytes;
+        if (total <= 0)
+            total = item->m_bytesReceived;
+        return total;
+    }
+    case InfoRole:
+        return item->downloadInfoLabel->text();
+    case DownloadingRole:
+        return item->downloading();
     default:
         break;
+    }
+    if (role == Qt::DecorationRole) {
+        if (m_downloadManager->m_iconProvider.isNull())
+            m_downloadManager->m_iconProvider.reset(new QFileIconProvider);
+        QIcon icon = m_downloadManager->m_iconProvider->icon(
+            QFileInfo(item->m_outputFileName));
+        if (icon.isNull())
+            icon = m_downloadManager->style()->standardIcon(
+                QStyle::SP_FileIcon);
+        return icon;
     }
     if (role == Qt::ToolTipRole)
         if (!m_downloadManager->m_downloads.at(index.row())->downloadedSuccessfully())
@@ -1577,7 +1554,6 @@ bool DownloadModel::removeRows(int row, int count, const QModelIndex &parent)
         }
     }
     m_downloadManager->m_autoSaver->changeOccurred();
-    m_downloadManager->updateItemCount();
     return true;
 }
 

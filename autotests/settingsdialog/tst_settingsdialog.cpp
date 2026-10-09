@@ -748,7 +748,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 10);
+        QCOMPARE(dialog.pagesList->count(), 11);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -766,6 +766,8 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("Extensions"));
         QCOMPARE(dialog.pagesList->item(9)->text(),
                  QStringLiteral("Containers"));
+        QCOMPARE(dialog.pagesList->item(10)->text(),
+                 QStringLiteral("Downloads"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -1069,7 +1071,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 10);
+    QCOMPARE(dialog.tabWidget->count(), 11);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));

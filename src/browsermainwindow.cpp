@@ -324,6 +324,17 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
     });
+    // DOWN02: a new download no longer pops a separate window — the
+    // Downloads section is selected when the dock is already up, and
+    // the window flashes so the arrival is still noticeable when the
+    // panel is hidden.
+    connect(BrowserApplication::downloadManager(),
+            &DownloadManager::itemAdded, this, [this]() {
+        if (m_sidebarPanel)
+            m_sidebarPanel->showDownloads();
+        if (isActiveWindow())
+            QApplication::alert(this);
+    });
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
 
@@ -1433,6 +1444,10 @@ void BrowserMainWindow::ensureSidebarPanel()
                                 const QString &title) {
         m_tabWidget->loadUrl(url, tab, title);
     });
+    // DOWN02: the Downloads page header's X folds the dock away (the
+    // toggle action + persistence follow via visibilityChanged).
+    connect(m_sidebarPanel, &SidebarPanel::closeRequested,
+            m_sidebarDock, &QWidget::hide);
     m_sidebarDock->setWidget(m_sidebarPanel);
 }
 
@@ -1549,7 +1564,13 @@ void BrowserMainWindow::viewStatusbar()
 
 void BrowserMainWindow::downloadManager()
 {
-    BrowserApplication::downloadManager()->show();
+    // DOWN02: downloads live in the sidebar — Ctrl+Y / Tools >
+    // Downloads raises the dock on the Downloads section instead of
+    // opening the (removed) standalone window.
+    ensureSidebarPanel();
+    m_sidebarPanel->showDownloads();
+    m_sidebarDock->setVisible(true);
+    m_sidebarDock->raise();
 }
 
 void BrowserMainWindow::selectLineEdit()

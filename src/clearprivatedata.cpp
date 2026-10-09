@@ -151,7 +151,6 @@ void ClearPrivateData::accept()
 
     if (m_downloadHistory->isChecked()) {
         DownloadManager::instance()->cleanup();
-        DownloadManager::instance()->hide();
     }
 
     if (m_searchHistory->isChecked()) {

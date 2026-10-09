@@ -21,13 +21,17 @@
 
 #include "tabwidget.h"
 
+#include <qpointer.h>
 #include <qwidget.h>
 
 class AutoSaver;
-class EditTableView;
+class DownloadItem;
 class EditTreeView;
-class QIdentityProxyModel;
+class QComboBox;
+class QFrame;
+class QListView;
 class QPlainTextEdit;
+class QSortFilterProxyModel;
 class QTabWidget;
 class TreeSortFilterProxyModel;
 
@@ -41,6 +45,9 @@ class SidebarPanel : public QWidget
 signals:
     void openUrl(const QUrl &url, TabWidget::OpenUrlIn tab,
                  const QString &title);
+    // DOWN02: the Downloads page header's X asks the host window to
+    // fold the whole dock away.
+    void closeRequested();
 
 public:
     explicit SidebarPanel(QWidget *parent = nullptr);
@@ -52,10 +59,14 @@ public:
 
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
+    QWidget *downloadsPage() const;
 
 public slots:
     // AutoSaver target — flushes the notes text and the selected tab.
     void save();
+    // DOWN02: Ctrl+Y / Tools > Downloads lands here — the dock is the
+    // only downloads surface now.
+    void showDownloads();
 
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);
@@ -63,15 +74,24 @@ private slots:
     void openHistoryEntry(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void historyContextMenu(const QPoint &pos);
     void openDownload(const QModelIndex &index);
+    void downloadsContextMenu(const QPoint &pos);
+    void downloadSelectionChanged(const QModelIndex &current,
+                                  const QModelIndex &previous);
+    void applyDownloadSort();
 
 private:
     QTabWidget *m_tabs;
     EditTreeView *m_bookmarksView;
     EditTreeView *m_historyView;
-    EditTableView *m_downloadsView;
+    QListView *m_downloadsView;
     TreeSortFilterProxyModel *m_bookmarksProxy;
     TreeSortFilterProxyModel *m_historyProxy;
-    QIdentityProxyModel *m_downloadsProxy;
+    QSortFilterProxyModel *m_downloadsProxy;
+    QWidget *m_downloadsPage;
+    QComboBox *m_downloadsSort;
+    QFrame *m_downloadDetail;
+    // The DownloadItem card currently hosted in the detail pane.
+    QPointer<QWidget> m_detailItem;
     QPlainTextEdit *m_notes;
     AutoSaver *m_autoSaver;
 };

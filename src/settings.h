@@ -94,7 +94,8 @@ public:
         AutoFillPage,
         AdvancedPage,
         ExtensionsPage,
-        ContainersPage
+        ContainersPage,
+        DownloadsPage
     };
 
     SettingsDialog(QWidget *parent = nullptr);

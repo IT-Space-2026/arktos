@@ -186,6 +186,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         "system-run",       // Advanced
         "list-add",         // Extensions
         "folder-new",       // Containers
+        "emblem-downloads", // Downloads
     };
     for (int i = 0;
          i < pagesList->count()
@@ -528,7 +529,7 @@ void SettingsDialog::openAtPage(Page page)
 
 int SettingsDialog::pageCount()
 {
-    return int(ContainersPage) + 1;
+    return int(DownloadsPage) + 1;
 }
 
 QString SettingsDialog::pageTitle(Page page)
@@ -544,6 +545,7 @@ QString SettingsDialog::pageTitle(Page page)
         QT_TR_NOOP("Advanced"),
         QT_TR_NOOP("Extensions"),
         QT_TR_NOOP("Containers"),
+        QT_TR_NOOP("Downloads"),
     };
     const int index = int(page);
     if (index < 0 || index >= int(sizeof(titles) / sizeof(titles[0])))
