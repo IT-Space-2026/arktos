@@ -37,7 +37,12 @@
 #include <adblockrule.h>
 #include <adblocksubscription.h>
 #include <browserapplication.h>
+#include <browserpaths.h>
+#include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
+
+#include <qwebengineprofile.h>
+#include <qwebenginecookiestore.h>
 
 #if defined(ARORA_RUSTCORE)
 #include "rustcore.h"
@@ -64,6 +69,12 @@ private slots:
     void engineTraversalName();
     void cardCompletes();
     void cardCancelRetry();
+
+    // DLACC05: secrets + filesystem hygiene — the scoped cookie
+    // export's scope/perms/lifetime, and that cancel leaves no
+    // secrets or staging behind.
+    void engineCookieExport();
+    void engineCancelCleansSecrets();
 
     // DLACC04: the policy gate's pure decisions — the verdicts the
     // Rust engine asks for on every hop.  (The crate-side fixture
@@ -233,6 +244,25 @@ public:
 
     int hits() const { return m_hits; }
 
+    // First captured request header for `path` ("" when absent) —
+    // DLACC05 asserts which cookies actually rode the wire.
+    QByteArray header(const QByteArray &path, const QByteArray &name) const
+    {
+        for (const auto &r : m_requests) {
+            if (r.first != path)
+                continue;
+            const QByteArray needle = QByteArray("\r\n") + name.toLower() + ":";
+            const QByteArray low = r.second.toLower();
+            const int pos = low.indexOf(needle);
+            if (pos == -1)
+                return QByteArray();
+            const int start = pos + needle.size();
+            const int end = r.second.indexOf("\r\n", start);
+            return r.second.mid(start, end - start).trimmed();
+        }
+        return QByteArray();
+    }
+
 private:
     void serve(QTcpSocket *socket, const QByteArray &request)
     {
@@ -241,6 +271,7 @@ private:
         const QList<QByteArray> parts = firstLine.split(' ');
         const QByteArray method = parts.value(0);
         const QByteArray path = parts.value(1);
+        m_requests.append({path, request});
 
         QByteArray range;
         const int rpos = request.toLower().indexOf("\r\nrange:");
@@ -253,6 +284,14 @@ private:
         if (path == "/redir") {
             socket->write("HTTP/1.1 302 Found\r\n"
                           "Location: /file\r\nContent-Length: 0\r\n\r\n");
+            socket->disconnectFromHost();
+            return;
+        }
+        if (path == "/warmup") {
+            // Instant answer for the page load that brings the
+            // profile's network context (and cookie store) up.
+            socket->write("HTTP/1.1 204 No Content\r\n"
+                          "Content-Length: 0\r\n\r\n");
             socket->disconnectFromHost();
             return;
         }
@@ -306,6 +345,7 @@ private:
     bool m_ranges;
     int m_throttle;
     int m_hits = 0;
+    QList<QPair<QByteArray, QByteArray>> m_requests;
 };
 
 static QByteArray pattern(int size)
@@ -494,6 +534,155 @@ void tst_RustDownload::cardCancelRetry()
     QFile f(dest.filePath("retry.bin"));
     QVERIFY(f.open(QIODevice::ReadOnly));
     QCOMPARE(f.readAll(), body);
+}
+
+// ---- DLACC05 secrets + filesystem hygiene --------------------------
+
+// The cookie export's home: cookies-<random> directly inside the
+// 0700 parts root.  Returns "" while no export exists.
+static QString findCookieFile(const QString &partsDir)
+{
+    const QStringList names = QDir(partsDir).entryList(
+        {QStringLiteral("cookies-*")}, QDir::Files);
+    return names.isEmpty() ? QString()
+                           : partsDir + QLatin1Char('/') + names.first();
+}
+
+void tst_RustDownload::engineCookieExport()
+{
+    // Throttled so the export file is observable mid-flight.
+    const QByteArray body = pattern(2 * 1024 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/4096);
+    QVERIFY(server.listen());
+
+    // An OTR profile + a live page: the store only runs once a page
+    // spins up the profile's network context.  A fresh jar for this
+    // profile reads the relaxed policy at construction, so the
+    // programmatic seeds below are accepted.
+    QSettings settings;
+    settings.setValue(QLatin1String("cookies/acceptCookies"),
+                      QLatin1String("AcceptAlways"));
+    settings.setValue(QLatin1String("cookies/blockThirdPartyCookies"),
+                      false);
+    QScopedPointer<QWebEngineProfile> profile(new QWebEngineProfile);
+    QScopedPointer<QWebEnginePage> page(
+        new QWebEnginePage(profile.data()));
+    // The store only runs once a navigation spins the profile's
+    // network context up — warm it on a path the download never uses.
+    QSignalSpy loadSpy(page.data(), &QWebEnginePage::loadFinished);
+    page->load(server.url(QStringLiteral("/warmup")));
+    QVERIFY(loadSpy.wait(15000));
+
+    // One cookie that matches the download URL and one that does not
+    // — the export must carry ONLY the matching rows; the whole jar
+    // never reaches disk.
+    QNetworkCookie matching("sess", "AAA");
+    QNetworkCookie unrelated("other", "ZZZ");
+    unrelated.setDomain(QLatin1String("unrelated.example"));
+    QSignalSpy storeSpy(profile->cookieStore(),
+                        &QWebEngineCookieStore::cookieAdded);
+    CookieJar *jar = CookieJar::instance(profile.data());
+    profile->cookieStore()->setCookie(matching, server.url("/file"));
+    profile->cookieStore()->setCookie(
+        unrelated, QUrl(QStringLiteral("http://unrelated.example/")));
+    QTRY_VERIFY(storeSpy.count() >= 1);
+    QTRY_VERIFY(!jar->cookiesForUrl(server.url("/file")).isEmpty());
+
+    QTemporaryDir dest;
+    QVERIFY(dest.isValid());
+    auto *engine = new RustDownloadEngine(page.data(), server.url("/file"),
+                                          QLatin1String("ck.bin"),
+                                          QString(), this);
+    engine->setDownloadDirectory(dest.path());
+    engine->setDownloadFileName(QLatin1String("ck.bin"));
+    engine->accept();
+
+    const QString partsDir =
+        BrowserPaths::dataFilePath(QLatin1String("downloads-parts"));
+    QString cookiePath;
+    QTRY_VERIFY(!(cookiePath = findCookieFile(partsDir)).isEmpty());
+
+    // 0600 — no group/other access — inside the 0700 root.
+    const QFileDevice::Permissions perms = QFileInfo(cookiePath).permissions();
+    QVERIFY(!(perms & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
+                       | QFileDevice::ExeGroup | QFileDevice::ReadOther
+                       | QFileDevice::WriteOther | QFileDevice::ExeOther)));
+
+    QFile f(cookiePath);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QByteArray rows = f.readAll();
+    f.close();
+    QVERIFY(rows.contains("sess\tAAA"));
+    QVERIFY(!rows.contains("unrelated.example"));
+    QVERIFY(!rows.contains("ZZZ"));
+
+    QTest::qWaitFor([engine]() { return engine->isFinished(); }, 30000);
+    if (engine->state() != QWebEngineDownloadRequest::DownloadCompleted)
+        qWarning() << "engine ended in state" << engine->state()
+                   << "err:" << engine->interruptReasonString();
+    QCOMPARE(engine->state(),
+             QWebEngineDownloadRequest::DownloadCompleted);
+
+    // The session cookie really rode the wire to the target host.
+    QVERIFY(server.header("/file", "cookie").contains("sess=AAA"));
+    // And the export file is gone once the transfer lands.
+    QVERIFY(findCookieFile(partsDir).isEmpty());
+}
+
+void tst_RustDownload::engineCancelCleansSecrets()
+{
+    const QByteArray body = pattern(2 * 1024 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/2048);
+    QVERIFY(server.listen());
+
+    // Same live-profile + permissive-fresh-jar setup as the export
+    // test — cancel must remove the export file too.
+    QSettings settings;
+    settings.setValue(QLatin1String("cookies/acceptCookies"),
+                      QLatin1String("AcceptAlways"));
+    settings.setValue(QLatin1String("cookies/blockThirdPartyCookies"),
+                      false);
+    QScopedPointer<QWebEngineProfile> profile(new QWebEngineProfile);
+    QScopedPointer<QWebEnginePage> page(
+        new QWebEnginePage(profile.data()));
+    QSignalSpy loadSpy(page.data(), &QWebEnginePage::loadFinished);
+    page->load(server.url(QStringLiteral("/warmup")));
+    QVERIFY(loadSpy.wait(15000));
+    QSignalSpy storeSpy(profile->cookieStore(),
+                        &QWebEngineCookieStore::cookieAdded);
+    CookieJar *jar = CookieJar::instance(profile.data());
+    profile->cookieStore()->setCookie(
+        QNetworkCookie("sess", "AAA"), server.url("/file"));
+    QTRY_VERIFY(storeSpy.count() >= 1);
+    QTRY_VERIFY(!jar->cookiesForUrl(server.url("/file")).isEmpty());
+
+    QTemporaryDir dest;
+    QVERIFY(dest.isValid());
+    auto *engine = new RustDownloadEngine(page.data(), server.url("/file"),
+                                          QLatin1String("gone.bin"),
+                                          QString(), this);
+    engine->setDownloadDirectory(dest.path());
+    engine->setDownloadFileName(QLatin1String("gone.bin"));
+    engine->accept();
+    const bool progressed = QTest::qWaitFor(
+        [engine]() { return engine->receivedBytes() > 0
+                          || engine->isFinished(); }, 10000);
+    QVERIFY(progressed);
+    if (!engine->isFinished()) {
+        engine->cancel();
+        QTRY_COMPARE(engine->state(),
+                     QWebEngineDownloadRequest::DownloadCancelled);
+        // No partial output when the transfer was cancelled.
+        QVERIFY(!QFile::exists(dest.filePath("gone.bin")));
+    }
+    // No dest-dir staging file and no cookie export — the checks
+    // hold for either terminal state.
+    QVERIFY(QDir(dest.path())
+            .entryList({QStringLiteral(".*.ardl")}, QDir::Files | QDir::Hidden)
+            .isEmpty());
+    const QString partsDir =
+        BrowserPaths::dataFilePath(QLatin1String("downloads-parts"));
+    QTRY_VERIFY(findCookieFile(partsDir).isEmpty());
 }
 
 // ---- DLACC04 gate coverage ----------------------------------------

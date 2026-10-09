@@ -479,7 +479,11 @@ QString DownloadItem::saveFileName(const QString &directory) const
         baseName = QLatin1String("unnamed_download");
 
 #ifdef DOWNLOADMANAGER_DEBUG
-        qDebug() << "DownloadItem::" << __FUNCTION__ << "downloading unknown file:" << m_url;
+        // DLACC05: query+fragment+userinfo stay out of logs — signed
+        // URLs carry tokens there; host+path is enough to debug.
+        qDebug() << "DownloadItem::" << __FUNCTION__ << "downloading unknown file:"
+                 << m_url.toString(QUrl::RemoveQuery | QUrl::RemoveFragment
+                                   | QUrl::RemoveUserInfo);
 #endif
     }
 
@@ -1026,7 +1030,12 @@ void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *downloa
         return;
 
 #ifdef DOWNLOADMANAGER_DEBUG
-    qDebug() << "DownloadManager::" << __FUNCTION__ << download->url()
+    // DLACC05: redact query+fragment+userinfo — download URLs can be
+    // signed one-shot links whose query is a credential.
+    qDebug() << "DownloadManager::" << __FUNCTION__
+             << download->url().toString(QUrl::RemoveQuery
+                                         | QUrl::RemoveFragment
+                                         | QUrl::RemoveUserInfo)
              << "requestFileName" << m_requestFileNameNext;
 #endif
 

@@ -110,9 +110,53 @@ pub unsafe extern "C" fn dl_set_temp_dir(utf8_path: *const c_char) -> DlStatus {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700));
         }
+        sweep_stale(&p);
         *temp_root().lock().unwrap() = Some(p);
         Ok(())
     })
+}
+
+/// Crash-adjacent hygiene (DLACC05): a worker that died with its
+/// process leaves its `dl-*` part dir — and the Qt side can leave a
+/// `cookies-*` export file — inside the temp root.  dl_set_temp_dir
+/// runs once per process arming, before any download of this run
+/// starts, so anything untouched for two minutes is residue.  A dir
+/// counts as dead only when every entry inside is also stale — a
+/// racing second process's in-flight parts have fresh write mtimes
+/// and survive the sweep.
+fn sweep_stale(root: &std::path::Path) {
+    let Some(cutoff) = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(120))
+    else {
+        return;
+    };
+    let fresh = |entry: &std::fs::DirEntry| {
+        entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t >= cutoff)
+            .unwrap_or(true)
+    };
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        if fresh(&entry) {
+            continue;
+        }
+        let name = entry.file_name();
+        let n = name.to_string_lossy();
+        if n.starts_with("dl-") {
+            let dead = std::fs::read_dir(entry.path())
+                .map(|inner| inner.flatten().all(|e| !fresh(&e)))
+                .unwrap_or(false);
+            if dead {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        } else if n.starts_with("cookies-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Always 1 when the crate is linked — presence probe for the UI.

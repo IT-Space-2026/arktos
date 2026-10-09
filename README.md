@@ -163,7 +163,13 @@ never ride a cross-domain hop, the profile's User-Agent and Referer
 policy apply, the application proxy is honored, and inside a tor
 window a download exits only via the managed SOCKS listener —
 otherwise it falls back to the built-in engine rather than ever
-opening a direct connection.
+opening a direct connection.  Authenticated downloads are fed by a
+scoped cookie export: only rows matching the target URL are written
+to a private 0600 file under the temp root (itself 0700), fsynced
+before the engine starts and deleted when the download ends;
+in-flight part/staging files stay 0600, stale dl-*/cookies-* debris
+is swept when the engine arms, and debug output redacts URL queries,
+fragments and userinfo.
 
 ### Extensions
 

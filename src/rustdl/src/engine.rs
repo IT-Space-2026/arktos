@@ -90,6 +90,10 @@ pub struct Download {
     error: Mutex<Option<String>>,
     file_name: Mutex<String>,
     output: Mutex<Option<PathBuf>>,
+    /// The `.{name}.ardl` staging file beside the destination — tracked
+    /// so any non-Done terminal state can unlink it (DLACC05: no
+    /// partial bytes left world-visible after fail/cancel/panic).
+    staging: Mutex<Option<PathBuf>>,
 }
 
 struct Speed {
@@ -139,6 +143,7 @@ impl Download {
             error: Mutex::new(None),
             file_name: Mutex::new(String::new()),
             output: Mutex::new(None),
+            staging: Mutex::new(None),
         })
     }
 
@@ -555,6 +560,21 @@ fn disposition_name(cd: &str) -> Option<String> {
     None
 }
 
+/// The staging file beside the destination stays owner-private while
+/// the transfer is in flight (0600 on unix); commit() relaxes the
+/// finished file to the conventional 0644 a browser download lands
+/// with.  No world-readable partial bytes (DLACC05).
+fn open_staging(path: &Path) -> std::io::Result<File> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
+}
+
 fn stream_to(mut resp: Response, file: &mut File, dl: &Download) -> Result<i64, Fail> {
     let mut buf = vec![0u8; COPY_BUF];
     let mut wrote = 0i64;
@@ -625,11 +645,7 @@ fn fetch_segment(
 
 /// Copies segment files in order into the staging file.
 fn merge(parts: &[PathBuf], staging: &Path, dl: &Download) -> Result<i64, Fail> {
-    let mut out = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(staging)?;
+    let mut out = open_staging(staging)?;
     let mut buf = vec![0u8; COPY_BUF];
     let mut total = 0i64;
     for p in parts {
@@ -770,6 +786,9 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
     // atomic on the same filesystem (the part files themselves stay in
     // the private tmp dir).
     let staging = job.dest_dir.join(format!(".{name}.ardl"));
+    // Registered before the file exists: every exit path below —
+    // fail, cancel, panic — can then unlink it (DLACC05).
+    *dl.staging.lock().unwrap() = Some(staging.clone());
 
     let total = pr.total.unwrap_or(-1);
     let seg_count = if pr.ranges && total >= MIN_SPLIT_BYTES {
@@ -800,11 +819,7 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
                 dl.bytes_total.store(t, Ordering::SeqCst);
             }
         }
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&staging)?;
+        let mut f = open_staging(&staging)?;
         stream_to(resp, &mut f, dl)?;
         f.flush()?;
         f.sync_all()?;
@@ -842,7 +857,17 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
                         dl.cancel.store(true, Ordering::SeqCst);
-                        if first_err.is_none() {
+                        // A sibling's "cancelled" must not overwrite the
+                        // real failure that tripped the flag — join order
+                        // is not chronology.
+                        let real = e.msg != "cancelled";
+                        if first_err.is_none()
+                            || (real
+                                && first_err
+                                    .as_ref()
+                                    .map(|f| f.msg == "cancelled")
+                                    .unwrap_or(false))
+                        {
                             first_err = Some(e);
                         }
                     }
@@ -862,7 +887,11 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
             }
         });
         if let Err(e) = outcome {
-            if dl.cancelled() {
+            // A genuine cancel reports as such; a real segment failure
+            // (which set the flag only to stop its siblings) must reach
+            // the caller with its own message — masking it as
+            // Cancelled hides bugs (DLACC05 audit find).
+            if dl.cancelled() && e.msg == "cancelled" {
                 return Err(Fail {
                     status: DlStatus::Busy,
                     msg: "cancelled".into(),
@@ -876,11 +905,7 @@ fn run_job(dl: &Arc<Download>, job: Job, tmp_dir: PathBuf) -> Result<PathBuf, Fa
                 dl.connections.store(1, Ordering::SeqCst);
                 let resp = send(&client, Method::GET, &pr.url, &ctx, None)?;
                 require_success(&resp, "get", &pr.url)?;
-                let mut f = OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&staging)?;
+                let mut f = open_staging(&staging)?;
                 stream_to(resp, &mut f, dl)?;
                 f.flush()?;
                 f.sync_all()?;
@@ -922,6 +947,13 @@ fn commit(
         fs::copy(staging, dest).map(|_| ())?;
         fs::remove_file(staging)
     })?;
+    // Staging ran owner-private; the committed result takes the
+    // conventional 0644 every other browser download lands with.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dest, fs::Permissions::from_mode(0o644));
+    }
     Ok(dest.to_path_buf())
 }
 
@@ -950,6 +982,13 @@ pub fn run(dl: Arc<Download>, job: Job, tmp_dir: PathBuf) {
         }
     }
     dl.connections.store(0, Ordering::SeqCst);
+    if dl.state.load(Ordering::SeqCst) != DlState::Done as i32 {
+        // Failed / cancelled / panicked — the dest-dir staging file
+        // must not outlive the transfer (DLACC05).
+        if let Some(staging) = dl.staging.lock().unwrap().take() {
+            let _ = fs::remove_file(staging);
+        }
+    }
     let _ = fs::remove_dir_all(&tmp_dir);
 }
 
@@ -1032,5 +1071,16 @@ mod tests {
         File::create(&p).unwrap();
         let p2 = dedup_path(d.path(), "f.txt");
         assert_eq!(p2, d.path().join("f-1.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_is_owner_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join(".f.ardl");
+        open_staging(&p).unwrap().write_all(b"x").unwrap();
+        let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "staging must not be world-readable");
     }
 }
