@@ -96,6 +96,10 @@ signals:
     // SAFE01: emitted when an http: main-frame navigation is stopped
     // by HTTPS-Only mode and the warning interstitial is being shown.
     void httpOnlyInterstitial(const QUrl &url);
+    // SEC18: emitted when a main-frame navigation to a blocklisted
+    // (phishing/malware) domain is stopped and the warning
+    // interstitial is being shown.
+    void domainBlockInterstitial(const QUrl &url);
     // JSCTL: re-emitted whenever the page's JavaScript policy is
     // re-evaluated (each accepted main-frame navigation and on
     // loadSettings) — true when scripts are currently blocked.
@@ -187,6 +191,12 @@ private:
     void showHttpWarning(const QUrl &url);
     QString httpWarningHtml(const QUrl &url);
     void resolveHttpWarningLink(const QUrl &url);
+    // SEC18: domain-block warning page — shown when a main-frame
+    // navigation targets a host on the anti-phishing/malware
+    // blocklist.
+    void showDomainBlockWarning(const QUrl &url);
+    QString domainBlockWarningHtml(const QUrl &url);
+    void resolveDomainBlockLink(const QUrl &url);
     void showRateLimitNoticeIfNeeded();
     // BADSSL03: answers the QWebEnginePage::selectClientCertificate
     // signal — prompts when the profile's client-certificate store
@@ -210,6 +220,11 @@ protected:
     QUrl m_httpWarningUrl;
     QString m_httpWarningNonce;
     bool m_httpWarningPending = false;
+    // SEC18: pending domain-block warning — the refused target and
+    // the nonce binding its interstitial's action links.
+    QUrl m_domainBlockUrl;
+    QString m_domainBlockNonce;
+    bool m_domainBlockPending = false;
     // SAFE07: generated error pages shown via showErrorPage() commit
     // their document under the failed url (setHtml's base) and emit a
     // LoadSucceeded for it — count them so that phantom success never

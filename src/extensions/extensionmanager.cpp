@@ -22,6 +22,10 @@
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+#endif
+
 #include <qcoreapplication.h>
 #include <qdatetime.h>
 #include <qdebug.h>
@@ -534,6 +538,39 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
         QString version;
     };
     QList<Offer> offers;
+#if defined(ARORA_RUSTCORE)
+    // SEC19: remote XML is parsed by memory-safe Rust — the crate
+    // hands back {"offers":[[appid,status,codebase,version],...]} and
+    // every policy decision below stays exactly where it was.
+    RcBuffer out{};
+    const RcStatus parsed = rc_updatemanifest_parse(
+        reinterpret_cast<const uint8_t *>(xml.constData()),
+        size_t(xml.size()), &out);
+    if (parsed != RC_OK) {
+        char *message = rc_last_error_message();
+        result->error = tr("update manifest is not valid XML: %1")
+            .arg(message ? QString::fromUtf8(message)
+                         : tr("malformed document"));
+        rc_string_free(message);
+        return false;
+    }
+    const QByteArray json(reinterpret_cast<const char *>(out.data),
+                          qsizetype(out.len));
+    rc_buffer_free(out);
+    const QJsonArray rows = QJsonDocument::fromJson(json)
+        .object().value(QLatin1String("offers")).toArray();
+    for (const QJsonValue &row : rows) {
+        const QJsonArray fields = row.toArray();
+        if (fields.size() != 4)
+            continue;
+        Offer offer;
+        offer.appId = fields.at(0).toString();
+        offer.status = fields.at(1).toString();
+        offer.codebase = fields.at(2).toString();
+        offer.version = fields.at(3).toString();
+        offers.append(offer);
+    }
+#else
     QString currentApp;
     QXmlStreamReader reader(xml);
     while (!reader.atEnd()) {
@@ -562,6 +599,7 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
             .arg(reader.errorString());
         return false;
     }
+#endif // ARORA_RUSTCORE
     if (offers.isEmpty()) {
         result->error = tr("update manifest carries no updatecheck entry");
         return false;

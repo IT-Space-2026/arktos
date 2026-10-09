@@ -380,7 +380,8 @@ void WebPage::init()
             // pages — keep them out of history.
             const QString scheme = url().scheme();
             if (ok && scheme != QLatin1String("arora-cert-error")
-                && scheme != QLatin1String("arora-http-warning"))
+                && scheme != QLatin1String("arora-http-warning")
+                && scheme != QLatin1String("arora-site-block"))
                 history->addHistoryEntry(url().toString());
         });
         connect(this, &QWebEnginePage::titleChanged, this,
@@ -647,6 +648,22 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // SEC18: the domain-block warning interstitial and its action
+    // links — the same nonce-bound scheme trick: only the rendered
+    // warning knows the nonce, so web content cannot forge a
+    // "proceed" for a host it did not trigger a block for.
+    if (scheme == QLatin1String("arora-site-block")) {
+        if (!isMainFrame)
+            return false;
+        const QString nonce = QUrlQuery(url)
+                .queryItemValue(QLatin1String("n"));
+        if (url.path() == QLatin1String("interstitial"))
+            return SchemeAccessHandler::hasInterstitialPage(nonce);
+        if (m_domainBlockPending && nonce == m_domainBlockNonce)
+            resolveDomainBlockLink(url);
+        return false;
+    }
+
     if (!scheme.isEmpty() && !isBrowserHandledScheme(scheme)) {
         // Subframe requests are dropped without prompting — an iframe
         // must not raise dialogs on the user's behalf.
@@ -680,6 +697,17 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         && !BrowserApplication::isPrivate()
         && !BrowserApplication::isTorMode()
         && divertToContainerRule(url)) {
+        return false;
+    }
+
+    // SEC18: anti-phishing/malware domain blocklist — a main-frame
+    // navigation whose host is on the local list is refused and
+    // swapped for the warning interstitial.  Redirect hops re-enter
+    // this hook, and the request interceptor covers whatever bypasses
+    // it, so every hop is gated.  Applies in tor windows too (a
+    // listed clearnet host is just as hostile there).
+    if (isMainFrame && PrivacyRequestInterceptor::shouldBlockDomain(url)) {
+        showDomainBlockWarning(url);
         return false;
     }
 
@@ -1020,6 +1048,17 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
 
     QUrl errorUrl = loadingInfo.url();
     if (errorUrl.isEmpty())
+        return;
+
+    // SEC18: a main-frame request the interceptor just refused under
+    // the domain blocklist arrives here as a failed load — swap in
+    // the warning interstitial instead of the not-found page, same
+    // consume-once contract as the HTTPS-Only registry below.
+    if (PrivacyRequestInterceptor::takeBlockedDomainNav(errorUrl)) {
+        showDomainBlockWarning(errorUrl);
+        return;
+    }
+    if (m_domainBlockPending && errorUrl == m_domainBlockUrl)
         return;
 
     // SAFE01: a main-frame http: request the privacy interceptor just
@@ -1477,6 +1516,114 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
             && !profile()->isOffTheRecord();
         PrivacyRequestInterceptor::allowHttpForHost(target.host(),
                                                   persist);
+        // Queued: navigating from inside acceptNavigationRequest
+        // would re-enter Chromium's navigation machinery.
+        QTimer::singleShot(0, this, [page, target]() {
+            if (page)
+                page->load(target);
+        });
+        return;
+    }
+    // "back to safety" (or anything unrecognised): leave the
+    // interstitial — back in history when there is one, otherwise the
+    // start page.  Queued for the same re-entrancy reason.
+    QTimer::singleShot(0, this, [page]() {
+        if (!page)
+            return;
+        if (page->history()->canGoBack())
+            page->history()->back();
+        else
+            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+    });
+}
+
+// SEC18: the refused navigation's target becomes a nonce-bound
+// interstitial on the private arora-site-block: scheme — same
+// machinery as the certificate-error and HTTPS-Only pages.  Called
+// both from the acceptNavigationRequest veto and from
+// handleLoadingChanged when the interceptor refused a hop, so the
+// load() below is always queued (a navigation issued synchronously
+// inside the veto would re-enter Chromium's navigation machinery).
+void WebPage::showDomainBlockWarning(const QUrl &target)
+{
+    m_domainBlockPending = true;
+    m_domainBlockUrl = target;
+    m_domainBlockNonce =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    SchemeAccessHandler::publishInterstitialPage(m_domainBlockNonce,
+            domainBlockWarningHtml(target));
+    SchemeAccessHandler::installInterstitialHandlers(profile());
+    const QUrl interstitial(
+        QLatin1String("arora-site-block:interstitial?n=")
+        + m_domainBlockNonce);
+    QPointer<WebPage> page(this);
+    QTimer::singleShot(0, this, [page, interstitial]() {
+        if (page)
+            page->load(interstitial);
+    });
+    emit domainBlockInterstitial(target);
+}
+
+QString WebPage::domainBlockWarningHtml(const QUrl &target)
+{
+    QFile warningFile(QLatin1String(":/certerror.html"));
+    if (!warningFile.open(QIODevice::ReadOnly))
+        return QString();
+    QString html = QLatin1String(warningFile.readAll());
+    QWidget *view = QWebEngineView::forPage(this);
+    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
+    QBuffer imageBuffer;
+    imageBuffer.open(QBuffer::ReadWrite);
+    if (pixmap.save(&imageBuffer, "PNG")) {
+        html.replace(QLatin1String("IMAGE_BINARY_DATA_HERE"),
+                     QLatin1String(imageBuffer.buffer().toBase64()));
+    }
+
+    // Everything interpolated here is web-controlled — escape it.
+    const QString shownHost =
+        QString::fromUtf8(target.host().toUtf8()).toHtmlEscaped();
+    const QString shownUrl =
+        QString::fromUtf8(target.toEncoded()).toHtmlEscaped();
+
+    // Two actions only: back to safety, or proceed for this session.
+    // There is deliberately no "always" link — a persisted bypass of
+    // a listed phishing/malware domain is a foot-gun SAFE01's plain
+    // http exception can afford to be and this list cannot.
+    QString buttons = tr("<a id=\"back\" href=\"arora-site-block:back?n=%1\">Back to safety</a>")
+            .arg(m_domainBlockNonce);
+    buttons += tr("<a id=\"proceed\" href=\"arora-site-block:proceed?n=%1\">Proceed anyway (unsafe)</a>")
+            .arg(m_domainBlockNonce);
+
+    html = html.arg(
+        tr("Dangerous site blocked: %1").arg(shownUrl),
+        tr("This site is on the local phishing/malware blocklist"),
+        tr("Arora stopped %1 from loading because the domain is "
+           "listed as serving phishing or malware.  Visiting it can "
+           "steal credentials or infect this computer.")
+            .arg(shownHost),
+        QLatin1String("<li>")
+            + tr("Requested address: %1").arg(shownUrl)
+            + QLatin1String("</li>"),
+        QLatin1String("<li>")
+            + tr("The list is a local copy — no lookup left this "
+                 "computer.  Proceeding is remembered only for this "
+                 "session.")
+            + QLatin1String("</li>"),
+        buttons);
+    return html;
+}
+
+void WebPage::resolveDomainBlockLink(const QUrl &command)
+{
+    const QUrl target = m_domainBlockUrl;
+    m_domainBlockPending = false;
+    QPointer<WebPage> page(this);
+    if (command.path() == QLatin1String("proceed")) {
+        // Session-scoped only — the choice is logged for the session
+        // and never written to settings.
+        qInfo() << "WebPage: domain-blocklist proceed for"
+                << target.host();
+        PrivacyRequestInterceptor::allowBlockedDomain(target.host());
         // Queued: navigating from inside acceptNavigationRequest
         // would re-enter Chromium's navigation machinery.
         QTimer::singleShot(0, this, [page, target]() {

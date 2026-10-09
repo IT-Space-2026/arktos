@@ -17,6 +17,7 @@ SUBDIRS  = \
     csp \
     devtools \
     dialogs \
+    domainblock \
     downloadmanager \
     historyfiltermodel \
     historymanager \
@@ -35,6 +36,7 @@ SUBDIRS  = \
     privatebrowsing \
     privacy \
     qrcode \
+    rustdownload \
     safetext \
     schemehandlers \
     scriptcontrol \

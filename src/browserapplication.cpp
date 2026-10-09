@@ -74,6 +74,7 @@
 #include "browsertheme.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "domainblocklist.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
 #include "historymanager.h"
@@ -604,6 +605,12 @@ void BrowserApplication::postLaunch()
         if (!isStandalone() && !isTorMode())
             AdBlockManager::instance()->maybePromptForListConsent(
                 m_mainWindows.isEmpty() ? nullptr : mainWindow());
+        // SEC18: the domain blocklist refreshes on the same consent
+        // gate and weekly cadence as the remote filter lists — a
+        // just-granted consent above fetches immediately, otherwise
+        // only a stale copy is refetched.  Without rustcore or
+        // consent this is a no-op and the vendored seed alone blocks.
+        DomainBlocklist::instance()->updateIfStale();
     });
 }
 

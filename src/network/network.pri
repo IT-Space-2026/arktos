@@ -6,6 +6,7 @@ FORMS += \
     $$PWD/proxy.ui
 
 HEADERS += \
+    $$PWD/domainblocklist.h \
     $$PWD/fileaccesshandler.h \
     $$PWD/networkaccessmanager.h \
     $$PWD/networkdiskcache.h \
@@ -14,6 +15,7 @@ HEADERS += \
     $$PWD/schemeaccesshandler.h
 
 SOURCES += \
+    $$PWD/domainblocklist.cpp \
     $$PWD/fileaccesshandler.cpp \
     $$PWD/networkaccessmanager.cpp \
     $$PWD/networkdiskcache.cpp \

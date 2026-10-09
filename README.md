@@ -68,6 +68,16 @@ browsing profile:
   Argon2id master passphrase; a Rust implementation (rustcore) is
   available behind `CONFIG+=rustcore`, byte-compatible with the C++
   store.
+- **Tracking-parameter stripping** — ClearURLs-style rules strip
+  tracking query params from navigations (vendored rules +
+  data-dir override; rustcore backend, C++ fallback).
+- **Anti-phishing/malware blocklist** — a vendored domain seed merged
+  with a consent-gated URLhaus/OpenPhish feed; listed main-frame
+  navigations stop at a warning interstitial with a session-only
+  proceed.
+- **Rust parsers for untrusted input** — OpenSearch descriptors,
+  extension update manifests and suggestion replies are parsed in
+  memory-safe Rust behind the FFI before Qt sees them.
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
@@ -197,8 +207,12 @@ Optional build flags:
 - `CONFIG+=adblock_rust` — Brave adblock-rust filter engine (needs a
   user-local Rust toolchain: `cargo build --release` in
   `src/adblock/rust` first)
-- `CONFIG+=rustcore` — Rust credential store backend (same toolchain;
-  falls back to the C++ store without it)
+- `CONFIG+=rustcore` — Rust core crate: credential store backend,
+  URL tracking-param stripper, domain blocklist and untrusted-format
+  parsers (same toolchain; qmake runs cargo; C++ paths stay the
+  default without it)
+- `CONFIG+=rustdl` — Rust accelerated downloader (reqwest +
+  std::thread, segmented ranged downloads behind a C ABI)
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

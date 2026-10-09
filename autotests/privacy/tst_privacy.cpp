@@ -57,6 +57,10 @@
 #include <qwebenginesettings.h>
 #include <qwebengineurlrequestinfo.h>
 
+#if defined(ARORA_RUSTCORE)
+#include <rustcore.h>
+#endif
+
 #include <memory>
 
 class tst_Privacy : public QObject
@@ -90,6 +94,10 @@ private slots:
     void resourceBlockToggles();
     void webSocketBlockDecision();
 
+    void stripTrackingParams_data();
+    void stripTrackingParams();
+    void stripToggleAndExceptions();
+
     void thirdPartyCookies();
     void thirdPartyCookieExceptions();
     void thirdPartyCookieEndToEnd();
@@ -119,6 +127,7 @@ private:
     QVariant m_savedBlockRemoteFonts;
     QVariant m_savedBlockPrefetch;
     QVariant m_savedBlockThirdPartyWs;
+    QVariant m_savedStripTrackingParams;
     QVariant m_savedAcceptLanguages;
     QVariant m_savedForceDarkMode;
     QVariant m_savedAutoscroll;
@@ -166,6 +175,8 @@ void tst_Privacy::initTestCase()
         settings.value(QLatin1String("privacy/blockPrefetch"));
     m_savedBlockThirdPartyWs =
         settings.value(QLatin1String("privacy/blockThirdPartyWebSockets"));
+    m_savedStripTrackingParams =
+        settings.value(QLatin1String("privacy/stripTrackingParams"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -205,6 +216,7 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/blockRemoteFonts"), m_savedBlockRemoteFonts);
     restoreSetting(settings, QLatin1String("privacy/blockPrefetch"), m_savedBlockPrefetch);
     restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
+    restoreSetting(settings, QLatin1String("privacy/stripTrackingParams"), m_savedStripTrackingParams);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -227,6 +239,7 @@ void tst_Privacy::init()
     settings.setValue(QLatin1String("blockRemoteFonts"), false);
     settings.setValue(QLatin1String("blockPrefetch"), true);
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
+    settings.setValue(QLatin1String("stripTrackingParams"), true);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -898,6 +911,118 @@ void tst_Privacy::webSocketBlockDecision()
     QVERIFY(!P::shouldBlockWebSocket(pageUrl, crossSiteSocket,
                                      I::ResourceTypeWebSocket));
     init();
+}
+
+// SEC17: the ClearURLs-style strip decision — with rustcore linked
+// these rows pin the vendored ruleset's semantics; without it the
+// stage is absent and every URL passes through untouched.
+void tst_Privacy::stripTrackingParams_data()
+{
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<QString>("expected");
+
+    QTest::newRow("utm-param")
+        << "https://example.com/?utm_source=x&real=1"
+        << "https://example.com/?real=1";
+    QTest::newRow("last-param-drops-qmark")
+        << "https://example.com/p?fbclid=zzz"
+        << "https://example.com/p";
+    QTest::newRow("fragment-preserved")
+        << "https://example.com/?gclid=g&a=1#sec"
+        << "https://example.com/?a=1#sec";
+    QTest::newRow("order-preserved")
+        << "https://example.com/?b=1&utm_medium=x&a=2"
+        << "https://example.com/?b=1&a=2";
+    QTest::newRow("case-insensitive")
+        << "https://example.com/?UTM_SOURCE=x&Gclid=y&ok=1"
+        << "https://example.com/?ok=1";
+    QTest::newRow("encoded-name")
+        << "https://example.com/?utm%5Fsource=x&ok=1"
+        << "https://example.com/?ok=1";
+    QTest::newRow("no-trackers")
+        << "https://example.com/?id=42&page=2"
+        << "https://example.com/?id=42&page=2";
+    QTest::newRow("no-query")
+        << "https://example.com/path#frag"
+        << "https://example.com/path#frag";
+    QTest::newRow("non-http-untouched")
+        << "ftp://example.com/f?utm_source=x"
+        << "ftp://example.com/f?utm_source=x";
+    QTest::newRow("qmark-in-fragment")
+        << "https://example.com/#frag?utm_source=x"
+        << "https://example.com/#frag?utm_source=x";
+}
+
+void tst_Privacy::stripTrackingParams()
+{
+    QFETCH(QString, url);
+    QFETCH(QString, expected);
+#if !defined(ARORA_RUSTCORE)
+    // No-rust build: the strip stage is absent — the URL passes
+    // through untouched (modulo QUrl's own %-escape normalization).
+    expected = QString::fromUtf8(QUrl(url).toEncoded());
+#endif
+    QCOMPARE(QString::fromUtf8(
+                 PrivacyRequestInterceptor::strippedUrl(QUrl(url))
+                     .toEncoded()),
+             expected);
+}
+
+void tst_Privacy::stripToggleAndExceptions()
+{
+    // The toggle is on by default (init pins it).
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("stripTrackingParams"), false);
+    settings.endGroup();
+    PrivacyRequestInterceptor::loadSettings();
+    QVERIFY(!PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+    init();
+    QVERIFY(PrivacyRequestInterceptor::stripTrackingParamsEnabled());
+
+#if defined(ARORA_RUSTCORE)
+    typedef PrivacyRequestInterceptor P;
+    // Per-site exceptions ride the ruleset: a host where stripping
+    // breaks auth is exempt entirely, a keep-list spares named params
+    // while the rest still strip.
+    const QByteArray rules = QByteArrayLiteral(
+        R"({"version":1,"params":["test_*","si"],
+            "exceptions":[{"host":"exempt.example"},
+                          {"host":"keep.example","keep":["si"]}]})");
+    QCOMPARE(rc_urlstrip_load_rules(
+                 reinterpret_cast<const uint8_t *>(rules.constData()),
+                 size_t(rules.size())),
+             RC_OK);
+
+    QCOMPARE(P::strippedUrl(QUrl("https://exempt.example/?test_x=1&si=2")),
+             QUrl("https://exempt.example/?test_x=1&si=2"));
+    QCOMPARE(P::strippedUrl(QUrl("https://sub.exempt.example/?test_x=1")),
+             QUrl("https://sub.exempt.example/?test_x=1"));
+    // A keep-listed param survives; other listed params still strip.
+    QCOMPARE(P::strippedUrl(QUrl("https://keep.example/?si=1&test_x=2")),
+             QUrl("https://keep.example/?si=1"));
+    QCOMPARE(P::strippedUrl(QUrl("https://other.example/?test_x=2&ok=1")),
+             QUrl("https://other.example/?ok=1"));
+
+    // A malformed ruleset must not disarm stripping — the previous
+    // set stays active.
+    const QByteArray bad = QByteArrayLiteral("{not json");
+    QCOMPARE(rc_urlstrip_load_rules(
+                 reinterpret_cast<const uint8_t *>(bad.constData()),
+                 size_t(bad.size())),
+             RC_CORRUPT);
+    QCOMPARE(P::strippedUrl(QUrl("https://other.example/?test_x=2")),
+             QUrl("https://other.example/"));
+
+    // reload() with no data-dir override re-arms the vendored set.
+    QCOMPARE(rc_urlstrip_reload(), RC_OK);
+    QCOMPARE(P::strippedUrl(QUrl("https://other.example/?test_x=2")),
+             QUrl("https://other.example/?test_x=2"));
+    QCOMPARE(P::strippedUrl(QUrl("https://e.com/?utm_source=x&ok=1")),
+             QUrl("https://e.com/?ok=1"));
+#endif
 }
 
 // XSLEAK03: loopback fixture for the cross-site e2e checks.  One

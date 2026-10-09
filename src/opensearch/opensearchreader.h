@@ -32,7 +32,7 @@ public:
     [[nodiscard]] OpenSearchEngine *read(QIODevice *device);
 
 private:
-    [[nodiscard]] OpenSearchEngine *read();
+    [[nodiscard]] OpenSearchEngine *read(const QByteArray &data);
 
 };
 
