@@ -541,6 +541,20 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileNewWindowAction);
     m_fileMenu->addAction(m_tabWidget->newTabAction());
 
+    // TOR02: a Tor window is a separate `arora --tor` process — the
+    // application proxy is process-global, so routing cannot be a
+    // mode of this window.  Disabled when no tor binary resolves.
+    m_fileNewTorWindowAction = new QAction(m_fileMenu);
+    connect(m_fileNewTorWindowAction, &QAction::triggered,
+            this, []() { BrowserApplication::openTorWindow(); });
+    if (TorManager::resolveBinary().isEmpty()) {
+        m_fileNewTorWindowAction->setEnabled(false);
+        m_fileNewTorWindowAction->setToolTip(
+            tr("No tor binary found — install tor or run "
+               "BuildProcess/fetch-tor.sh"));
+    }
+    m_fileMenu->addAction(m_fileNewTorWindowAction);
+
     // CONT02: container tabs — the submenu lists the registry and is
     // repopulated on open (containers are runtime-editable).  Tor
     // windows hide it — a tor process has no containers.
@@ -607,20 +621,6 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::privateBrowsing);
     m_filePrivateBrowsingAction->setCheckable(true);
     m_fileMenu->addAction(m_filePrivateBrowsingAction);
-
-    // TOR02: a Tor window is a separate `arora --tor` process — the
-    // application proxy is process-global, so routing cannot be a
-    // mode of this window.  Disabled when no tor binary resolves.
-    m_fileNewTorWindowAction = new QAction(m_fileMenu);
-    connect(m_fileNewTorWindowAction, &QAction::triggered,
-            this, []() { BrowserApplication::openTorWindow(); });
-    if (TorManager::resolveBinary().isEmpty()) {
-        m_fileNewTorWindowAction->setEnabled(false);
-        m_fileNewTorWindowAction->setToolTip(
-            tr("No tor binary found — install tor or run "
-               "BuildProcess/fetch-tor.sh"));
-    }
-    m_fileMenu->addAction(m_fileNewTorWindowAction);
     m_fileMenu->addSeparator();
 
     m_fileCloseWindow = new QAction(m_fileMenu);
