@@ -56,6 +56,7 @@ include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
 include(rustcore/rustcore.pri)        # RCORE01 — CONFIG+=rustcore gate
+include(rustdl/rustdl.pri)            # DLACC06 — CONFIG+=rustdl gate
 include(tor/tor.pri)                  # TOR01 done
 include(useragent/useragent.pri)      # MIG14 done
 # MIG13: qwebplugins/ deleted (plugin machinery removed per user

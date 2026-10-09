@@ -1,0 +1,35 @@
+[package]
+name = "arora-rustdl"
+version = "0.1.0"
+edition = "2021"
+description = "Arora accelerated download engine — segmented HTTP(S) fetches behind a C FFI"
+
+# staticlib is what the qmake build links (same pattern as
+# src/rustcore and src/adblock/rust — single binary, no rpath or
+# deployment concerns).  cdylib is emitted too so out-of-tree
+# consumers get the portable .so/.dylib/.dll artifact.
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# Exact-pinned (SEC21 policy): a dep bump is a deliberate, reviewed
+# `cargo update` + audit, never a silent re-resolve.  Cargo.lock is
+# committed for the transitive tree.
+#
+# reqwest is used with the `blocking` API + std::thread workers — a
+# tokio runtime bridge across the FFI would add complexity for no
+# gain here.  `rustls` keeps the staticlib free of OpenSSL linkage;
+# `socks` is compiled in so DLACC04 can route through the managed
+# Tor's SOCKS5 without an ABI change.  No default features: no
+# system-proxy env sniffing (proxy is set explicitly), no charset,
+# no decompression machinery (a downloaded file must be stored
+# byte-exact — Content-Encoding would corrupt it anyway).
+reqwest = { version = "=0.13.5", default-features = false, features = [
+    "blocking",
+    "rustls",
+    "socks",
+] }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+tempfile = "3"
