@@ -138,9 +138,11 @@ public:
     // Favicon lookup for the history models (replaces
     // BrowserApplication::icon() / the WebKit icon database).  Pages
     // feed entries via setIcon() from WebPage's iconChanged hook.
-    // Icons are keyed by host and persisted as png files under the
-    // data dir's icons/ so they survive restarts; hostless urls keep
-    // a memory-only per-url entry.
+    // Icons are keyed by host and persisted so they survive restarts:
+    // under rustcore as per-host PNG blobs in history.db (the HIST01
+    // store folded into the Rust core), otherwise as png files under
+    // the data dir's icons/; in the C++ store hostless urls keep a
+    // memory-only per-url entry.
     QIcon icon(const QUrl &url) const;
     void setIcon(const QUrl &url, const QIcon &icon);
     // QWebSettings::clearIconDatabase() replacement: drops the
@@ -169,6 +171,10 @@ private:
     void load();
     QString atomicString(const QString &string);
     void startFrecencyTimer();
+#ifdef ARORA_RUSTCORE
+    void importLegacyHistory();
+    void rustReplaceAll();
+#endif
 
     AutoSaver *m_saveTimer;
     int m_daysToExpire;

@@ -30,6 +30,8 @@
 #include <qbuffer.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
+#include <historyparser.h>
+
 #include <qwebengineprofile.h>
 
 #include <algorithm>
@@ -129,8 +131,13 @@ private slots:
     void setHistory();
     void saveload_data();
     void saveload();
+#ifndef ARORA_RUSTCORE
     void icons();
     void iconsFromPage();
+#else
+    void iconPersistence();
+    void legacyImport();
+#endif
 
     // TODO move to their own tests
     void big();
@@ -518,6 +525,7 @@ void tst_HistoryManager::saveload()
     }
 }
 
+#ifndef ARORA_RUSTCORE
 static QImage iconImage(const QIcon &icon)
 {
     return icon.pixmap(8).toImage().convertToFormat(QImage::Format_ARGB32);
@@ -612,6 +620,62 @@ void tst_HistoryManager::iconsFromPage()
     manager->setHistory(HistoryList());
     QVERIFY(!QFile::exists(iconPath));
 }
+#else
+// RCORE02: favicons persist per-host in history.db and survive a
+// manager restart — the HIST01 store folded into the Rust core.
+void tst_HistoryManager::iconPersistence()
+{
+    const QUrl url(QStringLiteral("http://icons.example.com/page"));
+    QPixmap pixmap(16, 16);
+    pixmap.fill(QColor(12, 120, 200));
+    const QIcon icon(pixmap);
+
+    {
+        SubHistory history;
+        history.setIcon(url, icon);
+    }
+    {
+        SubHistory history;
+        const QColor pixel = history.icon(url)
+                .pixmap(32, 32).toImage().pixelColor(8, 8);
+        QCOMPARE(pixel, QColor(12, 120, 200));
+        // Per-host keying: a different path on the same host resolves
+        // to the same stored icon.
+        const QColor other = history
+                .icon(QUrl(QStringLiteral("http://icons.example.com/other")))
+                .pixmap(32, 32).toImage().pixelColor(8, 8);
+        QCOMPARE(other, QColor(12, 120, 200));
+        history.clearIcons();
+    }
+}
+
+// RCORE02 migration: a pre-SQLite QDataStream "history" file is
+// imported into history.db on first open.
+void tst_HistoryManager::legacyImport()
+{
+    const QString path =
+        BrowserPaths::dataFilePath(QLatin1String("history"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QDataStream out(&file);
+        QByteArray data;
+        QDataStream stream(&data, QIODevice::WriteOnly);
+        stream << HistoryParser::Version << QStringLiteral("http://legacy.example.com/")
+               << QDateTime::currentDateTime() << QStringLiteral("Legacy");
+        out << data;
+    }
+    // The db already exists from earlier tests; unlinking it forces
+    // the fresh-open branch that runs the import.
+    QFile::remove(BrowserPaths::dataFilePath(QLatin1String("history.db")));
+    {
+        SubHistory history;
+        QVERIFY(history.historyContains(
+                QStringLiteral("http://legacy.example.com/")));
+    }
+    QFile::remove(path);
+}
+#endif // ARORA_RUSTCORE
 
 void tst_HistoryManager::big()
 {

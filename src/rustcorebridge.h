@@ -28,7 +28,8 @@
 // RustCoreBridge re-emits it as a queued storeChanged() signal so a
 // Rust-side caller on any thread lands safely on the GUI thread.
 //
-// Topics so far: "credentials" (the rc_cred_* map changed).
+// Topics so far: "credentials" (the rc_cred_* map changed),
+// "bookmarks" and "history" (the RCORE02 stores).
 // Compiled only under CONFIG+=rustcore (ARORA_RUSTCORE).
 class RustCoreBridge : public QObject
 {
@@ -46,5 +47,10 @@ private:
     explicit RustCoreBridge(QObject *parent = nullptr);
     static void trampoline(const char *topic, void *userdata);
 };
+
+// Points the crate at the application data dir — the same
+// idempotent call the SecureStore shim makes before every op, so
+// test-mode data-dir switches propagate (RCORE02).
+void rustCoreEnsureDataDir();
 
 #endif // RUSTCOREBRIDGE_H

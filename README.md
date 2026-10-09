@@ -80,6 +80,13 @@ browsing profile:
 - **Rust parsers for untrusted input** — OpenSearch descriptors,
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.
+- **Rust bookmark + history stores** — with `CONFIG+=rustcore` the
+  crate is also the canonical bookmark + history store:
+  bookmarks.xbel stays the on-disk format but is parsed and emitted
+  in Rust (queried lazily, one node handle per call — no bulk tree
+  marshal), and history lives in a SQLite history.db (visits plus
+  per-host favicons that persist across restarts) that imports the
+  legacy QDataStream file on first run.
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
@@ -245,9 +252,9 @@ Optional build flags:
   user-local Rust toolchain: `cargo build --release` in
   `src/adblock/rust` first)
 - `CONFIG+=rustcore` — Rust core crate: credential store backend,
-  URL tracking-param stripper, domain blocklist and untrusted-format
-  parsers (same toolchain; qmake runs cargo; C++ paths stay the
-  default without it)
+  URL tracking-param stripper, domain blocklist, untrusted-format
+  parsers and the bookmark + history stores (same toolchain; qmake
+  runs cargo; C++ paths stay the default without it)
 - `CONFIG+=rustdl` — Rust accelerated downloader (reqwest +
   std::thread, segmented ranged downloads behind a C ABI)
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test

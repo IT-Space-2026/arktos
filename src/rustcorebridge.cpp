@@ -19,6 +19,10 @@
 
 #include "rustcorebridge.h"
 
+#include "browserpaths.h"
+
+#include <qfileinfo.h>
+
 #include <rustcore.h>
 
 RustCoreBridge *RustCoreBridge::instance()
@@ -41,4 +45,14 @@ void RustCoreBridge::trampoline(const char *topic, void *userdata)
     QMetaObject::invokeMethod(self, [self, t]() {
         emit self->storeChanged(t);
     }, Qt::QueuedConnection);
+}
+
+void rustCoreEnsureDataDir()
+{
+    // Cheap and idempotent — call per operation so test-mode
+    // data-dir switches propagate.
+    const QByteArray dir =
+        QFileInfo(BrowserPaths::dataFilePath(QLatin1String(".rc")))
+            .absolutePath().toUtf8();
+    rc_set_data_dir(dir.constData());
 }
