@@ -159,6 +159,20 @@ Security:
   sandbox/enabled setting are the escape hatches, and
   `--sandbox-status` reports the live backend and policy. The
   self-contained bundle now also ships `arora-sandbox` (SAND03).
+- Sandboxed download worker (SAND02): accelerated downloads run in a
+  confined `arora --download-worker` subprocess whose bubblewrap
+  mount namespace grants only the download's work dir and the
+  destination directory — `$HOME`, the browser profile, keys and
+  cookie stores are absent entirely, the environment is scrubbed,
+  and pid/ipc/uts/cgroup namespaces are unshared (the network stays
+  shared so the transfer can connect). Policy checks (HTTPS-first,
+  HTTPS-Only, blocklists, redirect rules) still run in the browser
+  process and answer the worker over a stdin/stdout protocol, so the
+  sandboxed path is policy-identical; if the wrap cannot start the
+  download falls back to the in-process engine. Escape hatches:
+  `ARORA_DL_NO_SANDBOX=1` or `downloadmanager/sandboxedWorker=false`.
+  Seatbelt/AppContainer/unveil worker policies generate from the
+  same inputs but are untested off-Linux.
 
 Containers:
 - Isolated container profiles (CONT01).

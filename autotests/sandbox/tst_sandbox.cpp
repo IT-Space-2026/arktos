@@ -44,6 +44,12 @@ private slots:
     void appContainerManifest();
     void openBsdPlan();
     void managerStatus();
+    // SAND02: the restrictive --download-worker wrap generators.
+    void bwrapDownloadWorkerArgv();
+    void bwrapDownloadWorkerRemapsHome();
+    void seatbeltDownloadWorkerProfile();
+    void appContainerDownloadWorkerManifest();
+    void openBsdDownloadWorkerPlan();
 };
 
 void tst_Sandbox::denylistContents()
@@ -300,6 +306,187 @@ void tst_Sandbox::managerStatus()
     QVERIFY(report.contains(QLatin1String("sandboxed: no")));
     QVERIFY(report.contains(QLatin1String("masked directories")));
     QVERIFY(report.contains(QLatin1String("read-only roots")));
+}
+
+// ---- SAND02: the restrictive --download-worker wrap ----------------
+
+void tst_Sandbox::bwrapDownloadWorkerArgv()
+{
+    const QStringList argv = BwrapGenerator::downloadWorkerCommandLine(
+        QStringLiteral("/opt/arora/arora"),
+        {QStringLiteral("--download-worker")},
+        QStringLiteral("/home/t/.local/share/Arora/downloads-parts/w-abc"),
+        QStringLiteral("/home/t/Downloads"));
+
+    QCOMPARE(argv.first(), QStringLiteral("bwrap"));
+    QVERIFY(argv.contains(QLatin1String("--clearenv")));
+    QVERIFY(argv.contains(QLatin1String("--unshare-pid")));
+    QVERIFY(argv.contains(QLatin1String("--die-with-parent")));
+    // The writable surface: the per-download work dir and the
+    // destination dir — and nothing else.
+    const int binds = argv.count(QLatin1String("--bind"));
+    QVERIFY(binds >= 2);
+    const int wi = argv.indexOf(QStringLiteral(
+        "/home/t/.local/share/Arora/downloads-parts/w-abc"));
+    QVERIFY(wi > 0 && argv.at(wi - 1) == QLatin1String("--bind"));
+    const int di = argv.indexOf(QStringLiteral("/home/t/Downloads"));
+    QVERIFY(di > 0 && argv.at(di - 1) == QLatin1String("--bind"));
+    // $HOME must NOT appear anywhere — nothing under it is mounted.
+    QVERIFY(!argv.contains(QStringLiteral("/home/t")));
+    // The worker binary is a read-only mount and the payload follows
+    // `--` verbatim.
+    const int dd = argv.indexOf(QStringLiteral("--"));
+    QVERIFY(dd > 0);
+    QCOMPARE(argv.at(dd + 1), QStringLiteral("/opt/arora/arora"));
+    QCOMPARE(argv.at(dd + 2), QStringLiteral("--download-worker"));
+    // The wrap marker children see.
+    const int marker = argv.indexOf(QStringLiteral("ARORA_SANDBOXED"));
+    QVERIFY(marker > 0
+            && argv.at(marker + 1) == QLatin1String("bwrap-dl"));
+    // Networking must NOT be unshared — a downloader needs it.
+    QVERIFY(!argv.contains(QLatin1String("--unshare-net")));
+    QVERIFY(!argv.contains(QLatin1String("--unshare-all")));
+    // The Qt runtime prefix this build reports is bound read-only.
+    QVERIFY(argv.contains(QLatin1String("--ro-bind-try")));
+}
+
+void tst_Sandbox::bwrapDownloadWorkerRemapsHome()
+{
+    // A worker binary/Qt prefix under the REAL $HOME must not be
+    // bound at its own path — bwrap creates every bind target's
+    // parent dirs, which would leave a readable ~ skeleton inside
+    // the namespace.  Home-resident inputs are remapped under the
+    // private /arora-rt tmpfs and the exec target follows.
+    const QString homeProg =
+        QDir::homePath() + QStringLiteral("/build/arora");
+    const QStringList mapped =
+        BwrapGenerator::downloadWorkerCommandLine(
+            homeProg, {QStringLiteral("--download-worker")},
+            QStringLiteral("/tmp/arora-w"), QStringLiteral("/tmp/arora-d"));
+
+    const int dd = mapped.indexOf(QStringLiteral("--"));
+    QVERIFY(dd > 0);
+    QVERIFY(mapped.at(dd + 1).startsWith(QStringLiteral("/arora-rt/")));
+    QCOMPARE(mapped.at(dd + 2), QStringLiteral("--download-worker"));
+
+    // The real binary path appears only as a bind SOURCE.
+    const int pi = mapped.indexOf(homeProg);
+    QVERIFY(pi > 0
+            && mapped.at(pi - 1) == QLatin1String("--ro-bind-try"));
+
+    // No mount TARGET may live under $HOME — that is what would
+    // resurrect the skeleton.  Bind flags take src dest pairs; tmpfs
+    // takes a single dest.
+    const QString home = QDir::homePath();
+    for (int i = 0; i + 1 < mapped.size(); ++i) {
+        const QString &flag = mapped.at(i);
+        QString target;
+        if (flag == QLatin1String("--bind")
+                || flag == QLatin1String("--ro-bind-try")
+                || flag == QLatin1String("--ro-bind")
+                || flag == QLatin1String("--dev")
+                || flag == QLatin1String("--proc"))
+            target = mapped.value(i + 2);
+        else if (flag == QLatin1String("--tmpfs"))
+            target = mapped.value(i + 1);
+        if (!target.isEmpty())
+            QVERIFY2(!target.startsWith(home + QLatin1Char('/'))
+                         && target != home,
+                     qPrintable(target));
+    }
+    // And no --setenv leaks an unmapped home path either (the value
+    // sits at i + 2, after the variable name).
+    for (int i = 0; i + 2 < mapped.size(); ++i) {
+        if (mapped.at(i) == QLatin1String("--setenv"))
+            QVERIFY2(!mapped.at(i + 2).contains(home),
+                     qPrintable(mapped.at(i + 2)));
+    }
+}
+
+void tst_Sandbox::seatbeltDownloadWorkerProfile()
+{
+    const QString profile = SeatbeltGenerator::downloadWorkerProfile(
+        QStringLiteral("/Library/Caches/Arora/w-abc"),
+        QStringLiteral("/Users/t/Downloads"));
+    QVERIFY(profile.contains(QLatin1String("(version 1)")));
+    QVERIFY(profile.contains(QLatin1String("(deny default)")));
+    QVERIFY(profile.contains(QLatin1String("(allow network-outbound)")));
+    QVERIFY(profile.contains(QLatin1String(
+        "(allow file-read* file-write* (subpath "
+        "\"/Library/Caches/Arora/w-abc\"))")));
+    QVERIFY(profile.contains(QLatin1String(
+        "(allow file-read* file-write* (subpath "
+        "\"/Users/t/Downloads\"))")));
+    // Restrictive: no permissive catch-all, and the only read/write
+    // subpaths are /dev + the two granted dirs.
+    QVERIFY(!profile.contains(QLatin1String("(allow default)")));
+    QCOMPARE(profile.count(
+                 QLatin1String("(allow file-read* file-write* "
+                               "(subpath")),
+             3);
+}
+
+void tst_Sandbox::appContainerDownloadWorkerManifest()
+{
+    const QString xml = AppContainerGenerator::downloadWorkerManifestXml(
+        QStringLiteral("C:\\Users\\t\\AppData\\w-abc"),
+        QStringLiteral("C:\\Users\\t\\Downloads"));
+    QXmlStreamReader reader(xml);
+    bool sawInternet = false;
+    bool sawWorkWrite = false;
+    bool sawDestWrite = false;
+    int capabilities = 0;
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (!reader.isStartElement())
+            continue;
+        const auto attrs = reader.attributes();
+        if (reader.name() == QLatin1String("capability")) {
+            ++capabilities;
+            if (attrs.value(QLatin1String("name"))
+                == QLatin1String("internetClient"))
+                sawInternet = true;
+        }
+        if (reader.name() == QLatin1String("rule")
+            && attrs.value(QLatin1String("access"))
+                == QLatin1String("write")) {
+            const QStringView path =
+                attrs.value(QLatin1String("path"));
+            if (path == QLatin1String("C:\\Users\\t\\AppData\\w-abc"))
+                sawWorkWrite = true;
+            if (path == QLatin1String("C:\\Users\\t\\Downloads"))
+                sawDestWrite = true;
+        }
+    }
+    QVERIFY2(!reader.hasError(), qPrintable(reader.errorString()));
+    QVERIFY(sawInternet);
+    QCOMPARE(capabilities, 1); // internetClient only — no LAN/private
+    QVERIFY(sawWorkWrite);
+    QVERIFY(sawDestWrite);
+}
+
+void tst_Sandbox::openBsdDownloadWorkerPlan()
+{
+    const OpenBsdPlan plan = OpenBsdGenerator::downloadWorkerPlan(
+        QStringLiteral("/home/t/.local/share/Arora/w-abc"),
+        QStringLiteral("/home/t/Downloads"));
+    // Allowlist only — no broad "/" grant.
+    QVERIFY(!plan.unveilRules.contains(QStringLiteral("/|rwc")));
+    QVERIFY(plan.unveilRules.contains(
+        QStringLiteral("/home/t/.local/share/Arora/w-abc|rwc")));
+    QVERIFY(plan.unveilRules.contains(
+        QStringLiteral("/home/t/Downloads|rwc")));
+    // A worker that never forks drops the whole exec/proc family —
+    // word-level compare so prot_exec (needed for mapped libs) does
+    // not trip the check.
+    const QStringList promises = plan.pledgePromises.split(
+        QLatin1Char(' '), Qt::SkipEmptyParts);
+    QVERIFY(!promises.contains(QLatin1String("exec")));
+    QVERIFY(!promises.contains(QLatin1String("proc")));
+    QVERIFY(!promises.contains(QLatin1String("audio")));
+    QVERIFY(!promises.contains(QLatin1String("video")));
+    QVERIFY(promises.contains(QLatin1String("inet")));
+    QVERIFY(promises.contains(QLatin1String("wpath")));
 }
 
 QTEST_MAIN(tst_Sandbox)

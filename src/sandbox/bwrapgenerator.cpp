@@ -21,6 +21,10 @@
 
 #include "sandboxpolicy.h"
 
+#include <qdir.h>
+#include <qfileinfo.h>
+#include <qlibraryinfo.h>
+
 namespace BwrapGenerator {
 
 QStringList commandLine(const SandboxPolicy &policy,
@@ -111,6 +115,129 @@ QString launcherScript()
         "exec \"$bwrap\" \"$@\"\n"
     );
     return script;
+}
+
+QStringList downloadWorkerCommandLine(const QString &program,
+                                      const QStringList &programArgs,
+                                      const QString &workDir,
+                                      const QString &destDir)
+{
+    QStringList command;
+    command << QStringLiteral("bwrap")
+            << QStringLiteral("--die-with-parent")
+            // A clean environment: proxy, credential and session
+            // variables cannot ride in — the job's options carry the
+            // explicit proxy and PATH/HOME are replaced wholesale.
+            << QStringLiteral("--clearenv")
+            << QStringLiteral("--setenv") << QStringLiteral("PATH")
+            << QStringLiteral("/usr/local/bin:/usr/bin:/bin")
+            << QStringLiteral("--setenv") << QStringLiteral("TMPDIR")
+            << QStringLiteral("/tmp")
+            << QStringLiteral("--setenv") << QStringLiteral("HOME")
+            << QStringLiteral("/nonexistent")
+            << QStringLiteral("--setenv") << QStringLiteral("ARORA_SANDBOXED")
+            << QStringLiteral("bwrap-dl")
+            // Namespace tightening: pid/ipc/uts/cgroup are cheap
+            // isolation wins for a worker.  The network namespace
+            // deliberately stays SHARED — the worker must resolve and
+            // connect; proxies go through options, not netns tricks.
+            << QStringLiteral("--unshare-pid")
+            << QStringLiteral("--unshare-ipc")
+            << QStringLiteral("--unshare-uts")
+            << QStringLiteral("--unshare-cgroup-try")
+            // Minimal root view: fresh /dev and /proc, scratch /tmp,
+            // and the system roots read-only.  $HOME is never
+            // mounted — that is the entire point of this wrap.
+            // /arora-rt is a private tmpfs the mapped-bind targets
+            // below live under (see the bindRo lambda).
+            << QStringLiteral("--dev") << QStringLiteral("/dev")
+            << QStringLiteral("--proc") << QStringLiteral("/proc")
+            << QStringLiteral("--tmpfs") << QStringLiteral("/tmp")
+            << QStringLiteral("--tmpfs") << QStringLiteral("/arora-rt");
+
+    static const QStringList kSystemRoots = {
+        QStringLiteral("/usr"), QStringLiteral("/lib"),
+        QStringLiteral("/lib64"), QStringLiteral("/bin"),
+        QStringLiteral("/sbin"), QStringLiteral("/etc"),
+        QStringLiteral("/opt"), QStringLiteral("/run"),
+    };
+    for (const QString &dir : kSystemRoots)
+        command << QStringLiteral("--ro-bind-try") << dir << dir;
+
+    // bwrap materialises every bind target's parent directories, so
+    // binding a $HOME-resident path at its own location would leave a
+    // readable ~ skeleton inside the namespace — a user-local Qt
+    // prefix (~/Qt) or a dev-tree binary (~/Documents/arora/arora)
+    // would each resurrect /home/<user>.  Anything under the caller's
+    // home is therefore rebound below a neutral runtime root and the
+    // in-sandbox path is what the child sees (LD_LIBRARY_PATH and the
+    // exec target are rewritten to match).
+    const QString home = QDir::homePath();
+    int mapped = 0;
+    const auto bindRo = [&](const QString &hostPath) -> QString {
+        QString target = hostPath;
+        if (!home.isEmpty()
+                && (hostPath == home
+                    || hostPath.startsWith(home + QLatin1Char('/'))))
+            target = QStringLiteral("/arora-rt/mnt/%1").arg(mapped++);
+        command << QStringLiteral("--ro-bind-try") << hostPath << target;
+        return target;
+    };
+
+    // The Qt runtime has to be reachable: environment from a dev
+    // setup (qt-env.sh exports LD_LIBRARY_PATH), plus the prefix this
+    // binary was built against (covers ~/Qt user-local installs,
+    // system Qt and the bundled layout).  Each LD_LIBRARY_PATH entry
+    // is bound read-only and the variable is carried through
+    // --clearenv explicitly — rewritten to the mapped paths so the
+    // dynamic loader never references a hidden location.
+    const QByteArray ldPath = qgetenv("LD_LIBRARY_PATH");
+    if (!ldPath.isEmpty()) {
+        QStringList mappedEntries;
+        const QList<QByteArray> entries = ldPath.split(':');
+        for (const QByteArray &entry : entries) {
+            if (entry.isEmpty())
+                continue;
+            mappedEntries << bindRo(QString::fromLocal8Bit(entry));
+        }
+        command << QStringLiteral("--setenv")
+                << QStringLiteral("LD_LIBRARY_PATH")
+                << mappedEntries.join(QLatin1Char(':'));
+    }
+    const QString qtPrefix =
+        QLibraryInfo::path(QLibraryInfo::PrefixPath);
+    if (!qtPrefix.isEmpty())
+        bindRo(qtPrefix);
+    const QByteArray qtDir = qgetenv("QTDIR");
+    if (!qtDir.isEmpty() && QString::fromLocal8Bit(qtDir) != qtPrefix)
+        bindRo(QString::fromLocal8Bit(qtDir));
+
+    // The worker binary itself, plus its only writable surface: the
+    // per-download work dir (part files + scoped cookie export) and
+    // the destination directory.  workDir/destDir are the caller's
+    // deliberate grants and keep their own paths — callers pass a
+    // workDir outside $HOME (the engine nests it inside destDir).
+    const QString programTarget = bindRo(program);
+    const QString w = workDir.endsWith(QLatin1Char('/'))
+        ? workDir.chopped(1) : workDir;
+    const QString d = destDir.endsWith(QLatin1Char('/'))
+        ? destDir.chopped(1) : destDir;
+    // Emit only the outer bind when one directory nests inside the
+    // other: a child bind issued before its parent mount is shadowed
+    // by it, and one issued after restacks identical content.
+    if (w.startsWith(d + QLatin1Char('/')) || w == d) {
+        command << QStringLiteral("--bind") << d << d;
+    } else if (d.startsWith(w + QLatin1Char('/'))) {
+        command << QStringLiteral("--bind") << w << w;
+    } else {
+        command << QStringLiteral("--bind") << w << w
+                << QStringLiteral("--bind") << d << d;
+    }
+
+    command << QStringLiteral("--chdir") << QStringLiteral("/tmp")
+            << QStringLiteral("--") << programTarget;
+    command << programArgs;
+    return command;
 }
 
 } // namespace BwrapGenerator

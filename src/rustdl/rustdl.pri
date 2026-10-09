@@ -33,8 +33,10 @@ rustdl {
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustdl.h \
-        $$PWD/../rustdownloadengine.h
-    SOURCES += $$PWD/../rustdownloadengine.cpp
+        $$PWD/../rustdownloadengine.h \
+        $$PWD/../downloadworker.h
+    SOURCES += $$PWD/../rustdownloadengine.cpp \
+        $$PWD/../downloadworker.cpp
     LIBS += $$RUSTDL_LIB
     unix: LIBS += -ldl -lpthread -lm
 }

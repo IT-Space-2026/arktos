@@ -47,6 +47,25 @@ QStringList commandLine(const SandboxPolicy &policy,
 // SandboxPolicy::defaultPolicy()'s bucketing.
 QString launcherScript();
 
+// SAND02: restrictive allowlist wrap for the `--download-worker`
+// subprocess.  commandLine() is permissive (denylist over a full
+// filesystem) because the whole browser must still work; the download
+// worker is the one process we can confine tightly — it gets ONLY the
+// mounts a downloader needs: system roots and the Qt runtime prefix
+// read-only, `workDir` (part files + the scoped cookie export) and
+// `destDir` read/write, and $HOME simply absent.  Inputs that live
+// under $HOME (the program itself, the Qt prefix, LD_LIBRARY_PATH
+// entries) are rebound below the private /arora-rt tmpfs — bwrap
+// creates parent dirs for bind targets, so an own-path bind of
+// ~/Qt/... would materialise a readable ~ skeleton.  The network
+// namespace stays shared — a downloader that cannot resolve or
+// connect is useless.  -try variants skip sources that do not exist
+// on the host, so the function stays pure argv -> argv.
+QStringList downloadWorkerCommandLine(const QString &program,
+                                      const QStringList &programArgs,
+                                      const QString &workDir,
+                                      const QString &destDir);
+
 } // namespace BwrapGenerator
 
 #endif // BWRAPGENERATOR_H

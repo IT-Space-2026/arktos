@@ -45,6 +45,12 @@ public:
     // "bwrap" | "seatbelt" | "appcontainer" | "unveil" | "none".
     static QString backendName();
 
+    // Resolved bwrap executable path (ARORA_BWRAP override honored),
+    // "" when absent.  Linux only in practice — the other platforms
+    // resolve to their own backends.  SAND02's download-worker wrap
+    // resolves through here so the override works for it too.
+    static QString bwrapPath();
+
     // Human-readable report for --sandbox-status: backend state,
     // escape-hatch visibility, resolved denylist/read-only roots.
     static QString statusReport();

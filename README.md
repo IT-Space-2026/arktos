@@ -218,6 +218,17 @@ in-flight part/staging files stay 0600, stale dl-*/cookies-* debris
 is swept when the engine arms, and debug output redacts URL queries,
 fragments and userinfo.
 
+On Linux the accelerated engine runs inside `arora
+--download-worker`, a confined subprocess under a restrictive
+bubblewrap wrap: the mount namespace exposes only the download's
+work dir and the destination directory — `$HOME` and the profile
+are never mounted — so a compromised downloader cannot touch
+credentials, keys or cookies.  The browser keeps answering the
+policy gate over a stdin/stdout protocol, making the sandboxed path
+policy-identical to in-process; a failed wrap falls back to
+in-process.  Disable via `ARORA_DL_NO_SANDBOX=1` or
+`downloadmanager/sandboxedWorker=false`.
+
 Rust supply chain: `make check-supplychain` (also a `make check`
 prerequisite) runs cargo deny + cargo audit over every crate's
 committed Cargo.lock — RustSec advisories, yanked releases, the

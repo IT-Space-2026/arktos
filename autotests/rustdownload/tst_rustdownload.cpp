@@ -38,9 +38,13 @@
 #include <adblocksubscription.h>
 #include <browserapplication.h>
 #include <browserpaths.h>
+#include <bwrapgenerator.h>
 #include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
+#include <sandboxmanager.h>
 
+#include <qelapsedtimer.h>
+#include <qprocess.h>
 #include <qwebengineprofile.h>
 #include <qwebenginecookiestore.h>
 
@@ -91,6 +95,16 @@ private slots:
     void gateUrlStrip();
     void gateDomainBlocklist();
 #endif
+
+    // SAND02: the confined --download-worker subprocess — protocol
+    // end-to-end through the real bwrap wrap + the engine's
+    // subprocess/fallback selection.
+    void workerDownloadE2E();
+    void workerConfinesFilesystem();
+    void workerGateBridgeBlocks();
+    void workerCancelViaStdin();
+    void engineRunsSandboxed();
+    void engineFallsBackInProcess();
 #else
     void noRustBuild();
 #endif
@@ -106,6 +120,11 @@ void tst_RustDownload::init()
     QSettings settings;
     settings.clear();
 #ifdef ARORA_RUSTDL
+    // SAND02: keep the FFI fixture suite on the in-process path —
+    // the subprocess backend opts in explicitly inside its own tests
+    // so both engines get covered deterministically.
+    settings.setValue(QLatin1String("downloadmanager/sandboxedWorker"),
+                      false);
     // The gate consults the interceptor's lock-guarded snapshot —
     // reload it against the cleared settings so defaults apply.
     PrivacyRequestInterceptor::loadSettings();
@@ -116,6 +135,8 @@ void tst_RustDownload::cleanup()
 {
     QSettings settings;
     settings.clear();
+    qunsetenv("ARORA_WORKER_BINARY");
+    qunsetenv("ARORA_DL_NO_SANDBOX");
 #ifdef ARORA_RUSTDL
     PrivacyRequestInterceptor::loadSettings();
     BrowserApplication::setTorMode(false);
@@ -904,6 +925,393 @@ void tst_RustDownload::gateDomainBlocklist()
              RustDownloadEngine::GateBlock);
 }
 #endif // ARORA_RUSTCORE
+
+// ---- SAND02: the confined --download-worker subprocess --------------
+// These drive the JSONL protocol through the real bwrap wrap — the
+// worker binary is `../../arora` relative to this test binary
+// (ARORA_WORKER_BINARY overrides it), so the suite must run against a
+// built app.
+
+static QString aroraBinary()
+{
+    const QByteArray env = qgetenv("ARORA_WORKER_BINARY");
+    if (!env.isEmpty())
+        return QString::fromLocal8Bit(env);
+    return QDir(QCoreApplication::applicationDirPath())
+        .absoluteFilePath(QStringLiteral("../../arora"));
+}
+
+static bool workerWrapAvailable()
+{
+    return QFileInfo(aroraBinary()).isExecutable()
+        && !SandboxManager::bwrapPath().isEmpty();
+}
+
+static QJsonObject workerJob(const QUrl &url, const QString &workDir,
+                             const QString &destDir,
+                             const QString &suggested)
+{
+    QJsonObject job;
+    job.insert(QLatin1String("cmd"), QLatin1String("job"));
+    job.insert(QLatin1String("url"), url.toString());
+    job.insert(QLatin1String("dest_dir"), destDir);
+    job.insert(QLatin1String("suggested_name"), suggested);
+    job.insert(QLatin1String("work_dir"), workDir);
+    job.insert(QLatin1String("connections"), 4);
+    job.insert(QLatin1String("options"), QJsonObject());
+    return job;
+}
+
+// Spawn `arora --download-worker` under the generated bwrap wrap and
+// collect its event stream until a terminal event or process death.
+// Gate requests are answered with `gateAction` (0=allow by default —
+// the worker blocks on the reply, so answering is not optional).
+static QList<QJsonObject> runWorker(const QJsonObject &job,
+                                    const QString &workDir,
+                                    const QString &destDir,
+                                    int gateAction = 0,
+                                    int timeoutMs = 45000)
+{
+    const QStringList wrap = BwrapGenerator::downloadWorkerCommandLine(
+        aroraBinary(), {QStringLiteral("--download-worker")},
+        workDir, destDir);
+    QProcess proc;
+    proc.setProgram(wrap.first());
+    proc.setArguments(wrap.mid(1));
+    proc.start();
+    if (!proc.waitForStarted(10000))
+        return {};
+    proc.write(QJsonDocument(job).toJson(QJsonDocument::Compact)
+               + '\n');
+
+    QList<QJsonObject> events;
+    QByteArray buf;
+    QElapsedTimer timer;
+    timer.start();
+    bool terminal = false;
+    while (!terminal && timer.elapsed() < timeoutMs) {
+        // Pump the event loop rather than waitForReadyRead: the
+        // FixtureServer lives in this process and can only accept
+        // the worker's connections while the loop runs (and pumping
+        // also flushes the gate replies we write back).
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        buf += proc.readAllStandardOutput();
+        int nl;
+        while ((nl = buf.indexOf('\n')) != -1) {
+            const QByteArray line = buf.left(nl).trimmed();
+            buf.remove(0, nl + 1);
+            if (line.isEmpty())
+                continue;
+            const QJsonObject ev =
+                QJsonDocument::fromJson(line).object();
+            events.append(ev);
+            const QString kind =
+                ev.value(QLatin1String("ev")).toString();
+            if (kind == QLatin1String("gate")) {
+                QJsonObject reply;
+                reply.insert(QLatin1String("ev"),
+                             QLatin1String("gate-reply"));
+                reply.insert(QLatin1String("id"),
+                             ev.value(QLatin1String("id")));
+                reply.insert(QLatin1String("action"), gateAction);
+                if (gateAction == 1)
+                    reply.insert(QLatin1String("reason"),
+                                 QLatin1String("test gate refusal"));
+                proc.write(QJsonDocument(reply)
+                               .toJson(QJsonDocument::Compact) + '\n');
+            }
+            if (kind == QLatin1String("done")
+                    || kind == QLatin1String("cancelled")
+                    || kind == QLatin1String("error"))
+                terminal = true;
+        }
+        if (proc.state() == QProcess::NotRunning)
+            break;
+    }
+    proc.kill();
+    proc.waitForFinished(3000);
+    return events;
+}
+
+void tst_RustDownload::workerDownloadE2E()
+{
+    if (!workerWrapAvailable())
+        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+    const QByteArray body = pattern(512 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
+    QVERIFY(server.listen());
+    QTemporaryDir work;
+    QTemporaryDir dest;
+    QVERIFY(work.isValid() && dest.isValid());
+
+    const QList<QJsonObject> events = runWorker(
+        workerJob(server.url("/file"), work.path(), dest.path(),
+                  QLatin1String("w.bin")),
+        work.path(), dest.path());
+    QVERIFY(!events.isEmpty());
+
+    bool sawProgress = false;
+    QString output;
+    for (const QJsonObject &ev : events) {
+        if (ev.value(QLatin1String("ev")) == QLatin1String("progress"))
+            sawProgress = true;
+        if (ev.value(QLatin1String("ev")) == QLatin1String("done"))
+            output = ev.value(QLatin1String("output")).toString();
+    }
+    QVERIFY(sawProgress);
+    QVERIFY(!output.isEmpty());
+    QFile f(output);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), body);
+    // The file must land INSIDE the destination dir (absolutePath of
+    // a dir QFileInfo is its parent — compare against the dir's own
+    // absoluteFilePath).
+    QVERIFY2(QFileInfo(output).absolutePath()
+                 == QFileInfo(dest.path()).absoluteFilePath(),
+             qPrintable(QStringLiteral("output=%1 dest=%2")
+                        .arg(output, dest.path())));
+}
+
+void tst_RustDownload::workerConfinesFilesystem()
+{
+    if (!workerWrapAvailable())
+        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+    const QByteArray body = pattern(64 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
+    QVERIFY(server.listen());
+    QTemporaryDir work;
+    QTemporaryDir dest;
+    QVERIFY(work.isValid() && dest.isValid());
+    // A host-side secret OUTSIDE any granted path — the wrap must
+    // hide it (this is the profile/keyring stand-in: the worker's
+    // filesystem has no $HOME at all).
+    QTemporaryDir secret;
+    QVERIFY(secret.isValid());
+    QFile secretFile(secret.filePath("keys.pem"));
+    QVERIFY(secretFile.open(QIODevice::WriteOnly));
+    secretFile.write("PRIVATE KEY");
+    secretFile.close();
+
+    QJsonObject job = workerJob(server.url("/file"), work.path(),
+                                dest.path(), QLatin1String("w.bin"));
+    job.insert(QLatin1String("probe_paths"),
+               QJsonArray::fromStringList(
+                   {QDir::homePath(), secretFile.fileName(),
+                    BrowserPaths::dataFilePath(QString()),
+                    dest.path(), work.path(),
+                    QStringLiteral("/etc")}));
+    const QList<QJsonObject> events = runWorker(job, work.path(),
+                                                dest.path());
+
+    QHash<QString, bool> readable;
+    for (const QJsonObject &ev : events) {
+        if (ev.value(QLatin1String("ev")) == QLatin1String("probe"))
+            readable.insert(ev.value(QLatin1String("path")).toString(),
+                            ev.value(QLatin1String("readable"))
+                                .toBool());
+    }
+    QCOMPARE(readable.size(), 6);
+    // $HOME, the secret file and the profile data dir are all
+    // invisible inside the worker's mount namespace.
+    QVERIFY(!readable.value(QDir::homePath(), true));
+    QVERIFY(!readable.value(secretFile.fileName(), true));
+    QVERIFY(!readable.value(BrowserPaths::dataFilePath(QString()),
+                            true));
+    // And the granted surface is visible.
+    QVERIFY(readable.value(dest.path(), false));
+    QVERIFY(readable.value(work.path(), false));
+    QVERIFY(readable.value(QStringLiteral("/etc"), false));
+}
+
+void tst_RustDownload::workerGateBridgeBlocks()
+{
+    if (!workerWrapAvailable())
+        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+    const QByteArray body = pattern(64 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
+    QVERIFY(server.listen());
+    QTemporaryDir work;
+    QTemporaryDir dest;
+    QVERIFY(work.isValid() && dest.isValid());
+
+    const QList<QJsonObject> events = runWorker(
+        workerJob(server.url("/file"), work.path(), dest.path(),
+                  QLatin1String("w.bin")),
+        work.path(), dest.path(), /*gateAction=*/1);
+    bool sawGate = false;
+    bool sawError = false;
+    for (const QJsonObject &ev : events) {
+        const QString kind = ev.value(QLatin1String("ev")).toString();
+        if (kind == QLatin1String("gate"))
+            sawGate = true;
+        if (kind == QLatin1String("error"))
+            sawError = true;
+    }
+    // The request was refused at the gate — the download dies before
+    // a byte lands and nothing appears in the destination.
+    QVERIFY(sawGate);
+    QVERIFY(sawError);
+    QVERIFY(!QFile::exists(dest.filePath("w.bin")));
+}
+
+void tst_RustDownload::workerCancelViaStdin()
+{
+    if (!workerWrapAvailable())
+        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+    // Throttled so a cancel mid-flight is observable.
+    const QByteArray body = pattern(2 * 1024 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/4096);
+    QVERIFY(server.listen());
+    QTemporaryDir work;
+    QTemporaryDir dest;
+    QVERIFY(work.isValid() && dest.isValid());
+
+    const QStringList wrap = BwrapGenerator::downloadWorkerCommandLine(
+        aroraBinary(), {QStringLiteral("--download-worker")},
+        work.path(), dest.path());
+    QProcess proc;
+    proc.setProgram(wrap.first());
+    proc.setArguments(wrap.mid(1));
+    proc.start();
+    QVERIFY(proc.waitForStarted(10000));
+    proc.write(QJsonDocument(workerJob(server.url("/file"),
+                                       work.path(), dest.path(),
+                                       QLatin1String("w.bin")))
+                   .toJson(QJsonDocument::Compact) + '\n');
+
+    QList<QJsonObject> events;
+    QByteArray buf;
+    QElapsedTimer timer;
+    timer.start();
+    bool cancelled = false;
+    bool sentCancel = false;
+    while (!cancelled && timer.elapsed() < 30000) {
+        // Same event-loop pump as runWorker — the FixtureServer is
+        // in-process and starves without it.
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        buf += proc.readAllStandardOutput();
+        int nl;
+        while ((nl = buf.indexOf('\n')) != -1) {
+            const QByteArray line = buf.left(nl).trimmed();
+            buf.remove(0, nl + 1);
+            if (line.isEmpty())
+                continue;
+            const QJsonObject ev =
+                QJsonDocument::fromJson(line).object();
+            events.append(ev);
+            const QString kind =
+                ev.value(QLatin1String("ev")).toString();
+            if (kind == QLatin1String("gate")) {
+                QJsonObject reply;
+                reply.insert(QLatin1String("ev"),
+                             QLatin1String("gate-reply"));
+                reply.insert(QLatin1String("id"),
+                             ev.value(QLatin1String("id")));
+                reply.insert(QLatin1String("action"), 0);
+                proc.write(QJsonDocument(reply)
+                               .toJson(QJsonDocument::Compact) + '\n');
+            }
+            if (kind == QLatin1String("progress") && !sentCancel) {
+                sentCancel = true;
+                proc.write(QByteArray("{\"cmd\":\"cancel\"}\n"));
+            }
+            if (kind == QLatin1String("cancelled"))
+                cancelled = true;
+        }
+        if (proc.state() == QProcess::NotRunning)
+            break;
+    }
+    QVERIFY(sentCancel);
+    QVERIFY(cancelled);
+    QVERIFY(!QFile::exists(dest.filePath("w.bin")));
+    proc.kill();
+    proc.waitForFinished(3000);
+}
+
+void tst_RustDownload::engineRunsSandboxed()
+{
+    if (!workerWrapAvailable())
+        QSKIP("arora binary or bwrap missing — worker wrap untestable");
+    const QByteArray body = pattern(256 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
+    QVERIFY(server.listen());
+    QTemporaryDir dest;
+    QVERIFY(dest.isValid());
+
+    qputenv("ARORA_WORKER_BINARY", aroraBinary().toUtf8());
+    QSettings settings;
+    settings.setValue(QLatin1String("downloadmanager/sandboxedWorker"),
+                      true);
+    QVERIFY(RustDownloadEngine::sandboxedWorkerEnabled());
+
+    auto *engine = new RustDownloadEngine(nullptr, server.url("/file"),
+                                          QLatin1String("e.bin"),
+                                          QString(), this);
+    engine->setDownloadDirectory(dest.path());
+    engine->setDownloadFileName(QLatin1String("e.bin"));
+    engine->setProbePaths({dest.path(), QDir::homePath()});
+    engine->accept();
+    QVERIFY2(engine->subprocessActive(),
+             "expected the confined worker path, got in-process");
+    QTRY_COMPARE(engine->state(),
+                 QWebEngineDownloadRequest::DownloadCompleted);
+
+    QFile f(dest.filePath("e.bin"));
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), body);
+
+    // Probe evidence the subprocess really ran the wrap: the
+    // destination was visible, $HOME was not.
+    bool destSeen = false;
+    bool homeSeen = false;
+    const QJsonArray probes = engine->probeResults();
+    for (const QJsonValue &v : probes) {
+        const QJsonObject p = v.toObject();
+        const QString path =
+            p.value(QLatin1String("path")).toString();
+        if (path == dest.path())
+            destSeen = p.value(QLatin1String("readable")).toBool();
+        if (path == QDir::homePath())
+            homeSeen = p.value(QLatin1String("readable")).toBool();
+    }
+    QVERIFY(probes.size() >= 2);
+    QVERIFY(destSeen);
+    QVERIFY(!homeSeen);
+}
+
+void tst_RustDownload::engineFallsBackInProcess()
+{
+    if (SandboxManager::bwrapPath().isEmpty())
+        QSKIP("bwrap missing — fallback path is the only path");
+    const QByteArray body = pattern(128 * 1024);
+    FixtureServer server(body, /*ranges=*/true, /*throttle=*/0);
+    QVERIFY(server.listen());
+    QTemporaryDir dest;
+    QVERIFY(dest.isValid());
+
+    // An executable that is not the worker: bwrap runs it, it exits
+    // instantly, no protocol line ever arrives — the engine must
+    // fall back to the in-process dl_start and still complete.
+    qputenv("ARORA_WORKER_BINARY", "/bin/false");
+    QSettings settings;
+    settings.setValue(QLatin1String("downloadmanager/sandboxedWorker"),
+                      true);
+    QVERIFY(RustDownloadEngine::sandboxedWorkerEnabled());
+
+    auto *engine = new RustDownloadEngine(nullptr, server.url("/file"),
+                                          QLatin1String("f.bin"),
+                                          QString(), this);
+    engine->setDownloadDirectory(dest.path());
+    engine->setDownloadFileName(QLatin1String("f.bin"));
+    engine->accept();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        engine->state(),
+        QWebEngineDownloadRequest::DownloadCompleted, 30000);
+    QVERIFY(!engine->subprocessActive());
+    QFile f(dest.filePath("f.bin"));
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), body);
+}
 
 #else // !ARORA_RUSTDL
 

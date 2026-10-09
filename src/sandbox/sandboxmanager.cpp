@@ -62,7 +62,9 @@ bool disabledBySettings()
             .toBool();
 }
 
-QString resolveBwrap()
+} // namespace
+
+QString SandboxManager::bwrapPath()
 {
     const QByteArray overridePath = qgetenv("ARORA_BWRAP");
     if (!overridePath.isEmpty()) {
@@ -71,6 +73,8 @@ QString resolveBwrap()
     }
     return QStandardPaths::findExecutable(QStringLiteral("bwrap"));
 }
+
+namespace {
 
 // Browsing launches are arora [url...] and arora --tor — anything else
 // carrying an option flag is a dev/smoke/utility run that keeps its
@@ -100,7 +104,7 @@ QString SandboxManager::backendName()
     if (!marker.isEmpty())
         return QString::fromLocal8Bit(marker);
 #if defined(Q_OS_LINUX)
-    return resolveBwrap().isEmpty() ? QStringLiteral("none")
+    return bwrapPath().isEmpty() ? QStringLiteral("none")
                                   : QStringLiteral("bwrap");
 #elif defined(Q_OS_MACOS)
     return QStandardPaths::findExecutable(QStringLiteral("sandbox-exec"))
@@ -128,9 +132,9 @@ QString SandboxManager::statusReport()
                                            : QStringLiteral("no"));
 #if defined(Q_OS_LINUX)
     lines << QStringLiteral("  bwrap resolved: %1")
-                 .arg(resolveBwrap().isEmpty()
+                 .arg(bwrapPath().isEmpty()
                           ? QStringLiteral("(not found — would run unsandboxed)")
-                          : resolveBwrap());
+                          : bwrapPath());
 #endif
     const SandboxPolicy policy = SandboxPolicy::defaultPolicy();
     lines << QStringLiteral("  masked directories (%1):")
@@ -156,7 +160,7 @@ void SandboxManager::maybeReexec(int argc, char **argv)
         return;
 
 #if defined(Q_OS_LINUX)
-    const QString bwrap = resolveBwrap();
+    const QString bwrap = bwrapPath();
     if (bwrap.isEmpty()) {
         // Never hard-fail: the sandbox is defense-in-depth, not a
         // launch requirement.

@@ -83,6 +83,10 @@
 #include "rustcorebridge.h"
 #endif
 
+#ifdef ARORA_RUSTDL
+#include "downloadworker.h"
+#endif
+
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QCryptographicHash>
@@ -2750,6 +2754,19 @@ int main(int argc, char **argv)
     // ARORA_NO_SANDBOX=1 and the sandbox/enabled settings key are the
     // escape hatches, and a missing backend degrades to a warning.
     SandboxManager::maybeReexec(argc, argv);
+
+#ifdef ARORA_RUSTDL
+    // SAND02: `arora --download-worker` is the confined download
+    // subprocess RustDownloadEngine spawns under bwrap.  It never
+    // builds the GUI app or touches the profile — dispatch before
+    // anything global exists.  (maybeReexec already passed: a
+    // non-browsing flag never re-wraps, and a wrapped worker carries
+    // ARORA_SANDBOXED so it is idempotent either way.)
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--download-worker") == 0)
+            return downloadWorkerMain();
+    }
+#endif
 
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;

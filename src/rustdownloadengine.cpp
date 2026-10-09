@@ -24,10 +24,16 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserpaths.h"
+#include "bwrapgenerator.h"
 #include "cookiejar.h"
 #include "privacyrequestinterceptor.h"
+#include "sandboxmanager.h"
 
+#include <qcoreapplication.h>
 #include <qdatetime.h>
+#include <qdir.h>
+#include <qfileinfo.h>
+#include <qjsonarray.h>
 #include <qjsonobject.h>
 #include <qjsondocument.h>
 #include <qnetworkcookie.h>
@@ -237,11 +243,13 @@ RustDownloadEngine::RustDownloadEngine(QWebEnginePage *page, const QUrl &url,
 
 RustDownloadEngine::~RustDownloadEngine()
 {
+    stopWorkerProcess();
     if (m_handle) {
         dl_cancel(m_handle);
         dl_free(m_handle);
     }
     removeCookieFile();
+    cleanupWorkDir();
 }
 
 // DLACC05 — per-host cookie export for the engine's cookie_file
@@ -253,6 +261,12 @@ RustDownloadEngine::~RustDownloadEngine()
 // re-filters per redirect hop, so a hop to another host can never
 // pull this host's rows onto the wire.
 QString RustDownloadEngine::exportCookieFile() const
+{
+    return exportCookieFileTo(BrowserPaths::dataFilePath(
+        QLatin1String("downloads-parts")));
+}
+
+QString RustDownloadEngine::exportCookieFileTo(const QString &dir) const
 {
     QWebEngineProfile *profile = m_page && m_page->profile()
         ? m_page->profile()
@@ -302,9 +316,7 @@ QString RustDownloadEngine::exportCookieFile() const
     // carries the destination file name, and QTemporaryFile's
     // mkstemp-style create lands 0600 on unix before a byte is
     // written — fully flushed/fsynced and closed before dl_start.
-    QTemporaryFile file(
-        BrowserPaths::dataFilePath(QLatin1String("downloads-parts"))
-        + QLatin1String("/cookies-XXXXXX"));
+    QTemporaryFile file(dir + QLatin1String("/cookies-XXXXXX"));
     if (!file.open())
         return QString();
     file.setPermissions(QFileDevice::ReadUser | QFileDevice::WriteUser);
@@ -379,9 +391,59 @@ bool RustDownloadEngine::canHandle(const QUrl &url)
     return true;
 }
 
+QByteArray RustDownloadEngine::buildOptionsJson() const
+{
+    // Header/policy parity (DLACC04): profile UA so downloads are not
+    // a fingerprint diff; the page URL as first_party + referer
+    // source; the REF01 referer policy (tor enforces at least
+    // Trimmed); the SAFE07 downgrade scope the page's profile gates
+    // under; the proxy the fetch must ride.  Cookies (DLACC05) ride
+    // the scoped export file — never the whole jar.  The same JSON
+    // goes into the worker job for the subprocess path (SAND02).
+    QJsonObject options;
+    if (m_page && m_page->profile()) {
+        const QString ua = m_page->profile()->httpUserAgent();
+        if (!ua.isEmpty())
+            options.insert(QLatin1String("user_agent"), ua);
+        options.insert(QLatin1String("scope"),
+            PrivacyRequestInterceptor::downgradeScope(m_page->profile()));
+    }
+    const QUrl firstParty = m_page ? m_page->url() : QUrl();
+    const QString fpScheme = firstParty.scheme();
+    if (fpScheme == QLatin1String("http") || fpScheme == QLatin1String("https"))
+        options.insert(QLatin1String("first_party"),
+            QString::fromUtf8(firstParty.toEncoded()));
+    int refererPolicy = PrivacyRequestInterceptor::storedRefererPolicy();
+    if (BrowserApplication::isTorMode())
+        // TorRequestInterceptor floor — tor never sends the page's
+        // chosen EngineDefault lower than Trimmed.
+        refererPolicy = qMax(refererPolicy,
+            int(PrivacyRequestInterceptor::RefererTrimmed));
+    options.insert(QLatin1String("referer_policy"), refererPolicy);
+    const QString proxy = proxySpecForDownload();
+    if (!proxy.isEmpty())
+        options.insert(QLatin1String("proxy"), proxy);
+    // Second belt under canHandle(): if the proxy vanished between
+    // selection and start, the crate fails closed instead of opening
+    // a direct socket in a tor process.
+    options.insert(QLatin1String("require_proxy"),
+                   BrowserApplication::isTorMode());
+    return QJsonDocument(options).toJson(QJsonDocument::Compact);
+}
+
 void RustDownloadEngine::accept()
 {
-    if (m_handle || m_dir.isEmpty())
+    if (m_handle || m_process || m_dir.isEmpty())
+        return;
+
+    // SAND02: on Linux the crate runs inside the confined
+    // --download-worker subprocess when the wrap is available — the
+    // worker's mount namespace exposes only this download's work dir
+    // and the destination, not $HOME.  Any failure before the first
+    // protocol event falls back to the in-process path below, so a
+    // broken sandbox costs confinement, never the download.
+    if (!m_workerFellBack
+            && sandboxedWorkerEnabled() && startWorkerProcess())
         return;
 
     // Part files live under the app data dir (0700), never next to
@@ -413,40 +475,7 @@ void RustDownloadEngine::accept()
                     AdBlockManager::instance()->network());
     });
 
-    // Header/policy parity (DLACC04): profile UA so downloads are not
-    // a fingerprint diff; the page URL as first_party + referer
-    // source; the REF01 referer policy (tor enforces at least
-    // Trimmed); the SAFE07 downgrade scope the page's profile gates
-    // under; the proxy the fetch must ride.  Cookies (DLACC05) ride
-    // the scoped export file below — never the whole jar.
-    QJsonObject options;
-    if (m_page && m_page->profile()) {
-        const QString ua = m_page->profile()->httpUserAgent();
-        if (!ua.isEmpty())
-            options.insert(QLatin1String("user_agent"), ua);
-        options.insert(QLatin1String("scope"),
-            PrivacyRequestInterceptor::downgradeScope(m_page->profile()));
-    }
-    const QUrl firstParty = m_page ? m_page->url() : QUrl();
-    const QString fpScheme = firstParty.scheme();
-    if (fpScheme == QLatin1String("http") || fpScheme == QLatin1String("https"))
-        options.insert(QLatin1String("first_party"),
-            QString::fromUtf8(firstParty.toEncoded()));
-    int refererPolicy = PrivacyRequestInterceptor::storedRefererPolicy();
-    if (BrowserApplication::isTorMode())
-        // TorRequestInterceptor floor — tor never sends the page's
-        // chosen EngineDefault lower than Trimmed.
-        refererPolicy = qMax(refererPolicy,
-            int(PrivacyRequestInterceptor::RefererTrimmed));
-    options.insert(QLatin1String("referer_policy"), refererPolicy);
-    const QString proxy = proxySpecForDownload();
-    if (!proxy.isEmpty())
-        options.insert(QLatin1String("proxy"), proxy);
-    // Second belt under canHandle(): if the proxy vanished between
-    // selection and start, the crate fails closed instead of opening
-    // a direct socket in a tor process.
-    options.insert(QLatin1String("require_proxy"),
-                   BrowserApplication::isTorMode());
+    const QByteArray options = buildOptionsJson();
 
     // DLACC05: the cookie export is written, fsynced and closed
     // before the engine starts; a stale file from a previous accept()
@@ -458,7 +487,7 @@ void RustDownloadEngine::accept()
     const QByteArray u = m_url.toString().toUtf8();
     const QByteArray d = m_dir.toUtf8();
     const QByteArray n = m_fileName.toUtf8();
-    const QByteArray o = QJsonDocument(options).toJson(QJsonDocument::Compact);
+    const QByteArray &o = options;
     DlHandle handle = 0;
     const DlStatus st = dl_start(u.constData(), d.constData(),
                                  n.isEmpty() ? nullptr : n.constData(),
@@ -486,7 +515,19 @@ void RustDownloadEngine::accept()
 
 void RustDownloadEngine::cancel()
 {
-    if (m_handle) {
+    if (m_process) {
+        // The worker owns the transfer — ask it to cancel and give
+        // it a moment to exit before the kill.
+        m_cancelSent = true;
+        QJsonObject cmd;
+        cmd.insert(QLatin1String("cmd"), QLatin1String("cancel"));
+        writeWorkerLine(cmd);
+        QTimer::singleShot(2000, this, [this]() {
+            if (m_process && m_cancelSent
+                    && m_process->state() != QProcess::NotRunning)
+                m_process->kill();
+        });
+    } else if (m_handle) {
         dl_cancel(m_handle);
     } else {
         // No handle yet (cancelled at the filename prompt) — report
@@ -497,12 +538,18 @@ void RustDownloadEngine::cancel()
 
 void RustDownloadEngine::restart()
 {
+    stopWorkerProcess();
     if (m_handle) {
         dl_cancel(m_handle);
         dl_free(m_handle);
         m_handle = 0;
     }
     removeCookieFile();
+    cleanupWorkDir();
+    m_workerSawEvent = false;
+    m_workerFellBack = false;
+    m_cancelSent = false;
+    m_probeResults = QJsonArray();
     m_timer.stop();
     m_received = 0;
     m_total = -1;
@@ -583,4 +630,301 @@ void RustDownloadEngine::finish(QWebEngineDownloadRequest::DownloadState state,
     m_error = error;
     m_state = state;
     emit stateChanged(m_state);
+}
+
+// ---- SAND02 subprocess backend --------------------------------------------
+// `arora --download-worker` runs the crate inside a restrictive bwrap
+// wrap (allowlist mounts — $HOME is absent entirely) and speaks the
+// JSONL protocol documented in downloadworker.h.  The parent keeps
+// owning the policy gate: the worker marshals each dl_set_gate call
+// here as a "gate" event and this side answers with gateCheck() —
+// the SAME decision function the in-process FFI trampoline uses, so
+// the two paths are policy-identical.
+
+bool RustDownloadEngine::sandboxedWorkerEnabled()
+{
+#if defined(Q_OS_LINUX)
+    // Escape hatches mirror SAND01's: an env kill-switch for
+    // developers and a settings key for users; both default on.
+    if (!qgetenv("ARORA_DL_NO_SANDBOX").isEmpty())
+        return false;
+    QSettings settings;
+    settings.beginGroup(QLatin1String("downloadmanager"));
+    if (!settings.value(QLatin1String("sandboxedWorker"), true).toBool())
+        return false;
+    return !SandboxManager::bwrapPath().isEmpty()
+        && !workerProgram().isEmpty();
+#else
+    // The restrictive per-platform worker policies exist in
+    // platformgenerators.h but only the Linux bwrap apply path is
+    // wired and verified — other platforms stay in-process.
+    return false;
+#endif
+}
+
+QString RustDownloadEngine::workerProgram()
+{
+    // Tests and dev builds can point at a specific arora binary.
+    const QByteArray env = qgetenv("ARORA_WORKER_BINARY");
+    if (!env.isEmpty()) {
+        const QString path = QString::fromLocal8Bit(env);
+        return QFileInfo(path).isExecutable() ? path : QString();
+    }
+    // Same binary, different entry point — the worker needs no
+    // separate install (the self-contained bundle's wrapper script
+    // resolves through argv[0] the same way).
+    const QString self = QCoreApplication::applicationFilePath();
+    return QFileInfo(self).isExecutable() ? self : QString();
+}
+
+QString RustDownloadEngine::newWorkDir() const
+{
+    // Per-download work dir nested inside the destination: the
+    // worker's wrap grants destDir and nothing under $HOME, so part
+    // files and the scoped cookie export must live there too — a
+    // hidden dot-dir is the least surprising thing to briefly appear
+    // in ~/Downloads, the merge+rename stays on one mount, and the
+    // worker never sees a profile-side path.  0700 so a shared
+    // destination doesn't expose the cookie export to other users.
+    const QString dir = m_dir
+        + QLatin1String("/.arora-dl-")
+        + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (!QDir().mkpath(dir))
+        return QString();
+    QFile::setPermissions(dir, QFileDevice::ReadUser
+        | QFileDevice::WriteUser | QFileDevice::ExeUser);
+    return dir;
+}
+
+void RustDownloadEngine::cleanupWorkDir()
+{
+    if (m_workDir.isEmpty())
+        return;
+    QDir(m_workDir).removeRecursively();
+    m_workDir.clear();
+}
+
+bool RustDownloadEngine::startWorkerProcess()
+{
+    const QString bwrap = SandboxManager::bwrapPath();
+    const QString program = workerProgram();
+    if (bwrap.isEmpty() || program.isEmpty())
+        return false;
+
+    cleanupWorkDir();
+    m_workDir = newWorkDir();
+    if (m_workDir.isEmpty())
+        return false;
+
+    // The scoped cookie export is written into the work dir — inside
+    // the worker's one writable app-data bind — before spawn.
+    removeCookieFile();
+    m_cookieFile = exportCookieFileTo(m_workDir);
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("downloadmanager"));
+    QJsonObject job;
+    job.insert(QLatin1String("cmd"), QLatin1String("job"));
+    job.insert(QLatin1String("url"), m_url.toString());
+    job.insert(QLatin1String("dest_dir"), m_dir);
+    job.insert(QLatin1String("suggested_name"), m_fileName);
+    job.insert(QLatin1String("connections"),
+               settings.value(QLatin1String("connections"), 0).toInt());
+    job.insert(QLatin1String("cookie_file"), m_cookieFile);
+    job.insert(QLatin1String("work_dir"), m_workDir);
+    job.insert(QLatin1String("options"),
+               QJsonDocument::fromJson(buildOptionsJson()).object());
+    if (!m_probePaths.isEmpty())
+        job.insert(QLatin1String("probe_paths"),
+                   QJsonArray::fromStringList(m_probePaths));
+
+    const QStringList wrap = BwrapGenerator::downloadWorkerCommandLine(
+        program, {QStringLiteral("--download-worker")},
+        m_workDir, m_dir);
+    if (wrap.size() < 2)
+        return false;
+
+    m_workerInbox.clear();
+    m_workerSawEvent = false;
+    m_cancelSent = false;
+    m_probeResults = QJsonArray();
+
+    m_process = new QProcess(this);
+    m_process->setProgram(wrap.first());
+    m_process->setArguments(wrap.mid(1));
+    connect(m_process, &QProcess::readyReadStandardOutput,
+            this, &RustDownloadEngine::onWorkerReadyRead);
+    connect(m_process, &QProcess::finished,
+            this, &RustDownloadEngine::onWorkerFinished);
+    connect(m_process, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            onWorkerFinished(-1, QProcess::CrashExit);
+    });
+    // The job goes down stdin only once the child is actually running
+    // — no blocking waitForStarted on the GUI thread; a spawn failure
+    // surfaces through errorOccurred/finished and takes the
+    // in-process fallback instead.
+    connect(m_process, &QProcess::started, this, [this, job]() {
+        writeWorkerLine(job);
+    });
+    m_process->start();
+
+    m_received = 0;
+    m_total = -1;
+    m_state = QWebEngineDownloadRequest::DownloadInProgress;
+    emit stateChanged(m_state);
+    return true;
+}
+
+void RustDownloadEngine::stopWorkerProcess()
+{
+    if (!m_process)
+        return;
+    m_process->disconnect(this);
+    if (m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+        m_process->waitForFinished(2000);
+    }
+    m_process->deleteLater();
+    m_process = nullptr;
+}
+
+void RustDownloadEngine::writeWorkerLine(const QJsonObject &line)
+{
+    if (!m_process || m_process->state() != QProcess::Running)
+        return;
+    m_process->write(
+        QJsonDocument(line).toJson(QJsonDocument::Compact) + '\n');
+}
+
+void RustDownloadEngine::onWorkerReadyRead()
+{
+    if (!m_process)
+        return;
+    m_workerInbox += m_process->readAllStandardOutput();
+    int nl;
+    while ((nl = m_workerInbox.indexOf('\n')) != -1) {
+        const QByteArray line = m_workerInbox.left(nl).trimmed();
+        m_workerInbox.remove(0, nl + 1);
+        if (!line.isEmpty()) {
+            handleWorkerEvent(QJsonDocument::fromJson(line).object());
+            if (!m_process)
+                break;
+        }
+    }
+}
+
+void RustDownloadEngine::onWorkerFinished(int exitCode,
+                                          QProcess::ExitStatus)
+{
+    // The worker's last protocol lines can still sit in the pipe when
+    // finished() fires (the terminal event is written right before
+    // exit) — drain them before drawing conclusions.
+    if (m_process) {
+        m_workerInbox += m_process->readAllStandardOutput();
+        int nl;
+        while ((nl = m_workerInbox.indexOf('\n')) != -1) {
+            const QByteArray line = m_workerInbox.left(nl).trimmed();
+            m_workerInbox.remove(0, nl + 1);
+            if (!line.isEmpty())
+                handleWorkerEvent(QJsonDocument::fromJson(line).object());
+        }
+    }
+
+    const QByteArray err =
+        m_process ? m_process->readAllStandardError() : QByteArray();
+    if (!err.trimmed().isEmpty())
+        qWarning("Arora: download worker exited %d — stderr: %s",
+                 exitCode, err.trimmed().constData());
+
+    const bool hadEvents = m_workerSawEvent;
+    const bool cancelled = m_cancelSent;
+    // Detach before any fallback re-entry — accept() gates on
+    // m_process being null.
+    QProcess *dead = m_process;
+    m_process = nullptr;
+    m_workerInbox.clear();
+    if (dead)
+        dead->deleteLater();
+    cleanupWorkDir();
+
+    if (isFinished())
+        return; // a terminal protocol event already reported
+    if (cancelled) {
+        finish(QWebEngineDownloadRequest::DownloadCancelled);
+        return;
+    }
+    if (!hadEvents && !m_workerFellBack) {
+        // The wrap or the spawn failed before the job started — the
+        // download never began, so the in-process path can take it
+        // over cleanly.  Costs confinement, never the download.
+        m_workerFellBack = true;
+        qWarning("Arora: sandboxed download worker unavailable — "
+                 "running the accelerated engine in-process");
+        accept();
+        return;
+    }
+    finish(QWebEngineDownloadRequest::DownloadInterrupted,
+           tr("Download worker exited unexpectedly"));
+}
+
+void RustDownloadEngine::handleWorkerEvent(const QJsonObject &event)
+{
+    m_workerSawEvent = true;
+    const QString ev = event.value(QLatin1String("ev")).toString();
+
+    if (ev == QLatin1String("progress")) {
+        const qint64 received = qint64(
+            event.value(QLatin1String("bytes")).toDouble());
+        const qint64 total = qint64(
+            event.value(QLatin1String("total")).toDouble());
+        if (received != m_received) {
+            m_received = received;
+            emit receivedBytesChanged();
+        }
+        if (total > 0 && total != m_total) {
+            m_total = total;
+            emit totalBytesChanged();
+        }
+    } else if (ev == QLatin1String("gate")) {
+        // The worker's dl_set_gate trampoline needs a policy verdict
+        // — answer it through the same gateCheck() the in-process
+        // FFI hook uses, keeping the two paths policy-identical.
+        const GateDecision d = gateCheck(
+            QUrl::fromEncoded(
+                event.value(QLatin1String("url")).toString().toUtf8()),
+            QUrl::fromEncoded(event.value(QLatin1String("prev_url"))
+                .toString().toUtf8()),
+            QUrl::fromEncoded(event.value(QLatin1String("first_party"))
+                .toString().toUtf8()),
+            event.value(QLatin1String("scope")).toString(),
+            AdBlockManager::instance()->network());
+        QJsonObject reply;
+        reply.insert(QLatin1String("ev"), QLatin1String("gate-reply"));
+        reply.insert(QLatin1String("id"), event.value(QLatin1String("id")));
+        reply.insert(QLatin1String("action"), int(d.action));
+        if (d.action == GateRewrite)
+            reply.insert(QLatin1String("url"), d.url);
+        else if (d.action == GateBlock)
+            reply.insert(QLatin1String("reason"), d.reason);
+        writeWorkerLine(reply);
+    } else if (ev == QLatin1String("probe")) {
+        m_probeResults.append(event);
+    } else if (ev == QLatin1String("done")) {
+        m_output = event.value(QLatin1String("output")).toString();
+        const qint64 total = qint64(
+            event.value(QLatin1String("total")).toDouble());
+        if (total > 0)
+            m_total = total;
+        finish(QWebEngineDownloadRequest::DownloadCompleted);
+    } else if (ev == QLatin1String("cancelled")) {
+        finish(QWebEngineDownloadRequest::DownloadCancelled);
+    } else if (ev == QLatin1String("error")) {
+        const QString msg =
+            event.value(QLatin1String("message")).toString();
+        finish(QWebEngineDownloadRequest::DownloadInterrupted,
+               msg.isEmpty() ? tr("Download interrupted") : msg);
+    }
+    // "file-name" is informational — the item keeps its chosen name.
 }

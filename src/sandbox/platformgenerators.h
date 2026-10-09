@@ -38,6 +38,13 @@ namespace SeatbeltGenerator {
 // read-only protection still leaves ~/.ssh/authorized_keys writable.
 QString profile(const SandboxPolicy &policy);
 
+// SAND02: the restrictive counterpart for the `--download-worker`
+// subprocess.  deny-default + explicit grants only — system/lib dirs
+// readable, `workDir`/`destDir` writable, outbound network allowed.
+// UNTESTED-ON-TARGET: the apply path is compiled only on macOS.
+QString downloadWorkerProfile(const QString &workDir,
+                              const QString &destDir);
+
 } // namespace SeatbeltGenerator
 
 namespace AppContainerGenerator {
@@ -48,6 +55,13 @@ namespace AppContainerGenerator {
 // capabilities the process keeps (browsing needs networking) plus the
 // same deny/read-only rules as declarative FileRule entries.
 QString manifestXml(const SandboxPolicy &policy);
+
+// SAND02: restrictive manifest for the `--download-worker`
+// subprocess — internetClient only (no privateNetwork), file rules
+// reduced to read-only system roots + write under `workDir`/`destDir`.
+// UNTESTED-ON-TARGET, same apply-path story as manifestXml().
+QString downloadWorkerManifestXml(const QString &workDir,
+                                  const QString &destDir);
 
 } // namespace AppContainerGenerator
 
@@ -65,6 +79,12 @@ struct OpenBsdPlan {
 namespace OpenBsdGenerator {
 
 OpenBsdPlan plan(const SandboxPolicy &policy);
+
+// SAND02: the worker variant — no broad "/" grant.  unveil exposes
+// only system roots read-only plus `workDir`/`destDir` rwc; pledge
+// drops exec/proc/audio/video entirely (the worker forks nothing).
+OpenBsdPlan downloadWorkerPlan(const QString &workDir,
+                               const QString &destDir);
 
 } // namespace OpenBsdGenerator
 
