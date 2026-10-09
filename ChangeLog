@@ -77,6 +77,11 @@ UI:
   double-clicking an entry opens it in a new tab, and the search,
   Remove and context-menu actions work live against the shared
   history model (HIST02).
+- Download rows expand into a detail card (chevron on each item):
+  source URL, destination path, started/finished times, total size,
+  live speed and a speed-over-time sparkline, plus "Restart" and
+  "Show in File Manager" actions — Restart works on completed
+  downloads too and re-downloads to a fresh "-N" name (DOWN01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

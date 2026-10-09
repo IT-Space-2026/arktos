@@ -91,6 +91,7 @@ HEADERS += \
     $$PWD/commandpalette.h \
     $$PWD/containermanager.h \
     $$PWD/devtoolswindow.h \
+    $$PWD/downloadgraph.h \
     $$PWD/downloadmanager.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
@@ -151,6 +152,7 @@ SOURCES += \
     $$PWD/commandpalette.cpp \
     $$PWD/containermanager.cpp \
     $$PWD/devtoolswindow.cpp \
+    $$PWD/downloadgraph.cpp \
     $$PWD/downloadmanager.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \

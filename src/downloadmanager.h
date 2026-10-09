@@ -62,9 +62,11 @@
 #include "ui_downloads.h"
 #include "ui_downloaditem.h"
 
+#include <qdatetime.h>
 #include <qelapsedtimer.h>
 #include <qpointer.h>
 #include <qscopedpointer.h>
+#include <qvector.h>
 #include <qwebenginedownloadrequest.h>
 
 class QWebEnginePage;
@@ -81,6 +83,9 @@ signals:
     void statusChanged();
     void progress(qint64 bytesReceived = 0, qint64 bytesTotal = 0);
     void downloadFinished();
+    // Emitted when the detail card is shown/hidden so the view can
+    // resize the row to the item's new height.
+    void expandedChanged();
 
 public:
     DownloadItem(QWebEngineDownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
@@ -97,6 +102,15 @@ public:
     qint64 bytesReceived() const;
     double remainingTime() const;
     double currentSpeed() const;
+
+    // DOWN01 detail card — collapsed shows the classic compact row,
+    // expanded adds source/destination, timestamps, size, a live speed
+    // sparkline and Restart/Show-in-Folder actions.
+    bool isExpanded() const { return m_expanded; }
+    void setExpanded(bool expanded);
+    QDateTime startedTime() const { return m_startedTime; }
+    QDateTime finishedTime() const { return m_finishedTime; }
+    int speedSampleCount() const { return m_speedSamples.count(); }
 
     // Re-attaches the item to a fresh request.  "Try Again" re-issues the
     // download through the page, which produces a new request object.
@@ -116,6 +130,10 @@ private slots:
     void stop();
     void tryAgain();
     void open();
+    // Card actions: Restart re-issues the url for any finished or
+    // failed download; Show in File Manager reveals the folder.
+    void restart();
+    void showInFolder();
 
     void downloadProgressUpdate();
     void downloadStateChanged(QWebEngineDownloadRequest::DownloadState state);
@@ -125,6 +143,10 @@ private:
     void getFileName();
     void init();
     void updateInfoLabel();
+    void updateDetails();
+    void restartDownload();
+    void sampleSpeed();
+    void freezeSpeedSeries();
     bool confirmSafeToSave(const QString &fileName);
     void removePartialFile();
 
@@ -151,6 +173,21 @@ private:
     bool m_awaitingRetry;
     bool m_offTheRecord;
     QElapsedTimer m_lastProgressTime;
+
+    // DOWN01 card state.  m_speedSamples is a bounded ring of
+    // instantaneous bytes/second readings taken every ~500ms; it is
+    // frozen when the transfer reaches a terminal state and
+    // m_finishedTime records the wall-clock end.  m_restoredTotalBytes
+    // carries the persisted size for items reloaded from QSettings
+    // (they have no live backend to query).
+    QVector<double> m_speedSamples;
+    qint64 m_lastSampleMs;
+    qint64 m_lastSampleBytes;
+    qint64 m_restoredTotalBytes;
+    QDateTime m_startedTime;
+    QDateTime m_finishedTime;
+    double m_finalSpeed;
+    bool m_expanded;
 
     friend class DownloadManager;
     friend class DownloadModel;
