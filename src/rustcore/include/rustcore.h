@@ -276,6 +276,36 @@ RcStatus rc_hist_icon_set(const char *hostUtf8,
 RcStatus rc_hist_icon_get(const char *hostUtf8, RcBuffer *out);
 RcStatus rc_hist_icon_clear(void);
 
+/* --- session store (RCORE03) ----------------------------------------
+ * The canonical session file "<data dir>/session.dat" — a versioned
+ * binary schema (magic "ARSS", version 1) written atomically
+ * (temp + fsync + rename, 0600) and decoded under strict bounds: a
+ * corrupt or truncated file fails RC_CORRUPT whole, so it can never
+ * loop the crash-restore prompt or drop part of the window set.
+ *
+ * The C ABI carries the session as a JSON manifest:
+ *   {"version":1,"windows":[{"shell":"<base64>","current":0,
+ *     "tabs":[{"url","container","group","engine","state":"<base64>"}],
+ *     "groups":[{"id","name","color","collapsed"]}]}]}
+ * "shell" is the opaque window-chrome blob (the Qt shell's own
+ * serialization), "state" the opaque per-tab engine-state blob
+ * (WebEngine's serialized history today; a different engine supplies
+ * its own bytes — the format survives the swap).  "container" is the
+ * tab's container binding, "engine" its engine tag ("webengine").
+ *
+ * rc_session_load returns RC_NOT_FOUND when no session exists.
+ * rc_session_encode/decode are the pure codec (test seam). */
+RcStatus rc_session_save(const uint8_t *jsonUtf8, size_t len);
+RcStatus rc_session_load(RcBuffer *outJson);
+int rc_session_exists(void);
+RcStatus rc_session_clear(void);
+RcStatus rc_session_encode(const uint8_t *jsonUtf8, size_t len,
+                           RcBuffer *out);
+RcStatus rc_session_decode(const uint8_t *blob, size_t len,
+                           RcBuffer *outJson);
+
+#define RC_SESSION_FILE "session.dat"
+
 #ifdef __cplusplus
 }
 #endif

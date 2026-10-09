@@ -94,6 +94,7 @@
 #include <qdir.h>
 #include <qevent.h>
 #include <qimage.h>
+#include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qlistview.h>
@@ -2149,23 +2150,12 @@ void TabWidget::previousTab()
 
 static const qint32 TabWidgetMagic = 0xaa;
 
-QByteArray TabWidget::saveState() const
+TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
 {
-    int version = 3; // TABGRP01: v3 tails with group ids + a group table
-    QByteArray data;
-    QDataStream stream(&data, QIODevice::WriteOnly);
-
-    stream << qint32(TabWidgetMagic);
-    stream << qint32(version);
-
-    QStringList tabs;
-    QList<QByteArray> tabsHistory;
-    QStringList tabContainers;
-    QStringList tabGroups;
+    TabSessionSnapshot snap;
     // Private tabs live on the off-the-record profile — their urls and
     // history are never written into the saved session (SEC07).  The
     // current index is remapped onto the filtered list.
-    int savedCurrentIndex = -1;
     // orderedWebViews() splices a collapsed group's hidden members in
     // after its chip so no tab drops out of the serialized session.
     const QList<WebView*> ordered = orderedWebViews();
@@ -2175,44 +2165,56 @@ QByteArray TabWidget::saveState() const
         if (tab->page() && tab->page()->profile()->isOffTheRecord())
             continue;
         if (tab == currentWebView())
-            savedCurrentIndex = tabs.count();
-        tabs.append(QString::fromUtf8(tab->url().toEncoded()));
+            snap.currentIndex = snap.urls.count();
+        snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
         if (tab->history()->count() != 0)
-            tabsHistory.append(serializePageHistory(tab->history()));
+            snap.histories.append(serializePageHistory(tab->history()));
         else
-            tabsHistory.append(QByteArray());
-        tabContainers.append(tab->containerId());
-        tabGroups.append(m_tabGroups.value(tab));
+            snap.histories.append(QByteArray());
+        snap.containers.append(tab->containerId());
+        snap.groupIds.append(m_tabGroups.value(tab));
     }
-    stream << tabs;
-    stream << savedCurrentIndex;
-    stream << tabsHistory;
-    stream << tabContainers;
 
     // TABGRP01: the group table — one record per group that still has a
     // saved member, ordered by first appearance on the strip.  Orphaned
-    // ids in tabGroups (a record that somehow vanished) degrade to
+    // ids in groupIds (a record that somehow vanished) degrade to
     // ungrouped on restore.
-    QList<TabGroup> savedGroups;
-    for (const QString &gid : tabGroups) {
+    for (const QString &gid : snap.groupIds) {
         if (gid.isEmpty())
             continue;
         const auto it = m_tabGroupInfo.constFind(gid);
         if (it == m_tabGroupInfo.constEnd())
             continue;
         bool listed = false;
-        for (const TabGroup &group : savedGroups) {
+        for (const TabGroup &group : snap.groups) {
             if (group.id == gid) {
                 listed = true;
                 break;
             }
         }
         if (!listed)
-            savedGroups.append(*it);
+            snap.groups.append(*it);
     }
-    stream << tabGroups;
-    stream << qint32(savedGroups.count());
-    for (const TabGroup &group : savedGroups)
+    return snap;
+}
+
+QByteArray TabWidget::saveState() const
+{
+    int version = 3; // TABGRP01: v3 tails with group ids + a group table
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+
+    stream << qint32(TabWidgetMagic);
+    stream << qint32(version);
+
+    const TabSessionSnapshot snap = collectSessionSnapshot();
+    stream << snap.urls;
+    stream << snap.currentIndex;
+    stream << snap.histories;
+    stream << snap.containers;
+    stream << snap.groupIds;
+    stream << qint32(snap.groups.count());
+    for (const TabGroup &group : snap.groups)
         stream << group.id << group.name << group.color
                << qint32(group.collapsed ? 1 : 0);
 
@@ -2233,44 +2235,45 @@ bool TabWidget::restoreState(const QByteArray &state)
     if (marker != TabWidgetMagic || v < 1 || v > 3)
         return false;
 
-    QStringList openTabs;
-    StreamingUtils::readBoundedList(stream, openTabs);
+    TabSessionSnapshot snap;
+    StreamingUtils::readBoundedList(stream, snap.urls);
 
-    int currentTab = -1;
-    stream >> currentTab;
-    QList<QByteArray> tabHistory;
-    StreamingUtils::readBoundedList(stream, tabHistory);
-    QStringList tabContainers;
+    stream >> snap.currentIndex;
+    StreamingUtils::readBoundedList(stream, snap.histories);
     // CONT02: v2 tails the stream with each tab's container id; a v1
     // session (or a truncated blob) restores to the default container.
     if (v >= 2)
-        StreamingUtils::readBoundedList(stream, tabContainers);
+        StreamingUtils::readBoundedList(stream, snap.containers);
     // TABGRP01: v3 tails with each tab's group id plus the group table
     // (name/color/collapsed).  A truncated tail simply leaves the
     // session ungrouped — the same defensive floor the container tail
     // established.
-    QStringList savedGroupIds;
-    struct SavedGroup {
-        QString id;
-        QString name;
-        QColor color;
-        bool collapsed;
-    };
-    QList<SavedGroup> savedGroups;
     if (v >= 3) {
-        StreamingUtils::readBoundedList(stream, savedGroupIds);
+        StreamingUtils::readBoundedList(stream, snap.groupIds);
         qint32 groupCount = 0;
         stream >> groupCount;
         for (qint32 i = 0; i < groupCount && i < 1024; ++i) {
-            SavedGroup group;
+            TabGroup group;
             qint32 collapsed = 0;
             stream >> group.id >> group.name >> group.color >> collapsed;
             group.collapsed = (collapsed != 0);
-            savedGroups.append(group);
+            snap.groups.append(group);
         }
     }
     if (stream.status() != QDataStream::Ok)
         return false;
+
+    return restoreSessionSnapshot(snap);
+}
+
+bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
+{
+    const QStringList &openTabs = snap.urls;
+    const int currentTab = snap.currentIndex;
+    const QList<QByteArray> &tabHistory = snap.histories;
+    const QStringList &tabContainers = snap.containers;
+    const QStringList &savedGroupIds = snap.groupIds;
+    const QList<TabGroup> &savedGroups = snap.groups;
 
     // The empty placeholder tab a fresh window comes with is only a
     // fit for the first saved tab when its container matches — reusing
@@ -2320,7 +2323,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     // setTabGroupCollapsed no-ops if the flag is already latched).
     QHash<QString, QString> groupIdRemap;
     QStringList collapsedGroups;
-    for (const SavedGroup &saved : savedGroups) {
+    for (const TabGroup &saved : savedGroups) {
         if (saved.id.isEmpty() || groupIdRemap.contains(saved.id))
             continue;
         TabGroup group;
@@ -2361,6 +2364,80 @@ bool TabWidget::restoreState(const QByteArray &state)
     m_tabBar->update();
     return true;
 }
+
+#ifdef ARORA_RUSTCORE
+// RCORE03: the rustcore session store consumes this JSON manifest —
+// {"current":i,"tabs":[{url,container,group,engine,state}],
+//  "groups":[{id,name,color,collapsed}]}.  "state" is the opaque
+// engine-state blob (serializePageHistory's output, base64) and
+// "engine" the tag that produced it, so a future engine adapter's
+// tabs coexist without the core ever interpreting either field.
+QJsonObject TabWidget::sessionStateJson() const
+{
+    const TabSessionSnapshot snap = collectSessionSnapshot();
+    QJsonArray tabs;
+    for (int i = 0; i < snap.urls.count(); ++i) {
+        QJsonObject tab;
+        tab.insert(QLatin1String("url"), snap.urls.at(i));
+        tab.insert(QLatin1String("container"), snap.containers.value(i));
+        tab.insert(QLatin1String("group"), snap.groupIds.value(i));
+        tab.insert(QLatin1String("engine"), QLatin1String("webengine"));
+        tab.insert(QLatin1String("state"),
+                   QString::fromLatin1(snap.histories.value(i).toBase64()));
+        tabs.append(tab);
+    }
+    QJsonArray groups;
+    for (const TabGroup &group : snap.groups) {
+        QJsonObject g;
+        g.insert(QLatin1String("id"), group.id);
+        g.insert(QLatin1String("name"), group.name);
+        g.insert(QLatin1String("color"), group.color.name(QColor::HexArgb));
+        g.insert(QLatin1String("collapsed"), group.collapsed);
+        groups.append(g);
+    }
+    QJsonObject state;
+    state.insert(QLatin1String("current"), snap.currentIndex);
+    state.insert(QLatin1String("tabs"), tabs);
+    state.insert(QLatin1String("groups"), groups);
+    return state;
+}
+
+bool TabWidget::restoreSessionState(const QJsonObject &state)
+{
+    TabSessionSnapshot snap;
+    snap.currentIndex = state.value(QLatin1String("current")).toInt(-1);
+    const QJsonArray tabs = state.value(QLatin1String("tabs")).toArray();
+    for (const QJsonValue &v : tabs) {
+        const QJsonObject tab = v.toObject();
+        snap.urls.append(tab.value(QLatin1String("url")).toString());
+        snap.containers.append(
+            tab.value(QLatin1String("container")).toString());
+        snap.groupIds.append(tab.value(QLatin1String("group")).toString());
+        // The opaque engine-state blob routes by engine tag — only
+        // WebEngine's serializePageHistory format is understood here;
+        // a foreign engine's tab still restores its flat url.
+        QByteArray engineState;
+        if (tab.value(QLatin1String("engine"))
+                .toString(QLatin1String("webengine"))
+            == QLatin1String("webengine"))
+            engineState = QByteArray::fromBase64(
+                tab.value(QLatin1String("state")).toString().toLatin1());
+        snap.histories.append(engineState);
+    }
+    const QJsonArray groups = state.value(QLatin1String("groups")).toArray();
+    for (const QJsonValue &v : groups) {
+        const QJsonObject g = v.toObject();
+        TabGroup group;
+        group.id = g.value(QLatin1String("id")).toString();
+        group.name = g.value(QLatin1String("name")).toString();
+        group.color = QColor::fromString(
+            g.value(QLatin1String("color")).toString());
+        group.collapsed = g.value(QLatin1String("collapsed")).toBool();
+        snap.groups.append(group);
+    }
+    return restoreSessionSnapshot(snap);
+}
+#endif // ARORA_RUSTCORE
 
 void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab,
                           const QString &containerId)
