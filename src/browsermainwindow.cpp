@@ -1040,6 +1040,15 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu->addAction(m_toolsCommandPaletteAction);
     m_toolsMenu->addSeparator();
 
+    // MENU04: Downloads heads the Tools menu's utility cluster — the
+    // Window menu keeps only tab/window-management entries.
+    m_toolsDownloadsAction = new QAction(m_toolsMenu);
+    m_toolsDownloadsAction->setIcon(
+        AroraIcon::get(QLatin1String("emblem-downloads")));
+    connect(m_toolsDownloadsAction, &QAction::triggered,
+            this, &BrowserMainWindow::downloadManager);
+    m_toolsMenu->addAction(m_toolsDownloadsAction);
+
     // MENU01: no Tools-menu entry — the action lives on the window
     // itself so the Ctrl+K shortcut keeps reaching webSearch()
     // without a menu item to show.
@@ -1272,6 +1281,9 @@ void BrowserMainWindow::retranslate()
 
     m_toolsMenu->setTitle(tr("&Tools"));
     m_toolsCommandPaletteAction->setText(tr("Command &Palette..."));
+    m_toolsDownloadsAction->setText(tr("Downloads"));
+    m_toolsDownloadsAction->setShortcut(
+        QKeySequence(tr("Ctrl+Y", "Download Manager")));
     m_toolsWebSearchAction->setText(tr("Web &Search"));
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
@@ -2129,16 +2141,13 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     m_windowMenu->addAction(m_tabWidget->nextTabAction());
     m_windowMenu->addAction(m_tabWidget->previousTabAction());
     m_windowMenu->addAction(m_windowTabSearchAction);
-    m_windowMenu->addSeparator();
-    QAction *downloadManagerAction = m_windowMenu->addAction(tr("Downloads"), QKeySequence(tr("Ctrl+Y", "Download Manager")), this, &BrowserMainWindow::downloadManager);
-
-    downloadManagerAction->setIcon(AroraIcon::get(QLatin1String("emblem-downloads")));
-
-    m_windowMenu->addSeparator();
     BrowserApplication *application = BrowserApplication::instance();
     if (!application)
         return;
     QList<BrowserMainWindow*> windows = application->mainWindows();
+    if (windows.isEmpty())
+        return;
+    m_windowMenu->addSeparator();
     for (int i = 0; i < windows.count(); ++i) {
         BrowserMainWindow *window = windows.at(i);
         QAction *action = m_windowMenu->addAction(SafeText::menu(window->windowTitle()), this, &BrowserMainWindow::showWindow);

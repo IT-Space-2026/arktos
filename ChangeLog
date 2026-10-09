@@ -105,6 +105,9 @@ UI:
   reload/stop button — it appears only on article-like pages, shows
   a filled icon while the reader overlay is up, and stays in sync
   with View → Reader Mode (Ctrl+Alt+R) (READ02).
+- Downloads moved from the Window menu to the Tools menu — the
+  Ctrl+Y shortcut and icon are unchanged, and the Window menu now
+  holds only tab/window-switching entries (MENU04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

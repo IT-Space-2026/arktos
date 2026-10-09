@@ -104,6 +104,7 @@ private slots:
     void historyTab();
     void toolsMenuDedup();
     void fileMenuOrder();
+    void downloadsMenuHome();
     void stateSerialization();
     void events();
     void closeConfirm();
@@ -478,6 +479,62 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateAction->shortcut(),
              QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
                           | Qt::Key_N));
+    closeWindow(window);
+}
+
+// MENU04: Downloads moved out of the Window menu into the Tools
+// menu's utility cluster — same text, icon, and Ctrl+Y shortcut, and
+// neither menu keeps a doubled/orphaned separator.
+void tst_BrowserMainWindow::downloadsMenuHome()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *toolsMenu = nullptr;
+    QMenu *windowMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu())
+            continue;
+        if (menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+        if (menuAction->text().contains(QLatin1String("Window")))
+            windowMenu = menuAction->menu();
+    }
+    QVERIFY(toolsMenu);
+    QVERIFY(windowMenu);
+
+    // The Tools copy is the only Downloads entry.
+    QAction *downloads = nullptr;
+    for (QAction *action : toolsMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Downloads"))
+            downloads = action;
+    }
+    QVERIFY(downloads);
+    QCOMPARE(downloads->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+Y")));
+    QVERIFY(!downloads->icon().isNull());
+    for (QAction *action : windowMenu->actions())
+        QVERIFY(!action->text().contains(QLatin1String("Downloads")));
+
+    // No doubled or dangling separators in either menu after the move.
+    for (QMenu *menu : {toolsMenu, windowMenu}) {
+        bool previousWasSeparator = true;
+        for (QAction *action : menu->actions()) {
+            QVERIFY2(!(previousWasSeparator && action->isSeparator()),
+                     qPrintable(menu->title()));
+            previousWasSeparator = action->isSeparator();
+        }
+        QVERIFY(!menu->actions().constLast()->isSeparator());
+    }
+
+    // Triggering it opens the shared download manager.
+    downloads->trigger();
+    QVERIFY(BrowserApplication::downloadManager()->isVisible());
+    if (QDialog *dialog = qobject_cast<QDialog *>(
+            BrowserApplication::downloadManager()))
+        dialog->close();
+
     closeWindow(window);
 }
 
