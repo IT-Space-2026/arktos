@@ -71,10 +71,10 @@ while true; do
 	  timeout 1800 "$DEVIN" --permission-mode dangerous \
 		--respect-workspace-trust false \
 		${DEVIN_MODEL:+--model "$DEVIN_MODEL"} \
-		-p "$(cat "$PROMPT")" >>"$LOG" 2>&1 )
+		-p "$(cat "$PROMPT")" >>"$LOG" 2>&1 9>&- )
 	rc=$?
 	log "merge run exited rc=$rc"
 
 	# next cycle re-checks drift — no blind retries needed
-	sleep "$INTERVAL"
+	sleep "$INTERVAL" 9>&-
 done
