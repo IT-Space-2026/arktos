@@ -69,7 +69,9 @@
 class AutoSaver;
 class BookmarksToolBar;
 class CommandPalette;
+class QDockWidget;
 class QWebEnginePage;
+class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
 class WebView;
@@ -102,6 +104,11 @@ public:
     WebView *currentTab() const;
     ToolbarSearch *toolbarSearch() const;
     void applySearchBoxVisibility();
+    // SIDE01: applies the persisted sidebar visibility + dock side.
+    void applySidebarSettings();
+    // May be null — the panel is built lazily on first show.
+    SidebarPanel *sidebarPanel() const;
+    QDockWidget *sidebarDock() const;
     QByteArray saveState(bool withTabs = true) const;
     bool restoreState(const QByteArray &state);
     QAction *showMenuBarAction() const;
@@ -182,6 +189,7 @@ private:
     void loadDefaultState();
     void setupMenu();
     void setupToolBar();
+    void ensureSidebarPanel();
     void updateStopReloadActionText(bool loading);
 
 private:
@@ -229,6 +237,9 @@ private:
     QAction *m_viewTextEncodingAction;
     QMenu *m_viewTextEncodingMenu;
     QPointer<WebView> m_readerWatchedView;
+    QAction *m_viewSidebarAction;
+    QDockWidget *m_sidebarDock;
+    QPointer<SidebarPanel> m_sidebarPanel;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;

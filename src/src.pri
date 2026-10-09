@@ -104,6 +104,7 @@ HEADERS += \
     $$PWD/searchlineedit.h \
     $$PWD/securestore.h \
     $$PWD/settings.h \
+    $$PWD/sidebarpanel.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
@@ -159,6 +160,7 @@ SOURCES += \
     $$PWD/searchlineedit.cpp \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
+    $$PWD/sidebarpanel.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \

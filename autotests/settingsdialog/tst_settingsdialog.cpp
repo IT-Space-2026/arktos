@@ -60,6 +60,7 @@ private slots:
     void searchShortcutNicknames();
     void resetSearchSettings();
     void sidebarNavigation();
+    void sidebarSettings();
     void scrollablePages();
     void subDialogButtons();
     void setHomeToCurrentPage();
@@ -742,6 +743,46 @@ void tst_SettingsDialog::sidebarNavigation()
         QCOMPARE(dialog.tabWidget->currentIndex(), 0);
         QCOMPARE(dialog.pagesList->currentRow(), 0);
     }
+}
+
+// SIDE01: the General page's sidebar controls — off by default,
+// Left/Right dock side round-trips through MainWindow/sidebarDockArea.
+void tst_SettingsDialog::sidebarSettings()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+
+    // Fresh dialog defaults: unchecked, Left.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.showSidebar->isChecked());
+        QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
+    }
+
+    // Enabling + Right persists and reads back.
+    {
+        SettingsDialog dialog;
+        dialog.showSidebar->setChecked(true);
+        dialog.sidebarDockArea->setCurrentIndex(1);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar")).toBool(),
+             true);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
+             int(Qt::RightDockWidgetArea));
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.showSidebar->isChecked());
+        QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+        dialog.showSidebar->setChecked(false);
+        dialog.sidebarDockArea->setCurrentIndex(0);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar")).toBool(),
+             false);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
+             int(Qt::LeftDockWidgetArea));
 }
 
 // UIP06: every stacked page lives inside a scroll area so a page

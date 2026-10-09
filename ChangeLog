@@ -469,6 +469,9 @@ Picture-in-Picture (PIP01):
 Tab groups (TABGRP01):
     Tabs can be organized into named, color-coded groups, Vivaldi/Chrome-style. Right-click a tab to create a group ("New Group"), add it to an existing one, rename it, pick a color from the eight-color palette, or ungroup; dragging a tab onto a group member joins that group, and dragging a grouped tab away from its neighbors ungroups it. A group's tabs stay contiguous on the strip and a colored header chip bearing the group's name leads the run; "Collapse Group" folds the group down to just that chip (its tabs stay loaded invisibly) and clicking the chip expands it again. New tabs opened from a grouped tab inherit the group, closing a collapsed chip expands rather than strands its hidden members, and groups survive session save/restore (sessions written by older versions still restore, and older builds ignore the new group data).
 
+Sidebar panel (SIDE01):
+    An optional Vivaldi-style sidebar can now dock to the left or right edge of the window — off by default, so the interface is unchanged unless it is switched on. Toggle it from View → "Sidebar", the F4 key, the toolbar button, or Settings → General → "Show sidebar"; the same dialog also chooses whether it docks left or right. The panel hosts four tabs reusing the existing data: Bookmarks (the full tree with search filter, folders open in place, links load in the current tab), History (the shared history tree with filter), Downloads (the live download list — double-click opens finished files, a button opens the download manager), and Notes (a plain-text pad saved automatically). Visibility, dock side, the active tab and notes are all remembered across sessions; until the panel is first shown it is never constructed, so the default experience carries zero cost.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

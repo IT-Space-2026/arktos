@@ -496,6 +496,14 @@ void SettingsDialog::loadFromSettings()
     showSearchBox->setChecked(showBox);
     searchFieldRadio->setChecked(showBox);
     searchButtonRadio->setChecked(!showBox);
+    // SIDE01: the sidebar is off by default; its dock side is a
+    // separate Left/Right choice applied live to every window.
+    showSidebar->setChecked(
+        settings.value(QLatin1String("showSidebar"), false).toBool());
+    sidebarDockArea->setCurrentIndex(
+        settings.value(QLatin1String("sidebarDockArea"),
+                       int(Qt::LeftDockWidgetArea)).toInt()
+            == int(Qt::RightDockWidgetArea) ? 1 : 0);
     const QString iconTheme = AroraIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
@@ -763,6 +771,11 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("home"), homeLineEdit->text());
     settings.setValue(QLatin1String("startupBehavior"), startupBehavior->currentIndex());
     settings.setValue(QLatin1String("showSearchBox"), showSearchBox->isChecked());
+    settings.setValue(QLatin1String("showSidebar"), showSidebar->isChecked());
+    settings.setValue(QLatin1String("sidebarDockArea"),
+                      sidebarDockArea->currentIndex() == 1
+                      ? int(Qt::RightDockWidgetArea)
+                      : int(Qt::LeftDockWidgetArea));
     const QString iconTheme = iconThemeCombo->currentData().toString();
     settings.setValue(QLatin1String("iconTheme"), iconTheme);
     settings.endGroup();
@@ -1036,8 +1049,10 @@ void SettingsDialog::saveToSettings()
             view->loadSettings();
         else if (TabWidget *tabs = qobject_cast<TabWidget*>(widget))
             tabs->loadSettings();
-        else if (BrowserMainWindow *window = qobject_cast<BrowserMainWindow*>(widget))
+        else if (BrowserMainWindow *window = qobject_cast<BrowserMainWindow*>(widget)) {
             window->applySearchBoxVisibility();
+            window->applySidebarSettings();
+        }
     }
 }
 

@@ -188,6 +188,11 @@ public:
     // already gone (retry of an interrupted or restored download).
     QWebEnginePage *retryPage(bool offTheRecord);
 
+    // SIDE01: read-only model access for the sidebar downloads page —
+    // rows still render through the dialog's index widgets; secondary
+    // views map the DownloadModel::Roles.
+    DownloadModel *model() const { return m_model; }
+
     // SEC09: hands the url to the user-configured external download
     // handler (Settings > downloadmanager/externalPath).  The url
     // becomes a raw argv argument to another program, so only real
@@ -238,6 +243,16 @@ class DownloadModel : public QAbstractListModel
     Q_OBJECT
 
 public:
+    // SIDE01: plain-data roles for views that cannot host the
+    // dialog's per-row DownloadItem index widgets (DisplayRole stays
+    // empty so the dialog never paints text under its widgets).
+    enum Roles {
+        FileNameRole = Qt::UserRole + 1,
+        OutputFileRole,
+        SourceUrlRole,
+        CompletedRole
+    };
+
     DownloadModel(DownloadManager *downloadManager, QObject *parent = nullptr);
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;

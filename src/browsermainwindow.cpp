@@ -88,6 +88,7 @@
 #include "safetext.h"
 #include "securestore.h"
 #include "settings.h"
+#include "sidebarpanel.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
 #include "tabbar.h"
@@ -98,6 +99,7 @@
 #include "webview.h"
 #include "webviewsearch.h"
 
+#include <qdockwidget.h>
 #include <qevent.h>
 #include <qfiledialog.h>
 #include <qlabel.h>
@@ -221,6 +223,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     centralWidget->setLayout(layout);
     setCentralWidget(centralWidget);
 
+    // The dock was created in setupMenu() (its toggle action lives in
+    // the View menu); it joins the layout hidden — applySidebarSettings()
+    // decides visibility once the persisted state is read.
+    addDockWidget(Qt::LeftDockWidgetArea, m_sidebarDock);
+    m_sidebarDock->setVisible(false);
+
     connect(m_tabWidget, &TabWidget::setCurrentTitle,
             this, &BrowserMainWindow::updateWindowTitle);
     connect(m_tabWidget, &TabWidget::showStatusBarMessage,
@@ -249,6 +257,25 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 
     updateWindowTitle();
     loadDefaultState();
+    // SIDE01: the settings keys are authoritative over whatever the
+    // window-state blob restored for the dock — apply first, then hook
+    // persistence so startup writes nothing and a hidden sidebar costs
+    // nothing (the panel builds lazily on first show).
+    applySidebarSettings();
+    connect(m_sidebarDock, &QDockWidget::visibilityChanged,
+            this, [this](bool visible) {
+        if (visible)
+            ensureSidebarPanel();
+        QSettings settings;
+        settings.setValue(QLatin1String("MainWindow/showSidebar"), visible);
+        m_autoSaver->changeOccurred();
+    });
+    connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
+            this, [](Qt::DockWidgetArea area) {
+        QSettings settings;
+        settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
+                          int(area));
+    });
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
 
@@ -705,6 +732,19 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewStatusbarAction, &QAction::triggered, this, &BrowserMainWindow::viewStatusbar);
     m_viewMenu->addAction(m_viewStatusbarAction);
 
+    // SIDE01: optional Vivaldi-style sidebar dock — off by default.
+    // The action is the dock's own toggle action so its check state
+    // also tracks the dock's close button; applySidebarSettings() is
+    // the persisted authority (settings keys, not the window blob).
+    m_sidebarDock = new QDockWidget(this);
+    m_sidebarDock->setObjectName(QLatin1String("sidebarDock"));
+    m_sidebarDock->setAllowedAreas(Qt::LeftDockWidgetArea
+                                 | Qt::RightDockWidgetArea);
+    m_viewSidebarAction = m_sidebarDock->toggleViewAction();
+    m_viewSidebarAction->setShortcut(QKeySequence(Qt::Key_F4));
+    m_viewSidebarAction->setIcon(SidebarPanel::icon(this));
+    m_viewMenu->addAction(m_viewSidebarAction);
+
     m_viewMenu->addSeparator();
 
     m_viewStopAction = new QAction(m_viewMenu);
@@ -1131,6 +1171,8 @@ void BrowserMainWindow::retranslate()
     m_viewZoomTextOnlyAction->setText(tr("Zoom &Text Only"));
     m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewPipAction->setText(tr("Picture-&in-Picture"));
+    m_sidebarDock->setWindowTitle(tr("Sidebar"));
+    m_viewSidebarAction->setText(tr("Sidebar"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
     m_viewFullScreenAction->setText(tr("&Full Screen"));
@@ -1233,6 +1275,9 @@ void BrowserMainWindow::setupToolBar()
     m_tabWidget->locationBarStack()->setMinimumWidth(120);
     m_navigationSplitter->setCollapsible(0, false);
     m_navigationBar->addWidget(m_navigationSplitter);
+    // SIDE01: sidebar toggle at the far right of the navigation bar —
+    // same checkable action as View > Sidebar (F4).
+    m_navigationBar->addAction(m_viewSidebarAction);
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
     sizes << (int)((double)splitterWidth * .80) << (int)((double)splitterWidth * .20);
@@ -1255,6 +1300,52 @@ void BrowserMainWindow::applySearchBoxVisibility()
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
     m_toolbarSearch->setButtonMode(!field);
     m_toolbarSearch->setVisible(true);
+}
+
+// SIDE01: the panel is built on first show so a hidden sidebar is
+// zero-footprint — constructing it eagerly would pull the bookmarks,
+// history and download models into every window's startup path.
+void BrowserMainWindow::ensureSidebarPanel()
+{
+    if (m_sidebarPanel)
+        return;
+    m_sidebarPanel = new SidebarPanel(m_sidebarDock);
+    connect(m_sidebarPanel, &SidebarPanel::openUrl,
+            m_tabWidget, [this](const QUrl &url,
+                                TabWidget::OpenUrlIn tab,
+                                const QString &title) {
+        m_tabWidget->loadUrl(url, tab, title);
+    });
+    m_sidebarDock->setWidget(m_sidebarPanel);
+}
+
+void BrowserMainWindow::applySidebarSettings()
+{
+    QSettings settings;
+    const int storedArea =
+        settings.value(QLatin1String("MainWindow/sidebarDockArea"),
+                       int(Qt::LeftDockWidgetArea)).toInt();
+    const Qt::DockWidgetArea area =
+        storedArea == int(Qt::RightDockWidgetArea)
+        ? Qt::RightDockWidgetArea : Qt::LeftDockWidgetArea;
+    if (dockWidgetArea(m_sidebarDock) != area)
+        addDockWidget(area, m_sidebarDock);
+    const bool show =
+        settings.value(QLatin1String("MainWindow/showSidebar"), false)
+            .toBool();
+    if (show)
+        ensureSidebarPanel();
+    m_sidebarDock->setVisible(show);
+}
+
+SidebarPanel *BrowserMainWindow::sidebarPanel() const
+{
+    return m_sidebarPanel;
+}
+
+QDockWidget *BrowserMainWindow::sidebarDock() const
+{
+    return m_sidebarDock;
 }
 
 void BrowserMainWindow::showBookmarksDialog()

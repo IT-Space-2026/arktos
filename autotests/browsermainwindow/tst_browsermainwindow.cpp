@@ -29,14 +29,17 @@
 #include <QtGui/QtGui>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qdockwidget.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qmenu.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
+#include <qplaintextedit.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
 #include <qstatusbar.h>
+#include <qtabwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qtoolbar.h>
@@ -44,6 +47,7 @@
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "sidebarpanel.h"
 #include "statusbarwidgets.h"
 #include "tabwidget.h"
 #include "tabbar.h"
@@ -101,6 +105,7 @@ private slots:
     void chromeMetrics();
     void searchBoxVisibility();
     void statusBarWidgets();
+    void sidebarPanel();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -584,6 +589,87 @@ void tst_BrowserMainWindow::statusBarWidgets()
     // The finished notice clears itself; idle stays hidden.
     QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 15000);
 
+    closeWindow(window);
+}
+
+// SIDE01: the optional sidebar dock — off by default, lazily built on
+// first show, persisted through MainWindow/showSidebar +
+// sidebarDockArea, all four sections functional.
+void tst_BrowserMainWindow::sidebarPanel()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/notes"));
+    settings.remove(QLatin1String("sidebar/currentTab"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock);
+    // Default profile starts with the sidebar off — and the panel is
+    // not even built, so a hidden sidebar costs nothing.
+    QVERIFY(!dock->isVisible());
+    QVERIFY(!window->sidebarPanel());
+
+    // Menu action = the dock's toggle action (View > Sidebar, F4).
+    QAction *toggle = dock->toggleViewAction();
+    QVERIFY(toggle->isCheckable());
+    toggle->trigger();
+    QVERIFY(dock->isVisible());
+    QVERIFY(toggle->isChecked());
+    // First show builds the panel: four sections over the shared
+    // bookmarks/history/downloads models plus the notes editor.
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QVERIFY(panel->tabs());
+    QCOMPARE(panel->tabs()->count(), 4);
+    QVERIFY(panel->findChild<QWidget *>(
+                QLatin1String("sidebarBookmarksView")));
+    QVERIFY(panel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    QVERIFY(panel->findChild<QWidget *>(
+                QLatin1String("sidebarDownloadsView")));
+    QVERIFY(panel->notes());
+
+    // Toggling writes the persisted key; hiding is remembered.
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
+                 .toBool(), true);
+    toggle->trigger();
+    QVERIFY(!dock->isVisible());
+    QVERIFY(!toggle->isChecked());
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
+                 .toBool(), false);
+
+    // Settings-driven show + right-side docking via applySidebarSettings.
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+    settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
+                      int(Qt::RightDockWidgetArea));
+    window->applySidebarSettings();
+    QVERIFY(dock->isVisible());
+    QCOMPARE(window->dockWidgetArea(dock), Qt::RightDockWidgetArea);
+
+    // Notes persist through the panel's autosave slot.
+    panel->notes()->setPlainText(QLatin1String("remember me"));
+    QVERIFY(QMetaObject::invokeMethod(panel, "save"));
+    QCOMPARE(settings.value(QLatin1String("sidebar/notes")).toString(),
+             QLatin1String("remember me"));
+
+    // A second window honors the persisted show state + dock side.
+    SubWindow *window2 = new SubWindow;
+    window2->show();
+    QVERIFY(window2->sidebarDock()->isVisible());
+    QCOMPARE(window2->dockWidgetArea(window2->sidebarDock()),
+             Qt::RightDockWidgetArea);
+    QVERIFY(window2->sidebarPanel());
+    QCOMPARE(window2->sidebarPanel()->notes()->toPlainText(),
+             QLatin1String("remember me"));
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/notes"));
+    settings.remove(QLatin1String("sidebar/currentTab"));
     closeWindow(window);
 }
 

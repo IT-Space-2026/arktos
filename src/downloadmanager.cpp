@@ -1104,6 +1104,19 @@ QVariant DownloadModel::data(const QModelIndex &index, int role) const
 {
     if (index.row() < 0 || index.row() >= rowCount(index.parent()))
         return QVariant();
+    DownloadItem *item = m_downloadManager->m_downloads.at(index.row());
+    switch (role) {
+    case FileNameRole:
+        return item->fileNameLabel->text();
+    case OutputFileRole:
+        return item->m_outputFileName;
+    case SourceUrlRole:
+        return item->m_url;
+    case CompletedRole:
+        return item->downloadedSuccessfully();
+    default:
+        break;
+    }
     if (role == Qt::ToolTipRole)
         if (!m_downloadManager->m_downloads.at(index.row())->downloadedSuccessfully())
             return m_downloadManager->m_downloads.at(index.row())->downloadInfoLabel->text();
