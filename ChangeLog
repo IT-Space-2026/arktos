@@ -78,7 +78,9 @@ Search & location bar:
 - Dedicated Search settings page with inline engine editor and
   per-context engines (SRCH02/04/05).
 - Shortcut nicknames @bookmarks/@history/@tabs (SRCH06).
-- Dedicated search box is opt-in; button mode by default (SRCH03).
+- Dedicated search box is opt-in and fully hidden by default — no
+  residual engine button beside the location bar; Ctrl+K falls back
+  to the omnibox while it is off (SRCH03, SRCH08).
 - DuckDuckGo default engine (DENG01).
 - Fixed: a bare term like "hup" could navigate to https://hup/ instead
   of searching; a missing or broken search engine now falls back to

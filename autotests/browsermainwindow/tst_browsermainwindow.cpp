@@ -326,13 +326,16 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     QVERIFY(webSearch);
     QVERIFY(!toolsMenu->actions().contains(webSearch));
 
-    // Triggering it still runs webSearch() — SRCH04's button mode
-    // (fresh profile) answers with the non-modal engines menu, whose
-    // "Search..." prompt is the search entry point.
+    // Triggering it still runs webSearch() — SRCH08 hides the box
+    // outright on a fresh profile, so the shortcut falls back to the
+    // omnibox location bar rather than opening the engines popup.
     webSearch->trigger();
-    QWidget *popup = QApplication::activePopupWidget();
-    QVERIFY(popup);
-    popup->close();
+    QVERIFY(!QApplication::activePopupWidget());
+    QVERIFY(QApplication::focusWidget() != window->toolbarSearch());
+    if (window->isActiveWindow())
+        QCOMPARE(QApplication::focusWidget(),
+                 static_cast<QWidget *>(
+                     window->tabWidget()->currentLocationBar()));
 
     // Field mode goes back to selecting the box text.
     QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
@@ -536,23 +539,31 @@ void tst_BrowserMainWindow::chromeMetrics()
     closeWindow(window);
 }
 
-// SRCH03+SRCH04: the dedicated search box has two display modes —
-// showSearchBox unset/false collapses it to the engine button
-// (Vivaldi's "Show as a Button"), true gives the full text field.
-// The preference applies live without restart.
+// SRCH03+SRCH08: the dedicated search box is opt-in — showSearchBox
+// unset/false hides the widget outright (the SRCH04 collapsed-button
+// mode is retired), true gives the full text field.  The preference
+// applies live without restart.
 void tst_BrowserMainWindow::searchBoxVisibility()
 {
-    // initTestCase cleared settings; no showSearchBox key = button mode.
+    // initTestCase cleared settings; no showSearchBox key = hidden.
     SubWindow *window = new SubWindow;
     window->show();
-    QVERIFY(window->toolbarSearch()->isButtonMode());
-    QVERIFY(window->toolbarSearch()->isVisible());
-    QVERIFY(window->toolbarSearch()->isReadOnly());
+    QVERIFY(!window->toolbarSearch()->isButtonMode());
+    QVERIFY(window->toolbarSearch()->isHidden());
+    QVERIFY(!window->toolbarSearch()->isVisible());
+
+    // A hidden box must not strand focus — the shortcut falls back to
+    // the omnibox location bar.
+    window->activateWindow();
+    QApplication::processEvents();
+    QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
+    QVERIFY(QApplication::focusWidget() != window->toolbarSearch());
 
     // Field mode applies live and the shortcut selects the box text.
     QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
     QVERIFY(!window->toolbarSearch()->isButtonMode());
+    QVERIFY(!window->toolbarSearch()->isHidden());
     QVERIFY(!window->toolbarSearch()->isReadOnly());
     window->toolbarSearch()->setText(QLatin1String("arora"));
     QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
@@ -563,9 +574,16 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     SubWindow *shown = new SubWindow;
     shown->show();
     QVERIFY(!shown->toolbarSearch()->isButtonMode());
+    QVERIFY(!shown->toolbarSearch()->isHidden());
     closeWindow(shown);
 
+    // Back to hidden live — the toggle works in both directions.
+    SubWindow *off = new SubWindow;
+    off->show();
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    off->applySearchBoxVisibility();
+    QVERIFY(off->toolbarSearch()->isHidden());
+    closeWindow(off);
 }
 
 // TOR03: a tor window never carries the dedicated search box — even
