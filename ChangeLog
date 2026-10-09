@@ -497,6 +497,10 @@ Faster page loads (SEC16A):
     Autofill filling and ad-block cosmetic hiding no longer run inside the page's load-finished turn, where they competed with the subresource requests a page schedules right after load (web fonts and other paint-gated fetches could land visibly late). Both now run as per-document user scripts armed at navigation commit that execute at DOMContentLoaded — before the load event — so late-arriving resources are no longer delayed. Verified on the live browseraudit.com suite: the 18 CSP tests that previously warned on late fetches now all pass, identical to a bare engine.
     No behavior changes: autofill fill/capture, cosmetic filtering and every other load-time feature work exactly as before.
 
+Rust core credential storage (RCORE01):
+    A new shared Rust crate (src/rustcore) provides engine-neutral application components behind a stable C ABI — status codes, owned-string/buffer marshaling, a change-notification callback bridged to a Qt signal, and qmake wiring that builds it with cargo when `CONFIG+=rustcore` is set while leaving no-Rust builds untouched.
+    Configuring with `qmake CONFIG+=rustcore` moves credential storage into the Rust core: the AES-256-GCM sealed blobs, the Argon2id master-passphrase derivation and the securestore.key/securestore.kdf file handling all live behind the FFI, while the SecureStore API — and the autofill, proxy-password and lock/unlock UX built on it — is unchanged. Existing key and KDF files and sealed autofill.dat data open identically in both builds; the C++ implementation remains the default without the flag.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

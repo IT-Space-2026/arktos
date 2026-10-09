@@ -19,12 +19,9 @@
 
 #include "securestore.h"
 
-#include "argon2id.h"
 #include "browserpaths.h"
 
 #include <qfile.h>
-#include <qlibrary.h>
-#include <qrandom.h>
 #include <qsavefile.h>
 #include <qsettings.h>
 
@@ -38,6 +35,27 @@
 
 #include <qdebug.h>
 
+// RCORE01: under CONFIG+=rustcore the custody state machine and the
+// AES-256-GCM/Argon2id crypto live in the rustcore crate behind the
+// rc_* C ABI — the on-disk formats are identical, so either build
+// reads the other's stores.  This file keeps the Qt-facing policy
+// (interactive unlock prompt, consumer re-sealing via QSettings) and
+// delegates the rest over FFI.  Without the flag the original
+// OpenSSL-EVP + bundled-argon2id implementation below is used —
+// the tree needs no Rust toolchain.
+#ifdef ARORA_RUSTCORE
+#include "rustcore.h"
+#include "rustcorebridge.h"
+
+#include <qcoreapplication.h>
+#include <qfileinfo.h>
+#else
+#include "argon2id.h"
+
+#include <qlibrary.h>
+#include <qrandom.h>
+#endif
+
 namespace {
 
 // "ARSEC1" | 12-byte nonce | 16-byte GCM tag | ciphertext
@@ -45,6 +63,223 @@ const int kNonceSize = 12;
 const int kTagSize = 16;
 const int kHeaderSize = 6 + kNonceSize + kTagSize;
 const int kKeySize = 32;
+
+void secureZero(void *data, qsizetype size)
+{
+    volatile unsigned char *p = static_cast<volatile unsigned char *>(data);
+    while (size--)
+        *p++ = 0;
+}
+
+void secureZero(QByteArray &bytes)
+{
+    secureZero(bytes.data(), bytes.size());
+}
+
+QString storePath(const char *name)
+{
+    return BrowserPaths::dataFilePath(QLatin1String(name));
+}
+
+// ---- shared interactive-unlock state -------------------------------
+
+bool s_interactiveUnlock = true;
+bool s_unlockPromptActive = false;
+
+// Implemented per-backend below; resealConsumers() is backend-neutral.
+QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key);
+QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
+                       bool *ok);
+
+// Re-seals every consumer store from oldKey to newKey.  Surfaces:
+//   - autofill.dat (sealed blob or legacy plaintext)
+//   - QSettings proxy/password ("arsec1:" blob or plaintext)
+// A blob that does not open under oldKey is already unreadable — it
+// is left in place with a warning rather than blocking the switch.
+bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
+                     QString *error)
+{
+    const QString autofillPath = storePath("autofill.dat");
+    {
+        QFile file(autofillPath);
+        if (file.exists() && file.open(QIODevice::ReadOnly)) {
+            const QByteArray raw = file.readAll();
+            file.close();
+            QByteArray resealed;
+            if (SecureStore::isSealed(raw)) {
+                bool ok = false;
+                const QByteArray plain = openWithKey(raw, oldKey, &ok);
+                if (ok)
+                    resealed = sealWithKey(plain, newKey);
+                else
+                    qWarning() << "SecureStore: autofill.dat does not"
+                                  " open under the previous key;"
+                                  " leaving it in place";
+            } else if (!raw.isEmpty()) {
+                resealed = sealWithKey(raw, newKey);
+            }
+            if (!resealed.isEmpty()) {
+                QSaveFile out(autofillPath);
+                if (!out.open(QIODevice::WriteOnly)
+                    || out.write(resealed) != resealed.size()
+                    || !out.commit()) {
+                    if (error)
+                        *error = QStringLiteral(
+                            "cannot rewrite the autofill store");
+                    return false;
+                }
+                QFile::setPermissions(autofillPath,
+                    QFile::ReadUser | QFile::WriteUser);
+            }
+        }
+    }
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("proxy"));
+    const QString stored =
+        settings.value(QLatin1String("password")).toString();
+    if (!stored.isEmpty()) {
+        QString updated;
+        static const QLatin1String prefix("arsec1:");
+        if (stored.startsWith(prefix)) {
+            bool ok = false;
+            const QByteArray plain = openWithKey(
+                QByteArray::fromBase64(
+                    stored.mid(prefix.size()).toLatin1()),
+                oldKey, &ok);
+            if (ok) {
+                updated = prefix + QString::fromLatin1(
+                    sealWithKey(plain, newKey).toBase64());
+            } else {
+                qWarning() << "SecureStore: proxy password does not"
+                              " open under the previous key;"
+                              " leaving it in place";
+            }
+        } else {
+            const QByteArray blob =
+                sealWithKey(stored.toUtf8(), newKey);
+            if (!blob.isEmpty())
+                updated = prefix
+                    + QString::fromLatin1(blob.toBase64());
+        }
+        if (!updated.isEmpty())
+            settings.setValue(QLatin1String("password"), updated);
+    }
+    settings.endGroup();
+    return true;
+}
+
+#ifdef ARORA_RUSTCORE
+
+// ---- FFI-backed custody (rustcore crate) ---------------------------
+//
+// The Rust side owns the crypto and the key-file/KDF artifacts; this
+// half owns the crash-safe transition ordering (write the new custody
+// artifact -> re-seal every consumer -> retire the old one) and the
+// interactive unlock prompt.
+
+void ensureRustCore()
+{
+    // Cheap and idempotent — call per operation so test-mode data-dir
+    // switches propagate.
+    const QByteArray dir =
+        QFileInfo(storePath("securestore.key")).absolutePath().toUtf8();
+    rc_set_data_dir(dir.constData());
+    // Wake the change-callback -> Qt-signal bridge once a real
+    // application object exists.
+    if (QCoreApplication::instance())
+        RustCoreBridge::instance();
+}
+
+QByteArray bufferToByteArray(const RcBuffer &buf)
+{
+    const QByteArray out(reinterpret_cast<const char *>(buf.data),
+                         qsizetype(buf.len));
+    rc_buffer_free(buf);
+    return out;
+}
+
+QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key)
+{
+    ensureRustCore();
+    if (key.size() != kKeySize)
+        return QByteArray();
+    RcBuffer out{};
+    const RcStatus st = rc_seal_with_key(
+        reinterpret_cast<const uint8_t *>(key.constData()),
+        reinterpret_cast<const uint8_t *>(plain.constData()),
+        size_t(plain.size()), &out);
+    if (st != RC_OK)
+        return QByteArray();
+    return bufferToByteArray(out);
+}
+
+QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
+                       bool *ok)
+{
+    ensureRustCore();
+    bool result = false;
+    if (!ok)
+        ok = &result;
+    *ok = false;
+    if (key.size() != kKeySize)
+        return QByteArray();
+    RcBuffer out{};
+    const RcStatus st = rc_open_with_key(
+        reinterpret_cast<const uint8_t *>(key.constData()),
+        reinterpret_cast<const uint8_t *>(blob.constData()),
+        size_t(blob.size()), &out);
+    if (st != RC_OK)
+        return QByteArray();
+    *ok = true;
+    return bufferToByteArray(out);
+}
+
+// Copies of the custody keys for transition re-sealing.  The Rust
+// side already caches the file key; these byte copies are wiped by
+// the caller after use.
+QByteArray fileKeyCopy()
+{
+    ensureRustCore();
+    QByteArray key(kKeySize, Qt::Uninitialized);
+    if (rc_key_file_copy(reinterpret_cast<uint8_t *>(key.data()))
+        != RC_OK)
+        return QByteArray();
+    return key;
+}
+
+QByteArray derivedKeyCopy()
+{
+    QByteArray key(kKeySize, Qt::Uninitialized);
+    if (rc_derived_key_copy(reinterpret_cast<uint8_t *>(key.data()))
+        != RC_OK)
+        return QByteArray();
+    return key;
+}
+
+// The Rust-owned consumer (credentials.dat) re-seals through the same
+// hook the other consumers use.  Warn-and-continue matches the
+// unreadable-blob policy everywhere else.
+void resealRustCredentials(const QByteArray &oldKey,
+                           const QByteArray &newKey)
+{
+    if (oldKey.size() != kKeySize || newKey.size() != kKeySize)
+        return;
+    const RcStatus st = rc_cred_reseal(
+        reinterpret_cast<const uint8_t *>(oldKey.constData()),
+        reinterpret_cast<const uint8_t *>(newKey.constData()));
+    if (st != RC_OK && st != RC_NOT_FOUND)
+        qWarning() << "SecureStore: credentials.dat does not open"
+                      " under the previous key; leaving it in place";
+}
+
+void wipeKeys(QByteArray &a, QByteArray &b)
+{
+    secureZero(a);
+    secureZero(b);
+}
+
+#else // !ARORA_RUSTCORE — the original OpenSSL-EVP implementation
 
 // Argon2id parameters for the master-passphrase KDF — RFC 9106's
 // memory-constrained recommendation (64 MiB / t=3 / p=4).  Stored in
@@ -137,23 +372,6 @@ const EvpApi *evp()
     return resolved ? &api : nullptr;
 }
 
-void secureZero(void *data, qsizetype size)
-{
-    volatile unsigned char *p = static_cast<volatile unsigned char *>(data);
-    while (size--)
-        *p++ = 0;
-}
-
-void secureZero(QByteArray &bytes)
-{
-    secureZero(bytes.data(), bytes.size());
-}
-
-QString storePath(const char *name)
-{
-    return BrowserPaths::dataFilePath(QLatin1String(name));
-}
-
 // ---- key custody state ---------------------------------------------
 // The passphrase-derived key lives only in RAM (s_derivedKey); the
 // on-disk artifacts are either securestore.key (random file key) or
@@ -163,8 +381,6 @@ unsigned char s_derivedKey[kKeySize];
 bool s_derivedKeyValid = false;
 QByteArray s_fileKey;
 bool s_fileKeyLoaded = false;
-bool s_interactiveUnlock = true;
-bool s_unlockPromptActive = false;
 
 struct KdfParams {
     quint32 memoryKiB;
@@ -298,10 +514,6 @@ QByteArray deriveKey(const QString &passphrase, const KdfParams &params)
     return key;
 }
 
-QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key);
-QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
-                       bool *ok);
-
 // The key the current custody mode seals/opens with.  In passphrase
 // mode a locked store tries one interactive unlock first and fails
 // securely when the user declines.
@@ -317,99 +529,6 @@ QByteArray currentKey()
     }
     return fileKey();
 }
-
-// Re-seals every consumer store from oldKey to newKey.  Surfaces:
-//   - autofill.dat (sealed blob or legacy plaintext)
-//   - QSettings proxy/password ("arsec1:" blob or plaintext)
-// A blob that does not open under oldKey is already unreadable — it
-// is left in place with a warning rather than blocking the switch.
-bool resealConsumers(const QByteArray &oldKey, const QByteArray &newKey,
-                     QString *error)
-{
-    const QString autofillPath = storePath("autofill.dat");
-    {
-        QFile file(autofillPath);
-        if (file.exists() && file.open(QIODevice::ReadOnly)) {
-            const QByteArray raw = file.readAll();
-            file.close();
-            QByteArray resealed;
-            if (SecureStore::isSealed(raw)) {
-                bool ok = false;
-                const QByteArray plain = openWithKey(raw, oldKey, &ok);
-                if (ok)
-                    resealed = sealWithKey(plain, newKey);
-                else
-                    qWarning() << "SecureStore: autofill.dat does not"
-                                  " open under the previous key;"
-                                  " leaving it in place";
-            } else if (!raw.isEmpty()) {
-                resealed = sealWithKey(raw, newKey);
-            }
-            if (!resealed.isEmpty()) {
-                QSaveFile out(autofillPath);
-                if (!out.open(QIODevice::WriteOnly)
-                    || out.write(resealed) != resealed.size()
-                    || !out.commit()) {
-                    if (error)
-                        *error = QStringLiteral(
-                            "cannot rewrite the autofill store");
-                    return false;
-                }
-                QFile::setPermissions(autofillPath,
-                    QFile::ReadUser | QFile::WriteUser);
-            }
-        }
-    }
-
-    QSettings settings;
-    settings.beginGroup(QLatin1String("proxy"));
-    const QString stored =
-        settings.value(QLatin1String("password")).toString();
-    if (!stored.isEmpty()) {
-        QString updated;
-        static const QLatin1String prefix("arsec1:");
-        if (stored.startsWith(prefix)) {
-            bool ok = false;
-            const QByteArray plain = openWithKey(
-                QByteArray::fromBase64(
-                    stored.mid(prefix.size()).toLatin1()),
-                oldKey, &ok);
-            if (ok) {
-                updated = prefix + QString::fromLatin1(
-                    sealWithKey(plain, newKey).toBase64());
-            } else {
-                qWarning() << "SecureStore: proxy password does not"
-                              " open under the previous key;"
-                              " leaving it in place";
-            }
-        } else {
-            const QByteArray blob =
-                sealWithKey(stored.toUtf8(), newKey);
-            if (!blob.isEmpty())
-                updated = prefix
-                    + QString::fromLatin1(blob.toBase64());
-        }
-        if (!updated.isEmpty())
-            settings.setValue(QLatin1String("password"), updated);
-    }
-    settings.endGroup();
-    return true;
-}
-
-} // namespace
-
-bool SecureStore::isAvailable()
-{
-    return evp()
-        && (passphraseProtectionEnabled() || fileKey().size() == kKeySize);
-}
-
-bool SecureStore::isSealed(const QByteArray &blob)
-{
-    return blob.startsWith(QByteArrayLiteral("ARSEC1"));
-}
-
-namespace {
 
 QByteArray sealWithKey(const QByteArray &plain, const QByteArray &key)
 {
@@ -530,7 +649,227 @@ QByteArray openWithKey(const QByteArray &blob, const QByteArray &key,
     return plain;
 }
 
+#endif // ARORA_RUSTCORE
+
 } // namespace
+
+#ifdef ARORA_RUSTCORE
+
+bool SecureStore::isAvailable()
+{
+    ensureRustCore();
+    return rc_is_available() != 0;
+}
+
+QByteArray SecureStore::seal(const QByteArray &plain)
+{
+    ensureRustCore();
+    // Locked passphrase store: try one interactive unlock first and
+    // fail securely when the user declines — same policy as before.
+    if (rc_passphrase_enabled() && !rc_is_unlocked())
+        ensureUnlocked(nullptr);
+    RcBuffer out{};
+    if (rc_seal(reinterpret_cast<const uint8_t *>(plain.constData()),
+                size_t(plain.size()), &out) != RC_OK)
+        return QByteArray();
+    return bufferToByteArray(out);
+}
+
+QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
+{
+    bool result = false;
+    if (!ok)
+        ok = &result;
+    *ok = false;
+
+    ensureRustCore();
+    if (rc_passphrase_enabled() && !rc_is_unlocked())
+        ensureUnlocked(nullptr);
+
+    RcBuffer out{};
+    // Rust performs the passphrase-mode file-key fallback internally.
+    if (rc_open(reinterpret_cast<const uint8_t *>(blob.constData()),
+                size_t(blob.size()), &out) != RC_OK)
+        return QByteArray();
+    *ok = true;
+    return bufferToByteArray(out);
+}
+
+bool SecureStore::passphraseProtectionEnabled()
+{
+    ensureRustCore();
+    return rc_passphrase_enabled() != 0;
+}
+
+bool SecureStore::isUnlocked()
+{
+    ensureRustCore();
+    return rc_is_unlocked() != 0;
+}
+
+bool SecureStore::unlock(const QString &passphrase)
+{
+    ensureRustCore();
+    QByteArray utf8 = passphrase.toUtf8();
+    const RcStatus st = rc_unlock(
+        reinterpret_cast<const uint8_t *>(utf8.constData()),
+        size_t(utf8.size()));
+    secureZero(utf8);
+    return st == RC_OK;
+}
+
+void SecureStore::lock()
+{
+    rc_lock();
+}
+
+bool SecureStore::enablePassphraseProtection(const QString &passphrase,
+                                             QString *error)
+{
+    ensureRustCore();
+    if (passphraseProtectionEnabled()) {
+        if (error)
+            *error = QStringLiteral("passphrase protection is already"
+                                    " enabled");
+        return false;
+    }
+    if (passphrase.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("empty passphrase");
+        return false;
+    }
+
+    // Capture the current (file) key before custody switches.
+    QByteArray oldKey = fileKeyCopy();
+    if (oldKey.size() != kKeySize) {
+        if (error)
+            *error = QStringLiteral("cannot create the key file");
+        return false;
+    }
+
+    QByteArray utf8 = passphrase.toUtf8();
+    const RcStatus st = rc_kdf_create(
+        reinterpret_cast<const uint8_t *>(utf8.constData()),
+        size_t(utf8.size()));
+    secureZero(utf8);
+    if (st != RC_OK) {
+        secureZero(oldKey);
+        if (error)
+            *error = st == RC_IO
+                ? QStringLiteral("cannot write the KDF parameters")
+                : QStringLiteral("key derivation failed");
+        return false;
+    }
+    QByteArray newKey = derivedKeyCopy();
+
+    // Consumers re-seal while securestore.key still exists — a crash
+    // here still leaves open()'s file-key fallback able to read the
+    // old blobs; the key file is retired last.
+    const bool resealed = resealConsumers(oldKey, newKey, error);
+    if (!resealed) {
+        wipeKeys(oldKey, newKey);
+        return false;
+    }
+    resealRustCredentials(oldKey, newKey);
+
+    rc_key_file_delete();
+    wipeKeys(oldKey, newKey);
+    return true;
+}
+
+bool SecureStore::disablePassphraseProtection(QString *error)
+{
+    ensureRustCore();
+    if (!passphraseProtectionEnabled()) {
+        if (error)
+            *error = QStringLiteral("passphrase protection is not"
+                                    " enabled");
+        return false;
+    }
+    if (!isUnlocked()) {
+        if (error)
+            *error = QStringLiteral("the store is locked — unlock it"
+                                    " first");
+        return false;
+    }
+
+    QByteArray oldKey = derivedKeyCopy();
+    // Mirror ordering: write the new key file, re-seal consumers off
+    // the derived key, then drop the KDF file and wipe the key from
+    // RAM.
+    if (rc_key_file_create() != RC_OK) {
+        secureZero(oldKey);
+        if (error)
+            *error = QStringLiteral("cannot write the key file");
+        return false;
+    }
+    QByteArray newKey = fileKeyCopy();
+
+    const bool resealed = resealConsumers(oldKey, newKey, error);
+    if (resealed)
+        resealRustCredentials(oldKey, newKey);
+    if (!resealed) {
+        wipeKeys(oldKey, newKey);
+        return false;
+    }
+
+    rc_kdf_file_delete();
+    wipeKeys(oldKey, newKey);
+    return true;
+}
+
+bool SecureStore::changePassphrase(const QString &newPassphrase,
+                                   QString *error)
+{
+    ensureRustCore();
+    if (!passphraseProtectionEnabled()) {
+        if (error)
+            *error = QStringLiteral("passphrase protection is not"
+                                    " enabled");
+        return false;
+    }
+    if (!isUnlocked()) {
+        if (error)
+            *error = QStringLiteral("the store is locked — unlock it"
+                                    " first");
+        return false;
+    }
+    if (newPassphrase.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("empty passphrase");
+        return false;
+    }
+
+    QByteArray oldKey = derivedKeyCopy();
+    QByteArray utf8 = newPassphrase.toUtf8();
+    const RcStatus st = rc_kdf_create(
+        reinterpret_cast<const uint8_t *>(utf8.constData()),
+        size_t(utf8.size()));
+    secureZero(utf8);
+    if (st != RC_OK) {
+        secureZero(oldKey);
+        if (error)
+            *error = st == RC_IO
+                ? QStringLiteral("cannot write the KDF parameters")
+                : QStringLiteral("key derivation failed");
+        return false;
+    }
+    QByteArray newKey = derivedKeyCopy();
+
+    const bool resealed = resealConsumers(oldKey, newKey, error);
+    if (resealed)
+        resealRustCredentials(oldKey, newKey);
+    wipeKeys(oldKey, newKey);
+    return resealed;
+}
+
+#else // !ARORA_RUSTCORE
+
+bool SecureStore::isAvailable()
+{
+    return evp()
+        && (passphraseProtectionEnabled() || fileKey().size() == kKeySize);
+}
 
 QByteArray SecureStore::seal(const QByteArray &plain)
 {
@@ -568,33 +907,6 @@ QByteArray SecureStore::open(const QByteArray &blob, bool *ok)
     *ok = true;
     return plain;
 }
-
-QString SecureStore::sealString(const QString &plain)
-{
-    const QByteArray blob = seal(plain.toUtf8());
-    if (blob.isEmpty())
-        return plain;
-    return QLatin1String("arsec1:")
-        + QString::fromLatin1(blob.toBase64());
-}
-
-QString SecureStore::openString(const QString &stored, bool *ok)
-{
-    if (ok)
-        *ok = true;
-    static const QLatin1String prefix("arsec1:");
-    if (!stored.startsWith(prefix))
-        return stored;
-    bool good = false;
-    const QByteArray plain = open(
-        QByteArray::fromBase64(stored.mid(prefix.size()).toLatin1()),
-        &good);
-    if (ok)
-        *ok = good;
-    return good ? QString::fromUtf8(plain) : QString();
-}
-
-// ---- master-passphrase key custody ----------------------------------
 
 bool SecureStore::passphraseProtectionEnabled()
 {
@@ -641,52 +953,6 @@ void SecureStore::lock()
         s_fileKey.clear();
         s_fileKeyLoaded = false;
     }
-}
-
-bool SecureStore::ensureUnlocked(QWidget *parent)
-{
-    if (isUnlocked())
-        return true;
-    if (!s_interactiveUnlock)
-        return false;
-#ifdef QT_WIDGETS_LIB
-    if (!qobject_cast<QApplication *>(QCoreApplication::instance())
-        || s_unlockPromptActive)
-        return false;
-    s_unlockPromptActive = true;
-    bool unlocked = false;
-    for (int attempt = 0; attempt < 3 && !unlocked; ++attempt) {
-        bool given = false;
-        const QString text = QInputDialog::getText(parent,
-            QCoreApplication::translate("SecureStore",
-                                        "Unlock Credential Store"),
-            attempt == 0
-                ? QCoreApplication::translate("SecureStore",
-                    "Enter the master passphrase to unlock the saved"
-                    " password store:")
-                : QCoreApplication::translate("SecureStore",
-                    "Wrong passphrase — try again:"),
-            QLineEdit::Password, QString(), &given);
-        if (!given)
-            break;
-        unlocked = unlock(text);
-    }
-    s_unlockPromptActive = false;
-    return unlocked;
-#else
-    Q_UNUSED(parent);
-    return false;
-#endif
-}
-
-void SecureStore::setInteractiveUnlockEnabled(bool enabled)
-{
-    s_interactiveUnlock = enabled;
-}
-
-bool SecureStore::isInteractiveUnlockEnabled()
-{
-    return s_interactiveUnlock;
 }
 
 bool SecureStore::enablePassphraseProtection(const QString &passphrase,
@@ -870,13 +1136,100 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
     return resealed;
 }
 
+#endif // ARORA_RUSTCORE
+
+// ---- backend-neutral API --------------------------------------------
+
+bool SecureStore::isSealed(const QByteArray &blob)
+{
+    return blob.startsWith(QByteArrayLiteral("ARSEC1"));
+}
+
+QString SecureStore::sealString(const QString &plain)
+{
+    const QByteArray blob = seal(plain.toUtf8());
+    if (blob.isEmpty())
+        return plain;
+    return QLatin1String("arsec1:")
+        + QString::fromLatin1(blob.toBase64());
+}
+
+QString SecureStore::openString(const QString &stored, bool *ok)
+{
+    if (ok)
+        *ok = true;
+    static const QLatin1String prefix("arsec1:");
+    if (!stored.startsWith(prefix))
+        return stored;
+    bool good = false;
+    const QByteArray plain = open(
+        QByteArray::fromBase64(stored.mid(prefix.size()).toLatin1()),
+        &good);
+    if (ok)
+        *ok = good;
+    return good ? QString::fromUtf8(plain) : QString();
+}
+
+bool SecureStore::ensureUnlocked(QWidget *parent)
+{
+    if (isUnlocked())
+        return true;
+    if (!s_interactiveUnlock)
+        return false;
+#ifdef QT_WIDGETS_LIB
+    if (!qobject_cast<QApplication *>(QCoreApplication::instance())
+        || s_unlockPromptActive)
+        return false;
+    s_unlockPromptActive = true;
+    bool unlocked = false;
+    for (int attempt = 0; attempt < 3 && !unlocked; ++attempt) {
+        bool given = false;
+        const QString text = QInputDialog::getText(parent,
+            QCoreApplication::translate("SecureStore",
+                                        "Unlock Credential Store"),
+            attempt == 0
+                ? QCoreApplication::translate("SecureStore",
+                    "Enter the master passphrase to unlock the saved"
+                    " password store:")
+                : QCoreApplication::translate("SecureStore",
+                    "Wrong passphrase — try again:"),
+            QLineEdit::Password, QString(), &given);
+        if (!given)
+            break;
+        unlocked = unlock(text);
+    }
+    s_unlockPromptActive = false;
+    return unlocked;
+#else
+    Q_UNUSED(parent);
+    return false;
+#endif
+}
+
+void SecureStore::setInteractiveUnlockEnabled(bool enabled)
+{
+    s_interactiveUnlock = enabled;
+}
+
+bool SecureStore::isInteractiveUnlockEnabled()
+{
+    return s_interactiveUnlock;
+}
+
 #ifdef AUTOTESTS
 void SecureStore::resetForTests()
 {
     lock();
     s_interactiveUnlock = true;
     s_unlockPromptActive = false;
+#ifdef ARORA_RUSTCORE
+    ensureRustCore();
+    rc_kdf_file_delete();
+    rc_key_file_delete();
+    QFile::remove(storePath(RC_CREDENTIALS_FILE));
+#else
     QFile::remove(storePath("securestore.kdf"));
     QFile::remove(storePath("securestore.key"));
+#endif
 }
 #endif

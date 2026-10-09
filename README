@@ -14,6 +14,14 @@ FFI static library with `cargo build --release` in src/adblock/rust
 and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
 fixed probe set.
 
+Optional Rust core: `qmake CONFIG+=rustcore` builds src/rustcore (the
+shared engine-neutral component crate behind a C ABI; qmake runs cargo
+itself) and moves credential storage — the AES-256-GCM seal/open,
+Argon2id master-passphrase KDF and securestore.key/securestore.kdf file
+handling behind the SecureStore API — into it.  On-disk formats are
+unchanged, so existing stores open either way; the C++ implementation
+stays the default when the flag is off.
+
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
 tab-open, large-history-load, menu-open and profile permission-sweep
