@@ -99,8 +99,9 @@ browsing profile:
 - **Sharing** — "Copy Clean Link" strips tracking parameters;
   "Show QR" renders a link as a QR code.
 - **Preferences** — opens as a tab (one per window), Vivaldi-style
-  vertical sidebar navigation, scrollable pages capped to the screen
-  so buttons never clip, dedicated Search and Containers pages.
+  vertical sidebar navigation with a filter field that finds settings
+  by page title and control labels, scrollable pages capped to the
+  screen so buttons never clip, dedicated Search and Containers pages.
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — follows the desktop light/dark scheme

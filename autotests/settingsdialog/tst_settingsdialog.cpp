@@ -67,6 +67,7 @@ private slots:
     void resetSearchSettings();
     void sidebarNavigation();
     void sidebarSettings();
+    void settingsFilter();
     void iconThemeSelector();
     void uniformSidebarIcons();
     void scrollablePages();
@@ -823,6 +824,69 @@ void tst_SettingsDialog::sidebarSettings()
              false);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::LeftDockWidgetArea));
+}
+
+// PREFUI03: the nav filter field narrows the sidebar by page title
+// and by control labels inside each page, keeps the stack on a listed
+// hit, and restores the full list when cleared.
+void tst_SettingsDialog::settingsFilter()
+{
+    SettingsDialog dialog;
+    QVERIFY(dialog.pagesFilter);
+    QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
+    const int total = dialog.pagesList->count();
+
+    // "cookie" is not a page title — it matches Privacy's cookie
+    // controls (and the Containers explainer) through control labels,
+    // and the stack auto-jumps to the first listed hit.
+    dialog.pagesFilter->setText(QStringLiteral("cookie"));
+    int visible = 0;
+    for (int i = 0; i < total; ++i) {
+        if (!dialog.pagesList->item(i)->isHidden())
+            ++visible;
+    }
+    QVERIFY(visible >= 1);
+    QVERIFY(visible < total);
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::PrivacyPage))
+                 ->isHidden());
+    QVERIFY(dialog.pagesList->item(int(SettingsDialog::GeneralPage))
+                ->isHidden());
+    QCOMPARE(dialog.pagesList->currentRow(),
+             int(SettingsDialog::PrivacyPage));
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::PrivacyPage));
+
+    // Selecting a listed hit opens its page (UserRole mapping —
+    // visible row != stacked index once rows are hidden).
+    dialog.pagesList->setCurrentRow(int(SettingsDialog::ContainersPage));
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::ContainersPage));
+
+    // Page-title matching: "proxy" lists the Proxy page.
+    dialog.pagesFilter->setText(QStringLiteral("proxy"));
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::ProxyPage))
+                 ->isHidden());
+    QVERIFY(dialog.pagesList->item(int(SettingsDialog::ContainersPage))
+                ->isHidden());
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::ProxyPage));
+
+    // "font" lives inside Appearance's controls, not its title.
+    dialog.pagesFilter->setText(QStringLiteral("font"));
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::AppearancePage))
+                 ->isHidden());
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::AppearancePage));
+
+    // A no-match term hides every row without crashing.
+    dialog.pagesFilter->setText(QStringLiteral("zzz-no-such-setting"));
+    for (int i = 0; i < total; ++i)
+        QVERIFY(dialog.pagesList->item(i)->isHidden());
+
+    // Clearing restores the full list.
+    dialog.pagesFilter->clear();
+    for (int i = 0; i < total; ++i)
+        QVERIFY(!dialog.pagesList->item(i)->isHidden());
 }
 
 // ICONS03: the icon-theme selector lives on the Appearance page (not

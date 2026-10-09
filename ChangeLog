@@ -92,6 +92,11 @@ UI:
   OK/Cancel buttons now sit in a slim right-aligned footer strip
   separated by a rule line instead of stretching across the window
   (PREFUI02).
+- Preferences search: a filter field at the top of the section sidebar
+  narrows the page list as you type — it matches page titles and the
+  labels inside each page ("font" finds Appearance, "cookie" finds
+  Privacy). Clicking or pressing Enter opens the top hit, and
+  clearing the field restores the full list (PREFUI03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
