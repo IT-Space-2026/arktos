@@ -34,6 +34,10 @@
 //!   * history (RCORE02b): the canonical history store — rusqlite
 //!     visits + per-host icon tables in <data dir>/history.db,
 //!     write-through so the file is always current.
+//!   * session (RCORE03): the canonical session store — versioned
+//!     binary schema in <data dir>/session.dat, atomic writes, fully
+//!     bounded decode, opaque per-window/per-tab engine blobs so the
+//!     format survives an engine swap.
 
 mod blocklist;
 mod bookmarks;
@@ -42,6 +46,7 @@ mod error;
 mod history;
 mod notify;
 mod parsers;
+mod session;
 mod store;
 mod urlstrip;
 mod util;
@@ -1212,6 +1217,96 @@ pub unsafe extern "C" fn rc_hist_icon_get(host: *const c_char, out: *mut RcBuffe
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_icon_clear() -> RcStatus {
     status_of(|| history::with(|s| s.icon_clear()))
+}
+
+// ---- session store (RCORE03) -------------------------------------------
+
+/// Validates the JSON session manifest and atomically installs it as
+/// `<data dir>/session.dat` (temp + fsync + rename, 0600).  RC_CORRUPT
+/// rejects a malformed manifest without touching the on-disk session.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_save(json: *const u8, len: usize) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad session pointer".into(),
+        })?;
+        session::save(data)
+    })
+}
+
+/// Decodes the stored session into its canonical JSON manifest
+/// (rc_buffer_free the result).  RC_NOT_FOUND when no session exists,
+/// RC_CORRUPT when the file is malformed — the caller treats the
+/// session as absent and never loops a crash prompt on it.
+///
+/// # Safety
+/// `out` receives a buffer to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_load(out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        let json = session::load()?;
+        buffer_out(out, json);
+        Ok(())
+    })
+}
+
+/// True when a session file exists in the data dir.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_exists() -> i32 {
+    catch_unwind(AssertUnwindSafe(session::exists)).unwrap_or(false) as i32
+}
+
+/// Deletes the session file; absent is not an error.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_clear() -> RcStatus {
+    status_of(|| session::clear())
+}
+
+/// Pure codec: JSON manifest -> canonical binary blob.  Test seam.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_encode(
+    json: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad session pointer".into(),
+        })?;
+        buffer_out(out, session::encode(data)?);
+        Ok(())
+    })
+}
+
+/// Pure codec: binary blob -> canonical JSON manifest.  RC_CORRUPT on
+/// any malformation; the decode is fully bounds-checked.
+///
+/// # Safety
+/// `blob` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_decode(
+    blob: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(blob, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad session pointer".into(),
+        })?;
+        buffer_out(out, session::decode(data)?);
+        Ok(())
+    })
 }
 
 #[cfg(test)]

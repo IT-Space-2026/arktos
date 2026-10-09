@@ -94,7 +94,14 @@ browsing profile:
   in Rust (queried lazily, one node handle per call — no bulk tree
   marshal), and history lives in a SQLite history.db (visits plus
   per-host favicons that persist across restarts) that imports the
-  legacy QDataStream file on first run.
+  legacy QDataStream file on first run. The crate also owns session
+  save/restore serialization: a versioned session.dat written
+  atomically and bounds-checked on decode, so a corrupt file is
+  rejected whole instead of looping the crash-restore prompt —
+  per-tab records carry url, container binding, tab group and an
+  engine tag beside an opaque engine-state blob, keeping the format
+  engine-neutral (a pre-Rust QSettings session still restores once
+  through the legacy reader).
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.

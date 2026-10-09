@@ -78,6 +78,11 @@
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
+#ifdef ARORA_RUSTCORE
+#include "rustcore.h"
+#include "rustcorebridge.h"
+#endif
+
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QCryptographicHash>
@@ -9532,6 +9537,10 @@ int main(int argc, char **argv)
             // to "blank" so it does not navigate the window away.
             QSettings().setValue(QLatin1String("MainWindow/startupBehavior"), 1);
             QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+            rustCoreEnsureDataDir();
+            rc_session_clear();
+#endif
 
             BrowserMainWindow *browserWindow = application.newMainWindow();
             TabWidget *tabWidget = browserWindow->tabWidget();
@@ -9564,7 +9573,11 @@ int main(int argc, char **argv)
             application.saveSession();
             sessionCheck(
                 QSettings().value(QLatin1String("sessions/lastSession"))
-                    .isNull(),
+                    .isNull()
+#ifdef ARORA_RUSTCORE
+                    && rc_session_exists() == 0
+#endif
+                    ,
                 "saveSession while private writes nothing");
             privateWindow->close();
             BrowserApplication::setPrivate(false);
@@ -9573,6 +9586,65 @@ int main(int argc, char **argv)
                              &application,
                              [sessionCheck, fixtureUrls,
                               &sessionFailures]() {
+#ifdef ARORA_RUSTCORE
+                // RCORE03: the session lives in the rustcore store —
+                // read the file the window-close just wrote, check the
+                // "ARSS" magic, then walk the decoded manifest.
+                QFile sessionFile(BrowserPaths::dataFilePath(
+                    QLatin1String(RC_SESSION_FILE)));
+                QByteArray blob;
+                if (sessionFile.open(QIODevice::ReadOnly))
+                    blob = sessionFile.readAll();
+                sessionCheck(blob.startsWith("ARSS"),
+                             "session blob header");
+                QStringList restoredUrls;
+                qint64 restoredCurrent = -1;
+                int windowCount = 0;
+                RcBuffer out{nullptr, 0};
+                const RcStatus decoded = rc_session_decode(
+                    reinterpret_cast<const uint8_t *>(blob.constData()),
+                    size_t(blob.size()), &out);
+                sessionCheck(decoded == RC_OK, "session blob decodes");
+                if (decoded == RC_OK) {
+                    const QJsonDocument doc = QJsonDocument::fromJson(
+                        QByteArray(
+                            reinterpret_cast<const char *>(out.data),
+                            int(out.len)));
+                    rc_buffer_free(out);
+                    const QJsonArray windows = doc.object()
+                        .value(QLatin1String("windows")).toArray();
+                    windowCount = windows.count();
+                    if (!windows.isEmpty()) {
+                        const QJsonObject first =
+                            windows.first().toObject();
+                        restoredCurrent = first
+                            .value(QLatin1String("current"))
+                            .toInteger(-1);
+                        const QJsonArray tabs = first
+                            .value(QLatin1String("tabs")).toArray();
+                        for (const QJsonValue &t : tabs)
+                            restoredUrls << t.toObject()
+                                .value(QLatin1String("url")).toString();
+                    }
+                }
+                sessionCheck(windowCount == 1, "session window count");
+                sessionCheck(restoredUrls == fixtureUrls,
+                             "session blob tab urls in order");
+                sessionCheck(restoredCurrent == 1,
+                             "session blob current index");
+                // A corrupt or truncated blob must be rejected whole —
+                // never half-decoded into a partial window set.
+                RcBuffer bad{nullptr, 0};
+                const QByteArray truncated = blob.left(blob.size() - 1);
+                const RcStatus badStatus = rc_session_decode(
+                    reinterpret_cast<const uint8_t *>(
+                        truncated.constData()),
+                    size_t(truncated.size()), &bad);
+                sessionCheck(badStatus == RC_CORRUPT,
+                             "truncated session blob rejected");
+                if (bad.data)
+                    rc_buffer_free(bad);
+#else
                 // Parse the blob the user's window-close just wrote:
                 // magic, version, window count, then per-window states
                 // carrying a tab state of url list + current index.
@@ -9609,6 +9681,7 @@ int main(int argc, char **argv)
                              "session blob tab urls in order");
                 sessionCheck(restoredCurrent == 1,
                              "session blob current index");
+#endif
                 if (sessionFailures)
                     qInfo() << "session-smoke: FAIL";
             });

@@ -90,6 +90,15 @@
 #include "torrequestinterceptor.h"
 #include "webview.h"
 
+#ifdef ARORA_RUSTCORE
+#include "rustcore.h"
+#include "rustcorebridge.h"
+
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+#endif
+
 #include <qbuffer.h>
 #include <qdesktopservices.h>
 #include <qdir.h>
@@ -709,6 +718,41 @@ void BrowserApplication::saveSession()
 
     settings.beginGroup(QLatin1String("sessions"));
 
+#ifdef ARORA_RUSTCORE
+    // RCORE03: the rustcore session store owns the schema and the
+    // file — a JSON manifest per window (opaque shell blob, structured
+    // tab records with container binding + engine tag + opaque
+    // engine-state blob), atomically installed as session.dat.
+    rustCoreEnsureDataDir();
+    QJsonArray windows;
+    for (int i = 0; i < m_mainWindows.count(); ++i) {
+        BrowserMainWindow *window = m_mainWindows.at(i);
+        QJsonObject win = window->tabWidget()->sessionStateJson();
+        win.insert(QLatin1String("shell"), QString::fromLatin1(
+            window->saveState(false).toBase64()));
+        windows.append(win);
+    }
+    QJsonObject root;
+    root.insert(QLatin1String("version"), 1);
+    root.insert(QLatin1String("windows"), windows);
+    const QByteArray manifest =
+        QJsonDocument(root).toJson(QJsonDocument::Compact);
+    if (rc_session_save(
+            reinterpret_cast<const uint8_t *>(manifest.constData()),
+            size_t(manifest.size())) == RC_OK) {
+        // Retire the pre-rustcore QSettings blob so a stale copy can
+        // never win a restore or survive the exit wipe.
+        settings.remove(QLatin1String("lastSession"));
+        settings.endGroup();
+        m_lastSession.clear();
+        return;
+    }
+    char *err = rc_last_error_message();
+    qWarning() << "BrowserApplication::saveSession rustcore:"
+               << (err ? err : "") << "— falling back to QSettings";
+    rc_string_free(err);
+#endif
+
     int version = 2;
 
     QByteArray data;
@@ -729,6 +773,11 @@ void BrowserApplication::saveSession()
 
 bool BrowserApplication::canRestoreSession() const
 {
+#ifdef ARORA_RUSTCORE
+    rustCoreEnsureDataDir();
+    if (rc_session_exists())
+        return true;
+#endif
     return !m_lastSession.isEmpty();
 }
 
@@ -783,6 +832,11 @@ void BrowserApplication::clearPrivateDataOnExit()
     settings.beginGroup(QLatin1String("sessions"));
     settings.remove(QLatin1String("lastSession"));
     settings.endGroup();
+#ifdef ARORA_RUSTCORE
+    // The Rust-owned session file is browsing history too.
+    rustCoreEnsureDataDir();
+    rc_session_clear();
+#endif
 }
 
 bool BrowserApplication::restoreLastSession()
@@ -797,6 +851,55 @@ bool BrowserApplication::restoreLastSession()
                 return false;
         }
     }
+#ifdef ARORA_RUSTCORE
+    // RCORE03: the canonical store is the rustcore session file — the
+    // crate validated the whole blob before it reached us, so RC_OK
+    // means the window set is complete and safe to arm the guard on.
+    rustCoreEnsureDataDir();
+    {
+        RcBuffer stored{nullptr, 0};
+        const RcStatus sessionStatus = rc_session_load(&stored);
+        if (sessionStatus == RC_OK) {
+            const QByteArray manifest(
+                reinterpret_cast<const char *>(stored.data),
+                int(stored.len));
+            rc_buffer_free(stored);
+            const QJsonDocument doc = QJsonDocument::fromJson(manifest);
+            if (!doc.isObject())
+                return false;
+            const QJsonArray windows = doc.object()
+                .value(QLatin1String("windows")).toArray();
+            {
+                QSettings settings;
+                settings.beginGroup(QLatin1String("MainWindow"));
+                // Armed only once the blob has validated — a corrupt
+                // session can never loop the crash prompt.
+                settings.setValue(QLatin1String("restoring"), true);
+            }
+            for (int i = 0; i < windows.count(); ++i) {
+                const QJsonObject win = windows.at(i).toObject();
+                BrowserMainWindow *newWindow = nullptr;
+                if (i == 0 && m_mainWindows.count() >= 1) {
+                    newWindow = mainWindow();
+                } else {
+                    newWindow = newMainWindow();
+                }
+                // The shell blob carries no tabs (saveState(false));
+                // the structured record set restores them.
+                newWindow->restoreState(QByteArray::fromBase64(
+                    win.value(QLatin1String("shell"))
+                        .toString().toLatin1()));
+                newWindow->tabWidget()->restoreSessionState(win);
+            }
+            return true;
+        }
+        if (sessionStatus == RC_CORRUPT)
+            return false;
+        // RC_NOT_FOUND: fall through to the legacy QSettings blob — a
+        // session saved before the Rust store restores once through
+        // the old reader, and the next save writes the new file.
+    }
+#endif
     int version = 2;
     QList<QByteArray> windows;
     QBuffer buffer(&m_lastSession);

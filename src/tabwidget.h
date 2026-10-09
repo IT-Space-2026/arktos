@@ -72,6 +72,7 @@
 
 QT_BEGIN_NAMESPACE
 class QCompleter;
+class QJsonObject;
 class QLabel;
 class QLineEdit;
 class QMenu;
@@ -210,6 +211,15 @@ public:
 
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
+#ifdef ARORA_RUSTCORE
+    // RCORE03: the session record set the rustcore session store
+    // consumes — the same fields saveState() streams into the blob,
+    // structured so the core owns the schema (per-tab url, container
+    // binding, group id, engine tag + an opaque engine-state blob).
+    // Compiled only under CONFIG+=rustcore.
+    QJsonObject sessionStateJson() const;
+    bool restoreSessionState(const QJsonObject &state);
+#endif
 
     static OpenUrlIn modifyWithUserBehavior(OpenUrlIn tab);
     WebView *getView(OpenUrlIn tab, WebView *currentView);
@@ -357,6 +367,20 @@ private:
         bool collapsed = false;
         QList<HiddenGroupTab> hidden;
     };
+    // RCORE03: one ordered pass over the strip producing everything a
+    // session needs — shared by saveState() (blob) and
+    // sessionStateJson() (rustcore manifest) so the two can never
+    // diverge, and by the matching restore pair.
+    struct TabSessionSnapshot {
+        QStringList urls;
+        int currentIndex = -1;
+        QList<QByteArray> histories;   // parallel: serializePageHistory or empty
+        QStringList containers;        // parallel: container binding
+        QStringList groupIds;          // parallel: "" = ungrouped
+        QList<TabGroup> groups;        // group table, first-appearance order
+    };
+    TabSessionSnapshot collectSessionSnapshot() const;
+    bool restoreSessionSnapshot(const TabSessionSnapshot &snapshot);
     QHash<QString, TabGroup> m_tabGroupInfo;
     // view -> group id for every member, hidden or visible.
     QHash<WebView*, QString> m_tabGroups;
