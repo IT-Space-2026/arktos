@@ -1650,8 +1650,10 @@ void BrowserMainWindow::updateStatusbar(const QString &string)
 
 // TOR04: renders the circuit chain ("Tor: guard -> middle -> exit")
 // on the tor window's status-bar label.  Hop labels prefer the relay
-// nickname and fall back to a short fingerprint; the tooltip carries
-// the full chain, circuit id, status and purpose.
+// nickname and fall back to a short fingerprint; TOR05 appends each
+// hop's country code ("(DE)", "--" while unknown) resolved by
+// TorManager via the control port; the tooltip carries the full
+// chain, circuit id, status and purpose.
 void BrowserMainWindow::updateTorCircuitLabel()
 {
     if (!m_torCircuitLabel)
@@ -1698,13 +1700,19 @@ void BrowserMainWindow::updateTorCircuitLabel()
     QStringList names;
     QStringList detail;
     for (const TorCircuitHop &hop : circuit->hops) {
-        names << (hop.nickname.isEmpty()
-                      ? hop.fingerprint.left(8)
-                      : hop.nickname);
+        const QString country = hop.country.isEmpty()
+            ? QStringLiteral("--") : hop.country;
+        names << QStringLiteral("%1 (%2)")
+                     .arg(hop.nickname.isEmpty()
+                              ? hop.fingerprint.left(8)
+                              : hop.nickname,
+                          country);
         detail << (hop.nickname.isEmpty()
-                       ? hop.fingerprint
-                       : QStringLiteral("%1 (%2)")
-                             .arg(hop.nickname, hop.fingerprint));
+                       ? QStringLiteral("%1 [%2]")
+                             .arg(hop.fingerprint, country)
+                       : QStringLiteral("%1 (%2) [%3]")
+                             .arg(hop.nickname, hop.fingerprint,
+                                  country));
     }
     m_torCircuitLabel->setText(
         tr("Tor: %1").arg(names.join(QLatin1String(" -> "))));

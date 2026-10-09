@@ -46,9 +46,12 @@ private slots:
     void failsWithoutBinary();
     void controlProtocol();
     void circuitStatusParsing();
+    void nsAddressParsing();
     void socks5RejectsBadGreeting();
     void fakeDaemonLifecycle();
     void circuitInfo();
+    void circuitCountries();
+    void circuitCountriesNoGeoip();
     void realDaemonLifecycle();
 
 private:
@@ -247,6 +250,32 @@ void tst_TorManager::circuitStatusParsing()
         { QStringLiteral("OK") }).isEmpty());
 }
 
+// TOR05: the ns/id reply's 'r' line carries the OR address as its
+// 7th field — directory stanzas around it ('s', 'v', 'w' lines, the
+// "ns/id/<fp>=" header, trailing "OK") must be ignored.
+void tst_TorManager::nsAddressParsing()
+{
+    const QStringList lines = {
+        QStringLiteral("ns/id/AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11="),
+        QStringLiteral("r GuardOne aGVsbG8 aGVsbG8gd29ybGQg "
+                       "2026-10-09 00:00:00 5.9.80.11 9001 0"),
+        QStringLiteral("a eSgwbmc9PSBmb28="),
+        QStringLiteral("s Fast Running Stable Valid V2Dir"),
+        QStringLiteral("v Tor 0.4.8.12"),
+        QStringLiteral("w Bandwidth=5120"),
+        QStringLiteral("OK"),
+    };
+    QCOMPARE(TorManager::parseNsAddress(lines),
+             QLatin1String("5.9.80.11"));
+
+    // No 'r' line / a truncated one -> empty, never a stall or crash.
+    QVERIFY(TorManager::parseNsAddress(QStringList()).isEmpty());
+    QVERIFY(TorManager::parseNsAddress(
+        { QStringLiteral("r Short aGVsbG8") }).isEmpty());
+    QVERIFY(TorManager::parseNsAddress(
+        { QStringLiteral("s Running Valid") }).isEmpty());
+}
+
 // TOR04: requestCircuitInfo() queues circuit-status + stream-status on
 // the one control connection; circuitsChanged emits the parsed
 // snapshot and displayCircuitId prefers the stream-bearing BUILT
@@ -292,6 +321,124 @@ void tst_TorManager::circuitInfo()
     // The fixture's 650 CIRC after bootstrap triggers the debounced
     // refresh without another explicit request.
     QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 2, 10000);
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR05: the displayed circuit's hops get their countries resolved
+// over the control connection (ns/id -> ip-to-country), cached per
+// fingerprint so a second refresh issues no new queries, and only
+// the displayed circuit's hops are resolved — circuit 5's SoloHop
+// must never be looked up.  faketor.py logs each ns/id query to
+// <datadir>/ns-query-log.
+void tst_TorManager::circuitCountries()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    QSignalSpy circuitsSpy(&manager, &TorManager::circuitsChanged);
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+
+    // Countries land asynchronously after the first circuitsChanged.
+    auto displayedHops = [&manager]() -> QList<TorCircuitHop> {
+        const int id = manager.displayCircuitId();
+        const QList<TorCircuit> circuits = manager.circuits();
+        for (const TorCircuit &circuit : circuits) {
+            if (circuit.id == id)
+                return circuit.hops;
+        }
+        return QList<TorCircuitHop>();
+    };
+    auto nsQueryCount = [&dir]() -> int {
+        QFile log(dir.path() + QLatin1String("/ns-query-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return -1;
+        return QString::fromLatin1(log.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(
+        displayedHops().size() == 3
+            && !displayedHops().at(0).country.isEmpty()
+            && !displayedHops().at(1).country.isEmpty()
+            && !displayedHops().at(2).country.isEmpty(),
+        10000);
+    QCOMPARE(displayedHops().at(0).country, QLatin1String("DE"));
+    QCOMPARE(displayedHops().at(1).country, QLatin1String("NL"));
+    QCOMPARE(displayedHops().at(2).country, QLatin1String("IS"));
+
+    // Resolution re-emitting circuitsChanged is what repaints the
+    // label; a second refresh must not re-query any fingerprint and
+    // circuit 5's hop must never have been queried at all.
+    QCOMPARE(nsQueryCount(), 3);
+    const int emissions = circuitsSpy.count();
+    manager.requestCircuitInfo();
+    QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() > emissions, 10000);
+    QCOMPARE(displayedHops().at(0).country, QLatin1String("DE"));
+    // Queued queries would land behind the refresh reply — give any
+    // (buggy) re-query a beat to reach the log before asserting.
+    QTest::qWait(500);
+    QCOMPARE(nsQueryCount(), 3);
+
+    for (const TorCircuit &circuit : manager.circuits()) {
+        if (circuit.id == 5)
+            QVERIFY(circuit.hops.at(0).country.isEmpty());
+    }
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR05: a tor without a GeoIPFile answers ip-to-country with "??" —
+// hops keep an empty country (the label renders "--") and the whole
+// flow completes without a stall.
+void tst_TorManager::circuitCountriesNoGeoip()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    qputenv("FAKETOR_NOGEOIP", "1");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    // The child's environment is captured by QProcess::start() inside
+    // manager.start() — safe to restore right after.
+    manager.start();
+    qunsetenv("FAKETOR_NOGEOIP");
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+
+    // All three resolutions complete (the fake logs each ns/id hit)
+    // while hop countries stay empty.
+    auto nsQueryCount = [&dir]() -> int {
+        QFile log(dir.path() + QLatin1String("/ns-query-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return -1;
+        return QString::fromLatin1(log.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(nsQueryCount() == 3, 10000);
+    for (const TorCircuit &circuit : manager.circuits()) {
+        for (const TorCircuitHop &hop : circuit.hops)
+            QVERIFY(hop.country.isEmpty());
+    }
 
     manager.stop();
     QCOMPARE(manager.state(), TorManager::Stopped);

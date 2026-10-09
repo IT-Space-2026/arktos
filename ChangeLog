@@ -171,6 +171,9 @@ Tor:
 - The status bar of a Tor window shows the live circuit chain
   (guard -> middle -> exit) with the full fingerprints on hover,
   refreshed on daemon circuit events and tab switches (TOR04).
+- Each Tor circuit hop now carries its exit-country code ("(DE)",
+  "--" when unknown), resolved via the tor control port and cached
+  per relay fingerprint (TOR05).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

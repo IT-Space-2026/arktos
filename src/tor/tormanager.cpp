@@ -305,9 +305,115 @@ void TorManager::requestCircuitInfo()
                 }
             }
             m_circuitQueryInFlight = false;
+            fillHopCountries();
             emit circuitsChanged(m_circuits);
+            // TOR05: look up hop countries for the displayed circuit
+            // — queued on the same control connection, results land
+            // through finishHopCountryQuery -> circuitsChanged.
+            resolveHopCountries();
         });
     });
+}
+
+// 'r' line: "r nickname identity digest YYYY-MM-DD HH:MM:SS address
+// orport dirport" — the OR address is field 6.
+QString TorManager::parseNsAddress(const QStringList &lines)
+{
+    for (const QString &line : lines) {
+        if (!line.startsWith(QLatin1String("r ")))
+            continue;
+        const QStringList parts =
+            line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (parts.size() >= 7)
+            return parts.at(6);
+    }
+    return QString();
+}
+
+bool TorManager::fillHopCountries()
+{
+    bool changed = false;
+    for (TorCircuit &circuit : m_circuits) {
+        for (TorCircuitHop &hop : circuit.hops) {
+            const QString cached =
+                m_countryCache.value(hop.fingerprint);
+            if (hop.country != cached) {
+                hop.country = cached;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
+void TorManager::resolveHopCountries()
+{
+    if (!m_control || !m_control->isConnected())
+        return;
+    const int displayId = displayCircuitId();
+    const TorCircuit *circuit = nullptr;
+    for (const TorCircuit &candidate : m_circuits) {
+        if (candidate.id == displayId) {
+            circuit = &candidate;
+            break;
+        }
+    }
+    if (!circuit)
+        return;
+    for (const TorCircuitHop &hop : circuit->hops) {
+        const QString fingerprint = hop.fingerprint;
+        if (fingerprint.isEmpty()
+            || m_countryCache.contains(fingerprint)
+            || m_countryQueriesInFlight.contains(fingerprint))
+            continue;
+        m_countryQueriesInFlight.insert(fingerprint);
+        m_control->getInfo(QLatin1String("ns/id/") + fingerprint,
+            [this, fingerprint](int code, const QStringList &lines) {
+            const QString address =
+                (code == 250) ? parseNsAddress(lines) : QString();
+            if (address.isEmpty()) {
+                finishHopCountryQuery(fingerprint, QString());
+                return;
+            }
+            m_control->getInfo(
+                QLatin1String("ip-to-country/") + address,
+                [this, fingerprint](int code,
+                                    const QStringList &lines) {
+                QString country;
+                if (code == 250) {
+                    // "ip-to-country/<addr>=<cc>" — "??" is tor's
+                    // unmapped / no-geoip sentinel.
+                    for (const QString &line : lines) {
+                        if (!line.startsWith(
+                                QLatin1String("ip-to-country/")))
+                            continue;
+                        const int eq = line.indexOf(QLatin1Char('='));
+                        if (eq >= 0)
+                            country = line.mid(eq + 1).trimmed()
+                                .toUpper();
+                    }
+                    if (country == QLatin1String("??"))
+                        country.clear();
+                }
+                finishHopCountryQuery(fingerprint, country);
+            });
+        });
+    }
+}
+
+void TorManager::finishHopCountryQuery(const QString &fingerprint,
+                                       const QString &country)
+{
+    m_countryQueriesInFlight.remove(fingerprint);
+    if (!m_countryCache.contains(fingerprint)) {
+        m_countryCache.insert(fingerprint, country);
+        m_countryCacheOrder << fingerprint;
+        const int cacheCap = 512;
+        while (m_countryCacheOrder.size() > cacheCap)
+            m_countryCache.remove(m_countryCacheOrder.takeFirst());
+    }
+    if (fillHopCountries())
+        emit circuitsChanged(m_circuits);
 }
 
 void TorManager::setState(State state)
@@ -338,6 +444,10 @@ void TorManager::start()
     m_circuits.clear();
     m_streamCircuitId = -1;
     m_circuitQueryInFlight = false;
+    // The fp->country cache survives a daemon restart (relay geography
+    // does not change), but queries orphaned by a dead connection must
+    // not stay marked in flight.
+    m_countryQueriesInFlight.clear();
 
     // tor itself refuses to run as root unless coerced; enforce it here
     // too so the check survives config drift.
@@ -417,16 +527,35 @@ void TorManager::start()
 
     // The expert bundle ships geoip data in data/ next to tor/ — point
     // tor at it when present so it stops warning about missing files.
+    // TOR05: without a GeoIPFile the control port's ip-to-country
+    // lookups all answer "??", so fall back to the system database
+    // (e.g. debian's tor-geoipdb) when the bundle ships none — a
+    // system tor already loads its compiled-in path, passing it
+    // explicitly is a no-op there.
     const QString binaryDir =
         QFileInfo(binary).canonicalPath();
-    const QString geoip = binaryDir + QLatin1String("/../data/geoip");
-    const QString geoip6 = binaryDir + QLatin1String("/../data/geoip6");
-    if (QFile::exists(geoip))
-        args << QLatin1String("--GeoIPFile")
-             << QDir::toNativeSeparators(QFileInfo(geoip).canonicalFilePath());
-    if (QFile::exists(geoip6))
-        args << QLatin1String("--GeoIPv6File")
-             << QDir::toNativeSeparators(QFileInfo(geoip6).canonicalFilePath());
+    const QStringList geoipDirs = {
+        binaryDir + QLatin1String("/../data"),
+        binaryDir,
+#ifdef Q_OS_UNIX
+        QLatin1String("/usr/share/tor"),
+        QLatin1String("/usr/local/share/tor"),
+#endif
+    };
+    for (const char *name : {"geoip", "geoip6"}) {
+        for (const QString &dir : geoipDirs) {
+            const QString candidate =
+                dir + QLatin1Char('/') + QLatin1String(name);
+            if (!QFile::exists(candidate))
+                continue;
+            args << (QLatin1String(name) == QLatin1String("geoip6")
+                         ? QLatin1String("--GeoIPv6File")
+                         : QLatin1String("--GeoIPFile"))
+                 << QDir::toNativeSeparators(
+                        QFileInfo(candidate).canonicalFilePath());
+            break;
+        }
+    }
 
     m_process->setProgram(binary);
     m_process->setArguments(args);

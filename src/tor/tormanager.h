@@ -20,9 +20,11 @@
 #ifndef TORMANAGER_H
 #define TORMANAGER_H
 
+#include <qhash.h>
 #include <qhostaddress.h>
 #include <qnetworkproxy.h>
 #include <qobject.h>
+#include <qset.h>
 #include <qstring.h>
 #include <qstringlist.h>
 
@@ -38,6 +40,9 @@ struct TorCircuitHop
 {
     QString fingerprint;   // 40-hex, without the leading '$'
     QString nickname;      // may be empty
+    QString country;       // TOR05: ISO-3166 code resolved via the
+                           // control port (ns/id -> ip-to-country);
+                           // empty while unresolved or unresolvable
 };
 
 struct TorCircuit
@@ -126,6 +131,10 @@ public:
     // the trailing "OK" the reply collector includes.  Static for
     // unit tests.
     static QList<TorCircuit> parseCircuitStatus(const QStringList &lines);
+    // TOR05: parses the 'r' line of a ns/id/<fp> reply and returns the
+    // relay's IPv4 OR address ("r nick identity digest date time addr
+    // orport dirport").  Static for unit tests.
+    static QString parseNsAddress(const QStringList &lines);
     // The circuit the UI should surface: the BUILT circuit carrying
     // the most streams, else the newest BUILT PURPOSE=GENERAL, else
     // the newest BUILT at all; -1 when none qualify.
@@ -156,6 +165,13 @@ private:
     void onAsyncEvent(const QString &line);
     void onBootstrapLine(const QString &line);
     void querySocksListener();
+    // TOR05: kicks ns/id + ip-to-country lookups for the displayed
+    // circuit's uncached hops; fillHopCountries copies cache values
+    // into m_circuits and reports whether anything changed.
+    void resolveHopCountries();
+    bool fillHopCountries();
+    void finishHopCountryQuery(const QString &fingerprint,
+                               const QString &country);
 
     QString m_binaryPath;
     QString m_dataDirectory;
@@ -171,6 +187,14 @@ private:
     int m_streamCircuitId;          // busiest attached circuit, -1
     bool m_circuitQueryInFlight;
     QTimer *m_circuitRefreshTimer;  // debounces bursts of 650 CIRC lines
+
+    // TOR05: fingerprint -> ISO country code (a cached empty value is
+    // a known-unresolvable hop — it is not re-queried).  Circuits
+    // rotate every ~10min, so the cache is FIFO-capped via the order
+    // list.
+    QHash<QString, QString> m_countryCache;
+    QStringList m_countryCacheOrder;
+    QSet<QString> m_countryQueriesInFlight;
 
     QProcess *m_process;
     TorControl *m_control;
