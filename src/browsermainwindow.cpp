@@ -84,6 +84,7 @@
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "pictureinpicture.h"
+#include "readerbutton.h"
 #include "readermode.h"
 #include "safetext.h"
 #include "securestore.h"
@@ -128,6 +129,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
+    , m_readerModeButton(nullptr)
+    , m_navReaderAction(nullptr)
     , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
     , m_bookmarksToolbarFrame(0)
@@ -167,6 +170,15 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
         badge->setToolTip(tr("This window browses through the Tor network"));
         m_navigationBar->addWidget(badge);
+
+        // READ02: the reader button paints its glyph from
+        // ButtonText — dark on the violet tor bar.  Lift it to the
+        // badge's light text color; the next refresh() picks it up
+        // (the button only ever repaints while a page is loaded).
+        QPalette readerPalette = m_readerModeButton->palette();
+        readerPalette.setColor(QPalette::ButtonText,
+                               QColor(238, 238, 238));
+        m_readerModeButton->setPalette(readerPalette);
 
         // TOR04: the live circuit chain — a permanent status-bar
         // label fed by TorManager (GETINFO circuit-status refreshed
@@ -1140,6 +1152,14 @@ void BrowserMainWindow::updateReaderState()
     m_viewReaderAction->setEnabled(view != nullptr);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
+    // READ02: the nav-row button follows the same tab — it manages
+    // its own checked state off the view's ReaderMode, while the
+    // toolbar item's visibility goes through its widget action.
+    m_readerModeButton->setWebView(view);
+    const bool readerAvailable = view && view->readerMode()
+                                 && view->readerMode()->isAvailable();
+    m_navReaderAction->setVisible(readerAvailable);
+    m_readerModeButton->setVisible(readerAvailable);
     m_viewPipAction->setEnabled(view != nullptr);
     m_viewPipAction->setChecked(view && view->pictureInPicture()
                                 && view->pictureInPicture()->isActive());
@@ -1311,6 +1331,23 @@ void BrowserMainWindow::setupToolBar()
     m_stopReloadAction = new QAction(this);
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
+
+    // READ02: reader-mode toggle in the nav row — after stop/reload,
+    // before the location bar starts.  Same ReaderButton the location
+    // bar uses for its in-field page action: palette-painted glyph
+    // (no icon theme ships a reader glyph), hidden until the current
+    // page reports itself article-like, checked while the overlay is
+    // up.  updateReaderState() re-points it at the current tab along
+    // with the View-menu action, so the two can never disagree.
+    m_readerModeButton = new ReaderButton(m_navigationBar);
+    m_readerModeButton->setObjectName(QLatin1String("navReaderButton"));
+    // addWidget() wraps the button in a QWidgetAction — a toolbar
+    // item's presence is governed by the ACTION's visibility, so
+    // updateReaderState() toggles that (the widget's own hidden flag
+    // alone leaves the item latched off).
+    m_navReaderAction = m_navigationBar->addWidget(m_readerModeButton);
+    m_navReaderAction->setVisible(false);
+    m_navReaderAction->setEnabled(true);
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());

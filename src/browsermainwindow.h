@@ -72,6 +72,7 @@ class CommandPalette;
 class QDockWidget;
 class QLabel;
 class QWebEnginePage;
+class ReaderButton;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
@@ -291,6 +292,8 @@ private:
     QIcon m_reloadIcon;
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
+    ReaderButton *m_readerModeButton;
+    QAction *m_navReaderAction;
     ToolbarSearch *m_toolbarSearch;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
