@@ -66,6 +66,9 @@ UI:
   icon-theme picker previews and the engine list are all pinned to
   the style's small-icon metric, so mixed theme assets no longer
   render at different heights (ICONS02).
+- Preferences moved from Tools → "Options..." to the bottom of the
+  File menu as "Preferences..." (Ctrl+,), matching the cross-browser
+  layout (MENU03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

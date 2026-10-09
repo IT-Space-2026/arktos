@@ -663,6 +663,15 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_filePrintAction);
     m_fileMenu->addSeparator();
 
+    // MENU03: Preferences lives in the File menu's bottom group,
+    // directly above Close Window (cross-browser convention).
+    m_filePreferencesAction = new QAction(m_fileMenu);
+    m_filePreferencesAction->setMenuRole(QAction::PreferencesRole);
+    connect(m_filePreferencesAction, &QAction::triggered,
+            this, &BrowserMainWindow::preferences);
+    m_fileMenu->addAction(m_filePreferencesAction);
+    m_fileMenu->addSeparator();
+
     m_fileCloseWindow = new QAction(m_fileMenu);
     connect(m_fileCloseWindow, &QAction::triggered, this, &QWidget::close);
     m_fileCloseWindow->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_W));
@@ -1066,13 +1075,6 @@ void BrowserMainWindow::setupMenu()
             AdBlockManager::instance(), &AdBlockManager::showDialog);
     m_toolsMenu->addAction(m_adBlockDialogAction);
 
-    m_toolsMenu->addSeparator();
-    m_toolsPreferencesAction = new QAction(m_toolsMenu);
-    m_toolsPreferencesAction->setMenuRole(QAction::PreferencesRole);
-    connect(m_toolsPreferencesAction, &QAction::triggered,
-            this, &BrowserMainWindow::preferences);
-    m_toolsMenu->addAction(m_toolsPreferencesAction);
-
     // Help
     m_helpMenu = new QMenu(menuBar());
     menuBar()->addMenu(m_helpMenu);
@@ -1196,6 +1198,8 @@ void BrowserMainWindow::retranslate()
     m_filePrintAction->setText(tr("&Print..."));
     m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
+    m_filePreferencesAction->setText(tr("Preferences..."));
+    m_filePreferencesAction->setShortcut(tr("Ctrl+,"));
     m_fileCloseWindow->setText(tr("Close Window"));
     m_fileQuit->setText(tr("&Quit"));
 
@@ -1252,8 +1256,6 @@ void BrowserMainWindow::retranslate()
     m_toolsClearPrivateDataAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Delete", "Clear Private Data")));
     m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
     m_toolsEnableInspectorAction->setText(tr("Web &Inspector"));
-    m_toolsPreferencesAction->setText(tr("Options..."));
-    m_toolsPreferencesAction->setShortcut(tr("Ctrl+,"));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
     m_adBlockDialogAction->setText(tr("&Ad Block..."));
 
