@@ -331,31 +331,43 @@ their authors:
 
 **Framework & engine**
 
-- **Qt 6** (LGPL-3.0/GPL) — the UI toolkit; **QtWebEngine** embeds
-  **Chromium** (Blink/V8, BSD-3-Clause and others — see Chromium's
-  `LICENSE`/`about:credits`) as the rendering engine.
-- Bundled icon themes: **Tabler icons** (MIT), **KDE Breeze icons**
-  (LGPL-3.0), **GNOME Adwaita icons** (CC-BY-SA-3.0/LGPL) under
-  `src/icons/` alongside the original Arora legacy set.
+| Component | License | Home |
+|---|---|---|
+| Qt 6 (toolkit) | LGPL-3.0 / GPL-3.0 | https://www.qt.io |
+| QtWebEngine → Chromium (Blink/V8) | BSD-3-Clause (and others — see `about:credits`) | https://www.chromium.org |
+| Tabler icons (bundled) | MIT | https://github.com/tabler/tabler-icons |
+| KDE Breeze icons (bundled) | LGPL-3.0 | https://github.com/KDE/breeze-icons |
+| GNOME Adwaita icons (bundled) | CC-BY-SA-3.0 / LGPL-3.0 | https://gitlab.gnome.org/GNOME/adwaita-icon-theme |
 
-**Rust crates** (see `src/rustcore`, `src/rustdl`, `src/adblock/rust`)
+**Rust crates** (`src/rustcore`, `src/rustdl`, `src/adblock/rust` — all
+versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`)
 
-- `aes-gcm` + `argon2` + `zeroize` — credential/autofill encryption
-- `quick-xml` + `serde_json` — memory-safe parsing of untrusted XML/JSON
-- `rusqlite` (bundled **SQLite**) — history store
-- `reqwest` (rustls) + `tempfile` — the accelerated download engine
-- Brave's **`adblock`** crate (adblock-rust, MPL-2.0) — optional matcher
-- Supply chain pinned + vetted via `cargo deny` (`src/rustcore/deny.toml`)
+| Crate | License | Home |
+|---|---|---|
+| aes-gcm, argon2, zeroize, getrandom | MIT / Apache-2.0 | https://github.com/RustCrypto |
+| quick-xml | MIT | https://github.com/tafia/quick-xml |
+| serde_json | MIT / Apache-2.0 | https://github.com/serde-rs/json |
+| rusqlite | MIT | https://github.com/rusqlite/rusqlite |
+| SQLite (bundled via rusqlite) | Public domain | https://sqlite.org |
+| reqwest | MIT / Apache-2.0 | https://github.com/seanmonstar/reqwest |
+| rustls (TLS inside reqwest) | Apache-2.0 / MIT / ISC | https://github.com/rustls/rustls |
+| tempfile | MIT / Apache-2.0 | https://github.com/Stebalien/tempfile |
+| base64 | MIT / Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
+| adblock — Brave adblock-rust (optional matcher) | MPL-2.0 | https://github.com/brave/adblock-rust |
 
-**Data feeds** (downloaded at runtime, consent-gated)
+**Data feeds** (fetched at runtime, consent-gated)
 
-- **URLhaus** (abuse.ch) + **OpenPhish** — the local phishing/malware
-  domain blocklist; **ClearURLs-derived** tracking-parameter rules
-  (vendored as `urlstrip-rules.json`).
+| Feed | Terms | Home |
+|---|---|---|
+| URLhaus domain blocklist | abuse.ch usage terms | https://urlhaus.abuse.ch |
+| OpenPhish feed | OpenPhish community feed terms | https://openphish.com |
+| ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
-**Planned**: PDFium/`pdfium-render` for the shell-owned PDF view
-(PDF02), `lopdf` for the sanitize pass (PDF01), libservo for the
-selectable engine (ENG03-gated). Queued, not yet shipped.
+**Planned** (queued tasks, not shipped): PDFium +
+`pdfium-render` (BSD-3 / MIT-Apache — https://pdfium.googlesource.com,
+https://github.com/ajrcarey/pdfium-render) for the shell-owned PDF
+view, `lopdf` (MIT — https://github.com/J-F-Liu/lopdf) for the sanitize
+pass, libservo (MPL-2.0 — https://servo.org) as the selectable engine.
 
 ## License
 
