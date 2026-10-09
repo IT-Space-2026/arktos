@@ -69,6 +69,9 @@ UI:
 - Preferences moved from Tools → "Options..." to the bottom of the
   File menu as "Preferences..." (Ctrl+,), matching the cross-browser
   layout (MENU03).
+- The "Icons" theme picker moved from the General page to the
+  Appearance page of Preferences, and each option now previews a
+  strip of the set's own icons instead of a single swatch (ICONS03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

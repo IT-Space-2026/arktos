@@ -111,6 +111,7 @@
 #include <qstyle.h>
 #include <qfiledialog.h>
 #include <qheaderview.h>
+#include <qpainter.h>
 #include <qpixmap.h>
 #include <qpushbutton.h>
 #include <qregularexpression.h>
@@ -191,15 +192,51 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
 
     // ICONS01: one entry per AroraIcon::themeIds() — itemData carries
-    // the id, each option previews its own view-refresh glyph.
-    // ICONS02: each set's preview resolves at its own canvas size —
-    // pin it so the combo rows stay uniform.
-    iconThemeCombo->setIconSize(QSize(chromeIconExtent, chromeIconExtent));
+    // the id.
+    // ICONS03: each option previews a strip of the set's own chrome
+    // glyphs painted side-by-side into one pixmap — a single
+    // view-refresh swatch reads the same across the monochrome sets.
+    // The names are ones every bundled set ships; a set missing one
+    // gets a shorter strip, never a blank cell.
+    // ICONS02: the delegate scales item icons into iconSize, so the
+    // pin is the whole strip — still one fixed extent for every row.
+    static const char *const previewNames[] = {
+        "go-home", "document-open", "go-previous", "emblem-downloads",
+    };
+    const int previewGlyphCount =
+        int(sizeof(previewNames) / sizeof(previewNames[0]));
+    const QSize previewExtent(chromeIconExtent * previewGlyphCount,
+                              chromeIconExtent);
+    iconThemeCombo->setIconSize(previewExtent);
+    const qreal previewDpr = iconThemeCombo->devicePixelRatioF();
     for (const QString &id : AroraIcon::themeIds()) {
         const int row = iconThemeCombo->count();
         iconThemeCombo->addItem(AroraIcon::themeDisplayName(id), id);
-        iconThemeCombo->setItemIcon(
-            row, AroraIcon::iconForTheme(id, QLatin1String("view-refresh")));
+        QPixmap strip(previewExtent * previewDpr);
+        strip.setDevicePixelRatio(previewDpr);
+        strip.fill(Qt::transparent);
+        QPainter painter(&strip);
+        int painted = 0;
+        for (const char *name : previewNames) {
+            const QIcon glyph =
+                AroraIcon::iconForTheme(id, QLatin1String(name));
+            if (glyph.isNull())
+                continue;
+            glyph.paint(&painter,
+                        QRect(painted * chromeIconExtent, 0,
+                              chromeIconExtent, chromeIconExtent));
+            ++painted;
+        }
+        painter.end();
+        if (painted > 0) {
+            iconThemeCombo->setItemIcon(row, QIcon(strip));
+        } else {
+            // A set that resolves none of the preview names keeps the
+            // old single-glyph behavior rather than painting blank.
+            iconThemeCombo->setItemIcon(
+                row, AroraIcon::iconForTheme(
+                         id, QLatin1String("view-refresh")));
+        }
     }
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
