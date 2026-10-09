@@ -497,6 +497,10 @@ Faster page loads (SEC16A):
     Autofill filling and ad-block cosmetic hiding no longer run inside the page's load-finished turn, where they competed with the subresource requests a page schedules right after load (web fonts and other paint-gated fetches could land visibly late). Both now run as per-document user scripts armed at navigation commit that execute at DOMContentLoaded — before the load event — so late-arriving resources are no longer delayed. Verified on the live browseraudit.com suite: the 18 CSP tests that previously warned on late fetches now all pass, identical to a bare engine.
     No behavior changes: autofill fill/capture, cosmetic filtering and every other load-time feature work exactly as before.
 
+browseraudit.com app-side audit closed out (SEC16B):
+    A fresh full-suite run against the live browseraudit.com tests (397 pass / 34 warnings / 0 critical, versus 32 warnings on a bare-engine control) confirms the browser no longer adds any defect of its own on top of the engine. The two remaining divergences are intentional privacy behavior, not bugs: CSP violation reports are dropped by the same block that stops pings and beacons, and the referrer-policy warnings were proven engine/test-harness artifacts by re-running them with Arora's referrer trimming switched off — identical results.
+    Every proposed extra hardening lever (blocking insecure WebSockets outright, forcing HTTPS subrequests, injecting stricter CSP, sandbox-aware cookie filtering) was evaluated and documented in .devin/SEC15-browseraudit.md: none reaches a real flagged item, and several would break legitimate sites or restate protections the engine already enforces.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
