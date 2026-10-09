@@ -1102,6 +1102,423 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
     return application.exec();
 }
 
+// BADSSL02: --badssl-smoke drives the badssl.com front-page test
+// matrix against the real browsing profile (CookieJar filter,
+// PrivacyRequestInterceptor, WebPage navigation policy, cert-error
+// and HTTPS-Only interstitials — the full app wiring) and records a
+// per-case outcome for .devin/BADSSL01-report.md.  This is a
+// measurement harness only: it loads each case url, observes which
+// of the app's block/interstitial paths fired or whether the page
+// committed, and writes JSON.  The case table is transcribed from
+// https://badssl.com/ (fetched 2026-10-09) — each link's class
+// attribute is the site's own expectation: "bad" should not load,
+// "dubious" is allowed-but-should-warn, "good" must load.
+//
+// Per-case observation points:
+//   - WebPage::certificateErrorInterstitial  -> SEC06 interstitial
+//   - WebPage::httpOnlyInterstitial          -> SAFE01 warning
+//   - loadingChanged(LoadFailedStatus)       -> engine block/failure
+//   - urlChanged                             -> redirect/upgrade chain
+//   - loadFinished + a short settle debounce -> then a DOM probe
+//     (title, footer text, image naturalWidths, body background) so
+//     mixed-content pages self-report whether insecure subresources
+//     actually ran/loaded.
+//
+// Environment:
+//   ARORA_BADSSL_OUT        output path (default /tmp/badssl.json)
+//   ARORA_BADSSL_ONLY       substring filter on the case name —
+//                           BADSSL03 re-runs a single fixed case with
+//                           e.g. ARORA_BADSSL_ONLY=revoked
+//   ARORA_BADSSL_TIMEOUT_MS per-case budget (default 30000)
+struct BadSslCase {
+    const char *group;
+    const char *name;
+    const char *url;
+    const char *expect;
+};
+
+static const BadSslCase kBadSslCases[] = {
+    // certificate
+    { "certificate", "expired",          "https://expired.badssl.com/",          "bad" },
+    { "certificate", "wrong.host",       "https://wrong.host.badssl.com/",       "bad" },
+    { "certificate", "self-signed",      "https://self-signed.badssl.com/",      "bad" },
+    { "certificate", "untrusted-root",   "https://untrusted-root.badssl.com/",   "bad" },
+    { "certificate", "revoked",          "https://revoked.badssl.com/",          "bad" },
+    { "certificate", "pinning-test",     "https://pinning-test.badssl.com/",     "bad" },
+    { "certificate", "no-common-name",   "https://no-common-name.badssl.com/",   "dubious" },
+    { "certificate", "no-subject",       "https://no-subject.badssl.com/",       "dubious" },
+    { "certificate", "incomplete-chain", "https://incomplete-chain.badssl.com/", "dubious" },
+    { "certificate", "sha256",           "https://sha256.badssl.com/",           "good" },
+    { "certificate", "sha384",           "https://sha384.badssl.com/",           "good" },
+    { "certificate", "sha512",           "https://sha512.badssl.com/",           "good" },
+    { "certificate", "1000-sans",        "https://1000-sans.badssl.com/",        "good" },
+    { "certificate", "10000-sans",       "https://10000-sans.badssl.com/",       "good" },
+    { "certificate", "ecc256",           "https://ecc256.badssl.com/",           "good" },
+    { "certificate", "ecc384",           "https://ecc384.badssl.com/",           "good" },
+    { "certificate", "rsa2048",          "https://rsa2048.badssl.com/",          "good" },
+    { "certificate", "rsa4096",          "https://rsa4096.badssl.com/",          "good" },
+    { "certificate", "rsa8192",          "https://rsa8192.badssl.com/",          "dubious" },
+    { "certificate", "extended-validation", "https://extended-validation.badssl.com/", "good" },
+    // client-certificate
+    { "client-certificate", "client",              "https://client.badssl.com/",              "good" },
+    { "client-certificate", "client-cert-missing", "https://client-cert-missing.badssl.com/", "bad" },
+    // mixed-content
+    { "mixed-content", "mixed-script",  "https://mixed-script.badssl.com/",  "bad" },
+    { "mixed-content", "very",          "https://very.badssl.com/",          "bad" },
+    { "mixed-content", "mixed",         "https://mixed.badssl.com/",         "dubious" },
+    { "mixed-content", "mixed-favicon", "https://mixed-favicon.badssl.com/", "dubious" },
+    { "mixed-content", "mixed-form",    "https://mixed-form.badssl.com/",    "dubious" },
+    // http
+    { "http", "http",               "http://http.badssl.com/",               "bad" },
+    { "http", "http-textarea",      "http://http-textarea.badssl.com/",      "bad" },
+    { "http", "http-password",      "http://http-password.badssl.com/",      "bad" },
+    { "http", "http-login",         "http://http-login.badssl.com/",         "bad" },
+    { "http", "http-dynamic-login", "http://http-dynamic-login.badssl.com/", "bad" },
+    { "http", "http-credit-card",   "http://http-credit-card.badssl.com/",   "bad" },
+    // cipher-suite
+    { "cipher-suite", "cbc",                  "https://cbc.badssl.com/",                  "dubious" },
+    { "cipher-suite", "rc4-md5",              "https://rc4-md5.badssl.com/",              "bad" },
+    { "cipher-suite", "rc4",                  "https://rc4.badssl.com/",                  "bad" },
+    { "cipher-suite", "3des",                 "https://3des.badssl.com/",                 "bad" },
+    { "cipher-suite", "null",                 "https://null.badssl.com/",                 "bad" },
+    { "cipher-suite", "mozilla-old",          "https://mozilla-old.badssl.com/",          "bad" },
+    { "cipher-suite", "mozilla-intermediate", "https://mozilla-intermediate.badssl.com/", "dubious" },
+    { "cipher-suite", "mozilla-modern",       "https://mozilla-modern.badssl.com/",       "good" },
+    // key-exchange
+    { "key-exchange", "dh480",            "https://dh480.badssl.com/",            "bad" },
+    { "key-exchange", "dh512",            "https://dh512.badssl.com/",            "bad" },
+    { "key-exchange", "dh1024",           "https://dh1024.badssl.com/",           "bad" },
+    { "key-exchange", "dh2048",           "https://dh2048.badssl.com/",           "dubious" },
+    { "key-exchange", "dh-small-subgroup", "https://dh-small-subgroup.badssl.com/", "bad" },
+    { "key-exchange", "dh-composite",     "https://dh-composite.badssl.com/",     "bad" },
+    { "key-exchange", "static-rsa",       "https://static-rsa.badssl.com/",       "dubious" },
+    // protocol
+    { "protocol", "tls-v1-0", "https://tls-v1-0.badssl.com:1010/", "dubious" },
+    { "protocol", "tls-v1-1", "https://tls-v1-1.badssl.com:1011/", "dubious" },
+    { "protocol", "tls-v1-2", "https://tls-v1-2.badssl.com:1012/", "good" },
+    // certificate-transparency
+    { "certificate-transparency", "no-sct", "https://no-sct.badssl.com/", "bad" },
+    // upgrade
+    { "upgrade", "hsts",                      "https://hsts.badssl.com/",                      "good" },
+    { "upgrade", "upgrade",                   "https://upgrade.badssl.com/",                   "good" },
+    { "upgrade", "preloaded-hsts",            "https://preloaded-hsts.badssl.com/",            "good" },
+    { "upgrade", "subdomain.preloaded-hsts",  "https://subdomain.preloaded-hsts.badssl.com/",  "bad" },
+    { "upgrade", "https-everywhere",          "https://https-everywhere.badssl.com/",          "good" },
+    // ui
+    { "ui", "spoofed-favicon", "https://spoofed-favicon.badssl.com/", "dubious" },
+    { "ui", "lock-title",      "https://lock-title.badssl.com/",      "dubious" },
+    { "ui", "long-extended-subdomain-name", "https://long-extended-subdomain-name-containing-many-letters-and-dashes.badssl.com/", "good" },
+    { "ui", "longextendedsubdomain",        "https://longextendedsubdomainnamewithoutdashesinordertotestwordwrapping.badssl.com/", "good" },
+    // known-bad
+    { "known-bad", "superfish",           "https://superfish.badssl.com/",           "bad" },
+    { "known-bad", "edellroot",           "https://edellroot.badssl.com/",           "bad" },
+    { "known-bad", "dsdtestprovider",     "https://dsdtestprovider.badssl.com/",     "bad" },
+    { "known-bad", "preact-cli",          "https://preact-cli.badssl.com/",          "bad" },
+    { "known-bad", "webpack-dev-server",  "https://webpack-dev-server.badssl.com/",  "bad" },
+    // chrome
+    { "chrome", "captive-portal", "https://captive-portal.badssl.com/", "bad" },
+    { "chrome", "mitm-software",  "https://mitm-software.badssl.com/",  "bad" },
+    // defunct
+    { "defunct", "sha1-2016",             "https://sha1-2016.badssl.com/",             "dubious" },
+    { "defunct", "sha1-2017",             "https://sha1-2017.badssl.com/",             "bad" },
+    { "defunct", "sha1-intermediate",     "https://sha1-intermediate.badssl.com/",     "bad" },
+    { "defunct", "invalid-expected-sct",  "https://invalid-expected-sct.badssl.com/",  "bad" },
+};
+
+// DOM probe run after a case settles.  The footer/background fields
+// are badssl-specific self-reports (nonsecure.js rewrites #footer and
+// paints the body red when active mixed content actually executed);
+// imgWidths detect whether passive mixed images were fetched.
+static const char kBadSslProbeJs[] = R"JS(
+(function () {
+    var d = document;
+    var footer = '';
+    try {
+        var f = d.getElementById('footer');
+        footer = f ? String(f.innerText) : '';
+    } catch (e) { }
+    var bg = '';
+    try { bg = String(getComputedStyle(d.body).backgroundColor); }
+    catch (e) { }
+    var imgs = [];
+    try {
+        imgs = Array.prototype.map.call(d.images,
+            function (i) { return i.naturalWidth; });
+    } catch (e) { }
+    return JSON.stringify({
+        title: String(d.title || ''),
+        href: String(location.href),
+        footer: footer.slice(0, 300),
+        bodyBg: bg,
+        imgWidths: imgs,
+        readyState: String(d.readyState)
+    });
+})()
+)JS";
+
+static int badSslSmoke(BrowserApplication &application, WebView *view)
+{
+    const QString outPath = qEnvironmentVariable("ARORA_BADSSL_OUT",
+        QStringLiteral("/tmp/badssl.json"));
+    const QString only = qEnvironmentVariable("ARORA_BADSSL_ONLY");
+    int caseTimeoutMs =
+        qEnvironmentVariableIntValue("ARORA_BADSSL_TIMEOUT_MS");
+    if (caseTimeoutMs <= 0)
+        caseTimeoutMs = 30000;
+
+    // The smoke dispatch returns before main()'s window.show() —
+    // show the stub window so the page is not treated as hidden.
+    view->window()->show();
+    WebPage *page = view->webPage();
+
+    struct CaseState {
+        QJsonArray navChain;     // committed urls, in order
+        QJsonArray failures;     // loadingChanged LoadFailed records
+        QUrl certInterstitial;   // target url the SEC06 page names
+        QUrl httpWarning;        // target url the SAFE01 page names
+        int popupsBlocked = 0;
+        bool sawFinish = false;
+        bool finishOk = false;
+    };
+    struct Runner {
+        WebView *view;
+        WebPage *page;
+        BrowserApplication *app;
+        QList<BadSslCase> cases;
+        int index = 0;
+        CaseState cur;
+        QElapsedTimer caseTimer;
+        QTimer settleTimer;
+        QTimer caseTimer2;
+        QJsonArray results;
+        QString outPath;
+        bool finishing = false;
+    };
+    Runner *r = new Runner;
+    r->view = view;
+    r->page = page;
+    r->app = &application;
+    r->outPath = outPath;
+    for (const BadSslCase &c : kBadSslCases) {
+        if (!only.isEmpty()
+            && !QString::fromLatin1(c.name).contains(
+                only, Qt::CaseInsensitive))
+            continue;
+        r->cases.append(c);
+    }
+    if (r->cases.isEmpty()) {
+        qInfo() << "badssl-smoke: FAIL (no cases match"
+                << (only.isEmpty() ? QStringLiteral("<empty table>")
+                                   : only) << ")";
+        delete r;
+        return 1;
+    }
+    r->settleTimer.setSingleShot(true);
+    r->settleTimer.setInterval(900);
+    r->caseTimer2.setSingleShot(true);
+    r->caseTimer2.setInterval(caseTimeoutMs);
+
+    QObject::connect(page, &QWebEnginePage::urlChanged, r->app,
+                     [r](const QUrl &url) {
+        r->cur.navChain.append(QString::fromUtf8(url.toEncoded()));
+    });
+    QObject::connect(page, &QWebEnginePage::loadingChanged, r->app,
+                     [r](const QWebEngineLoadingInfo &info) {
+        if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+            return;
+        QJsonObject failure;
+        failure.insert(QStringLiteral("url"),
+                       QString::fromUtf8(info.url().toEncoded()));
+        failure.insert(QStringLiteral("domain"), int(info.errorDomain()));
+        failure.insert(QStringLiteral("code"), info.errorCode());
+        failure.insert(QStringLiteral("error"), info.errorString());
+        r->cur.failures.append(failure);
+    });
+    QObject::connect(page, &WebPage::certificateErrorInterstitial,
+                     r->app, [r](const QUrl &url) {
+        r->cur.certInterstitial = url;
+    });
+    QObject::connect(page, &WebPage::httpOnlyInterstitial,
+                     r->app, [r](const QUrl &url) {
+        r->cur.httpWarning = url;
+    });
+    QObject::connect(page, &WebPage::popupBlocked,
+                     r->app, [r]() { ++r->cur.popupsBlocked; });
+    // Every loadFinished — including the interstitial/error-page
+    // commits that follow a failed navigation — restarts the settle
+    // debounce; a case is complete only once signals go quiet.
+    QObject::connect(view, &QWebEngineView::loadFinished, r->app,
+                     [r](bool ok) {
+        r->cur.sawFinish = true;
+        r->cur.finishOk = ok;
+        r->settleTimer.start();
+    });
+
+    auto writeAndExit = [r](int rc) {
+        QJsonObject envelope;
+        envelope.insert(QStringLiteral("chromiumVersion"),
+                        QLatin1String(qWebEngineChromiumVersion()));
+        envelope.insert(QStringLiteral("generated"),
+                        QDateTime::currentDateTimeUtc()
+                            .toString(Qt::ISODate));
+        envelope.insert(QStringLiteral("profile"),
+                        QStringLiteral("app"));
+        envelope.insert(QStringLiteral("cases"), r->results);
+        int loaded = 0, blocked = 0, other = 0;
+        for (const QJsonValue &value : r->results) {
+            const QString outcome = value.toObject()
+                .value(QLatin1String("outcome")).toString();
+            if (outcome == QLatin1String("loaded"))
+                ++loaded;
+            else if (outcome.startsWith(QLatin1String("blocked")))
+                ++blocked;
+            else
+                ++other;
+        }
+        QJsonObject summary;
+        summary.insert(QStringLiteral("total"), r->results.count());
+        summary.insert(QStringLiteral("loaded"), loaded);
+        summary.insert(QStringLiteral("blocked"), blocked);
+        summary.insert(QStringLiteral("other"), other);
+        envelope.insert(QStringLiteral("summary"), summary);
+        QFile out(r->outPath);
+        if (!out.open(QIODevice::WriteOnly)) {
+            qInfo() << "badssl-smoke: FAIL (cannot write"
+                    << r->outPath << ")";
+            r->app->exit(3);
+            return;
+        }
+        out.write(QJsonDocument(envelope).toJson(
+            QJsonDocument::Indented));
+        qInfo() << "badssl-smoke: DONE" << r->results.count()
+                << "cases -" << loaded << "loaded" << blocked
+                << "blocked" << other << "other ->" << r->outPath;
+        r->app->exit(rc);
+    };
+
+    auto advance = std::make_shared<std::function<void()>>();
+    auto finish = std::make_shared<std::function<void(bool)>>();
+
+    *finish = [r, writeAndExit, advance](bool timedOut) {
+        if (r->finishing)
+            return;
+        r->finishing = true;
+        r->caseTimer2.stop();
+        r->settleTimer.stop();
+        const BadSslCase &c = r->cases.at(r->index);
+        if (timedOut)
+            r->view->stop();
+        // Probe the settled DOM — on interstitial/error pages this
+        // captures the chrome page's own title; on real pages the
+        // badssl self-report markers.
+        r->page->runJavaScript(QString::fromUtf8(kBadSslProbeJs),
+            [r, writeAndExit, advance, timedOut, c](
+                const QVariant &payload) {
+            QJsonObject rec;
+            rec.insert(QStringLiteral("group"),
+                       QLatin1String(c.group));
+            rec.insert(QStringLiteral("name"), QLatin1String(c.name));
+            rec.insert(QStringLiteral("url"), QLatin1String(c.url));
+            rec.insert(QStringLiteral("expect"),
+                       QLatin1String(c.expect));
+            rec.insert(QStringLiteral("durationMs"),
+                       qint64(r->caseTimer.elapsed()));
+            rec.insert(QStringLiteral("navChain"), r->cur.navChain);
+            rec.insert(QStringLiteral("failures"), r->cur.failures);
+            if (!r->cur.certInterstitial.isEmpty())
+                rec.insert(QStringLiteral("certInterstitialFor"),
+                           QString::fromUtf8(
+                               r->cur.certInterstitial.toEncoded()));
+            if (!r->cur.httpWarning.isEmpty())
+                rec.insert(QStringLiteral("httpWarningFor"),
+                           QString::fromUtf8(
+                               r->cur.httpWarning.toEncoded()));
+            if (r->cur.popupsBlocked)
+                rec.insert(QStringLiteral("popupsBlocked"),
+                           r->cur.popupsBlocked);
+
+            const QJsonObject probe = QJsonDocument::fromJson(
+                payload.toString().toUtf8()).object();
+            const QString title = probe.value(QLatin1String("title"))
+                .toString();
+            const QString href = probe.value(QLatin1String("href"))
+                .toString();
+            rec.insert(QStringLiteral("probe"), probe);
+            rec.insert(QStringLiteral("finalUrl"), href);
+
+            QString outcome;
+            if (!r->cur.certInterstitial.isEmpty()
+                || href.startsWith(QLatin1String("arora-cert-error:")))
+                outcome = QStringLiteral("blocked:cert-interstitial");
+            else if (!r->cur.httpWarning.isEmpty()
+                || href.startsWith(QLatin1String("arora-http-warning:")))
+                outcome = QStringLiteral("blocked:http-warning");
+            else if (timedOut)
+                outcome = QStringLiteral("timeout");
+            else if (title.startsWith(QLatin1String("Error loading")))
+                outcome = QStringLiteral("blocked:error-page");
+            else if (r->cur.sawFinish && r->cur.finishOk)
+                outcome = QStringLiteral("loaded");
+            else if (!r->cur.failures.isEmpty())
+                outcome = QStringLiteral("blocked:load-failed");
+            else
+                outcome = QStringLiteral("no-terminal-signal");
+            rec.insert(QStringLiteral("outcome"), outcome);
+
+            QString verdict;
+            const QString expect = QLatin1String(c.expect);
+            if (expect == QLatin1String("bad"))
+                verdict = (outcome == QLatin1String("loaded"))
+                    ? QStringLiteral("MISS")
+                    : QStringLiteral("ok-blocked");
+            else if (expect == QLatin1String("good"))
+                verdict = (outcome == QLatin1String("loaded"))
+                    ? QStringLiteral("ok-loaded")
+                    : QStringLiteral("REGRESSION");
+            else
+                verdict = QStringLiteral("info-") + outcome;
+            rec.insert(QStringLiteral("verdict"), verdict);
+
+            r->results.append(rec);
+            qInfo() << "badssl-smoke:" << r->results.count() << "/"
+                    << r->cases.count() << c.name << "->" << outcome
+                    << verdict;
+            ++r->index;
+            (*advance)();
+        });
+    };
+
+    *advance = [r, finish, writeAndExit]() {
+        if (r->index >= r->cases.count()) {
+            writeAndExit(0);
+            return;
+        }
+        const BadSslCase &c = r->cases.at(r->index);
+        r->cur = CaseState();
+        r->finishing = false;
+        r->caseTimer.start();
+        r->caseTimer2.start();
+        r->view->loadUrl(QUrl(QLatin1String(c.url)));
+    };
+
+    QObject::connect(&r->settleTimer, &QTimer::timeout, r->app,
+                     [finish]() { (*finish)(false); });
+    QObject::connect(&r->caseTimer2, &QTimer::timeout, r->app,
+                     [finish]() { (*finish)(true); });
+
+    // Global watchdog — write whatever has been measured so a hung
+    // endpoint cannot lose the whole baseline.
+    QTimer::singleShot(25 * 60 * 1000, &application,
+                       [r, writeAndExit]() {
+        qInfo() << "badssl-smoke: global timeout at case"
+                << r->index << "of" << r->cases.count();
+        writeAndExit(2);
+    });
+
+    (*advance)();
+    return application.exec();
+}
+
 // XSLEAK04: --xsleak-smoke re-runs the xsinator.com battery on the
 // browsing profile with shipping defaults — the same discipline the
 // user-measured baseline used — and dumps every test's {res0, res1}
@@ -1845,7 +2262,7 @@ int main(int argc, char **argv)
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
-        "xsleak-smoke", "xsleak-open",
+        "xsleak-smoke", "xsleak-open", "badssl-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
     };
     for (const char *option : internalOptions)
@@ -2002,6 +2419,12 @@ int main(int argc, char **argv)
         return xsLeakSmoke(application, view,
             args.contains(QLatin1String("--xsleak-open")),
             savedPopupBlocking, savedBlockPings);
+
+    // BADSSL02: live-site measurement — loads every badssl.com
+    // matrix case on the browsing profile and records per-case
+    // block/load outcomes for .devin/BADSSL01-report.md.
+    if (args.contains(QLatin1String("--badssl-smoke")))
+        return badSslSmoke(application, view);
 
     window.show();
 
