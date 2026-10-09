@@ -32,9 +32,10 @@ reproduces on unmodified HEAD).
 
 | profile | pass | warning | critical | skip | total |
 |---------|------|---------|----------|------|-------|
+| app (SEC16B re-run) | **397** | 34 | 0 | 0 | 431 |
 | app (post-fix, final capture) | **383** | 48 | 0 | 0 | 431 |
 | app (pre-fix capture) | 372 | 50 | 0 | 9 | 431 |
-| bare engine (vanilla OTR profile) | 399 | 32 | 0 | 0 | 431 |
+| bare engine (SEC16B re-run) | 399 | 32 | 0 | 0 | 431 |
 
 The bare engine itself warns on 32 tests — the suite was written ~2015
 against CSP2/early-fetch-spec semantics, so shared warnings are
@@ -185,6 +186,87 @@ actual security failure fired on either profile.
   additionally blocked by design (PING01 blocks
   `ResourceTypeCspReport`); the bare-profile warning shows the engine
   behavior independent of that policy.
+
+## SEC16B — app-side fix pass (fresh full-suite captures)
+
+Re-ran the complete suite on current HEAD
+(`sec15/browseraudit-sec16b-app.json`,
+`sec15/browseraudit-sec16b-bare.json`):
+
+- **app 397 pass / 34 warning / 0 critical / 0 skip**; bare 399 / 32 /
+  0 / 0. All 18 SEC16A latency warnings (229, 231, 311–348) stay
+  cleared on the full suite. Zero skips.
+- The only app-vs-bare outcome divergences are **405, 454, 456, 458**
+  (app-only warns) and **451, 461** (bare-only warns — flip-flops).
+
+### Per-item resolution of the app-side divergences
+
+- **405 (report-uri) — APP-SIDE, by design.** Behaviour `block`, warn =
+  "report not received". Local probe (loopback HTTP fixture
+  `sec15/csp-report-probe.py` serving
+  `Content-Security-Policy: default-src 'none'; report-uri /r`):
+  with `privacy/blockPings=false` two `application/csp-report` POSTs
+  arrive; with the shipping default they never leave the browser —
+  PING01's `ResourceTypeCspReport` block drops the report-uri upload
+  deterministically. The SEC15 app capture passed this test, so the
+  block was presumably not active in that run's profile; the mechanism
+  is now verified deterministic. This is the privacy feature working —
+  **resolved as intentional divergence**, not fixed. (Whether the
+  newer Reporting-API `report-to` path also reaches the interceptor is
+  PING02's residual question.)
+- **454, 456, 458 (+450/451/455 shared) — Referrer-Policy — NOT
+  app-caused.** Isolated re-run of category 40 twice on the app
+  profile, once with `privacy/refererPolicy=0` (engine default) and
+  once with the shipping Trimmed default (`sec15/referer-probe.py`
+  captured the on-wire Referer for the interceptor-visibility check):
+  **identical warn sets**
+  (454/455/456/458 warn both ways). REF01's rewrite never reaches
+  these requests — the tests observe redirect follow-up legs, whose
+  Referer Chromium recomputes after the interceptor ran (already noted
+  in the interceptor header). The warn subset shifts run to run on
+  both profiles — the suite's session-global `/set_referer` /
+  `/get_referer_policy` endpoints are shared mutable state. Reclassify
+  as harness artifact (was listed under test-stale; now verified
+  policy-independent).
+
+### SEC16 interceptor-lever evaluation — none reach a real item
+
+- **ws: blocking (wss-only).** The only websocket warnings (361/364)
+  are wss-under-`'self'` spec drift — the suite wants a spec-correct
+  CSP3 allow blocked; satisfying it means violating CSP3. ws: on an
+  https: page is already mixed-content-blocked by the engine; ws: on
+  an http: page is legitimate (SAFE07's downgrade/exception machinery
+  exists precisely for http-only sites). Third-party ws: is already
+  covered opt-in (XSLEAK03 `blockThirdPartyWebSockets`). A blanket ws:
+  block reaches zero flagged items and would break real sites — **not
+  applied**.
+- **https-only subrequest enforcement.** Engine already enforces this:
+  Chromium's mixed-content auto-upgrade is the documented reason the
+  HSTS probes (180/182/183) can observe no plain-http request.
+  Interceptor-upgrading http: subresources on SAFE07-excepted http
+  hosts would break exactly the sites the exception exists for.
+  **Not applied** — no flagged item is reachable through it.
+- **Additive CSP injection.** No remaining warning is an app-owned
+  "policy not enforced". Injection cannot conjure the manifest fetches
+  (440–447 — the engine never issues the request) and cannot fix
+  report scheduling (464 — in-app already blocked). **Not applied** —
+  nothing to inject for.
+- **Cookie-store filtering for sandbox cases.** SEC14 verified the
+  sandbox cookie behavior spec-correct locally; 391/393 flip-flop
+  between runs on *both* profiles (timing), and
+  `QWebEngineCookieStore::FilterRequest` exposes no sandbox/opaque-
+  origin flag to attribute a frame context anyway — that observation
+  gap is engine-side material for SEC16C, not an app fix. **Not
+  applied**.
+
+### App-side column: final state
+
+**Zero defect items.** The remaining app warnings decompose as: shared
+test-stale/engine warnings identical to the bare control, one
+intentional privacy divergence (405 — PING01), and the referrer
+harness flake (454/456/458 this run — verified policy-independent).
+Engine-side remainder (440–447 manifest-src, 464 report-to) carries
+over to SEC16C for the named-missing-API write-ups.
 
 ## Notes for SEC16 (fix pass)
 
