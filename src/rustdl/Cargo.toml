@@ -3,6 +3,8 @@ name = "arora-rustdl"
 version = "0.1.0"
 edition = "2021"
 description = "Arora accelerated download engine — segmented HTTP(S) fetches behind a C FFI"
+license = "GPL-2.0-or-later"
+publish = false
 
 # staticlib is what the qmake build links (same pattern as
 # src/rustcore and src/adblock/rust — single binary, no rpath or

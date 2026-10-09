@@ -1,10 +1,13 @@
 # cargo-deny policy for the Rust surface (SEC21).  Applies to every
-# crate in the tree; run with `cargo deny check` from a crate dir or a
-# workspace root once the SEC21 gate wires it into `make check`.
+# crate in the tree; `make check-supplychain` (part of `make check`)
+# runs `cargo deny --locked check` + `cargo audit` over each crate's
+# committed Cargo.lock, or run `cargo deny check` by hand here.
+# Dep bumps: `cargo update`, re-run the gate, commit Cargo.toml +
+# Cargo.lock together.
 
 [advisories]
 # Fail on any unpatched advisory in a dependency we ship.
-db-url = "https://github.com/rustsec/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 
 [licenses]
@@ -21,6 +24,14 @@ allow = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "Zlib",
+    # webpki-root-certs (Mozilla root store, via rustls) — permissive
+    # data license, the cert-file equivalent of CC0.
+    "CDLA-Permissive-2.0",
+    # Brave's adblock crate — weak file-level copyleft, GPL-compatible
+    # (MPL 2.0 exhibits compatibility with GPL per its own Exhibit B).
+    "MPL-2.0",
+    # the crates in this tree are part of the GPLv2+ browser itself
+    "GPL-2.0-or-later",
 ]
 
 [bans]

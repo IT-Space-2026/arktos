@@ -3,6 +3,8 @@ name = "arora-rustcore"
 version = "0.1.0"
 edition = "2021"
 description = "Arora shared Rust core — engine-neutral app services behind a C FFI"
+license = "GPL-2.0-or-later"
+publish = false
 
 # staticlib is what the qmake build links (same pattern as
 # src/adblock/rust — single binary, no rpath/deployment concerns).
