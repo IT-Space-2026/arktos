@@ -255,8 +255,12 @@ void DownloadItem::getFileName()
     // SEC01: the name may describe a file the OS will run or install
     // when opened — warn before any bytes or directories are created.
     // The prompt spins a nested event loop, so the request can die
-    // underneath us; m_download is a QPointer.
-    if (!m_download || !confirmSafeToSave(fileName)) {
+    // underneath us; both backends are QPoiners → QPointers.
+    bool backendGone = !m_download;
+#ifdef ARORA_RUSTDL
+    backendGone = backendGone && !m_engine;
+#endif
+    if (backendGone || !confirmSafeToSave(fileName)) {
         progressBar->setVisible(false);
         m_canceledByUser = true;
         stop();

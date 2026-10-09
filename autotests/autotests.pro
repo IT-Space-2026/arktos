@@ -36,6 +36,7 @@ SUBDIRS  = \
     privatebrowsing \
     privacy \
     qrcode \
+    rustdownload \
     safetext \
     schemehandlers \
     scriptcontrol \

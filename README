@@ -34,6 +34,15 @@ extension update manifests and suggestion replies are schema-checked
 behind the FFI before Qt sees them, and bookmark XBEL files get a
 Rust structural gate ahead of the Qt tree reader.
 
+Optional accelerated downloads: `qmake CONFIG+=rustdl` builds
+src/rustdl (reqwest + std::thread behind a C ABI, cargo run by qmake)
+and lets the download settings' "Accelerated (Rust)" engine fetch
+HTTP(S) files as parallel ranged GETs — 4–16 connections, default 8 —
+merged atomically on completion, with a single-stream fallback when a
+server does not accept ranges.  The built-in Chromium engine stays the
+default; without the flag the selector simply does not offer the Rust
+engine.
+
 Performance: `./arora --perf-smoke` runs headless (with
 QT_QPA_PLATFORM=offscreen) and reports cold-start, first-window,
 tab-open, large-history-load, menu-open and profile permission-sweep
