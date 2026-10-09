@@ -76,6 +76,7 @@
 #include "bookmarkstoolbar.h"
 #include "browserapplication.h"
 #include "clearprivatedata.h"
+#include "commandpalette.h"
 #include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
@@ -901,6 +902,16 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu = new QMenu(menuBar());
     menuBar()->addMenu(m_toolsMenu);
 
+    // CMD01: the palette action doubles as the discoverable menu entry
+    // for the Ctrl+Shift+P shortcut.
+    m_toolsCommandPaletteAction = new QAction(m_toolsMenu);
+    m_toolsCommandPaletteAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_P));
+    connect(m_toolsCommandPaletteAction, &QAction::triggered,
+            this, &BrowserMainWindow::showCommandPalette);
+    m_toolsMenu->addAction(m_toolsCommandPaletteAction);
+    m_toolsMenu->addSeparator();
+
     // MENU01: no Tools-menu entry — the action lives on the window
     // itself so the Ctrl+K shortcut keeps reaching webSearch()
     // without a menu item to show.
@@ -1114,6 +1125,7 @@ void BrowserMainWindow::retranslate()
     m_windowMenu->setTitle(tr("&Window"));
 
     m_toolsMenu->setTitle(tr("&Tools"));
+    m_toolsCommandPaletteAction->setText(tr("Command &Palette..."));
     m_toolsWebSearchAction->setText(tr("Web &Search"));
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
@@ -1327,6 +1339,18 @@ void BrowserMainWindow::preferences()
 {
     SettingsDialog settingsDialog(this);
     settingsDialog.exec();
+}
+
+CommandPalette *BrowserMainWindow::commandPalette()
+{
+    if (!m_commandPalette)
+        m_commandPalette = new CommandPalette(this);
+    return m_commandPalette;
+}
+
+void BrowserMainWindow::showCommandPalette()
+{
+    commandPalette()->openPalette();
 }
 
 void BrowserMainWindow::updateStatusbar(const QString &string)

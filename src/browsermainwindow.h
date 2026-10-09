@@ -68,6 +68,7 @@
 
 class AutoSaver;
 class BookmarksToolBar;
+class CommandPalette;
 class QWebEnginePage;
 class TabWidget;
 class ToolbarSearch;
@@ -104,12 +105,16 @@ public:
     QByteArray saveState(bool withTabs = true) const;
     bool restoreState(const QByteArray &state);
     QAction *showMenuBarAction() const;
+    // CMD01: lazily created Ctrl+Shift+P command palette bound to this
+    // window.
+    CommandPalette *commandPalette();
 
 public slots:
     void goHome();
     void privacyChanged(bool isPrivate);
     void zoomTextOnlyChanged(bool textOnly);
     void preferences();
+    void showCommandPalette();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -238,6 +243,7 @@ private:
     QMenu *m_windowMenu;
 
     QMenu *m_toolsMenu;
+    QAction *m_toolsCommandPaletteAction;
     QAction *m_toolsWebSearchAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
@@ -272,6 +278,7 @@ private:
     ZoomControl *m_zoomControl;
 
     AutoSaver *m_autoSaver;
+    QPointer<CommandPalette> m_commandPalette;
 
     // These store if the user requested the menu/status bars visible. They are
     // used to determine if these bars should be reshown when leaving fullscreen.

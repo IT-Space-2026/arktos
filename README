@@ -47,6 +47,13 @@ selects the field's text in field mode.  The Search page can also
 assign separate engines to private/Tor windows and to image searches
 (the image context menu's "Search Image" entry).
 
+Command palette: Ctrl+Shift+P (or Tools → "Command Palette") opens a
+keyboard-first overlay that fuzzy-searches every menu action, open
+tab, bookmark title and settings section.  Arrows navigate, Enter
+executes, Esc dismisses; recently used entries rank first, so e.g.
+"clear history" reaches Clear Private Data and a tab title switches
+straight to that tab.
+
 Extensions: Arora can run Chrome Manifest-V3 extensions through Qt
 WebEngine's (tech preview) extension manager — the Extensions page in
 the preferences dialog loads unpacked folders or installs .zip packages.

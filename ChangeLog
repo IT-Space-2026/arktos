@@ -460,6 +460,9 @@ Reader mode (READ01):
 Sleeping tabs (SLEEP01):
     Tabs can now be suspended to reclaim memory without losing their place on the strip. An opt-in "Suspend tabs after N minutes idle" setting (Settings > Tabs, off by default) sweeps background tabs and discards their web content through the engine's page-lifecycle API — the slot keeps its title and favicon, the title dims and a "zZ" badge marks it, and clicking the tab wakes it with a reload that restores the captured scroll position. The tab context menu also offers "Sleep Tab" / "Wake Tab" for manual control; a manual sleep overrides the media exemptions (a valid way to silence a tab) while the automatic sweep skips the current tab, recently-audible pages, tabs with an in-flight download, tabs still loading, and tabs holding unsaved form input — a refused suspend is explained on the status bar. Preserved across a sleep: the tab slot, title, favicon, history entries and scroll position; transient form content is not, which is why dirty forms are never suspended.
 
+Command palette (CMD01):
+    A Ctrl+Shift+P command palette (also in the Tools menu) fuzzy-searches every browser action, open tab, bookmark title and settings section from one keyboard-first overlay: arrows navigate, Enter executes, Esc dismisses, and recently run entries float to the top. Typing "clear history" reaches Clear Private Data, "privacy" jumps straight to that settings page, and tab titles switch tabs; bookmark entries load the page in the current tab.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

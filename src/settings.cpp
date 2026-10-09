@@ -405,6 +405,31 @@ void SettingsDialog::openAtPage(Page page)
     tabWidget->setCurrentIndex(int(page));
 }
 
+int SettingsDialog::pageCount()
+{
+    return int(ContainersPage) + 1;
+}
+
+QString SettingsDialog::pageTitle(Page page)
+{
+    static const char *const titles[] = {
+        QT_TR_NOOP("General"),
+        QT_TR_NOOP("Search"),
+        QT_TR_NOOP("Appearance"),
+        QT_TR_NOOP("Privacy"),
+        QT_TR_NOOP("Tab Settings"),
+        QT_TR_NOOP("Proxy"),
+        QT_TR_NOOP("AutoFill"),
+        QT_TR_NOOP("Advanced"),
+        QT_TR_NOOP("Extensions"),
+        QT_TR_NOOP("Containers"),
+    };
+    const int index = int(page);
+    if (index < 0 || index >= int(sizeof(titles) / sizeof(titles[0])))
+        return QString();
+    return tr(titles[index]);
+}
+
 void SettingsDialog::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);

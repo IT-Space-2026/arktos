@@ -36,6 +36,7 @@
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "clearprivatedata.h"
+#include "commandpalette.h"
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
@@ -122,12 +123,17 @@
 #include <QtWebEngineCore/QWebEngineSettings>
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QDialog>
 #include <QtWidgets/QFrame>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QToolButton>
+#include <QtGui/QAction>
+#include <QtGui/QKeyEvent>
+#include <QtGui/QKeySequence>
 
 #include <cstdio>
 #include <cstdlib>
@@ -1809,7 +1815,7 @@ int main(int argc, char **argv)
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
         "xsleak-smoke", "xsleak-open",
-        "sleep-smoke",
+        "sleep-smoke", "palette-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -5604,6 +5610,210 @@ int main(int argc, char **argv)
             application.exit(1);
         });
         tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
+    }
+
+    // Headless verification for CMD01: a real BrowserMainWindow's
+    // command palette must open via the Tools-menu action (which
+    // carries Ctrl+Shift+P), fuzzy-find commands ("new tab",
+    // "private", "clear history"), the open tabs, a bookmark and a
+    // Settings section; executing items must run the real payload
+    // (modal dialogs are auto-dismissed by a polling timer), the
+    // keyboard must navigate the list, and executions must land in
+    // the persisted MRU.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--palette-smoke"))) {
+        BrowserMainWindow *browserWindow = new BrowserMainWindow();
+        browserWindow->show();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+        CommandPalette *palette = browserWindow->commandPalette();
+
+        int failures = 0;
+        const auto check = [&failures](bool ok, const char *what) {
+            qInfo() << "palette-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto pump = []() {
+            // execute() defers payloads one event turn so modal
+            // handlers never run inside the popup's own path.
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+        };
+        const auto findRow = [palette](const QString &needle) {
+            for (int i = 0; i < palette->visibleCount(); ++i) {
+                if (palette->itemText(i).contains(needle))
+                    return i;
+            }
+            return -1;
+        };
+
+        // Modal auto-dismisser — Private Browsing exec()s a
+        // QMessageBox, Clear Private Data and the Preferences pages
+        // exec() QDialogs.  What it closed is recorded so the checks
+        // can assert the right dialog actually opened.
+        int sawMessageBox = 0;
+        int sawClearData = 0;
+        int sawSettingsAtPage = -1;
+        QTimer dismisser;
+        QObject::connect(&dismisser, &QTimer::timeout, &application,
+                         [&]() {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (!modal)
+                return;
+            if (QMessageBox *box = qobject_cast<QMessageBox*>(modal)) {
+                ++sawMessageBox;
+                box->reject();
+            } else if (SettingsDialog *dialog =
+                       qobject_cast<SettingsDialog*>(modal)) {
+                sawSettingsAtPage = dialog->tabWidget->currentIndex();
+                dialog->reject();
+            } else if (QDialog *dialog = qobject_cast<QDialog*>(modal)) {
+                if (qobject_cast<ClearPrivateData*>(modal))
+                    ++sawClearData;
+                dialog->reject();
+            }
+        });
+        dismisser.start(30);
+
+        // 1. The menu-toggleable shortcut: find the action carrying
+        //    Ctrl+Shift+P and open the palette through it.
+        QAction *paletteAction = nullptr;
+        const QList<QAction*> windowActions = browserWindow->actions();
+        for (QAction *action : windowActions) {
+            if (action->shortcut()
+                == QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                                | Qt::Key_P))
+                paletteAction = action;
+        }
+        check(paletteAction != nullptr, "ctrl+shift+p menu action");
+        if (paletteAction)
+            paletteAction->trigger();
+        pump();
+        check(palette->isVisible() && palette->visibleCount() > 0,
+              "palette opens with items");
+
+        // 2. Fuzzy reachability + command execution: "new tab" must
+        //    find New Tab and running it must grow the strip.
+        palette->setQuery(QLatin1String("new tab"));
+        const int newTabRow = findRow(QLatin1String("New Tab"));
+        check(newTabRow >= 0, "'new tab' query finds New Tab");
+        const int tabsBefore = tabWidget->count();
+        if (newTabRow >= 0) {
+            palette->executeRow(newTabRow);
+            pump();
+        }
+        check(tabWidget->count() == tabsBefore + 1,
+              "New Tab command executes");
+
+        // 3. "private" reaches Private Browsing; executing it opens
+        //    the confirmation prompt (auto-rejected — the window must
+        //    stay non-private).
+        palette->openPalette();
+        palette->setQuery(QLatin1String("private"));
+        const int privateRow =
+            findRow(QLatin1String("Private Browsing"));
+        check(privateRow >= 0, "'private' query finds Private Browsing");
+        if (privateRow >= 0) {
+            palette->executeRow(privateRow);
+            pump();
+        }
+        check(sawMessageBox > 0
+                  && !BrowserApplication::isPrivate(),
+              "Private Browsing executes (prompt dismissed)");
+
+        // 4. "clear history" reaches Clear Private Data through the
+        //    keyword tail (the action's name never says 'history').
+        palette->openPalette();
+        palette->setQuery(QLatin1String("clear history"));
+        const int clearRow =
+            findRow(QLatin1String("Clear Private Data"));
+        check(clearRow >= 0,
+              "'clear history' query finds Clear Private Data");
+        if (clearRow >= 0) {
+            palette->executeRow(clearRow);
+            pump();
+        }
+        check(sawClearData > 0,
+              "Clear Private Data executes (dialog dismissed)");
+
+        // 5. Open tabs are items and execute as a tab switch.
+        tabWidget->setTabText(0, QLatin1String("smoke-alpha-tab"));
+        tabWidget->setTabText(1, QLatin1String("smoke-beta-tab"));
+        tabWidget->setCurrentIndex(0);
+        palette->openPalette();
+        palette->setQuery(QLatin1String("smoke-beta"));
+        const int tabRow = findRow(QLatin1String("smoke-beta-tab"));
+        check(tabRow >= 0, "open tab reachable by title");
+        if (tabRow >= 0) {
+            check(palette->itemCategory(tabRow)
+                      == QLatin1String("Tab"),
+                  "tab item category");
+            palette->executeRow(tabRow);
+            pump();
+        }
+        check(tabWidget->currentIndex() == 1, "tab switch executes");
+
+        // 6. Bookmarks are items; executing one navigates the tab.
+        BookmarksManager *bookmarks = BookmarksManager::instance();
+        BookmarkNode *smokeBookmark =
+            new BookmarkNode(BookmarkNode::Bookmark);
+        smokeBookmark->title = QLatin1String("palette-smoke-bookmark");
+        smokeBookmark->url = QLatin1String("http://127.0.0.1:9/palette");
+        bookmarks->addBookmark(bookmarks->menu(), smokeBookmark);
+        palette->openPalette();
+        palette->setQuery(QLatin1String("palette-smoke-book"));
+        const int bookmarkRow =
+            findRow(QLatin1String("palette-smoke-bookmark"));
+        check(bookmarkRow >= 0, "bookmark reachable by title");
+        if (bookmarkRow >= 0) {
+            palette->executeRow(bookmarkRow);
+            pump();
+        }
+        check(tabWidget->currentWebView()->url()
+                  == QUrl(QLatin1String("http://127.0.0.1:9/palette")),
+              "bookmark navigates current tab");
+        bookmarks->removeBookmark(smokeBookmark);
+
+        // 7. Settings sections deep-link: "privacy" opens the
+        //    Preferences dialog on the Privacy page.
+        palette->openPalette();
+        palette->setQuery(QLatin1String("privacy"));
+        const int privacyRow =
+            findRow(QLatin1String("Preferences: Privacy"));
+        check(privacyRow >= 0,
+              "'privacy' query finds Preferences: Privacy");
+        if (privacyRow >= 0) {
+            palette->executeRow(privacyRow);
+            pump();
+        }
+        check(sawSettingsAtPage == int(SettingsDialog::PrivacyPage),
+              "settings page deep-link executes");
+
+        // 8. Keyboard: Down moves the selection, Return executes the
+        //    current row, Escape dismisses.  Events go through
+        //    sendEvent so the line edit's installed filter sees them.
+        palette->openPalette();
+        palette->setQuery(QLatin1String("tab"));
+        pump();
+        QWidget *focus = QApplication::focusWidget();
+        const int rowBefore = palette->currentRow();
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QCoreApplication::sendEvent(focus, &down);
+        check(palette->currentRow() == rowBefore + 1,
+              "down-arrow navigates");
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QCoreApplication::sendEvent(focus, &esc);
+        pump();
+        check(!palette->isVisible(), "escape dismisses");
+
+        // 9. The MRU recorded the executions.
+        check(!CommandPalette::mruIds().isEmpty(),
+              "executions recorded in MRU");
+
+        qInfo() << "palette-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL")
+                << "failures:" << failures;
+        delete browserWindow;
+        return failures == 0 ? 0 : 1;
     }
 
     // Headless verification for SLEEP01: a real BrowserMainWindow

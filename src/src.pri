@@ -86,6 +86,7 @@ HEADERS += \
     $$PWD/browsertheme.h \
     $$PWD/clearbutton.h \
     $$PWD/clearprivatedata.h \
+    $$PWD/commandpalette.h \
     $$PWD/containermanager.h \
     $$PWD/devtoolswindow.h \
     $$PWD/downloadmanager.h \
@@ -138,6 +139,7 @@ SOURCES += \
     $$PWD/browsertheme.cpp \
     $$PWD/clearbutton.cpp \
     $$PWD/clearprivatedata.cpp \
+    $$PWD/commandpalette.cpp \
     $$PWD/containermanager.cpp \
     $$PWD/devtoolswindow.cpp \
     $$PWD/downloadmanager.cpp \

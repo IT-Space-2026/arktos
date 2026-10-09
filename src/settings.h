@@ -94,6 +94,11 @@ public:
     SettingsDialog(QWidget *parent = nullptr);
     void accept() override;
     void openAtPage(Page page);
+    // CMD01: display names for the sidebar pages, kept in enum order —
+    // the command palette deep-links to sections without constructing
+    // the dialog.  Must match settings.ui's pagesList order.
+    static int pageCount();
+    static QString pageTitle(Page page);
 
 protected:
     void showEvent(QShowEvent *event) override;
