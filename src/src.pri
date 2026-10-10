@@ -50,6 +50,7 @@ exists(../.git/HEAD) {
 #
 include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
+include(engine/engine.pri)            # ENG01 — interface + WebEngine adapter
 include(extensions/extensions.pri)    # EXT01 done
 include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
