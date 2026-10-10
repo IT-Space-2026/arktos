@@ -279,6 +279,10 @@ Accelerated downloads in Rust (DLACC03/DLACC06):
     Configuring with `qmake CONFIG+=rustdl` adds an optional accelerated download engine (src/rustdl, reqwest + std::thread behind a C ABI): HTTP/HTTPS downloads can run as parallel ranged GETs (4–16 connections, default 8) that merge atomically on completion, falling back to a single stream when the server does not accept ranges. Progress, speed, cancel and retry appear on the existing download card UI unchanged, and the built-in Chromium engine remains the default — the Rust engine is only used when selected in the download settings.
     Untrusted server input is handled in memory-safe Rust: Content-Disposition and suggested file names are sanitized against path traversal, control characters and overwrite (existing files dedup with a -N suffix), part files stage under a private app-data directory, and the finished file lands via an atomic rename with executable bits stripped. No-Rust builds behave exactly as before.
 
+Engine-adapter groundwork (ENG01/ENG04, in progress):
+    The browser shell is being decoupled from QtWebEngine behind an engine-neutral interface (src/engine): Engine::Page/Profile/Backend carry navigation, signals, zoom, find, script and request-policy calls, and src/engine/webenginebackend.* is the first backend implementing it over QWebEngineView/QWebEnginePage. Find-in-page, the status-bar load/memory indicators, and the per-tab load/title/icon/url signal wiring already go through the adapter, so a future backend (e.g. Servo) can implement the same boundary without touching chrome code.
+    Running `arora --engine-list` prints the active backend's id, display name and capability flags and exits — the diagnostic the interface tests and future engine selection build on.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.
