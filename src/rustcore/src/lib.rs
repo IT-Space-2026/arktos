@@ -42,7 +42,11 @@
 //!     (url-or-search classification incl. the QUrl::fromUserInput
 //!     heuristics) and the frecency-ranked history suggestions the
 //!     completer displays — the Qt side thin-shells both.
+//!   * autofill (RCORE05): the saved-form record store under the same
+//!     AEAD + Argon2id custody as credentials — sealed
+//!     autofill-store.dat, one unlock opens both.
 
+mod autofill;
 mod bidi;
 mod blocklist;
 mod bookmarks;
@@ -520,6 +524,94 @@ pub unsafe extern "C" fn rc_cred_reseal(from: *const u8, to: *const u8) -> RcSta
             msg: "bad to-key pointer".into(),
         })?;
         store::lock().cred_reseal(from, to)
+    })
+}
+
+// ---- autofill store (RCORE05) -------------------------------------------
+//
+// The saved-form records live in <data dir>/autofill-store.dat — a
+// sealed "ARSEC1" blob under the same custody key as credentials.dat,
+// so one unlock opens both and every passphrase/lock transition
+// covers it.  The legacy autofill.dat is a read-only import source:
+// the Qt adapter parses it with its own bounded reader and hands the
+// records over via rc_autofill_set_forms, then retires the file.
+
+/// Whether the Rust autofill store exists on disk — the Qt side's
+/// "does the legacy file still need importing" check.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_store_present() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        store::lock().autofill_store_present() as i32
+    }))
+    .unwrap_or(0)
+}
+
+/// JSON array of every stored form:
+/// [{"url","name","has_password":bool,"elements":[["k","v"],...]}]
+/// Free with rc_string_free(); NULL on error (locked store, corrupt
+/// file — rc_last_error_message says which).
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_forms() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match store::lock().autofill_json() {
+            Ok(j) => util::to_c_string(j),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Replaces the whole record set from the JSON array and persists it
+/// atomically; emits the "autofill" change topic when the set
+/// actually changed.  RC_INVALID_ARGUMENT on malformed JSON — the
+/// store keeps its previous contents then.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_set_forms(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let records = autofill::forms_from_json(data)?;
+        changed = store::lock().autofill_set(records)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("autofill");
+    }
+    st
+}
+
+/// Re-seals autofill-store.dat between explicit keys during a custody
+/// transition; no-op when the file does not exist.
+///
+/// # Safety
+/// Both pointers must read 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_reseal(
+    from: *const u8,
+    to: *const u8,
+) -> RcStatus {
+    status_of(|| {
+        let from = unsafe { util::key32(from) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad from-key pointer".into(),
+        })?;
+        let to = unsafe { util::key32(to) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad to-key pointer".into(),
+        })?;
+        store::lock().autofill_reseal(from, to)
     })
 }
 

@@ -62,6 +62,8 @@ pub struct Store {
     pub derived_key: Option<Key>,
     /// Lazily decrypted rc_cred_* map; dropped again by lock().
     pub creds: Option<CredMap>,
+    /// Lazily decrypted rc_autofill_* records; dropped with the keys.
+    pub autofill: Option<Vec<crate::autofill::FormRecord>>,
 }
 
 static STORE: Mutex<Store> = Mutex::new(Store {
@@ -70,6 +72,7 @@ static STORE: Mutex<Store> = Mutex::new(Store {
     file_key_loaded: false,
     derived_key: None,
     creds: None,
+    autofill: None,
 });
 
 /// Locks the shared store, surviving a poisoned mutex (a panicked FFI
@@ -94,6 +97,7 @@ impl Store {
             self.file_key_loaded = false;
             self.derived_key = None;
             self.creds = None;
+            self.autofill = None;
         }
         Ok(())
     }
@@ -264,12 +268,13 @@ impl Store {
         Ok(())
     }
 
-    /// Wipes every cached key and the decoded credential map.
+    /// Wipes every cached key and the decoded record caches.
     pub fn lock(&mut self) {
         self.derived_key = None;
         self.file_key = None;
         self.file_key_loaded = false;
         self.creds = None;
+        self.autofill = None;
     }
 
     /// Writes a fresh random securestore.key and caches it.

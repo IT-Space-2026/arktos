@@ -141,6 +141,8 @@ impl Store {
     /// external stores to re-seal (the Qt SecureStore shim instead
     /// drives kdf_create + explicit-key re-sealing stage by stage so
     /// its autofill.dat/QSettings consumers keep crash ordering).
+    /// Covers every Rust-owned custody file: credentials.dat and
+    /// autofill-store.dat.
     pub fn cred_change_passphrase(&mut self, pass: &[u8]) -> RcResult<()> {
         if !self.passphrase_enabled() {
             return fail(
@@ -154,6 +156,7 @@ impl Store {
         };
         self.kdf_create(pass)?;
         let new = Zeroizing::new(**self.derived_key.as_ref().unwrap());
-        self.cred_reseal(&old, &new)
+        self.cred_reseal(&old, &new)?;
+        self.autofill_reseal(&old, &new)
     }
 }

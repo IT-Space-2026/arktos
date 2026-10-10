@@ -29,7 +29,8 @@
 // Rust-side caller on any thread lands safely on the GUI thread.
 //
 // Topics so far: "credentials" (the rc_cred_* map changed),
-// "bookmarks" and "history" (the RCORE02 stores).
+// "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
+// RCORE05 record set).
 // Compiled only under CONFIG+=rustcore (ARORA_RUSTCORE).
 class RustCoreBridge : public QObject
 {

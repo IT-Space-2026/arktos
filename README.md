@@ -110,7 +110,12 @@ browsing profile:
   C++ routing in autotests/omnibox) and the frecency-ranked history
   suggestions the completion dropdown shows (rc_history_suggest
   queries history.db directly so only the visible rows cross the
-  FFI).
+  FFI). The autofill form store follows the credentials into the
+  same encrypted custody: saved field name/value records
+  (including typed passwords and card numbers) live in a dedicated
+  sealed autofill-store.dat under the shared unlock/passphrase
+  lifecycle, with a one-shot import of the old autofill.dat —
+  sealed or plaintext — on first run.
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.

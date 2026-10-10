@@ -257,11 +257,12 @@ QByteArray derivedKeyCopy()
     return key;
 }
 
-// The Rust-owned consumer (credentials.dat) re-seals through the same
-// hook the other consumers use.  Warn-and-continue matches the
-// unreadable-blob policy everywhere else.
-void resealRustCredentials(const QByteArray &oldKey,
-                           const QByteArray &newKey)
+// The Rust-owned consumers (credentials.dat, autofill-store.dat)
+// re-seal through the same hook the other consumers use.
+// Warn-and-continue matches the unreadable-blob policy everywhere
+// else.
+void resealRustStores(const QByteArray &oldKey,
+                      const QByteArray &newKey)
 {
     if (oldKey.size() != kKeySize || newKey.size() != kKeySize)
         return;
@@ -270,6 +271,12 @@ void resealRustCredentials(const QByteArray &oldKey,
         reinterpret_cast<const uint8_t *>(newKey.constData()));
     if (st != RC_OK && st != RC_NOT_FOUND)
         qWarning() << "SecureStore: credentials.dat does not open"
+                      " under the previous key; leaving it in place";
+    const RcStatus stAuto = rc_autofill_reseal(
+        reinterpret_cast<const uint8_t *>(oldKey.constData()),
+        reinterpret_cast<const uint8_t *>(newKey.constData()));
+    if (stAuto != RC_OK && stAuto != RC_NOT_FOUND)
+        qWarning() << "SecureStore: autofill-store.dat does not open"
                       " under the previous key; leaving it in place";
 }
 
@@ -770,7 +777,7 @@ bool SecureStore::enablePassphraseProtection(const QString &passphrase,
         wipeKeys(oldKey, newKey);
         return false;
     }
-    resealRustCredentials(oldKey, newKey);
+    resealRustStores(oldKey, newKey);
 
     rc_key_file_delete();
     wipeKeys(oldKey, newKey);
@@ -807,7 +814,7 @@ bool SecureStore::disablePassphraseProtection(QString *error)
 
     const bool resealed = resealConsumers(oldKey, newKey, error);
     if (resealed)
-        resealRustCredentials(oldKey, newKey);
+        resealRustStores(oldKey, newKey);
     if (!resealed) {
         wipeKeys(oldKey, newKey);
         return false;
@@ -858,7 +865,7 @@ bool SecureStore::changePassphrase(const QString &newPassphrase,
 
     const bool resealed = resealConsumers(oldKey, newKey, error);
     if (resealed)
-        resealRustCredentials(oldKey, newKey);
+        resealRustStores(oldKey, newKey);
     wipeKeys(oldKey, newKey);
     return resealed;
 }
@@ -1227,6 +1234,7 @@ void SecureStore::resetForTests()
     rc_kdf_file_delete();
     rc_key_file_delete();
     QFile::remove(storePath(RC_CREDENTIALS_FILE));
+    QFile::remove(storePath(RC_AUTOFILL_FILE));
 #else
     QFile::remove(storePath("securestore.kdf"));
     QFile::remove(storePath("securestore.key"));
