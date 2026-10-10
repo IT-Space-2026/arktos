@@ -32,3 +32,14 @@ rusqlite = { version = "=0.35.0", features = ["bundled"] }
 # ages (Qt computes daysTo on the date parts, not elapsed time).
 # Exact-pinned like the rest of the reviewed tree (SEC21).
 libc = "=0.2.190"
+# TLS probe (SEC22): a real client handshake + independent chain
+# evaluation as a second opinion beside the engine's verifier.
+# Exact-pinned like the rest of the reviewed tree.  `ring` is the
+# crypto provider — it keeps the build C-compiler-only (aws-lc-rs
+# would add a much heavier assembly/cmake build for no difference in
+# what the probe verifies).
+rustls = { version = "=0.23.45", default-features = false,
+           features = ["ring", "logging", "std", "tls12"] }
+rustls-native-certs = "=0.8.4"
+rustls-webpki = "=0.103.15"
+x509-parser = "=0.18.1"

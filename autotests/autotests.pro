@@ -49,6 +49,7 @@ SUBDIRS  = \
     sitepanel \
     tabbar \
     tabwidget \
+    tlsverify \
     toolbarsearch \
     tormanager \
     urlcleaner \

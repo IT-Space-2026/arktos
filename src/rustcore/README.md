@@ -90,6 +90,40 @@ Rust side never touches the network — fetching is entirely Qt-side and
 consent-gated like remote filter lists.  Without `CONFIG+=rustcore` the
 whole feature is absent and nothing is ever blocked.
 
+## Second-opinion TLS verification (SEC22)
+
+`rc_tls_check(host, port, flags)` performs a real blocking TLS
+handshake to the host (TLS 1.2/1.3, ALPN `http/1.1`, SNI = host,
+5 s connect / 5 s per-io / 15 s total) and evaluates the presented
+chain with rustls+webpki against the platform root store
+(rustls-native-certs) plus any `rc_tls_add_root` anchors — a second,
+independent verdict beside whatever the engine decided.  It answers
+a JSON verdict, never an FFI error for a reachable-but-bad chain:
+
+- `verified` — handshake done, chain validated.
+- `warning` — chain evaluated and FAILED; `error_class` is one of
+  `expired`, `not-yet-valid`, `bad-hostname`, `untrusted-root`,
+  `broken-chain`, `weak-signature`, `revoked`.
+- `unverified` — the chain was never evaluated: `network`
+  (dns/connect/timeout), `protocol` (TLS-level failure before the
+  chain), `root-store` (no usable anchors).  A network hiccup is not
+  a bad chain — the Qt side must never render it as one.
+- `refused` — the probe declined: `private-host` (loopback/private/
+  LAN/.onion unless `RC_TLS_F_ALLOW_LOCAL`), `invalid-host`,
+  `invalid-port`.
+
+The chain the verifier actually evaluated is captured inside the
+verify callback and summarized per cert (subject, issuer, validity
+window, signature-algorithm OID, SANs) — a rejected chain is exactly
+what the site panel needs to show.  Honest limits, spelled out in the
+verdict: no OCSP/CRL revocation fetch (`"revocation":"not-checked"`),
+and the probe is a *direct* connection — callers must not issue it
+for tor-mode pages or while an application proxy is set (bypassing
+SOCKS would de-anonymize the user), and private/loopback targets are
+refused outright (SSRF discipline, same rule as the interceptors).
+`data/testcerts/` holds the scratch-CA fixture set the unit tests
+probe; `gen_testcerts.py` regenerates it.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

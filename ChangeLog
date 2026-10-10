@@ -536,6 +536,10 @@ Omnibox routing and history ranking in Rust (OMNI01):
 Autofill profile store in Rust (RCORE05):
     When built with `qmake CONFIG+=rustcore`, saved form-fill data — the per-site field name/value records autofill captures on submit, including any password or card numbers a user typed — moves into the Rust core's encrypted custody: a dedicated autofill-store.dat sealed with the same AES-256-GCM framing and Argon2id master-passphrase lifecycle as the credential store (one unlock opens both, lock and passphrase changes reseal both). The AutoFillManager interface and the WebChannel fill scripts are unchanged; on first run the existing sealed or plaintext autofill.dat is imported once through the bounded legacy reader and retired, and a tampered or corrupt store fails closed instead of crashing. Card numbers and passwords never reach plaintext settings files, and no-Rust builds keep the previous Qt storage path entirely.
 
+Second-opinion TLS verification (SEC22):
+    When built with `qmake CONFIG+=rustcore`, committed https navigations kick off an independent certificate re-check on a worker thread: the Rust core performs a real TLS handshake to the site and evaluates the chain with rustls+webpki against the platform root store — the same class of check Chromium runs, sharing no code path with it. The site panel shows the result beside the security line: "TLS verified by Arora" on a clean verdict, or a "TLS WARNING: <reason>" line (expired, wrong host name, untrusted root, broken chain, weak signature) when the second opinion disagrees with what the engine accepted.
+    The check informs the panel only — it never blocks a page — and it is honest about its limits: a host that cannot be reached reports "not independently verified" rather than raising a false alarm, revocation (OCSP/CRL) is not consulted, and Tor windows, proxied sessions and private/LAN hosts are never probed at all since a direct handshake from the browser would bypass the user's configured route. Builds without the Rust core simply omit the indicator.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -83,6 +83,7 @@ private:
     QPointer<WebView> m_webView;
     QLabel *m_hostLabel;
     QLabel *m_securityLabel;
+    QLabel *m_tlsLabel;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
     QCheckBox *m_blockContent;

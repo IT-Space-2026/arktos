@@ -24,6 +24,7 @@
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
+#include "tlsverifier.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -31,6 +32,7 @@
 #include <qcombobox.h>
 #include <qlabel.h>
 #include <qlayout.h>
+#include <qpalette.h>
 #include <qpushbutton.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
@@ -66,6 +68,17 @@ SitePanel::SitePanel(QWidget *parent)
     m_securityLabel = plainLabel(QString(), this);
     m_securityLabel->setObjectName(QLatin1String("sitePanelSecurity"));
     layout->addWidget(m_securityLabel);
+
+    // SEC22: the second-opinion TLS chip — hidden until rustcore's
+    // probe reports on the current host.  Warning gets the palette's
+    // warning-role color (BrightText); every other verdict keeps the
+    // normal text color.
+    m_tlsLabel = plainLabel(QString(), this);
+    m_tlsLabel->setObjectName(QLatin1String("sitePanelTls"));
+    m_tlsLabel->setVisible(false);
+    layout->addWidget(m_tlsLabel);
+    connect(TlsVerifier::instance(), &TlsVerifier::statusChanged,
+            this, [this](const QString &) { refresh(); });
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
@@ -241,6 +254,69 @@ void SitePanel::refresh()
         m_securityLabel->setText(tr("Connection is not secure (HTTP)"));
     else
         m_securityLabel->setText(tr("Local content"));
+
+    // SEC22 chip: only https sites are probed.  The verdict is a
+    // second opinion — a mismatch surfaces the error class, a network
+    // failure just drops the chip back to "not verified", and
+    // non-webengine/tor/proxy/private pages simply hide it.
+    TlsVerifier::Status tls = TlsVerifier::Status::None;
+    quint16 tlsPort = 443;
+    if (scheme == QLatin1String("https") && hasSite) {
+        tlsPort = quint16(url.port(443));
+        tls = TlsVerifier::instance()->statusFor(site, tlsPort);
+    }
+    switch (tls) {
+    case TlsVerifier::Status::Verified: {
+        const QString version =
+            TlsVerifier::instance()->tlsVersion(site, tlsPort);
+        m_tlsLabel->setText(version.isEmpty()
+            ? tr("TLS verified by Arora")
+            : tr("TLS verified by Arora (%1)")
+                  .arg(version == QLatin1String("TLSv1_3")
+                           ? QStringLiteral("TLS 1.3")
+                       : version == QLatin1String("TLSv1_2")
+                           ? QStringLiteral("TLS 1.2") : version));
+        m_tlsLabel->setToolTip(
+            tr("The certificate chain was re-verified independently of "
+               "the web engine."));
+        m_tlsLabel->setPalette(palette());
+        m_tlsLabel->setVisible(true);
+        break;
+    }
+    case TlsVerifier::Status::Warning: {
+        const QString errorClass =
+            TlsVerifier::instance()->errorClass(site, tlsPort);
+        m_tlsLabel->setText(tr("TLS WARNING: %1")
+            .arg(errorClass.isEmpty() ? tr("unknown") : errorClass));
+        m_tlsLabel->setToolTip(
+            TlsVerifier::instance()->detail(site, tlsPort));
+        QPalette warning = palette();
+        warning.setColor(QPalette::WindowText,
+                         warning.color(QPalette::BrightText));
+        m_tlsLabel->setPalette(warning);
+        m_tlsLabel->setVisible(true);
+        break;
+    }
+    case TlsVerifier::Status::Pending:
+        m_tlsLabel->setText(tr("Verifying TLS…"));
+        m_tlsLabel->setToolTip(QString());
+        m_tlsLabel->setPalette(palette());
+        m_tlsLabel->setVisible(true);
+        break;
+    case TlsVerifier::Status::Unverified:
+        // Honest reporting: the chain was never evaluated — that is
+        // not a certificate problem and must not render like one.
+        m_tlsLabel->setText(tr("TLS not independently verified"));
+        m_tlsLabel->setToolTip(
+            TlsVerifier::instance()->detail(site, tlsPort));
+        m_tlsLabel->setPalette(palette());
+        m_tlsLabel->setVisible(true);
+        break;
+    case TlsVerifier::Status::Refused:
+    case TlsVerifier::Status::None:
+        m_tlsLabel->setVisible(false);
+        break;
+    }
 
     CookieJar *jar = siteCookieJar();
     m_cookieRule->setEnabled(hasSite && jar);
