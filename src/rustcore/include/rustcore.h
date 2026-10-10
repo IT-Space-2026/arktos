@@ -520,6 +520,28 @@ char *rc_classify_input(const char *inputUtf8,
 RcStatus rc_frecency_score(const char *jsonUtf8, int64_t *out);
 char *rc_history_suggest(const char *termUtf8, int64_t limit);
 
+/* --- command palette matching (CPAL01) --------------------------------
+ * The query -> ranked-items decision of the command palette.  The row
+ * registry stays Qt-side (palette rows are QActions, WebViews and
+ * bookmark handles) — the shell marshals each row's match text and
+ * stable id in and reads ordered indices back.
+ *
+ * rc_pal_score is the subsequence fuzzy scorer (the
+ * CommandPalette::fuzzyScore port, plus a camel-hump word-boundary
+ * bonus the lowered-haystack reference could not see): >= 0 matches,
+ * higher is better, -1 is no match or a bad pointer.
+ *
+ * rc_pal_match ranks a whole item set in one call:
+ *   request {"items":[{"match":"...","id":"..."},...],
+ *            "mru":["id",...]}       (the MRU id list, recent first)
+ *   -> JSON [{"index":n,"score":n},...]   matched rows in display
+ *      order — score descending, ties keep item order; an id found
+ *      at mru position k adds the legacy 60-k recency boost.
+ * NULL on a bad pointer or malformed request
+ * (rc_last_error_message); free the result with rc_string_free. */
+int64_t rc_pal_score(const char *queryUtf8, const char *candidateUtf8);
+char *rc_pal_match(const char *queryUtf8, const char *itemsJsonUtf8);
+
 /* --- second-opinion TLS verification (SEC22) -------------------------
  * rc_tls_check performs a REAL blocking TLS handshake to host:port
  * (TLS 1.2/1.3, ALPN "http/1.1", SNI=host, 5 s connect / 5 s per-io /

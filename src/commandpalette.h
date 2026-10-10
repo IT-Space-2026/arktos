@@ -65,8 +65,12 @@ public:
     void openTabSearch();
 
     // Subsequence score: >= 0 matches (higher is better), -1 no match.
-    // Public so tests can pin the ranking rules directly.
+    // Public so tests can pin the ranking rules directly.  Under
+    // ARORA_RUSTCORE fuzzyScore dispatches to rc_pal_score (CPAL01);
+    // fuzzyScoreCpp is the Qt reference implementation kept for
+    // no-rust builds, FFI-failure fallback and the parity test.
     static int fuzzyScore(const QString &query, const QString &candidate);
+    static int fuzzyScoreCpp(const QString &query, const QString &candidate);
 
     // Recently executed item ids, most recent first.
     static QStringList mruIds();

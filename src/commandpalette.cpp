@@ -43,6 +43,14 @@
 #include <qmenu.h>
 #include <qpainter.h>
 
+#ifdef ARORA_RUSTCORE
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <rustcore.h>
+#endif
+
 namespace {
 
 const int HintRole = Qt::UserRole + 1;
@@ -167,6 +175,18 @@ CommandPalette::CommandPalette(BrowserMainWindow *window)
 }
 
 int CommandPalette::fuzzyScore(const QString &query, const QString &candidate)
+{
+#ifdef ARORA_RUSTCORE
+    // CPAL01: the rustcore scorer owns the ranking rule; -1 is also
+    // the FFI's bad-pointer verdict.
+    return int(rc_pal_score(query.toUtf8().constData(),
+                            candidate.toUtf8().constData()));
+#else
+    return fuzzyScoreCpp(query, candidate);
+#endif
+}
+
+int CommandPalette::fuzzyScoreCpp(const QString &query, const QString &candidate)
 {
     const QString needle = query.toLower();
     const QString hay = candidate.toLower();
@@ -415,21 +435,68 @@ void CommandPalette::refilter()
     const QStringList mru = mruIds();
 
     QList<QPair<int, int> > scored;   // (item index, score)
-    scored.reserve(m_items.size());
-    for (int i = 0; i < m_items.size(); ++i) {
-        const Item &item = m_items.at(i);
-        int score = fuzzyScore(queryText, item.matchText);
-        if (score < 0)
-            continue;
-        const int mruIndex = mru.indexOf(item.id);
-        if (mruIndex >= 0)
-            score += 60 - mruIndex;
-        scored.append(QPair<int, int>(i, score));
+    bool ranked = false;
+#ifdef ARORA_RUSTCORE
+    {
+        // CPAL01: rc_pal_match ranks the whole set in the core —
+        // {match,id} rows marshal in, ordered indices come back.
+        // Any FFI/parse/index trouble re-runs the reference loop.
+        QJsonArray itemsJson;
+        for (const Item &item : m_items) {
+            QJsonObject entry;
+            entry.insert(QLatin1String("match"), item.matchText);
+            entry.insert(QLatin1String("id"), item.id);
+            itemsJson.append(entry);
+        }
+        QJsonObject request;
+        request.insert(QLatin1String("items"), itemsJson);
+        request.insert(QLatin1String("mru"),
+                       QJsonArray::fromStringList(mru));
+        const QByteArray requestJson =
+            QJsonDocument(request).toJson(QJsonDocument::Compact);
+        const QByteArray queryUtf8 = queryText.toUtf8();
+        char *out = rc_pal_match(queryUtf8.constData(),
+                                 requestJson.constData());
+        if (out) {
+            const QJsonArray rows =
+                QJsonDocument::fromJson(QByteArray(out)).array();
+            rc_string_free(out);
+            scored.reserve(rows.size());
+            ranked = true;
+            for (const QJsonValue &v : rows) {
+                const QJsonObject row = v.toObject();
+                const int index =
+                    row.value(QLatin1String("index")).toInt(-1);
+                if (index < 0 || index >= m_items.size()) {
+                    ranked = false;
+                    scored.clear();
+                    break;
+                }
+                scored.append(QPair<int, int>(
+                    index,
+                    row.value(QLatin1String("score")).toInt()));
+            }
+        }
     }
-    std::stable_sort(scored.begin(), scored.end(),
-                     [](const QPair<int, int> &a, const QPair<int, int> &b) {
-        return a.second > b.second;
-    });
+#endif
+    if (!ranked) {
+        scored.clear();
+        scored.reserve(m_items.size());
+        for (int i = 0; i < m_items.size(); ++i) {
+            const Item &item = m_items.at(i);
+            int score = fuzzyScoreCpp(queryText, item.matchText);
+            if (score < 0)
+                continue;
+            const int mruIndex = mru.indexOf(item.id);
+            if (mruIndex >= 0)
+                score += 60 - mruIndex;
+            scored.append(QPair<int, int>(i, score));
+        }
+        std::stable_sort(scored.begin(), scored.end(),
+                         [](const QPair<int, int> &a, const QPair<int, int> &b) {
+            return a.second > b.second;
+        });
+    }
 
     m_list->clear();
     const int cap = 100;

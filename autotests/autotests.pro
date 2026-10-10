@@ -38,6 +38,7 @@ SUBDIRS  = \
     opensearchmanager \
     opensearchreader \
     opensearchwriter \
+    palette \
     popupblocker \
     privatebrowsing \
     privacy \
