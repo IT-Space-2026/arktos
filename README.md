@@ -413,7 +413,10 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 - `./arora --*-smoke` — a family of headless harnesses:
   `--adblock-smoke`, `--adblock-rust-smoke`, `--telemetry-smoke`,
   `--anon-smoke`, `--badssl-smoke`, `--browseraudit-smoke`,
-  `--session-smoke`, `--perf-smoke`, `--sorry-smoke`, and more
+  `--session-smoke`, `--perf-smoke`, `--sorry-smoke`, and more.
+  Every smoke (plus `--quit-after-load`) runs against a throwaway
+  per-run config/data store, so test writes never touch the real
+  profile — even when a run is killed mid-flight
 - `./arora --sandbox-smoke` — end-to-end sandbox verification: wraps a
   probe child in bwrap, asserts the denylist hides files and
   directories, writes pass through, the engine runs inside the wrap,

@@ -1898,9 +1898,7 @@ JSON.stringify({
 )JS";
 
 static int xsLeakSmoke(BrowserApplication &application, WebView *view,
-                       bool permissive,
-                       const QVariant &savedPopupBlocking,
-                       const QVariant &savedBlockPings)
+                       bool permissive)
 {
     const QString mode = permissive ? QStringLiteral("open")
                                     : QStringLiteral("defaults");
@@ -1922,33 +1920,15 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     capture.setSourceCode(QString::fromUtf8(kXsLeakCaptureJs));
     view->page()->scripts().insert(capture);
 
-    // Restore the caller's real settings on the way out — the
-    // permissive run pinned them on the live store before the
-    // BrowserApplication constructor (QSettings ignores the test-mode
-    // paths).
+    // The permissive run's pinned keys die with the per-run settings
+    // store — nothing to restore on the way out.
     auto done = std::make_shared<bool>(false);
-    const auto finish = [&application, done, permissive,
-                         &savedPopupBlocking, &savedBlockPings]
+    const auto finish = [&application, done]
                         (int rc, const QString &line) {
         if (*done)
             return;
         *done = true;
         qInfo().noquote() << "xsleak-smoke:" << line;
-        if (permissive) {
-            QSettings settings;
-            if (savedPopupBlocking.isValid())
-                settings.setValue(
-                    QLatin1String("websettings/blockPopupWindows"),
-                    savedPopupBlocking);
-            else
-                settings.remove(
-                    QLatin1String("websettings/blockPopupWindows"));
-            if (savedBlockPings.isValid())
-                settings.setValue(QLatin1String("privacy/blockPings"),
-                                  savedBlockPings);
-            else
-                settings.remove(QLatin1String("privacy/blockPings"));
-        }
         application.exit(rc);
     };
 
@@ -2149,104 +2129,6 @@ static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
     return application.exec();
 }
 
-// SEC16: the adblock smokes below inject probe filters into the shared
-// test-mode custom subscription and AdBlockManager's AutoSaver
-// persists whatever the subscription still holds when the process
-// exits.  A run that fails to clean up leaves its probes behind for
-// every later run — a leftover "##body" element-hide rule restyled
-// every page the browseraudit harness loaded.  Drop leftovers from
-// earlier runs before snapshotting.
-static const char *const kSmokeFilters[] = {
-    "||adblock-smoke.invalid^",
-    ".invalid^",
-    "@@||allowed-smoke.invalid^",
-    "##body",
-    "||list-smoke.invalid^",
-    "||ads.example.com^",
-    "||banner.example^$script",
-    "@@||banner.example^$script,domain=trusted.example",
-    "||tracker.example^$third-party",
-    "||cdn.example/lib.js$~third-party",
-    "||redir.example/vast.xml$redirect=noop-vast-4.0",
-    "||param.example^$removeparam=utm_source",
-    "smoke.example##.ad-banner",
-    "*$script,redirect-rule=noopjs",
-    "qwebchannel.js$script",
-    "arora.svg$image",
-};
-
-static void purgeSmokeFilters(AdBlockSubscription *custom)
-{
-    const QList<AdBlockRule> rules = custom->allRules();
-    for (int i = rules.count() - 1; i >= 0; --i) {
-        const QString filter = rules.at(i).filter();
-        for (const char *smokeFilter : kSmokeFilters) {
-            if (filter == QLatin1String(smokeFilter)) {
-                custom->removeRule(i);
-                break;
-            }
-        }
-    }
-}
-
-// Snapshots every subscription's rules and enabled flag plus the
-// subscription list itself, and restores them from a post-routine:
-// those run inside ~QCoreApplication, before ~QObject tears down the
-// children (NetworkAccessManager -> AdBlockManager) whose destructor
-// performs the final saveIfNeccessary — so a smoke's mutations never
-// reach disk on either the exit() or the early-return path.
-struct AdBlockSmokeState {
-    AdBlockSubscription *subscription;
-    QList<AdBlockRule> rules;
-    bool enabled;
-};
-static QList<AdBlockSmokeState> *s_adBlockSmokeSaved = nullptr;
-// ADB06: the engine pick is a QSettings key, not a subscription —
-// saved/restored alongside so a smoke's engine switch never leaks.
-static int s_adBlockSmokeEngine = -1;
-
-static void restoreAdBlockState()
-{
-    if (!s_adBlockSmokeSaved)
-        return;
-    AdBlockManager *manager = AdBlockManager::instance();
-    for (AdBlockSubscription *subscription : manager->subscriptions()) {
-        bool savedBefore = false;
-        for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
-            if (state.subscription == subscription) {
-                savedBefore = true;
-                break;
-            }
-        }
-        if (!savedBefore)
-            manager->removeSubscription(subscription);
-    }
-    for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
-        state.subscription->setEnabled(state.enabled);
-        state.subscription->setRules(state.rules);
-    }
-    delete s_adBlockSmokeSaved;
-    s_adBlockSmokeSaved = nullptr;
-    if (s_adBlockSmokeEngine >= 0) {
-        manager->setEngine(AdBlockManager::Engine(s_adBlockSmokeEngine));
-        s_adBlockSmokeEngine = -1;
-    }
-}
-
-static void restoreAdBlockStateOnExit()
-{
-    if (s_adBlockSmokeSaved)
-        return;
-    AdBlockManager *manager = AdBlockManager::instance();
-    s_adBlockSmokeSaved = new QList<AdBlockSmokeState>;
-    for (AdBlockSubscription *subscription : manager->subscriptions())
-        s_adBlockSmokeSaved->append({subscription,
-                                     subscription->allRules(),
-                                     subscription->isEnabled()});
-    s_adBlockSmokeEngine = int(manager->storedEngine());
-    qAddPostRoutine(&restoreAdBlockState);
-}
-
 // START01: the qrc start page must always finish loading AND get a
 // working channel — the regression net for both reported suspects:
 // a stalled qrc subresource in the interceptor path (STALL01's
@@ -2433,8 +2315,6 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
     AdBlockSubscription *custom = manager->customRules();
-    purgeSmokeFilters(custom);
-    restoreAdBlockStateOnExit();
     if (!custom->isEnabled())
         custom->setEnabled(true);
     custom->addRule(AdBlockRule(QLatin1String("*$script,redirect-rule=noopjs")));
@@ -2981,11 +2861,6 @@ int main(int argc, char **argv)
     bool xsleakOpen = false;
     bool parallelDownloadSmoke = false;
     bool parallelDownloadOffSmoke = false;
-    QVariant savedDohMode, savedDohServer, savedTlsStrict;
-    QVariant savedWebrtcProtection;
-    QVariant savedHttpsFirst, savedHttpsOnly, savedHttpExceptions;
-    QVariant savedPopupBlocking, savedBlockPings;
-    QVariant savedParallelSegments;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -2996,8 +2871,15 @@ int main(int argc, char **argv)
             smokeRun = true;
         // Modifier for --xsleak-smoke's attribution run; on its own it
         // still takes that path, so it is a smoke run too.
-        if (arg == "--xsleak-open")
+        if (arg == "--xsleak-open") {
             xsleakOpen = true;
+            smokeRun = true;
+        }
+        // Test hooks that don't carry the -smoke suffix — both run the
+        // app's write paths, so they isolate like the smokes.
+        if (arg == "--quit-after-load"
+                || arg == "--fingerprint-inject-seed")
+            smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
         if (arg == "--telemetry-browse-smoke")
@@ -3049,13 +2931,80 @@ int main(int argc, char **argv)
             qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
         }
     }
-    if (smokeRun)
-        QStandardPaths::setTestModeEnabled(true);
-
     // QSettings resolution needs the application identity; the
     // BrowserApplication constructor sets the same values again.
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
+
+    // SMOKE01: a smoke run must never write to the user's real
+    // config — QSettings ignores QStandardPaths' test mode, so the
+    // pinned fixtures below used to land in the live ~/.config/Arora/
+    // Arora.conf and a mid-run kill left them dirty (the url-bar
+    // search-fallback flip the user hit twice).  Redirect the XDG
+    // roots into a throwaway dir before the first QSettings is
+    // constructed: every QSettings AND QStandardPaths write then
+    // lands in the per-run store — including in child processes,
+    // which inherit the environment — and a kill -9 leaks nothing
+    // but the temp dir itself.
+    //
+    // ARORA_SMOKE_STORE marks the store root for spawned children:
+    // a smoke that re-execs itself (fingerprint-smoke, telemetry's
+    // prefetch probe, the sandbox wraps) needs the child to see the
+    // parent's seeded settings, so the child REUSES the inherited
+    // root instead of minting its own — only the creator's
+    // QTemporaryDir auto-removes it.
+    std::unique_ptr<QTemporaryDir> smokeTempDir;
+    if (smokeRun) {
+        QStandardPaths::setTestModeEnabled(true);
+        const QByteArray inheritedEnv = qgetenv("ARORA_SMOKE_STORE");
+        QString inherited = QFile::decodeName(inheritedEnv);
+        while (inherited.endsWith(QLatin1Char('/')))
+            inherited.chop(1);
+        QString storeRoot;
+        if (!inherited.isEmpty() && QDir(inherited).exists()) {
+            storeRoot = inherited;
+        } else {
+            smokeTempDir.reset(new QTemporaryDir(
+                QDir::temp().filePath(
+                    QStringLiteral("arora-smoke-XXXXXX"))));
+            if (smokeTempDir->isValid()) {
+                storeRoot = smokeTempDir->path();
+                qputenv("ARORA_SMOKE_STORE",
+                        QFile::encodeName(storeRoot));
+                qputenv("XDG_CONFIG_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("config"))));
+                qputenv("XDG_DATA_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("data"))));
+                qputenv("XDG_CACHE_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("cache"))));
+            }
+        }
+        if (!storeRoot.isEmpty()) {
+            // QSettings latches the XDG config dir on its FIRST
+            // construction in this process — the env redirect above
+            // only reaches children and QStandardPaths.  setPath is
+            // the unconditional in-process override; both formats,
+            // so explicit-Ini callers land in the store too.
+            const QString configDir =
+                storeRoot + QLatin1String("/config");
+            QSettings::setPath(QSettings::NativeFormat,
+                               QSettings::UserScope, configDir);
+            QSettings::setPath(QSettings::IniFormat,
+                               QSettings::UserScope, configDir);
+        }
+        // GUARD: the resolved settings file must live inside the
+        // active store root — a run that would write to the real
+        // config fails loudly before a single key lands.
+        const QString resolvedConfig = QSettings().fileName();
+        if (storeRoot.isEmpty()
+                || !resolvedConfig.startsWith(
+                    storeRoot + QLatin1Char('/'))) {
+            qWarning() << "smoke-run settings isolation FAILED —"
+                          "QSettings resolves outside the smoke store:"
+                       << resolvedConfig;
+            return 2;
+        }
+    }
 
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
@@ -3065,11 +3014,6 @@ int main(int argc, char **argv)
     if (dohSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        // Remember the real values — the smoke runs against the live
-        // settings store (QSettings does not follow QStandardPaths'
-        // test mode), so finish() restores them on the way out.
-        savedDohMode = settings.value(QLatin1String("secureDnsMode"));
-        savedDohServer = settings.value(QLatin1String("secureDnsServer"));
         settings.setValue(QLatin1String("secureDnsMode"), 3);
         settings.setValue(QLatin1String("secureDnsServer"),
                           QLatin1String("https://127.0.0.1:1/dns-query"));
@@ -3078,14 +3022,12 @@ int main(int argc, char **argv)
 
     // TLS01: the ClientHello smokes pin privacy/tlsStrictCiphers
     // BEFORE applyChromiumFlags reads it, so each run exercises the
-    // setting deterministically regardless of the real store —
-    // --tls-smoke forces it on, --tls-off-smoke forces it off for the
-    // differential control.  The smoke's finish() restores the real
-    // value on the way out (QSettings ignores the test-mode paths).
+    // setting deterministically — --tls-smoke forces it on,
+    // --tls-off-smoke forces it off for the differential control.
+    // The pin lands in the per-run settings store.
     if (tlsSmoke || tlsOffSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedTlsStrict = settings.value(QLatin1String("tlsStrictCiphers"));
         settings.setValue(QLatin1String("tlsStrictCiphers"), tlsSmoke);
         settings.endGroup();
     }
@@ -3095,13 +3037,10 @@ int main(int argc, char **argv)
     // exercises the armed policy; --webrtc-off-smoke forces it off for
     // the differential control (unprotected ICE gathering must still
     // produce candidates, else a "no leak" verdict proves nothing).
-    // The smoke's finish() restores the real value on the way out —
-    // QSettings ignores the test-mode paths.
+    // The pin lands in the per-run settings store.
     if (webrtcSmoke || webrtcOffSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedWebrtcProtection =
-            settings.value(QLatin1String("webrtcIpProtection"));
         settings.setValue(QLatin1String("webrtcIpProtection"),
                           webrtcSmoke);
         settings.endGroup();
@@ -3112,7 +3051,7 @@ int main(int argc, char **argv)
     // list) BEFORE applyChromiumFlags/applySettings read them, then
     // points the engine at the answering proxy so a request that
     // should have been refused is observable rather than merely
-    // failed.  finish() restores the real values on the way out.
+    // failed.  The pins land in the per-run settings store.
     quint16 httpOnlyProxyPort = 0;
 #if defined(Q_OS_UNIX)
     if (httpOnlySmoke)
@@ -3121,10 +3060,6 @@ int main(int argc, char **argv)
     if (httpOnlySmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedHttpsFirst = settings.value(QLatin1String("httpsFirst"));
-        savedHttpsOnly = settings.value(QLatin1String("httpsOnly"));
-        savedHttpExceptions =
-            settings.value(QLatin1String("httpsOnlyExceptions"));
         settings.setValue(QLatin1String("httpsFirst"), true);
         settings.setValue(QLatin1String("httpsOnly"), true);
         settings.remove(QLatin1String("httpsOnlyExceptions"));
@@ -3154,7 +3089,6 @@ int main(int argc, char **argv)
     // depend on the operator's settings (ARORA_TELEMETRY_PREFETCH=1
     // arms prefetch instead — the differential proves the detector).
     quint16 telemetryProxyPort = 0;
-    QVariant savedDnsPrefetch, savedSecureDnsMode, savedProxyEnabled;
 #if defined(Q_OS_UNIX)
     s_telemetryForward = telemetryBrowseSmoke;
     if (telemetrySmoke || telemetryBrowseSmoke)
@@ -3162,16 +3096,11 @@ int main(int argc, char **argv)
     if (telemetryBrowseSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedDnsPrefetch = settings.value(QLatin1String("dnsPrefetch"));
-        savedSecureDnsMode =
-            settings.value(QLatin1String("secureDnsMode"));
         settings.setValue(QLatin1String("dnsPrefetch"),
                           qEnvironmentVariableIntValue(
                               "ARORA_TELEMETRY_PREFETCH") == 1);
         settings.setValue(QLatin1String("secureDnsMode"), 0);
         settings.endGroup();
-        savedProxyEnabled =
-            settings.value(QLatin1String("proxy/enabled"));
     }
 #endif
     if (telemetryProxyPort != 0) {
@@ -3196,13 +3125,9 @@ int main(int argc, char **argv)
     // dead-end suite vectors — the popup blocker (window.WW orchestration)
     // and the ping/CSP-report block (the CSPDirective verdict channel) —
     // BEFORE the browsing profile and its interceptor snapshot exist.
-    // xsLeakSmoke's finish() restores the real values on the way out.
+    // The pins land in the per-run settings store.
     if (xsleakOpen) {
         QSettings settings;
-        savedPopupBlocking = settings.value(
-            QLatin1String("websettings/blockPopupWindows"));
-        savedBlockPings = settings.value(
-            QLatin1String("privacy/blockPings"));
         settings.setValue(QLatin1String("websettings/blockPopupWindows"),
                           false);
         settings.setValue(QLatin1String("privacy/blockPings"), false);
@@ -3225,13 +3150,10 @@ int main(int argc, char **argv)
     // downloadmanager/parallelSegments BEFORE applyChromiumFlags
     // reads it — the ParallelDownloading feature switch latches with
     // the engine flags, so each run deterministically exercises the
-    // armed (or, for the -off control, disarmed) configuration.  The
-    // smoke's finish() restores the real value on the way out —
-    // QSettings ignores the test-mode paths.
+    // armed (or, for the -off control, disarmed) configuration.
+    // The pin lands in the per-run settings store.
     if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
         QSettings settings;
-        savedParallelSegments = settings.value(
-            QLatin1String("downloadmanager/parallelSegments"));
         settings.setValue(
             QLatin1String("downloadmanager/parallelSegments"),
             parallelDownloadSmoke);
@@ -3438,10 +3360,6 @@ int main(int argc, char **argv)
         };
 
         QSettings settings;
-        const QVariant savedEngine =
-            settings.value(QLatin1String("openSearch/engine"));
-        const QVariant savedFallback =
-            settings.value(QLatin1String("urlloading/searchEngineFallback"));
 
         // Phase 1 — SRCH07(b): a stale saved engine name must not
         // degrade to a bogus http://<term> navigation.  The seed has
@@ -3469,15 +3387,10 @@ int main(int argc, char **argv)
                        "(manager already loaded)";
         }
 
-        // Restore the saved engine choice (compiled default when none).
-        if (savedEngine.isValid())
-            settings.setValue(QLatin1String("openSearch/engine"), savedEngine);
-        else
-            settings.remove(QLatin1String("openSearch/engine"));
-        manager->setCurrentEngineName(
-            savedEngine.isValid() && manager->engineExists(savedEngine.toString())
-                ? savedEngine.toString()
-                : QLatin1String("DuckDuckGo"));
+        // Clear the stale-name seed back to the fresh-store state so
+        // the routing checks below run on the compiled default.
+        settings.remove(QLatin1String("openSearch/engine"));
+        manager->setCurrentEngineName(QLatin1String("DuckDuckGo"));
 
         // Phase 2 — routing.  Whatever engine is configured supplies
         // the expected search url.
@@ -3550,11 +3463,7 @@ int main(int argc, char **argv)
               isHttp(reenabled)
                   && reenabled.host() != QLatin1String("hup"),
               reenabled);
-        if (savedFallback.isValid())
-            settings.setValue(QLatin1String("urlloading/searchEngineFallback"),
-                              savedFallback);
-        else
-            settings.remove(QLatin1String("urlloading/searchEngineFallback"));
+        settings.remove(QLatin1String("urlloading/searchEngineFallback"));
 
         qInfo() << "search-guess-smoke:" << (ok ? "PASS" : "FAIL");
         return ok ? 0 : 1;
@@ -3700,8 +3609,7 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--xsleak-smoke"))
             || args.contains(QLatin1String("--xsleak-open")))
         return xsLeakSmoke(application, view,
-            args.contains(QLatin1String("--xsleak-open")),
-            savedPopupBlocking, savedBlockPings);
+            args.contains(QLatin1String("--xsleak-open")));
 
     // DEVT03: engine-neutral devtools channel end-to-end.
     if (args.contains(QLatin1String("--bidi-smoke")))
@@ -3865,19 +3773,12 @@ int main(int argc, char **argv)
     if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
         QTcpServer *server = new QTcpServer(&application);
         auto done = std::make_shared<bool>(false);
-        const auto finish = [&application, done, &savedParallelSegments]
+        const auto finish = [&application, done]
                             (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "parallel-download-smoke:" << line;
-            if (savedParallelSegments.isValid())
-                QSettings().setValue(
-                    QLatin1String("downloadmanager/parallelSegments"),
-                    savedParallelSegments);
-            else
-                QSettings().remove(
-                    QLatin1String("downloadmanager/parallelSegments"));
             application.exit(rc);
         };
         if (!server->listen(QHostAddress::LocalHost)) {
@@ -4207,10 +4108,9 @@ int main(int argc, char **argv)
     // its Set-Cookie must be rejected as third-party while the
     // first-party Set-Cookie lands.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--privacy-smoke"))) {
-        // Hermeticity: the user's real subscription lists match the
+        // Hermeticity: downloaded subscription lists could match the
         // fixture paths (EasyList blocks a bare "/img" request) —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         QTcpServer *server = new QTcpServer(&application);
@@ -4330,10 +4230,9 @@ int main(int argc, char **argv)
     // Never, applied mid-run through the same QSettings +
     // loadSettings() path the settings dialog uses.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--referer-smoke"))) {
-        // Hermeticity: the user's real subscription lists match the
-        // fixture paths (EasyList blocks bare "/img" requests) —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // Hermeticity: downloaded subscription lists could match the
+        // fixture paths (EasyList blocks a bare "/img" request) —
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         QTcpServer *server = new QTcpServer(&application);
@@ -4443,18 +4342,7 @@ int main(int argc, char **argv)
         });
 
         // Phase 1 pins the Trimmed level — the smoke grades the
-        // recommended policy, whatever the user profile had stored.
-        const QVariant savedRefererPolicy =
-            QSettings().value(QLatin1String("privacy/refererPolicy"));
-        auto restorePolicy = [savedRefererPolicy]() {
-            QSettings settings;
-            if (savedRefererPolicy.isValid())
-                settings.setValue(QLatin1String("privacy/refererPolicy"),
-                                  savedRefererPolicy);
-            else
-                settings.remove(QLatin1String("privacy/refererPolicy"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
+        // recommended policy.  The pin lands in the per-run store.
         QSettings().setValue(QLatin1String("privacy/refererPolicy"),
                              int(PrivacyRequestInterceptor::RefererTrimmed));
         PrivacyRequestInterceptor::loadSettings();
@@ -4491,7 +4379,7 @@ int main(int argc, char **argv)
         settle->setInterval(800);
         QObject::connect(settle, &QTimer::timeout, &application,
                          [&application, view, steps, stepIndex, phase,
-                          phase2Step, observed, h1, h2, restorePolicy]() {
+                          phase2Step, observed, h1, h2]() {
             const int i = ++*stepIndex;
             if (*phase == 0 && i >= steps.size()) {
                 // Grade phase 1 (Trimmed) once the matrix completed.
@@ -4548,7 +4436,6 @@ int main(int argc, char **argv)
                 qInfo() << "referer-smoke: phase-1 trimmed"
                         << (failures.isEmpty() ? "PASS" : "FAIL");
                 if (!failures.isEmpty()) {
-                    restorePolicy();
                     application.exit(1);
                     return;
                 }
@@ -4599,7 +4486,6 @@ int main(int argc, char **argv)
                     }
                 }
                 qInfo() << "referer-smoke:" << (pass ? "PASS" : "FAIL");
-                restorePolicy();
                 application.exit(pass ? 0 : 1);
                 return;
             }
@@ -4620,9 +4506,8 @@ int main(int argc, char **argv)
                          [settle](bool ok) { if (ok) settle->start(); });
         settle->start();  // first tick runs step 0
         QTimer::singleShot(90000, &application,
-                           [&application, restorePolicy]() {
+                           [&application]() {
             qInfo() << "referer-smoke: FAIL (timeout)";
-            restorePolicy();
             application.exit(1);
         });
     }
@@ -4635,25 +4520,13 @@ int main(int argc, char **argv)
     // server.  Phase 2 turns the toggle off through the same
     // QSettings + applySettings path the dialog uses — a control that
     // must observe all three uploads, else a clean phase 1 was
-    // vacuous.  The real setting is restored on exit.  Exits 0 on PASS.
+    // vacuous.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--ping-smoke"))) {
         // The user's subscription lists could match fixture paths —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
 
-        const QVariant savedBlockPings =
-            QSettings().value(QLatin1String("privacy/blockPings"));
-        auto restorePings = [savedBlockPings]() {
-            QSettings settings;
-            if (savedBlockPings.isValid())
-                settings.setValue(QLatin1String("privacy/blockPings"),
-                                  savedBlockPings);
-            else
-                settings.remove(QLatin1String("privacy/blockPings"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
         auto armPings = [](bool on) {
             QSettings().setValue(QLatin1String("privacy/blockPings"), on);
             PrivacyRequestInterceptor::loadSettings();
@@ -4667,7 +4540,6 @@ int main(int argc, char **argv)
         QTcpServer *server = new QTcpServer(&application);
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "ping-smoke: FAIL (listen)" << server->errorString();
-            restorePings();
             return 1;
         }
         const quint16 port = server->serverPort();
@@ -4759,8 +4631,7 @@ int main(int argc, char **argv)
         });
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, hits, state, jsFired,
-                          settleTicks, ticks, armPings, restorePings,
-                          port]() {
+                          settleTicks, ticks, armPings, port]() {
             const bool beacon = hits->contains(QLatin1String("/beacon"));
             const bool aping = hits->contains(QLatin1String("/aping"));
             const bool csp = hits->contains(QLatin1String("/csp"));
@@ -4777,7 +4648,6 @@ int main(int argc, char **argv)
                             << "state:" << *state
                             << "beacon:" << beacon << "aping:" << aping
                             << "csp:" << csp << "report:" << report;
-                    restorePings();
                     application.exit(1);
                     return;
                 }
@@ -4797,7 +4667,6 @@ int main(int argc, char **argv)
                             << "csp:" << csp
                             << (nav ? "PASS" : "FAIL");
                     if (!nav) {
-                        restorePings();
                         application.exit(1);
                         return;
                     }
@@ -4838,7 +4707,6 @@ int main(int argc, char **argv)
             if (beacon && aping && csp) {
                 qInfo() << "ping-smoke: PASS (control delivered"
                         << "beacon+aping+csp)";
-                restorePings();
                 application.exit(0);
                 return;
             }
@@ -4846,7 +4714,6 @@ int main(int argc, char **argv)
                 qInfo() << "ping-smoke: FAIL (control missing)"
                         << "beacon:" << beacon << "aping:" << aping
                         << "csp:" << csp << "nav:" << nav;
-                restorePings();
                 application.exit(1);
             }
         });
@@ -4855,9 +4722,8 @@ int main(int argc, char **argv)
         view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
                                .arg(port)));
         QTimer::singleShot(40000, &application,
-                           [&application, restorePings]() {
+                           [&application]() {
             qInfo() << "ping-smoke: FAIL (timeout)";
-            restorePings();
             application.exit(1);
         });
     }
@@ -4873,30 +4739,11 @@ int main(int argc, char **argv)
     //             (proves the toggle really gates, not the fixture),
     //             the prefetch still must not
     //   phase 3 — both off: prefetch arrives too (control)
-    // The real settings are restored on exit.  Exits 0 on PASS.
+    // Exits 0 on PASS.
     if (args.contains(QLatin1String("--resourceblock-smoke"))) {
-        restoreAdBlockStateOnExit();
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
 
-        const QVariant savedFonts =
-            QSettings().value(QLatin1String("privacy/blockRemoteFonts"));
-        const QVariant savedPrefetch =
-            QSettings().value(QLatin1String("privacy/blockPrefetch"));
-        auto restoreToggles = [savedFonts, savedPrefetch]() {
-            QSettings settings;
-            if (savedFonts.isValid())
-                settings.setValue(QLatin1String("privacy/blockRemoteFonts"),
-                                  savedFonts);
-            else
-                settings.remove(QLatin1String("privacy/blockRemoteFonts"));
-            if (savedPrefetch.isValid())
-                settings.setValue(QLatin1String("privacy/blockPrefetch"),
-                                  savedPrefetch);
-            else
-                settings.remove(QLatin1String("privacy/blockPrefetch"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
         auto armToggles = [](bool fonts, bool prefetch) {
             QSettings settings;
             settings.setValue(QLatin1String("privacy/blockRemoteFonts"), fonts);
@@ -4908,7 +4755,6 @@ int main(int argc, char **argv)
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "resourceblock-smoke: FAIL (listen)"
                     << server->errorString();
-            restoreToggles();
             return 1;
         }
         const quint16 port = server->serverPort();
@@ -4961,16 +4807,15 @@ int main(int argc, char **argv)
                     "fetch('/probe');"));
             }
         });
-        auto fail = [&application, restoreToggles](const QString &why) {
+        auto fail = [&application](const QString &why) {
             qInfo() << "resourceblock-smoke: FAIL" << why;
-            restoreToggles();
             application.exit(1);
         };
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, hits, state, jsFired,
                           settleTicks, ticks, armToggles, fail,
-                          restoreToggles, port]() {
+                          port]() {
             const bool font = hits->contains(QLatin1String("/font.woff2"));
             const bool prefetchLink =
                 hits->contains(QLatin1String("/prefetch-target"));
@@ -5044,7 +4889,6 @@ int main(int argc, char **argv)
                 if (nav && probe && prefetch) {
                     qInfo() << "resourceblock-smoke: PASS"
                             << "(control delivered font+prefetch)";
-                    restoreToggles();
                     application.exit(0);
                     return;
                 }
@@ -5084,26 +4928,7 @@ int main(int argc, char **argv)
     //   6 toggle off — privacy/httpsOnly=false restores plain-http
     //     loading for a fresh host
     if (args.contains(QLatin1String("--httpsonly-smoke"))) {
-        const auto restoreHttpOnly =
-            [savedHttpsFirst, savedHttpsOnly, savedHttpExceptions]() {
-            QSettings settings;
-            settings.beginGroup(QLatin1String("privacy"));
-            const auto restore = [&settings](const QString &key,
-                                             const QVariant &saved) {
-                if (saved.isValid())
-                    settings.setValue(key, saved);
-                else
-                    settings.remove(key);
-            };
-            restore(QLatin1String("httpsFirst"), savedHttpsFirst);
-            restore(QLatin1String("httpsOnly"), savedHttpsOnly);
-            restore(QLatin1String("httpsOnlyExceptions"),
-                    savedHttpExceptions);
-            settings.endGroup();
-            PrivacyRequestInterceptor::loadSettings();
-        };
-        const auto finish = [&application, restoreHttpOnly](int code) {
-            restoreHttpOnly();
+        const auto finish = [&application](int code) {
             application.exit(code);
         };
 #if !defined(Q_OS_UNIX)
@@ -5117,8 +4942,7 @@ int main(int argc, char **argv)
             return application.exec();
         }
         // Hermeticity: the user's real subscriptions could eat the
-        // fixture hosts — neuter adblock, restored on exit.
-        restoreAdBlockStateOnExit();
+        // fixture hosts — neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         // SAFE07: downgrade marks are per-profile — the smoke asserts
@@ -5387,9 +5211,6 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        QSettings settings;
-        const QVariant savedLevel =
-            settings.value(QLatin1String("privacy/securityLevel"));
         auto applyLevel = [profile](int level) {
             QSettings().setValue(QLatin1String("privacy/securityLevel"), level);
             PrivacyRequestInterceptor::loadSettings();
@@ -5411,13 +5232,8 @@ int main(int argc, char **argv)
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, poll, profile, phase,
                           loaded, settle, ticks, wantPath, observed,
-                          savedLevel, applyLevel, lan, port]() {
+                          applyLevel, lan, port]() {
             auto finish = [&](bool ok, const QString &why) {
-                if (savedLevel.isValid())
-                    QSettings().setValue(QLatin1String("privacy/securityLevel"),
-                                         savedLevel);
-                else
-                    QSettings().remove(QLatin1String("privacy/securityLevel"));
                 PrivacyRequestInterceptor::loadSettings();
                 BrowserProfile::applySettings(profile);
                 qInfo() << "seclvl-smoke:" << (ok ? "PASS" : "FAIL") << why;
@@ -5557,26 +5373,12 @@ int main(int argc, char **argv)
             controlReply->deleteLater();
         });
 
-        const auto finish = [&application, done, &savedDohMode,
-                             &savedDohServer](int rc, const QString &line) {
+        const auto finish = [&application, done]
+                            (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "doh-smoke:" << line;
-            // Put the caller's own settings back before the store
-            // syncs at exit.
-            QSettings settings;
-            settings.beginGroup(QLatin1String("privacy"));
-            const auto restore = [&settings](const QString &key,
-                                             const QVariant &saved) {
-                if (saved.isValid())
-                    settings.setValue(key, saved);
-                else
-                    settings.remove(key);
-            };
-            restore(QLatin1String("secureDnsMode"), savedDohMode);
-            restore(QLatin1String("secureDnsServer"), savedDohServer);
-            settings.endGroup();
             application.exit(rc);
         };
 
@@ -5704,31 +5506,17 @@ int main(int argc, char **argv)
         QTcpServer *server = new QTcpServer(&application);
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "tls-smoke: FAIL (listen)" << server->errorString();
-            if (savedTlsStrict.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/tlsStrictCiphers"));
             return 1;
         }
 
         auto done = std::make_shared<bool>(false);
         auto capturing = std::make_shared<bool>(false);
-        const auto finish = [&application, done, &savedTlsStrict]
+        const auto finish = [&application, done]
                             (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "tls-smoke:" << line;
-            // Put the caller's own setting back before the store
-            // syncs at exit (the pre-app seed pinned it).
-            if (savedTlsStrict.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/tlsStrictCiphers"));
             application.exit(rc);
         };
 
@@ -5919,13 +5707,6 @@ int main(int argc, char **argv)
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "webrtc-smoke: FAIL (listen)"
                     << server->errorString();
-            if (savedWebrtcProtection.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/webrtcIpProtection"),
-                    savedWebrtcProtection);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/webrtcIpProtection"));
             return 1;
         }
         static const QByteArray rtcPage = QByteArray(
@@ -5965,21 +5746,12 @@ int main(int argc, char **argv)
         });
 
         auto done = std::make_shared<bool>(false);
-        const auto finish = [&application, done, &savedWebrtcProtection]
+        const auto finish = [&application, done]
                             (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "webrtc-smoke:" << line;
-            // Put the caller's own setting back before the store
-            // syncs at exit (the pre-app seed pinned it).
-            if (savedWebrtcProtection.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/webrtcIpProtection"),
-                    savedWebrtcProtection);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/webrtcIpProtection"));
             application.exit(rc);
         };
 
@@ -6281,8 +6053,6 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--adblock-smoke"))) {
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||adblock-smoke.invalid^")));
         custom->addRule(AdBlockRule(QLatin1String(".invalid^")));
         custom->addRule(AdBlockRule(QLatin1String("@@||allowed-smoke.invalid^")));
@@ -6375,9 +6145,8 @@ int main(int argc, char **argv)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockNetwork *network = manager->network();
 
-        // Earlier runs persisted their smoke subscription into the
-        // shared test-mode settings list; drop leftovers before the
-        // exit-restore snapshot is taken.
+        // Drop any earlier list-smoke subscription so the smoke adds
+        // exactly one.
         for (AdBlockSubscription *existing : manager->subscriptions()) {
             const QUrlQuery query(existing->url());
             if (query.queryItemValue(QLatin1String("title"),
@@ -6388,8 +6157,6 @@ int main(int argc, char **argv)
 
         // A second subscription proves multi-subscription matching.
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||list-smoke.invalid^")));
 
         QUrl subscribeUrl;
@@ -6695,12 +6462,8 @@ int main(int argc, char **argv)
 #if defined(ARORA_ADBLOCK_RUST)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
-        // Test-mode app data persists between runs — an earlier
-        // --adblock-list-smoke leaves a full EasyList subscription
-        // behind.  Disable everything but the custom corpus so the
-        // probes are deterministic.
+        // Disable everything but the custom corpus so the probes are
+        // deterministic even if downloaded subscriptions come back.
         for (AdBlockSubscription *s : manager->subscriptions()) {
             if (s != custom)
                 s->setEnabled(false);
@@ -6910,17 +6673,10 @@ int main(int argc, char **argv)
         }
         const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
 
-        // A leftover ##body cosmetic rule in the shared test-mode
-        // settings hides the whole page (display:none text is
-        // unfindable); suspend adblocking for the duration and put the
-        // persisted flag back on the way out.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // Any cosmetic rule would hide the whole page (display:none
+        // text is unfindable); suspend adblocking for determinism —
+        // the flag dies with the per-run store.
+        AdBlockManager::instance()->setEnabled(false);
 
         WebViewSearch *searchBar = new WebViewSearch(view, &window);
         QLineEdit *searchEdit =
@@ -7101,14 +6857,9 @@ int main(int argc, char **argv)
 
         // Cosmetic adblock rules would be injected into the serialized
         // DOM the viewer compares against (see --find-smoke); suspend
-        // adblocking for the duration.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // adblocking for determinism — the flag dies with the per-run
+        // store.
+        AdBlockManager::instance()->setEnabled(false);
 
         // The ported QRegularExpression state machine must mark up a
         // document without any WebEngine involvement.
@@ -7279,28 +7030,10 @@ int main(int argc, char **argv)
             qInfo() << "reader-smoke: RENDERER DIED" << status << code;
         });
 
-        // Snapshot the reader prefs the in-overlay controls write so
-        // the run leaves no trace in the live settings.
+        // Start from the reader-pref defaults — the in-overlay
+        // controls' writes land in the per-run store.
         {
             QSettings settings;
-            const QVariant savedFont =
-                settings.value(QLatin1String("reader/fontSize"));
-            const QVariant savedTheme =
-                settings.value(QLatin1String("reader/theme"));
-            QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                             &application, [savedFont, savedTheme]() {
-                QSettings settings;
-                if (savedFont.isValid())
-                    settings.setValue(QLatin1String("reader/fontSize"),
-                                      savedFont);
-                else
-                    settings.remove(QLatin1String("reader/fontSize"));
-                if (savedTheme.isValid())
-                    settings.setValue(QLatin1String("reader/theme"),
-                                      savedTheme);
-                else
-                    settings.remove(QLatin1String("reader/theme"));
-            });
             settings.remove(QLatin1String("reader/fontSize"));
             settings.remove(QLatin1String("reader/theme"));
         }
@@ -8062,19 +7795,9 @@ int main(int argc, char **argv)
     // BrowserApplication::instance() is null and the chrome must
     // degrade gracefully.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--browser-smoke"))) {
-        // A leftover ##body cosmetic rule from earlier test-mode runs
-        // would restyle the page; suspend adblock for determinism and
-        // put the persisted flag back on the way out — the test-mode
-        // settings file is shared with the other smokes, and leaving
-        // enabled=false behind silently breaks --adblock-smoke's
-        // matcher check on the next run.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // Any cosmetic rule would restyle the page; suspend adblock
+        // for determinism — the flag dies with the per-run store.
+        AdBlockManager::instance()->setEnabled(false);
 
         // The window is deleted before application.exit() below: an
         // unregistered window would otherwise outlive the profile at
@@ -11028,12 +10751,6 @@ int main(int argc, char **argv)
         };
 
         QSettings settings;
-        const QVariant savedUtc =
-            settings.value(QLatin1String("privacy/reportUtcTimezone"));
-        const QVariant savedLang =
-            settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
-        const QVariant savedAccept =
-            settings.value(QLatin1String("network/acceptLanguages"));
 
         // (b) Accept-Language normalization — a distinctive stored
         // list proves the toggle replaces it rather than appending or
@@ -11102,18 +10819,6 @@ int main(int argc, char **argv)
             && child.exitStatus() == QProcess::NormalExit
             && child.exitCode() == 0;
         check(childOk, "child run: normalized surface visible to JS");
-
-        const auto restore = [&settings](const QString &key,
-                                         const QVariant &saved) {
-            if (saved.isValid())
-                settings.setValue(key, saved);
-            else
-                settings.remove(key);
-        };
-        restore(QLatin1String("privacy/reportUtcTimezone"), savedUtc);
-        restore(QLatin1String("privacy/normalizeAcceptLanguage"), savedLang);
-        restore(QLatin1String("network/acceptLanguages"), savedAccept);
-        BrowserProfile::applyFingerprintEnvironment();
 
         qInfo() << "fingerprint-smoke:" << (failures == 0 ? "PASS" : "FAIL")
                 << failures << "failures";
@@ -11336,8 +11041,6 @@ int main(int argc, char **argv)
         };
 
         QSettings settings;
-        const QVariant savedToggle = settings.value(
-            QLatin1String("privacy/fingerprintProtection"));
         FingerprintProtector *protector =
             FingerprintProtector::instance();
 
@@ -11371,13 +11074,6 @@ int main(int argc, char **argv)
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "fingerprint-inject-smoke: FAIL (listen)"
                     << server->errorString();
-            if (savedToggle.isValid())
-                settings.setValue(
-                    QLatin1String("privacy/fingerprintProtection"),
-                    savedToggle);
-            else
-                settings.remove(
-                    QLatin1String("privacy/fingerprintProtection"));
             return 1;
         }
         QObject::connect(server, &QTcpServer::newConnection,
@@ -11447,15 +11143,8 @@ int main(int argc, char **argv)
             view->loadUrl(QUrl(pageUrl));
         };
 
-        auto finish = [&application, &failures, &settings,
-                       savedToggle, protector]() mutable {
-            if (savedToggle.isValid())
-                settings.setValue(
-                    QLatin1String("privacy/fingerprintProtection"),
-                    savedToggle);
-            else
-                settings.remove(
-                    QLatin1String("privacy/fingerprintProtection"));
+        auto finish = [&application, &failures,
+                       protector]() mutable {
             protector->clearException(QLatin1String("127.0.0.1"));
             qInfo() << "fingerprint-inject-smoke:"
                     << (failures == 0 ? "PASS" : "FAIL")
@@ -11858,24 +11547,8 @@ int main(int argc, char **argv)
                              " (got %1 — detector broken, not safe)")
                   .arg(onVerdict));
 
-        // Restore the pinned settings + undo the capture proxy so the
-        // run leaves the operator's store as it found it.
-        {
-            QSettings settings;
-            const auto restore = [&settings](const QString &key,
-                                             const QVariant &saved) {
-                if (saved.isValid())
-                    settings.setValue(key, saved);
-                else
-                    settings.remove(key);
-            };
-            restore(QLatin1String("privacy/dnsPrefetch"),
-                    savedDnsPrefetch);
-            restore(QLatin1String("privacy/secureDnsMode"),
-                    savedSecureDnsMode);
-            restore(QLatin1String("proxy/enabled"),
-                    savedProxyEnabled);
-        }
+        // The pinned settings + capture proxy die with the per-run
+        // store — only the scratch download dir needs a sweep.
         QDir(downloadDir).removeRecursively();
 
         qInfo() << "telemetry-browse-smoke:"
@@ -11963,16 +11636,6 @@ int main(int argc, char **argv)
 
         // (a) defaults + toggle round-trips.
         QSettings settings;
-        const QVariant savedViewer =
-            settings.value(QLatin1String("privacy/pdfViewer"));
-        const QVariant savedSanitize =
-            settings.value(QLatin1String("privacy/pdfSanitize"));
-        // The raw-download leg must not trip a real save dialog or a
-        // configured external handler — pin both for the run.
-        const QVariant savedPrompt =
-            settings.value(QLatin1String("downloadmanager/alwaysPromptForFileName"));
-        const QVariant savedExternal =
-            settings.value(QLatin1String("downloadmanager/external"));
         check(QStringLiteral("viewer+sanitize default on"),
               PdfSupport::viewerEnabled() && PdfSupport::sanitizeEnabled());
         check(QStringLiteral("profile PdfViewerEnabled on"),
@@ -12191,25 +11854,11 @@ int main(int argc, char **argv)
         PrivacyRequestInterceptor::resetRequestsSeen();
         view->loadUrl(pdfUrl);
 
-        // Restore toggles + drop the downloaded raw file when done.
+        // The toggles die with the per-run store — only the
+        // downloaded raw file needs a sweep.
         auto *restorer = new QObject(&application);
         QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         restorer, [savedViewer, savedSanitize,
-                                    savedPrompt, savedExternal,
-                                    downloadDir]() {
-            QSettings st;
-            const auto restore = [&st](const QString &key,
-                                       const QVariant &saved) {
-                if (saved.isValid())
-                    st.setValue(key, saved);
-                else
-                    st.remove(key);
-            };
-            restore(QLatin1String("privacy/pdfViewer"), savedViewer);
-            restore(QLatin1String("privacy/pdfSanitize"), savedSanitize);
-            restore(QLatin1String("downloadmanager/alwaysPromptForFileName"),
-                    savedPrompt);
-            restore(QLatin1String("downloadmanager/external"), savedExternal);
+                         restorer, [downloadDir]() {
             QDir(downloadDir).removeRecursively();
         });
     }
