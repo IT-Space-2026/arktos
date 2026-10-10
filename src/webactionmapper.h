@@ -63,7 +63,7 @@
 #ifndef WEBACTIONMAPPER_H
 #define WEBACTIONMAPPER_H
 
-#include <qwebenginepage.h>
+#include "engineinterface.h"
 
 QT_BEGIN_NAMESPACE
 class QAction;
@@ -81,10 +81,10 @@ class WebActionMapper : public QObject
     Q_OBJECT
 
 public:
-    WebActionMapper(QAction *root, QWebEnginePage::WebAction webAction, QObject *parent);
-    QWebEnginePage::WebAction webAction() const;
+    WebActionMapper(QAction *root, Engine::StandardAction webAction, QObject *parent);
+    Engine::StandardAction webAction() const;
     void addChild(QAction *action);
-    void updateCurrent(QWebEnginePage *currentParent);
+    void updateCurrent(Engine::Page *currentParent);
 
 private slots:
     void rootTriggered();
@@ -93,9 +93,9 @@ private slots:
     void currentDestroyed();
 
 private:
-    QWebEnginePage *m_currentParent;
+    Engine::Page *m_currentParent;
     QAction *m_root;
-    QWebEnginePage::WebAction m_webAction;
+    Engine::StandardAction m_webAction;
 };
 
 #endif // WEBACTIONMAPPER_H

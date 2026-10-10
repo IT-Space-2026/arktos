@@ -54,6 +54,7 @@
 
 #include <functional>
 
+class QAction;
 class QWidget;
 
 namespace Engine {
@@ -279,6 +280,24 @@ signals:
     void receivedBytesChanged();
 };
 
+// ---- standard actions --------------------------------------------------------------
+
+// Chrome actions the engine owns — menu/toolbar entries whose enabled
+// and checked state mirrors the engine's own QAction (WebActionMapper
+// keeps the two in sync).  Mirrors QWebEnginePage::WebAction; a
+// backend may leave an entry unmapped and return nullptr from
+// Page::action(), which chrome must read as "disabled".
+enum class StandardAction {
+    Back, Forward, Stop, Reload, ReloadAndBypassCache,
+    Cut, Copy, Paste, Undo, Redo, SelectAll, PasteAndMatchStyle,
+    OpenLinkInThisWindow, OpenLinkInNewWindow, OpenLinkInNewTab,
+    CopyLinkToClipboard, DownloadLinkToDisk,
+    CopyImageToClipboard, CopyImageUrlToClipboard, DownloadImageToDisk,
+    CopyMediaUrlToClipboard, DownloadMediaToDisk,
+    InspectElement, ExitFullScreen, RequestClose, Unselect,
+    SavePage, ViewSource
+};
+
 // ---- context menus ------------------------------------------------------------------
 
 // Minimal context-menu payload (webview.cpp feeds on
@@ -334,6 +353,20 @@ public:
     virtual void runJavaScript(const QString &source,
                                const std::function<void(const QVariant &)> &resultCallback
                                    = std::function<void(const QVariant &)>()) = 0;
+
+    // The engine-owned QAction behind a standard chrome entry —
+    // nullptr when the backend has no equivalent (chrome disables the
+    // entry rather than synthesizing one).
+    virtual QAction *action(StandardAction action) = 0;
+
+    // SLEEP01's suspend gate consults these; an engine without the
+    // concept answers false so the gate treats the page as quiet.
+    virtual bool isLoading() const = 0;
+    virtual bool recentlyAudible() const = 0;
+
+    // Whether the page's profile is off-the-record — the per-tab
+    // privacy gates (history, icon store, autofill) key on it.
+    virtual bool isOffTheRecord() const = 0;
 
     // per-page attributes (JSCTL's JavascriptEnabled flip, JS can-open-
     // windows for the popup gate).  Keyed loosely so each backend maps
@@ -488,6 +521,7 @@ public:
 } // namespace Engine
 
 // Signal payloads need metatypes for queued delivery + QSignalSpy.
+Q_DECLARE_METATYPE(Engine::StandardAction)
 Q_DECLARE_METATYPE(Engine::FindResult)
 Q_DECLARE_METATYPE(Engine::ContextMenuInfo)
 Q_DECLARE_METATYPE(Engine::CertificateErrorInfo)

@@ -79,6 +79,15 @@ public:
             resultCallback(QVariant(QStringLiteral("fake-result")));
     }
 
+    QAction *action(Engine::StandardAction which) override
+    {
+        return actions.value(which);
+    }
+
+    bool isLoading() const override { return m_loading; }
+    bool recentlyAudible() const override { return m_audible; }
+    bool isOffTheRecord() const override { return m_otr; }
+
     void setPageAttribute(const QString &name, bool on) override
     {
         attributes.insert(name, on);
@@ -100,6 +109,10 @@ public:
     qreal m_zoom = 1.0;
     bool m_canBack = false;
     bool m_canForward = false;
+    bool m_loading = false;
+    bool m_audible = false;
+    bool m_otr = false;
+    QHash<Engine::StandardAction, QAction*> actions;
     LifecycleState m_lifecycle = LifecycleState::Active;
     qint64 m_pid = -1;
     QString lastFind;
@@ -242,6 +255,16 @@ void tst_EngineAdapter::fakePageNavigation()
     page.reload();
     QCOMPARE(page.stops, 1);
     QCOMPARE(page.reloads, 1);
+
+    // Standard-action + probe surface: unmapped actions come back
+    // null (chrome disables the entry), probes answer false.
+    QVERIFY(!page.action(Engine::StandardAction::Back));
+    QAction reloadAction;
+    page.actions.insert(Engine::StandardAction::Reload, &reloadAction);
+    QCOMPARE(page.action(Engine::StandardAction::Reload), &reloadAction);
+    QVERIFY(!page.isLoading());
+    QVERIFY(!page.recentlyAudible());
+    QVERIFY(!page.isOffTheRecord());
 }
 
 void tst_EngineAdapter::fakePageZoomFindScript()
@@ -343,6 +366,18 @@ void tst_EngineAdapter::webEnginePageForwarding()
     QCOMPARE(enginePage->lifecycleState(),
              static_cast<Engine::Page::LifecycleState>(
                  view.page()->lifecycleState()));
+
+    // Standard actions resolve to the page's own QActions; the
+    // loading/audible/OTR probes are passthroughs.
+    QCOMPARE(enginePage->action(Engine::StandardAction::Back),
+             view.page()->action(QWebEnginePage::Back));
+    QCOMPARE(enginePage->action(Engine::StandardAction::InspectElement),
+             view.page()->action(QWebEnginePage::InspectElement));
+    QCOMPARE(enginePage->isLoading(), view.page()->isLoading());
+    QCOMPARE(enginePage->recentlyAudible(),
+             view.page()->recentlyAudible());
+    QCOMPARE(enginePage->isOffTheRecord(),
+             view.page()->profile()->isOffTheRecord());
 }
 
 void tst_EngineAdapter::webEngineProfileSurface()
