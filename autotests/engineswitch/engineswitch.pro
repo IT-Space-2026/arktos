@@ -7,4 +7,4 @@ include(../autotests.pri)
 
 # Input
 SOURCES += tst_engineswitch.cpp
-HEADERS +=
+HEADERS += ../fakeengine.h

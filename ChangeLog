@@ -75,6 +75,12 @@ UI:
   the navigation toolbar as a fixed-width button immediately right of
   the URL bar — one shared control that mirrors the active tab's
   engine instead of a per-bar embedded glyph (ENG08).
+- Switching a tab's engine no longer breaks the strip: swapping the
+  chip of a collapsed tab group keeps the group collapsed around its
+  next member instead of spilling all hidden tabs onto the strip, and
+  the swapped tab's original slot, pin and neighbours are preserved
+  (a foreign-engine tab still drops group membership — documented)
+  (ENG09).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

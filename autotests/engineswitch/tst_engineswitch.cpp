@@ -31,6 +31,7 @@
 
 #include <browserapplication.h>
 #include <browsermainwindow.h>
+#include <containermanager.h>
 #include <engineindicator.h>
 #include <engineinterface.h>
 #include <engineregistry.h>
@@ -43,164 +44,10 @@
 #include <qsplitter.h>
 #include <qwebenginepage.h>
 
-// --- fake backend ----------------------------------------------------
+#include "fakeengine.h"
 
-class SwitchFakePage : public Engine::Page
-{
-    Q_OBJECT
-
-public:
-    explicit SwitchFakePage(QObject *parent = nullptr)
-        : Engine::Page(parent) {}
-
-    void load(const QUrl &newUrl) override
-    {
-        m_url = newUrl;
-        ++loads;
-        emit urlChanged(newUrl);
-        emit loadStarted();
-        emit loadProgress(100);
-        emit loadFinished(true);
-    }
-    void stop() override {}
-    void reload() override { ++reloads; }
-    QUrl url() const override { return m_url; }
-
-    bool canGoBack() const override { return false; }
-    bool canGoForward() const override { return false; }
-    void back() override {}
-    void forward() override {}
-
-    int historyCount() const override { return m_url.isEmpty() ? 0 : 1; }
-    int currentHistoryIndex() const override { return m_url.isEmpty() ? -1 : 0; }
-    QList<Engine::HistoryEntry> historyItems() const override
-    {
-        if (m_url.isEmpty())
-            return {};
-        Engine::HistoryEntry entry;
-        entry.url = m_url;
-        entry.index = 0;
-        return {entry};
-    }
-    QList<Engine::HistoryEntry> backItems(int) const override { return {}; }
-    QList<Engine::HistoryEntry> forwardItems(int) const override { return {}; }
-    void goToHistoryEntry(const Engine::HistoryEntry &) override {}
-
-    void setZoomFactor(qreal factor) override { m_zoom = factor; }
-    qreal zoomFactor() const override { return m_zoom; }
-
-    void findText(const QString &, Engine::FindFlags) override
-    {
-        emit findTextFinished(Engine::FindResult());
-    }
-
-    void runJavaScript(const QString &,
-                       const std::function<void(const QVariant &)> &resultCallback
-                           = std::function<void(const QVariant &)>()) override
-    {
-        if (resultCallback)
-            resultCallback(QVariant());
-    }
-    void runJavaScriptLifted(const QString &source,
-                       const std::function<void(const QVariant &)> &resultCallback
-                           = std::function<void(const QVariant &)>()) override
-    {
-        runJavaScript(source, resultCallback);
-    }
-    void toHtml(const std::function<void(const QString &)> &resultCallback) override
-    {
-        if (resultCallback)
-            resultCallback(QString());
-    }
-
-    QAction *action(Engine::StandardAction) override { return nullptr; }
-
-    bool isLoading() const override { return false; }
-    bool recentlyAudible() const override { return false; }
-    bool isOffTheRecord() const override { return false; }
-
-    void setPageAttribute(const QString &, bool) override {}
-    void setLifecycleState(LifecycleState state) override { m_lifecycle = state; }
-    LifecycleState lifecycleState() const override { return m_lifecycle; }
-    qint64 renderProcessId() const override { return -1; }
-    Engine::Page *createWindow(Engine::WebWindowType) override { return nullptr; }
-
-    void insertScript(const Engine::Script &) override {}
-    void removeScript(const QString &) override {}
-    QList<Engine::Script> scripts() const override { return {}; }
-
-    void download(const QUrl &) override {}
-    QWidget *view() const override { return m_view; }
-
-    QUrl m_url;
-    qreal m_zoom = 1.0;
-    int loads = 0;
-    int reloads = 0;
-    LifecycleState m_lifecycle = LifecycleState::Active;
-    QWidget *m_view = nullptr;
-};
-
-class SwitchFakeProfile : public Engine::Profile
-{
-    Q_OBJECT
-
-public:
-    explicit SwitchFakeProfile(QObject *parent = nullptr)
-        : Engine::Profile(parent) {}
-
-    bool isOffTheRecord() const override { return false; }
-    QString storageName() const override { return QStringLiteral("fake"); }
-    void setUserAgent(const QString &) override {}
-    void setRequestPolicy(Engine::RequestPolicy *) override {}
-    Engine::RequestPolicy *requestPolicy() const override { return nullptr; }
-    void setCookieFilter(
-            const std::function<bool(const Engine::CookieAttempt &)> &) override {}
-    void insertScript(const Engine::Script &) override {}
-    void removeScript(const QString &) override {}
-    QList<Engine::Script> scripts() const override { return {}; }
-    void clear(Engine::StorageAreas) override {}
-    void setProfileAttribute(const QString &, const QVariant &) override {}
-};
-
-class SwitchFakeBackend : public Engine::Backend
-{
-    Q_OBJECT
-
-public:
-    explicit SwitchFakeBackend(QObject *parent = nullptr)
-        : Engine::Backend(parent) {}
-
-    QString id() const override { return QStringLiteral("fake"); }
-    QString displayName() const override { return QStringLiteral("Fake Engine"); }
-    Engine::Capabilities capabilities() const override
-    {
-        Engine::Capabilities caps;
-        caps.downloads = false;
-        return caps;
-    }
-    bool initialize() override { return true; }
-    Engine::Profile *createProfile(const Engine::ProfileOptions &,
-                                   QObject *parent = nullptr) override
-    {
-        return new SwitchFakeProfile(parent);
-    }
-    Engine::Page *createPage(Engine::Profile *,
-                             QObject *parent = nullptr) override
-    {
-        auto *page = new SwitchFakePage(parent);
-        pages.append(page);
-        return page;
-    }
-    QWidget *createView(Engine::Page *page, QWidget *parent = nullptr) override
-    {
-        auto *view = new QWidget(parent);
-        if (auto *fakePage = qobject_cast<SwitchFakePage*>(page))
-            fakePage->m_view = view;
-        return view;
-    }
-
-    QList<QPointer<SwitchFakePage>> pages;
-};
+// The fake engine backend lives in autotests/fakeengine.h — shared
+// with tst_tabwidget's swap legs.
 
 // --- helpers -----------------------------------------------------------
 
@@ -254,9 +101,15 @@ private slots:
     void torLock();
     void missingArtifactHidesOption();
     void settingsRoundTrip();
+    void swapKeepsStrip();
+    void swapKeepsPinned();
+    void swapKeepsGroup();
+    void swapCollapsedGroupChip();
+    void swapOnContainerLevel();
+    void swapProbe();
 
 private:
-    SwitchFakeBackend *m_fake = nullptr;
+    FakeEngineBackend *m_fake = nullptr;
 };
 
 void tst_EngineSwitch::initTestCase()
@@ -268,7 +121,7 @@ void tst_EngineSwitch::initTestCase()
     // window legs open several tabs before closing.
     settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
                       false);
-    m_fake = new SwitchFakeBackend(this);
+    m_fake = new FakeEngineBackend(this);
     EngineRegistry::registerBackend(m_fake);
 }
 
@@ -403,8 +256,8 @@ void tst_EngineSwitch::switchReloadsCurrentUrl()
     QCOMPARE(widget.count(), 1);
     QCOMPARE(widget.tabEngineId(0), QStringLiteral("fake"));
     QVERIFY(m_fake->pages.count() > pagesBefore);
-    SwitchFakePage *fakePage =
-        qobject_cast<SwitchFakePage*>(widget.engineTab(0)->page());
+    FakeEnginePage *fakePage =
+        qobject_cast<FakeEnginePage*>(widget.engineTab(0)->page());
     QVERIFY(fakePage);
     QCOMPARE(fakePage->loads, 1);
     QCOMPARE(fakePage->url(), url);
@@ -526,6 +379,267 @@ void tst_EngineSwitch::settingsRoundTrip()
     TabWidget widget2;
     widget2.newTab();
     QCOMPARE(widget2.tabEngineId(0), QStringLiteral("webengine"));
+}
+
+// ENG09 — strip integrity across the engine swap, per strip-state
+// variant: the swap must never lose or reorder the OTHER tabs, the
+// replacement takes the old tab's slot, and whatever strip state the
+// task documents as dropping is asserted rather than assumed.
+
+void tst_EngineSwitch::swapKeepsStrip()
+{
+    TabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    WebView *v0 = widget.webView(0);
+    WebView *v2 = widget.webView(2);
+
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.webView(0), v0);
+    QCOMPARE(widget.webView(2), v2);
+    QVERIFY(widget.engineTab(1));
+    QCOMPARE(widget.tabEngineId(1), QStringLiteral("fake"));
+
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("webengine")));
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.webView(0), v0);
+    QCOMPARE(widget.webView(2), v2);
+    QVERIFY(widget.webView(1));
+    QCOMPARE(widget.tabEngineId(1), QStringLiteral("webengine"));
+}
+
+void tst_EngineSwitch::swapKeepsPinned()
+{
+    TabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    widget.setTabPinned(0, true);
+    widget.setTabPinned(1, true);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    WebView *v3 = widget.webView(3);
+
+    // An unpinned tab swaps to the foreign engine and back — the
+    // pinned prefix and the trailing tab are untouched.
+    QVERIFY(widget.reloadTabInEngine(2, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 4);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QVERIFY(widget.engineTab(2));
+    QCOMPARE(widget.webView(3), v3);
+
+    QVERIFY(widget.reloadTabInEngine(2, QStringLiteral("webengine")));
+    QCOMPARE(widget.count(), 4);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QVERIFY(widget.webView(2));
+    QCOMPARE(widget.webView(3), v3);
+
+    // A pinned tab swaps too — the replacement inherits the pin
+    // (position-based pin boundary) and the block stays a prefix.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 4);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QVERIFY(widget.engineTab(0));
+    QVERIFY(widget.isTabPinned(0));
+
+    // And back — still pinned, still first.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("webengine")));
+    QCOMPARE(widget.count(), 4);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QVERIFY(widget.isTabPinned(0));
+    QVERIFY(widget.webView(0));
+}
+
+void tst_EngineSwitch::swapKeepsGroup()
+{
+    TabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);      // strip [v0 G, v1 G, v2]
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 0 << 1);
+    WebView *v2 = widget.webView(2);
+
+    // Swapping the second member out: the group keeps v0, the
+    // EngineTab cannot carry membership (documented drop — the
+    // m_tabGroups map keys on WebView*).
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.tabGroupId(0), gid);
+    QCOMPARE(widget.tabGroupId(1), QString());
+    QCOMPARE(widget.webView(2), v2);
+    QVERIFY(widget.engineTab(1));
+
+    // Swapping back to WebEngine restores the WebView in place but
+    // does not resurrect the dropped membership — the strip shape
+    // stays honest either way.
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("webengine")));
+    QCOMPARE(widget.count(), 3);
+    QCOMPARE(widget.webView(2), v2);
+    QCOMPARE(widget.tabGroupId(0), gid);
+    QCOMPARE(widget.tabGroupId(1), QString());
+}
+
+void tst_EngineSwitch::swapCollapsedGroupChip()
+{
+    TabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);
+    widget.addTabToGroup(2, gid);      // [v0,v1,v2 G, v3]
+    widget.setTabGroupCollapsed(gid, true);
+    QVERIFY(widget.tabGroupIsCollapsed(gid));
+    QVERIFY(widget.isTabGroupChip(0));
+    QCOMPARE(widget.count(), 2);       // chip + v3
+    WebView *v3 = widget.webView(1);
+
+    // Swapping the chip: the foreign tab takes the chip's slot but
+    // cannot hold membership, so the group re-collapses around its
+    // next member — the hidden tabs stay hidden.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 3);       // T + new chip + v3
+    QVERIFY(widget.engineTab(0));
+    QCOMPARE(widget.tabGroupId(0), QString());
+    QVERIFY(widget.tabGroupIsCollapsed(gid));
+    QVERIFY(widget.isTabGroupChip(1));
+    QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1);
+    QCOMPARE(widget.webView(2), v3);
+}
+
+void tst_EngineSwitch::swapOnContainerLevel()
+{
+    // CONT06 two-level strip: on the default level a plain swap
+    // proceeds; on a non-default level the swap refuses (documented
+    // guard) rather than re-filtering mid-swap.
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    TabWidget widget;
+    widget.loadSettings();
+    QVERIFY(widget.twoLevelStrip());
+
+    for (int i = 0; i < 2; ++i)
+        widget.newTab();
+    WebView *containerTab = widget.makeNewTabInContainer(
+        ContainerManager::instance()->createContainer(
+            QStringLiteral("Work"), QColor(Qt::red)).id,
+        true);
+    QVERIFY(containerTab);
+    QVERIFY(widget.containerStripActive());
+    // makeCurrent pulled the strip to the Work level — the two
+    // default tabs detached into their level's hidden store.
+    QCOMPARE(widget.count(), 1);
+
+    // The container tab is on the default level only if its header is
+    // active — the swap guard keys on the ACTIVE header.
+    const QString workId = containerTab->containerId();
+    QVERIFY(!workId.isEmpty());
+    // makeCurrent pulled the strip to the Work level.
+    QCOMPARE(widget.activeContainerHeader(), workId);
+    QVERIFY(!widget.reloadTabInEngine(
+        widget.currentIndex(), QStringLiteral("fake")));
+
+    // Back on the default level the swap works and the hidden level
+    // keeps its tab.
+    widget.setActiveContainerHeader(ContainerManager::defaultContainerId());
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.engineTab(0));
+    QCOMPARE(widget.containerTabCount(workId), 1);
+    QCOMPARE(widget.totalTabCount(), 3);
+
+    ContainerManager::instance()->deleteContainer(workId);
+    QSettings().remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// ENG09 reproduction probe — permutes strip shapes and dumps any
+// invariant break: lost/duplicated widgets, bar-stack desync, dropped
+// pins, vanished group members.
+void tst_EngineSwitch::swapProbe()
+{
+    int failures = 0;
+    const auto fail = [&failures](const QString &tag, const char *what) {
+        ++failures;
+        qWarning() << "FAIL" << tag << what;
+    };
+    for (int n = 1; n <= 4; ++n) {
+        for (int pins = 0; pins <= qMin(n, 2); ++pins) {
+            for (int grp = 0; grp < 3; ++grp) {  // 0 none, 1 expanded, 2 collapsed
+                for (int victim = 0; victim < n; ++victim) {
+                    TabWidget widget;
+                    for (int i = 0; i < n; ++i)
+                        widget.newTab();
+                    for (int i = 0; i < pins; ++i)
+                        widget.setTabPinned(i, true);
+                    QString gid;
+                    if (grp) {
+                        gid = widget.createTabGroup(qMin(n - 1, 1));
+                        if (n > 2)
+                            widget.addTabToGroup(n - 1, gid);
+                    }
+                    if (grp == 2)
+                        widget.setTabGroupCollapsed(gid, true);
+                    if (victim >= widget.count())
+                        continue;
+                    for (int dir = 0; dir < 2; ++dir) { // 0 -> fake, 1 -> back
+                        const int visibleBefore = widget.count();
+                        const int totalBefore = widget.totalTabCount();
+                        QList<QWidget*> before;
+                        for (int i = 0; i < widget.count(); ++i)
+                            before << widget.widget(i);
+                        QWidget *victimW = widget.widget(victim);
+                        // A collapsed chip's swap legitimately adds
+                        // one visible slot — the foreign tab takes
+                        // the slot and the next member becomes the
+                        // new chip — but only when the group has
+                        // hidden members to re-collapse around.
+                        const bool chip = widget.isTabGroupChip(victim)
+                            && widget.tabGroupSize(
+                                widget.tabGroupId(victim)) > 1;
+                        const QString target = dir
+                            ? QStringLiteral("webengine")
+                            : QStringLiteral("fake");
+                        const QString tag = QStringLiteral(
+                            "n=%1 pins=%2 grp=%3 victim=%4 dir=%5")
+                            .arg(n).arg(pins).arg(grp).arg(victim).arg(dir);
+                        if (!widget.reloadTabInEngine(victim, target)) {
+                            // Refusal must leave the strip untouched.
+                            if (widget.count() != visibleBefore)
+                                fail(tag, "refuse-mutated");
+                            else {
+                                for (int i = 0; i < widget.count(); ++i)
+                                    if (widget.widget(i) != before.value(i)) {
+                                        fail(tag, "refuse-reorder");
+                                        break;
+                                    }
+                            }
+                            break;   // a refused swap-back ends the variant
+                        }
+                        // Invariants: no page lost anywhere (visible
+                        // or hidden), the victim swapped out, every
+                        // other pre-swap widget still present.
+                        if (widget.totalTabCount() != totalBefore)
+                            fail(tag, "total");
+                        if (widget.count() != visibleBefore + (chip ? 1 : 0))
+                            fail(tag, "count");
+                        QList<QWidget*> survivors;
+                        for (int i = 0; i < widget.count(); ++i)
+                            survivors << widget.widget(i);
+                        if (survivors.contains(victimW))
+                            fail(tag, "victim-lived");
+                        QList<QWidget*> expected = before;
+                        expected.removeAll(victimW);
+                        for (QWidget *w : expected)
+                            if (!survivors.removeOne(w))
+                                fail(tag, "lost");
+                        if (survivors.count() != 1 + (chip ? 1 : 0))
+                            fail(tag, "surplus");
+                    }
+                }
+            }
+        }
+    }
+    QCOMPARE(failures, 0);
 }
 
 QTEST_MAIN(tst_EngineSwitch)

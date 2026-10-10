@@ -22,9 +22,13 @@
 #include "qtest_arora.h"
 
 #include <engineinterface.h>
+#include <engineregistry.h>
+#include <enginetab.h>
 #include <tabwidget.h>
 #include <tabbar.h>
 #include <webview.h>
+
+#include "fakeengine.h"
 
 #include <historycompleter.h>
 #include <opensearchmanager.h>
@@ -95,6 +99,7 @@ private slots:
     void tabGroups();
     void pinnedTabs();
     void reopenClosedTab();
+    void engineSwapStripState();
 };
 
 // Subclass that exposes the protected functions.
@@ -1567,6 +1572,79 @@ void tst_TabWidget::reopenClosedTab()
                           savedDisplay);
     else
         settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// ENG09 — strip integrity across reloadTabInEngine(): the swap must
+// never lose or reorder the other tabs, the replacement takes the
+// old tab's slot, and strip state survives per the documented
+// contract (pin transfers by position; group membership drops on a
+// foreign EngineTab; a collapsed group re-collapses around its next
+// member when its chip is swapped).
+void tst_TabWidget::engineSwapStripState()
+{
+    FakeEngineBackend fake;
+    EngineRegistry::registerBackend(&fake);
+
+    // Multi-tab strip: the middle tab swaps out and back — every
+    // other tab keeps its slot.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 3; ++i)
+            widget.newTab();
+        WebView *v0 = widget.webView(0);
+        WebView *v2 = widget.webView(2);
+        QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(1));
+        QCOMPARE(widget.webView(0), v0);
+        QCOMPARE(widget.webView(2), v2);
+        QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("webengine")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.webView(1));
+        QCOMPARE(widget.webView(0), v0);
+        QCOMPARE(widget.webView(2), v2);
+    }
+
+    // Pinned strip: swapping a pinned tab keeps the replacement in
+    // the pinned block.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 3; ++i)
+            widget.newTab();
+        widget.setTabPinned(0, true);
+        widget.setTabPinned(1, true);
+        QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(0));
+        QCOMPARE(widget.pinnedTabCount(), 2);
+        QVERIFY(widget.isTabPinned(0));
+    }
+
+    // Collapsed group chip: closing the chip expands the group to
+    // free the hidden members — the swap must re-collapse it around
+    // the next member rather than leaving the strip expanded.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 4; ++i)
+            widget.newTab();
+        const QString gid = widget.createTabGroup(0);
+        widget.addTabToGroup(1, gid);
+        widget.addTabToGroup(2, gid);
+        widget.setTabGroupCollapsed(gid, true);
+        QCOMPARE(widget.count(), 2);            // chip + v3
+        const int totalBefore = widget.totalTabCount();
+        QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+        // The foreign tab takes the chip's slot, the next member
+        // becomes the new chip, the rest stay hidden.
+        QCOMPARE(widget.count(), 3);
+        QCOMPARE(widget.totalTabCount(), totalBefore);
+        QVERIFY(widget.engineTab(0));
+        QVERIFY(widget.tabGroupIsCollapsed(gid));
+        QVERIFY(widget.isTabGroupChip(1));
+        QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1);
+    }
+
+    EngineRegistry::unregisterBackend(&fake);
 }
 
 QTEST_MAIN(tst_TabWidget)

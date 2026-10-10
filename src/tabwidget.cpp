@@ -1041,6 +1041,11 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
     // TABGRP01: membership keys on WebView — a webengine target keeps
     // the group, a foreign tab drops it (no slot to hang the tag on).
     const QString gid = tabGroupId(index);
+    // ENG09: keep the original's widget pointer — the replacement's
+    // insert+move and the group expansion inside closeTab() can all
+    // shift strip indices, so the old tab is closed by identity, not
+    // by the 'index + 1' positional guess.
+    QWidget *original = widget(index);
 
     QWidget *replacement = nullptr;
     if (engineId == QLatin1String("webengine")) {
@@ -1069,7 +1074,17 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
     const int newIndex = indexOf(replacement);
     if (newIndex >= 0 && newIndex != index)
         m_tabBar->moveTab(newIndex, index);
-    closeTab(index + 1);
+    // TABGRP01: the swapped slot can be a collapsed group's chip —
+    // closing it expands the group to free the hidden members, so
+    // collapse it again around the next member (the foreign tab
+    // itself cannot hold membership and take over the chip).
+    const bool wasCollapsed = !gid.isEmpty()
+        && m_tabGroupInfo.value(gid).collapsed;
+    const int originalIndex = indexOf(original);
+    if (originalIndex >= 0)
+        closeTab(originalIndex);
+    if (wasCollapsed && m_tabGroupInfo.contains(gid))
+        setTabGroupCollapsed(gid, true);
     return true;
 }
 

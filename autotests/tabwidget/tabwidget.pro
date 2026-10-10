@@ -7,4 +7,4 @@ include(../autotests.pri)
 
 # Input
 SOURCES += tst_tabwidget.cpp
-HEADERS +=
+HEADERS += ../fakeengine.h
