@@ -814,6 +814,11 @@ OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) co
     return m_keywords.value(keyword);
 }
 
+QStringList OpenSearchManager::keywords() const
+{
+    return m_keywords.keys();
+}
+
 void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEngine *engine)
 {
     if (keyword.isEmpty())

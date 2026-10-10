@@ -38,6 +38,10 @@
 //!     binary schema in <data dir>/session.dat, atomic writes, fully
 //!     bounded decode, opaque per-window/per-tab engine blobs so the
 //!     format survives an engine swap.
+//!   * omnibox (OMNI01): the location-bar routing decision
+//!     (url-or-search classification incl. the QUrl::fromUserInput
+//!     heuristics) and the frecency-ranked history suggestions the
+//!     completer displays — the Qt side thin-shells both.
 
 mod blocklist;
 mod bookmarks;
@@ -45,6 +49,7 @@ mod cred;
 mod error;
 mod history;
 mod notify;
+mod omnibox;
 mod parsers;
 mod session;
 mod store;
@@ -1307,6 +1312,129 @@ pub unsafe extern "C" fn rc_session_decode(
         buffer_out(out, session::decode(data)?);
         Ok(())
     })
+}
+
+// ---- omnibox (OMNI01) -------------------------------------------------
+
+/// The location-bar routing decision.  `input` is the typed text;
+/// `options` is a JSON object `{"keywords":[...],"search_fallback":bool}`
+/// — both from the caller's live config so the verdict needs no hidden
+/// state.  Returns a JSON verdict (see rustcore.h); NULL on a bad
+/// pointer (rc_last_error_message).  Free with rc_string_free().
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_classify_input(
+    input: *const c_char,
+    options: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let input = match unsafe { util::cstr(input) } {
+            Some(s) => s,
+            None => {
+                error::set_error("bad input pointer");
+                return ptr::null_mut();
+            }
+        };
+        let mut keywords: Vec<String> = Vec::new();
+        let mut search_fallback = true;
+        if let Some(opt) = unsafe { util::cstr(options) } {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(opt) {
+                if let Some(arr) = v.get("keywords").and_then(|k| k.as_array()) {
+                    keywords = arr
+                        .iter()
+                        .filter_map(|k| k.as_str().map(String::from))
+                        .collect();
+                }
+                if let Some(b) =
+                    v.get("search_fallback").and_then(|b| b.as_bool())
+                {
+                    search_fallback = b;
+                }
+            }
+        }
+        util::to_c_string(
+            omnibox::classify(input, &keywords, search_fallback).to_string(),
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Pure frecency scorer.  `json` is
+/// `{"visits":[<visit ms-epoch>,...],"now_ms":<ms>,"typed":<n>,
+/// "bookmarked":<bool>}` — now_ms/typed/bookmarked optional; now_ms
+/// defaults to the current time.  `out` receives the score.
+///
+/// # Safety
+/// `json` must be NUL-terminated UTF-8; `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_frecency_score(
+    json: *const c_char,
+    out: *mut i64,
+) -> RcStatus {
+    status_of(|| {
+        let text = unsafe { util::cstr(json) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad frecency input pointer".into(),
+        })?;
+        let v: serde_json::Value =
+            serde_json::from_str(text).map_err(|_| error::Fail {
+                status: RcStatus::Corrupt,
+                msg: "frecency input: not JSON".into(),
+            })?;
+        let ages: Vec<i64> = v
+            .get("visits")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_i64()).collect())
+            .unwrap_or_default();
+        let now = v.get("now_ms").and_then(|n| n.as_i64()).unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        });
+        let typed = v.get("typed").and_then(|t| t.as_i64()).unwrap_or(0);
+        let bookmarked =
+            v.get("bookmarked").and_then(|b| b.as_bool()).unwrap_or(false);
+        match unsafe { out.as_mut() } {
+            Some(slot) => {
+                *slot = omnibox::frecency(&ages, now, typed, bookmarked);
+                Ok(())
+            }
+            None => error::fail(RcStatus::InvalidArgument, "bad out pointer"),
+        }
+    })
+}
+
+/// Ranked history suggestions for the completer — a JSON array
+/// `[{"url","title","ts","frecency","score"}, ...]` ordered by score
+/// (descending), limited to `limit` rows (<=0 picks the default 100).
+/// NULL on error (store not open: rc_last_error_message).  Free with
+/// rc_string_free().
+///
+/// # Safety
+/// `term` must be NUL-terminated UTF-8, or null (treated as "").
+#[no_mangle]
+pub unsafe extern "C" fn rc_history_suggest(
+    term: *const c_char,
+    limit: i64,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let term = unsafe { util::cstr(term) }.unwrap_or("");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        match history::with(|h| h.suggest(term, limit, now)) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]

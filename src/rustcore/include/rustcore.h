@@ -306,6 +306,37 @@ RcStatus rc_session_decode(const uint8_t *blob, size_t len,
 
 #define RC_SESSION_FILE "session.dat"
 
+/* --- omnibox (OMNI01) -------------------------------------------------
+ * The location-bar routing decision and the frecency ranking the
+ * completion dropdown displays — ported logic, the Qt side thin-shells.
+ *
+ * rc_classify_input(input, optionsJson) -> verdict JSON:
+ *   {"kind":"navigate","url":...}            load this url (web/ftp)
+ *   {"kind":"internal","url":...}           explicit non-web scheme
+ *                                           (about:, mailto:, qrc:…)
+ *   {"kind":"file","path":...}              local filesystem path —
+ *                                           build with QUrl::fromLocalFile
+ *   {"kind":"search","engine":null|<kw>,
+ *     "query":...}                          resolve through the context
+ *                                           engine, or keyword kw's
+ * optionsJson: {"keywords":[...],"search_fallback":bool} — the live
+ * keyword set and the urlloading/searchEngineFallback opt-in.
+ * NULL return is an argument error, not an empty verdict.
+ *
+ * rc_frecency_score(json, out) — pure scoring seam:
+ *   {"visits":[...],"now_ms":...,"typed":n,"bookmarked":bool}
+ *   (now_ms optional; visits are visit stamps in ms-epoch, bucketed
+ *   by local calendar days like QDateTime::daysTo).
+ *
+ * rc_history_suggest(term, limit) -> JSON array
+ *   [{"url","title","ts","frecency","score"}, ...] ranked rows from the
+ *   history store, newest-title representative per url; NULL when the
+ *   store is not open. */
+char *rc_classify_input(const char *inputUtf8,
+                        const char *optionsJsonUtf8);
+RcStatus rc_frecency_score(const char *jsonUtf8, int64_t *out);
+char *rc_history_suggest(const char *termUtf8, int64_t limit);
+
 #ifdef __cplusplus
 }
 #endif

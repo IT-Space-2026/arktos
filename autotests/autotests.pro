@@ -28,6 +28,7 @@ SUBDIRS  = \
     modeltoolbar \
     networkaccessmanager \
     networkcookiejar \
+    omnibox \
     opensearchengine \
     opensearchmanager \
     opensearchreader \

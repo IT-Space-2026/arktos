@@ -26,6 +26,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection};
 
 use crate::error::{Fail, RcResult, RcStatus};
+use crate::omnibox;
 use crate::store;
 
 const DB_FILE: &str = "history.db";
@@ -284,6 +285,108 @@ impl HistoryStore {
             .map_err(|e| sql_fail("icon clear", e))?;
         Ok(())
     }
+
+    // ---- omnibox suggestions (OMNI01) ---------------------------------
+    //
+    // Ranked completion rows for a term — the Rust twin of the
+    // HistoryFilterModel + HistoryCompletionModel pipeline: visits are
+    // grouped per-url (newest visit supplies the row's title/ts),
+    // frecency is the summed per-visit decay, a word-boundary hit of the
+    // term on the url's host or the title doubles the score, and the
+    // result is ordered score-descending.  `limit` caps the marshal —
+    // the completer only ever displays a slice.
+    pub fn suggest(&mut self, term: &str, limit: i64, now_ms: i64) -> RcResult<String> {
+        let limit = if limit <= 0 {
+            100usize
+        } else {
+            (limit as usize).min(1000)
+        };
+        let now_day = omnibox::local_day_number(now_ms);
+        let term_l = term.to_lowercase();
+
+        struct Agg {
+            title: String,
+            ts: i64,
+            frecency: i64,
+        }
+        // Newest-first group order, mirroring the legacy hash's
+        // first-seen-in-descending-order representative row.
+        let mut order: Vec<String> = Vec::new();
+        let mut agg: std::collections::HashMap<String, Agg> =
+            std::collections::HashMap::new();
+        {
+            let conn = self.conn()?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT url, title, visited_at FROM visits
+                     ORDER BY visited_at DESC, seq DESC",
+                )
+                .map_err(|e| sql_fail("history suggest", e))?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(|e| sql_fail("history suggest", e))?;
+            for row in rows {
+                let (url, title, ts) =
+                    row.map_err(|e| sql_fail("history suggest", e))?;
+                let score = omnibox::decay(now_day - omnibox::local_day_number(ts));
+                match agg.entry(url) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        e.get_mut().frecency += score;
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        order.push(e.key().clone());
+                        e.insert(Agg {
+                            title,
+                            ts,
+                            frecency: score,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut scored: Vec<serde_json::Value> = Vec::new();
+        for url in order {
+            let a = agg.remove(&url).unwrap();
+            if !term_l.is_empty()
+                && !url.to_lowercase().contains(&term_l)
+                && !a.title.to_lowercase().contains(&term_l)
+            {
+                continue;
+            }
+            // HistoryCompletionModel::lessThan's word-boundary bonus.
+            let boundary = omnibox::word_boundary_match(
+                omnibox::url_host(&url),
+                term,
+            ) || omnibox::word_boundary_match(&a.title, term);
+            let score = if boundary { a.frecency * 2 } else { a.frecency };
+            scored.push(serde_json::json!({
+                "url": url,
+                "title": a.title,
+                "ts": a.ts,
+                "frecency": a.frecency,
+                "score": score,
+            }));
+        }
+        scored.sort_by(|a, b| {
+            b["score"]
+                .as_i64()
+                .cmp(&a["score"].as_i64())
+                // HistoryFilterModel appends first-seen rows while
+                // iterating newest-first, so score ties resolve
+                // newest-representative-first.
+                .then(b["ts"].as_i64().cmp(&a["ts"].as_i64()))
+                .then(a["url"].as_str().cmp(&b["url"].as_str()))
+        });
+        scored.truncate(limit);
+        Ok(serde_json::to_string(&scored).unwrap_or_else(|_| "[]".into()))
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +482,47 @@ mod tests {
             s.icon_clear().unwrap();
             assert!(s.icon_get("other.org").is_err());
         }
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn suggest_ranks_filters_and_aggregates() {
+        let p = temp_db("suggest");
+        let mut s = store_at(&p);
+        // Fixed "now" — mid-bucket offsets keep local-day diffs inside
+        // their decay buckets regardless of the host timezone.
+        let now = 1_800_000_000_000i64;
+        let day = 86_400_000i64;
+        // B: three visits ~3 days ago -> 3x90 = 270 beats A's single
+        // fresh visit (100): the multi-visit sum is the ordering key.
+        s.add("http://b.example/old", "B", now - 3 * day).unwrap();
+        s.add("http://b.example/old", "B", now - 3 * day - 1000).unwrap();
+        s.add("http://b.example/old", "B", now - 3 * day - 2000).unwrap();
+        s.add("http://a.example/fresh", "A", now).unwrap();
+        // C only matches its title, not the url.
+        s.add("http://c.example/", "needle page", now).unwrap();
+        let rows = |json: &str| -> Vec<serde_json::Value> {
+            serde_json::from_str(json).unwrap()
+        };
+        let r = rows(&s.suggest("", 500, now).unwrap());
+        assert_eq!(r[0]["url"], "http://b.example/old");
+        assert_eq!(r[0]["frecency"], 270);
+        // A and C tie at 100 frecency — the word-boundary bonus
+        // decides: "" matches everywhere, so both get doubled; the
+        // tie-break is newest ts then url.
+        let r = rows(&s.suggest("example", 500, now).unwrap());
+        assert_eq!(r.len(), 3);
+        // term filter: only the title-matching row survives.
+        let r = rows(&s.suggest("needle", 500, now).unwrap());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0]["url"], "http://c.example/");
+        // word-boundary doubling: "b" starts b.example's host at a
+        // boundary, "fresh" does not appear at one in a.example.
+        let r = rows(&s.suggest("b", 500, now).unwrap());
+        assert_eq!(r[0]["url"], "http://b.example/old");
+        assert_eq!(r[0]["score"], 540);
+        // limit truncates the marshal.
+        assert_eq!(rows(&s.suggest("", 1, now).unwrap()).len(), 1);
         std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
     }
 

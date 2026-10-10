@@ -88,6 +88,10 @@
 #include "webview.h"
 #include "webviewsearch.h"
 
+#ifdef ARORA_RUSTCORE
+#include <rustcore.h>
+#endif
+
 #include <qabstractproxymodel.h>
 #include <qcompleter.h>
 #include <qdatetime.h>
@@ -437,7 +441,17 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     LocationBar *locationBar = new LocationBar;
     if (!m_lineEditCompleter) {
         HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
+#ifdef ARORA_RUSTCORE
+        // OMNI01: the rustcore store serves the ranked completion rows
+        // — a thin model in front of rc_history_suggest().  The no-rust
+        // build keeps the in-memory filter model.  (Touch the manager
+        // so its load() has opened the store before the first query.)
+        BrowserApplication::historyManager();
+        completionModel->setSourceModel(
+            new RustHistorySuggestModel(completionModel));
+#else
         completionModel->setSourceModel(BrowserApplication::historyManager()->historyFilterModel());
+#endif
         // SRCH01: search suggestions sit above the history matches in
         // the same dropdown — the merged model keeps the completer
         // hack in HistoryCompleter unaware of the extra rows.
@@ -1867,7 +1881,99 @@ static bool looksLikeAddress(const QString &text)
     return dot > 0;
 }
 
+#ifdef ARORA_RUSTCORE
+// OMNI01: rc_classify_input() owns the url-or-search decision; this
+// resolves its verdict against the Qt-owned engine table and the
+// private-context routing.  An empty QUrl means FFI or JSON trouble —
+// the caller falls back to the reference path.
+QUrl TabWidget::guessUrlFromStringRust(const QString &string)
+{
+    const QString trimmed = string.trimmed();
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("urlloading"));
+    const bool searchFallback =
+        settings.value(QLatin1String("searchEngineFallback"), true)
+            .toBool();
+
+    QJsonObject options;
+    options.insert(QLatin1String("search_fallback"), searchFallback);
+    options.insert(QLatin1String("keywords"),
+                   QJsonArray::fromStringList(manager->keywords()));
+    const QByteArray optionsJson =
+        QJsonDocument(options).toJson(QJsonDocument::Compact);
+
+    char *json = rc_classify_input(trimmed.toUtf8().constData(),
+                                   optionsJson.constData());
+    if (!json)
+        return QUrl();
+    const QJsonObject verdict =
+        QJsonDocument::fromJson(QByteArray(json)).object();
+    rc_string_free(json);
+
+    const QString kind = verdict.value(QLatin1String("kind")).toString();
+    const auto parse = [](const QJsonValue &value) {
+        return QUrl::fromEncoded(value.toString().toUtf8(),
+                                 QUrl::TolerantMode);
+    };
+    if (kind == QLatin1String("navigate"))
+        return parse(verdict.value(QLatin1String("url")));
+    if (kind == QLatin1String("internal")) {
+        QUrl url = parse(verdict.value(QLatin1String("url")));
+        if (url.scheme() == QLatin1String("about")
+            && url.path() == QLatin1String("home"))
+            url = QUrl(QLatin1String("qrc:/startpage.html"));
+        return url;
+    }
+    if (kind == QLatin1String("file"))
+        return QUrl::fromLocalFile(
+            verdict.value(QLatin1String("path")).toString());
+    if (kind != QLatin1String("search"))
+        return QUrl();
+
+    // "engine" names a keyword to resolve, or is null for the
+    // context engine.
+    const QString keyword =
+        verdict.value(QLatin1String("engine")).toString();
+    QString query = verdict.value(QLatin1String("query")).toString();
+    if (!keyword.isEmpty()) {
+        if (OpenSearchEngine *engine =
+                manager->engineForKeyword(keyword)) {
+            const QUrl searchUrl = engine->searchUrl(query);
+            if (!searchUrl.isEmpty() && searchUrl.isValid())
+                return searchUrl;
+        }
+        // A keyword that vanished (or whose template produced an
+        // unusable url) is a miss: the reference path re-routes the
+        // raw input through the ordinary search fallback.
+        query = trimmed;
+    }
+    if (searchFallback) {
+        if (OpenSearchEngine *engine = manager->engineForContext(
+                BrowserApplication::isPrivate())) {
+            const QUrl searchUrl = engine->searchUrl(query);
+            if (!searchUrl.isEmpty() && searchUrl.isValid())
+                return searchUrl;
+        }
+    }
+    return QUrl::fromEncoded(
+        (QLatin1String("http://") + trimmed).toUtf8(),
+        QUrl::TolerantMode);
+}
+#endif // ARORA_RUSTCORE
+
 QUrl TabWidget::guessUrlFromString(const QString &string)
+{
+#ifdef ARORA_RUSTCORE
+    const QUrl resolved = guessUrlFromStringRust(string);
+    if (!resolved.isEmpty())
+        return resolved;
+#endif
+    return guessUrlFromStringCpp(string);
+}
+
+QUrl TabWidget::guessUrlFromStringCpp(const QString &string)
 {
     const QString trimmed = string.trimmed();
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();

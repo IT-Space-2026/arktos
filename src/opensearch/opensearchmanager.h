@@ -112,6 +112,10 @@ public:
     QUrl convertKeywordSearchToUrl(const QString &string);
     OpenSearchEngine *engineForKeyword(const QString &keyword) const;
     void setEngineForKeyword(const QString &keyword, OpenSearchEngine *engine);
+    // OMNI01: the registered shortcut keywords — the rustcore
+    // classifier consumes the live list so 'keyword terms' keeps
+    // priority in the routing decision.
+    QStringList keywords() const;
 
     QStringList keywordsForEngine(OpenSearchEngine *engine) const;
     void setKeywordsForEngine(OpenSearchEngine *engine, const QStringList &keywords);
