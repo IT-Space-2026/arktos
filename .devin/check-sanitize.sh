@@ -15,6 +15,11 @@
 # MEM01's job, which reuses this harness with ARORA_SANITIZE_LEAKS=1.
 #
 # Env:
+#   ARORA_SANITIZE_BUILD=dir resume an existing instrumented tree
+#                            instead of copying fresh — lets a killed
+#                            run keep its objects (same pattern as
+#                            ARORA_STATIC_BUILD/ARORA_LEAKS_BUILD).
+#                            Implies KEEP.
 #   ARORA_SANITIZE_LEAKS=1   enable LSan (default off — MEM01 flips it)
 #   ARORA_SANITIZE_STRICT=1  build CONFIG+=sanitize-strict (UBSan
 #                            findings become fatal instead of logged)
@@ -42,12 +47,19 @@ command -v git >/dev/null 2>&1 || die "git not found"
 CONFIG=sanitize
 [ "$STRICT" = "1" ] && CONFIG=sanitize-strict
 
-BUILD=$(mktemp -d /tmp/arora-san.XXXXXX)
-echo "check-sanitize: build tree $BUILD (CONFIG+=$CONFIG)"
+if [ -n "${ARORA_SANITIZE_BUILD:-}" ]; then
+    BUILD=$ARORA_SANITIZE_BUILD
+    [ -d "$BUILD/src" ] || die "ARORA_SANITIZE_BUILD=$BUILD is not a build tree"
+    KEEP=1
+    echo "check-sanitize: resuming instrumented tree $BUILD (CONFIG+=$CONFIG)"
+else
+    BUILD=$(mktemp -d /tmp/arora-san.XXXXXX)
+    echo "check-sanitize: build tree $BUILD (CONFIG+=$CONFIG)"
 
-cd "$ROOT" || die "cannot cd to $ROOT"
-git ls-files -z -c -o --exclude-standard | tar --null -T - -cf - \
-    | tar -x -C "$BUILD" || die "tree copy failed"
+    cd "$ROOT" || die "cannot cd to $ROOT"
+    git ls-files -z -c -o --exclude-standard | tar --null -T - -cf - \
+        | tar -x -C "$BUILD" || die "tree copy failed"
+fi
 
 cd "$BUILD" || die "cannot cd to $BUILD"
 # shellcheck disable=SC1090
@@ -55,8 +67,10 @@ cd "$BUILD" || die "cannot cd to $BUILD"
 
 QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 
-echo "check-sanitize: qmake ($("$QMAKE" -query QT_VERSION), linux-clang) + make -j$JOBS"
-"$QMAKE" -spec linux-clang "CONFIG+=$CONFIG" arora.pro || die "qmake failed"
+if [ -z "${ARORA_SANITIZE_BUILD:-}" ]; then
+    echo "check-sanitize: qmake ($("$QMAKE" -query QT_VERSION), linux-clang) + make -j$JOBS"
+    "$QMAKE" -spec linux-clang "CONFIG+=$CONFIG" arora.pro || die "qmake failed"
+fi
 make -j"$JOBS" sub-src sub-autotests || die "build failed"
 
 # Isolate HOME: tests/smokes write the real app profile dirs otherwise.

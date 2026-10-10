@@ -550,3 +550,15 @@ I'll start the merge run. First, check the working tree state and fetch.Working 
 - **WORKLOG**: appended MERGEWATCH line, committed as `06ba86f`, pushed.
 - Pre-existing dirty files (`Arora-Task.md`, `mergewatch.log`, `taskloop.log`) left untouched. Stopping after this one pass.
 [2026-10-10 08:55:31] merge run exited rc=0
+[2026-10-10 09:47:10] mergewatch starting: lanes='rust-work ui-work' interval=300s model=swe-2-high
+[2026-10-10 09:47:11] merge due: rust-work(2) ui-work(1) — spawning devin merge run
+I'll start by checking the state of this checkout and fetching origin.Two log files are dirty (watchdog logs — not merge inputs). Now checking lane ahead counts.Both lanes are ahead. Let me inspect what each lane contains before merging.rust-work only touches its task table; ui-work has real src changes. Merging rust-work first.rust-work merged cleanly. Now ui-work.Both merges were clean. Now verifying the build.Build is running. Waiting for completion.Build succeeded. Now let me check the WORKLOG format before pushing.Let me check how previous MERGEWATCH worklog lines got committed.Previous runs committed the worklog line before pushing. I'll append two MERGEWATCH lines, commit just that file, then push.Merge run complete. Summary:
+
+- **rust-work** (2 ahead): merged cleanly — task-table-only commits (`Arora-Task-Rust.md` EXT06/SEC22 rows).
+- **ui-work** (1 ahead): merged cleanly — ENG04 standard actions + page probes through `Engine::Page`; `browsermainwindow.cpp`, `tabwidget.cpp/h` auto-merged with no conflicts.
+- **Build**: `source .devin/qt-env.sh && make -C src -j2` — ok, `arora` binary linked.
+- **Worklog**: 2 MERGEWATCH lines appended and committed (`b5253a5`).
+- **Push**: `88bbf3e..b5253a5 master -> master`.
+
+Pre-existing dirty files (`.devin/mergewatch.log`, `.devin/taskloop.log` — watchdog logs) left untouched. Stopping after this one pass.
+[2026-10-10 09:49:36] merge run exited rc=0
