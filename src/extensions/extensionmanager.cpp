@@ -92,6 +92,111 @@ static QWebEngineExtensionManager *managerFor(const QList<QWebEngineProfile *> &
 
 #endif // QT_CONFIG(webengine_extensions)
 
+namespace {
+// A real reply (or picked package) buffers whatever the peer sends;
+// cap rather than letting a hostile endpoint grow memory unbounded.
+// kUpdatePackageMaxBytes doubles as the .zip inspection bound.
+constexpr qint64 kUpdateManifestMaxBytes = 1024 * 1024;
+constexpr qint64 kUpdatePackageMaxBytes = 64 * 1024 * 1024;
+constexpr int kUpdateFetchTimeoutMs = 20000;
+constexpr int kUpdateDownloadTimeoutMs = 60000;
+}
+
+#if defined(ARORA_RUSTCORE)
+// EXT06: the review dialog consumes PRE-VALIDATED manifest fields —
+// rc_ext_manifest_check parses the schema + permission lists in Rust
+// and this maps its verdict onto the UI-facing Manifest.  The raw
+// manifest.json bytes never reach Qt JSON objects.
+static void fillManifestFromCheck(ExtensionManager::Manifest *manifest,
+                                  const QJsonObject &check)
+{
+    manifest->valid = check.value(QLatin1String("valid")).toBool();
+    manifest->manifestVersion =
+        check.value(QLatin1String("manifest_version")).toInt();
+    manifest->name = check.value(QLatin1String("name")).toString();
+    manifest->version = check.value(QLatin1String("version")).toString();
+    manifest->description =
+        check.value(QLatin1String("description")).toString();
+    manifest->hasBackground =
+        check.value(QLatin1String("has_background")).toBool();
+    manifest->hasAction = check.value(QLatin1String("has_action")).toBool();
+    manifest->contentScriptCount =
+        check.value(QLatin1String("content_script_count")).toInt();
+    manifest->updateUrl = check.value(QLatin1String("update_url")).toString();
+
+    const auto stringList = [&check](const char *key) {
+        QStringList list;
+        const QJsonArray entries =
+            check.value(QLatin1String(key)).toArray();
+        for (const QJsonValue &value : entries)
+            list.append(value.toString());
+        return list;
+    };
+    manifest->permissions = stringList("permissions");
+    manifest->hostPermissions = stringList("host_permissions");
+    manifest->unsupported = stringList("unsupported");
+    manifest->unverified = stringList("unverified");
+    manifest->dangerous = stringList("dangerous");
+    manifest->error = stringList("errors").join(QLatin1String(" "));
+}
+
+// Packaged install path: the whole archive is verified in Rust —
+// structure, member names, declared-hash — and its embedded
+// manifest.json comes back already classified.
+static ExtensionManager::Manifest inspectPackageManifest(const QString &path)
+{
+    ExtensionManager::Manifest manifest;
+    QFile file(path);
+    if (file.size() > kUpdatePackageMaxBytes
+            || !file.open(QIODevice::ReadOnly)) {
+        manifest.error = QObject::tr("cannot read %1").arg(path);
+        return manifest;
+    }
+    const QByteArray body = file.readAll();
+    RcBuffer out{};
+    const RcStatus verified = rc_ext_verify_package(
+        reinterpret_cast<const uint8_t *>(body.constData()),
+        size_t(body.size()), nullptr, nullptr, 0, &out);
+    if (verified != RC_OK) {
+        char *message = rc_last_error_message();
+        manifest.error = QObject::tr("package verification failed: %1")
+            .arg(message ? QString::fromUtf8(message)
+                         : QObject::tr("error"));
+        rc_string_free(message);
+        return manifest;
+    }
+    const QJsonObject verdict = QJsonDocument::fromJson(
+        QByteArray(reinterpret_cast<const char *>(out.data),
+                   qsizetype(out.len))).object();
+    rc_buffer_free(out);
+    if (verdict.value(QLatin1String("status")).toString()
+            != QLatin1String("valid")) {
+        manifest.error = QObject::tr("package rejected: %1")
+            .arg(verdict.value(QLatin1String("error")).toString());
+        return manifest;
+    }
+    const QJsonObject check =
+        verdict.value(QLatin1String("manifest")).toObject();
+    if (check.isEmpty() || !check.value(QLatin1String("valid")).toBool()) {
+        manifest.error = QObject::tr(
+            "package contains no readable manifest.json");
+        return manifest;
+    }
+    fillManifestFromCheck(&manifest, check);
+    // Honesty note for the review dialog: v1 verifies the CRX3
+    // header's structure, not the signatures themselves.
+    manifest.packageNote =
+        verdict.value(QLatin1String("signing")).toString()
+                == QLatin1String("signed")
+        ? QObject::tr("CRX3 package carrying a signature block — "
+                      "the signature is structure-checked, not "
+                      "cryptographically verified.")
+        : QObject::tr("Package is unsigned — its contents were "
+                      "structure-checked only.");
+    return manifest;
+}
+#endif // ARORA_RUSTCORE
+
 ExtensionManager::ExtensionManager(QObject *parent)
     : QObject(parent)
 {
@@ -265,11 +370,18 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     else if (info.isFile() && info.fileName() == QLatin1String("manifest.json"))
         manifestPath = info.absoluteFilePath();
     else if (info.isFile() && info.suffix() == QLatin1String("zip")) {
+#if defined(ARORA_RUSTCORE)
+        // EXT06: the archive is verified in Rust and its embedded
+        // manifest comes back pre-classified — the review dialog
+        // shows real permissions for packages now.
+        return inspectPackageManifest(info.absoluteFilePath());
+#else
         // Qt's installer accepts .zip packages; the manifest inside is
         // not inspected here — Chromium reports errors through
         // installFinished's error string instead.
         manifest.error = tr("zip package — manifest not inspected before install");
         return manifest;
+#endif
     } else {
         manifest.error = tr("not an extension folder or manifest.json");
         return manifest;
@@ -281,6 +393,29 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("cannot read %1").arg(manifestPath);
         return manifest;
     }
+#if defined(ARORA_RUSTCORE)
+    // EXT06: schema + permissions are parsed in Rust — the fields
+    // below come back pre-classified, never from raw JSON on this side.
+    const QByteArray raw = file.readAll();
+    RcBuffer out{};
+    const RcStatus checked = rc_ext_manifest_check(
+        reinterpret_cast<const uint8_t *>(raw.constData()),
+        size_t(raw.size()), &out);
+    if (checked != RC_OK) {
+        char *message = rc_last_error_message();
+        manifest.error = tr("manifest.json is not valid JSON: %1")
+            .arg(message ? QString::fromUtf8(message)
+                         : tr("malformed document"));
+        rc_string_free(message);
+        return manifest;
+    }
+    const QJsonObject check = QJsonDocument::fromJson(
+        QByteArray(reinterpret_cast<const char *>(out.data),
+                   qsizetype(out.len))).object();
+    rc_buffer_free(out);
+    fillManifestFromCheck(&manifest, check);
+    return manifest;
+#else
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
@@ -327,6 +462,7 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("Qt WebEngine supports Manifest V3 extensions only "
                             "(this package declares version %1).")
             .arg(manifest.manifestVersion);
+#endif // ARORA_RUSTCORE
     return manifest;
 }
 
@@ -480,15 +616,12 @@ void ExtensionManager::reloadUserScripts(QWebEngineProfile *profile)
 // separate extension, so installs are limited to the user-initiated
 // check.  .crx packages cannot be installed by Qt at all — they are
 // saved under updatesPath() for manual handling.
-
-namespace {
-// A real reply buffers whatever the peer sends; abort past the cap
-// rather than letting a hostile endpoint grow memory unbounded.
-constexpr qint64 kUpdateManifestMaxBytes = 1024 * 1024;
-constexpr qint64 kUpdatePackageMaxBytes = 64 * 1024 * 1024;
-constexpr int kUpdateFetchTimeoutMs = 20000;
-constexpr int kUpdateDownloadTimeoutMs = 60000;
-}
+//
+// EXT06: under CONFIG+=rustcore the downloaded bytes are verified by
+// rc_ext_verify_package BEFORE they hit disk — the update manifest's
+// declared hash_sha256 (when present), the zip/CRX3 structure and
+// member names, and an embedded readable manifest.json are all
+// required.  Rejected packages are never written.
 
 QString ExtensionManager::updatesPath()
 {
@@ -536,12 +669,14 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
         QString status;
         QString codebase;
         QString version;
+        QString hash;   // hash_sha256 — declared package digest (hex)
     };
     QList<Offer> offers;
 #if defined(ARORA_RUSTCORE)
     // SEC19: remote XML is parsed by memory-safe Rust — the crate
-    // hands back {"offers":[[appid,status,codebase,version],...]} and
-    // every policy decision below stays exactly where it was.
+    // hands back {"offers":[[appid,status,codebase,version,
+    // hash_sha256],...]} and every policy decision below stays
+    // exactly where it was.
     RcBuffer out{};
     const RcStatus parsed = rc_updatemanifest_parse(
         reinterpret_cast<const uint8_t *>(xml.constData()),
@@ -561,13 +696,15 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
         .object().value(QLatin1String("offers")).toArray();
     for (const QJsonValue &row : rows) {
         const QJsonArray fields = row.toArray();
-        if (fields.size() != 4)
+        if (fields.size() < 4)
             continue;
         Offer offer;
         offer.appId = fields.at(0).toString();
         offer.status = fields.at(1).toString();
         offer.codebase = fields.at(2).toString();
         offer.version = fields.at(3).toString();
+        if (fields.size() > 4)
+            offer.hash = fields.at(4).toString();
         offers.append(offer);
     }
 #else
@@ -587,6 +724,7 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
                 offer.status = attrs.value(QLatin1String("status")).toString();
                 offer.codebase = attrs.value(QLatin1String("codebase")).toString();
                 offer.version = attrs.value(QLatin1String("version")).toString();
+                offer.hash = attrs.value(QLatin1String("hash_sha256")).toString();
                 offers.append(offer);
             }
         } else if (token == QXmlStreamReader::EndElement
@@ -646,6 +784,7 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
     }
     result->availableVersion = offer->version;
     result->codeBase = codebase;
+    result->packageHash = offer->hash;
     return true;
 }
 
@@ -801,6 +940,55 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
 
         if (reply->error() == QNetworkReply::NoError) {
             const QByteArray body = reply->readAll();
+#if defined(ARORA_RUSTCORE)
+            // EXT06: verify the fetched bytes before they hit disk —
+            // the update manifest's declared hash (when it carries
+            // one), the zip/CRX3 structure, member names and a
+            // readable manifest.json are all required.  A rejected
+            // package is never written, let alone installed.
+            const QByteArray expected =
+                QByteArray::fromHex(job.result.packageHash.toLatin1());
+            RcBuffer verdictBuf{};
+            const RcStatus verified = rc_ext_verify_package(
+                reinterpret_cast<const uint8_t *>(body.constData()),
+                size_t(body.size()),
+                expected.size() == 32
+                    ? reinterpret_cast<const uint8_t *>(expected.constData())
+                    : nullptr,
+                nullptr, 0, &verdictBuf);
+            QString verifyError;
+            if (verified == RC_OK) {
+                const QJsonObject verdict = QJsonDocument::fromJson(
+                    QByteArray(reinterpret_cast<const char *>(verdictBuf.data),
+                               qsizetype(verdictBuf.len))).object();
+                rc_buffer_free(verdictBuf);
+                if (verdict.value(QLatin1String("status")).toString()
+                        != QLatin1String("valid")) {
+                    verifyError = tr("update package rejected: %1")
+                        .arg(verdict.value(QLatin1String("error")).toString());
+                } else {
+                    const QJsonObject check =
+                        verdict.value(QLatin1String("manifest")).toObject();
+                    if (check.isEmpty()
+                        || !check.value(QLatin1String("valid")).toBool())
+                        verifyError = tr("update package carries no readable "
+                                         "manifest.json");
+                }
+            } else {
+                char *message = rc_last_error_message();
+                verifyError = tr("update package verification failed: %1")
+                    .arg(message ? QString::fromUtf8(message)
+                                 : tr("error"));
+                rc_string_free(message);
+            }
+            if (!verifyError.isEmpty()) {
+                job.result.error = verifyError;
+                m_updateResults.append(job.result);
+                m_lastUpdateResults.insert(job.result.id, job.result);
+                finishUpdateCheck();
+                return;
+            }
+#endif
             QString fileName =
                 QFileInfo(job.result.codeBase.path()).fileName();
             fileName.remove(QRegularExpression(

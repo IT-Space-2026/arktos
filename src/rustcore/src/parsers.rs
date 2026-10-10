@@ -19,9 +19,10 @@
 //!
 //!   * rc_updatemanifest_parse — extension self-update "gupdate"
 //!     manifests, remote XML fetched from each extension's update_url.
-//!     Result JSON: {"offers":[[appid,status,codebase,version],...]} —
-//!     the Qt side keeps every policy decision (multi-app matching,
-//!     status/version handling, codebase scheme check).
+//!     Result JSON: {"offers":[[appid,status,codebase,version,
+//!     hash_sha256],...]} — the Qt side keeps every policy decision
+//!     (multi-app matching, status/version handling, codebase scheme
+//!     check); hash_sha256 is "" when the offer doesn't declare one.
 //!
 //!   * rc_suggest_parse — OpenSearch suggestions replies
 //!     (["term", ["s1", ...]] remote JSON).  Result JSON is a plain
@@ -549,6 +550,7 @@ pub fn update_manifest(data: &[u8]) -> RcResult<Vec<u8>> {
                                 attr_or_empty(&attrs, "status"),
                                 attr_or_empty(&attrs, "codebase"),
                                 attr_or_empty(&attrs, "version"),
+                                attr_or_empty(&attrs, "hash_sha256"),
                             ]));
                         }
                     }
@@ -816,9 +818,24 @@ mod tests {
         assert_eq!(
             v["offers"],
             json!([
-                ["abc", "ok", "https://x/p.zip", "2.0.0"],
-                ["def", "noupdate", "", ""]
+                ["abc", "ok", "https://x/p.zip", "2.0.0", ""],
+                ["def", "noupdate", "", "", ""]
             ])
+        );
+    }
+
+    #[test]
+    fn update_manifest_hash() {
+        // hash_sha256 rides along as the fifth offer field (EXT06) —
+        // "" when undeclared.
+        let xml = "<gupdate><app appid='a'>\
+                   <updatecheck status='ok' codebase='https://x/p.crx' \
+                                version='2' hash_sha256='abcd1234'/>\
+                   </app></gupdate>";
+        let v = fields(&update_manifest(xml.as_bytes()).unwrap());
+        assert_eq!(
+            v["offers"],
+            json!([["a", "ok", "https://x/p.crx", "2", "abcd1234"]])
         );
     }
 
@@ -831,7 +848,7 @@ mod tests {
                    <app appid='a'><updatecheck version='3'/></app>\
                    <updatecheck version='4'/></gupdate>";
         let v = fields(&update_manifest(xml.as_bytes()).unwrap());
-        assert_eq!(v["offers"], json!([["a", "", "", "3"]]));
+        assert_eq!(v["offers"], json!([["a", "", "", "3", ""]]));
         // malformed + DTD + truncated
         assert!(update_manifest(b"<gupdate>").is_err());
         assert!(update_manifest(b"<!DOCTYPE g><gupdate/>").is_err());

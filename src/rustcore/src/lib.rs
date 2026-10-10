@@ -50,12 +50,18 @@
 //!     platform roots, independent of the engine's verdict, reported
 //!     as a JSON status/error-class/chain summary.
 
+//!   * extverify (EXT06): extension-package verification — zip/CRX3
+//!     structure checks, update-payload SHA-256 vs the declared hash,
+//!     and the manifest.json schema+permission parse — all before Qt
+//!     sees a byte of the package.
+//!
 mod autofill;
 mod bidi;
 mod blocklist;
 mod bookmarks;
 mod cred;
 mod error;
+mod extverify;
 mod history;
 mod notify;
 mod omnibox;
@@ -960,6 +966,90 @@ pub unsafe extern "C" fn rc_pdf_sanitize(
             msg,
         })?;
         buffer_out(out, cleaned);
+        Ok(())
+    })
+}
+
+// ---- extension-package verification (EXT06) ------------------------
+//
+// The untrusted-bytes boundary of the extension system: packages and
+// update payloads are verified in Rust before Qt's installer sees
+// them.  Both entry points return a JSON verdict — see extverify.rs
+// for the schema.
+
+/// Verifies an extension package (zip or CRX3) in memory and returns
+/// the verdict JSON in `out` (rc_buffer_free).  RC_OK means a verdict
+/// was produced — the JSON "status" field says "valid" or "rejected"
+/// ("error" carries the reason).  `expected_sha256` is the update
+/// manifest's declared 32-byte digest, or null when undeclared;
+/// `pinned_pubkey` is reserved for signature pinning (v1 reports
+/// "no-pinning-configured" when supplied).
+///
+/// # Safety
+/// `pkg` must point to `len` readable bytes; `expected_sha256` is null
+/// or points to 32 bytes; `pinned_pubkey` is null or points to
+/// `pubkey_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ext_verify_package(
+    pkg: *const u8,
+    len: usize,
+    expected_sha256: *const u8,
+    pinned_pubkey: *const u8,
+    pubkey_len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(pkg, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad package pointer".into(),
+        })?;
+        let expected = if expected_sha256.is_null() {
+            None
+        } else {
+            let e = unsafe { util::bytes(expected_sha256, 32) }.ok_or_else(|| {
+                error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "bad hash pointer".into(),
+                }
+            })?;
+            Some(e)
+        };
+        let pubkey = if pinned_pubkey.is_null() {
+            None
+        } else {
+            Some(unsafe { util::bytes(pinned_pubkey, pubkey_len) }.ok_or_else(
+                || error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "bad pubkey pointer".into(),
+                },
+            )?)
+        };
+        let json = extverify::verify_package(data, expected, pubkey)?;
+        buffer_out(out, json);
+        Ok(())
+    })
+}
+
+/// Parses + validates a manifest.json document (<= 1 MiB) into the
+/// permission-classification JSON consumed by the review dialog —
+/// see extverify.rs.  RC_CORRUPT on unreadable JSON.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ext_manifest_check(
+    json: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad manifest pointer".into(),
+        })?;
+        let checked = extverify::manifest_check(data)?;
+        buffer_out(out, checked);
         Ok(())
     })
 }

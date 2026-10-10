@@ -21,6 +21,7 @@ SUBDIRS  = \
     domainblock \
     downloadmanager \
     engineadapter \
+    extverify \
     historyfiltermodel \
     historymanager \
     historyui \

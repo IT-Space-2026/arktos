@@ -44,3 +44,9 @@ rustls = { version = "=0.23.45", default-features = false,
 rustls-native-certs = "=0.8.4"
 rustls-webpki = "=0.103.15"
 x509-parser = "=0.18.1"
+# Extension-package verification (EXT06): SHA-256 of downloaded
+# packages vs the update-manifest hash, and pure-Rust inflate for
+# reading manifest.json out of a deflated zip member.  Exact-pinned
+# like the rest of the reviewed tree.
+sha2 = "=0.10.9"
+miniz_oxide = "=0.8.9"

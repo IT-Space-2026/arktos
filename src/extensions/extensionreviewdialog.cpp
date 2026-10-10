@@ -131,6 +131,19 @@ ExtensionReviewDialog::ExtensionReviewDialog(
             tr("Declares APIs with only partial Qt WebEngine support: %1")
                 .arg(manifest.unverified.join(QLatin1String(", "))),
             m_warningsList);
+    // EXT06: the deny-by-default set (populated by rustcore's
+    // rc_ext_manifest_check — empty on no-Rust builds and on manifests
+    // that declare none of them).  EXT05 turns this warning into
+    // per-permission consent checkboxes; surfacing it now keeps the
+    // classification visible.
+    if (!manifest.dangerous.isEmpty())
+        new QListWidgetItem(
+            tr("Declares high-risk access — review carefully before "
+               "consenting: %1")
+                .arg(manifest.dangerous.join(QLatin1String(", "))),
+            m_warningsList);
+    if (!manifest.packageNote.isEmpty())
+        new QListWidgetItem(manifest.packageNote, m_warningsList);
     // Qt WebEngine surfaces actionPopupUrl but has no toolbar to host
     // a browser-action button or its popup in — say so up front.
     if (manifest.hasAction)

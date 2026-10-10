@@ -93,6 +93,11 @@ public:
         QStringList hostPermissions;
         QStringList unsupported;      // permissions Qt WebEngine cannot serve
         QStringList unverified;       // registered but delegates may be stubs
+        QStringList dangerous;        // EXT06 deny-by-default consent set —
+                                      // populated under CONFIG+=rustcore by
+                                      // rc_ext_manifest_check, empty otherwise
+        QString packageNote;          // honesty note for packaged installs
+                                      // ("unsigned", "structure-only sig")
         QString updateUrl;            // update_url — self-hosted update manifest
     };
 
@@ -111,6 +116,8 @@ public:
         QString availableVersion; // non-empty when the remote is newer
         QUrl codeBase;            // package URL from the update manifest
         QString savedTo;          // downloaded package file, if fetched
+        QString packageHash;      // hash_sha256 the update manifest declared
+                                  // for the package (hex), empty when absent
         bool noSource = false;    // no update_url — cannot self-update
         bool upToDate = false;    // remote version not newer
         bool installTriggered = false; // .zip handed to installExtension()

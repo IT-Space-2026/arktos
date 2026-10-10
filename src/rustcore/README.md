@@ -124,6 +124,40 @@ refused outright (SSRF discipline, same rule as the interceptors).
 `data/testcerts/` holds the scratch-CA fixture set the unit tests
 probe; `gen_testcerts.py` regenerates it.
 
+## Extension package verification (EXT06)
+
+`rc_ext_verify_package(bytes, expected_sha256?, pinned_pubkey?)` is the
+untrusted-bytes boundary of the extension system: downloaded .zip/.crx
+packages and self-hosted update payloads are verified before Qt's
+installer or the review dialog sees a byte.  The FFI answers a JSON
+verdict — `status: valid|rejected`, `format: zip|crx3`,
+`signing: unsigned|signed`, `signature_check: none|structure-only`,
+`expected_sha256: match|mismatch|not-declared`, archive stats, and the
+embedded manifest's `rc_ext_manifest_check` verdict.
+
+- CRX3: magic + version + header length are checked, the signed-header
+  protobuf is scanned field-by-field on the wire format (length bounds
+  enforced), and the embedded zip is re-verified.  A signature block is
+  honestly reported as `structure-only` — v1 does no cryptographic
+  signature verification, and a caller-supplied pinned key reports
+  `no-pinning-configured`.  An unsigned package is a classification,
+  not a rejection.
+- Zip: EOCD + central-directory bounds, multi-disk and zip64 refusal,
+  entry-count and total-uncompressed caps, per-member local-header
+  checks, and member names rejecting `..`, absolute paths, drive
+  letters and backslash tricks.  A missing/unreadable `manifest.json`
+  rejects the package.
+- `expected_sha256` carries the update manifest's declared
+  `hash_sha256` — a tampered download fails before Qt writes it.
+
+`rc_ext_manifest_check(json)` parses a manifest.json (≤ 1 MiB) and
+returns the pre-classified fields the review dialog consumes: name,
+version, update_url, key, permissions/host_permissions split into
+`unsupported`, `unverified` and `dangerous` (nativeMessaging, debugger,
+webRequestBlocking, cookies, browsingData, `<all_urls>`/`*://*/*`),
+plus a non-fatal `errors` list — the Qt side never parses raw
+package JSON itself.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

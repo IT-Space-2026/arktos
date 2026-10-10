@@ -9435,11 +9435,13 @@ int main(int argc, char **argv)
         });
 
         // Drop leftovers from an interrupted earlier run so installs
-        // start clean.
+        // start clean — fixture dirs land under upd-*, a successfully
+        // applied update package under pkg_* (named after pkg.zip).
         const QString installRoot = upm->installPath();
         for (const QString &sub : QDir(installRoot)
                 .entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-            if (sub.startsWith(QLatin1String("upd-")))
+            if (sub.startsWith(QLatin1String("upd-"))
+                || sub.startsWith(QLatin1String("pkg_")))
                 QDir(installRoot + QLatin1Char('/') + sub)
                     .removeRecursively();
         }
