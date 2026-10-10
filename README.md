@@ -149,7 +149,8 @@ browsing profile:
 - **Look & feel** — Theme selector (System default / Light / Dark,
   `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
   (Adwaita/Breeze/Tabler, light+dark variants), status-bar load
-  indicator and zoom control, domain-emphasized anti-phishing address
+  indicator, zoom control and per-tab memory/bandwidth readouts
+  (Linux), domain-emphasized anti-phishing address
   bar with IDN punycode display.
 
 ### Search

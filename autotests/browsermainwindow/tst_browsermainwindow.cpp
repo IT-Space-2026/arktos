@@ -120,6 +120,7 @@ private slots:
     void torCircuitStatusLabel();
     void readerModeButton();
     void statusBarWidgets();
+    void statusBarIndicators();
     void sidebarPanel();
     void downloadsSidebarPanel();
 };
@@ -1100,6 +1101,87 @@ void tst_BrowserMainWindow::statusBarWidgets()
 
     // The finished notice clears itself; idle stays hidden.
     QTRY_VERIFY_WITH_TIMEOUT(!indicator->isVisible(), 15000);
+
+    closeWindow(window);
+}
+
+// SBAR01: per-tab renderer memory + live bandwidth — the /proc
+// helpers are deterministic, the widgets' bind/auto-hide behavior is
+// driven through their slots like statusBarWidgets() does.
+void tst_BrowserMainWindow::statusBarIndicators()
+{
+    // VmRSS reader: bogus/dead pids report -1, a live one reads > 0.
+    QCOMPARE(MemIndicator::residentMemoryKb(-1), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(0), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(99999999), qint64(-1));
+    QVERIFY(MemIndicator::residentMemoryKb(
+                QCoreApplication::applicationPid()) > 0);
+
+    // Display ladder: one decimal under 100MB, integer from there,
+    // GB past a gigabyte.
+    QCOMPARE(MemIndicator::formatRss(87 * 1024),
+             QLatin1String("87.0 MB"));
+    QCOMPARE(MemIndicator::formatRss(238 * 1024),
+             QLatin1String("238 MB"));
+    QCOMPARE(MemIndicator::formatRss(1536 * 1024),
+             QLatin1String("1.5 GB"));
+
+    // Rate formatter shares the DownloadManager unit ladder + "/s".
+    QCOMPARE(NetIndicator::formatRate(84 * 1024),
+             QLatin1String("84.0 kB/s"));
+    QCOMPARE(NetIndicator::formatRate(1200 * 1024),
+             QLatin1String("1.2 MB/s"));
+
+    // The standalone io scan is a soft check — a test run may have
+    // engine children (earlier cases spawn renderers) or none.
+    qint64 ioRead = -1, ioWrite = -1;
+    if (NetIndicator::engineIoTotals(&ioRead, &ioWrite)) {
+        QVERIFY(ioRead >= 0);
+        QVERIFY(ioWrite >= 0);
+    }
+
+    {
+        MemIndicator mem;
+        QLabel *label = mem.findChild<QLabel *>(
+            QLatin1String("memLabel"));
+        QVERIFY(label);
+        // No bound view -> "MEM —", and refresh keeps it there.
+        QVERIFY(label->text().startsWith(QLatin1String("MEM")));
+        QVERIFY(QMetaObject::invokeMethod(&mem, "refresh"));
+        QVERIFY(label->text().contains(
+            QString::fromUtf8("\xe2\x80\x94")));
+
+        NetIndicator net;
+        QVERIFY(!net.isVisible());
+        // First sample only builds the baseline — no burst, stays
+        // hidden.
+        QVERIFY(QMetaObject::invokeMethod(&net, "sample"));
+        QVERIFY(!net.isVisible());
+        net.setVisible(true);
+        QVERIFY(QMetaObject::invokeMethod(&net, "hideWhenIdle"));
+        QVERIFY(!net.isVisible());
+    }
+
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    MemIndicator *mem = window->findChild<MemIndicator *>(
+        QLatin1String("memIndicator"));
+    NetIndicator *net = window->findChild<NetIndicator *>(
+        QLatin1String("netIndicator"));
+    QVERIFY(mem && net);
+    QCOMPARE(mem->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(net->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(mem->webView(), window->currentTab());
+
+    // The memory indicator follows tab switches like the zoom
+    // control does.
+    WebView *firstTab = window->currentTab();
+    window->tabWidget()->newTab();
+    QVERIFY(window->currentTab() != firstTab);
+    QCOMPARE(mem->webView(), window->currentTab());
 
     closeWindow(window);
 }

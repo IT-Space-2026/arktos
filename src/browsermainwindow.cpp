@@ -140,6 +140,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_tabWidget(new TabWidget(this))
     , m_loadingIndicator(new LoadingIndicator(this))
     , m_zoomControl(new ZoomControl(this))
+    , m_memIndicator(new MemIndicator(this))
+    , m_netIndicator(new NetIndicator(this))
     , m_autoSaver(new AutoSaver(this))
 {
     setAttribute(Qt::WA_DeleteOnClose, true);
@@ -298,12 +300,18 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 
     // UIP04: permanent status-bar widgets — page-load timing and a
     // zoom control, both bound to whichever tab is current.
+    // SBAR01: the memory/bandwidth pair anchors the group's left edge
+    // (Vivaldi-style stats-first ordering); the net indicator hides
+    // itself while idle, so the stable widgets sit right of it.
+    statusBar()->addPermanentWidget(m_memIndicator);
+    statusBar()->addPermanentWidget(m_netIndicator);
     statusBar()->addPermanentWidget(m_loadingIndicator);
     statusBar()->addPermanentWidget(m_zoomControl);
     connect(m_tabWidget, &QTabWidget::currentChanged,
             this, [this](int) {
         m_loadingIndicator->setWebView(currentTab());
         m_zoomControl->setWebView(currentTab());
+        m_memIndicator->setWebView(currentTab());
         updateReaderState();
     });
 

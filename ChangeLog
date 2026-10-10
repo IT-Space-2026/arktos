@@ -137,6 +137,12 @@ UI:
   the tab strip on its Top/Left/Right/Bottom edge, the selection
   carries a highlighted frame and check badge, and the picker works
   by mouse or keyboard (arrows move, Enter/Space commits) (TABS03).
+- Status bar gains per-tab memory and live bandwidth readouts
+  (Linux): "MEM 238 MB" polls the current tab's renderer RSS from
+  /proc every 2s and follows tab switches and renderer crashes,
+  while a network indicator shows down/up rates only while traffic
+  moves (auto-hides when idle; exact download bytes are used while
+  a file downloads) (SBAR01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
