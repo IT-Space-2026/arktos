@@ -37,6 +37,7 @@
 #include "schemeaccesshandler.h"
 #include "scriptcontrolmanager.h"
 #include "tabwidget.h"
+#include "tlsverifier.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
@@ -328,6 +329,18 @@ void WebPage::init()
             [this](const QUrl &url) {
         if (m_documentLoadPending)
             schedulePageScripts(url);
+    });
+
+    // SEC22: second-opinion TLS verification.  Once an https main
+    // frame commits, the rustcore probe re-evaluates the chain on a
+    // worker — it informs the site panel, it never gates navigation
+    // (the in-flight-load test is the same one page scripts use, so
+    // same-document navigations don't re-probe).  TlsVerifier owns
+    // the tor/proxy/private-host gates and the dedup.
+    connect(this, &QWebEnginePage::urlChanged, this,
+            [this](const QUrl &url) {
+        if (m_documentLoadPending)
+            TlsVerifier::instance()->probeUrl(url);
     });
 
     // SEC15: keep Chromium's built-in error pages enabled.  With them

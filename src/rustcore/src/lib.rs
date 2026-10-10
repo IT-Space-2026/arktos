@@ -45,6 +45,10 @@
 //!   * autofill (RCORE05): the saved-form record store under the same
 //!     AEAD + Argon2id custody as credentials — sealed
 //!     autofill-store.dat, one unlock opens both.
+//!   * tlsprobe (SEC22): second-opinion TLS verification — a real
+//!     handshake to host:port evaluated by rustls+webpki against the
+//!     platform roots, independent of the engine's verdict, reported
+//!     as a JSON status/error-class/chain summary.
 
 mod autofill;
 mod bidi;
@@ -60,6 +64,7 @@ mod pdfsanitize;
 mod policy;
 mod session;
 mod store;
+mod tlsprobe;
 mod urlstrip;
 mod util;
 
@@ -1673,6 +1678,78 @@ pub unsafe extern "C" fn rc_history_suggest(
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- tlsprobe (SEC22) -----------------------------------------------
+//
+// Second-opinion TLS verification.  rc_tls_check performs a real
+// handshake to host:port and evaluates the chain with rustls+webpki
+// against the platform roots — independent of the engine's verifier.
+// The result is ALWAYS a JSON verdict document (see tlsprobe.rs and
+// rustcore.h for the status/error-class vocabulary), never an FFI
+// error for a reachable-but-bad chain; NULL is reserved for bad
+// arguments.
+
+/// Flags accepted by rc_tls_check.
+pub const RC_TLS_F_ALLOW_LOCAL: u32 = tlsprobe::FLAG_ALLOW_LOCAL;
+
+/// Second-opinion TLS check.  Performs a blocking handshake (5 s
+/// connect, 5 s per-io, 15 s total budget) — callers run it on a
+/// worker thread, never the UI thread.  Returns the verdict JSON:
+///   {"status":"verified"|"warning"|"unverified"|"refused",
+///    "error_class":null|<class>, "detail":..., "host":..., "port":...,
+///    "revocation":"not-checked",
+///    "negotiated":{"tls_version","cipher_suite","alpn"}|null,
+///    "roots":{"native":n,"extra":m},
+///    "chain":[{"subject","issuer","serial","not_before","not_after",
+///              "signature_algorithm","sans":[...]}]}
+/// error_class vocabulary: expired, not-yet-valid, bad-hostname,
+/// untrusted-root, broken-chain, weak-signature, revoked, protocol,
+/// network, root-store, private-host, invalid-host, invalid-port.
+/// Free the result with rc_string_free(); NULL on bad arguments.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tls_check(
+    host: *const c_char,
+    port: u16,
+    flags: u32,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => util::to_c_string(tlsprobe::check(h, port, flags).to_string()),
+            None => {
+                error::set_error("bad host pointer");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Installs an extra DER trust anchor consulted by subsequent probes —
+/// the fixture-CA seam for tests and the hook for enterprise/user
+/// roots.  RC_CORRUPT when the bytes do not parse as X.509.
+///
+/// # Safety
+/// `der` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tls_add_root(der: *const u8, len: usize) -> RcStatus {
+    status_of(|| {
+        let der = unsafe { util::bytes(der, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad der pointer".into(),
+        })?;
+        tlsprobe::add_root(der)
+    })
+}
+
+/// Drops every caller-installed anchor (the platform store is loaded
+/// per probe and unaffected).
+#[no_mangle]
+pub unsafe extern "C" fn rc_tls_clear_roots() -> RcStatus {
+    status_of(tlsprobe::clear_roots)
 }
 
 #[cfg(test)]

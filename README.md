@@ -115,7 +115,17 @@ browsing profile:
   (including typed passwords and card numbers) live in a dedicated
   sealed autofill-store.dat under the shared unlock/passphrase
   lifecycle, with a one-shot import of the old autofill.dat —
-  sealed or plaintext — on first run.
+  sealed or plaintext — on first run. The crate also carries the
+  second-opinion TLS verifier: on https page commits a worker
+  performs a real handshake to the host and re-evaluates the
+  certificate chain with rustls+webpki against the platform
+  roots — the site panel shows a "TLS verified by Arora" chip,
+  or a warning line naming the failure class when the
+  independent verdict disagrees. The check only informs the
+  panel (it never blocks a page), skips Tor windows, proxied
+  sessions and private/loopback hosts entirely, and does no
+  OCSP/CRL fetch — an unreachable host reports "not verified",
+  never a false alarm.
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.

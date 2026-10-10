@@ -448,6 +448,52 @@ char *rc_classify_input(const char *inputUtf8,
 RcStatus rc_frecency_score(const char *jsonUtf8, int64_t *out);
 char *rc_history_suggest(const char *termUtf8, int64_t limit);
 
+/* --- second-opinion TLS verification (SEC22) -------------------------
+ * rc_tls_check performs a REAL blocking TLS handshake to host:port
+ * (TLS 1.2/1.3, ALPN "http/1.1", SNI=host, 5 s connect / 5 s per-io /
+ * 15 s total) and evaluates the chain with rustls+webpki against the
+ * platform root store plus any rc_tls_add_root anchors — independent
+ * of whatever the engine decided.  Run it on a worker thread, never
+ * the UI thread.
+ *
+ * Returns a JSON verdict (free with rc_string_free; NULL only on a
+ * bad host pointer):
+ *   {"status": "verified"|"warning"|"unverified"|"refused",
+ *    "error_class": <class>|null, "detail": "...",
+ *    "host": "...", "port": n, "revocation": "not-checked",
+ *    "negotiated": {"tls_version","cipher_suite","alpn"}|null,
+ *    "roots": {"native":n,"extra":m},
+ *    "chain": [{"subject","issuer","serial","not_before","not_after",
+ *               "signature_algorithm","sans":[...]}]}
+ *
+ * status / error_class vocabulary:
+ *   verified    — handshake completed, chain validated (class null)
+ *   warning     — chain evaluated and FAILED:
+ *                 expired, not-yet-valid, bad-hostname,
+ *                 untrusted-root, broken-chain, weak-signature, revoked
+ *   unverified  — chain never evaluated; NOT a bad-chain signal:
+ *                 network (dns/connect/timeout/refused/eof),
+ *                 protocol (TLS-level failure before the chain),
+ *                 root-store (no trust anchors usable)
+ *   refused     — probe declined: private-host (loopback/private/LAN/
+ *                 .onion without RC_TLS_F_ALLOW_LOCAL), invalid-host,
+ *                 invalid-port
+ *
+ * The probe is a DIRECT handshake: the Qt side must not issue it for
+ * tor-mode pages or when the app's traffic rides a proxy — a direct
+ * connection would bypass SOCKS and de-anonymize the user.
+ * Revocation is not checked in v1 (no OCSP/CRL fetch — reported
+ * verbatim as "not-checked"). */
+#define RC_TLS_F_ALLOW_LOCAL 0x01u   /* permit private/loopback
+                                        targets (test fixture seam) */
+char *rc_tls_check(const char *hostUtf8, uint16_t port, uint32_t flags);
+
+/* Extra trust anchors consulted by later probes — the fixture-CA test
+ * seam and the hook for enterprise/user roots.  RC_CORRUPT on non-DER
+ * input; the platform store is unaffected by either call. */
+RcStatus rc_tls_add_root(const uint8_t *der, size_t len);
+RcStatus rc_tls_clear_roots(void);
+
 #ifdef __cplusplus
 }
 #endif
