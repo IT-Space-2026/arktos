@@ -214,7 +214,8 @@ size_t rc_blocklist_count(void);
  *   A slot key is absent when no matching <Url> was accepted.
  *
  * rc_updatemanifest_parse: gupdate manifest ->
- *   {"offers":[[appid,status,codebase,version],...]}
+ *   {"offers":[[appid,status,codebase,version,hash_sha256],...]}
+ *   (hash_sha256 is "" when the offer doesn't declare one)
  *
  * rc_suggest_parse: OpenSearch suggestions reply -> JSON string array.
  *   RC_CORRUPT when the reply is not the [term, [...]] shape.
@@ -229,6 +230,50 @@ RcStatus rc_updatemanifest_parse(const uint8_t *xml, size_t len,
 RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
 RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
                           RcBuffer *outJson);
+
+/* --- extension-package verification (EXT06) --------------------------
+ * The untrusted-bytes boundary of the extension system: downloaded
+ * packages (.zip/.crx) and update payloads are verified in Rust
+ * before Qt's installer sees a byte.
+ *
+ * rc_ext_verify_package consumes the package in memory and writes a
+ * JSON verdict to outJson (rc_buffer_free).  RC_OK means a verdict
+ * was produced — the JSON carries:
+ *   {"status":"valid"|"rejected", "error":reason|null,
+ *    "format":"zip"|"crx3"|null,
+ *    "signing":"unsigned"|"signed"|"unknown",
+ *    "signature_check":"none"|"structure-only",
+ *    "pinning":"not-requested"|"no-pinning-configured",
+ *    "crx_id":hex|null, "sha256":hex|null,
+ *    "expected_sha256":"match"|"mismatch"|"not-declared",
+ *    "entries":n, "uncompressed_total":n,
+ *    "manifest":<rc_ext_manifest_check verdict>|null}
+ * An "unsigned" CRX3 is a classification, not a failure.  Signature
+ * verification itself is v2 scope — v1 verifies the header's protobuf
+ * structure only (honest "structure-only"); a caller-supplied pinned
+ * pubkey reports "no-pinning-configured".  expected_sha256 is the
+ * update manifest's declared digest (NULL when undeclared); a
+ * mismatch rejects the package.  Zip checks: EOCD/CD bounds,
+ * multi-disk + zip64 refusal, entry-count and uncompressed-size caps,
+ * local-header verification and traversal/absolute/drive-letter
+ * member-name rejection.
+ *
+ * rc_ext_manifest_check parses a manifest.json document (<= 1 MiB)
+ * into the classification the review dialog consumes:
+ *   {"valid","manifest_version","name","version","description",
+ *    "update_url","key","has_background","has_action",
+ *    "content_script_count","permissions":[...],"host_permissions":[...],
+ *    "unsupported":[...],"unverified":[...],"dangerous":[...],
+ *    "errors":[...]}
+ * RC_CORRUPT means the bytes are not readable JSON — field problems
+ * land in "errors". */
+RcStatus rc_ext_verify_package(const uint8_t *pkg, size_t len,
+                               const uint8_t *expected_sha256_or_null,
+                               const uint8_t *pinned_pubkey_or_null,
+                               size_t pubkey_len,
+                               RcBuffer *outJson);
+RcStatus rc_ext_manifest_check(const uint8_t *json, size_t len,
+                               RcBuffer *outJson);
 
 /* --- bookmark store (RCORE02a) ---------------------------------------
  * The canonical bookmark tree.  Nodes are addressed by uint64

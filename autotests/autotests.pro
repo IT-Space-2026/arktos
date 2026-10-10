@@ -20,6 +20,7 @@ SUBDIRS  = \
     dialogs \
     domainblock \
     downloadmanager \
+    extverify \
     historyfiltermodel \
     historymanager \
     historyui \
