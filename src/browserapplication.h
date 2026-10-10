@@ -103,6 +103,11 @@ public:
     static QIcon icon(const QUrl &url);
 
     void saveSession();
+    // SESS02: termination-signal entry point — flushes every window's
+    // pending AutoSaver debounce plus a forced session write, after
+    // which the caller re-raises the signal.  See
+    // TerminationSignalHandler.
+    void flushSessionsForTermination();
     bool canRestoreSession() const;
 
     static HistoryManager *historyManager();

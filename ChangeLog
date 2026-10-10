@@ -24,6 +24,10 @@ Core / Qt 6 port:
 - Bundled CLI tools rebuilt for Qt 6 (TOOL01).
 - Qt 6.12 toolchain (QTUP01).
 - Session restore end to end (SESS01).
+- Session state now survives an OS kill: SIGTERM, SIGINT and SIGHUP
+  flush the pending session save before the process dies, instead of
+  losing changes still inside the debounce window (SESS02). SIGKILL
+  remains unflushed by design — it cannot be caught.
 - Command-line URL arguments treated as untrusted input (SEC09).
 
 UI:

@@ -771,6 +771,21 @@ void BrowserApplication::saveSession()
     m_lastSession = data;
 }
 
+void BrowserApplication::flushSessionsForTermination()
+{
+    clean();
+    for (int i = 0; i < m_mainWindows.count(); ++i) {
+        if (BrowserMainWindow *window = m_mainWindows.at(i))
+            window->m_autoSaver->saveIfNeccessary();
+    }
+    // The debounce only covers changes it was notified about — write
+    // the live state unconditionally so anything that bypassed
+    // changeOccurred() still lands in the session blob.  Private
+    // browsing stays excluded: saveSession() writes nothing while
+    // isPrivate().
+    saveSession();
+}
+
 bool BrowserApplication::canRestoreSession() const
 {
 #ifdef ARORA_RUSTCORE

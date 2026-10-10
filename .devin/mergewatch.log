@@ -426,3 +426,28 @@ I'll start by checking the repo state and fetching.ui-work is 1 commit ahead (AD
 
 Stopping after this one pass as instructed.
 [2026-10-10 04:23:54] merge run exited rc=0
+[2026-10-10 05:08:58] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository.Working tree has only a modified `.devin/mergewatch.log` (watchdog log — not a merge conflict concern). Fetching and checking lane status.`rust-work` is at 0 (skip). `ui-work` is 1 ahead — checking what it contains before merging.The dirty file (`mergewatch.log`) isn't touched by this lane, so it's safe to merge.Clean merge, no conflicts. Verifying the build.Build is running. Waiting for it to complete.Build succeeded — `arora` binary linked cleanly. Now checking how prior MERGEWATCH entries were committed, then appending the log line.Prior runs commit the WORKLOG line as a separate "MERGEWATCH: log ui-work merge" commit. Following that convention — appending the line and staging only `WORKLOG.md`.Merge run complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit (`3c5cdef` TABS03 tab-position picker) — merged cleanly with zero conflicts; all overlapping files (`WORKLOG.md`, `ChangeLog`, `README.md`, `settings.ui`, `src.pri`) auto-merged.
+- **Build**: `make -C src -j2` succeeded — `arora` binary linked with `tabpositionpicker.o` included.
+- **Push**: `master` pushed (`3e07c7f..30f80d9`), including the merge commit and the MERGEWATCH worklog entry.
+- Dirty log files (`mergewatch.log`, `taskloop.log` — live watchdog logs) left untouched and unstaged.
+
+Stopping after this pass as instructed.
+[2026-10-10 05:12:21] merge run exited rc=0
+[2026-10-10 05:32:23] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository.`rust-work` is at 0 — skipping. `ui-work` is 1 commit ahead; let me see what it touches and whether it intersects the dirty files.No overlap between the lane's changed files and this tree's dirty files, so the merge is safe to attempt.Clean merge with no conflicts. Now verifying the build.The archive exists. Let me check whether the link command actually included it.The current Makefile was generated without `CONFIG+=rustcore`, but stale objects compiled earlier with it still reference `rc_*`. Let me check timestamps and what the env script expects.The documented build is plain `qmake` — rustcore is opt-in. The stale `.o` files were built under a different config. Let me check what the in-flight agent is doing before deciding how to handle this.The canonical config is `CONFIG+=rustcore` — the stale objects match it, but the Makefile was regenerated without it by the mid-run agent (which noticed and was rebuilding). Let me check if that agent is still actively working before deciding whether to touch the build state.No build processes are running right now. Let me check the tail of the taskloop log to see if the SESS02 run is still live or died mid-build.Convention confirmed. Now I'll push the merge, then append the WORKLOG line and commit it.Merge pushed. Now appending the MERGEWATCH line to WORKLOG.md.Merge pass complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit (`b768f58` SBAR01 per-tab memory + bandwidth status-bar indicators) — merged cleanly, zero conflicts; `WORKLOG.md`, `ChangeLog`, `README.md`, `browsermainwindow.cpp/h` all auto-merged. No overlap with this tree's dirty files (live SESS02 run).
+- **Build**: first `make -C src -j2` failed at link with undefined `rc_*` refs — the SESS02 agent had transiently regenerated `src/Makefile` without the canonical `CONFIG+=rustcore` while stale objects still referenced the Rust core. Not merge-caused (all merge-touched files compiled clean); the live agent re-ran `qmake CONFIG+=rustcore` mid-verification, and a re-run of the prescribed command succeeds with `arora` linked.
+- **Push**: `master` pushed — merge `cdd3928`, MERGEWATCH log commit `d9681b5`.
+- **WORKLOG**: appended the `ui-work merged … build ok` line noting the transient config churn.
+
+Stopping after this one pass as instructed.
+[2026-10-10 05:38:42] merge run exited rc=0
+[2026-10-10 05:48:43] merge due: ui-work(1) — spawning devin merge run
+I'll start by fetching and checking the state of both lanes.The lane's single commit touches `ChangeLog`, which is dirty in this tree. Let me attempt the merge — git will tell us if the dirty file blocks it.[2026-10-10 05:49:25] merge run exited rc=0
+[2026-10-10 05:54:26] merge due: ui-work(1) — spawning devin merge run

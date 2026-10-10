@@ -89,7 +89,7 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/popupblocker.h` | comment only (`JavascriptCanOpenWindows` note) | comment | — |
 | `src/clearprivatedata.cpp` | `QWebEngineProfile` `clearHttpCache`/`clearAllVisitedLinks`/cookie store + per-`QWebEngineView` JS sweep | wrap | `Profile::clear(StorageAreas)` + `Page::runJavaScript`. |
 | `src/settings.cpp` | `QWebEnginePermission` type list (Site Permissions audit page), `QWebEngineSettings` defaults, `QWebEngineProfile` | wrap | Maps `Engine::PermissionType` names; defaults come from the backend. |
-| `src/statusbarwidgets.cpp` | `QWebEngineView` load signals (loading indicator); memory widget reads `renderProcessPid` via the view | wrap | `Engine::View` signals + `Page::renderProcessId` (returns -1 when unsupported → '—'). |
+| `src/statusbarwidgets.h`, `src/statusbarwidgets.cpp` | `QWebEngineView` load signals (loading indicator); memory widget reads `renderProcessPid` via the view; `.h` only names `QtWebEngineProcess` in comments | wrap | `Engine::View` signals + `Page::renderProcessId` (returns -1 when unsupported → '—'). |
 | `src/locationbar/locationbar.cpp` | `QWebEngineView` `urlChanged`/`loadProgress` connects | wrap | `Engine::View` signals. |
 | `src/locationbar/locationbarsiteicon.cpp` | `QWebEngineView` `loadFinished`/`iconChanged` | wrap | — |
 | `src/locationbar/popupblockerbutton.cpp` | `QWebEngineView` `urlChanged` | wrap | — |

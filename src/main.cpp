@@ -70,6 +70,7 @@
 #include "tabbar.h"
 #include "tabpreview.h"
 #include "tabwidget.h"
+#include "terminationsignalhandler.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torsocks5.h"
@@ -168,6 +169,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -3233,6 +3235,23 @@ int main(int argc, char **argv)
     if (!application.isStandalone() && !application.isRunning())
         return 0;
 
+#if defined(Q_OS_UNIX)
+    // SESS02: bounce SIGTERM/SIGINT/SIGHUP into the event loop so a
+    // pending AutoSaver debounce + the session blob still flush to
+    // disk before the process dies — an OS kill (logoff, timeout,
+    // service stop) previously lost every change the debounce was
+    // holding.  A wedged loop cannot stall it either: the handler's
+    // watchdog exits on a deadline.  Declared after `application` so
+    // the default dispositions return first during normal teardown.
+    TerminationSignalHandler signalFlush;
+    QObject::connect(&signalFlush,
+                     &TerminationSignalHandler::terminateRequested,
+                     &application,
+                     [&application]() {
+        application.flushSessionsForTermination();
+    });
+#endif
+
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QCoreApplication::translate("main",
@@ -3279,6 +3298,7 @@ int main(int argc, char **argv)
         "extension-update-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
+        "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
@@ -3300,6 +3320,10 @@ int main(int argc, char **argv)
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
+    // SESS02: which signal --sigterm-child-smoke sends to itself.
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sigterm-signal"),
+        QString(), QLatin1String("name")));
     parser.process(application);
 
     if (!application.isStandalone()) {
@@ -9963,6 +9987,178 @@ int main(int argc, char **argv)
             poll->start(200);
             return application.exec();
         }
+    }
+
+    // Headless verification for SESS02 — termination-signal session
+    // flush.  `--sigterm-smoke` orchestrates: for each covered signal
+    // it clears the session stores and spawns `--sigterm-child-smoke`,
+    // which builds tab state and sends the signal to itself while the
+    // AutoSaver debounce is still holding the changes.  A default-
+    // handler death would leave the stores empty — decoding the blob
+    // after the child's signal death proves the flush ran first.
+    const bool sigtermSmoke = args.contains(QLatin1String("--sigterm-smoke"));
+    const bool sigtermChildSmoke =
+        args.contains(QLatin1String("--sigterm-child-smoke"));
+    if (sigtermSmoke || sigtermChildSmoke) {
+        window.hide();
+        QSettings().setValue(
+            QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+        QSettings().setValue(
+            QLatin1String("MainWindow/restoring"), false);
+        QSettings().setValue(
+            QLatin1String("MainWindow/startupBehavior"), 1);
+
+        QStringList fixtureUrls;
+        for (int i = 1; i <= 3; ++i) {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("arora-sigterm-%1.html").arg(i));
+            QFile fixture(path);
+            if (fixture.open(QIODevice::WriteOnly)) {
+                fixture.write(QStringLiteral(
+                    "<html><head><title>arora-sigterm-%1</title>"
+                    "</head><body>%1</body></html>").arg(i).toUtf8());
+            }
+            fixtureUrls << QUrl::fromLocalFile(path).toString();
+        }
+
+        int sigtermFailures = 0;
+        const auto sigtermCheck =
+            [&sigtermFailures](bool ok, const char *what) {
+            qInfo() << "sigterm-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++sigtermFailures;
+        };
+
+        if (sigtermChildSmoke) {
+            QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+            rustCoreEnsureDataDir();
+            rc_session_clear();
+#endif
+            BrowserMainWindow *browserWindow =
+                application.newMainWindow();
+            TabWidget *tabWidget = browserWindow->tabWidget();
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(0)),
+                               TabWidget::CurrentTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(1)),
+                               TabWidget::NewNotSelectedTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(2)),
+                               TabWidget::NewNotSelectedTab);
+            // The last change lands inside the AutoSaver debounce
+            // window — exactly the state a default signal handler
+            // would lose.
+            tabWidget->setCurrentIndex(1);
+#if defined(Q_OS_UNIX)
+            int killSignal = SIGTERM;
+            const QString signalName =
+                parser.value(QLatin1String("sigterm-signal"));
+            if (signalName == QLatin1String("hup"))
+                killSignal = SIGHUP;
+            else if (signalName == QLatin1String("int"))
+                killSignal = SIGINT;
+            QTimer::singleShot(400, [killSignal]() {
+                ::kill(::getpid(), killSignal);
+            });
+#else
+            QTimer::singleShot(400, &application,
+                               [&application]() { application.exit(2); });
+#endif
+            return application.exec();
+        }
+
+        // Orchestrator: per signal — clean stores, spawn the child,
+        // confirm it died BY the signal (CrashExit — a clean exit
+        // would mean the session was written by a normal quit path),
+        // then decode whatever the flush persisted.
+        const QStringList signalNames = {QStringLiteral("term"),
+                                         QStringLiteral("hup"),
+                                         QStringLiteral("int")};
+        for (const QString &signal : signalNames) {
+            QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+            rustCoreEnsureDataDir();
+            rc_session_clear();
+#endif
+            QProcess child;
+            child.start(
+                QCoreApplication::applicationFilePath(),
+                QStringList()
+                    << QStringLiteral("--sigterm-child-smoke")
+                    << QStringLiteral("--sigterm-signal=%1").arg(signal));
+            const bool finished = child.waitForFinished(60000);
+            sigtermCheck(finished
+                             && child.exitStatus() == QProcess::CrashExit,
+                         "child died by signal");
+
+            QStringList restoredUrls;
+            qint64 restoredCurrent = -1;
+            int windowCount = 0;
+#ifdef ARORA_RUSTCORE
+            QFile sessionFile(BrowserPaths::dataFilePath(
+                QLatin1String(RC_SESSION_FILE)));
+            QByteArray blob;
+            if (sessionFile.open(QIODevice::ReadOnly))
+                blob = sessionFile.readAll();
+            RcBuffer out{nullptr, 0};
+            const RcStatus decoded = rc_session_decode(
+                reinterpret_cast<const uint8_t *>(blob.constData()),
+                size_t(blob.size()), &out);
+            if (decoded == RC_OK) {
+                const QJsonDocument doc = QJsonDocument::fromJson(
+                    QByteArray(
+                        reinterpret_cast<const char *>(out.data),
+                        int(out.len)));
+                rc_buffer_free(out);
+                const QJsonArray windows = doc.object()
+                    .value(QLatin1String("windows")).toArray();
+                windowCount = windows.count();
+                if (!windows.isEmpty()) {
+                    const QJsonObject first = windows.first().toObject();
+                    restoredCurrent = first
+                        .value(QLatin1String("current")).toInteger(-1);
+                    const QJsonArray tabs = first
+                        .value(QLatin1String("tabs")).toArray();
+                    for (const QJsonValue &tab : tabs)
+                        restoredUrls << tab.toObject()
+                            .value(QLatin1String("url")).toString();
+                }
+            }
+#else
+            const QByteArray blob = QSettings()
+                .value(QLatin1String("sessions/lastSession"))
+                .toByteArray();
+            QDataStream stream(blob);
+            qint32 marker = 0, version = 0, windows = 0;
+            stream >> marker >> version >> windows;
+            if (marker == 0xec && version == 2) {
+                windowCount = windows;
+                for (qint32 i = 0; i < windows; ++i) {
+                    QByteArray windowState;
+                    stream >> windowState;
+                    QDataStream windowStream(windowState);
+                    qint32 wmarker = 0, wversion = 0;
+                    QSize size;
+                    bool b1 = false, b2 = false, b3 = false;
+                    QByteArray tabState;
+                    windowStream >> wmarker >> wversion >> size
+                        >> b1 >> b2 >> b3 >> tabState;
+                    QDataStream tabStream(tabState);
+                    qint32 tmarker = 0, tversion = 0;
+                    qint32 current = -1;
+                    tabStream >> tmarker >> tversion >> restoredUrls
+                        >> current;
+                    restoredCurrent = current;
+                }
+            }
+#endif
+            sigtermCheck(windowCount == 1, "session window count");
+            sigtermCheck(restoredUrls == fixtureUrls,
+                         "flushed tab urls in order");
+            sigtermCheck(restoredCurrent == 1, "flushed current index");
+        }
+        qInfo() << "sigterm-smoke:"
+                << (sigtermFailures ? "FAIL" : "PASS");
+        return sigtermFailures ? 1 : 0;
     }
 
     // Headless measurement for PERF01 — report-only timings for the

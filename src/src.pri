@@ -140,6 +140,7 @@ HEADERS += \
     $$PWD/utils/scopeshortcuts.h \
     $$PWD/utils/singleapplication.h \
     $$PWD/utils/squeezelabel.h \
+    $$PWD/utils/terminationsignalhandler.h \
     $$PWD/utils/treesortfilterproxymodel.h
 SOURCES += \
     $$PWD/aboutdialog.cpp \
@@ -202,6 +203,7 @@ SOURCES += \
     $$PWD/utils/scopeshortcuts.cpp \
     $$PWD/utils/singleapplication.cpp \
     $$PWD/utils/squeezelabel.cpp \
+    $$PWD/utils/terminationsignalhandler.cpp \
     $$PWD/utils/treesortfilterproxymodel.cpp
 
 RESOURCES += \
