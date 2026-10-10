@@ -6000,8 +6000,11 @@ int main(int argc, char **argv)
             searchBar->findNext();
             awaitResult(base1, [=]() {
                 settle([=]() {
+                // A hit lands the "1/2" counter on the info label —
+                // the MIG12 expectation here was inverted (asserted
+                // empty) and the smoke never reached stage 2.
                 const bool pass = *lastMatches == 2 && *lastActive >= 0
-                    && searchInfo->text().isEmpty();
+                    && !searchInfo->text().isEmpty();
                 qInfo() << "find-smoke: next" << (pass ? "PASS" : "FAIL")
                         << "matches:" << *lastMatches
                         << "active:" << *lastActive;
