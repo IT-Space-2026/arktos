@@ -2153,16 +2153,16 @@ void BrowserMainWindow::aboutToShowBackMenu()
     m_historyBackMenu->clear();
     if (!currentTab())
         return;
-    QWebEngineHistory *history = currentTab()->history();
-    int historyCount = history->count();
-    const QList<QWebEngineHistoryItem> backItems = history->backItems(historyCount);
+    Engine::Page *page = currentTab()->enginePage();
+    int historyCount = page->historyCount();
+    const QList<Engine::HistoryEntry> backItems = page->backItems(historyCount);
     for (int i = backItems.count() - 1; i >= 0; --i) {
-        const QWebEngineHistoryItem item = backItems.at(i);
+        const Engine::HistoryEntry item = backItems.at(i);
         QAction *action = new QAction(this);
         action->setData(-1 * (historyCount - i - 1));
-        QIcon icon = BrowserApplication::icon(item.url());
+        QIcon icon = BrowserApplication::icon(item.url);
         action->setIcon(icon);
-        action->setText(SafeText::menu(item.title()));
+        action->setText(SafeText::menu(item.title));
         m_historyBackMenu->addAction(action);
     }
 }
@@ -2172,16 +2172,16 @@ void BrowserMainWindow::aboutToShowForwardMenu()
     m_historyForwardMenu->clear();
     if (!currentTab())
         return;
-    QWebEngineHistory *history = currentTab()->history();
-    int historyCount = history->count();
-    const QList<QWebEngineHistoryItem> forwardItems = history->forwardItems(historyCount);
+    Engine::Page *page = currentTab()->enginePage();
+    int historyCount = page->historyCount();
+    const QList<Engine::HistoryEntry> forwardItems = page->forwardItems(historyCount);
     for (int i = 0; i < forwardItems.count(); ++i) {
-        const QWebEngineHistoryItem item = forwardItems.at(i);
+        const Engine::HistoryEntry item = forwardItems.at(i);
         QAction *action = new QAction(this);
         action->setData(historyCount - i);
-        QIcon icon = BrowserApplication::icon(item.url());
+        QIcon icon = BrowserApplication::icon(item.url);
         action->setIcon(icon);
-        action->setText(SafeText::menu(item.title()));
+        action->setText(SafeText::menu(item.title));
         m_historyForwardMenu->addAction(action);
     }
 }
@@ -2229,15 +2229,15 @@ void BrowserMainWindow::showWindow()
 void BrowserMainWindow::openActionUrl(QAction *action)
 {
     int offset = action->data().toInt();
-    QWebEngineHistory *history = currentTab()->history();
+    Engine::Page *page = currentTab()->enginePage();
     if (offset < 0) {
-        const QList<QWebEngineHistoryItem> items = history->backItems(-1 * offset);
+        const QList<Engine::HistoryEntry> items = page->backItems(-1 * offset);
         if (!items.isEmpty())
-            history->goToItem(items.first()); // back
+            page->goToHistoryEntry(items.first()); // back
     } else if (offset > 0) {
-        const QList<QWebEngineHistoryItem> items = history->forwardItems(history->count() - offset + 1);
+        const QList<Engine::HistoryEntry> items = page->forwardItems(page->historyCount() - offset + 1);
         if (!items.isEmpty())
-            history->goToItem(items.back()); // forward
+            page->goToHistoryEntry(items.back()); // forward
     }
 }
 

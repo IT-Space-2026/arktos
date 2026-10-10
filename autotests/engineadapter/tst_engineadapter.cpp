@@ -57,6 +57,26 @@ public:
     void back() override { m_canForward = true; m_canBack = false; }
     void forward() override { m_canBack = true; m_canForward = false; }
 
+    int historyCount() const override { return m_entries.count(); }
+    int currentHistoryIndex() const override { return m_current; }
+    QList<Engine::HistoryEntry> historyItems() const override
+    {
+        return m_entries;
+    }
+    QList<Engine::HistoryEntry> backItems(int maxItems) const override
+    {
+        return m_entries.mid(qMax(0, m_current - maxItems),
+                             qMin(maxItems, m_current));
+    }
+    QList<Engine::HistoryEntry> forwardItems(int maxItems) const override
+    {
+        return m_entries.mid(m_current + 1, maxItems);
+    }
+    void goToHistoryEntry(const Engine::HistoryEntry &entry) override
+    {
+        lastGoTo = entry.index;
+    }
+
     void setZoomFactor(qreal factor) override { m_zoom = factor; }
     qreal zoomFactor() const override { return m_zoom; }
 
@@ -113,6 +133,9 @@ public:
     bool m_audible = false;
     bool m_otr = false;
     QHash<Engine::StandardAction, QAction*> actions;
+    QList<Engine::HistoryEntry> m_entries;
+    int m_current = -1;
+    int lastGoTo = -1;
     LifecycleState m_lifecycle = LifecycleState::Active;
     qint64 m_pid = -1;
     QString lastFind;
@@ -265,6 +288,24 @@ void tst_EngineAdapter::fakePageNavigation()
     QVERIFY(!page.isLoading());
     QVERIFY(!page.recentlyAudible());
     QVERIFY(!page.isOffTheRecord());
+
+    // History surface: entries carry their stack index for goTo.
+    page.m_entries = {
+        Engine::HistoryEntry{ QUrl(QStringLiteral("https://a/")),
+                              QStringLiteral("a"), 0 },
+        Engine::HistoryEntry{ QUrl(QStringLiteral("https://b/")),
+                              QStringLiteral("b"), 1 },
+        Engine::HistoryEntry{ QUrl(QStringLiteral("https://c/")),
+                              QStringLiteral("c"), 2 } };
+    page.m_current = 1;
+    QCOMPARE(page.historyCount(), 3);
+    QCOMPARE(page.currentHistoryIndex(), 1);
+    QCOMPARE(page.backItems(5).count(), 1);
+    QCOMPARE(page.backItems(5).first().index, 0);
+    QCOMPARE(page.forwardItems(5).count(), 1);
+    QCOMPARE(page.forwardItems(5).first().index, 2);
+    page.goToHistoryEntry(page.historyItems().first());
+    QCOMPARE(page.lastGoTo, 0);
 }
 
 void tst_EngineAdapter::fakePageZoomFindScript()
@@ -378,6 +419,22 @@ void tst_EngineAdapter::webEnginePageForwarding()
              view.page()->recentlyAudible());
     QCOMPARE(enginePage->isOffTheRecord(),
              view.page()->profile()->isOffTheRecord());
+
+    // The history surface mirrors the wrapped history 1:1.
+    QCOMPARE(enginePage->historyCount(), view.page()->history()->count());
+    QCOMPARE(enginePage->currentHistoryIndex(),
+             view.page()->history()->currentItemIndex());
+    const QList<Engine::HistoryEntry> items = enginePage->historyItems();
+    QCOMPARE(items.count(), view.page()->history()->items().count());
+    for (int i = 0; i < items.count(); ++i) {
+        QCOMPARE(items.at(i).index, i);
+        QCOMPARE(items.at(i).url,
+                 view.page()->history()->items().at(i).url());
+    }
+    const int back = enginePage->currentHistoryIndex();
+    QCOMPARE(enginePage->backItems(10).count(), back);
+    QCOMPARE(enginePage->forwardItems(10).count(),
+             enginePage->historyCount() - back - 1);
 }
 
 void tst_EngineAdapter::webEngineProfileSurface()

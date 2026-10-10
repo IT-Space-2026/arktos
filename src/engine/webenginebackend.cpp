@@ -344,6 +344,49 @@ void WebEnginePageAdapter::forward()
     m_page->triggerAction(QWebEnginePage::Forward);
 }
 
+int WebEnginePageAdapter::historyCount() const
+{
+    return m_page->history()->count();
+}
+
+int WebEnginePageAdapter::currentHistoryIndex() const
+{
+    return m_page->history()->currentItemIndex();
+}
+
+QList<Engine::HistoryEntry> WebEnginePageAdapter::historyItems() const
+{
+    const QList<QWebEngineHistoryItem> items = m_page->history()->items();
+    QList<Engine::HistoryEntry> out;
+    out.reserve(items.size());
+    for (int i = 0; i < items.size(); ++i)
+        out.append(Engine::HistoryEntry{ items.at(i).url(),
+                                         items.at(i).title(), i });
+    return out;
+}
+
+QList<Engine::HistoryEntry> WebEnginePageAdapter::backItems(int maxItems) const
+{
+    const QList<Engine::HistoryEntry> items = historyItems();
+    const int current = currentHistoryIndex();
+    return items.mid(qMax(0, current - maxItems),
+                     qMin(maxItems, current));
+}
+
+QList<Engine::HistoryEntry> WebEnginePageAdapter::forwardItems(int maxItems) const
+{
+    const QList<Engine::HistoryEntry> items = historyItems();
+    return items.mid(currentHistoryIndex() + 1, maxItems);
+}
+
+void WebEnginePageAdapter::goToHistoryEntry(const Engine::HistoryEntry &entry)
+{
+    QWebEngineHistory *history = m_page->history();
+    const QList<QWebEngineHistoryItem> items = history->items();
+    if (entry.index >= 0 && entry.index < items.size())
+        history->goToItem(items.at(entry.index));
+}
+
 void WebEnginePageAdapter::setZoomFactor(qreal factor)
 {
     m_page->setZoomFactor(factor);

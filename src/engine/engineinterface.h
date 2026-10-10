@@ -320,6 +320,16 @@ struct ContextMenuInfo {
 
 // ---- page ----------------------------------------------------------------------------
 
+// One entry in a page's session history (QWebEngineHistoryItem's
+// url/title — icons resolve through the app's icon store, not the
+// engine).  `index` is the entry's position in the linear stack;
+// Page::goToHistoryEntry() consumes it.
+struct HistoryEntry {
+    QUrl url;
+    QString title;
+    int index = -1;
+};
+
 // One document's worth of engine.  The WebEngine adapter is a thin
 // subclass around QWebEnginePage; a Servo backend drives its WebView
 // delegate callbacks into the same signals.
@@ -340,6 +350,17 @@ public:
     virtual bool canGoForward() const = 0;
     virtual void back() = 0;
     virtual void forward() = 0;
+
+    // The page's session history, QWebEngineHistory-shaped: a linear
+    // stack with a current index.  backItems()/forwardItems() return
+    // up to maxItems entries in stack order (oldest first), and
+    // goToHistoryEntry() jumps to an entry the lists produced.
+    virtual int historyCount() const = 0;
+    virtual int currentHistoryIndex() const = 0;
+    virtual QList<HistoryEntry> historyItems() const = 0;
+    virtual QList<HistoryEntry> backItems(int maxItems) const = 0;
+    virtual QList<HistoryEntry> forwardItems(int maxItems) const = 0;
+    virtual void goToHistoryEntry(const HistoryEntry &entry) = 0;
 
     // zoom
     virtual void setZoomFactor(qreal factor) = 0;

@@ -1270,7 +1270,7 @@ QList<WebView*> TabWidget::orderedWebViews() const
 
 // Defined further down — closeHiddenTab() records the closed page's
 // history for "reopen closed tab" the same way closeTab() does.
-static QByteArray serializePageHistory(const QWebEngineHistory *history);
+static QByteArray serializePageHistory(Engine::Page *page);
 
 // CONT06 — two-level container strip ---------------------------------
 //
@@ -1527,7 +1527,7 @@ void TabWidget::closeHiddenTab(WebView *view)
                 m_recentlyClosedTabsAction->setEnabled(true);
                 m_recentlyClosedTabs.prepend(view->url());
                 m_recentlyClosedTabsHistory.prepend(
-                    serializePageHistory(view->history()));
+                    serializePageHistory(view->enginePage()));
                 m_recentlyClosedTabsContainers.prepend(it.key());
                 if (m_recentlyClosedTabs.size()
                     >= TabWidget::m_recentlyClosedTabsSize) {
@@ -1979,17 +1979,17 @@ void TabWidget::cloneTab(int index)
 // QWebHistory could, so the url stack and current index are serialized
 // by hand.  The back/forward stack cannot be injected into a WebEngine
 // page afterwards — restoring only reopens the current entry.
-static QByteArray serializePageHistory(const QWebEngineHistory *history)
+static QByteArray serializePageHistory(Engine::Page *page)
 {
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
     stream << qint32(1); // serialization version
     QStringList urls;
-    const QList<QWebEngineHistoryItem> items = history->items();
-    for (const QWebEngineHistoryItem &item : items)
-        urls.append(QString::fromUtf8(item.url().toEncoded()));
+    const QList<Engine::HistoryEntry> items = page->historyItems();
+    for (const Engine::HistoryEntry &item : items)
+        urls.append(QString::fromUtf8(item.url.toEncoded()));
     stream << urls;
-    stream << qint32(history->currentItemIndex());
+    stream << qint32(page->currentHistoryIndex());
     return data;
 }
 
@@ -2043,7 +2043,7 @@ void TabWidget::closeTab(int index)
     if (recordable) {
         m_recentlyClosedTabsAction->setEnabled(true);
         m_recentlyClosedTabs.prepend(tab->url());
-        m_recentlyClosedTabsHistory.prepend(serializePageHistory(tab->history()));
+        m_recentlyClosedTabsHistory.prepend(serializePageHistory(tab->enginePage()));
         // CONT02: the container id rides with the entry so "reopen
         // closed tab" returns to the same browsing context.
         m_recentlyClosedTabsContainers.prepend(containerIdForTab(index));
@@ -2773,8 +2773,8 @@ QByteArray TabWidget::saveState() const
         if (tab == currentWebView())
             savedCurrentIndex = tabs.count();
         tabs.append(QString::fromUtf8(tab->url().toEncoded()));
-        if (tab->history()->count() != 0)
-            tabsHistory.append(serializePageHistory(tab->history()));
+        if (tab->enginePage()->historyCount() != 0)
+            tabsHistory.append(serializePageHistory(tab->enginePage()));
         else
             tabsHistory.append(QByteArray());
         tabContainers.append(tab->containerId());
