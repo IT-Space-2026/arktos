@@ -645,7 +645,7 @@ int WebView::levelForZoom(int zoom)
 
 void WebView::applyZoom()
 {
-    setZoomFactor(qreal(m_currentZoom) / 100.0);
+    enginePage()->setZoomFactor(qreal(m_currentZoom) / 100.0);
     emit zoomChanged(m_currentZoom);
 }
 
@@ -691,7 +691,7 @@ void WebView::loadUrl(const QUrl &url, const QString &title)
 {
     if (url.scheme() == QLatin1String("javascript")) {
         QString scriptSource = QUrl::fromPercentEncoding(url.toString(QUrl::RemoveScheme).toUtf8());
-        m_page->runJavaScript(scriptSource);
+        enginePage()->runJavaScript(scriptSource);
         return;
     }
     m_initialUrl = url;
@@ -881,7 +881,7 @@ void WebView::runContextImageScript(
         + QLatin1Char('\n') + call;
     if (m_page->settings()->testAttribute(
             QWebEngineSettings::JavascriptEnabled)) {
-        m_page->runJavaScript(program, callback);
+        enginePage()->runJavaScript(program, callback);
         return;
     }
     // JSCTL/SECLVL: runJavaScript is silently dropped while
@@ -924,7 +924,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
 {
     // The request's position is in view pixels; elementFromPoint wants
     // CSS pixels (same conversion PictureInPicture applies).
-    qreal zoom = m_page->zoomFactor();
+    qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
     const QString call = QStringLiteral("__aroraCtxImage.%1(%2,%3);")
@@ -954,7 +954,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
 void WebView::openContextPosterInTarget(const QPoint &viewPos,
         TabWidget::OpenUrlIn target)
 {
-    qreal zoom = m_page->zoomFactor();
+    qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
     const QString call = QStringLiteral("__aroraCtxImage.posterUrl(%1,%2);")

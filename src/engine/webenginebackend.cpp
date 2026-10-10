@@ -304,6 +304,11 @@ QWebEnginePage *WebEnginePageAdapter::webEnginePage() const
     return m_page;
 }
 
+WebEnginePageAdapter *WebEnginePageAdapter::of(Engine::Page *page)
+{
+    return qobject_cast<WebEnginePageAdapter*>(page);
+}
+
 void WebEnginePageAdapter::load(const QUrl &url)
 {
     m_page->load(url);
@@ -407,6 +412,12 @@ void WebEnginePageAdapter::runJavaScript(
         const std::function<void(const QVariant &)> &resultCallback)
 {
     m_page->runJavaScript(source, resultCallback);
+}
+
+void WebEnginePageAdapter::toHtml(
+        const std::function<void(const QString &)> &resultCallback)
+{
+    m_page->toHtml(resultCallback);
 }
 
 QAction *WebEnginePageAdapter::action(Engine::StandardAction action)

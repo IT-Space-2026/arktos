@@ -72,7 +72,6 @@ class BidiPanel;
 class CommandPalette;
 class QDockWidget;
 class QLabel;
-class QWebEnginePage;
 class ReaderButton;
 class SidebarPanel;
 class TabWidget;
@@ -199,7 +198,7 @@ private slots:
     void showWindow();
     void swapFocus();
 
-    void printRequested(QWebEnginePage *page);
+    void printRequested(WebView *view);
 
 private:
     void retranslate();

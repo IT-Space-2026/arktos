@@ -53,6 +53,8 @@ public:
     // The wrapped engine object — the escape hatch for call sites not
     // yet on the interface.
     QWebEnginePage *webEnginePage() const;
+    // Escape-hatch downcast — nullptr on a foreign backend's adapter.
+    static WebEnginePageAdapter *of(Engine::Page *page);
 
     void load(const QUrl &url) override;
     void stop() override;
@@ -79,6 +81,9 @@ public:
     void runJavaScript(const QString &source,
                        const std::function<void(const QVariant &)> &resultCallback
                            = std::function<void(const QVariant &)>()) override;
+
+    void toHtml(
+            const std::function<void(const QString &)> &resultCallback) override;
 
     QAction *action(Engine::StandardAction action) override;
 

@@ -663,7 +663,7 @@ void tst_BrowserMainWindow::events()
     if (window->currentTab() && window->currentTab()->webPage()) {
         rejectModal();
         QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
-                       Q_ARG(QWebEnginePage *, static_cast<QWebEnginePage *>(window->currentTab()->webPage()))));
+                       Q_ARG(WebView *, window->currentTab())));
     }
 
     // Last-tab-closed closes the window (and, via WA_DeleteOnClose,

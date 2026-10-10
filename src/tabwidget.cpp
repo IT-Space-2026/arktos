@@ -637,7 +637,7 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
     connect(enginePage, &Engine::Page::windowCloseRequested,
             this, &TabWidget::windowCloseRequested);
     connect(enginePage, &Engine::Page::printRequested,
-            this, [this, webView]() { emit printRequested(webView->page()); });
+            this, [this, webView]() { emit printRequested(webView); });
     // Qt WebEngine does not surface WebKit's window-feature requests
     // (geometryChangeRequested / *VisibilityChangeRequested); window.open
     // chrome handling is internal to Chromium.
@@ -1286,6 +1286,9 @@ QList<WebView*> TabWidget::orderedWebViews() const
 // Defined further down — closeHiddenTab() records the closed page's
 // history for "reopen closed tab" the same way closeTab() does.
 static QByteArray serializePageHistory(Engine::Page *page);
+// Defined further down — resolves the tab a page signal arrived
+// from; senders are the WebView or its Engine::Page adapter.
+static WebView *webViewForSender(QObject *sender);
 
 // CONT06 — two-level container strip ---------------------------------
 //
@@ -1656,8 +1659,13 @@ QString TabWidget::sleepBlockReason(int index) const
         return QLatin1String("loading");
     if (view->enginePage()->recentlyAudible())
         return QLatin1String("audible");
-    if (DownloadManager::instance()->hasActiveDownloadForPage(view->page()))
-        return QLatin1String("download");
+    // DownloadManager is still engine-typed internally — hand it the
+    // wrapped page through the adapter's escape hatch.
+    if (WebEnginePageAdapter *adapter =
+            WebEnginePageAdapter::of(view->enginePage()))
+        if (DownloadManager::instance()->hasActiveDownloadForPage(
+                adapter->webEnginePage()))
+            return QLatin1String("download");
     return QString();
 }
 
@@ -1931,11 +1939,11 @@ void TabWidget::lineEditReturnPressed()
 
 void TabWidget::windowCloseRequested()
 {
-    WebPage *webPage = qobject_cast<WebPage*>(sender());
-    if (!webPage)
+    // The signal arrives through the Engine::Page adapter — resolve
+    // the owning tab the same way the webView* slots below do.
+    WebView *webView = webViewForSender(sender());
+    if (!webView)
         return;
-    // QWebEnginePage has no view() — forPage() is the reverse lookup.
-    WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(webPage));
     int index = webViewIndex(webView);
     if (index >= 0) {
         // CONT06: hidden container levels still hold live tabs — the
