@@ -395,6 +395,13 @@ public:
     virtual void setZoomFactor(qreal factor) = 0;
     virtual qreal zoomFactor() const = 0;
 
+    // TABS05: the last scroll offset the engine reported for the
+    // page — the undo-close record snapshots it so the restored tab
+    // can scroll back to where the user left off.  A backend without
+    // the concept returns a null point (what an unscrolled page also
+    // reports), which simply restores nothing.
+    virtual QPointF scrollPosition() const { return QPointF(); }
+
     // find-in-page — async on every real engine
     virtual void findText(const QString &subString, FindFlags options) = 0;
 

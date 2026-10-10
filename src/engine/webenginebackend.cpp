@@ -481,6 +481,13 @@ qreal WebEnginePageAdapter::zoomFactor() const
     return m_page->zoomFactor();
 }
 
+QPointF WebEnginePageAdapter::scrollPosition() const
+{
+    // QWebEnginePage's synchronous getter — the last offset the
+    // renderer reported, exactly what an undo-close record wants.
+    return m_page->scrollPosition();
+}
+
 void WebEnginePageAdapter::findText(const QString &subString, Engine::FindFlags options)
 {
     m_page->findText(subString, webEngineFindFlags(options));

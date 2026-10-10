@@ -49,6 +49,12 @@ UI:
   dragging a tab across the boundary pins or unpins it, and pin state
   is restored with the session (TABS04).
 - Named, color-coded tab groups (TABGRP01).
+- Undo closed tab: Ctrl+Shift+T (or the tab context menu's Reopen
+  Closed Tab, plus a titled/icon'd submenu of recent entries) reopens
+  the last closed tab at its original index with history, scroll
+  position, tab group, container and pinned state intact. The
+  memory-only stack keeps 25 entries per window, never records
+  private tabs and is wiped by Clear Private Data (TABS05).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Command palette, Ctrl+Shift+P (CMD01).
 - Tab search dropdown, Ctrl+Shift+A, with hover previews (POL02).

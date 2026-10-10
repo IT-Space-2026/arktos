@@ -366,6 +366,19 @@ void TabBar::contextMenuRequested(const QPoint &position)
         return;
 
     menu.addAction(tabWidget->newTabAction());
+
+    // TABS05: undo-close — 'Reopen' pops the newest record, the
+    // History-menu submenu lists the whole stack.  The shortcut shown
+    // here is display-only; the real binding lives on the TabWidget.
+    QAction *reopenAction = menu.addAction(
+        tr("Reopen Closed Tab"), tabWidget,
+        [tabWidget]() { tabWidget->openLastTab(); });
+    reopenAction->setShortcut(QKeySequence(
+        Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_T));
+    reopenAction->setEnabled(tabWidget->hasRecentlyClosedTabs());
+    menu.addAction(tabWidget->recentlyClosedTabsAction());
+    menu.addSeparator();
+
     int index = tabAt(stripPos(position));
     if (-1 != index) {
         QAction *action = menu.addAction(tr("Duplicate Tab"),
@@ -595,8 +608,6 @@ void TabBar::contextMenuRequested(const QPoint &position)
         action = menu.addAction(tr("Reload Tab"), QKeySequence::Refresh,
                                 this, QOverload<>::of(&TabBar::reloadTab));
         action->setData(index);
-    } else {
-        menu.addSeparator();
     }
     menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
     menu.addSeparator();

@@ -32,8 +32,12 @@
 #include <privacyrequestinterceptor.h>
 #include <toolbarsearch.h>
 
+#include <containermanager.h>
+#include <historymanager.h>
+
 #include <qcompleter.h>
 #include <qlineedit.h>
+#include <qmenu.h>
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
@@ -90,6 +94,7 @@ private slots:
     void omniboxTabScope();
     void tabGroups();
     void pinnedTabs();
+    void reopenClosedTab();
 };
 
 // Subclass that exposes the protected functions.
@@ -1387,6 +1392,181 @@ void tst_TabWidget::pinnedTabs()
     widget.closeTab();
     widget.closeTab();
     widget.closeTab();
+}
+
+// TABS05: undo closed tab — a capped memory-only stack records each
+// closed tab's url, session history blob, strip index, container,
+// group, pin and scroll offset.  Ctrl+Shift+T (openLastTab) rebuilds
+// the tab at its old slot in LIFO order; off-the-record pages never
+// enter and a history wipe or explicit clear empties the stack.
+void tst_TabWidget::reopenClosedTab()
+{
+    // The CONT06 strip (default on) only engages once a second
+    // container owns tabs — pin the inline mode anyway so the index
+    // assertions below are immune to the setting.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
+    SubTabWidget widget;
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+    widget.openLastTab();          // empty-stack no-op
+    QCOMPARE(widget.count(), 0);
+
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    const QUrl u0("data:text/plain,undo-a");
+    const QUrl u1("data:text/plain,undo-b");
+    const QUrl u2("data:text/plain,undo-c");
+    widget.webView(0)->loadUrl(u0);
+    widget.webView(1)->loadUrl(u1);
+    widget.webView(2)->loadUrl(u2);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), u2, 15000);
+
+    // Close all three; the records stack newest-first.
+    widget.closeTab(1);            // u1
+    widget.closeTab(0);            // u0
+    widget.closeTab(0);            // u2 (shifted down)
+    QCOMPARE(widget.count(), 0);
+    QVERIFY(widget.hasRecentlyClosedTabs());
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+
+    // Three undos restore most-recent-first, each at its recorded
+    // index — u2@0, then u0@0, then u1@1 -> original order rebuilt.
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u2, 15000);
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 15000);
+    QCOMPARE(widget.webView(1)->url(), u2);
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 15000);
+    QCOMPARE(widget.webView(0)->url(), u0);
+    QCOMPARE(widget.webView(2)->url(), u2);
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+
+    // Pin round-trip — a pinned tab comes back into the block.
+    widget.setTabPinned(1, true);            // u1 leads, pinned
+    QVERIFY(widget.isTabPinned(0));
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 2);
+    widget.openLastTab();
+    QCOMPARE(widget.count(), 3);
+    int pinnedIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u1)
+            pinnedIdx = i;
+    }
+    QCOMPARE(pinnedIdx, 0);
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.pinnedTabCount(), 1);
+
+    // Group round-trip — close a member, the group lives on, undo
+    // rejoins it.
+    const QString gid = widget.createTabGroup(1);
+    QVERIFY(!gid.isEmpty());
+    widget.addTabToGroup(2, gid);
+    QCOMPARE(widget.tabGroupId(2), gid);
+    widget.closeTab(2);                      // u2 leaves the group
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    widget.openLastTab();
+    QVERIFY(widget.tabGroupSize(gid) >= 2);
+    int groupIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u2)
+            groupIdx = i;
+    }
+    QVERIFY(groupIdx >= 0);
+    QCOMPARE(widget.tabGroupId(groupIdx), gid);
+
+    // A group that died between close and undo restores ungrouped.
+    widget.closeTab(1);                      // u0 leaves the group
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    widget.ungroupTabs(gid);                 // the group record dies
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    widget.openLastTab();                    // u0, recorded gid gone
+    int ungroupedIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u0)
+            ungroupedIdx = i;
+    }
+    QVERIFY(ungroupedIdx >= 0);
+    QCOMPARE(widget.tabGroupId(ungroupedIdx), QString());
+
+    // Container round-trip — the reopened tab lands back on its
+    // container's profile.
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        QStringLiteral("UndoTest"), QColor(Qt::blue)).id;
+    QVERIFY(!cid.isEmpty());
+    WebView *containerView = widget.makeNewTabInContainer(cid, true);
+    QVERIFY(containerView);
+    const QUrl cu("data:text/plain,undo-container");
+    containerView->loadUrl(cu);
+    QTRY_COMPARE_WITH_TIMEOUT(containerView->url(), cu, 15000);
+    const int containerIdx = widget.webViewIndex(containerView);
+    QCOMPARE(widget.containerIdForTab(containerIdx), cid);
+    widget.closeTab(containerIdx);
+    widget.openLastTab();
+    int restoredContainerIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == cu)
+            restoredContainerIdx = i;
+    }
+    QVERIFY(restoredContainerIdx >= 0);
+    QCOMPARE(widget.containerIdForTab(restoredContainerIdx), cid);
+    // deleteContainer() is not idempotent (a second call fails on
+    // !isContainerId) and its storage teardown retries internally,
+    // so it must run once — wait for the closed view's deferred
+    // deletion to land, then call it a single time.
+    QSignalSpy containerViewDied(widget.webView(restoredContainerIdx),
+                                 &QObject::destroyed);
+    widget.closeTab(restoredContainerIdx);
+    QTRY_VERIFY_WITH_TIMEOUT(containerViewDied.count() == 1, 5000);
+    QVERIFY(manager->deleteContainer(cid));
+
+    // The recently-closed submenu lists records with their titles —
+    // a data: page has none, so the url stands in.
+    QMenu *closedMenu = widget.recentlyClosedTabsAction()->menu();
+    QVERIFY(closedMenu);
+    emit closedMenu->aboutToShow();
+    const int records = closedMenu->actions().size();
+    QVERIFY(records > 0);
+    for (QAction *entry : closedMenu->actions())
+        QVERIFY(!entry->text().isEmpty());
+
+    // A private tab never enters the stack — closing it queues
+    // nothing (SEC07).
+    WebView *privateView = widget.makeNewPrivateTab(true);
+    QVERIFY(privateView);
+    const QUrl pu("data:text/plain,undo-private");
+    privateView->loadUrl(pu);
+    QTRY_COMPARE_WITH_TIMEOUT(privateView->url(), pu, 15000);
+    const int privateIdx = widget.webViewIndex(privateView);
+    QVERIFY(widget.isTabPrivate(privateIdx));
+    widget.closeTab(privateIdx);
+    emit closedMenu->aboutToShow();
+    QCOMPARE(closedMenu->actions().size(), records);
+
+    // A history wipe empties the stack (the Clear Private Data path
+    // reaches the same slot).
+    emit HistoryManager::instance()->historyCleared();
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+
+    while (widget.count() > 0)
+        widget.closeTab(widget.count() - 1);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 QTEST_MAIN(tst_TabWidget)

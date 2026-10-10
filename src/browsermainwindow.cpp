@@ -2108,7 +2108,20 @@ void BrowserMainWindow::webSearch()
 void BrowserMainWindow::clearPrivateData()
 {
     ClearPrivateData dialog;
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted) {
+        // TABS05: the undo-close stacks hold urls, titles and history
+        // blobs — a private-data wipe drops them in every window, the
+        // same trace removal the dialog performs on the stores.
+        if (BrowserApplication *application =
+                BrowserApplication::instance()) {
+            const QList<BrowserMainWindow*> windows =
+                application->mainWindows();
+            for (BrowserMainWindow *window : windows)
+                window->tabWidget()->clearRecentlyClosedTabs();
+        } else {
+            m_tabWidget->clearRecentlyClosedTabs();
+        }
+    }
 }
 
 void BrowserMainWindow::swapFocus()
