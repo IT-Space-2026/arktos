@@ -1467,6 +1467,10 @@ void BrowserMainWindow::applySidebarSettings()
             .toBool();
     if (show)
         ensureSidebarPanel();
+    // SIDE02: an already-built panel picks up per-panel visibility
+    // changes here too (a hidden dock re-reads on next show anyway).
+    if (m_sidebarPanel)
+        m_sidebarPanel->applyPanelVisibility();
     m_sidebarDock->setVisible(show);
 }
 

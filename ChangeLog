@@ -119,6 +119,12 @@ UI:
   without the rustdl backend — plus a connections-per-download field
   and a cleanup policy for the finished-downloads list (keep, clear
   on exit, or remove each entry as it completes) (DLACC01).
+- Sidebar reworked Vivaldi-style: the panel picker is now a slim
+  icon-only vertical rail instead of horizontal tabs eating the
+  dock's height, and a new Preferences → Appearance → Sidebar
+  section holds the enable toggle, Left/Right placement and a
+  checkable per-panel list (Bookmarks/History/Downloads/Notes —
+  hidden panels are never built, toggles apply live) (SIDE02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

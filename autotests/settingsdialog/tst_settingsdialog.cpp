@@ -46,6 +46,7 @@
 #include "opensearchmanager.h"
 #include "popupblocker.h"
 #include "scopeshortcuts.h"
+#include "sidebarpanel.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -792,24 +793,46 @@ void tst_SettingsDialog::sidebarNavigation()
     }
 }
 
-// SIDE01: the General page's sidebar controls — off by default,
-// Left/Right dock side round-trips through MainWindow/sidebarDockArea.
+// SIDE02: the sidebar controls live in the Appearance page's
+// "Sidebar" group — off by default, Left/Right dock side round-trips
+// through MainWindow/sidebarDockArea, and the Panels checklist
+// persists each registered section under sidebar/panels/<id>.
 void tst_SettingsDialog::sidebarSettings()
 {
     QSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
-    // Fresh dialog defaults: unchecked, Left.
     {
         SettingsDialog dialog;
         QVERIFY(!dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
-    }
+        // The whole group moved off General onto the Appearance page.
+        QWidget *host = dialog.sidebarGroupBox;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::AppearancePage));
 
-    // Enabling + Right persists and reads back.
-    {
-        SettingsDialog dialog;
+        // The Panels checklist mirrors the registered rail entries —
+        // every one on by default.
+        QCOMPARE(dialog.sidebarPanelsList->count(),
+                 SidebarPanel::panels().count());
+        QListWidgetItem *history = nullptr;
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QVERIFY(item->flags() & Qt::ItemIsUserCheckable);
+            QCOMPARE(item->checkState(), Qt::Checked);
+            QVERIFY(!item->icon().isNull());
+            if (item->data(Qt::UserRole).toByteArray() == "history")
+                history = item;
+        }
+        QVERIFY(history);
+
+        // Unchecking persists under sidebar/panels/history.
+        history->setCheckState(Qt::Unchecked);
         dialog.showSidebar->setChecked(true);
         dialog.sidebarDockArea->setCurrentIndex(1);
         dialog.accept();
@@ -818,18 +841,31 @@ void tst_SettingsDialog::sidebarSettings()
              true);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::RightDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             false);
+    QVERIFY(!SidebarPanel::isPanelVisible("history"));
     {
         SettingsDialog dialog;
         QVERIFY(dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QCOMPARE(item->checkState(),
+                     item->data(Qt::UserRole).toByteArray() == "history"
+                         ? Qt::Unchecked : Qt::Checked);
+        }
         dialog.showSidebar->setChecked(false);
         dialog.sidebarDockArea->setCurrentIndex(0);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i)
+            dialog.sidebarPanelsList->item(i)->setCheckState(Qt::Checked);
         dialog.accept();
     }
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar")).toBool(),
              false);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::LeftDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             true);
 }
 
 // PREFUI03: the nav filter field narrows the sidebar by page title

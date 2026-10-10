@@ -87,6 +87,7 @@
 #include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
 #include "securestore.h"
+#include "sidebarpanel.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
@@ -298,6 +299,20 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                          id, QLatin1String("view-refresh")));
         }
     }
+    // SIDE02: the Panels checklist mirrors SidebarPanel's registered
+    // sections — a panel added through registerPanel() shows up here
+    // automatically.  Check states are applied in loadFromSettings.
+    for (const SidebarPanel::Panel &panel : SidebarPanel::panels()) {
+        QListWidgetItem *item = new QListWidgetItem(
+            AroraIcon::get(QLatin1String(panel.iconName)), panel.title,
+            sidebarPanelsList);
+        item->setData(Qt::UserRole, panel.id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    }
+    sidebarPanelsList->setIconSize(
+        QSize(chromeIconExtent, chromeIconExtent));
+
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
     connect(fixedFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFixedFont);
@@ -730,6 +745,17 @@ void SettingsDialog::loadFromSettings()
         settings.value(QLatin1String("sidebarDockArea"),
                        int(Qt::LeftDockWidgetArea)).toInt()
             == int(Qt::RightDockWidgetArea) ? 1 : 0);
+    // SIDE02: which panels the rail offers — default on, keyed under
+    // sidebar/panels/<id> by the registered id in each row's UserRole.
+    for (int row = 0; row < sidebarPanelsList->count(); ++row) {
+        QListWidgetItem *item = sidebarPanelsList->item(row);
+        if (!item)
+            continue;
+        item->setCheckState(
+            SidebarPanel::isPanelVisible(
+                item->data(Qt::UserRole).toByteArray())
+                ? Qt::Checked : Qt::Unchecked);
+    }
     const QString iconTheme = AroraIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
@@ -1045,6 +1071,17 @@ void SettingsDialog::saveToSettings()
                       sidebarDockArea->currentIndex() == 1
                       ? int(Qt::RightDockWidgetArea)
                       : int(Qt::LeftDockWidgetArea));
+    // SIDE02: persist the rail's per-panel checkboxes (the keys live
+    // under sidebar/panels/, not this group — write through the
+    // panel's own helpers).  Live application happens below via each
+    // window's applySidebarSettings().
+    for (int row = 0; row < sidebarPanelsList->count(); ++row) {
+        QListWidgetItem *item = sidebarPanelsList->item(row);
+        if (item)
+            SidebarPanel::setPanelVisible(
+                item->data(Qt::UserRole).toByteArray(),
+                item->checkState() == Qt::Checked);
+    }
     const QString iconTheme = iconThemeCombo->currentData().toString();
     settings.setValue(QLatin1String("iconTheme"), iconTheme);
     settings.endGroup();

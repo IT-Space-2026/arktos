@@ -1036,6 +1036,7 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
     SubWindow *window = new SubWindow;
     window->show();
@@ -1065,6 +1066,41 @@ void tst_BrowserMainWindow::sidebarPanel()
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
     QVERIFY(panel->notes());
+
+    // SIDE02: the switcher is a vertical icon rail — entries carry
+    // their title as text (a11y) + tooltip plus a themed glyph, but
+    // the rail only paints the icon.
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::West);
+    for (int i = 0; i < panel->tabs()->count(); ++i) {
+        QVERIFY(!panel->tabs()->tabIcon(i).isNull());
+        QVERIFY(!panel->tabs()->tabText(i).isEmpty());
+        QCOMPARE(panel->tabs()->tabToolTip(i),
+                 panel->tabs()->tabText(i));
+    }
+
+    // Unchecking a section in settings drops its tab on apply; the
+    // rail keeps registry order when it comes back.
+    SidebarPanel::setPanelVisible("history", false);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 3);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!panel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    SidebarPanel::setPanelVisible("history", true);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
+
+    // Offscreen panel grab for visual review — set
+    // ARORA_SIDEBAR_GRAB_DIR to a directory and the panel lands there
+    // as sidebar-panel.png (same convention as ARORA_SETTINGS_GRAB_DIR).
+    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    if (!sidebarGrabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
+        qApp->processEvents();
+        panel->grab().save(QString::fromLocal8Bit(sidebarGrabDir)
+            + QStringLiteral("/sidebar-panel.png"));
+    }
 
     // Toggling writes the persisted key; hiding is remembered.
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
@@ -1104,6 +1140,7 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
     closeWindow(window);
 }
 

@@ -27,6 +27,7 @@
 #include "historymanager.h"
 #include "searchlineedit.h"
 #include "settings.h"
+#include "utils/aroraicon.h"
 #include "utils/edittreeview.h"
 #include "utils/treesortfilterproxymodel.h"
 
@@ -48,6 +49,8 @@
 #include <qsortfilterproxymodel.h>
 #include <qstyleditemdelegate.h>
 #include <qstyle.h>
+#include <qstyleoption.h>
+#include <qtabbar.h>
 #include <qtabwidget.h>
 #include <qtoolbutton.h>
 
@@ -183,17 +186,89 @@ public:
     }
 };
 
+// SIDE02: the dock's section switcher — a vertical icon rail like
+// Vivaldi's.  A stock West-shaped QTabBar would rotate each entry's
+// text AND icon; this bar keeps the tab text (tooltips and the a11y
+// name still read it) but paints just the unrotated glyph inside a
+// square cell.
+class SidebarRail : public QTabBar
+{
+public:
+    explicit SidebarRail(QWidget *parent = nullptr)
+        : QTabBar(parent)
+    {
+        setShape(RoundedWest);
+        setExpanding(false);
+        setAccessibleName(SidebarPanel::tr("Sidebar panels"));
+        const int extent =
+            style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+        setIconSize(QSize(extent, extent));
+    }
+
+    QSize tabSizeHint(int index) const override
+    {
+        Q_UNUSED(index);
+        const int extent = iconSize().height() + 12;
+        return QSize(extent, extent);
+    }
+
+    QSize minimumTabSizeHint(int index) const override
+    {
+        return tabSizeHint(index);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        for (int i = 0; i < count(); ++i) {
+            QStyleOptionTab option;
+            initStyleOption(&option, i);
+            const QRect cell = option.rect.adjusted(3, 3, -3, -3);
+            if (option.state & QStyle::State_Selected) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(palette().color(QPalette::Highlight));
+                painter.drawRoundedRect(cell, 4, 4);
+            } else if (option.state & QStyle::State_MouseOver) {
+                QColor hover = palette().color(QPalette::Highlight);
+                hover.setAlpha(64);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(hover);
+                painter.drawRoundedRect(cell, 4, 4);
+            }
+            QRect iconRect(QPoint(0, 0), iconSize());
+            iconRect.moveCenter(cell.center());
+            tabIcon(i).paint(&painter, iconRect, Qt::AlignCenter,
+                             (option.state & QStyle::State_Selected)
+                                 ? QIcon::Selected : QIcon::Normal);
+            if (option.state & QStyle::State_HasFocus) {
+                QStyleOptionFocusRect focus;
+                focus.initFrom(this);
+                focus.rect = cell.adjusted(1, 1, -1, -1);
+                style()->drawPrimitive(QStyle::PE_FrameFocusRect,
+                                       &focus, &painter, this);
+            }
+        }
+    }
+};
+
+// QTabWidget::setTabBar() is protected — a shim is the only way to
+// install the rail before the first insertTab().
+class SidebarTabWidget : public QTabWidget
+{
+public:
+    explicit SidebarTabWidget(QWidget *parent = nullptr)
+        : QTabWidget(parent)
+    {
+        setTabPosition(West);
+        setTabBar(new SidebarRail(this));
+    }
+};
+
 SidebarPanel::SidebarPanel(QWidget *parent)
     : QWidget(parent)
-    , m_tabs(new QTabWidget(this))
-    , m_bookmarksView(new EditTreeView)
-    , m_historyView(new EditTreeView)
-    , m_downloadsView(new QListView)
-    , m_bookmarksProxy(new TreeSortFilterProxyModel(m_bookmarksView))
-    , m_historyProxy(new TreeSortFilterProxyModel(m_historyView))
-    , m_downloadsProxy(new SidebarDownloadsModel(
-          DownloadManager::instance()->model(), m_downloadsView))
-    , m_notes(new QPlainTextEdit)
+    , m_tabs(new SidebarTabWidget(this))
     , m_autoSaver(new AutoSaver(this))
 {
     QVBoxLayout *layout = new QVBoxLayout(this);
@@ -204,14 +279,140 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     m_tabs->setObjectName(QLatin1String("sidebarTabs"));
     m_tabs->setDocumentMode(true);
 
-    // Bookmarks — the shared model behind the dialog/toolbar, with the
-    // same search-line + proxy presentation the dialog uses.
+    // Every rail entry is an icon-only tab — the title rides the
+    // tooltip + accessible name instead of rendering as rotated text.
+    applyPanelVisibility();
+
+    connect(m_tabs, &QTabWidget::currentChanged,
+            m_autoSaver, &AutoSaver::changeOccurred);
+
+    QSettings settings;
+    if (m_notes)
+        m_notes->setPlainText(
+            settings.value(QLatin1String("sidebar/notes")).toString());
+    const int tab = settings.value(QLatin1String("sidebar/currentTab"), 0)
+                        .toInt();
+    if (tab >= 0 && tab < m_tabs->count())
+        m_tabs->setCurrentIndex(tab);
+}
+
+// The registered rail entries, in display order.  Built-ins resolve
+// lazily so registerPanel() calls made before the first panel (or
+// without one, e.g. the Preferences checklist) still append to the
+// same list.
+QList<SidebarPanel::Panel> &SidebarPanel::registry()
+{
+    static QList<Panel> panels;
+    if (panels.isEmpty()) {
+        panels.append({ QByteArrayLiteral("bookmarks"), tr("Bookmarks"),
+                        QByteArrayLiteral("user-bookmarks"),
+                        [](SidebarPanel *p) { return p->buildBookmarksPage(); } });
+        panels.append({ QByteArrayLiteral("history"), tr("History"),
+                        QByteArrayLiteral("document-revert"),
+                        [](SidebarPanel *p) { return p->buildHistoryPage(); } });
+        panels.append({ QByteArrayLiteral("downloads"), tr("Downloads"),
+                        QByteArrayLiteral("emblem-downloads"),
+                        [](SidebarPanel *p) { return p->buildDownloadsPage(); } });
+        panels.append({ QByteArrayLiteral("notes"), tr("Notes"),
+                        QByteArrayLiteral("edit-paste"),
+                        [](SidebarPanel *p) { return p->buildNotesPage(); } });
+    }
+    return panels;
+}
+
+QList<SidebarPanel::Panel> SidebarPanel::panels()
+{
+    return registry();
+}
+
+void SidebarPanel::registerPanel(const Panel &panel)
+{
+    for (Panel &entry : registry()) {
+        if (entry.id == panel.id) {
+            entry = panel;
+            return;
+        }
+    }
+    registry().append(panel);
+}
+
+static QString sidebarPanelKey(const QByteArray &id)
+{
+    return QLatin1String("sidebar/panels/") + QLatin1String(id);
+}
+
+bool SidebarPanel::isPanelVisible(const QByteArray &id)
+{
+    return QSettings().value(sidebarPanelKey(id), true).toBool();
+}
+
+void SidebarPanel::setPanelVisible(const QByteArray &id, bool visible)
+{
+    QSettings().setValue(sidebarPanelKey(id), visible);
+}
+
+int SidebarPanel::indexOfPanel(const QByteArray &id) const
+{
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (m_tabs->widget(i)
+                ->property("sidebarPanelId").toByteArray() == id)
+            return i;
+    }
+    return -1;
+}
+
+void SidebarPanel::applyPanelVisibility()
+{
+    const QList<Panel> available = panels();
+    for (const Panel &panel : available) {
+        const int index = indexOfPanel(panel.id);
+        if (isPanelVisible(panel.id)) {
+            if (index >= 0)
+                continue;
+            QWidget *page = panel.create ? panel.create(this) : nullptr;
+            if (!page)
+                continue;
+            page->setProperty("sidebarPanelId", panel.id);
+            // Registry order is the rail order — slot the page behind
+            // the enabled panels registered before it.
+            int position = 0;
+            for (const Panel &earlier : available) {
+                if (earlier.id == panel.id)
+                    break;
+                if (indexOfPanel(earlier.id) >= 0)
+                    ++position;
+            }
+            const int at = m_tabs->insertTab(position, page,
+                AroraIcon::get(QLatin1String(panel.iconName)),
+                panel.title);
+            m_tabs->setTabToolTip(at, panel.title);
+        } else if (index >= 0) {
+            QWidget *page = m_tabs->widget(index);
+            // The downloads detail pane may be hosting a card owned by
+            // DownloadManager — park it back before the page dies.
+            if (page == m_downloadsPage && m_detailItem) {
+                m_detailItem->setParent(DownloadManager::instance());
+                m_detailItem->hide();
+                m_detailItem.clear();
+            }
+            m_tabs->removeTab(index);
+            page->deleteLater();
+        }
+    }
+}
+
+// Bookmarks — the shared model behind the dialog/toolbar, with the
+// same search-line + proxy presentation the dialog uses.
+QWidget *SidebarPanel::buildBookmarksPage()
+{
     QWidget *bookmarksPage = new QWidget(m_tabs);
     QVBoxLayout *bookmarksLayout = new QVBoxLayout(bookmarksPage);
     bookmarksLayout->setContentsMargins(2, 2, 2, 2);
     bookmarksLayout->setSpacing(2);
     SearchLineEdit *bookmarksSearch = new SearchLineEdit(bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
+    m_bookmarksView = new EditTreeView(bookmarksPage);
+    m_bookmarksProxy = new TreeSortFilterProxyModel(m_bookmarksView);
     m_bookmarksView->setObjectName(QLatin1String("sidebarBookmarksView"));
     m_bookmarksView->setAccessibleName(tr("Bookmarks"));
     m_bookmarksView->setUniformRowHeights(true);
@@ -233,15 +434,20 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     connect(m_bookmarksView, &EditTreeView::customContextMenuRequested,
             this, &SidebarPanel::bookmarksContextMenu);
     bookmarksLayout->addWidget(m_bookmarksView);
-    m_tabs->addTab(bookmarksPage, tr("Bookmarks"));
+    return bookmarksPage;
+}
 
-    // History — the day-grouped tree model the History dialog uses.
+// History — the day-grouped tree model the History dialog uses.
+QWidget *SidebarPanel::buildHistoryPage()
+{
     QWidget *historyPage = new QWidget(m_tabs);
     QVBoxLayout *historyLayout = new QVBoxLayout(historyPage);
     historyLayout->setContentsMargins(2, 2, 2, 2);
     historyLayout->setSpacing(2);
     SearchLineEdit *historySearch = new SearchLineEdit(historyPage);
     historyLayout->addWidget(historySearch);
+    m_historyView = new EditTreeView(historyPage);
+    m_historyProxy = new TreeSortFilterProxyModel(m_historyView);
     m_historyView->setObjectName(QLatin1String("sidebarHistoryView"));
     m_historyView->setAccessibleName(tr("History"));
     m_historyView->setUniformRowHeights(true);
@@ -264,12 +470,15 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     connect(m_historyView, &EditTreeView::customContextMenuRequested,
             this, &SidebarPanel::historyContextMenu);
     historyLayout->addWidget(m_historyView);
-    m_tabs->addTab(historyPage, tr("History"));
+    return historyPage;
+}
 
-    // DOWN02: downloads — the standalone manager window is gone; this
-    // panel is the download surface.  Header close X, a filter field,
-    // a sort combo, the item list and a bottom detail pane that hosts
-    // the selected row's real DownloadItem card (DOWN01).
+// DOWN02: downloads — the standalone manager window is gone; this
+// panel is the download surface.  Header close X, a filter field,
+// a sort combo, the item list and a bottom detail pane that hosts
+// the selected row's real DownloadItem card (DOWN01).
+QWidget *SidebarPanel::buildDownloadsPage()
+{
     m_downloadsPage = new QWidget(m_tabs);
     QVBoxLayout *downloadsLayout = new QVBoxLayout(m_downloadsPage);
     downloadsLayout->setContentsMargins(2, 2, 2, 2);
@@ -298,7 +507,7 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     downloadsSearch->setAccessibleName(tr("Filter downloads"));
     connect(downloadsSearch, &SearchLineEdit::textChanged,
             this, [this](const QString &text) {
-        static_cast<SidebarDownloadsModel*>(m_downloadsProxy)
+        static_cast<SidebarDownloadsModel*>(m_downloadsProxy.data())
             ->setSearchText(text);
     });
     downloadsLayout->addWidget(downloadsSearch);
@@ -313,6 +522,9 @@ SidebarPanel::SidebarPanel(QWidget *parent)
             this, [this](int) { applyDownloadSort(); });
     downloadsLayout->addWidget(m_downloadsSort);
 
+    m_downloadsView = new QListView(m_downloadsPage);
+    m_downloadsProxy = new SidebarDownloadsModel(
+        DownloadManager::instance()->model(), m_downloadsView);
     m_downloadsView->setObjectName(QLatin1String("sidebarDownloadsView"));
     m_downloadsView->setAccessibleName(tr("Downloads"));
     m_downloadsView->setUniformItemSizes(true);
@@ -359,7 +571,7 @@ SidebarPanel::SidebarPanel(QWidget *parent)
     connect(DownloadManager::instance()->model(),
             &QAbstractItemModel::rowsAboutToBeRemoved, this,
             [this](const QModelIndex &, int first, int last) {
-        if (!m_detailItem)
+        if (!m_detailItem || !m_downloadDetail)
             return;
         for (int row = first; row <= last; ++row) {
             if (DownloadManager::instance()->itemAt(row) == m_detailItem) {
@@ -377,32 +589,30 @@ SidebarPanel::SidebarPanel(QWidget *parent)
         SettingsDialog::openPage(this, SettingsDialog::DownloadsPage);
     });
     downloadsLayout->addWidget(settingsButton);
-    m_tabs->addTab(m_downloadsPage, tr("Downloads"));
+    return m_downloadsPage;
+}
 
-    // Notes — a per-profile scratch pad, debounce-persisted through
-    // the AutoSaver like every other app-side store.
+// Notes — a per-profile scratch pad, debounce-persisted through
+// the AutoSaver like every other app-side store.
+QWidget *SidebarPanel::buildNotesPage()
+{
     QWidget *notesPage = new QWidget(m_tabs);
     QVBoxLayout *notesLayout = new QVBoxLayout(notesPage);
     notesLayout->setContentsMargins(2, 2, 2, 2);
     notesLayout->setSpacing(2);
+    m_notes = new QPlainTextEdit(notesPage);
     m_notes->setObjectName(QLatin1String("sidebarNotes"));
     m_notes->setAccessibleName(tr("Notes"));
     m_notes->setPlaceholderText(tr("Notes are saved automatically."));
     notesLayout->addWidget(m_notes);
-    m_tabs->addTab(notesPage, tr("Notes"));
 
     connect(m_notes, &QPlainTextEdit::textChanged,
             m_autoSaver, &AutoSaver::changeOccurred);
-    connect(m_tabs, &QTabWidget::currentChanged,
-            m_autoSaver, &AutoSaver::changeOccurred);
-
-    QSettings settings;
+    // The panel may be re-enabled at runtime — a stored note picks
+    // back up without waiting for a restart.
     m_notes->setPlainText(
-        settings.value(QLatin1String("sidebar/notes")).toString());
-    const int tab = settings.value(QLatin1String("sidebar/currentTab"), 0)
-                        .toInt();
-    if (tab >= 0 && tab < m_tabs->count())
-        m_tabs->setCurrentIndex(tab);
+        QSettings().value(QLatin1String("sidebar/notes")).toString());
+    return notesPage;
 }
 
 QIcon SidebarPanel::icon(const QWidget *forPalette)
@@ -435,7 +645,11 @@ QPlainTextEdit *SidebarPanel::notes() const
 void SidebarPanel::save()
 {
     QSettings settings;
-    settings.setValue(QLatin1String("sidebar/notes"), m_notes->toPlainText());
+    // A hidden Notes panel keeps its stored text — don't clobber the
+    // key with an empty editor state.
+    if (m_notes)
+        settings.setValue(QLatin1String("sidebar/notes"),
+                          m_notes->toPlainText());
     settings.setValue(QLatin1String("sidebar/currentTab"), m_tabs->currentIndex());
 }
 
@@ -507,7 +721,10 @@ QWidget *SidebarPanel::downloadsPage() const
 
 void SidebarPanel::showDownloads()
 {
-    m_tabs->setCurrentWidget(m_downloadsPage);
+    // The user may have unchecked Downloads in Preferences — then the
+    // dock still raises (the caller shows it) but nothing selects.
+    if (m_downloadsPage && m_tabs->indexOf(m_downloadsPage) >= 0)
+        m_tabs->setCurrentWidget(m_downloadsPage);
 }
 
 void SidebarPanel::applyDownloadSort()
