@@ -35,6 +35,7 @@
 #include <qwebengineprofile.h>
 
 #include "settings.h"
+#include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "aroraicon.h"
 #include "browserapplication.h"
@@ -86,6 +87,7 @@ private slots:
     void downloadsPage();
     void tabPositionPicker();
     void contentBlockerEngine();
+    void adblockManageButton();
     void pagePolishSettings();
     void extensionReview();
 };
@@ -1723,6 +1725,35 @@ void tst_SettingsDialog::contentBlockerEngine()
 #endif
     }
     QCOMPARE(AdBlockManager::storedEngine(), AdBlockManager::NativeEngine);
+}
+
+// MENU05: with the Tools-menu "Ad Block..." entry removed, the
+// Content Blocking group's Manage button is the Preferences-side
+// path to the same modeless AdBlockDialog the site panel opens.
+void tst_SettingsDialog::adblockManageButton()
+{
+    SettingsDialog dialog;
+    dialog.openAtPage(SettingsDialog::PrivacyPage);
+
+    QCOMPARE(dialog.adblockManageButton->parentWidget()
+                 ->objectName(),
+             QStringLiteral("contentBlockingGroup"));
+
+    dialog.adblockManageButton->click();
+    AdBlockDialog *adblock = nullptr;
+    for (int i = 0; i < 50 && !adblock; ++i) {
+        QTest::qWait(20);
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            AdBlockDialog *candidate =
+                qobject_cast<AdBlockDialog *>(widget);
+            if (candidate && candidate->isVisible()) {
+                adblock = candidate;
+                break;
+            }
+        }
+    }
+    QVERIFY(adblock);
+    adblock->close();
 }
 
 // EXT02: the permission-review dialog is the consent gate every

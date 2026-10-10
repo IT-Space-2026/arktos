@@ -118,7 +118,8 @@ QString commandKeywords(const QString &cleanText)
         {QStringLiteral("Show All Bookmarks..."),
          QStringLiteral("library bookmarks manager")},
         {QStringLiteral("Preferences..."),
-         QStringLiteral("options settings configure")},
+         QStringLiteral("options settings configure adblock "
+                        "advertisements filters ublock")},
         {QStringLiteral("Downloads"),
          QStringLiteral("download manager files")},
         {QStringLiteral("Reader Mode"),
@@ -129,8 +130,6 @@ QString commandKeywords(const QString &cleanText)
          QStringLiteral("fullscreen f11")},
         {QStringLiteral("Zoom Text Only"),
          QStringLiteral("text zoom fonts")},
-        {QStringLiteral("Ad Block..."),
-         QStringLiteral("adblock advertisements filters ublock")},
     };
     return aliases.value(cleanText);
 }

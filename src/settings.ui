@@ -1483,6 +1483,25 @@
             </property>
            </widget>
           </item>
+          <item row="2" column="0" colspan="2">
+           <widget class="QPushButton" name="adblockManageButton">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="accessibleName">
+             <string>Manage content-blocking filters</string>
+            </property>
+            <property name="toolTip">
+             <string>Opens the filter-list manager to enable, update or add ad and tracker blocking subscriptions.</string>
+            </property>
+            <property name="text">
+             <string>Manage content-blocking filters...</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

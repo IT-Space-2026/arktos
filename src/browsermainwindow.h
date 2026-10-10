@@ -289,7 +289,6 @@ private:
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
     UserAgentMenu *m_toolsUserAgentMenu;
-    QAction *m_adBlockDialogAction;
 
     QMenu *m_helpMenu;
     QAction *m_helpChangeLanguageAction;
