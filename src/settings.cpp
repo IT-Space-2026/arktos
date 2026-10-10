@@ -63,6 +63,7 @@
 #include "settings.h"
 
 #include "acceptlanguagedialog.h"
+#include "adblockmanager.h"
 #include "aroraicon.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
@@ -432,6 +433,23 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(securityLevelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updateSecurityLevelHint(); });
     updateSecurityLevelHint();
+
+    // ADB06: the content-blocker engine picker persists AdBlock/engine
+    // (cpp|rust) — the key AdBlockManager::engine() consults.  Item
+    // data carries the persisted id.  Without an adblock_rust build
+    // the Brave row stays listed but disabled so a persisted pick
+    // round-trips instead of being silently rewritten to Built-in.
+    adblockEngineCombo->setItemData(0, QLatin1String("cpp"));
+    adblockEngineCombo->setItemData(1, QLatin1String("rust"));
+#ifndef ARORA_ADBLOCK_RUST
+    if (QStandardItemModel *engineModel =
+            qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
+        if (QStandardItem *rust = engineModel->item(1)) {
+            rust->setEnabled(false);
+            rust->setText(tr("Brave adblock-rust — rebuild with CONFIG+=adblock_rust"));
+        }
+    }
+#endif
 
     // DOH01: the DoH endpoint field only matters to the two Custom
     // modes — keep it greyed otherwise.
@@ -1026,6 +1044,18 @@ void SettingsDialog::loadFromSettings()
     settings.endGroup();
     updateSecurityLevelHint();
 
+    // ADB06: the raw stored pick (rust stays rust on a build without
+    // the engine — the disabled row still selects, and re-saving
+    // writes the same id back).
+    {
+        const QString engineId = AdBlockManager::storedEngine()
+                == AdBlockManager::RustEngine
+                ? QLatin1String("rust") : QLatin1String("cpp");
+        const int engineRow = adblockEngineCombo->findData(engineId);
+        adblockEngineCombo->setCurrentIndex(engineRow < 0 ? 0 : engineRow);
+    }
+    updateContentBlockerStatus();
+
     // The Search tab mirrors OpenSearchManager: engine combo (default
     // engine selection) plus the per-engine suggestions opt-in (SEC11)
     // bound to whichever engine the combo shows.
@@ -1294,6 +1324,16 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("fingerprintProtection"), fingerprintProtection->isChecked());
     settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
     settings.endGroup();
+
+    // ADB06: write through the manager so the matcher snapshot is
+    // rebuilt on rulesChanged — the engine switch answers the next
+    // request, no restart.  The raw pick persists even on builds
+    // without the Rust engine (the disabled row still carries it).
+    AdBlockManager::instance()->setEngine(
+        adblockEngineCombo->currentData().toString()
+                == QLatin1String("rust")
+        ? AdBlockManager::RustEngine : AdBlockManager::NativeEngine);
+    updateContentBlockerStatus();
 
     // PRIV02: TZ is process environment — applying it now reaches
     // engine processes spawned from here on; the ones already running
@@ -2445,6 +2485,26 @@ void SettingsDialog::updateSecurityLevelHint()
     securityLevelHint->setText(hint);
     enableJavascript->setEnabled(
         securityLevelCombo->currentIndex() != PrivacyRequestInterceptor::Safest);
+}
+
+// ADB06: the status line reports the engine actually answering
+// requests — the effective pick — so a persisted "rust" on a native-
+// only build reads as Built-in, not as the dead selection.
+void SettingsDialog::updateContentBlockerStatus()
+{
+    QString text;
+    if (AdBlockManager::storedEngine() == AdBlockManager::RustEngine
+        && !AdBlockManager::rustEngineAvailable()) {
+        text = tr("Active engine: Built-in — Brave adblock-rust is not "
+                  "compiled into this build (rebuild with "
+                  "CONFIG+=adblock_rust)");
+    } else {
+        text = tr("Active engine: %1")
+            .arg(AdBlockManager::instance()->engine()
+                 == AdBlockManager::RustEngine
+                 ? tr("Brave adblock-rust") : tr("Built-in"));
+    }
+    adblockEngineStatus->setText(text);
 }
 
 // Prompts for a new master passphrase — entered twice — and returns

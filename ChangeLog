@@ -248,6 +248,8 @@ AdBlock:
 - Preset filter-list catalog (ADB03).
 - Subscription-centric dialog + custom rules editor (ADB04).
 - Toolbar blocker button with per-page counts (ADB05).
+- Content-blocker engine picker in Preferences → Privacy (Built-in /
+  Brave adblock-rust, live switch, rust builds only) (ADB06).
 - Indexed request matcher (PERF02).
 
 Extensions:

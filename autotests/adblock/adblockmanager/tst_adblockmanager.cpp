@@ -71,6 +71,7 @@ private slots:
     void presetCatalog();
     void subscribeRemoteList();
     void presetsDialog();
+    void engineSelection();
 };
 
 // Subclass that exposes the protected functions.
@@ -435,6 +436,61 @@ void tst_AdBlockManager::presetsDialog()
     manager->removeSubscription(subscription);
     AdBlockManager::setRemoteListsConsent(
         AdBlockManager::RemoteListsUndecided);
+}
+
+// ADB06: the runtime engine pick persists under AdBlock/engine,
+// defaults to Built-in, emits rulesChanged only on a real change, and
+// drives which matcher answers.  The Rust pick is only effective in
+// CONFIG+=adblock_rust builds; elsewhere it round-trips as a stored
+// value while the native matcher keeps answering.
+void tst_AdBlockManager::engineSelection()
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->load();
+    QCOMPARE(int(AdBlockManager::storedEngine()),
+             int(AdBlockManager::NativeEngine));
+    QCOMPARE(int(manager->engine()), int(AdBlockManager::NativeEngine));
+#if defined(ARORA_ADBLOCK_RUST)
+    QVERIFY(AdBlockManager::rustEngineAvailable());
+#else
+    QVERIFY(!AdBlockManager::rustEngineAvailable());
+#endif
+
+    QSignalSpy spy(manager, SIGNAL(rulesChanged()));
+    manager->setEngine(AdBlockManager::RustEngine);
+    QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine")).toString(),
+             QLatin1String("rust"));
+    QCOMPARE(int(AdBlockManager::storedEngine()),
+             int(AdBlockManager::RustEngine));
+    QCOMPARE(spy.count(), 1);
+
+#if defined(ARORA_ADBLOCK_RUST)
+    QCOMPARE(int(manager->engine()), int(AdBlockManager::RustEngine));
+    // The engine only builds when there is rule text to parse — feed
+    // the custom subscription a rule (emits rulesChanged itself), then
+    // the pick is live in the rebuilt snapshot.
+    manager->customRules()->addRule(
+        AdBlockRule(QLatin1String("||engine-smoke.invalid^")));
+    manager->network()->rebuildRules();
+    QVERIFY(manager->network()->rustEngineActive());
+    QVERIFY(manager->rustEngineInUse());
+    manager->setEngine(AdBlockManager::NativeEngine);
+    QVERIFY(!manager->rustEngineInUse());
+    QVERIFY(!manager->network()->rustEngineActive());
+#else
+    // The stored pick survives but the effective engine clamps to the
+    // native matcher — no dead delegation.
+    QCOMPARE(int(manager->engine()), int(AdBlockManager::NativeEngine));
+    QVERIFY(!manager->rustEngineInUse());
+    QVERIFY(!manager->network()->rustEngineActive());
+    manager->setEngine(AdBlockManager::NativeEngine);
+#endif
+    QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine")).toString(),
+             QLatin1String("cpp"));
+    // No signal when the pick does not actually change.
+    const int settled = spy.count();
+    manager->setEngine(AdBlockManager::NativeEngine);
+    QCOMPARE(spy.count(), settled);
 }
 
 QTEST_MAIN(tst_AdBlockManager)

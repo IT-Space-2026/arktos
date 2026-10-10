@@ -2197,6 +2197,9 @@ struct AdBlockSmokeState {
     bool enabled;
 };
 static QList<AdBlockSmokeState> *s_adBlockSmokeSaved = nullptr;
+// ADB06: the engine pick is a QSettings key, not a subscription —
+// saved/restored alongside so a smoke's engine switch never leaks.
+static int s_adBlockSmokeEngine = -1;
 
 static void restoreAdBlockState()
 {
@@ -2220,6 +2223,10 @@ static void restoreAdBlockState()
     }
     delete s_adBlockSmokeSaved;
     s_adBlockSmokeSaved = nullptr;
+    if (s_adBlockSmokeEngine >= 0) {
+        manager->setEngine(AdBlockManager::Engine(s_adBlockSmokeEngine));
+        s_adBlockSmokeEngine = -1;
+    }
 }
 
 static void restoreAdBlockStateOnExit()
@@ -2232,6 +2239,7 @@ static void restoreAdBlockStateOnExit()
         s_adBlockSmokeSaved->append({subscription,
                                      subscription->allRules(),
                                      subscription->isEnabled()});
+    s_adBlockSmokeEngine = int(manager->storedEngine());
     qAddPostRoutine(&restoreAdBlockState);
 }
 
@@ -6420,7 +6428,15 @@ int main(int argc, char **argv)
         for (const char *rule : corpus)
             custom->addRule(AdBlockRule(QLatin1String(rule)));
 
+        // ADB06: matching is runtime-selected now (AdBlock/engine,
+        // default Built-in) — the smoke exists to diff the Rust
+        // engine, so pick it explicitly.  rulesChanged rebuilds the
+        // snapshot synchronously, which is also the lazy-construction
+        // path the Preferences switch takes.
+        manager->setEngine(AdBlockManager::RustEngine);
+
         AdBlockNetwork *network = manager->network();
+        const bool rustActive = network->rustEngineActive();
         struct Probe {
             const char *url;
             const char *firstParty;
@@ -6469,11 +6485,25 @@ int main(int argc, char **argv)
         const bool cosmeticOk = cosmetic.value(QLatin1String("hide"))
             .toArray().contains(QLatin1String(".ad-banner"));
 
-        const bool pass = rustExpected == total && cosmeticOk;
+        // ADB06: toggling back to Built-in must drop the engine and
+        // leave match() answering through the native matcher — the
+        // same live switch the settings combo drives.
+        manager->setEngine(AdBlockManager::NativeEngine);
+        const bool toggledOff = !network->rustEngineActive()
+            && adblockDecisionKind(network->match(
+                    QUrl(QLatin1String("http://ads.example.com/a.js")),
+                    QUrl(QLatin1String("http://site.example/")), 3)) == 1;
+        manager->setEngine(AdBlockManager::RustEngine);
+        const bool toggledOn = network->rustEngineActive();
+
+        const bool pass = rustActive && rustExpected == total
+                && cosmeticOk && toggledOff && toggledOn;
         qInfo() << "adblock-rust-smoke:" << (pass ? "PASS" : "FAIL")
                 << "rust-matches-expected" << rustExpected << "/" << total
                 << "native-agrees" << agree << "/" << total
-                << "cosmetic" << cosmeticOk;
+                << "cosmetic" << cosmeticOk
+                << "engine-active" << rustActive
+                << "toggle" << toggledOff << toggledOn;
         return pass ? 0 : 1;
 #else
         qInfo() << "adblock-rust-smoke: SKIP"
