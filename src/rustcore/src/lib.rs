@@ -72,11 +72,16 @@
 //!     brand version, the useragents.xml preset parse and the
 //!     per-site UA spoof table (a "uaspoof" kind inside the
 //!     sitedecisions store).
+//!   * clearplan (CLR01): the clear-private-data decision — a pure
+//!     (period, categories, scope) -> ordered operation list
+//!     function the Qt shell executes per-store; profile scoping is
+//!     baked in so an OTR clear can never reach persistent stores.
 //!
 mod autofill;
 mod bidi;
 mod blocklist;
 mod bookmarks;
+mod clearplan;
 mod cred;
 mod error;
 mod extverify;
@@ -1631,6 +1636,17 @@ pub unsafe extern "C" fn rc_hist_icon_clear() -> RcStatus {
     status_of(|| history::with(|s| s.icon_clear()))
 }
 
+/// Deletes every visit at or after `since_ms` (ms-epoch) — the
+/// ranged leg of a clear-private-data plan (CLR01).  Icons are kept.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_clear_since(since_ms: i64) -> RcStatus {
+    let st = status_of(|| history::with(|s| s.clear_since(since_ms)));
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
 // ---- session store (RCORE03) -------------------------------------------
 
 /// Validates the JSON session manifest and atomically installs it as
@@ -2821,6 +2837,52 @@ pub unsafe extern "C" fn rc_ua_spoof_list() -> *mut c_char {
         Err(e) => {
             error::set_error(&e.msg);
             ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- clear-private-data decision engine (CLR01) -------------------------
+//
+// The "which stores get wiped" decision as a pure function — see
+// clearplan.rs for the op vocabulary and the two scope rules.  The Qt
+// shell executes the ordered list per-store; the core executes
+// nothing itself.
+
+/// rc_clearplan(period, categories, otr_active) -> JSON plan:
+///   {"scope":"persistent"|"otr", "period":name,
+///    "since_secs":n, "ops":[{...}]}
+/// `period` is "all"/"everything"/"" for a whole-store wipe or
+/// "hour"/"day"/"week" for a recent window (the "last-"-prefixed
+/// spellings accepted); NULL or an unrecognized name -> NULL +
+/// RC_INVALID_ARGUMENT-class error.  `categories` is the OR of the
+/// RC_CLEAR_* bits; unknown bits are ignored.  `otr_active` non-zero
+/// scopes the plan to the off-the-record context — the result then
+/// contains no op that touches a persistent store.  Free the result
+/// with rc_string_free().
+///
+/// # Safety
+/// `period` must be NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_clearplan(
+    period: *const c_char,
+    categories: u32,
+    otr_active: i32,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let p = match unsafe { util::cstr(period) } {
+            Some(s) => s,
+            None => {
+                error::set_error("bad period pointer");
+                return ptr::null_mut();
+            }
+        };
+        match clearplan::plan_json(p, categories, otr_active != 0) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
         }
     }))
     .unwrap_or(ptr::null_mut())

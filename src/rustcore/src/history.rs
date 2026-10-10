@@ -187,6 +187,20 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Deletes every visit at or after `since_ms` — the ranged leg
+    /// of a clear-private-data plan (CLR01).  Icons are per-host and
+    /// stay, matching icon_clear() being a separate category.
+    pub fn clear_since(&mut self, since_ms: i64) -> RcResult<()> {
+        self.conn()?
+            .execute(
+                "DELETE FROM visits WHERE visited_at >= ?1",
+                params![since_ms],
+            )
+            .map_err(|e| sql_fail("history clear_since", e))?;
+        self.entries = None;
+        Ok(())
+    }
+
     /// The deduped, newest-first listing: consecutive rows identical
     /// in (url, title, ts) collapse into one, keeping the newest
     /// non-empty title in the run — the old HistoryParser rule, so a
@@ -460,6 +474,28 @@ mod tests {
         s.remove("http://a/", "new", 200).unwrap();
         assert_eq!(s.count().unwrap(), 1);
         s.clear().unwrap();
+        assert_eq!(s.count().unwrap(), 0);
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn clear_since_drops_only_the_window() {
+        let p = temp_db("since");
+        let mut s = store_at(&p);
+        s.add("http://old/", "O", 100).unwrap();
+        s.add("http://edge/", "E", 200).unwrap();
+        s.add("http://new/", "N", 300).unwrap();
+        // Rows at the cutoff boundary are inside the window.
+        s.clear_since(200).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
+        assert_eq!(
+            s.entry_at(0).unwrap().unwrap().contains("http://old/"),
+            true
+        );
+        // A future cutoff is a no-op; everything is still cleared.
+        s.clear_since(500).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
+        s.clear_since(0).unwrap();
         assert_eq!(s.count().unwrap(), 0);
         std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
     }

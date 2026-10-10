@@ -157,6 +157,10 @@ public:
 
 public slots:
     void clear();
+    // CLR01 ranged wipe used by a clear-private-data plan: drops the
+    // visits at or after the cutoff (ms since epoch); icons and the
+    // older rows stay.
+    void clearSince(qint64 sinceMs);
     void loadSettings();
 
 private slots:
