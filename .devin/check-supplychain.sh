@@ -72,8 +72,12 @@ if [ "$OFFLINE" = 1 ]; then
         || die "ARORA_SUPPLYCHAIN_OFFLINE=1 but no cached advisory DB at ~/.cargo/advisory-db"
 fi
 
+# spikes/ is excluded on purpose: spike harnesses are throwaway
+# experiments (never shipped, never linked into src/), so vetting them
+# would gate the build on code that is not part of the product.  A spike
+# that graduates into the tree moves out of spikes/ and gets vetted.
 CRATES=$(cd "$ROOT" && git ls-files -c -o --exclude-standard -- '*/Cargo.toml' 'Cargo.toml' \
-    | grep -v '/target/' || true)
+    | grep -v '/target/' | grep -v '^spikes/' || true)
 [ -n "$CRATES" ] || { note "no crates in tree — nothing to vet"; exit 0; }
 
 FAILED=""

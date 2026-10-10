@@ -1,0 +1,72 @@
+# cargo-deny policy for the ENG03 servo embeddability SPIKE crate.
+#
+# Unlike the shipped Rust crates (src/rustcore, src/rustdl,
+# src/adblock/rust), this crate is a feasibility probe — it is not part
+# of the qmake build, links nothing the browser ships, and exists to
+# answer "can libservo be embedded". libservo is not published on
+# crates.io, so the servo git dependency below is the whole point of
+# the spike and is allow-listed explicitly; every other source stays
+# denied. Advisory ignores mirror servo v0.7.0's own deny.toml — they
+# document upstream-known, unfixed advisories in the servo dep tree,
+# not new risk introduced here (this artifact never ships).
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# servo pins several crates that upstream has since yanked; the spike
+# must build the pinned tag as-is. Revisit on re-probe.
+yanked = "warn"
+ignore = [
+    # unic-* unmaintained (servo deny.toml, v0.7.0)
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+    # rsa Marvin side channel — upstream wait (servo deny.toml)
+    "RUSTSEC-2023-0071",
+    # bincode unmaintained, pinned by servo (servo deny.toml)
+    "RUSTSEC-2025-0141",
+    # ttf-parser unmaintained via fontdb/usvg (servo deny.toml)
+    "RUSTSEC-2026-0192",
+    # paste unmaintained (servo deny.toml)
+    "RUSTSEC-2024-0436",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MPL-2.0",
+    "OFL-1.1",
+    "OpenSSL",
+    "Ubuntu-font-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "GPL-2.0-or-later",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[bans]
+# servo's dep tree intentionally carries duplicate versions; servo
+# itself keeps a long skip list for them. A spike crate inherits that
+# tree as-is — flag duplicates for visibility only.
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# libservo is only distributed via the servo git repo (not crates.io);
+# the spike pins the v0.7.0 tag on purpose.
+allow-git = ["https://github.com/servo/servo.git"]

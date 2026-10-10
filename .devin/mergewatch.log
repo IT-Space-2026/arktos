@@ -404,4 +404,25 @@ Starting the merge run. First, checking repo state.Dirty working tree — I'll w
 Stopping after this pass as instructed.
 [2026-10-10 03:24:49] merge run exited rc=0
 [2026-10-10 03:39:51] merge due: ui-work(1) — spawning devin merge run
-I'll start by checking the repository state and fetching from origin.
+I'll start by checking the repository state and fetching from origin.Working tree has dirty files — I'll note which ones so I can detect conflicts with merges. Now fetching and checking lane status.ui-work touches `.devin/WORKLOG.md`, which is dirty in this tree. Let me check what the local changes are before attempting the merge.Odd — `git status` lists WORKLOG.md and Arora-Task.md as modified but `git diff` shows no changes. Let me check for mode changes or stat-dirt.The earlier status was stat-dirt — after refresh, actual dirty files are `check-supplychain.sh`, `mergewatch.log`, `taskloop.log`, `.gitignore` (plus untracked). None overlap with ui-work's touched files. Merging ui-work now.Clean merge, no conflicts. Now verifying the build.Build succeeded (exit 0, binary linked). Let me check how previous MERGEWATCH entries were handled (committed vs dirty) before pushing.Appending the MERGEWATCH line, then committing just the worklog and pushing master.Done — one merge pass complete.
+
+**Summary:**
+- `git fetch origin` → `rust-work`: 0 ahead (skipped), `ui-work`: 1 ahead (`cd73428` DEVT01: View > Development Tools submenu).
+- Initial dirty-looking files (WORKLOG.md, Arora-Task.md, bidiclient.cpp) turned out to be stat-dirt only — `git update-index --refresh` cleared them; no lane files overlapped with the real dirty set (`check-supplychain.sh`, `mergewatch.log`, `taskloop.log`, `.gitignore`), so no lane needed skipping.
+- `git merge ui-work --no-edit` — clean `ort` merge, zero conflicts (WORKLOG.md, ChangeLog, browsermainwindow.cpp/h auto-merged).
+- Build verified: `source .devin/qt-env.sh && make -C src -j2` → exit 0, `arora` binary linked.
+- WORKLOG.md MERGEWATCH line appended and committed (`696e510`), master pushed: `2454d02..696e510`.
+
+Stopping after this pass per the watchdog protocol.
+[2026-10-10 03:42:26] merge run exited rc=0
+[2026-10-10 04:22:30] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.ui-work is 1 commit ahead (ADB06: content-blocker engine selector). None of the dirty files overlap with the commit's file set, so the merge is safe.Clean merge, no conflicts. Now verifying the build.Build is still running. Waiting for it to finish.Build succeeded — `../arora` linked cleanly. Now appending the WORKLOG entry and checking prior format.Appending the MERGEWATCH entry.Now staging only `.devin/WORKLOG.md` and committing it, then pushing.Merge run complete:
+
+- **rust-work** — 0 commits ahead, skipped.
+- **ui-work** — 1 commit ahead (`0ac488b` ADB06: runtime content-blocker engine selector). Merged into master cleanly — WORKLOG.md, ChangeLog, README.md, main.cpp, settings.cpp/settings.ui all auto-merged, no conflicts. None of the in-flight dirty files (`.devin/Arora-Task.md`, `check-supplychain.sh`, logs, `.gitignore`, `spikes/`) overlapped, so they were left untouched.
+- **Build** — `source .devin/qt-env.sh && make -C src -j2` succeeded; `../arora` linked.
+- **WORKLOG** — appended the MERGEWATCH line, committed as `3f47075` (matching prior convention).
+- **Push** — `master` pushed (`696e510..3f47075`).
+
+Stopping after this one pass as instructed.
+[2026-10-10 04:23:54] merge run exited rc=0
