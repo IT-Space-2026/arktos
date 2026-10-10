@@ -33,8 +33,11 @@
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <QHostAddress>
+#include <QRandomGenerator>
 #include <qsslcertificate.h>
 #include <qsslkey.h>
+#include <QTcpServer>
 #include <qurl.h>
 #include <qwebengineclientcertificatestore.h>
 #include <qwebengineclienthints.h>
@@ -47,6 +50,11 @@
 #include <ctime>
 
 namespace BrowserProfile {
+
+// DEVT03: populated by applyChromiumFlags() when it arms the
+// remote-debugging endpoint — the BiDi panel's connect parameters.
+static quint16 s_bidiDebugPort = 0;
+static QString s_bidiDebugOrigin;
 
 QWebEngineProfile *normalProfile()
 {
@@ -906,7 +914,47 @@ void applyChromiumFlags()
             flags.append(prefix
                 + QLatin1String("0x009c,0x009d,0x002f,0x0035,0xc013,0xc014"));
     }
+    // DEVT03: arm the BiDi devtools channel.  The remote-debugging
+    // server binds loopback only; the per-session Origin token in
+    // --remote-allow-origins rejects every websocket handshake that
+    // presents a foreign Origin (verified: foreign origins get 403,
+    // the token origin 101) — the web-content path that could
+    // otherwise drive the channel cross-origin.  A handshake with NO
+    // Origin header is accepted like Chrome's own tooling contract —
+    // only a same-uid local process can omit it, and that process
+    // could read the token off disk anyway.  The browser target's ws
+    // path additionally carries an unguessable GUID.  Gated off entirely in a tor process — its
+    // spec forbids a debug channel — and by devtools/bidiBackend=0.
+    // An operator-set QTWEBENGINE_REMOTE_DEBUGGING is left untouched.
+    const bool bidiBackend = settings.value(
+        QLatin1String("devtools/bidiBackend"), true).toBool();
+    if (bidiBackend && !BrowserApplication::isTorMode()
+        && !qEnvironmentVariableIsSet("QTWEBENGINE_REMOTE_DEBUGGING")) {
+        QTcpServer probe;
+        if (probe.listen(QHostAddress::LocalHost, 0)) {
+            s_bidiDebugPort = probe.serverPort();
+            probe.close();
+            s_bidiDebugOrigin = QStringLiteral("http://bidi-")
+                + QString::number(QRandomGenerator::system()->generate64(), 16)
+                + QString::number(QRandomGenerator::system()->generate64(), 16)
+                + QStringLiteral(".invalid");
+            qputenv("QTWEBENGINE_REMOTE_DEBUGGING",
+                    QByteArray::number(s_bidiDebugPort));
+            addFlag(QStringLiteral("--remote-allow-origins=")
+                    + s_bidiDebugOrigin);
+        }
+    }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
+}
+
+quint16 bidiDebugPort()
+{
+    return s_bidiDebugPort;
+}
+
+QString bidiDebugOrigin()
+{
+    return s_bidiDebugOrigin;
 }
 
 void applyFingerprintEnvironment()

@@ -29,6 +29,7 @@
 #include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
+#include "bidiclient.h"
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
@@ -2254,6 +2255,168 @@ static void restoreAdBlockStateOnExit()
 // page's own update() filling document.title and the search button
 // — and answer an explicit searchUrl() round-trip, the call the
 // search box itself makes.
+// DEVT03: --bidi-smoke exercises the engine-neutral devtools channel
+// end to end — connect to the armed loopback endpoint (Origin-token
+// gated), open the BiDi session, subscribe for events, list browsing
+// contexts, evaluate script, navigate the view's context, and require
+// a console log entry plus network lifecycle events.  Exits 0 on
+// PASS, 1 on FAIL.
+static int bidiSmoke(BrowserApplication &application, WebView *view)
+{
+    struct Smoke {
+        BidiClient client;
+        QString context;
+        bool sawTree = false;
+        bool sawEval = false;
+        bool sawLog = false;
+        bool sawNetRequest = false;
+        bool sawNetResponse = false;
+        bool sawCookies = false;
+        bool done = false;
+    };
+    Smoke *sm = new Smoke;
+
+    const auto finish = [&application, sm](bool pass, const QString &why) {
+        if (sm->done)
+            return;
+        sm->done = true;
+        qInfo() << "bidi-smoke:" << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QObject::connect(&sm->client, &BidiClient::connectionChanged,
+                     &application, [&application, sm, view](int state) {
+        if (state == BidiClient::Connected) {
+            sm->client.sendCommand(QStringLiteral("session.new"));
+            sm->client.sendCommand(QStringLiteral("session.subscribe"),
+                QByteArray("{\"events\":[\"browsingContext\",\"log\",\"network\"]}"));
+            sm->client.sendCommand(QStringLiteral("browsingContext.getTree"));
+        } else if (state == BidiClient::Unavailable
+                   || (state == BidiClient::Disconnected && sm->done == false
+                       && sm->sawTree)) {
+            qInfo() << "bidi-smoke: FAIL (channel:" << state << ")"
+                    << sm->client.unavailableReason();
+            sm->done = true;
+            application.exit(1);
+        }
+        Q_UNUSED(view);
+    });
+
+    QObject::connect(&sm->client, &BidiClient::responseReceived,
+                     &application, [sm, view, finish](quint64 id,
+                                               const QByteArray &json) {
+        Q_UNUSED(id);
+        const QJsonObject root =
+            QJsonDocument::fromJson(json).object();
+        const QJsonObject result =
+            root[QStringLiteral("result")].toObject();
+
+        if (result.contains(QStringLiteral("contexts"))) {
+            // browsingContext.getTree
+            const QJsonArray contexts =
+                result[QStringLiteral("contexts")].toArray();
+            if (contexts.isEmpty())
+                return;
+            sm->sawTree = true;
+            // Prefer the context matching the view's url.
+            const QString want = view->url().toString();
+            QString pick = contexts.first().toObject()
+                               [QStringLiteral("context")].toString();
+            for (const QJsonValue &cv : contexts) {
+                const QJsonObject c = cv.toObject();
+                if (c[QStringLiteral("url")].toString() == want)
+                    pick = c[QStringLiteral("context")].toString();
+            }
+            sm->context = pick;
+            qInfo() << "bidi-smoke: tree has" << contexts.size()
+                    << "contexts, using" << pick;
+            // eval
+            sm->client.sendCommand(QStringLiteral("script.evaluate"),
+                QByteArray("{\"expression\":\"40+2\",\"target\":{\"context\":\"")
+                + pick.toUtf8()
+                + QByteArray("\"},\"awaitPromise\":true}"));
+            // storage
+            sm->client.sendCommand(QStringLiteral("storage.getCookies"),
+                QByteArray("{\"context\":\"") + pick.toUtf8()
+                + QByteArray("\"}"));
+            // navigate to a page that logs and fetches
+            sm->client.sendCommand(QStringLiteral("browsingContext.navigate"),
+                QByteArray("{\"context\":\"") + pick.toUtf8()
+                + QByteArray("\",\"url\":\"data:text/html,"
+                    "<script>console.log('bidi-marker');"
+                    "fetch('data:,ok')</script>bidi-smoke-page\"}"));
+            return;
+        }
+        if (result.contains(QStringLiteral("cookies"))) {
+            sm->sawCookies = true;
+            qInfo() << "bidi-smoke: cookies"
+                    << result[QStringLiteral("cookies")].toArray().size();
+            return;
+        }
+        if (result[QStringLiteral("type")].toString()
+            == QLatin1String("success")) {
+            const QJsonObject remote =
+                result[QStringLiteral("result")].toObject();
+            if (remote[QStringLiteral("value")].toInt() == 42) {
+                sm->sawEval = true;
+                qInfo() << "bidi-smoke: eval 40+2 == 42";
+            }
+        }
+    });
+
+    QObject::connect(&sm->client, &BidiClient::eventReceived,
+                     &application, [sm, finish](const QByteArray &json) {
+        const QJsonObject env = QJsonDocument::fromJson(json).object();
+        const QString method =
+            env[QStringLiteral("method")].toString();
+        const QJsonObject params =
+            env[QStringLiteral("params")].toObject();
+        if (method == QLatin1String("log.entryAdded")
+            && params[QStringLiteral("text")].toString()
+                   .contains(QLatin1String("bidi-marker"))) {
+            sm->sawLog = true;
+            qInfo() << "bidi-smoke: saw console marker";
+        }
+        if (method == QLatin1String("network.beforeRequestSent"))
+            sm->sawNetRequest = true;
+        if (method == QLatin1String("network.responseCompleted")
+            || method == QLatin1String("network.fetchError"))
+            sm->sawNetResponse = true;
+        if (sm->sawTree && sm->sawEval && sm->sawLog && sm->sawNetRequest
+            && sm->sawCookies) {
+            const bool ok = sm->sawNetResponse;
+            finish(ok, ok ? QStringLiteral("all checks green")
+                          : QStringLiteral("no terminal network event"));
+        }
+    });
+
+    sm->client.connectToEngine();
+    if (sm->client.state() == BidiClient::Unavailable) {
+        // exit() before exec() is a no-op — return the code directly.
+#ifndef ARORA_RUSTCORE
+        // Same convention as --adblock-rust-smoke: an absent backend
+        // is a skip, not a failure.
+        qInfo() << "bidi-smoke: SKIP" << sm->client.unavailableReason();
+        delete sm;
+        return 0;
+#else
+        qInfo() << "bidi-smoke: FAIL" << sm->client.unavailableReason();
+        delete sm;
+        return 1;
+#endif
+    }
+    QTimer::singleShot(20000, &application, [sm, finish]() {
+        finish(false, QStringLiteral(
+                   "timeout tree=%1 eval=%2 log=%3 net=%4/%5 cookies=%6")
+                   .arg(sm->sawTree).arg(sm->sawEval).arg(sm->sawLog)
+                   .arg(sm->sawNetRequest).arg(sm->sawNetResponse)
+                   .arg(sm->sawCookies));
+    });
+    const int rc = application.exec();
+    delete sm;
+    return rc;
+}
+
 static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
     AdBlockManager *manager = AdBlockManager::instance();
@@ -3125,6 +3288,7 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
+        "bidi-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -3458,6 +3622,10 @@ int main(int argc, char **argv)
         return xsLeakSmoke(application, view,
             args.contains(QLatin1String("--xsleak-open")),
             savedPopupBlocking, savedBlockPings);
+
+    // DEVT03: engine-neutral devtools channel end-to-end.
+    if (args.contains(QLatin1String("--bidi-smoke")))
+        return bidiSmoke(application, view);
 
     // BADSSL02: live-site measurement — loads every badssl.com
     // matrix case on the browsing profile and records per-case

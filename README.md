@@ -280,7 +280,13 @@ that swap means in practice:
   app-side fetches such as search suggestions and blocklist downloads.
 - **Inspector** — WebKit's built-in inspector became a DevTools host
   window: the inspected page hands its `devToolsPage` to a second
-  QWebEngineView on the same profile.
+  QWebEngineView on the same profile.  A second, engine-neutral
+  panel (Tools → BiDi Dev Tools; `CONFIG+=rustcore` builds) talks
+  WebDriver-BiDi-shaped commands to the engine — console log + JS
+  eval, DOM tree, network request list, cookies/localStorage — over
+  the loopback-only, Origin-token-gated remote-debugging socket
+  (never a bare port; off in Tor windows and via
+  `devtools/bidiBackend=0`).
 - **file:// directory listings** — WebKit rendered them natively; they
   are now served by a registered `arora-file:` URL scheme handler.
 - **QtScript gone** — OpenSearch suggestions parse JSON natively;

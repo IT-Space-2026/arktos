@@ -240,6 +240,13 @@ void applySecureDns();
 // tunnel with the whole lookup stream.
 int effectiveSecureDnsMode();
 
+// DEVT03: the BiDi devtools channel arming decided in
+// applyChromiumFlags().  Port 0 / empty origin means the channel is
+// disabled this run (devtools/bidiBackend=0, tor mode, or the
+// operator already set QTWEBENGINE_REMOTE_DEBUGGING).
+quint16 bidiDebugPort();
+QString bidiDebugOrigin();
+
 // PRIV02: fingerprint-normalization that works through the process
 // environment rather than a Chromium switch.  When
 // privacy/reportUtcTimezone is on, TZ is forced to UTC before the

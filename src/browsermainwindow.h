@@ -68,6 +68,7 @@
 
 class AutoSaver;
 class BookmarksToolBar;
+class BidiPanel;
 class CommandPalette;
 class QDockWidget;
 class QLabel;
@@ -204,6 +205,7 @@ private:
     void setupMenu();
     void setupToolBar();
     void ensureSidebarPanel();
+    void ensureBidiPanel();
     void updateStopReloadActionText(bool loading);
 
 private:
@@ -255,6 +257,10 @@ private:
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
     QPointer<SidebarPanel> m_sidebarPanel;
+    // DEVT03: engine-neutral dev tools dock (BiDi channel); the panel
+    // inside is built lazily on first show like the sidebar's.
+    QDockWidget *m_bidiPanelDock;
+    QPointer<BidiPanel> m_bidiPanel;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;

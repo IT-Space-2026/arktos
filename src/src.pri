@@ -113,6 +113,8 @@ HEADERS += \
     $$PWD/securestore.h \
     $$PWD/settings.h \
     $$PWD/sidebarpanel.h \
+    $$PWD/bidiclient.h \
+    $$PWD/bidipanel.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
@@ -175,6 +177,8 @@ SOURCES += \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
     $$PWD/sidebarpanel.cpp \
+    $$PWD/bidiclient.cpp \
+    $$PWD/bidipanel.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \

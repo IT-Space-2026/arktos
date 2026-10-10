@@ -60,7 +60,91 @@ mod ws {
         out
     }
 
+    /// Ask the loopback endpoint for the browser target's ws path.
+    /// /json/version is readable without the Origin token (Chromium
+    /// treats header-less GETs as CLI tooling) — the token only gates
+    /// the ws upgrade below.
+    ///
+    /// This MUST run on its own short-lived socket: the devtools HTTP
+    /// server serializes connections, so holding the upgrade socket
+    /// open while discovering deadlocks the GET.  It also keep-alives
+    /// the response connection, so we stop at Content-Length rather
+    /// than reading to EOF.
+    pub fn discover_path(host: &str, port: u16) -> Result<String, Fail> {
+        let mut stream = TcpStream::connect((host, port))?;
+        stream.set_nodelay(true).ok();
+        let req = format!(
+            "GET /json/version HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes())?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .ok();
+        let mut body = Vec::new();
+        let mut tmp = [0u8; 8192];
+        let wanted = |buf: &[u8]| -> Option<usize> {
+            // Full response size once headers + Content-Length are in.
+            let hdr_end = buf
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)?;
+            let head = String::from_utf8_lossy(&buf[..hdr_end]);
+            let clen = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.trim().eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            Some(hdr_end + clen)
+        };
+        loop {
+            if let Some(need) = wanted(&body) {
+                if body.len() >= need {
+                    break;
+                }
+            }
+            match stream.read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => body.extend_from_slice(&tmp[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => break,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        let hdr_end = body
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|i| i + 4)
+            .ok_or_else(|| Fail {
+                status: RcStatus::Io,
+                msg: "devtools /json/version empty".into(),
+            })?;
+        let text = String::from_utf8_lossy(&body[hdr_end..]);
+        let v: Value = serde_json::from_str(text.trim()).map_err(|e| Fail {
+            status: RcStatus::Corrupt,
+            msg: format!("devtools /json/version: {e}"),
+        })?;
+        let url = v
+            .get("webSocketDebuggerUrl")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| Fail {
+                status: RcStatus::Io,
+                msg: "no webSocketDebuggerUrl".into(),
+            })?;
+        // ws://host:port/devtools/browser/<guid> -> path part
+        let path = url
+            .find("://")
+            .and_then(|i| url[i + 3..].find('/').map(|j| url[i + 3 + j..].to_string()))
+            .unwrap_or_else(|| "/devtools/browser".to_string());
+        Ok(path)
+    }
+
     /// Perform the HTTP upgrade; on Ok the stream is a live websocket.
+    /// The caller must pass a discovered `path` — see discover_path
+    /// for why a second connection must not be held during it.
     pub fn handshake(
         stream: &mut TcpStream,
         host: &str,
@@ -254,9 +338,9 @@ struct PendingCdp {
 }
 
 enum CdpAction {
-    /// attachToTarget for a context we need a session on; `follow`
-    /// is re-run with (context_id, session_id).
-    Attach { context: String, follow: FollowUp },
+    /// attachToTarget for a context we need a session on; queued
+    /// follow-ups live in State::attaching and run on completion.
+    Attach { context: String },
     /// A domain-enable step that precedes the same follow-up.
     Step { follow: FollowUp },
     /// Terminal step — translate the CDP result and answer `bidi_id`.
@@ -396,7 +480,6 @@ impl Core {
             json!({ "targetId": context, "flatten": true }),
             CdpAction::Attach {
                 context: context.to_string(),
-                follow: FollowUp::Quiet, // queued separately
             },
         )
     }
@@ -532,13 +615,33 @@ impl Core {
                 Ok(())
             }
             "storage.getCookies" => {
-                self.cdp_call(
-                    None,
-                    "Network.getAllCookies",
-                    json!({}),
-                    CdpAction::Answer {
+                // Session-scoped read — the browser-level cookie
+                // methods (Storage.getCookies, Network.getAllCookies)
+                // are not implemented in QtWebEngine's CDP.
+                let context = params
+                    .get("context")
+                    .and_then(|c| c.as_str())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        self.state
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .contexts
+                            .keys()
+                            .next()
+                            .cloned()
+                    })
+                    .unwrap_or_default();
+                if context.is_empty() {
+                    self.answer_err(bidi_id, "storage.getCookies: no browsing context");
+                    return Ok(());
+                }
+                self.with_session(
+                    &context,
+                    FollowUp::Command {
                         bidi_id,
-                        kind: AnswerKind::Cookies,
+                        method: method.to_string(),
+                        params,
                     },
                 )?;
                 Ok(())
@@ -616,6 +719,29 @@ impl Core {
                     CdpAction::Answer {
                         bidi_id,
                         kind: AnswerKind::Raw,
+                    },
+                )
+            }
+            "storage.getCookies" => {
+                // Scope to the context's current URL when known.
+                let mut p = json!({});
+                if let Some(u) = params.get("urls").cloned().or_else(|| {
+                    self.state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .contexts
+                        .get(_context)
+                        .map(|(u, _)| json!([u]))
+                }) {
+                    p["urls"] = u;
+                }
+                self.cdp_call(
+                    Some(session),
+                    "Network.getCookies",
+                    p,
+                    CdpAction::Answer {
+                        bidi_id,
+                        kind: AnswerKind::Cookies,
                     },
                 )
             }
@@ -1015,6 +1141,15 @@ impl Client {
     /// `ws_url` like "127.0.0.1:PORT/devtools/browser/GUID"; `origin`
     /// is the per-session allow-origins token.
     pub fn connect(host: &str, port: u16, path: &str, origin: &str) -> Result<Client, Fail> {
+        // Discover on a dedicated socket first — the devtools HTTP
+        // server won't service a second connection while one is held.
+        let owned;
+        let path = if path.is_empty() {
+            owned = ws::discover_path(host, port)?;
+            owned.as_str()
+        } else {
+            path
+        };
         let mut stream = TcpStream::connect((host, port))?;
         stream.set_nodelay(true).ok();
         ws::handshake(&mut stream, host, port, path, origin)?;
@@ -1231,7 +1366,6 @@ pub unsafe extern "C" fn rc_bidi_free(client: *mut Client) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::BufRead;
     use std::net::TcpListener;
     use std::sync::atomic::AtomicUsize;
 
@@ -1240,7 +1374,6 @@ mod tests {
     /// canned events, all scripted.
     struct FakeServer {
         port: u16,
-        seen: Arc<Mutex<Vec<String>>>,
         stop: Arc<AtomicBool>,
         handle: Option<thread::JoinHandle<()>>,
     }
@@ -1309,7 +1442,7 @@ mod tests {
                         ]}}),
                         "Target.attachToTarget" => json!({"id":id,"result":{"sessionId":"S1"}}),
                         "Runtime.evaluate" => json!({"id":id,"result":{"result":{"type":"number","value":7}}}),
-                        "Network.getAllCookies" => json!({"id":id,"result":{"cookies":[
+                        "Network.getCookies" => json!({"id":id,"result":{"cookies":[
                             {"name":"n","value":"v","domain":"d","path":"/","secure":true,"httpOnly":false,"expires":1}
                         ]}}),
                         _ => json!({"id":id,"result":{}}),
@@ -1332,7 +1465,6 @@ mod tests {
             });
             FakeServer {
                 port,
-                seen: scripted,
                 stop,
                 handle: Some(handle),
             }
@@ -1435,7 +1567,7 @@ mod tests {
         };
         assert!(evalr.contains("\"type\":\"number\""), "eval {evalr}");
 
-        let _ = client.command("storage.getCookies", "{}");
+        let _ = client.command("storage.getCookies", r#"{"context":"AAA"}"#);
         let mut ck = None;
         let t0 = std::time::Instant::now();
         while t0.elapsed() < std::time::Duration::from_secs(3) {

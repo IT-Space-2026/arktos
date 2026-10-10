@@ -89,6 +89,7 @@
 #include "safetext.h"
 #include "securestore.h"
 #include "settings.h"
+#include "bidipanel.h"
 #include "sidebarpanel.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
@@ -276,6 +277,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     // decides visibility once the persisted state is read.
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebarDock);
     m_sidebarDock->setVisible(false);
+
+    addDockWidget(Qt::RightDockWidgetArea, m_bidiPanelDock);
+    m_bidiPanelDock->setVisible(false);
 
     connect(m_tabWidget, &TabWidget::setCurrentTitle,
             this, &BrowserMainWindow::updateWindowTitle);
@@ -806,6 +810,16 @@ void BrowserMainWindow::setupMenu()
     m_viewSidebarAction->setIcon(SidebarPanel::icon(this));
     m_viewMenu->addAction(m_viewSidebarAction);
 
+    // DEVT03: dev tools dock — the BiDi panel builds lazily on first
+    // show (ensureBidiPanel).  Its toggle action joins the Tools menu
+    // next to the Chromium inspector entry further down.
+    m_bidiPanelDock = new QDockWidget(this);
+    m_bidiPanelDock->setObjectName(QLatin1String("bidiPanelDock"));
+    m_bidiPanelDock->setAllowedAreas(Qt::LeftDockWidgetArea
+                                   | Qt::RightDockWidgetArea);
+    connect(m_bidiPanelDock, &QDockWidget::visibilityChanged,
+            this, [this](bool visible) { if (visible) ensureBidiPanel(); });
+
     m_viewMenu->addSeparator();
 
     m_viewStopAction = new QAction(m_viewMenu);
@@ -1081,6 +1095,22 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsMenu->addAction(m_toolsEnableInspectorAction);
 
+    // DEVT03: engine-neutral dev tools dock — toggleViewAction keeps
+    // its check state synced with the dock's close button.  No-rust
+    // builds have no BiDi backend at all — the entry stays out of the
+    // menu there; a tor window keeps it visible but disabled since
+    // its process never arms the debug channel.
+#ifdef ARORA_RUSTCORE
+    QAction *bidiAction = m_bidiPanelDock->toggleViewAction();
+    bidiAction->setText(tr("BiDi Dev &Tools"));
+    if (BrowserApplication::isTorMode()) {
+        bidiAction->setEnabled(false);
+        bidiAction->setToolTip(
+            tr("The debug channel is never armed in Tor windows."));
+    }
+    m_toolsMenu->addAction(bidiAction);
+#endif
+
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
 
@@ -1250,6 +1280,7 @@ void BrowserMainWindow::retranslate()
     m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewPipAction->setText(tr("Picture-&in-Picture"));
     m_sidebarDock->setWindowTitle(tr("Sidebar"));
+    m_bidiPanelDock->setWindowTitle(tr("Development Tools"));
     m_viewSidebarAction->setText(tr("Sidebar"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
@@ -1422,6 +1453,16 @@ void BrowserMainWindow::ensureSidebarPanel()
         m_tabWidget->loadUrl(url, tab, title);
     });
     m_sidebarDock->setWidget(m_sidebarPanel);
+}
+
+// DEVT03: built on first show for the same zero-footprint reason as
+// the sidebar — the BiDi client inside connects on show too.
+void BrowserMainWindow::ensureBidiPanel()
+{
+    if (m_bidiPanel)
+        return;
+    m_bidiPanel = new BidiPanel(m_bidiPanelDock);
+    m_bidiPanelDock->setWidget(m_bidiPanel);
 }
 
 void BrowserMainWindow::applySidebarSettings()
