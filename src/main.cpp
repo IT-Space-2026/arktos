@@ -68,6 +68,7 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torsocks5.h"
+#include "webenginebackend.h"
 #include "webpage.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -2397,6 +2398,7 @@ int main(int argc, char **argv)
         "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
+        "engine-list",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2414,6 +2416,27 @@ int main(int argc, char **argv)
     // Standalone development harness: a stub window hosting a WebView
     // on the browsing profile drives --quit-after-load and the smokes.
     const QStringList args = application.arguments();
+
+    // ENG04: print the active engine backend + its capability surface.
+    // Pure diagnostic — no profile, no window, exits 0.
+    if (args.contains(QLatin1String("--engine-list"))) {
+        Engine::Backend *backend = WebEngineBackend::instance();
+        const Engine::Capabilities caps = backend->capabilities();
+        qInfo() << "engine:" << backend->id()
+                << "-" << backend->displayName();
+        qInfo() << "  requestInterception:" << caps.requestInterception
+                << "scriptInjection:" << caps.scriptInjection
+                << "scriptEvaluation:" << caps.scriptEvaluation
+                << "cookieFilter:" << caps.cookieFilter
+                << "perPageSettings:" << caps.perPageSettings
+                << "lifecycleDiscard:" << caps.lifecycleDiscard
+                << "contextMenuInfo:" << caps.contextMenuInfo
+                << "certificateOverride:" << caps.certificateOverride
+                << "devTools:" << caps.devTools
+                << "extensions:" << caps.extensions
+                << "downloads:" << caps.downloads;
+        return 0;
+    }
 
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's

@@ -19,6 +19,7 @@ SUBDIRS  = \
     dialogs \
     domainblock \
     downloadmanager \
+    engineadapter \
     historyfiltermodel \
     historymanager \
     historyui \

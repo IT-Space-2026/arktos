@@ -81,6 +81,7 @@
 #include "scriptcontrolmanager.h"
 #include "toolbarsearch.h"
 #include "urlcleaner.h"
+#include "webenginebackend.h"
 #include "webpage.h"
 
 #include <qapplication.h>
@@ -106,6 +107,7 @@ WebView::WebView(QWidget *parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(this))
+    , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
 {
     init();
@@ -116,9 +118,19 @@ WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(profile, this))
+    , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
 {
     init();
+}
+
+Engine::Page *WebView::enginePage() const
+{
+    // Parented to the page — m_page is stable for the view's lifetime
+    // (init() setPage()s it once), so the adapter shares its clock.
+    if (!m_enginePage)
+        m_enginePage = new WebEnginePageAdapter(m_page, m_page);
+    return m_enginePage;
 }
 
 void WebView::init()

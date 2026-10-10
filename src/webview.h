@@ -70,12 +70,14 @@
 
 #include "tabwidget.h"
 
+namespace Engine { class Page; }
 class QWebEngineProfile;
 class BrowserMainWindow;
 class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
+class WebEnginePageAdapter;
 class WebPage;
 class WebView : public QWebEngineView
 {
@@ -87,6 +89,9 @@ public:
     // at the private off-the-record profile, for example).
     WebView(QWebEngineProfile *profile, QWidget *parent = nullptr);
     WebPage *webPage() const { return m_page; }
+    // ENG04: the engine-neutral view of this tab's page — the path
+    // chrome code migrates onto so it stops naming QWebEngine types.
+    Engine::Page *enginePage() const;
 
     void loadSettings();
 
@@ -188,6 +193,7 @@ private:
     int m_currentZoom;
     QList<int> m_zoomLevels;
     WebPage *m_page;
+    mutable WebEnginePageAdapter *m_enginePage;
     ScriptBlockInfoBar *m_scriptBlockBar;
     ReaderMode *m_readerMode;
     PictureInPicture *m_pip;
