@@ -61,17 +61,17 @@
 
 #include "ui_downloaditem.h"
 
+#include "engineinterface.h"
+
 #include <qabstractitemmodel.h>
 #include <qdatetime.h>
 #include <qelapsedtimer.h>
 #include <qpointer.h>
 #include <qscopedpointer.h>
 #include <qvector.h>
-#include <qwebenginedownloadrequest.h>
 
 class DownloadManager;
 class QWebEnginePage;
-class QWebEngineProfile;
 #ifdef ARORA_RUSTDL
 class RustDownloadEngine;
 #endif
@@ -89,7 +89,7 @@ signals:
     void expandedChanged();
 
 public:
-    DownloadItem(QWebEngineDownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
+    DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
 #ifdef ARORA_RUSTDL
     // Card backed by the rustdl accelerated engine instead of a
     // Chromium request (DLACC06).  The engine object is re-parented
@@ -115,7 +115,7 @@ public:
 
     // Re-attaches the item to a fresh request.  "Try Again" re-issues the
     // download through the page, which produces a new request object.
-    void attach(QWebEngineDownloadRequest *download);
+    void attach(Engine::DownloadRequest *download);
 
     // SEC01 hardening helpers — static so autotests can drive them
     // without a live download.
@@ -137,7 +137,7 @@ private slots:
     void showInFolder();
 
     void downloadProgressUpdate();
-    void downloadStateChanged(QWebEngineDownloadRequest::DownloadState state);
+    void downloadStateChanged(Engine::DownloadRequest::State state);
     void finished();
 
 private:
@@ -155,13 +155,13 @@ private:
 
     // Backend-neutral accessors — the same card drives a Chromium
     // request or the rustdl engine behind these.
-    QWebEnginePage *page() const;
+    Engine::Page *page() const;
     QString mimeType() const;
     QString suggestedFileName() const;
-    QWebEngineDownloadRequest::DownloadState currentState() const;
+    Engine::DownloadRequest::State currentState() const;
     bool isFinished() const;
 
-    QPointer<QWebEngineDownloadRequest> m_download;
+    QPointer<Engine::DownloadRequest> m_download;
 #ifdef ARORA_RUSTDL
     QPointer<RustDownloadEngine> m_engine;
 #endif
@@ -234,7 +234,7 @@ public:
     // SLEEP01: true while any in-flight download was initiated by
     // this page — the sleeping-tabs sweep skips such tabs so a
     // suspend can never orphan a stream.
-    bool hasActiveDownloadForPage(QWebEnginePage *page) const;
+    bool hasActiveDownloadForPage(Engine::Page *page) const;
     bool allowQuit();
 
     RemovePolicy removePolicy() const;
@@ -249,11 +249,11 @@ public:
     // Hooks this manager into the profile's downloadRequested signal.
     // Must be called once for every profile that can produce downloads
     // (default profile and the off-the-record private profile).
-    void installOnProfile(QWebEngineProfile *profile);
+    void installOnProfile(Engine::Profile *profile);
 
     // Hidden page used to re-issue downloads whose originating page is
     // already gone (retry of an interrupted or restored download).
-    QWebEnginePage *retryPage(bool offTheRecord);
+    Engine::Page *retryPage(bool offTheRecord);
 
     // SIDE01: read-only model access for the sidebar downloads page —
     // secondary views map the DownloadModel::Roles.
@@ -280,8 +280,8 @@ signals:
 public slots:
     // WebEngine downloads can only be initiated from a page; there is no
     // profile-level download() entry point.
-    void download(QWebEnginePage *page, const QUrl &url, bool requestFileName = false);
-    void handleDownloadRequested(QWebEngineDownloadRequest *download);
+    void download(Engine::Page *page, const QUrl &url, bool requestFileName = false);
+    void handleDownloadRequested(Engine::DownloadRequest *download);
     void cleanup();
 
 private slots:

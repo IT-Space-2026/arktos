@@ -77,10 +77,9 @@ class QLineEdit;
 class QMenu;
 class QStackedWidget;
 class QTimer;
-class QWebEngineProfile;
 QT_END_NAMESPACE
 
-namespace Engine { enum class StandardAction; }
+namespace Engine { class Profile; enum class StandardAction; }
 
 class BrowserMainWindow;
 class OmniboxSuggestions;
@@ -351,7 +350,7 @@ private:
     void retranslate();
     // The shared body of makeNewTabInContainer()/makeNewPrivateTab():
     // a location bar plus a WebView bound to the resolved profile.
-    WebView *makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCurrent);
+    WebView *makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent);
     // Child-tab inheritance for the container AND the private context
     // of source (the current tab for Ctrl+T, the opener page for
     // window.open / open-in-new-tab).

@@ -30,9 +30,11 @@
 
 #include "autosaver.h"
 #include "browserpaths.h"
+#include "engineinterface.h"
 #include "securestore.h"
 #include "startupprofile.h"
 #include "streamingutils.h"
+#include "webenginebackend.h"
 
 #ifdef ARORA_RUSTCORE
 #include "rustcorebridge.h"
@@ -53,8 +55,6 @@
 #include <quuid.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
-#include <qwebenginescript.h>
-#include <qwebenginescriptcollection.h>
 
 #include <qdebug.h>
 
@@ -408,17 +408,29 @@ void AutoFillManager::loadFormData()
 // pages on the off-the-record profile get the fill pass (parity with
 // the old global private mode) but no submit capture, and their
 // bridge drops reports.
-bool AutoFillManager::captureEnabledForPage(QWebEnginePage *page) const
+// The channel bridge lives on the engine page (WebPage registers it
+// through QWebChannel) — engine-bound plumbing reached through the
+// adapter's escape hatch while callers stay on the interface.
+static QWebEnginePage *enginePageFor(Engine::Page *page)
 {
-    return page && !page->profile()->isOffTheRecord()
-        && page->findChild<AutoFillBridge *>();
+    WebEnginePageAdapter *adapter = WebEnginePageAdapter::of(page);
+    return adapter ? adapter->webEnginePage() : nullptr;
 }
 
-QString AutoFillManager::scriptForPage(QWebEnginePage *page,
+bool AutoFillManager::captureEnabledForPage(Engine::Page *page) const
+{
+    QWebEnginePage *enginePage = enginePageFor(page);
+    return enginePage && !page->isOffTheRecord()
+        && enginePage->findChild<AutoFillBridge *>();
+}
+
+QString AutoFillManager::scriptForPage(Engine::Page *page,
         const QUrl &url)
 {
     const bool capture = captureEnabledForPage(page);
-    AutoFillBridge *bridge = page ? page->findChild<AutoFillBridge *>() : nullptr;
+    QWebEnginePage *enginePage = enginePageFor(page);
+    AutoFillBridge *bridge =
+        enginePage ? enginePage->findChild<AutoFillBridge *>() : nullptr;
     // SEC08: a fresh token per load — the injected script passes it
     // back inside its closure, and the bridge rejects reports without
     // it so page script cannot mint submits of its own.
@@ -431,30 +443,21 @@ QString AutoFillManager::scriptForPage(QWebEnginePage *page,
     return autoFillScript(fetchForms(stripUrl(url)), capture, token);
 }
 
-static void replacePageScript(QWebEnginePage *page, const QString &name,
+static void replacePageScript(Engine::Page *page, const QString &name,
         const QString &source)
 {
-    QWebEngineScriptCollection &scripts = page->scripts();
-    const QList<QWebEngineScript> installed = scripts.toList();
-    for (const QWebEngineScript &script : installed) {
-        if (script.name() == name)
-            scripts.remove(script);
-    }
+    page->removeScript(name);
     if (source.isEmpty())
         return;
-    QWebEngineScript script;
-    script.setName(name);
-    script.setInjectionPoint(QWebEngineScript::DocumentReady);
-    // MainWorld is NOT the QWebEngineScript default (the default is
-    // ApplicationWorld): the bundle must run where the page's
+    // worldId 0 is the main world — NOT the QWebEngineScript default
+    // (ApplicationWorld): the bundle must run where the page's
     // HTMLFormElement.prototype and the __aroraChannel bootstrap live.
-    script.setWorldId(QWebEngineScript::MainWorld);
-    script.setRunsOnSubFrames(false);
-    script.setSourceCode(source);
-    scripts.insert(script);
+    page->insertScript(Engine::Script{
+        name, source, Engine::InjectionPoint::DocumentReady,
+        0 /* main world */, false });
 }
 
-void AutoFillManager::attachToPage(QWebEnginePage *page)
+void AutoFillManager::attachToPage(Engine::Page *page)
 {
     if (!page)
         return;
@@ -463,7 +466,7 @@ void AutoFillManager::attachToPage(QWebEnginePage *page)
         page->runJavaScript(script);
 }
 
-void AutoFillManager::scheduleOnPage(QWebEnginePage *page,
+void AutoFillManager::scheduleOnPage(Engine::Page *page,
         const QUrl &url)
 {
     if (!page)

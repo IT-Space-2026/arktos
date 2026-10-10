@@ -29,7 +29,7 @@
 
 #include <qdebug.h>
 
-WebViewSearch::WebViewSearch(QWebEngineView *webView, QWidget *parent)
+WebViewSearch::WebViewSearch(QWidget *webView, QWidget *parent)
     : SearchBar(parent)
 {
     setSearchObject(webView);

@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "adblockrequestinterceptor.h"
 #include "cookiejar.h"
+#include "engineinterface.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
@@ -651,8 +652,11 @@ void SitePanel::clearSiteData()
     // the origin, so the sweep empties Chromium's live storage areas.
     // The on-disk leveldb trees are service-coupled — they are not
     // removable under a running browser (see BrowserProfile::
-    // clearSiteStorage); the in-memory wipe keeps them empty.
-    m_webView->page()->runJavaScript(QStringLiteral(
+    // clearSiteStorage); the in-memory wipe keeps them empty.  The
+    // lifted path reaches pages whose scripts are blocked (JSCTL) —
+    // a plain runJavaScript is silently dropped there and the wipe
+    // would not happen.
+    m_webView->enginePage()->runJavaScriptLifted(QStringLiteral(
         "try{localStorage.clear()}catch(e){}"
         "try{sessionStorage.clear()}catch(e){}"
         "try{if(window.indexedDB&&indexedDB.databases)"

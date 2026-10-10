@@ -82,6 +82,7 @@
 #include "networkaccessmanager.h"
 #include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
+#include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "startupprofile.h"
@@ -171,7 +172,8 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
             AcceptLanguageDialog::httpString(
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
-    DownloadManager::instance()->installOnProfile(profile);
+    DownloadManager::instance()->installOnProfile(
+        WebEngineProfileAdapter::forProfile(profile));
     if (!BrowserApplication::isTorMode()) {
         // BADSSL03: TLS client certificates are strong user identity —
         // re-register the user's installed certs on every prepared

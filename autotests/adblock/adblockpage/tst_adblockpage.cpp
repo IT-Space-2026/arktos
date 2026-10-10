@@ -39,6 +39,7 @@
 #include "adblockmanager.h"
 #include "adblocksubscription.h"
 #include "adblockrule.h"
+#include "webenginebackend.h"
 
 #include <qwebengineview.h>
 #include <qwebenginepage.h>
@@ -114,7 +115,7 @@ void tst_AdBlockPage::adblockpage_data()
 void tst_AdBlockPage::adblockpage()
 {
     SubAdBlockPage page;
-    page.applyRulesToPage((QWebEnginePage*)0);
+    page.applyRulesToPage((Engine::Page*)nullptr);
 }
 
 void tst_AdBlockPage::applyRulesToPage_data()
@@ -164,7 +165,7 @@ void tst_AdBlockPage::applyRulesToPage()
     QTRY_VERIFY_WITH_TIMEOUT(spy1.count() >= 1, 15000);
 
     SubAdBlockPage page;
-    page.applyRulesToPage(view.page());
+    page.applyRulesToPage(WebEnginePageAdapter::forPage(view.page()));
 
     // The <style> injection is asynchronous; keep evaluating until the
     // visible-element count settles or the deadline passes.

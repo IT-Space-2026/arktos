@@ -258,6 +258,8 @@ enum class CertificateErrorAction {
 
 // ---- downloads ---------------------------------------------------------------------
 
+class Page;
+
 // Handle a backend hands the app when a download starts (MIG05's
 // QWebEngineDownloadRequest shape — every engine offers roughly this).
 class DownloadRequest : public QObject {
@@ -266,18 +268,42 @@ class DownloadRequest : public QObject {
 public:
     explicit DownloadRequest(QObject *parent = nullptr) : QObject(parent) {}
 
+    // Mirrors QWebEngineDownloadRequest::DownloadState.
+    enum class State {
+        Requested,
+        InProgress,
+        Completed,
+        Cancelled,
+        Interrupted
+    };
+    Q_ENUM(State)
+
     virtual QUrl url() const = 0;
     virtual QString suggestedFileName() const = 0;
+    virtual QString mimeType() const = 0;
     virtual void accept(const QString &filePath) = 0;
     virtual void cancel() = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
     virtual qint64 receivedBytes() const = 0;
     virtual qint64 totalBytes() const = 0;
+    virtual State state() const = 0;
+    virtual bool isFinished() const = 0;
+    virtual QString interruptReasonString() const = 0;
+    // Split target-path setters — DownloadItem picks the name through
+    // its own policy dialog before accept().
+    virtual void setDownloadDirectory(const QString &directory) = 0;
+    virtual void setDownloadFileName(const QString &fileName) = 0;
+    virtual QString downloadDirectory() const = 0;
+    virtual QString downloadFileName() const = 0;
+    // The page the request originated from — nullptr when the engine
+    // no longer attributes one (e.g. a page that already closed).
+    virtual Page *page() const = 0;
 
 signals:
-    void stateChanged();
+    void stateChanged(Engine::DownloadRequest::State state);
     void receivedBytesChanged();
+    void totalBytesChanged();
 };
 
 // ---- standard actions --------------------------------------------------------------
@@ -313,8 +339,11 @@ struct ContextMenuInfo {
     bool isContentEditable = false;
     // media/link classification — the "media type" enum collapses to
     // flags since only Image/Video/Audio/Canvas drive menu entries.
+    // hasVideo stays distinct from hasMedia (which includes audio):
+    // the PiP/poster entries discriminate video from audio.
     bool hasImage = false;
     bool hasMedia = false;
+    bool hasVideo = false;
     bool isCanvas = false;
 };
 
@@ -413,6 +442,34 @@ public:
     // POPUP01/tab creation — the engine asks the app for a new page.
     // Returning nullptr refuses the window.
     virtual Page *createWindow(WebWindowType type) = 0;
+
+    // Trusted chrome-script injection for callers whose work must
+    // still reach a page while page scripting is off (JSCTL/SECLVL
+    // block): reader-mode's driver, PiP's pop-out, the context-image
+    // resolver and the storage wipes all need it.  The backend lifts
+    // its script gate for the injection window only — page scripts
+    // refused at parse time do not retro-run while the gate is up.
+    // A backend with no script gate just runs runJavaScript.
+    virtual void runJavaScriptLifted(const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>()) = 0;
+
+    // Per-page user-script collection (adblock cosmetic, autofill) —
+    // the same Script triple Profile carries, scoped to one document.
+    virtual void insertScript(const Script &script) = 0;
+    virtual void removeScript(const QString &name) = 0;
+    virtual QList<Script> scripts() const = 0;
+
+    // Ask the engine to fetch url as a download — QWebEnginePage::
+    // download's neutral spelling.  Downloads surface back through
+    // Profile::downloadRequested.
+    virtual void download(const QUrl &url) = 0;
+
+    // The widget currently presenting the page — the engine's
+    // forPage reverse lookup.  nullptr while the page is headless or
+    // detached (an engine may attach more than one view; the backend
+    // answers with the primary one).
+    virtual QWidget *view() const = 0;
 
 signals:
     void loadStarted();

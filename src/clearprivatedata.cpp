@@ -26,6 +26,7 @@
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "toolbarsearch.h"
+#include "webenginebackend.h"
 
 #include <qabstractnetworkcache.h>
 #include <qapplication.h>
@@ -188,8 +189,13 @@ void ClearPrivateData::accept()
         const QWidgetList widgets = qApp->allWidgets();
         for (QWidget *widget : widgets) {
             QWebEngineView *view = qobject_cast<QWebEngineView*>(widget);
-            if (view && view->page() && profileSet.contains(view->page()->profile()))
-                view->page()->runJavaScript(wipeScript);
+            if (view && view->page() && profileSet.contains(view->page()->profile())) {
+                // Lifted so the wipe also reaches pages whose scripts
+                // are blocked (JSCTL) — a dropped wipe leaves live DOM
+                // storage to re-flush over the cleared profile.
+                WebEnginePageAdapter::runJavaScriptLiftedOn(
+                    view->page(), wipeScript);
+            }
         }
         // Then schedule the on-disk storage trees for removal at the
         // next profile start — deleting them under the live browser

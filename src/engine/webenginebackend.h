@@ -55,6 +55,12 @@ public:
     QWebEnginePage *webEnginePage() const;
     // Escape-hatch downcast — nullptr on a foreign backend's adapter.
     static WebEnginePageAdapter *of(Engine::Page *page);
+    // The canonical adapter for an engine page: the one already
+    // parented to it (WebView::enginePage), or a fresh one parented
+    // to the page so every caller sees the same Engine::Page object —
+    // required wherever identity is compared (the download surface's
+    // hasActiveDownloadForPage).
+    static WebEnginePageAdapter *forPage(QWebEnginePage *page);
 
     void load(const QUrl &url) override;
     void stop() override;
@@ -105,6 +111,24 @@ public:
     void setCreateWindowHandler(
             const std::function<Engine::Page *(Engine::WebWindowType)> &handler);
 
+    void runJavaScriptLifted(const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>()) override;
+    // The same lift on a raw engine page — escape hatch for callers
+    // still holding QWebEnginePage*/QWebEngineView* (the
+    // clear-private-data sweep walks views, not WebView tabs).
+    static void runJavaScriptLiftedOn(QWebEnginePage *page,
+            const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>());
+
+    void insertScript(const Engine::Script &script) override;
+    void removeScript(const QString &name) override;
+    QList<Engine::Script> scripts() const override;
+
+    void download(const QUrl &url) override;
+    QWidget *view() const override;
+
 private:
     QWebEnginePage *m_page;
     std::function<Engine::Page *(Engine::WebWindowType)> m_createWindow;
@@ -120,12 +144,21 @@ public:
 
     QUrl url() const override;
     QString suggestedFileName() const override;
+    QString mimeType() const override;
     void accept(const QString &filePath) override;
     void cancel() override;
     void pause() override;
     void resume() override;
     qint64 receivedBytes() const override;
     qint64 totalBytes() const override;
+    State state() const override;
+    bool isFinished() const override;
+    QString interruptReasonString() const override;
+    void setDownloadDirectory(const QString &directory) override;
+    void setDownloadFileName(const QString &fileName) override;
+    QString downloadDirectory() const override;
+    QString downloadFileName() const override;
+    Engine::Page *page() const override;
 
 private:
     QWebEngineDownloadRequest *m_request;
@@ -142,6 +175,12 @@ public:
                                      QObject *parent = nullptr);
 
     QWebEngineProfile *webEngineProfile() const;
+    // Escape-hatch downcast — nullptr on a foreign backend's adapter.
+    static WebEngineProfileAdapter *of(Engine::Profile *profile);
+    // The canonical adapter for an engine profile (same identity rule
+    // as forPage): reuse the one already parented to the profile or
+    // create one parented to it.
+    static WebEngineProfileAdapter *forProfile(QWebEngineProfile *profile);
 
     bool isOffTheRecord() const override;
     QString storageName() const override;

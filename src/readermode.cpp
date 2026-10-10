@@ -19,6 +19,7 @@
 
 #include "readermode.h"
 
+#include "engineinterface.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -165,54 +166,17 @@ void ReaderMode::runDriver(
         const QString &call,
         const std::function<void(const QVariant &)> &callback)
 {
-    QWebEnginePage *page = m_view ? m_view->page() : nullptr;
+    Engine::Page *page = m_view ? m_view->enginePage() : nullptr;
     if (!page) {
         if (callback)
             callback(QVariant());
         return;
     }
     const QString program = scriptBundle() + call;
-    QWebEngineSettings *settings = page->settings();
-    if (settings->testAttribute(QWebEngineSettings::JavascriptEnabled)) {
-        page->runJavaScript(program, [callback](const QVariant &result) {
-            if (callback)
-                callback(result);
-        });
-        return;
-    }
-
-    // JSCTL/SECLVL: WebEngine silently drops runJavaScript while
-    // JavascriptEnabled is off.  Lift the attribute for the injection
-    // window only — the attribute's IPC lands asynchronously, so the
-    // script is queued behind a delay and the attribute is restored a
-    // beat after the callback (with a hard fallback in case it never
-    // arrives).  Page scripts blocked at parse time do not retro-run
-    // while the flag is up, so the page stays scriptless.
-    settings->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
-    QPointer<QWebEnginePage> livePage(page);
-    QTimer::singleShot(700, this,
-            [livePage, program, callback]() {
-        if (!livePage)
-            return;
-        livePage->runJavaScript(program,
-                [callback, livePage](const QVariant &result) {
-            if (callback)
-                callback(result);
-            QTimer::singleShot(400, qApp, [livePage]() {
-                if (livePage) {
-                    livePage->settings()->setAttribute(
-                        QWebEngineSettings::JavascriptEnabled, false);
-                }
-            });
-        });
-    });
-    // Fallback restore: the attribute must not stay lifted if the
-    // injection above is wedged by a dying renderer.
-    QTimer::singleShot(5000, this, [livePage]() {
-        if (livePage)
-            livePage->settings()->setAttribute(
-                QWebEngineSettings::JavascriptEnabled, false);
-    });
+    // JSCTL/SECLVL: the lift keeps the driver reaching pages whose
+    // scripts are blocked — Engine::Page::runJavaScriptLifted owns
+    // the JavascriptEnabled gate juggling.
+    page->runJavaScriptLifted(program, callback);
 }
 
 void ReaderMode::probe()
