@@ -30,6 +30,7 @@
 
 class QNetworkReply;
 class QNetworkRequest;
+class QSettings;
 
 class AutoSaver;
 class OpenSearchEngine;
@@ -158,6 +159,12 @@ protected:
 
 private:
     bool confirmAddition(OpenSearchEngine *engine);
+#if defined(ARORA_RUSTCORE)
+    // OSE01: one-shot migration of the legacy descriptor dir +
+    // QSettings openSearch keys into the rustcore searchengines.json
+    // store — runs once on first load, then retires the old paths.
+    void importLegacyRegistry(QSettings &settings);
+#endif
 
 protected slots:
     void engineFromUrlAvailable();

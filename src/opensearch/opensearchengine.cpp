@@ -23,6 +23,8 @@
 
 #if defined(ARORA_RUSTCORE)
 #include "rustcore.h"
+
+#include <qjsonobject.h>
 #endif
 
 #include <qbuffer.h>
@@ -294,6 +296,37 @@ QUrl OpenSearchEngine::buildUrl(const QString &searchTerm,
     if (templ.isEmpty())
         return QUrl();
 
+#if defined(ARORA_RUSTCORE)
+    // OSE01: template expansion + query assembly run in Rust — the
+    // port is byte-identical to the parseTemplate()/QUrlQuery
+    // pipeline below (probed on Qt 6.12); the result is wrapped in
+    // QUrl::fromEncoded exactly like before.
+    QJsonObject spec;
+    spec.insert(QLatin1String("template"), templ);
+    spec.insert(QLatin1String("method"), method);
+    QJsonArray params;
+    for (const Parameter &parameter : parameters)
+        params.append(QJsonArray{parameter.first, parameter.second});
+    spec.insert(QLatin1String("params"), params);
+    spec.insert(QLatin1String("term"), searchTerm);
+    QString language = QLocale().name();
+    // Simple conversion to RFC 3066, same as parseTemplate().
+    language.replace(QLatin1Char('_'), QLatin1Char('-'));
+    spec.insert(QLatin1String("language"), language);
+    spec.insert(QLatin1String("source"),
+                QCoreApplication::applicationName());
+    const QByteArray json =
+        QJsonDocument(spec).toJson(QJsonDocument::Compact);
+    char *url = rc_ose_expand(
+        reinterpret_cast<const uint8_t *>(json.constData()),
+        size_t(json.size()));
+    if (!url)
+        return QUrl();
+    const QUrl retVal = QUrl::fromEncoded(QByteArray::fromRawData(
+        url, int(strlen(url))));
+    rc_string_free(url);
+    return retVal;
+#else
     QUrl retVal = QUrl::fromEncoded(parseTemplate(searchTerm, templ).toUtf8());
 
     if (method != QLatin1String("post")) {
@@ -306,6 +339,7 @@ QUrl OpenSearchEngine::buildUrl(const QString &searchTerm,
     }
 
     return retVal;
+#endif
 }
 
 /*!
@@ -708,3 +742,103 @@ void OpenSearchEngine::setDelegate(OpenSearchEngineDelegate *delegate)
 
     \sa requestSuggestions()
 */
+
+#if defined(ARORA_RUSTCORE)
+// OSE01: rc_opensearch_parse field map <-> engine marshaling.  The
+// schema is the one rustcore.h documents for rc_ose_get: name,
+// description, imageUrl plus a search/suggestions/image slot of
+// {template, method, params:[[k,v],...]}.
+static OpenSearchEngine::Parameters parametersOfJson(
+    const QJsonObject &slot)
+{
+    OpenSearchEngine::Parameters parameters;
+    const QJsonArray pairs = slot.value(QLatin1String("params")).toArray();
+    for (const QJsonValue &pair : pairs) {
+        const QJsonArray kv = pair.toArray();
+        if (kv.size() == 2)
+            parameters.append(OpenSearchEngine::Parameter(
+                kv.at(0).toString(), kv.at(1).toString()));
+    }
+    return parameters;
+}
+
+void openSearchEngineApplyJson(OpenSearchEngine *engine,
+                               const QJsonObject &root)
+{
+    if (!engine)
+        return;
+
+    engine->setName(root.value(QLatin1String("name")).toString());
+    engine->setDescription(
+        root.value(QLatin1String("description")).toString());
+    engine->setImageUrl(root.value(QLatin1String("imageUrl")).toString());
+
+    const QJsonObject search = root.value(QLatin1String("search")).toObject();
+    if (!search.isEmpty()) {
+        engine->setSearchUrlTemplate(
+            search.value(QLatin1String("template")).toString());
+        engine->setSearchParameters(parametersOfJson(search));
+        engine->setSearchMethod(
+            search.value(QLatin1String("method")).toString());
+    }
+    const QJsonObject suggestions =
+        root.value(QLatin1String("suggestions")).toObject();
+    if (!suggestions.isEmpty()) {
+        engine->setSuggestionsUrlTemplate(
+            suggestions.value(QLatin1String("template")).toString());
+        engine->setSuggestionsParameters(parametersOfJson(suggestions));
+        engine->setSuggestionsMethod(
+            suggestions.value(QLatin1String("method")).toString());
+    }
+    const QJsonObject image = root.value(QLatin1String("image")).toObject();
+    if (!image.isEmpty()) {
+        engine->setImageSearchUrlTemplate(
+            image.value(QLatin1String("template")).toString());
+        engine->setImageSearchParameters(parametersOfJson(image));
+        engine->setImageSearchMethod(
+            image.value(QLatin1String("method")).toString());
+    }
+}
+
+QJsonObject openSearchEngineToJson(const OpenSearchEngine *engine)
+{
+    QJsonObject root;
+    if (!engine)
+        return root;
+
+    const auto slotOf = [](const QString &templ, const QString &method,
+                           const OpenSearchEngine::Parameters &parameters) {
+        QJsonObject slot;
+        slot.insert(QLatin1String("template"), templ);
+        slot.insert(QLatin1String("method"), method);
+        QJsonArray pairs;
+        for (const OpenSearchEngine::Parameter &parameter : parameters)
+            pairs.append(QJsonArray{parameter.first, parameter.second});
+        slot.insert(QLatin1String("params"), pairs);
+        return slot;
+    };
+
+    root.insert(QLatin1String("name"), engine->name());
+    root.insert(QLatin1String("description"), engine->description());
+    root.insert(QLatin1String("imageUrl"), engine->imageUrl());
+    if (!engine->searchUrlTemplate().isEmpty()) {
+        root.insert(QLatin1String("search"),
+                    slotOf(engine->searchUrlTemplate(),
+                           engine->searchMethod(),
+                           engine->searchParameters()));
+    }
+    if (!engine->suggestionsUrlTemplate().isEmpty()) {
+        root.insert(QLatin1String("suggestions"),
+                    slotOf(engine->suggestionsUrlTemplate(),
+                           engine->suggestionsMethod(),
+                           engine->suggestionsParameters()));
+    }
+    if (!engine->imageSearchUrlTemplate().isEmpty()) {
+        root.insert(QLatin1String("image"),
+                    slotOf(engine->imageSearchUrlTemplate(),
+                           engine->imageSearchMethod(),
+                           engine->imageSearchParameters()));
+    }
+    return root;
+}
+#endif // ARORA_RUSTCORE

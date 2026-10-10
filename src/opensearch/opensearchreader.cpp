@@ -128,48 +128,9 @@ OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
     rc_buffer_free(out);
 
     const QJsonObject root = QJsonDocument::fromJson(json).object();
-    engine->setName(root.value(QLatin1String("name")).toString());
-    engine->setDescription(root.value(QLatin1String("description")).toString());
-    engine->setImageUrl(root.value(QLatin1String("imageUrl")).toString());
-
-    const auto parametersOf = [](const QJsonObject &slot) {
-        OpenSearchEngine::Parameters parameters;
-        const QJsonArray pairs =
-            slot.value(QLatin1String("params")).toArray();
-        for (const QJsonValue &pair : pairs) {
-            const QJsonArray kv = pair.toArray();
-            if (kv.size() == 2)
-                parameters.append(OpenSearchEngine::Parameter(
-                    kv.at(0).toString(), kv.at(1).toString()));
-        }
-        return parameters;
-    };
-
-    const QJsonObject search = root.value(QLatin1String("search")).toObject();
-    if (!search.isEmpty()) {
-        engine->setSearchUrlTemplate(
-            search.value(QLatin1String("template")).toString());
-        engine->setSearchParameters(parametersOf(search));
-        engine->setSearchMethod(
-            search.value(QLatin1String("method")).toString());
-    }
-    const QJsonObject suggestions =
-        root.value(QLatin1String("suggestions")).toObject();
-    if (!suggestions.isEmpty()) {
-        engine->setSuggestionsUrlTemplate(
-            suggestions.value(QLatin1String("template")).toString());
-        engine->setSuggestionsParameters(parametersOf(suggestions));
-        engine->setSuggestionsMethod(
-            suggestions.value(QLatin1String("method")).toString());
-    }
-    const QJsonObject image = root.value(QLatin1String("image")).toObject();
-    if (!image.isEmpty()) {
-        engine->setImageSearchUrlTemplate(
-            image.value(QLatin1String("template")).toString());
-        engine->setImageSearchParameters(parametersOf(image));
-        engine->setImageSearchMethod(
-            image.value(QLatin1String("method")).toString());
-    }
+    // OSE01: the field-map -> engine marshaling is shared with the
+    // manager's registry hydration (opensearchengine.cpp).
+    openSearchEngineApplyJson(engine, root);
     return engine;
 }
 #else

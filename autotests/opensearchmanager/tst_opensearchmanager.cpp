@@ -26,6 +26,11 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "browserpaths.h"
+#include "rustcore.h"
+#endif
+
 class tst_OpenSearchManager : public QObject
 {
     Q_OBJECT
@@ -50,6 +55,12 @@ private slots:
     void renameEngine();
     void convertKeywordSearchToUrl();
     void convertKeywordSearchToUrl_data();
+#if defined(ARORA_RUSTCORE)
+    // OSE01: the legacy descriptor dir + QSettings keys move into
+    // searchengines.json exactly once — keep last: it rebuilds the
+    // store from scratch.
+    void legacyMigration();
+#endif
 };
 
 class SubOpenSearchManager : public OpenSearchManager
@@ -583,6 +594,88 @@ void tst_OpenSearchManager::convertKeywordSearchToUrl()
 
     QCOMPARE(manager.convertKeywordSearchToUrl(string).isValid(), valid);
 }
+
+#if defined(ARORA_RUSTCORE)
+// OSE01: the legacy layout — the searchengines/ descriptor directory
+// plus the openSearch QSettings keys — migrates into
+// searchengines.json exactly once, then the legacy paths retire.
+void tst_OpenSearchManager::legacyMigration()
+{
+    // Re-arm the migration gate: no canonical store.
+    QCOMPARE(rc_ose_reset(), RC_OK);
+    QVERIFY(!rc_ose_store_present());
+
+    // Seed a pre-OSE01 profile: one custom descriptor on disk, a
+    // blocked bundled engine, a keyword binding, a display order.
+    const QString dirName =
+        BrowserPaths::dataFilePath(QLatin1String("searchengines"));
+    const QString migratedDir = dirName + QLatin1String(".migrated");
+    QDir(migratedDir).removeRecursively();
+    QVERIFY(QDir().mkpath(dirName));
+    QFile file(dirName + QLatin1String("/FooSearch.xml"));
+    QVERIFY(file.open(QFile::WriteOnly));
+    file.write(
+        "<?xml version=\"1.0\"?>\n"
+        "<OpenSearchDescription"
+        " xmlns=\"http://a9.com/-/spec/opensearch/1.1/\">\n"
+        "  <ShortName>Foo Search</ShortName>\n"
+        "  <Description>legacy fixture</Description>\n"
+        "  <Url type=\"text/html\""
+        " template=\"http://foo.example/?q={searchTerms}\"/>\n"
+        "</OpenSearchDescription>\n");
+    file.close();
+
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("openSearch"));
+        settings.setValue(QLatin1String("removedBundledEngines"),
+                          QStringList() << QLatin1String("Yahoo!"));
+        settings.beginWriteArray(QLatin1String("keywords"));
+        settings.setArrayIndex(0);
+        settings.setValue(QLatin1String("keyword"), QLatin1String("f"));
+        settings.setValue(QLatin1String("engine"),
+                          QLatin1String("Foo Search"));
+        settings.endArray();
+        settings.setValue(QLatin1String("engineOrder"),
+                          QStringList() << QLatin1String("Foo Search"));
+        settings.endGroup();
+    }
+
+    SubOpenSearchManager manager;
+
+    // The descriptor imported, the bundled seed merged minus the
+    // blocked entry, and the keyword + order rows landed.
+    OpenSearchEngine *engine =
+        manager.engine(QLatin1String("Foo Search"));
+    QVERIFY(engine);
+    QCOMPARE(engine->searchUrlTemplate(),
+             QLatin1String("http://foo.example/?q={searchTerms}"));
+    QVERIFY(manager.engineExists(QLatin1String("DuckDuckGo")));
+    QVERIFY(!manager.engineExists(QLatin1String("Yahoo!")));
+    QCOMPARE(manager.engineForKeyword(QLatin1String("f")), engine);
+    QCOMPARE(manager.allEnginesNames().first(),
+             QLatin1String("Foo Search"));
+
+    // The legacy paths retired: the descriptor dir moved aside and
+    // the migrated QSettings keys are gone — a second manager sees
+    // the canonical store, not a re-import.
+    QVERIFY(!QDir(dirName).exists());
+    QVERIFY(QDir(migratedDir).exists());
+    QSettings settings;
+    QVERIFY(!settings.contains(QLatin1String("openSearch/keywords")));
+    QVERIFY(!settings.contains(QLatin1String("openSearch/engineOrder")));
+    QVERIFY(!settings.contains(
+        QLatin1String("openSearch/removedBundledEngines")));
+
+    SubOpenSearchManager second;
+    QVERIFY(second.engineExists(QLatin1String("Foo Search")));
+    QCOMPARE(second.engineForKeyword(QLatin1String("f"))->name(),
+             QLatin1String("Foo Search"));
+
+    // The retired dir is test residue — drop it.
+    QDir(migratedDir).removeRecursively();
+}
+#endif // ARORA_RUSTCORE
 
 QTEST_MAIN(tst_OpenSearchManager)
 

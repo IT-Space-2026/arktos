@@ -28,6 +28,7 @@
 #include <qurl.h>
 
 class QNetworkReply;
+class QJsonObject;
 
 class OpenSearchEngineDelegate;
 class OpenSearchEngine : public QObject
@@ -158,6 +159,16 @@ private:
 
     OpenSearchEngineDelegate *m_delegate;
 };
+
+#if defined(ARORA_RUSTCORE)
+// OSE01: the rc_opensearch_parse field map <-> engine marshaling the
+// reader's Rust path and the manager's registry hydration share
+// (rustcore builds only — the field names are documented in
+// rustcore.h next to rc_ose_get).
+void openSearchEngineApplyJson(OpenSearchEngine *engine,
+                               const QJsonObject &fields);
+QJsonObject openSearchEngineToJson(const OpenSearchEngine *engine);
+#endif
 
 #endif // OPENSEARCHENGINE_H
 

@@ -39,6 +39,70 @@
 #include <qsettings.h>
 #include <qstringlist.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "rustcore.h"
+#include "rustcorebridge.h"
+
+#include <qcoreapplication.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+#include <qlocale.h>
+
+// OSE01: searchengines.json in the rustcore data dir is the canonical
+// engine store — engine records (the rc_opensearch_parse field map
+// plus keyword bindings), the display order and the removed-bundled
+// blocklist.  These helpers marshal the JSON contract rustcore.h
+// documents; every mutation below writes through to the store.
+namespace {
+
+QByteArray oseTake(char *raw)
+{
+    if (!raw)
+        return QByteArray();
+    const QByteArray bytes(raw, int(strlen(raw)));
+    rc_string_free(raw);
+    return bytes;
+}
+
+QStringList oseStringList(char *raw)
+{
+    QStringList out;
+    const QJsonArray array =
+        QJsonDocument::fromJson(oseTake(raw)).array();
+    for (const QJsonValue &value : array)
+        out.append(value.toString());
+    return out;
+}
+
+QByteArray oseJsonStringArray(const QStringList &list)
+{
+    return QJsonDocument(QJsonArray::fromStringList(list))
+        .toJson(QJsonDocument::Compact);
+}
+
+QByteArray oseEngineJson(OpenSearchEngine *engine)
+{
+    return QJsonDocument(openSearchEngineToJson(engine))
+        .toJson(QJsonDocument::Compact);
+}
+
+// The {language}/{source} substitutions parseTemplate applies.
+QByteArray oseLanguage()
+{
+    QString language = QLocale().name();
+    language.replace(QLatin1Char('_'), QLatin1Char('-'));
+    return language.toUtf8();
+}
+
+QByteArray oseSource()
+{
+    return QCoreApplication::applicationName().toUtf8();
+}
+
+} // namespace
+#endif // ARORA_RUSTCORE
+
 OpenSearchManager::OpenSearchManager(QObject *parent)
     : QObject(parent)
     , m_autoSaver(new AutoSaver(this))
@@ -270,6 +334,16 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
     if (m_engines.contains(engine->name()))
         return false;
 
+#if defined(ARORA_RUSTCORE)
+    // OSE01: the registry is canonical — the record writes through
+    // immediately (keyword bindings arrive via setKeywordsForEngine).
+    rustCoreEnsureDataDir();
+    const QByteArray json = oseEngineJson(engine);
+    if (rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+                   size_t(json.size())) != RC_OK)
+        return false;
+#endif
+
     m_engines[engine->name()] = engine;
     if (!m_engineOrder.contains(engine->name()))
         m_engineOrder.append(engine->name());
@@ -288,8 +362,10 @@ void OpenSearchManager::removeEngine(const QString &name)
         return;
 
     OpenSearchEngine *engine = m_engines[name];
+#if !defined(ARORA_RUSTCORE)
     for (const QString &keyword : m_keywords.keys(engine))
         m_keywords.remove(keyword);
+#endif
     engine->deleteLater();
 
     m_engines[name] = nullptr;
@@ -307,14 +383,25 @@ void OpenSearchManager::removeEngine(const QString &name)
     if (name == m_fieldEngine)
         m_fieldEngine.clear();
 
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    const QByteArray utf8 = name.toUtf8();
+    // The record drops its keyword bindings with it.
+    rc_ose_remove(utf8.constData());
+#else
     QString file = QDir(enginesDirectory()).filePath(generateEngineFileName(name));
     QFile::remove(file);
+#endif
 
     // Removing a bundled engine must survive the bundled merge in
     // load() — otherwise the next launch resurrects it.
     if (QFile::exists(QLatin1String(":/searchengines/") + generateEngineFileName(name))
-            && !m_removedBundled.contains(name))
+            && !m_removedBundled.contains(name)) {
         m_removedBundled.append(name);
+#if defined(ARORA_RUSTCORE)
+        rc_ose_block_bundled(utf8.constData());
+#endif
+    }
 
     if (name == m_current)
         setCurrentEngineName(m_engines.keys().at(0));
@@ -335,6 +422,12 @@ bool OpenSearchManager::moveEngine(const QString &name, int offset)
         return false;
 
     m_engineOrder.move(from, to);
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    const QByteArray json = oseJsonStringArray(m_engineOrder);
+    rc_ose_reorder(reinterpret_cast<const uint8_t *>(json.constData()),
+                   size_t(json.size()));
+#endif
     emit changed();
     return true;
 }
@@ -351,6 +444,18 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
         return false;
     if (m_engines.contains(trimmed))
         return false;
+
+#if defined(ARORA_RUSTCORE)
+    // The store move keeps the record's keyword bindings and its
+    // display-order slot — abort before touching any Qt state if it
+    // fails.
+    rustCoreEnsureDataDir();
+    const QByteArray oldUtf8 = oldName.toUtf8();
+    const QByteArray newUtf8 = trimmed.toUtf8();
+    if (rc_ose_rename(oldUtf8.constData(), newUtf8.constData())
+            != RC_OK)
+        return false;
+#endif
 
     OpenSearchEngine *engine = m_engines.take(oldName);
     engine->setName(trimmed);
@@ -373,19 +478,30 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
     if (m_fieldEngine == oldName)
         m_fieldEngine = trimmed;
 
-    // The persisted descriptor keeps the old generated file name.
-    QFile::remove(QDir(enginesDirectory())
-                  .filePath(generateEngineFileName(oldName)));
-
     // Renaming a bundled engine blocks the bundled descriptor from
     // resurrecting on the next load (same bookkeeping removeEngine
     // uses); naming an engine after a previously removed bundled one
     // unblocks it — the user's own engine with that name exists now.
+#if defined(ARORA_RUSTCORE)
+    if (QFile::exists(QLatin1String(":/searchengines/")
+                      + generateEngineFileName(oldName))
+            && !m_removedBundled.contains(oldName)) {
+        m_removedBundled.append(oldName);
+        rc_ose_block_bundled(oldUtf8.constData());
+    }
+    m_removedBundled.removeAll(trimmed);
+    rc_ose_unblock_bundled(newUtf8.constData());
+#else
+    // The persisted descriptor keeps the old generated file name.
+    QFile::remove(QDir(enginesDirectory())
+                  .filePath(generateEngineFileName(oldName)));
+
     if (QFile::exists(QLatin1String(":/searchengines/")
                       + generateEngineFileName(oldName))
             && !m_removedBundled.contains(oldName))
         m_removedBundled.append(oldName);
     m_removedBundled.removeAll(trimmed);
+#endif
 
     emit currentEngineChanged();
     emit changed();
@@ -396,6 +512,16 @@ void OpenSearchManager::engineEdited(OpenSearchEngine *engine)
 {
     if (!engine || m_engines.key(engine).isEmpty())
         return;
+
+#if defined(ARORA_RUSTCORE)
+    // OSE01: engine objects carry no change notification — the edit
+    // notification pushes the record through immediately.
+    rustCoreEnsureDataDir();
+    const QByteArray json = oseEngineJson(engine);
+    rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+               size_t(json.size()));
+#endif
+
     emit changed();
 }
 
@@ -442,6 +568,26 @@ void OpenSearchManager::saveDirectory(const QString &dirName)
 
 void OpenSearchManager::save()
 {
+#if defined(ARORA_RUSTCORE)
+    // OSE01: mutations write through; the autosave still re-syncs the
+    // engine objects (a direct field edit only marks the saver dirty)
+    // and the display order.  The descriptor dir plus the keyword,
+    // engineOrder and removedBundledEngines keys are retired by
+    // migration — only the preference keys are still persisted here.
+    rustCoreEnsureDataDir();
+    for (OpenSearchEngine *engine : m_engines.values()) {
+        const QByteArray json = oseEngineJson(engine);
+        rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+                   size_t(json.size()));
+    }
+    const QByteArray order = oseJsonStringArray(m_engineOrder);
+    rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
+                   size_t(order.size()));
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("openSearch"));
+    settings.setValue(QLatin1String("engine"), m_current);
+#else
     saveDirectory(enginesDirectory());
 
     QSettings settings;
@@ -462,7 +608,7 @@ void OpenSearchManager::save()
         settings.setValue(QLatin1String("engine"), i.value()->name());
     }
     settings.endArray();
-
+#endif
     settings.setValue(QLatin1String("suggestions"), m_suggestionsEnabled);
 
     // SRCH04: engine assignments + suggestion-context toggles.
@@ -500,9 +646,143 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
     return success;
 }
 
+#if defined(ARORA_RUSTCORE)
+// OSE01: one-shot migration from the legacy layout — the descriptor
+// directory, the openSearch/keywords array, engineOrder and
+// removedBundledEngines all move into searchengines.json, then the
+// legacy paths retire so a second run imports nothing.
+void OpenSearchManager::importLegacyRegistry(QSettings &settings)
+{
+    // The blocklist first — it gates the bundled seed below.
+    const QStringList removed = settings.value(
+        QLatin1String("removedBundledEngines")).toStringList();
+    for (const QString &name : removed) {
+        const QByteArray utf8 = name.toUtf8();
+        rc_ose_block_bundled(utf8.constData());
+    }
+
+    // The persisted descriptor dir imports filename-sorted so the
+    // migrated order is deterministic; rc_ose_import tolerates the
+    // same inputs addEngine(fileName) did.
+    const QString dirName = enginesDirectory();
+    const QDir dir(dirName);
+    const QStringList files = dir.entryList(
+        QStringList() << QLatin1String("*.xml"), QDir::Files, QDir::Name);
+    for (const QString &fileName : files) {
+        QFile file(dir.filePath(fileName));
+        if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
+            continue;
+        const QByteArray xml = file.readAll();
+        rc_ose_import(reinterpret_cast<const uint8_t *>(xml.constData()),
+                      size_t(xml.size()));
+    }
+
+    rc_ose_seed_bundled();
+
+    // The keyword array flattens into per-engine bindings — last write
+    // wins, same as the QHash the code used to fill.
+    QHash<QString, QStringList> byEngine;
+    const int size = settings.beginReadArray(QLatin1String("keywords"));
+    for (int i = 0; i < size; ++i) {
+        settings.setArrayIndex(i);
+        const QString keyword =
+            settings.value(QLatin1String("keyword")).toString();
+        const QString engineName =
+            settings.value(QLatin1String("engine")).toString();
+        if (!keyword.isEmpty() && !engineName.isEmpty()) {
+            for (auto it = byEngine.begin(); it != byEngine.end(); ++it)
+                it->removeAll(keyword);
+            byEngine[engineName].append(keyword);
+        }
+    }
+    settings.endArray();
+    for (auto it = byEngine.constBegin(); it != byEngine.constEnd(); ++it) {
+        const QByteArray name = it.key().toUtf8();
+        const QByteArray json = oseJsonStringArray(it.value());
+        rc_ose_set_keywords(name.constData(),
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()));
+    }
+
+    const QByteArray order = oseJsonStringArray(
+        settings.value(QLatin1String("engineOrder")).toStringList());
+    rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
+                   size_t(order.size()));
+
+    // Retire the legacy paths — a leftover descriptor dir or stale
+    // keys must never re-import over the canonical store.
+    if (dir.exists())
+        QDir().rename(dirName,
+                      dirName + QLatin1String(".migrated"));
+    settings.remove(QLatin1String("keywords"));
+    settings.remove(QLatin1String("engineOrder"));
+    settings.remove(QLatin1String("removedBundledEngines"));
+}
+#endif // ARORA_RUSTCORE
+
 void OpenSearchManager::load()
 {
     StartupProfile::Scope profileScope("opensearch engines parse");
+#if defined(ARORA_RUSTCORE)
+    // OSE01: searchengines.json is canonical; first access migrates
+    // the legacy descriptor dir + QSettings openSearch keys.
+    rustCoreEnsureDataDir();
+
+    QSettings settings;
+    settings.beginGroup(QLatin1String("openSearch"));
+
+    if (!rc_ose_store_present())
+        importLegacyRegistry(settings);
+
+    // The bundled merge survives in the Rust path too — upgrades
+    // deliver new descriptors; removed_bundled keeps deleted ones
+    // gone.  Idempotent: existing records always win.
+    rc_ose_seed_bundled();
+
+    m_removedBundled = oseStringList(rc_ose_removed_bundled());
+
+    // Hydrate the engine objects from the canonical records — the
+    // store's order IS the display order.
+    const QStringList names = oseStringList(rc_ose_list());
+    for (const QString &name : names) {
+        const QByteArray utf8 = name.toUtf8();
+        const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
+        OpenSearchEngine *engine = new OpenSearchEngine();
+        openSearchEngineApplyJson(
+            engine, QJsonDocument::fromJson(json).object());
+        if (engine->isValid())
+            m_engines[name] = engine;
+        else
+            delete engine;
+    }
+    m_engineOrder = names;
+
+    m_current = settings.value(QLatin1String("engine"),
+                               QLatin1String("DuckDuckGo")).toString();
+    m_suggestionsEnabled =
+        settings.value(QLatin1String("suggestions")).toStringList();
+
+    // SRCH04: engine assignments + suggestion-context toggles.
+    m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
+    m_imageEngine = settings.value(QLatin1String("imageEngine")).toString();
+    m_keepFieldEngine = settings.value(QLatin1String("keepFieldEngine"), true).toBool();
+    m_fieldEngine = m_keepFieldEngine
+        ? settings.value(QLatin1String("fieldEngine")).toString()
+        : QString();
+    m_suggestInAddressField = settings.value(
+        QLatin1String("suggestInAddressField"), true).toBool();
+    m_suggestInSearchField = settings.value(
+        QLatin1String("suggestInSearchField"), true).toBool();
+    m_suggestOnlyWithKeyword = settings.value(
+        QLatin1String("suggestOnlyWithKeyword"), false).toBool();
+
+    settings.endGroup();
+
+    if (!m_engines.contains(m_current) && m_engines.count() > 0)
+        m_current = m_engines.keys().at(0);
+
+    emit currentEngineChanged();
+#else
     loadDirectory(enginesDirectory());
 
     // get current engine
@@ -581,6 +861,7 @@ void OpenSearchManager::load()
         m_current = m_engines.keys().at(0);
 
     emit currentEngineChanged();
+#endif // ARORA_RUSTCORE
 }
 
 bool OpenSearchManager::suggestionsEnabledForEngine(const QString &engineName) const
@@ -658,6 +939,37 @@ void OpenSearchManager::setSuggestionsOnlyWithKeyword(bool enabled)
 
 void OpenSearchManager::restoreDefaults()
 {
+#if defined(ARORA_RUSTCORE)
+    // OSE01: the store-side restore clears the blocklist and re-adds
+    // every bundled record, preserving keyword bindings.  Existing
+    // objects refresh in place so consumers' pointers stay valid.
+    rustCoreEnsureDataDir();
+    m_removedBundled.clear();
+    rc_ose_restore_bundled();
+    const QStringList bundled = oseStringList(rc_ose_bundled_names());
+    for (const QString &name : bundled) {
+        const QByteArray utf8 = name.toUtf8();
+        const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
+        const QJsonObject record =
+            QJsonDocument::fromJson(json).object();
+        OpenSearchEngine *engine = m_engines.value(name);
+        if (!engine) {
+            engine = new OpenSearchEngine();
+            openSearchEngineApplyJson(engine, record);
+            if (!engine->isValid()) {
+                delete engine;
+                continue;
+            }
+            m_engines[name] = engine;
+            if (!m_engineOrder.contains(name))
+                m_engineOrder.append(name);
+            continue;
+        }
+        openSearchEngineApplyJson(engine, record);
+    }
+    emit currentEngineChanged();
+    emit changed();
+#else
     // Re-add every bundled engine.  Deleted ones come back (the
     // removal blocklist is part of "defaults"); ones still present
     // are REPLACED rather than skipped — persisted copies can be
@@ -702,6 +1014,7 @@ void OpenSearchManager::restoreDefaults()
         emit currentEngineChanged();
         emit changed();
     }
+#endif // ARORA_RUSTCORE
 }
 
 void OpenSearchManager::resetSearchPreferences()
@@ -799,24 +1112,51 @@ QUrl OpenSearchManager::convertKeywordSearchToUrl(const QString &string)
     if (terms.isEmpty())
         return QUrl();
 
+#if defined(ARORA_RUSTCORE)
+    // OSE01: resolution + expansion run in Rust (same result as the
+    // engineForKeyword + searchUrl calls below).
+    rustCoreEnsureDataDir();
+    const QByteArray keywordUtf8 = keyword.toUtf8();
+    const QByteArray termsUtf8 = terms.toUtf8();
+    const QByteArray language = oseLanguage();
+    const QByteArray source = oseSource();
+    const QByteArray url = oseTake(rc_ose_keyword_url(
+        keywordUtf8.constData(), termsUtf8.constData(),
+        language.constData(), source.constData()));
+    return url.isEmpty() ? QUrl() : QUrl::fromEncoded(url);
+#else
     if (OpenSearchEngine *engine = engineForKeyword(keyword))
         return engine->searchUrl(terms);
 
     return QUrl();
+#endif
 }
 
 OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) const
 {
     if (keyword.isEmpty())
         return nullptr;
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    const QByteArray utf8 = keyword.toUtf8();
+    const QString name = QString::fromUtf8(
+        oseTake(rc_ose_engine_for_keyword(utf8.constData())));
+    return name.isEmpty() ? nullptr : m_engines.value(name);
+#else
     if (!m_keywords.contains(keyword))
         return nullptr;
     return m_keywords.value(keyword);
+#endif
 }
 
 QStringList OpenSearchManager::keywords() const
 {
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    return oseStringList(rc_ose_keywords());
+#else
     return m_keywords.keys();
+#endif
 }
 
 void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEngine *engine)
@@ -824,17 +1164,54 @@ void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEn
     if (keyword.isEmpty())
         return;
 
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    const QByteArray utf8 = keyword.toUtf8();
+    if (!engine) {
+        const QString owner = QString::fromUtf8(
+            oseTake(rc_ose_engine_for_keyword(utf8.constData())));
+        if (owner.isEmpty()) {
+            emit changed();
+            return;
+        }
+        QStringList list = keywordsForEngine(m_engines.value(owner));
+        list.removeAll(keyword);
+        setKeywordsForEngine(m_engines.value(owner), list);
+        return;
+    }
+    QStringList list = keywordsForEngine(engine);
+    list.removeAll(keyword);
+    list.append(keyword);
+    setKeywordsForEngine(engine, list);
+    return;
+#else
     if (!engine)
         m_keywords.remove(keyword);
     else
         m_keywords.insert(keyword, engine);
 
     emit changed();
+#endif
 }
 
 QStringList OpenSearchManager::keywordsForEngine(OpenSearchEngine *engine) const
 {
+#if defined(ARORA_RUSTCORE)
+    if (!engine)
+        return QStringList();
+    rustCoreEnsureDataDir();
+    const QByteArray utf8 = engine->name().toUtf8();
+    const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
+    QStringList out;
+    const QJsonArray keywords =
+        QJsonDocument::fromJson(json).object()
+            .value(QLatin1String("keywords")).toArray();
+    for (const QJsonValue &value : keywords)
+        out.append(value.toString());
+    return out;
+#else
     return m_keywords.keys(engine);
+#endif
 }
 
 void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QStringList &keywords)
@@ -842,6 +1219,20 @@ void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QSt
     if (!engine)
         return;
 
+#if defined(ARORA_RUSTCORE)
+    rustCoreEnsureDataDir();
+    QStringList list;
+    for (const QString &keyword : keywords) {
+        if (!keyword.isEmpty())
+            list.append(keyword);
+    }
+    const QByteArray name = engine->name().toUtf8();
+    const QByteArray json = oseJsonStringArray(list);
+    // The store strips the listed keywords off every other engine.
+    rc_ose_set_keywords(name.constData(),
+                        reinterpret_cast<const uint8_t *>(json.constData()),
+                        size_t(json.size()));
+#else
     for (const QString &keyword : keywordsForEngine(engine))
         m_keywords.remove(keyword);
 
@@ -851,6 +1242,7 @@ void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QSt
 
         m_keywords.insert(keyword, engine);
     }
+#endif
 
     emit changed();
 }

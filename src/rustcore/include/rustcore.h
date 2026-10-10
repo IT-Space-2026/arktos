@@ -592,6 +592,104 @@ RcStatus rc_sitedec_reload(void);
 /* Empty every kind (store file removed). */
 RcStatus rc_sitedec_reset(void);
 
+/* ------------------------------------------------------------------ */
+/* OSE01: OpenSearch engine registry                                   */
+/*                                                                      */
+/* The canonical search-engine store — searchengines.json under the   */
+/* data dir holds one record per engine (the rc_opensearch_parse      */
+/* field map plus a "keywords" string array), the display order and   */
+/* the removed-bundled blocklist.  The OpenSearchManager Qt adapter   */
+/* hydrates engine objects from these records and every mutation      */
+/* writes through; mutations emit the "searchengines" change topic.   */
+/*                                                                      */
+/* Bundled descriptors are vendored into the crate (the same files    */
+/* the no-rust qrc ships) and seed through rc_ose_seed_bundled /      */
+/* rc_ose_restore_bundled — never as an implicit read fallback, so    */
+/* deleting a bundled engine stays deleted.                            */
+
+/* 1 when the store file exists — the legacy-import gate. */
+int rc_ose_store_present(void);
+
+/* Engine names in display order — JSON string array; rc_string_free. */
+char *rc_ose_list(void);
+
+/* One engine record as JSON — NULL when absent; rc_string_free. */
+char *rc_ose_get(const char *nameUtf8);
+
+/* Upsert an engine record JSON (name + search template required;
+ * "keywords" replaces the bindings when present, preserved when
+ * absent). */
+RcStatus rc_ose_put(const uint8_t *jsonUtf8, size_t len);
+
+/* Parse an OpenSearch descriptor (bounded, DTD-refused) and upsert
+ * it — the .xml import path; keywords survive a replace. */
+RcStatus rc_ose_import(const uint8_t *xmlUtf8, size_t len);
+
+/* Drop an engine by name; RC_OK whether or not it existed. */
+RcStatus rc_ose_remove(const char *nameUtf8);
+
+/* Re-key an engine keeping its order slot and keywords —
+ * RC_NOT_FOUND on a missing source, RC_INVALID_ARGUMENT on an
+ * empty/taken target. */
+RcStatus rc_ose_rename(const char *oldUtf8, const char *newUtf8);
+
+/* Replace the display order with a JSON name array. */
+RcStatus rc_ose_reorder(const uint8_t *jsonUtf8, size_t len);
+
+/* Replace an engine's keyword bindings (JSON string array);
+ * RC_NOT_FOUND when the engine does not exist. */
+RcStatus rc_ose_set_keywords(const char *nameUtf8,
+                             const uint8_t *jsonUtf8, size_t len);
+
+/* The engine name a keyword resolves to — NULL when unbound;
+ * rc_string_free. */
+char *rc_ose_engine_for_keyword(const char *keywordUtf8);
+
+/* Every bound keyword — JSON string array; rc_string_free. */
+char *rc_ose_keywords(void);
+
+/* The removed-bundled blocklist — JSON string array; rc_string_free. */
+char *rc_ose_removed_bundled(void);
+RcStatus rc_ose_block_bundled(const char *nameUtf8);
+RcStatus rc_ose_unblock_bundled(const char *nameUtf8);
+
+/* The vendored bundled engine names — JSON string array. */
+char *rc_ose_bundled_names(void);
+
+/* Insert every bundled engine that is absent and not blocked. */
+RcStatus rc_ose_seed_bundled(void);
+
+/* Clear the blocklist and re-add every bundled engine, replacing
+ * same-named records but keeping their keyword bindings — the
+ * "restore defaults" semantic. */
+RcStatus rc_ose_restore_bundled(void);
+
+/* Wipe the registry and remove searchengines.json — the test-suite
+ * reset seam; re-arms the Qt legacy-migration gate. */
+RcStatus rc_ose_reset(void);
+
+/* URL expansion — the buildUrl()/parseTemplate() port, byte-identical
+ * to the Qt implementation (probed on Qt 6.12):
+ *   spec JSON {"template","method","params":[["k","v"],...],"term",
+ *              "language","source"} -> encoded URL string.
+ * {searchTerms} encodes per QUrl::toPercentEncoding (only
+ * [A-Za-z0-9-._~] raw); existing-query pairs and appended Param
+ * values encode per QUrlQuery's component table (valid %XX triplets
+ * preserved, uppercase-normalized).  NULL on a bad spec;
+ * rc_string_free. */
+char *rc_ose_expand(const uint8_t *specJsonUtf8, size_t len);
+
+/* Engine + slot kind ("search"|"suggestions"|"image") + term ->
+ * expanded URL; NULL when the engine or slot is absent. */
+char *rc_ose_url(const char *nameUtf8, const char *kindUtf8,
+                 const char *termUtf8, const char *languageUtf8,
+                 const char *sourceUtf8);
+
+/* keyword + terms -> the bound engine's search URL; NULL when the
+ * keyword is unbound. */
+char *rc_ose_keyword_url(const char *keywordUtf8, const char *termUtf8,
+                         const char *languageUtf8, const char *sourceUtf8);
+
 #ifdef __cplusplus
 }
 #endif
