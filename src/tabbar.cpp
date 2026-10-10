@@ -94,6 +94,11 @@
 // Defined further down — the TABGRP01 drop-zone check in
 // mouseReleaseEvent needs it too.
 static bool verticalTabShape(QTabBar::Shape shape);
+// CONT06: builds a copy of a mouse event whose position() is shifted
+// into strip space (below the level-1 band) for the base-class
+// handlers.
+static QMouseEvent shiftedMouseEvent(const QMouseEvent *event,
+                                     const QPointF &delta);
 
 TabShortcut::TabShortcut(int tab, const QKeySequence &key, QWidget *parent)
     : QShortcut(key, parent)
@@ -309,6 +314,11 @@ void TabBar::leaveEvent(QEvent *event)
         m_hoveredTab = -1;
         updateCloseButtonVisibility();
     }
+    if (m_bandHoverHeader != -1 || m_bandDropHeader != -1) {
+        m_bandHoverHeader = -1;
+        m_bandDropHeader = -1;
+        update();
+    }
     m_previewTimer->stop();
     hideTabPreview();
     QTabBar::leaveEvent(event);
@@ -337,13 +347,17 @@ void TabBar::selectTabAction()
 void TabBar::contextMenuRequested(const QPoint &position)
 {
     hideTabPreview();
+    // CONT06: the header band has no context menu.
+    if (containerStripHeight() > 0
+        && position.y() < containerStripHeight())
+        return;
     QMenu menu;
     TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
     if (!tabWidget)
         return;
 
     menu.addAction(tabWidget->newTabAction());
-    int index = tabAt(position);
+    int index = tabAt(stripPos(position));
     if (-1 != index) {
         QAction *action = menu.addAction(tr("Duplicate Tab"),
                                          this, QOverload<>::of(&TabBar::cloneTab));
@@ -601,8 +615,13 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
     m_previewTimer->stop();
     hideTabPreview();
     if (event->button() == Qt::LeftButton
-        && tabAt(event->position().toPoint()) == -1) {
-        emit newTab();
+        && tabAt(stripPos(event->position().toPoint())) == -1) {
+        // CONT06: double-clicking the header band is not "empty
+        // strip" — a click there does not spawn a tab.
+        if (containerStripHeight() <= 0
+            || event->position().toPoint().y()
+               >= containerStripHeight())
+            emit newTab();
         return;
     }
     QTabBar::mouseDoubleClickEvent(event);
@@ -610,7 +629,53 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TabBar::mouseReleaseEvent(QMouseEvent *event)
 {
+    const int band = containerStripHeight();
+    const QPoint pos = event->position().toPoint();
+    const bool inBand = band > 0 && pos.y() >= 0 && pos.y() < band;
     if (event->button() == Qt::LeftButton) {
+        // CONT06: a release in the header band finishes one of two
+        // gestures — a tab drag landing on a header rebinds the tab
+        // to that container, a header press/drag activates or
+        // reorders headers.
+        if (inBand) {
+            TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            const int header = containerHeaderAt(pos);
+            const int dragged = m_draggedIndex >= 0
+                ? m_draggedIndex : m_pressedTabIndex;
+            if (m_dragTracking && dragged >= 0 && header >= 0
+                && tabWidget) {
+                m_dragTracking = false;
+                m_draggedIndex = -1;
+                m_bandDropHeader = -1;
+                tabWidget->reopenTabInContainer(
+                    dragged, tabWidget->containerHeaders().value(header));
+            } else if (m_bandPressedHeader >= 0 && tabWidget) {
+                if (header == m_bandPressedHeader) {
+                    tabWidget->setActiveContainerHeader(
+                        tabWidget->containerHeaders().value(header));
+                } else if (header > 0 && m_bandPressedHeader > 0) {
+                    // The default header stays pinned first — only
+                    // container headers reorder.
+                    tabWidget->moveContainerHeader(
+                        m_bandPressedHeader, header);
+                }
+            }
+            m_dragTracking = false;
+            m_pressedTabIndex = -1;
+            m_moveDragActive = false;
+            m_bandPressedHeader = -1;
+            m_bandDropHeader = -1;
+            update();
+            QMouseEvent shifted = shiftedMouseEvent(
+                event, QPointF(0, -band));
+            QTabBar::mouseReleaseEvent(&shifted);
+            return;
+        }
+        if (m_bandPressedHeader >= 0) {
+            m_bandPressedHeader = -1;
+            update();
+        }
         m_pressedTabIndex = -1;
         m_moveDragActive = false;
         // TABS02: end of an inner-edge width drag — persist the width
@@ -633,8 +698,8 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
             return;
         }
     }
-    if (event->button() == Qt::MiddleButton) {
-        int index = tabAt(event->position().toPoint());
+    if (event->button() == Qt::MiddleButton && !inBand) {
+        int index = tabAt(stripPos(pos));
         if (index != -1) {
             emit closeTab(index);
             return;
@@ -656,7 +721,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
         const int dragged = m_draggedIndex;
         m_dragTracking = false;
         if (dragged >= 0) {
-            const QPoint pos = event->position().toPoint();
+            const QPoint pos = stripPos(event->position().toPoint());
             const int over = tabAt(pos);
             if (over != -1 && over != dragged) {
                 const QRect r = tabRect(over);
@@ -674,6 +739,11 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
         }
     }
 
+    if (band > 0) {
+        QMouseEvent shifted = shiftedMouseEvent(event, QPointF(0, -band));
+        QTabBar::mouseReleaseEvent(&shifted);
+        return;
+    }
     QTabBar::mouseReleaseEvent(event);
 }
 
@@ -681,24 +751,39 @@ void TabBar::mousePressEvent(QMouseEvent *event)
 {
     m_previewTimer->stop();
     hideTabPreview();
+    const int band = containerStripHeight();
+    const QPoint pos = event->position().toPoint();
     if (event->button() == Qt::LeftButton) {
+        // CONT06: a press in the header band starts a header
+        // click/drag — QTabBar never sees it, so it can neither
+        // select a tab nor arm a move drag.
+        if (band > 0 && pos.y() >= 0 && pos.y() < band) {
+            m_bandPressedHeader = containerHeaderAt(pos);
+            m_bandFocusHeader = -1;
+            update();
+            return;
+        }
+        const QPoint spos = stripPos(pos);
         // TABS02: a press in the strip's inner-edge grip zone starts
         // a width drag, not a tab press — QTabBar never sees it, so
         // it can neither select the tab nor arm a move drag.
         if (verticalTabShape(shape())
-            && inResizeGrip(event->position().toPoint())) {
+            && inResizeGrip(spos)) {
             m_resizing = true;
             m_resizeStartX = event->globalPosition().toPoint().x();
             m_resizeStartWidth = m_verticalTabWidth;
             setCursor(Qt::SizeHorCursor);
             return;
         }
-        m_dragStartPos = event->position().toPoint();
+        m_dragStartPos = spos;
         // TABS02: track the pressed tab so paintEvent can float it
         // horizontally during a move drag.
         m_pressedTabIndex = tabAt(m_dragStartPos);
         m_moveDragGrabOffset = m_pressedTabIndex >= 0
             ? m_dragStartPos.y() - tabRect(m_pressedTabIndex).top()
+            : 0;
+        m_moveDragGrabOffsetX = m_pressedTabIndex >= 0
+            ? m_dragStartPos.x() - tabRect(m_pressedTabIndex).left()
             : 0;
         // TABGRP01: a press starts a potential drag — arm the
         // tabMoved tracker so the release can see where the tab went.
@@ -710,6 +795,11 @@ void TabBar::mousePressEvent(QMouseEvent *event)
         if (tabWidget && index >= 0 && tabWidget->isTabGroupChip(index))
             tabWidget->setTabGroupCollapsed(tabWidget->tabGroupId(index),
                                             false);
+    }
+    if (band > 0) {
+        QMouseEvent shifted = shiftedMouseEvent(event, QPointF(0, -band));
+        QTabBar::mousePressEvent(&shifted);
+        return;
     }
     QTabBar::mousePressEvent(event);
 }
@@ -731,7 +821,10 @@ static bool verticalTabShape(QTabBar::Shape shape)
 
 void TabBar::mouseMoveEvent(QMouseEvent *event)
 {
+    const int band = containerStripHeight();
     const QPoint pos = event->position().toPoint();
+    const QPoint spos = pos - QPoint(0, band);
+    const bool inBand = band > 0 && pos.y() >= 0 && pos.y() < band;
     // TABS02: an active inner-edge width drag eats the move — the
     // strip resizes instead of the press acting on a tab.
     if (m_resizing) {
@@ -747,18 +840,35 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
     // TABS02: the grip zone advertises itself with a resize cursor.
     if (!(event->buttons() & Qt::LeftButton)
         && verticalTabShape(shape())) {
-        if (inResizeGrip(pos))
+        if (inResizeGrip(spos))
             setCursor(Qt::SizeHorCursor);
         else if (cursor().shape() == Qt::SizeHorCursor)
             unsetCursor();
     }
 
-    updateHoveredTab(pos);
+    // CONT06: track header hover (plain moves and header drags) and
+    // the rebind target a dragged tab is hovering over.
+    if (band > 0) {
+        const int hover = inBand ? containerHeaderAt(pos) : -1;
+        const int drop = (inBand && m_pressedTabIndex >= 0
+                          && (event->buttons() & Qt::LeftButton))
+            ? hover : -1;
+        if (hover != m_bandHoverHeader || drop != m_bandDropHeader) {
+            m_bandHoverHeader = hover;
+            m_bandDropHeader = drop;
+            update();
+        }
+    }
+
+    updateHoveredTab(spos);
     if (event->buttons() == Qt::LeftButton) {
-        const QPoint diff = pos - m_dragStartPos;
+        const QPoint diff = spos - m_dragStartPos;
         // "Tear the tab off" = drag away from the bar, perpendicular
         // to the tab strip; the direction depends on which edge the
-        // bar sits on (drag up for North, right for East, ...).
+        // bar sits on (drag up for North, right for East, ...).  A
+        // drag that lands on the header band is a rebind gesture, not
+        // a tear-off — the band suppresses it until the pointer
+        // actually leaves the widget.
         const bool vertical = verticalTabShape(shape());
         const int along = vertical ? diff.y() : diff.x();
         bool away;
@@ -781,11 +891,11 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
         }
         if (diff.manhattanLength() > QApplication::startDragDistance()
             && along < 3 && along > -3
-            && away) {
+            && away && !inBand) {
             QDrag *drag = new QDrag(this);
             QMimeData *mimeData = new QMimeData;
             QList<QUrl> urls;
-            int index = tabAt(event->position().toPoint());
+            int index = tabAt(spos);
             QUrl url = tabData(index).toUrl();
             urls.append(url);
             mimeData->setUrls(urls);
@@ -802,20 +912,26 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             drag->exec();
         }
     }
-    QTabBar::mouseMoveEvent(event);
+    if (band > 0) {
+        QMouseEvent shifted = shiftedMouseEvent(event, QPointF(0, -band));
+        QTabBar::mouseMoveEvent(&shifted);
+    } else {
+        QTabBar::mouseMoveEvent(event);
+    }
     // TABS02: mirror Qt's move-drag lifecycle — past the drag
     // threshold Qt floats its own rotated tab pixmap; hide that
     // widget and let paintEvent float a horizontal row instead.
     if (m_pressedTabIndex >= 0
         && event->buttons() & Qt::LeftButton) {
-        const QPoint diff = pos - m_dragStartPos;
+        const QPoint diff = spos - m_dragStartPos;
         if (!m_moveDragActive
             && diff.manhattanLength() > QApplication::startDragDistance())
             m_moveDragActive = true;
         if (m_moveDragActive) {
             m_moveDragVertical = verticalTabShape(shape())
                 && qAbs(diff.y()) > qAbs(diff.x());
-            m_moveDragMouseY = pos.y();
+            m_moveDragMouseY = spos.y();
+            m_moveDragMouseX = spos.x();
             hideNativeMovingTab();
             update();
         }
@@ -842,7 +958,23 @@ void TabBar::dropEvent(QDropEvent *event)
 
     if (!url.isEmpty() && url.isValid()) {
         event->acceptProposedAction();
-        int index = tabAt(event->position().toPoint());
+        const int band = containerStripHeight();
+        const QPoint pos = event->position().toPoint();
+        // CONT06: a drop on a level-1 header opens the url in that
+        // container; a drop on the row below keeps today's
+        // load-onto-tab / new-tab behavior.
+        if (band > 0 && pos.y() >= 0 && pos.y() < band) {
+            if (TabWidget *tabWidget =
+                    qobject_cast<TabWidget*>(parentWidget())) {
+                const int header = containerHeaderAt(pos);
+                if (header >= 0) {
+                    tabWidget->loadUrlInContainer(
+                        url, tabWidget->containerHeaders().value(header));
+                    return;
+                }
+            }
+        }
+        int index = tabAt(stripPos(pos));
         if (-1 != index) {
             setCurrentIndex(index);
             emit loadUrl(url, TabWidget::CurrentTab);
@@ -937,6 +1069,10 @@ QFont TabBar::containerChipFont() const
 // side strip and taller for the chip across the tab's top).
 QSize TabBar::containerChipSize(int index) const
 {
+    // CONT06: no chips inside a filtered level — the header already
+    // names the container.
+    if (containerStripHeight() > 0)
+        return QSize();
     const ContainerManager::Container c = containerForTab(index);
     if (c.id.isEmpty())
         return QSize();
@@ -944,6 +1080,315 @@ QSize TabBar::containerChipSize(int index) const
     if (verticalTabShape(shape()))
         return QSize(3, chipHeight + 2);
     return QSize(0, chipHeight + 3);
+}
+
+// CONT06 — level-1 container-header band ------------------------------
+//
+// The band occupies the top containerStripHeight() pixels of the bar
+// when the TabWidget's two-level mode has more than one container
+// owning tabs.  Tabs keep their natural layout — tabRect()/tabAt()
+// and Qt's internals all live in the "strip space" starting at
+// logical y=0 — so every event handler maps a physical point down by
+// the band height first (stripPos()) and the paint paths translate
+// up by the same amount.
+
+int TabBar::containerStripHeight() const
+{
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || !tabWidget->containerStripActive())
+        return 0;
+    return fontMetrics().height() + 9;
+}
+
+QPoint TabBar::stripPos(const QPoint &physicalPos) const
+{
+    return physicalPos - QPoint(0, containerStripHeight());
+}
+
+QString TabBar::containerHeaderId(int headerIndex) const
+{
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget)
+        return QString();
+    return tabWidget->containerHeaders().value(headerIndex);
+}
+
+// Preferred pixel width of one header cell — icon + name + count,
+// clamped so a long container name can't starve the other headers.
+static int containerHeaderCellWidth(const QString &text,
+                                    const QFontMetrics &fm)
+{
+    const int preferred = 8 + 16 + 4 + fm.horizontalAdvance(text) + 8;
+    return qBound(40, preferred, 170);
+}
+
+QRect TabBar::containerHeaderRect(int headerIndex) const
+{
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget)
+        return QRect();
+    const QStringList headers = tabWidget->containerHeaders();
+    if (headerIndex < 0 || headerIndex >= headers.count())
+        return QRect();
+    const QFontMetrics fm(font());
+    QVector<int> widths(headers.count());
+    int total = 0;
+    for (int i = 0; i < headers.count(); ++i) {
+        const ContainerManager::Container container =
+            ContainerManager::instance()->containerForId(headers.at(i));
+        const QString name = container.id.isEmpty()
+            ? tr("Tabs") : container.name;
+        widths[i] = containerHeaderCellWidth(
+            name + QLatin1Char(' ')
+                + QString::number(tabWidget->containerTabCount(
+                    headers.at(i))),
+            fm);
+        total += widths[i];
+    }
+    // Overflow shrinks every cell proportionally, never below an
+    // icon-and-count sliver.
+    const int avail = width() - 8 - qMax(0, headers.count() - 1) * 2;
+    if (total > avail && avail > 0) {
+        for (int i = 0; i < widths.count(); ++i)
+            widths[i] = qMax(24, qMin(widths[i],
+                widths[i] * avail / qMax(1, total)));
+    }
+    int x = 4;
+    for (int i = 0; i < headerIndex; ++i)
+        x += widths[i] + 2;
+    const int band = containerStripHeight();
+    return QRect(x, 1, widths[headerIndex], band - 2);
+}
+
+int TabBar::containerHeaderAt(const QPoint &physicalPos) const
+{
+    const int band = containerStripHeight();
+    if (band <= 0 || physicalPos.y() < 0 || physicalPos.y() >= band)
+        return -1;
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    const int headers = tabWidget ? tabWidget->containerHeaders().count()
+                                  : 0;
+    for (int i = 0; i < headers; ++i) {
+        if (containerHeaderRect(i).contains(physicalPos))
+            return i;
+    }
+    return -1;
+}
+
+void TabBar::paintContainerStrip(QPainter *painter)
+{
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget)
+        return;
+    const int band = containerStripHeight();
+    const QStringList headers = tabWidget->containerHeaders();
+    const QString active = tabWidget->activeContainerHeader();
+    ContainerManager *manager = ContainerManager::instance();
+
+    painter->fillRect(0, 0, width(), band,
+                      palette().color(QPalette::Window).darker(103));
+    for (int i = 0; i < headers.count(); ++i) {
+        const QString id = headers.at(i);
+        const QRect rect = containerHeaderRect(i);
+        const bool isActive = (id == active);
+        const ContainerManager::Container container =
+            manager->containerForId(id);
+        const QColor accent = container.color.isValid()
+            ? container.color : palette().color(QPalette::Mid);
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        QColor fill = palette().color(QPalette::Window);
+        if (isActive)
+            fill = palette().color(QPalette::Base);
+        else if (i == m_bandHoverHeader || i == m_bandPressedHeader)
+            fill = fill.lighter(112);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(fill);
+        painter->drawRoundedRect(rect.adjusted(0, 0, 0, 1), 4, 4);
+        // The container color rides the cell's bottom edge — same
+        // accent language as the CONT02 tab strip.
+        painter->fillRect(rect.left() + 4, rect.bottom() - 2,
+                          rect.width() - 8, isActive ? 3 : 2, accent);
+        if (i == m_bandDropHeader) {
+            painter->setPen(QPen(palette().color(QPalette::Highlight),
+                                 2));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4);
+        }
+        if (i == m_bandFocusHeader && hasFocus()) {
+            QStyleOptionFocusRect option;
+            option.initFrom(this);
+            option.rect = rect.adjusted(2, 2, -2, -2);
+            style()->drawPrimitive(QStyle::PE_FrameFocusRect, &option,
+                                   painter, this);
+        }
+
+        // Swatch + name + count badge.
+        const int iconSize = 14;
+        QRect iconRect(rect.left() + 6,
+                       rect.top() + (rect.height() - iconSize) / 2 - 2,
+                       iconSize, iconSize);
+        ContainerManager::colorIcon(accent).paint(
+            painter, iconRect, Qt::AlignCenter);
+        const QString name = container.id.isEmpty()
+            ? tr("Tabs") : container.name;
+        const QString text = tr("%1 (%2)")
+            .arg(name)
+            .arg(tabWidget->containerTabCount(id));
+        const QRect textRect(rect.left() + iconSize + 10, rect.top(),
+                             rect.width() - iconSize - 14,
+                             rect.height() - 3);
+        painter->setFont(font());
+        painter->setPen(palette().color(
+            isActive ? QPalette::Text : QPalette::WindowText));
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          fontMetrics().elidedText(text, Qt::ElideRight,
+                                                   textRect.width()));
+        painter->restore();
+    }
+}
+
+// QTabBar lays per-tab side buttons and its scroll buttons out in
+// strip space — with the band up everything sits containerStripHeight()
+// pixels too high.  Qt repositions them on every layout, so any child
+// still inside the band zone shifts down by the band height.
+void TabBar::shiftChildrenBelowStrip()
+{
+    const int band = containerStripHeight();
+    if (band <= 0)
+        return;
+    const bool vertical = verticalTabShape(shape());
+    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
+                                               QTabBar::RightSide };
+    const QObjectList kids = children();
+    for (QObject *kid : kids) {
+        QWidget *child = qobject_cast<QWidget*>(kid);
+        if (!child || child == m_preview || child->y() >= band)
+            continue;
+        bool isTabButton = false;
+        for (int i = 0; i < count() && !isTabButton; ++i) {
+            for (const QTabBar::ButtonPosition side : sides) {
+                if (tabButton(i, side) == child) {
+                    isTabButton = true;
+                    break;
+                }
+            }
+        }
+        // Vertical tab buttons are placed by layoutRowTabButtons(),
+        // which already knows about the band.
+        if (isTabButton && vertical)
+            continue;
+        child->move(child->x(), child->y() + band);
+    }
+}
+
+// Screen readers can't see the painted headers — carry them on the
+// bar's description instead.
+void TabBar::updateAccessibleStrip()
+{
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (!tabWidget || !tabWidget->containerStripActive()) {
+        if (!accessibleDescription().isEmpty())
+            setAccessibleDescription(QString());
+        return;
+    }
+    ContainerManager *manager = ContainerManager::instance();
+    QStringList parts;
+    const QStringList headers = tabWidget->containerHeaders();
+    const QString active = tabWidget->activeContainerHeader();
+    for (const QString &id : headers) {
+        const ContainerManager::Container container =
+            manager->containerForId(id);
+        parts.append(tr("%1 (%2 tabs%3)")
+            .arg(container.id.isEmpty() ? tr("Tabs") : container.name)
+            .arg(tabWidget->containerTabCount(id))
+            .arg(id == active ? tr(", active") : QString()));
+    }
+    setAccessibleDescription(tr("Container strip: %1")
+                             .arg(parts.join(QLatin1String(", "))));
+}
+
+// The band is real widget height — the strip below keeps its natural
+// tab layout.
+QSize TabBar::sizeHint() const
+{
+    QSize size = QTabBar::sizeHint();
+    size.rheight() += containerStripHeight();
+    return size;
+}
+
+QSize TabBar::minimumSizeHint() const
+{
+    QSize size = QTabBar::minimumSizeHint();
+    size.rheight() += containerStripHeight();
+    return size;
+}
+
+// Arrow-key header nav: Up leaves the tab row into the band,
+// Left/Right walk the headers, Return/Space activates, Down/Escape
+// drops back to the row.
+void TabBar::keyPressEvent(QKeyEvent *event)
+{
+    const int band = containerStripHeight();
+    TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (band <= 0 || !tabWidget) {
+        QTabBar::keyPressEvent(event);
+        return;
+    }
+    const QStringList headers = tabWidget->containerHeaders();
+    if (m_bandFocusHeader >= 0) {
+        switch (event->key()) {
+        case Qt::Key_Left:
+            m_bandFocusHeader = qMax(0, m_bandFocusHeader - 1);
+            break;
+        case Qt::Key_Right:
+            m_bandFocusHeader = qMin(headers.count() - 1,
+                                     m_bandFocusHeader + 1);
+            break;
+        case Qt::Key_Home:
+            m_bandFocusHeader = 0;
+            break;
+        case Qt::Key_End:
+            m_bandFocusHeader = headers.count() - 1;
+            break;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+        case Qt::Key_Space:
+            tabWidget->setActiveContainerHeader(
+                containerHeaderId(m_bandFocusHeader));
+            break;
+        case Qt::Key_Down:
+        case Qt::Key_Escape:
+            m_bandFocusHeader = -1;
+            break;
+        default:
+            QTabBar::keyPressEvent(event);
+            return;
+        }
+        update();
+        return;
+    }
+    if (event->key() == Qt::Key_Up
+        && (!verticalTabShape(shape()) || currentIndex() <= 0)) {
+        m_bandFocusHeader = qMax(
+            0, headers.indexOf(tabWidget->activeContainerHeader()));
+        update();
+        return;
+    }
+    QTabBar::keyPressEvent(event);
+}
+
+// A mouse event whose position() is shifted into strip space — Qt's
+// own handlers (press-to-select, move drags, hover) all resolve tabs
+// through it.
+static QMouseEvent shiftedMouseEvent(const QMouseEvent *event,
+                                     const QPointF &delta)
+{
+    return QMouseEvent(event->type(), event->position() + delta,
+                       event->scenePosition() + delta,
+                       event->globalPosition(), event->button(),
+                       event->buttons(), event->modifiers());
 }
 
 // TABGRP01: the tab's group id, or empty when ungrouped / the bar is
@@ -982,8 +1427,15 @@ QString TabBar::groupChipLabel(int index) const
 // CONT02: after the style paints the tab, container tabs get their
 // accent — a strip on the tab's outer edge (top for a horizontal bar,
 // the free side for a vertical one) plus a name chip just inside it.
+// CONT06: with the two-level band up, every tab paints containerStripHeight()
+// pixels lower and the band paints above it in physical space.
 void TabBar::paintEvent(QPaintEvent *event)
 {
+    const int band = containerStripHeight();
+    if (band > 0) {
+        QPainter bandPainter(this);
+        paintContainerStrip(&bandPainter);
+    }
     if (verticalTabShape(shape())) {
         // TABS02: rows, not rotated tabs — each vertical tab paints
         // through the horizontal North shape so its title stays
@@ -992,7 +1444,8 @@ void TabBar::paintEvent(QPaintEvent *event)
         // own layout positions them transposed for West/East shapes.
         layoutRowTabButtons();
         QPainter painter(this);
-        painter.fillRect(event->rect(),
+        painter.translate(0, band);
+        painter.fillRect(event->rect().translated(0, -band),
                          palette().color(QPalette::Window));
         for (int index = 0; index < count(); ++index) {
             if (m_moveDragActive && m_moveDragVertical
@@ -1038,9 +1491,21 @@ void TabBar::paintEvent(QPaintEvent *event)
         painter.setPen(palette().color(QPalette::Mid));
         if (shape() == QTabBar::RoundedEast
             || shape() == QTabBar::TriangularEast)
-            painter.drawLine(0, 0, 0, height());
+            painter.drawLine(0, 0, 0, height() - band);
         else
-            painter.drawLine(width() - 1, 0, width() - 1, height());
+            painter.drawLine(width() - 1, 0, width() - 1,
+                             height() - band);
+    } else if (band > 0) {
+        // CONT06: horizontal shapes hand-paint each tab under the
+        // band — QTabBar::paintEvent has no way to offset the row.
+        QPainter painter(this);
+        painter.translate(0, band);
+        for (int index = 0; index < count(); ++index) {
+            QStyleOptionTab option;
+            initStyleOption(&option, index);
+            style()->drawControl(QStyle::CE_TabBarTab, &option,
+                                 &painter, this);
+        }
     } else {
         QTabBar::paintEvent(event);
     }
@@ -1050,7 +1515,14 @@ void TabBar::paintEvent(QPaintEvent *event)
     const int strip = 3;
 
     QPainter painter(this);
-    for (int index = 0; index < count(); ++index) {
+    // Every overlay below the band still measures against tabRect()'s
+    // strip coordinates — translate once instead of touching each
+    // chip/badge/pill rect.
+    painter.translate(0, band);
+    // CONT06: inside a filtered level the container chips are
+    // redundant — every tab in the row shares the header's container.
+    // They stay on in single-row (inline chips) mode.
+    for (int index = 0; band <= 0 && index < count(); ++index) {
         const ContainerManager::Container container = containerForTab(index);
         if (container.id.isEmpty())
             continue;
@@ -1317,6 +1789,9 @@ void TabBar::tabLayoutChange()
     QTabBar::tabLayoutChange();
     if (verticalTabShape(shape()))
         layoutRowTabButtons();
+    // CONT06: Qt just re-placed every child in strip space — move
+    // them below the header band.
+    shiftChildrenBelowStrip();
 }
 
 // TABS02: ~5px along the strip's content-facing edge is the width
@@ -1343,6 +1818,9 @@ bool TabBar::inResizeGrip(const QPoint &pos) const
 // them to the row ends the North painting reserves space for.
 void TabBar::layoutRowTabButtons()
 {
+    // CONT06: the option rects are strip coordinates — the widgets
+    // they position are physical, so the band height lands here.
+    const int band = containerStripHeight();
     for (int index = 0; index < count(); ++index) {
         QStyleOptionTab option;
         initStyleOption(&option, index);
@@ -1365,7 +1843,7 @@ void TabBar::layoutRowTabButtons()
                 style()->subElementRect(element, &option, this);
             if (button->size().isEmpty())
                 button->resize(button->sizeHint());
-            button->move(rect.topLeft());
+            button->move(rect.topLeft() + QPoint(0, band));
         }
     }
 }
@@ -1432,6 +1910,7 @@ void TabBar::tabInserted(int position)
         installCloseButton(position);
     updateCloseButtonVisibility();
     updateVisibility();
+    updateAccessibleStrip();
 }
 
 void TabBar::tabRemoved(int position)
@@ -1440,7 +1919,8 @@ void TabBar::tabRemoved(int position)
     // Indices shifted — recompute what (if anything) the cursor is
     // over now that the tab under it may be a different one.
     m_hoveredTab = -1;
-    updateHoveredTab(mapFromGlobal(QCursor::pos()));
+    updateHoveredTab(stripPos(mapFromGlobal(QCursor::pos())));
+    updateAccessibleStrip();
     updateCloseButtonVisibility();
     updateVisibility();
 }
@@ -1454,10 +1934,13 @@ void TabBar::updateVisibility()
     hideTabPreview();
     // TABGRP01: a collapsed group can leave a single chip on the strip
     // — the bar must stay reachable so the chip can be re-expanded.
+    // CONT06: a live header band keeps the bar up at any tab count —
+    // the headers are the only way back to the filtered-out levels.
     bool collapsedGroups = false;
     if (TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget()))
         collapsedGroups = tabWidget->hasCollapsedTabGroup();
-    setVisible((count()) > 1 || m_showTabBarWhenOneTab || collapsedGroups);
+    setVisible((count()) > 1 || m_showTabBarWhenOneTab || collapsedGroups
+               || containerStripHeight() > 0);
     bool enabled = (count() == 1);
     if (m_viewTabBarAction->isEnabled() != enabled)
         m_viewTabBarAction->setEnabled(enabled);

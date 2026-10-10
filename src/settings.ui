@@ -2937,6 +2937,44 @@
         </widget>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="containerDisplayLayout">
+         <item>
+          <widget class="QLabel" name="containerDisplayLabel">
+           <property name="text">
+            <string>Container display:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="containerDisplayCombo">
+           <property name="accessibleName">
+            <string>Container tab display mode</string>
+           </property>
+           <property name="toolTip">
+            <string>Two-level strip groups container tabs under their own header row; inline chips keep every tab in one row with a container label.</string>
+           </property>
+           <item>
+            <property name="text">
+             <string>Inline chips</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Two-level strip</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         <item>
+          <spacer name="containerDisplaySpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
         <widget class="QStackedWidget" name="containersStack">
          <property name="currentIndex">
           <number>0</number>

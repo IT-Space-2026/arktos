@@ -69,6 +69,7 @@
 #include "tabwidget.h"
 
 class QTimer;
+class QPainter;
 class TabPreview;
 
 /*
@@ -120,6 +121,17 @@ public:
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();
 
+    // CONT06: the level-1 container-header band painted along the
+    // strip's top edge when the TabWidget's two-level mode has more
+    // than one container owning tabs.  The band is real height on the
+    // widget (sizeHint grows); tabs stay laid out below it in "strip
+    // coordinates" — every mouse handler maps physical event pos to
+    // stripPos() before tabAt()/tabRect() math.
+    int containerStripHeight() const;
+    int containerHeaderAt(const QPoint &physicalPos) const;
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 protected:
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
@@ -130,6 +142,7 @@ protected:
     void dropEvent(QDropEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
     QSize tabSizeHint(int index) const override;
     QSize minimumTabSizeHint(int index) const override;
     void tabLayoutChange() override;
@@ -178,6 +191,16 @@ private:
     bool inResizeGrip(const QPoint &pos) const;
     void layoutRowTabButtons();
     void hideNativeMovingTab();
+    // CONT06: level-1 band helpers — header geometry and painting
+    // live in physical widget space (the top containerStripHeight()
+    // pixels); stripPos() maps a physical event point into the
+    // tabRect() space below the band.
+    QPoint stripPos(const QPoint &physicalPos) const;
+    QRect containerHeaderRect(int headerIndex) const;
+    QString containerHeaderId(int headerIndex) const;
+    void paintContainerStrip(QPainter *painter);
+    void shiftChildrenBelowStrip();
+    void updateAccessibleStrip();
     friend class TabWidget;
 
     QPoint m_dragStartPos;
@@ -205,6 +228,17 @@ private:
     bool m_moveDragVertical;
     int m_moveDragMouseY;
     int m_moveDragGrabOffset;
+    // CONT06: level-1 band state — the hovered header, the header a
+    // press started on (click selects, drag to another header
+    // reorders), the header a dragged tab is hovering (rebind
+    // target), the keyboard-focused header, and the horizontal
+    // move-drag float used when the band is up.
+    int m_bandHoverHeader = -1;
+    int m_bandPressedHeader = -1;
+    int m_bandDropHeader = -1;
+    int m_bandFocusHeader = -1;
+    int m_moveDragMouseX = 0;
+    int m_moveDragGrabOffsetX = 0;
 };
 
 

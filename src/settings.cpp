@@ -1085,6 +1085,9 @@ void SettingsDialog::loadFromSettings()
     suspendTabsMinutes->setEnabled(suspendTabs->isChecked());
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
     openLinksFromAppsIn->setCurrentIndex(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
+    // CONT06: 0 = inline chips, 1 = two-level strip (the default).
+    containerDisplayCombo->setCurrentIndex(qBound(0,
+        settings.value(QLatin1String("containerDisplay"), 1).toInt(), 1));
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));
@@ -1404,6 +1407,7 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("suspendTabsMinutes"), suspendTabsMinutes->value());
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
+    settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));

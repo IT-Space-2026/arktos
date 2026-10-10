@@ -34,6 +34,7 @@
 #include <qimage.h>
 #include <qprocess.h>
 #include <qsettings.h>
+#include <qpointer.h>
 #include <qsignalspy.h>
 #include <qstandardpaths.h>
 #include <qtcpserver.h>
@@ -284,6 +285,16 @@ private slots:
     void sessionRestoresContainers();
     void containerChipIndicator();
 
+    // CONT06: the two-level container strip — per-container level-1
+    // headers, filtered level-2 rows, live counts, cross-level rebind,
+    // empty-level removal, session round-trip and group nesting.
+    void twoLevelStripBasics();
+    void twoLevelStripEmptyLevelFallsBack();
+    void twoLevelStripReopenAcrossLevels();
+    void twoLevelStripSessionRoundTrip();
+    void twoLevelStripGroupStaysNested();
+    void twoLevelStripHeaderReorder();
+
     // CONT04: site->container "always open" rules — persistence,
     // matching, and the navigation-time diversion.
     void siteRuleCrud();
@@ -346,6 +357,10 @@ void tst_ContainerManager::init()
     if (qEnvironmentVariable("CONT01_STAGE") != QLatin1String("verify")) {
         QSettings settings;
         settings.clear();
+        // CONT06: the pre-CONT06 tests below were written against the
+        // single-row (inline chips) strip — pin that mode; the
+        // two-level tests opt back in explicitly.
+        settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
     }
     m_server->requests.clear();
     m_server->cookieHeaders.clear();
@@ -1560,6 +1575,258 @@ void tst_ContainerManager::historyIsGlobalByDesign()
     }
     QTRY_VERIFY_WITH_TIMEOUT(
         HistoryManager::instance()->historyContains(url.toString()), 15000);
+}
+
+// CONT06: with the two-level strip on (the default), a window whose
+// tabs span containers shows only the ACTIVE level's tabs — the rest
+// detach into their own level's store.  The default "Tabs" header is
+// always first, container headers appear once they own a tab, the
+// counts cover visible + hidden tabs, and a background container tab
+// never leaks into the wrong level.
+void tst_ContainerManager::twoLevelStripBasics()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString id = create(QLatin1String("Work"));
+
+    TabWidget widget;
+    QVERIFY(widget.twoLevelStrip());
+    widget.newTab();
+    WebView *containerTab = widget.makeNewTabInContainer(id, false);
+    QVERIFY(containerTab);
+
+    // Two levels exist: the pinned default header + the container's.
+    QVERIFY(widget.containerStripActive());
+    QCOMPARE(widget.containerHeaders(),
+             (QStringList() << QString() << id));
+    QCOMPARE(widget.activeContainerHeader(), QString());
+    QCOMPARE(widget.containerTabCount(QString()), 1);
+    QCOMPARE(widget.containerTabCount(id), 1);
+    // A background container tab joins its level's hidden row — the
+    // visible strip holds only default-level tabs.
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+
+    // The level-1 band is real height on the bar and carries the
+    // header names/counts for assistive tools.
+    TabBar *bar = widget.tabBar();
+    widget.resize(600, 400);
+    QVERIFY(bar->containerStripHeight() > 0);
+    QCOMPARE(bar->containerHeaderAt(QPoint(6, 2)), 0);
+    QVERIFY(bar->accessibleDescription().contains(QLatin1String("Work")));
+
+    // Switching headers swaps the visible row; the other level waits
+    // in its store — no tab is lost or mixed.
+    widget.setActiveContainerHeader(id);
+    QCOMPARE(widget.activeContainerHeader(), id);
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.webView(0), containerTab);
+    for (int i = 0; i < widget.count(); ++i)
+        QCOMPARE(widget.containerIdForTab(i), id);
+
+    widget.setActiveContainerHeader(QString());
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QCOMPARE(widget.containerTabCount(id), 1);
+}
+
+// CONT06: a container level whose last tab closes drops off the
+// header row entirely, and the strip falls back to the default level —
+// the lastTabClosed signal must not fire while other levels still
+// hold tabs.
+void tst_ContainerManager::twoLevelStripEmptyLevelFallsBack()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString idA = create(QLatin1String("A"));
+    const QString idB = create(QLatin1String("B"));
+
+    TabWidget widget;
+    QSignalSpy closedSpy(&widget, &TabWidget::lastTabClosed);
+    widget.newTab();
+    widget.makeNewTabInContainer(idB, false);
+    WebView *a = widget.makeNewTabInContainer(idA, true);
+    QVERIFY(a);
+    QCOMPARE(widget.activeContainerHeader(), idA);
+    QCOMPARE(widget.containerHeaders().count(), 3);
+
+    // Closing the only tab of the active level empties it out of the
+    // strip and lands back on the default level.
+    widget.closeTab(0);
+    QCOMPARE(widget.containerTabCount(idA), 0);
+    QVERIFY(!widget.containerHeaders().contains(idA));
+    QCOMPARE(widget.activeContainerHeader(), QString());
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QVERIFY(closedSpy.isEmpty());
+
+    // The same holds when the LAST non-default level empties — the
+    // band itself disappears (single level = single row).  idB holds
+    // the earlier background tab plus this one — close both.
+    widget.makeNewTabInContainer(idB, true);
+    QCOMPARE(widget.activeContainerHeader(), idB);
+    QVERIFY(widget.containerStripActive());
+    widget.closeTab(0);
+    QCOMPARE(widget.containerTabCount(idB), 1);
+    widget.closeTab(0);
+    QCOMPARE(widget.containerHeaders(),
+             QStringList() << QString());
+    QVERIFY(!widget.containerStripActive());
+    QCOMPARE(widget.tabBar()->containerStripHeight(), 0);
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(closedSpy.isEmpty());
+}
+
+// CONT06: dropping a level-2 tab on a level-1 header rebinds it —
+// reopen-in-container semantics: a fresh tab on the target profile,
+// the old one closes inside its (now hidden) level.
+void tst_ContainerManager::twoLevelStripReopenAcrossLevels()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString id = create();
+    ContainerManager *manager = ContainerManager::instance();
+
+    TabWidget widget;
+    widget.newTab();
+    widget.makeNewTabInContainer(id, false);
+    QCOMPARE(widget.activeContainerHeader(), QString());
+    QCOMPARE(widget.containerTabCount(id), 1);
+
+    QPointer<WebView> orig = widget.webView(0);
+    widget.reopenTabInContainer(0, id);
+
+    // The replacement raised the strip to the target level; the old
+    // tab's original level kept its remaining tabs.
+    QCOMPARE(widget.activeContainerHeader(), id);
+    QCOMPARE(widget.containerTabCount(id), 2);
+    QCOMPARE(widget.containerTabCount(QString()), 0);
+    QCOMPARE(widget.count(), 2);
+    for (int i = 0; i < widget.count(); ++i) {
+        QCOMPARE(widget.containerIdForTab(i), id);
+        QCOMPARE(widget.webView(i)->page()->profile(),
+                 manager->profileFor(id));
+    }
+    // The rebind was a swap, not a move — the old page is gone.
+    QTRY_VERIFY_WITH_TIMEOUT(orig.isNull(), 5000);
+}
+
+// CONT06: the active level rides the session blob (v4) — a window
+// saved on a container level restores onto it, every hidden level's
+// tabs come back, and the saved-current tab reselects inside its
+// level.
+void tst_ContainerManager::twoLevelStripSessionRoundTrip()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString idA = create(QLatin1String("A"));
+    const QString idB = create(QLatin1String("B"));
+
+    QByteArray state;
+    {
+        TabWidget widget;
+        widget.newTab();
+        widget.makeNewTabInContainer(idA, true);
+        widget.makeNewTabInContainer(idA, false);
+        widget.makeNewTabInContainer(idB, false);
+        QCOMPARE(widget.activeContainerHeader(), idA);
+        QCOMPARE(widget.count(), 2);
+        state = widget.saveState();
+    }
+
+    TabWidget restored;
+    QVERIFY(restored.restoreState(state));
+    QCOMPARE(restored.activeContainerHeader(), idA);
+    // The visible row is exactly the saved level; nothing mixed in.
+    QCOMPARE(restored.count(), 2);
+    for (int i = 0; i < restored.count(); ++i)
+        QCOMPARE(restored.containerIdForTab(i), idA);
+    // Hidden levels survived the round trip intact.
+    QCOMPARE(restored.containerTabCount(QString()), 1);
+    QCOMPARE(restored.containerTabCount(idB), 1);
+    QCOMPARE(restored.containerHeaders(),
+             (QStringList() << QString() << idA << idB));
+    // The saved current tab — a level-A tab — is current again.
+    QVERIFY(restored.currentWebView());
+    QCOMPARE(restored.currentWebView()->containerId(), idA);
+
+    // The other way round: a blob saved on the DEFAULT header with the
+    // container levels filtered out restores every level too.
+    QByteArray defaultState;
+    {
+        TabWidget widget;
+        widget.newTab();
+        widget.makeNewTabInContainer(idB, false);
+        defaultState = widget.saveState();
+    }
+    TabWidget restoredDefault;
+    QVERIFY(restoredDefault.restoreState(defaultState));
+    QCOMPARE(restoredDefault.activeContainerHeader(), QString());
+    QCOMPARE(restoredDefault.count(), 1);
+    QCOMPARE(restoredDefault.containerTabCount(idB), 1);
+}
+
+// CONT06: groups stay nested inside their container level — a
+// collapsed group in a filtered-out level hides with it, and its
+// members still serialize (the chip carries them through
+// orderedWebViews' hidden-level pass).
+void tst_ContainerManager::twoLevelStripGroupStaysNested()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString id = create();
+
+    TabWidget widget;
+    widget.newTab();
+    WebView *a = widget.makeNewTabInContainer(id, true);
+    WebView *b = widget.makeNewTabInContainer(id, false);
+    QVERIFY(a && b);
+    widget.groupTabWith(widget.webViewIndex(b), widget.webViewIndex(a));
+    const QString gid = widget.tabGroupId(widget.webViewIndex(a));
+    QVERIFY(!gid.isEmpty());
+    widget.setTabGroupCollapsed(gid, true);
+    QVERIFY(widget.hasCollapsedTabGroup());
+
+    // Filtering the group's whole level out detaches the chip into
+    // the level's store; the collapsed members stay with the group.
+    widget.setActiveContainerHeader(QString());
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.containerIdForTab(0), QString());
+    QCOMPARE(widget.containerTabCount(id), 2);
+
+    // Session round-trip loses nothing — both group members come
+    // back in the container's level.
+    const QByteArray state = widget.saveState();
+    TabWidget restored;
+    QVERIFY(restored.restoreState(state));
+    QCOMPARE(restored.containerTabCount(id), 2);
+    QCOMPARE(restored.containerTabCount(QString()), 1);
+    restored.setActiveContainerHeader(id);
+    QCOMPARE(restored.count(), 2);
+    const QString restoredGid = restored.tabGroupId(0);
+    QVERIFY(!restoredGid.isEmpty());
+    QCOMPARE(restored.tabGroupId(0), restored.tabGroupId(1));
+}
+
+// CONT06: level-1 headers drag-reorder — the default header is pinned
+// first, the rest move freely.
+void tst_ContainerManager::twoLevelStripHeaderReorder()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    const QString idA = create(QLatin1String("A"));
+    const QString idB = create(QLatin1String("B"));
+
+    TabWidget widget;
+    widget.newTab();
+    widget.makeNewTabInContainer(idA, false);
+    widget.makeNewTabInContainer(idB, false);
+    const QStringList initial =
+        QStringList() << QString() << idA << idB;
+    QCOMPARE(widget.containerHeaders(), initial);
+
+    // The pinned default header cannot move.
+    widget.moveContainerHeader(0, 1);
+    QCOMPARE(widget.containerHeaders(), initial);
+
+    // Container headers reorder around it.
+    widget.moveContainerHeader(2, 1);
+    QCOMPARE(widget.containerHeaders(),
+             (QStringList() << QString() << idB << idA));
 }
 
 QTEST_MAIN(tst_ContainerManager)

@@ -209,6 +209,11 @@ Containers:
 - Container management page in Settings (CONT03).
 - Site-to-container pinning (CONT04).
 - End-to-end isolation audit (CONT05).
+- Optional two-level container tab strip: when multiple containers own
+  tabs, a level-1 header row (color, name, live tab counts) filters
+  the tab row to the selected container; header click switches, tab
+  drag onto a header rebinds, headers reorder, and the single-row
+  inline-chips mode remains a setting (CONT06).
 
 Tor:
 - Managed tor daemon plumbing (TOR01).
