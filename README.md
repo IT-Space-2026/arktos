@@ -77,9 +77,9 @@ browsing profile:
   a proper certificate-error interstitial, and verified WebRTC/DNS leak
   behavior.
 - **Encrypted credential storage** — AES-256-GCM store with optional
-  Argon2id master passphrase; a Rust implementation (rustcore) is
-  available behind `CONFIG+=rustcore`, byte-compatible with the C++
-  store.
+  Argon2id master passphrase; a Rust implementation (rustcore) is the
+  default backend — the crates are default-on, see Build flags —
+  byte-compatible with the C++ fallback used in no-rust builds.
 - **Tracking-parameter stripping** — ClearURLs-style rules strip
   tracking query params from navigations (vendored rules +
   data-dir override; rustcore backend, C++ fallback).
@@ -90,8 +90,8 @@ browsing profile:
 - **Rust parsers for untrusted input** — OpenSearch descriptors,
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.
-- **Rust bookmark + history stores** — with `CONFIG+=rustcore` the
-  crate is also the canonical bookmark + history store:
+- **Rust bookmark + history stores** — in default (rust-enabled)
+  builds the crate is also the canonical bookmark + history store:
   bookmarks.xbel stays the on-disk format but is parsed and emitted
   in Rust (queried lazily, one node handle per call — no bulk tree
   marshal), and history lives in a SQLite history.db (visits plus
@@ -103,7 +103,7 @@ browsing profile:
   per-tab records carry url, container binding, tab group and an
   engine tag beside an opaque engine-state blob, keeping the format
   engine-neutral (a pre-Rust QSettings session still restores once
-  through the legacy reader). With the flag set the crate also owns
+  through the legacy reader). The crate also owns
   the omnibox: the location bar's url-or-search routing decision
   (rc_classify_input — a ported QUrl::fromUserInput heuristic plus
   keyword/search-fallback handling, verdict diffed against the old
@@ -131,7 +131,7 @@ browsing profile:
   strings cannot inject markup into chrome.
 - **In-browser PDFs, sanitized before view** — PDFs open in Chromium's
   built-in PDFium viewer (Preferences → Privacy → PDF Documents).
-  In `CONFIG+=rustcore` builds the bytes are first fetched through the
+  In rust-enabled builds the bytes are first fetched through the
   page's own profile (cookies, Tor SOCKS routing and container
   isolation ride along) and rewritten by a Rust policy pass that strips
   JavaScript, /Launch and auto-actions, embedded files and
@@ -207,9 +207,9 @@ browsing profile:
   third-party/domain restrictions, $important/$badfilter/$removeparam,
   $redirect to bundled stubs, cosmetic extended selectors and a
   scriptlet subset.
-- **Optional Brave adblock-rust engine** — `qmake
-  CONFIG+=adblock_rust` after `cargo build --release` in
-  src/adblock/rust; the built-in matcher stays the default. With the
+- **Brave adblock-rust engine** — compiled in by default (qmake runs
+  cargo; opt out with `CONFIG-=adblock_rust` or `CONFIG+=no-rust`);
+  the built-in matcher stays the runtime default. With the
   engine compiled in, Preferences → Privacy → Content Blocking lets
   you switch between the built-in matcher and Brave adblock-rust at
   runtime (no restart).
@@ -248,12 +248,12 @@ surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, and each selected row expands into a
 detail card in the panel's bottom pane. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
-enabled in `CONFIG+=rustdl` builds) — a connections-per-download
+compiled in by default) — a connections-per-download
 field, a cleanup policy for the finished-downloads list, and a
 "Parallel segments" toggle (default on) that has the built-in
 Chromium engine fetch range-capable downloads over multiple
-concurrent byte-range requests; it takes effect at restart. An
-optional Rust reqwest-based engine (`CONFIG+=rustdl`) accelerates
+concurrent byte-range requests; it takes effect at restart. A
+Rust reqwest-based engine (rustdl, compiled in by default) accelerates
 HTTP(S) downloads as parallel ranged GETs and holds the same privacy
 guarantees as the built-in engine: every request and each redirect hop
 is vetted by the same interceptor pipeline (HTTPS-first upgrade,
@@ -339,7 +339,7 @@ that swap means in practice:
 - **Inspector** — WebKit's built-in inspector became a DevTools host
   window: the inspected page hands its `devToolsPage` to a second
   QWebEngineView on the same profile.  A second, engine-neutral
-  panel (Tools → BiDi Dev Tools; `CONFIG+=rustcore` builds) talks
+  panel (Tools → BiDi Dev Tools; rust-enabled builds) talks
   WebDriver-BiDi-shaped commands to the engine — console log + JS
   eval, DOM tree, network request list, cookies/localStorage — over
   the loopback-only, Origin-token-gated remote-debugging socket
@@ -424,16 +424,22 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
 
 ### Build flags
 
-- `CONFIG+=adblock_rust` — Brave adblock-rust filter engine (needs a
-  user-local Rust toolchain: `cargo build --release` in
-  `src/adblock/rust` first)
-- `CONFIG+=rustcore` — Rust core crate: credential store backend,
-  URL tracking-param stripper, domain blocklist, untrusted-format
-  parsers, bookmark + history stores and the navigation/cookie
-  request-policy core (same toolchain; qmake runs cargo; C++ paths
-  stay the default without it)
-- `CONFIG+=rustdl` — Rust accelerated downloader (reqwest +
-  std::thread, segmented ranged downloads behind a C ABI)
+- **Rust crates — ON by default (RDEF01).** `.qmake.conf` adds
+  `CONFIG+=rustcore rustdl adblock_rust` whenever a cargo toolchain
+  resolves (PATH first, then the user-local rustup at
+  `~/.cargo/bin`; no sudo, no system packages) and qmake runs cargo
+  itself as part of `make`. Opt out per crate with
+  `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`, or
+  `CONFIG+=no-rust` for all three. With no toolchain at all qmake
+  warns loudly and builds the Qt fallback paths, so the tree always
+  configures. The crates:
+    - `rustcore` — credential store backend, URL tracking-param
+      stripper, domain blocklist, untrusted-format parsers,
+      bookmark + history stores and the navigation/cookie
+      request-policy core (the C++ paths are the no-rust fallback)
+    - `rustdl` — accelerated downloader (reqwest + std::thread,
+      segmented ranged downloads behind a C ABI)
+    - `adblock_rust` — Brave adblock-rust filter engine
 - `servo=1` — experimental Servo co-engine (ENG05): compiles the
   Servo backend against `spikes/servo/servo-embed/include`, then
   dlopens the prebuilt `libservo_embed.so` at runtime. The artifact

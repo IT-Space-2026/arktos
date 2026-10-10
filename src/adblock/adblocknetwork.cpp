@@ -72,11 +72,85 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
         return decision;
 
 #if defined(ARORA_ADBLOCK_RUST)
-    if (m_rustEngine)
-        return m_rustEngine->check(url, firstPartyUrl, resourceType);
+    if (m_rustEngine) {
+        // Page-level unbreak is evaluated first, same as the native
+        // paths: the adblock crate leaves document-scope exceptions to
+        // the embedder, so an unbroken page must never reach it — a
+        // stray subresource block on a whitelisted page is a site-
+        // breaking regression.  $document unbreaks outright;
+        // $genericblock suppresses generic rules in a way the Rust
+        // engine cannot scope per-request, so those pages take the
+        // native matcher wholesale.
+        const QString urlString = QString::fromUtf8(url.toEncoded());
+        const QString documentHost =
+                firstPartyUrl.isEmpty() ? QString() : firstPartyUrl.host();
+        const QString documentString = firstPartyUrl.isEmpty()
+                ? urlString : QString::fromUtf8(firstPartyUrl.toEncoded());
+        const int unbreak = documentUnbreakUnlocked(documentString,
+                                                  documentHost);
+        if (unbreak == 1)
+            return decision;
+        if (unbreak == 2)
+            return matchNativeUnlocked(url, firstPartyUrl, resourceType);
+
+        // RDEF01 transition audit: the Rust engine is the primary
+        // matcher and its block/redirect/$removeparam verdicts stand,
+        // but an Allow falls through to the native matcher once.  The
+        // two engines' rule semantics diverge in a few places (the
+        // adblock crate scopes substring rules and $subdocument
+        // exceptions differently on document-type requests, drops a
+        // degenerate lone-"/" pattern, and only applies $removeparam
+        // to frame requests) — a missed block is a silent protection
+        // regression, while consulting the native matcher on allows
+        // keeps the composite at least as strict as the pre-Rust
+        // default and preserves its $removeparam coverage.
+        AdBlockDecision decision =
+            m_rustEngine->check(url, firstPartyUrl, resourceType);
+        if (decision.action != AdBlockDecision::Allow
+                && decision.redirectUrl.isEmpty())
+            return decision;
+        const AdBlockDecision native =
+            matchNativeUnlocked(url, firstPartyUrl, resourceType);
+        if (decision.action != AdBlockDecision::Allow) {
+            // A $removeparam rewrite arrives as Redirect + the
+            // already-stripped URL.  When the native matcher also
+            // strips params on this request, prefer its decision so
+            // the query surgery flows through Arora's own removeParams
+            // path — identical outcome, canonical representation.  A
+            // rust-only rewrite still stands.
+            return native.removeParams.isEmpty() ? decision : native;
+        }
+        return native;
+    }
 #endif
     return matchNativeUnlocked(url, firstPartyUrl, resourceType);
 }
+
+#if defined(ARORA_ADBLOCK_RUST)
+// Requires m_lock held (read) and m_enabled already checked.
+// Document-level unbreak scan shared with the native match paths:
+// returns 1 when a $document exception unbreaks the whole page, 2 when
+// $genericblock suppresses generic rules on it, 0 otherwise.
+int AdBlockNetwork::documentUnbreakUnlocked(
+        const QString &documentString, const QString &documentHost) const
+{
+    int result = 0;
+    for (const SubscriptionRules &rules : m_subscriptions) {
+        for (const int i : rules.exceptionIndex.pageRules) {
+            const AdBlockRule &rule = rules.exceptionRules.at(i);
+            if (rule.isDocumentException()
+                && rule.networkMatch(documentString, documentHost,
+                                     sc_mainFrameType))
+                return 1;
+            if (rule.isGenericBlock()
+                && rule.networkMatch(documentString, documentHost,
+                                     sc_mainFrameType))
+                result = 2;
+        }
+    }
+    return result;
+}
+#endif
 
 AdBlockDecision AdBlockNetwork::matchLinear(const QUrl &url,
                                             const QUrl &firstPartyUrl,

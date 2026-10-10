@@ -122,6 +122,13 @@ public slots:
 
 private:
     // Requires m_lock held (read) and m_enabled already checked.
+#if defined(ARORA_ADBLOCK_RUST)
+    // Document-level unbreak scan shared by the composite match():
+    // 1 = $document page exception (allow everything), 2 =
+    // $genericblock page (native matcher handles it), 0 = neither.
+    int documentUnbreakUnlocked(const QString &documentString,
+                                const QString &documentHost) const;
+#endif
     AdBlockDecision matchNativeUnlocked(
             const QUrl &requestUrl,
             const QUrl &firstPartyUrl,
