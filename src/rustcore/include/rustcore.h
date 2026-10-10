@@ -453,6 +453,20 @@ char *rc_history_suggest(const char *termUtf8, int64_t limit);
 int64_t rc_pal_score(const char *queryUtf8, const char *candidateUtf8);
 char *rc_pal_match(const char *queryUtf8, const char *itemsJsonUtf8);
 
+/* --- QR encoding (QRC01) ---------------------------------------------
+ * Nayuki's qrcodegen-rs behind the ABI — the same code lineage as the
+ * vendored C++ qrcodegen it replaces, so the matrix is bit-identical.
+ *
+ * rc_qr_encode(text, eccLevel, out) encodes UTF-8 text at eccLevel
+ * (0=Low 1=Medium 2=Quartile 3=High — the qrcodegen Ecc ordinals) and
+ * fills *out (free with rc_buffer_free) with:
+ *   u32le size, then size*size module bytes, row-major, 1 = dark,
+ *   0 = light, no quiet zone (renderers add the spec's 4 modules).
+ * RC_INVALID_ARGUMENT on a bad pointer, out-of-range level or an
+ * over-capacity payload — rc_last_error_message says which. */
+RcStatus rc_qr_encode(const char *textUtf8, int32_t eccLevel,
+                      RcBuffer *out);
+
 /* --- second-opinion TLS verification (SEC22) -------------------------
  * rc_tls_check performs a REAL blocking TLS handshake to host:port
  * (TLS 1.2/1.3, ALPN "http/1.1", SNI=host, 5 s connect / 5 s per-io /

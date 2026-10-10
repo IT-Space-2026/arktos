@@ -28,40 +28,89 @@
 #include <qpushbutton.h>
 #include <qboxlayout.h>
 
+#ifdef ARORA_RUSTCORE
+#include <qendian.h>
+
+#include <rustcore.h>
+#endif
+
 using qrcodegen::QrCode;
 
 // Quiet zone required by the QR spec: 4 modules on every side.
 static const int kQuietZoneModules = 4;
 
+// Paints a row-major 0/1 module matrix into a scaled image with the
+// quiet zone — shared by the rustcore matrix and the vendored C++
+// encoder's marshaled output.
+static QImage paintQrImage(int size, const QByteArray &modules,
+                           int minPixelSize)
+{
+    const int total = size + 2 * kQuietZoneModules;
+    const int scale = qMax(1, (minPixelSize + total - 1) / total);
+    QImage image(total * scale, total * scale, QImage::Format_RGB32);
+    image.fill(Qt::white);
+
+    QPainter painter(&image);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::black);
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            if (modules.at(y * size + x))
+                painter.drawRect((x + kQuietZoneModules) * scale,
+                                 (y + kQuietZoneModules) * scale,
+                                 scale, scale);
+        }
+    }
+    painter.end();
+    return image;
+}
+
 QImage QrCodeDialog::imageForText(const QString &text, int minPixelSize)
 {
-    try {
-        const QrCode qr = QrCode::encodeText(
-            text.toUtf8().constData(), QrCode::Ecc::MEDIUM);
+    int size = 0;
+    QByteArray modules;
 
-        const int modules = qr.getSize() + 2 * kQuietZoneModules;
-        const int scale = qMax(1, (minPixelSize + modules - 1) / modules);
-        QImage image(modules * scale, modules * scale,
-                     QImage::Format_RGB32);
-        image.fill(Qt::white);
-
-        QPainter painter(&image);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(Qt::black);
-        for (int y = 0; y < qr.getSize(); ++y) {
-            for (int x = 0; x < qr.getSize(); ++x) {
-                if (qr.getModule(x, y))
-                    painter.drawRect((x + kQuietZoneModules) * scale,
-                                     (y + kQuietZoneModules) * scale,
-                                     scale, scale);
+#ifdef ARORA_RUSTCORE
+    {
+        // QRC01: the rustcore encoder owns the matrix — qrcodegen-rs
+        // is the same code lineage as the vendored C++ encoder, so
+        // the modules come out identical.
+        const QByteArray utf8 = text.toUtf8();
+        RcBuffer buf = { nullptr, 0 };
+        const RcStatus status = rc_qr_encode(
+            utf8.constData(), int(QrCode::Ecc::MEDIUM), &buf);
+        if (status == RC_OK && buf.data && buf.len >= 4) {
+            const quint32 n = qFromLittleEndian<quint32>(buf.data);
+            if (n >= 21 && n <= 177 && quint64(n) * n + 4 == buf.len) {
+                size = int(n);
+                modules = QByteArray(
+                    reinterpret_cast<const char *>(buf.data) + 4,
+                    size * size);
             }
         }
-        painter.end();
-        return image;
-    } catch (const std::length_error &) {
-        // Payload exceeds QR capacity (~2.9 KB at any level).
-        return QImage();
+        if (buf.data)
+            rc_buffer_free(buf);
     }
+#endif
+
+    if (size == 0) {
+        // No-rust build and FFI-failure fallback: the vendored Nayuki
+        // encoder marshaled into the same matrix layout.
+        try {
+            const QrCode qr = QrCode::encodeText(
+                text.toUtf8().constData(), QrCode::Ecc::MEDIUM);
+            size = qr.getSize();
+            modules.resize(size * size);
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x)
+                    modules[y * size + x] = qr.getModule(x, y) ? 1 : 0;
+        } catch (const std::length_error &) {
+            // Payload exceeds QR capacity (~2.9 KB at any level).
+            return QImage();
+        }
+    }
+
+    return paintQrImage(size, modules, minPixelSize);
 }
 
 QrCodeDialog::QrCodeDialog(const QUrl &url, QWidget *parent)

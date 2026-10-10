@@ -222,6 +222,17 @@ article `content` fragment.
 - In a no-rust build ReaderMode keeps its injected-JS reader as the
   fallback path.
 
+## QR encoding (QRC01)
+
+`rc_qr_encode(text, ecc_level)` produces the QR module matrix for
+"Show QR for this page".  The encoder is Nayuki's `qrcodegen` crate —
+the same code lineage (and MIT license) as the vendored C++
+`qrcodegen.cpp` it replaces, so segmenting, the ECL boost and mask
+choice all come out bit-identical.  The out buffer is `u32le size`
+followed by `size*size` row-major module bytes (1 = dark); the quiet
+zone and painting stay Qt-side, and the C++ encoder remains as the
+no-rust / FFI-failure fallback.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

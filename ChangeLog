@@ -475,7 +475,7 @@ Sidebar panel (SIDE01):
 
 Link sharing (POL01):
     Right-click menus gain "Copy Clean Link", which copies the link — or the page address when clicked on plain page content — with tracking parameters stripped: utm_*, fbclid, gclid, msclkid, Mailchimp/HubSpot/Marketo identifiers and ~50 more names from a curated blocklist (extendable without a rebuild via the urlcleaner/extraParams settings key). Other query parameters, their order, and the #fragment are preserved; only http(s) URLs are touched.
-    Every context menu also offers "Show QR Code for This Page", popping a small dialog that renders the current page address as a scannable QR code (vendored MIT-licensed qrcodegen encoder) with the URL shown selectable underneath.
+    Every context menu also offers "Show QR Code for This Page", popping a small dialog that renders the current page address as a scannable QR code with the URL shown selectable underneath. Under the default Rust build the symbol is encoded in the Rust core (QRC01 — Nayuki's qrcodegen-rs, the same MIT-licensed lineage as the vendored C++ encoder, so the module matrix is bit-identical); the C++ encoder remains as the no-toolchain fallback.
 
 Tab strip polish (POL02):
     Ctrl+Shift+A (or Window → "Search Tabs...") opens a tab search: the command palette restricted to the open-tabs list across every window, fuzzy-filtered by title — Enter switches straight to the match. The full palette is unchanged; tabs-only is a per-open mode, not a sticky filter.
