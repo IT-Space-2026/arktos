@@ -82,7 +82,9 @@
 #include <qmenu.h>
 #include <qmimedata.h>
 #include <qpainter.h>
+#include <qsettings.h>
 #include <qstyle.h>
+#include <qstyleoption.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qurl.h>
@@ -114,6 +116,15 @@ TabBar::TabBar(QWidget *parent)
     , m_hoveredTab(-1)
     , m_preview(nullptr)
     , m_previewTimer(nullptr)
+    , m_verticalTabWidth(180)
+    , m_resizing(false)
+    , m_resizeStartX(0)
+    , m_resizeStartWidth(0)
+    , m_pressedTabIndex(-1)
+    , m_moveDragActive(false)
+    , m_moveDragVertical(false)
+    , m_moveDragMouseY(0)
+    , m_moveDragGrabOffset(0)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
@@ -163,10 +174,21 @@ TabBar::TabBar(QWidget *parent)
     // TABGRP01: while a left-button drag is live, remember where the
     // moved tab lands — on release a middle-of-tab drop stacks it into
     // the target's group instead of staying a plain reorder.
-    connect(this, &QTabBar::tabMoved, this, [this](int, int to) {
+    connect(this, &QTabBar::tabMoved, this, [this](int from, int to) {
         if (m_dragTracking)
             m_draggedIndex = to;
+        // TABS02: keep the tracked press index pointing at the same
+        // tab while a move drag slides it across the strip.
+        if (m_pressedTabIndex == from)
+            m_pressedTabIndex = to;
+        else if (m_pressedTabIndex > from && m_pressedTabIndex <= to)
+            --m_pressedTabIndex;
+        else if (m_pressedTabIndex < from && m_pressedTabIndex >= to)
+            ++m_pressedTabIndex;
     });
+
+    // TABS02: persisted Left/Right strip width.
+    reloadVerticalTabWidth();
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -281,6 +303,8 @@ void TabBar::updateCloseButtonVisibility()
 
 void TabBar::leaveEvent(QEvent *event)
 {
+    if (cursor().shape() == Qt::SizeHorCursor)
+        unsetCursor();
     if (m_hoveredTab != -1) {
         m_hoveredTab = -1;
         updateCloseButtonVisibility();
@@ -586,6 +610,29 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TabBar::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton) {
+        m_pressedTabIndex = -1;
+        m_moveDragActive = false;
+        // TABS02: end of an inner-edge width drag — persist the width
+        // and fan it out to every live window's bar, the same
+        // live-apply path TABS01's position uses.
+        if (m_resizing) {
+            m_resizing = false;
+            if (cursor().shape() == Qt::SizeHorCursor)
+                unsetCursor();
+            QSettings settings;
+            settings.beginGroup(QLatin1String("tabs"));
+            settings.setValue(QLatin1String("verticalTabWidth"),
+                              m_verticalTabWidth);
+            const QWidgetList widgets = qApp->allWidgets();
+            for (QWidget *widget : widgets) {
+                TabBar *bar = qobject_cast<TabBar*>(widget);
+                if (bar && bar != this)
+                    bar->reloadVerticalTabWidth();
+            }
+            return;
+        }
+    }
     if (event->button() == Qt::MiddleButton) {
         int index = tabAt(event->position().toPoint());
         if (index != -1) {
@@ -635,7 +682,24 @@ void TabBar::mousePressEvent(QMouseEvent *event)
     m_previewTimer->stop();
     hideTabPreview();
     if (event->button() == Qt::LeftButton) {
+        // TABS02: a press in the strip's inner-edge grip zone starts
+        // a width drag, not a tab press — QTabBar never sees it, so
+        // it can neither select the tab nor arm a move drag.
+        if (verticalTabShape(shape())
+            && inResizeGrip(event->position().toPoint())) {
+            m_resizing = true;
+            m_resizeStartX = event->globalPosition().toPoint().x();
+            m_resizeStartWidth = m_verticalTabWidth;
+            setCursor(Qt::SizeHorCursor);
+            return;
+        }
         m_dragStartPos = event->position().toPoint();
+        // TABS02: track the pressed tab so paintEvent can float it
+        // horizontally during a move drag.
+        m_pressedTabIndex = tabAt(m_dragStartPos);
+        m_moveDragGrabOffset = m_pressedTabIndex >= 0
+            ? m_dragStartPos.y() - tabRect(m_pressedTabIndex).top()
+            : 0;
         // TABGRP01: a press starts a potential drag — arm the
         // tabMoved tracker so the release can see where the tab went.
         m_dragTracking = true;
@@ -667,9 +731,31 @@ static bool verticalTabShape(QTabBar::Shape shape)
 
 void TabBar::mouseMoveEvent(QMouseEvent *event)
 {
-    updateHoveredTab(event->position().toPoint());
+    const QPoint pos = event->position().toPoint();
+    // TABS02: an active inner-edge width drag eats the move — the
+    // strip resizes instead of the press acting on a tab.
+    if (m_resizing) {
+        const int dx = event->globalPosition().toPoint().x()
+            - m_resizeStartX;
+        // West bars widen rightwards (their grip is the right edge),
+        // East bars widen leftwards.
+        const bool east = (shape() == QTabBar::RoundedEast
+                           || shape() == QTabBar::TriangularEast);
+        setVerticalTabWidth(m_resizeStartWidth + (east ? -dx : dx));
+        return;
+    }
+    // TABS02: the grip zone advertises itself with a resize cursor.
+    if (!(event->buttons() & Qt::LeftButton)
+        && verticalTabShape(shape())) {
+        if (inResizeGrip(pos))
+            setCursor(Qt::SizeHorCursor);
+        else if (cursor().shape() == Qt::SizeHorCursor)
+            unsetCursor();
+    }
+
+    updateHoveredTab(pos);
     if (event->buttons() == Qt::LeftButton) {
-        const QPoint diff = event->position().toPoint() - m_dragStartPos;
+        const QPoint diff = pos - m_dragStartPos;
         // "Tear the tab off" = drag away from the bar, perpendicular
         // to the tab strip; the direction depends on which edge the
         // bar sits on (drag up for North, right for East, ...).
@@ -709,10 +795,31 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
             // TABGRP01: a tear-off leaves the bar — the in-bar
             // drop-stack tracking stops here.
             m_dragTracking = false;
+            // TABS02: and so does the move-drag tracking — the bar is
+            // about to spend the drag inside QDrag::exec().
+            m_moveDragActive = false;
+            m_pressedTabIndex = -1;
             drag->exec();
         }
     }
     QTabBar::mouseMoveEvent(event);
+    // TABS02: mirror Qt's move-drag lifecycle — past the drag
+    // threshold Qt floats its own rotated tab pixmap; hide that
+    // widget and let paintEvent float a horizontal row instead.
+    if (m_pressedTabIndex >= 0
+        && event->buttons() & Qt::LeftButton) {
+        const QPoint diff = pos - m_dragStartPos;
+        if (!m_moveDragActive
+            && diff.manhattanLength() > QApplication::startDragDistance())
+            m_moveDragActive = true;
+        if (m_moveDragActive) {
+            m_moveDragVertical = verticalTabShape(shape())
+                && qAbs(diff.y()) > qAbs(diff.x());
+            m_moveDragMouseY = pos.y();
+            hideNativeMovingTab();
+            update();
+        }
+    }
 }
 
 void TabBar::dragEnterEvent(QDragEnterEvent *event)
@@ -877,7 +984,66 @@ QString TabBar::groupChipLabel(int index) const
 // the free side for a vertical one) plus a name chip just inside it.
 void TabBar::paintEvent(QPaintEvent *event)
 {
-    QTabBar::paintEvent(event);
+    if (verticalTabShape(shape())) {
+        // TABS02: rows, not rotated tabs — each vertical tab paints
+        // through the horizontal North shape so its title stays
+        // readable.  The side-button widgets (favicon label, close
+        // button) are re-anchored to the row ends first; QTabBar's
+        // own layout positions them transposed for West/East shapes.
+        layoutRowTabButtons();
+        QPainter painter(this);
+        painter.fillRect(event->rect(),
+                         palette().color(QPalette::Window));
+        for (int index = 0; index < count(); ++index) {
+            if (m_moveDragActive && m_moveDragVertical
+                && index == m_pressedTabIndex)
+                continue;   // painted floating below
+            QStyleOptionTab option;
+            initStyleOption(&option, index);
+            if (option.rect.bottom() < 0 || option.rect.top() > height())
+                continue;   // scrolled out of the strip
+            option.shape = QTabBar::RoundedNorth;
+            // initStyleOption already elided the text against the
+            // vertical shape's narrow text rect — redo it for the
+            // row's width.
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, &option, this);
+            option.text = fontMetrics().elidedText(
+                tabText(index), elideMode(), textRect.width(),
+                Qt::TextShowMnemonic);
+            if (!(option.state & QStyle::State_Enabled))
+                option.palette.setCurrentColorGroup(QPalette::Disabled);
+            style()->drawControl(QStyle::CE_TabBarTab, &option,
+                                 &painter, this);
+        }
+        // The tab under a move drag floats with the cursor; Qt's own
+        // moving-tab pixmap (painted rotated) is hidden.
+        if (m_moveDragActive && m_moveDragVertical
+            && m_pressedTabIndex >= 0 && m_pressedTabIndex < count()) {
+            QStyleOptionTab option;
+            initStyleOption(&option, m_pressedTabIndex);
+            option.shape = QTabBar::RoundedNorth;
+            option.position = QStyleOptionTab::Moving;
+            option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, &option, this);
+            option.text = fontMetrics().elidedText(
+                tabText(m_pressedTabIndex), elideMode(),
+                textRect.width(), Qt::TextShowMnemonic);
+            style()->drawControl(QStyle::CE_TabBarTab, &option,
+                                 &painter, this);
+        }
+        // A divider along the strip's inner edge doubles as the
+        // resize grip's affordance.
+        painter.setPen(palette().color(QPalette::Mid));
+        if (shape() == QTabBar::RoundedEast
+            || shape() == QTabBar::TriangularEast)
+            painter.drawLine(0, 0, 0, height());
+        else
+            painter.drawLine(width() - 1, 0, width() - 1, height());
+    } else {
+        QTabBar::paintEvent(event);
+    }
 
     const QFont chipFont = containerChipFont();
     const int chipHeight = QFontMetrics(chipFont).height() + 4;
@@ -1097,37 +1263,159 @@ QSize TabBar::tabSizeHint(int index) const
     // reserve their chip's extent on top of that.
     const int thickness = fm.height() + 10;
     const QSize chip = containerChipSize(index);
+    const QString gid = groupIdForTab(index);
+    // TABS02: vertical strips lay out as horizontal rows — the
+    // strip's width is the persisted drag-resizable width and each
+    // row is a single text line tall.  Container tabs keep their
+    // outer-edge strip + top chip band (containerChipSize already
+    // carries them); a group run's first member keeps the band the
+    // name pill paints into.
+    if (verticalTabShape(shape())) {
+        int rowHeight = thickness;
+        if (!gid.isEmpty()) {
+            TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+            if (tabWidget && isFirstInGroupRun(index)
+                && !tabWidget->tabGroupName(gid).isEmpty())
+                rowHeight += QFontMetrics(containerChipFont()).height() + 6;
+        }
+        return QSize(m_verticalTabWidth + qMax(0, chip.width()),
+                     rowHeight + qMax(0, chip.height()));
+    }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
     // of the member's title; the first member of a run widens to carry
     // the group name pill paintEvent() draws.
-    const QString gid = groupIdForTab(index);
     if (!gid.isEmpty()) {
         TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
         if (tabWidget && tabWidget->isTabGroupChip(index)) {
             const int labelWidth = QFontMetrics(containerChipFont())
                 .horizontalAdvance(groupChipLabel(index)) + 20;
-            if (verticalTabShape(shape()))
-                sizeHint.setHeight(qMin(sizeHint.height(), labelWidth));
-            else
-                sizeHint.setWidth(qMin(sizeHint.width(), labelWidth));
+            sizeHint.setWidth(qMin(sizeHint.width(), labelWidth));
         } else if (isFirstInGroupRun(index) && tabWidget) {
             const QString name = tabWidget->tabGroupName(gid);
             if (!name.isEmpty()) {
                 const int pillWidth = QFontMetrics(containerChipFont())
                     .horizontalAdvance(name) + 20;
-                if (verticalTabShape(shape()))
-                    sizeHint.setHeight(sizeHint.height()
-                                       + fm.height() + 4);
-                else
-                    sizeHint.setWidth(sizeHint.width() + pillWidth);
+                sizeHint.setWidth(sizeHint.width() + pillWidth);
             }
         }
     }
-    if (verticalTabShape(shape()))
-        return QSize(qMax(sizeHint.width(), thickness) + chip.width(),
-                     qMin(sizeHint.height(), extent) + chip.height());
     return QSize(qMin(sizeHint.width(), extent),
                  qMax(sizeHint.height(), thickness) + chip.height());
+}
+
+QSize TabBar::minimumTabSizeHint(int index) const
+{
+    // TABS02: rows never compress below their line height — when the
+    // strip overflows, the scroll buttons take over.
+    if (verticalTabShape(shape()))
+        return tabSizeHint(index);
+    return QTabBar::minimumTabSizeHint(index);
+}
+
+void TabBar::tabLayoutChange()
+{
+    QTabBar::tabLayoutChange();
+    if (verticalTabShape(shape()))
+        layoutRowTabButtons();
+}
+
+// TABS02: ~5px along the strip's content-facing edge is the width
+// drag grip — right edge for a Left (West) strip, left edge for a
+// Right (East) strip.
+bool TabBar::inResizeGrip(const QPoint &pos) const
+{
+    static const int grip = 5;
+    switch (shape()) {
+    case QTabBar::RoundedWest:
+    case QTabBar::TriangularWest:
+        return pos.x() >= width() - grip;
+    case QTabBar::RoundedEast:
+    case QTabBar::TriangularEast:
+        return pos.x() < grip;
+    default:
+        return false;
+    }
+}
+
+// TABS02: QTabBar positions per-tab side widgets (favicon label,
+// close button) through the style's sub-element rects for the real
+// West/East shape — transposed to the tab's top/bottom.  Re-anchor
+// them to the row ends the North painting reserves space for.
+void TabBar::layoutRowTabButtons()
+{
+    for (int index = 0; index < count(); ++index) {
+        QStyleOptionTab option;
+        initStyleOption(&option, index);
+        option.shape = QTabBar::RoundedNorth;
+        // The dragged tab's buttons ride the floating row.
+        if (m_moveDragActive && m_moveDragVertical
+            && index == m_pressedTabIndex)
+            option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
+        const QTabBar::ButtonPosition sides[2] = {
+            QTabBar::LeftSide, QTabBar::RightSide };
+        for (const QTabBar::ButtonPosition side : sides) {
+            QWidget *button = tabButton(index, side);
+            if (!button)
+                continue;
+            const QStyle::SubElement element =
+                (side == QTabBar::LeftSide)
+                    ? QStyle::SE_TabBarTabLeftButton
+                    : QStyle::SE_TabBarTabRightButton;
+            const QRect rect =
+                style()->subElementRect(element, &option, this);
+            if (button->size().isEmpty())
+                button->resize(button->sizeHint());
+            button->move(rect.topLeft());
+        }
+    }
+}
+
+// TABS02: once Qt's move drag starts it floats a private pixmap
+// widget painted with the real (rotated) tab shape — hide it; the
+// horizontal floating row paintEvent draws takes its place.
+void TabBar::hideNativeMovingTab()
+{
+    const QObjectList kids = children();
+    for (QObject *kid : kids) {
+        if (qstrcmp(kid->metaObject()->className(),
+                    "QMovableTabWidget") == 0) {
+            static_cast<QWidget*>(kid)->hide();
+            return;
+        }
+    }
+}
+
+int TabBar::verticalTabWidth() const
+{
+    return m_verticalTabWidth;
+}
+
+void TabBar::setVerticalTabWidth(int width)
+{
+    width = qBound(120, width, 400);
+    if (m_verticalTabWidth == width)
+        return;
+    m_verticalTabWidth = width;
+    // QTabBar caches the laid-out tab rects (what sizeHint() unions)
+    // until its private layoutDirty flag is set — a no-op setIconSize
+    // is the only public setter that re-arms it without a visual
+    // change, so the next sizeHint() sees the new strip width. It
+    // also posts this bar's updateGeometry().
+    setIconSize(iconSize());
+    // The enclosing QTabWidget sizes the strip from the bar's
+    // sizeHint inside its private layout — a LayoutRequest on it is
+    // what re-runs that layout (QTabWidget::event -> setUpLayout).
+    if (QWidget *tabWidget = parentWidget())
+        tabWidget->updateGeometry();
+    update();
+}
+
+void TabBar::reloadVerticalTabWidth()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    setVerticalTabWidth(
+        settings.value(QLatin1String("verticalTabWidth"), 180).toInt());
 }
 
 void TabBar::reloadTab()

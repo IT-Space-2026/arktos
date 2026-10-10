@@ -36,6 +36,8 @@ UI:
 - Shield icon at the left of the location bar (UIP05).
 - Scrollable Preferences pages, capped to the screen (UIP06).
 - Tab bar positions: Top/Bottom/Left/Right (TABS01).
+- Left/Right tab strips show horizontal, readable tab titles and can
+  be resized by dragging their inner edge (TABS02).
 - Named, color-coded tab groups (TABGRP01).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Command palette, Ctrl+Shift+P (CMD01).
