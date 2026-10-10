@@ -156,6 +156,15 @@ public:
     // element — never a shell string — and is re-gated as untrusted
     // input on the receiving side (torStartup).
     static void openTorWindow(const QUrl &url = QUrl());
+    // CONT08: the argument vector openTorWindow() spawns with — a
+    // QStringList, so the url is a verbatim argv element no shell can
+    // ever re-parse, and a refused scheme leaves this process as
+    // nothing but the bare --tor switch.  Exposed for the
+    // security-audit tests.
+    static QStringList torWindowArguments(const QUrl &url);
+    // The receiving-side gate torStartup() applies to an argv url
+    // operand — the same page-link discipline the sender enforced.
+    static bool isUrlAllowedOnTorArgv(const QString &operand);
 
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);

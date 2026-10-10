@@ -229,6 +229,11 @@ Security:
 - XS-Leak baseline and third-party WebSocket block (XSLEAK02–04).
 - Adblock page-load stall fix (STALL01).
 - WebChannel console noise eliminated (CHAN01).
+- Adversarial regression lock on link context opens: the full
+  source-profile x open-target matrix, refused javascript:/data:/blob:
+  schemes at both menu and slot level, Referer only on same-profile
+  opens, an argv-only Tor hand-off re-gated on receipt, and zero
+  history/session/reopen residue from private opens (CONT08).
 
 Containers:
 - Isolated container profiles (CONT01).
