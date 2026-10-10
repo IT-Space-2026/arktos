@@ -1872,7 +1872,10 @@ void BrowserMainWindow::printRequested(WebView *view)
     if (!view)
         return;
     // Engine printing is asynchronous — the printer must stay alive
-    // until printFinished fires.
+    // until printFinished fires.  The view is the connection context,
+    // so a view destroyed mid-print would never run that cleanup:
+    // guard on destroyed too, and drop the guard once printFinished
+    // released the printer so neither path double-deletes.
     QPrinter *printer = new QPrinter(QPrinter::HighResolution);
     QPrintDialog dialog(printer, this);
     dialog.setWindowTitle(tr("Print Document"));
@@ -1880,8 +1883,13 @@ void BrowserMainWindow::printRequested(WebView *view)
         delete printer;
         return;
     }
+    QMetaObject::Connection guard = connect(view, &QObject::destroyed,
+            view, [printer]() { delete printer; });
     connect(view, &WebView::printFinished, view,
-            [printer](bool) { delete printer; });
+            [printer, guard](bool) {
+        delete printer;
+        disconnect(guard);
+    });
     view->print(printer);
 }
 

@@ -152,6 +152,8 @@ UI:
   moved to Preferences → Privacy → Content Blocking → "Manage
   content-blocking filters..." (the site shield's Ad Block
   Settings button is unchanged) (MENU05).
+- Fixed a memory leak when a tab or window was closed while a
+  print job was still running (UIAUDIT01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
