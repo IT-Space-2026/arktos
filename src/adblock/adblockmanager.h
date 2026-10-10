@@ -124,8 +124,32 @@ public:
     void installOnProfile(QWebEngineProfile *profile,
                           bool deferInitialRules = false);
 
+    // ADB06: which matcher answers requests, picked at runtime in
+    // Preferences (persisted as AdBlock/engine = "cpp"|"rust").
+    // RustEngine is Brave's adblock-rust — reachable only in
+    // CONFIG+=adblock_rust builds, where it still constructs lazily on
+    // first selection; every other configuration is NativeEngine.
+    // storedEngine() returns the raw persisted pick so a non-rust
+    // build can round-trip a "rust" choice instead of silently
+    // rewriting it; engine() is the effective pick and clamps to
+    // NativeEngine when the Rust engine is not compiled in.
+    enum Engine {
+        NativeEngine = 0,
+        RustEngine = 1
+    };
+    static bool rustEngineAvailable();
+    static Engine storedEngine();
+    Engine engine() const;
+    // True while the live matcher snapshot delegates to the Rust
+    // engine.  Never constructs the network snapshot just to answer.
+    bool rustEngineInUse() const;
+
 public slots:
     void setEnabled(bool enabled);
+    // Persists the pick and emits rulesChanged, so the matcher
+    // snapshot is rebuilt and the switch applies to the next request —
+    // no restart.
+    void setEngine(Engine engine);
     AdBlockDialog *showDialog();
 
 private slots:

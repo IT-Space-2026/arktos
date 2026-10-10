@@ -425,6 +425,16 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
     return decision;
 }
 
+bool AdBlockNetwork::rustEngineActive() const
+{
+#if defined(ARORA_ADBLOCK_RUST)
+    QReadLocker locker(&m_lock);
+    return m_rustEngine != nullptr;
+#else
+    return false;
+#endif
+}
+
 bool AdBlockNetwork::shouldBlock(const QUrl &url) const
 {
     return match(url).action != AdBlockDecision::Allow;
@@ -440,6 +450,12 @@ void AdBlockNetwork::rebuildRules()
     QList<SubscriptionRules> snapshot;
     snapshot.reserve(subscriptions.count());
 #if defined(ARORA_ADBLOCK_RUST)
+    // ADB06: the Rust engine is runtime-selected now (AdBlock/engine);
+    // it is only built when the user picked it — lazily on first
+    // selection — and dropped when they switch back.  Serializing the
+    // corpus is skipped too while Built-in answers.
+    const bool wantRust =
+            enabled && manager->engine() == AdBlockManager::RustEngine;
     QByteArray rustText;
 #endif
     for (const AdBlockSubscription *subscription : subscriptions) {
@@ -469,11 +485,13 @@ void AdBlockNetwork::rebuildRules()
         // rules we can stand behind (enabled, no unimplementable
         // options) are fed to it.  $badfilter lines pass through —
         // adblock-rust resolves them natively.
-        for (const AdBlockRule &rule : subscription->allRules()) {
-            if (!rule.isEnabled() || !rule.isSupported())
-                continue;
-            rustText += rule.filter().toUtf8();
-            rustText += '\n';
+        if (wantRust) {
+            for (const AdBlockRule &rule : subscription->allRules()) {
+                if (!rule.isEnabled() || !rule.isSupported())
+                    continue;
+                rustText += rule.filter().toUtf8();
+                rustText += '\n';
+            }
         }
 #endif
     }
@@ -482,7 +500,7 @@ void AdBlockNetwork::rebuildRules()
     // Engine construction parses the whole corpus — do it before
     // taking the write lock so IO-thread readers are not stalled.
     AdBlockRustEngine *rustEngine =
-            enabled ? AdBlockRustEngine::create(rustText) : nullptr;
+            wantRust ? AdBlockRustEngine::create(rustText) : nullptr;
 #endif
 
     QWriteLocker locker(&m_lock);

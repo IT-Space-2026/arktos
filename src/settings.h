@@ -201,6 +201,10 @@ private slots:
     void filterPages(const QString &text);
 
 private:
+    // ADB06: the Content Blocking status line mirrors the engine that
+    // is actually answering requests (effective pick, not the combo's
+    // unsaved position).
+    void updateContentBlockerStatus();
     void buildPageSearchIndex();
     void stashSearchSuggestions();
     void populateEngineForm();
