@@ -2118,10 +2118,13 @@ int main(int argc, char **argv)
     bool webrtcOffSmoke = false;
     bool httpOnlySmoke = false;
     bool xsleakOpen = false;
+    bool parallelDownloadSmoke = false;
+    bool parallelDownloadOffSmoke = false;
     QVariant savedDohMode, savedDohServer, savedTlsStrict;
     QVariant savedWebrtcProtection;
     QVariant savedHttpsFirst, savedHttpsOnly, savedHttpExceptions;
     QVariant savedPopupBlocking, savedBlockPings;
+    QVariant savedParallelSegments;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -2148,6 +2151,10 @@ int main(int argc, char **argv)
             webrtcOffSmoke = true;
         if (arg == "--httpsonly-smoke")
             httpOnlySmoke = true;
+        if (arg == "--parallel-download-smoke")
+            parallelDownloadSmoke = true;
+        if (arg == "--parallel-download-off-smoke")
+            parallelDownloadOffSmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
         if (arg == "--sleep-smoke") {
@@ -2311,6 +2318,22 @@ int main(int argc, char **argv)
         settings.setValue(QLatin1String("privacy/blockPings"), false);
     }
 
+    // DLACC02: the parallel-download smokes pin
+    // downloadmanager/parallelSegments BEFORE applyChromiumFlags
+    // reads it — the ParallelDownloading feature switch latches with
+    // the engine flags, so each run deterministically exercises the
+    // armed (or, for the -off control, disarmed) configuration.  The
+    // smoke's finish() restores the real value on the way out —
+    // QSettings ignores the test-mode paths.
+    if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
+        QSettings settings;
+        savedParallelSegments = settings.value(
+            QLatin1String("downloadmanager/parallelSegments"));
+        settings.setValue(
+            QLatin1String("downloadmanager/parallelSegments"),
+            parallelDownloadSmoke);
+    }
+
     // PRIV02: the UTC-timezone normalization is process environment
     // (TZ) and must be in place before ANY engine initialization —
     // the BrowserApplication constructor already brings the browsing
@@ -2373,6 +2396,7 @@ int main(int argc, char **argv)
         "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
         "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
+        "parallel-download-smoke", "parallel-download-off-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -2817,6 +2841,224 @@ int main(int argc, char **argv)
         QTimer::singleShot(30000, &application,
                            [&application]() { application.exit(1); });
         view->webPage()->download(downloadUrl);
+    }
+
+    // DLACC02: --parallel-download-smoke proves the ParallelDownloading
+    // feature actually forks slice requests — env-presence of the
+    // switch alone is not the verdict.  A loopback server advertises
+    // Accept-Ranges and streams a 16MB blob slowly: Chromium only
+    // forks sub-requests when the estimated remaining time clears its
+    // (~2s) gate, so the throttle is what deterministically exercises
+    // the fork.  The server logs every connection's Range header; the
+    // download completing over multiple range connections is the
+    // verdict.  --parallel-download-off-smoke pins the setting off as
+    // the differential control: the same blob must arrive over a
+    // single stream with zero range requests, or the "on" result
+    // proves nothing.
+    if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
+        QTcpServer *server = new QTcpServer(&application);
+        auto done = std::make_shared<bool>(false);
+        const auto finish = [&application, done, &savedParallelSegments]
+                            (int rc, const QString &line) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo().noquote() << "parallel-download-smoke:" << line;
+            if (savedParallelSegments.isValid())
+                QSettings().setValue(
+                    QLatin1String("downloadmanager/parallelSegments"),
+                    savedParallelSegments);
+            else
+                QSettings().remove(
+                    QLatin1String("downloadmanager/parallelSegments"));
+            application.exit(rc);
+        };
+        if (!server->listen(QHostAddress::LocalHost)) {
+            finish(1, QStringLiteral("FAIL (listen: %1)")
+                       .arg(server->errorString()));
+            return application.exec();
+        }
+
+        // 16MB in 64KB pieces at ~2MB/s per connection: a lone stream
+        // estimates ~8s remaining — well past the forking gate — and
+        // the ~5.3MB slices still land quickly once split.
+        const qint64 blobSize = 16 * 1024 * 1024;
+        struct ServerStats {
+            int connections = 0;
+            int rangeRequests = 0;
+            int active = 0;
+            int maxActive = 0;
+        };
+        auto stats = std::make_shared<ServerStats>();
+
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, stats, blobSize]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            ++stats->connections;
+            ++stats->active;
+            stats->maxActive = qMax(stats->maxActive, stats->active);
+            auto header = std::make_shared<QByteArray>();
+            auto remaining = std::make_shared<qint64>(-1);
+            auto pump = new QTimer(client);
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [client, stats, pump]() {
+                pump->stop();
+                --stats->active;
+                client->deleteLater();
+            });
+            QObject::connect(pump, &QTimer::timeout, client,
+                             [client, remaining]() {
+                if (*remaining < 0)
+                    return;
+                if (*remaining == 0) {
+                    client->disconnectFromHost();
+                    return;
+                }
+                if (client->bytesToWrite() > 256 * 1024)
+                    return;
+                const int piece = int(qMin<qint64>(64 * 1024, *remaining));
+                client->write(QByteArray(piece, '\0'));
+                *remaining -= piece;
+            });
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, header, remaining, pump, stats,
+                              blobSize]() {
+                if (*remaining >= 0) {
+                    // HTTP pipelining is unused here; drain and ignore.
+                    client->readAll();
+                    return;
+                }
+                header->append(client->readAll());
+                const int headEnd = header->indexOf("\r\n\r\n");
+                if (headEnd < 0)
+                    return;
+                qint64 from = 0, to = blobSize - 1;
+                bool hasRange = false;
+                const QList<QByteArray> lines =
+                    header->left(headEnd).split('\n');
+                for (const QByteArray &raw : lines) {
+                    const QByteArray line = raw.trimmed();
+                    if (!line.toLower().startsWith("range:"))
+                        continue;
+                    QByteArray spec = line.mid(6).trimmed();
+                    if (spec.startsWith("bytes="))
+                        spec = spec.mid(6);
+                    const int dash = spec.indexOf('-');
+                    if (dash < 0)
+                        continue;
+                    hasRange = true;
+                    from = spec.left(dash).toLongLong();
+                    const QByteArray endPart = spec.mid(dash + 1).trimmed();
+                    to = endPart.isEmpty() ? blobSize - 1
+                                           : endPart.toLongLong();
+                }
+                to = qMin(to, blobSize - 1);
+                from = qBound<qint64>(0, from, to + 1);
+                *remaining = to - from + 1;
+                QByteArray reply;
+                if (hasRange) {
+                    ++stats->rangeRequests;
+                    qInfo() << "parallel-download-smoke: range request"
+                            << from << "-" << to
+                            << "(conn" << stats->connections << ")";
+                    reply = "HTTP/1.1 206 Partial Content\r\n"
+                        "Content-Range: bytes "
+                        + QByteArray::number(from) + "-"
+                        + QByteArray::number(to) + "/"
+                        + QByteArray::number(blobSize) + "\r\n";
+                } else {
+                    reply = "HTTP/1.1 200 OK\r\n";
+                }
+                reply += "Content-Type: application/octet-stream\r\n"
+                    "Content-Length: " + QByteArray::number(*remaining)
+                    // Chromium only parallelizes responses carrying a
+                    // strong validator (ETag or Last-Modified).
+                    + "\r\nETag: \"dlacc02\"\r\n"
+                    "Accept-Ranges: bytes\r\n"
+                    "Content-Disposition: attachment;"
+                    " filename=\"blob.bin\"\r\n"
+                    "Connection: close\r\n\r\n";
+                client->write(reply);
+                pump->start(30);
+            });
+        });
+
+        const QString smokeDir = QDir::temp().filePath(
+            QLatin1String("arora-pdl-smoke"));
+        QDir().mkpath(smokeDir);
+        downloadManager->setDownloadDirectory(smokeDir);
+        // A save-as prompt can't be answered under offscreen QPA.
+        QSettings().setValue(
+            QLatin1String("downloadmanager/alwaysPromptForFileName"),
+            false);
+        QObject::connect(profile, &QWebEngineProfile::downloadRequested,
+                         &application,
+                         [&application, finish, stats, blobSize,
+                          parallelDownloadOffSmoke]
+                         (QWebEngineDownloadRequest *request) {
+            QObject::connect(request,
+                &QWebEngineDownloadRequest::stateChanged,
+                &application,
+                [finish, stats, blobSize, parallelDownloadOffSmoke,
+                 request]
+                (QWebEngineDownloadRequest::DownloadState state) {
+                if (state == QWebEngineDownloadRequest::DownloadInterrupted
+                    || state == QWebEngineDownloadRequest::DownloadCancelled) {
+                    finish(1, QStringLiteral("FAIL (download %1)")
+                        .arg(request->interruptReasonString()));
+                    return;
+                }
+                if (state != QWebEngineDownloadRequest::DownloadCompleted)
+                    return;
+                const QString path = request->downloadDirectory()
+                    + QLatin1Char('/') + request->downloadFileName();
+                if (!QFile::exists(path)
+                    || QFileInfo(path).size() != blobSize) {
+                    finish(1, QStringLiteral(
+                        "FAIL (file incomplete: %1 conns=%2 ranges=%3)")
+                        .arg(path).arg(stats->connections)
+                        .arg(stats->rangeRequests));
+                    return;
+                }
+                QFile::remove(path);
+                qInfo() << "parallel-download-smoke: stats connections="
+                        << stats->connections
+                        << "rangeRequests=" << stats->rangeRequests
+                        << "maxActive=" << stats->maxActive;
+                if (parallelDownloadOffSmoke) {
+                    // Differential control: no slice requests may
+                    // appear at all — a stray range request means the
+                    // feature fired without its setting.
+                    finish(stats->rangeRequests == 0 ? 0 : 1,
+                        QStringLiteral(
+                            "%1 (off-mode control: %2 connections, "
+                            "%3 range requests)")
+                        .arg(stats->rangeRequests == 0
+                                ? QLatin1String("PASS")
+                                : QLatin1String("FAIL"))
+                        .arg(stats->connections)
+                        .arg(stats->rangeRequests));
+                    return;
+                }
+                finish(stats->rangeRequests >= 1
+                           && stats->connections >= 2 ? 0 : 1,
+                    QStringLiteral(
+                        "%1 (%2 connections, %3 range requests — "
+                        "ParallelDownloading %4)")
+                    .arg(stats->rangeRequests >= 1
+                            && stats->connections >= 2
+                        ? QLatin1String("PASS") : QLatin1String("FAIL"))
+                    .arg(stats->connections).arg(stats->rangeRequests)
+                    .arg(stats->rangeRequests >= 1
+                        ? QLatin1String("forked slice requests")
+                        : QLatin1String("never fired")));
+            });
+        });
+        QTimer::singleShot(90000, &application, [finish]() {
+            finish(1, QStringLiteral("FAIL (timeout)"));
+        });
+        view->webPage()->download(QUrl(QStringLiteral(
+            "http://127.0.0.1:%1/blob.bin").arg(server->serverPort())));
     }
 
     // Headless verification for MIG03: push a cookie through the jar's

@@ -825,6 +825,19 @@ void applyChromiumFlags()
         addListEntry(QLatin1String("--enable-blink-features"),
                      QLatin1String("MiddleClickAutoscroll"));
     }
+    // DLACC02: Chromium's ParallelDownloading feature splits a
+    // range-capable download into ~3 parallel byte-range requests —
+    // engine-native acceleration for the built-in download engine
+    // with no app code path.  Tor windows take the same flag: the
+    // engine path stays proxied either way, so no special-casing.
+    // Latched at engine init — a settings change applies at the next
+    // launch (the checkbox text says so).
+    if (settings.value(
+            QLatin1String("downloadmanager/parallelSegments"),
+            true).toBool()) {
+        addListEntry(QLatin1String("--enable-features"),
+                     QLatin1String("ParallelDownloading"));
+    }
     if (strictTlsCiphers) {
         // TLS01: strip the weak suites from the ClientHello — RSA key
         // exchange has no forward secrecy and CBC is weak — leaving

@@ -168,9 +168,11 @@ Downloads) — filterable, sortable, and each selected row expands into a
 detail card in the panel's bottom pane. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 enabled in `CONFIG+=rustdl` builds) — a connections-per-download
-field, and a cleanup policy for the finished-downloads list. The Rust
-reqwest-based multi-connection engine itself is in development (DLACC
-tasks).
+field, a cleanup policy for the finished-downloads list, and a
+"Parallel segments" toggle (default on) that has Chromium fetch
+range-capable downloads over multiple concurrent byte-range requests;
+it takes effect at restart. The Rust reqwest-based multi-connection
+engine itself is in development (DLACC tasks).
 
 ### Extensions
 

@@ -121,6 +121,11 @@ UI:
   without the rustdl backend — plus a connections-per-download field
   and a cleanup policy for the finished-downloads list (keep, clear
   on exit, or remove each entry as it completes) (DLACC01).
+- Downloads on the built-in engine are fetched in parallel segments:
+  Chromium's ParallelDownloading feature splits range-capable
+  downloads into ~3 concurrent byte-range requests.  On by default;
+  the Preferences → Downloads "Parallel segments" checkbox toggles it
+  (applies at restart, works in Tor windows too) (DLACC02).
 - Sidebar reworked Vivaldi-style: the panel picker is now a slim
   icon-only vertical rail instead of horizontal tabs eating the
   dock's height, and a new Preferences → Appearance → Sidebar

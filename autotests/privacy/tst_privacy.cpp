@@ -1413,7 +1413,19 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(flags.contains(QLatin1String("--user-flag=1")));
     QCOMPARE(flags.count(QLatin1String(
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")), 1);
-    QVERIFY(flags.contains(QLatin1String("--enable-features=DnsOverHttps")));
+    // The list switches MERGE: DnsOverHttps (secureDns) and
+    // ParallelDownloading (DLACC02, on by default) ride the same
+    // --enable-features switch rather than shadowing each other.
+    QString enableFeatures;
+    for (const QString &flag : flags) {
+        if (flag.startsWith(QLatin1String("--enable-features=")))
+            enableFeatures = flag;
+    }
+    const QStringList enabled = enableFeatures.mid(
+        QStringLiteral("--enable-features=").size()).split(
+        QLatin1Char(','), Qt::SkipEmptyParts);
+    QVERIFY(enabled.contains(QLatin1String("DnsOverHttps")));
+    QVERIFY(enabled.contains(QLatin1String("ParallelDownloading")));
 
     // Toggles off -> only the unconditional TELEM01 kill-list is
     // appended, user flags stay put, and a second run adds nothing.
@@ -1537,6 +1549,22 @@ void tst_Privacy::chromiumFlags()
     settings.setValue(QLatin1String("secureDnsMode"), 0);
     settings.endGroup();
     QSettings().remove(QLatin1String("websettings/middleClickAutoscroll"));
+
+    // DLACC02: a stored "off" leaves ParallelDownloading out of the
+    // merged switch entirely; removing the key restores the
+    // default-on.
+    QSettings().setValue(
+        QLatin1String("downloadmanager/parallelSegments"), false);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("ParallelDownloading")));
+    QSettings().remove(
+        QLatin1String("downloadmanager/parallelSegments"));
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("ParallelDownloading")));
 
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.

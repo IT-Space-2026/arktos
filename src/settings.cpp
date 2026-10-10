@@ -875,6 +875,11 @@ void SettingsDialog::loadFromSettings()
         settings.value(QLatin1String("connections"), 0).toInt());
     downloadConnectionsSpin->setEnabled(
         downloadEngineCombo->currentIndex() == 1);
+    // DLACC02: built-in engine's ParallelDownloading feature — the
+    // checkbox text says it only applies at restart (the engine flag
+    // latches in applyChromiumFlags at startup).
+    downloadParallelSegments->setChecked(
+        settings.value(QLatin1String("parallelSegments"), true).toBool());
     // The list-cleanup combo persists the RemovePolicy enum key
     // DownloadManager::save() writes.
     const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
@@ -1148,6 +1153,10 @@ void SettingsDialog::saveToSettings()
                       downloadEngineCombo->currentData().toString());
     settings.setValue(QLatin1String("connections"),
                       downloadConnectionsSpin->value());
+    // Latched by applyChromiumFlags() at engine startup — the
+    // checkbox text already tells the user it needs a restart.
+    settings.setValue(QLatin1String("parallelSegments"),
+                      downloadParallelSegments->isChecked());
     const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
         DownloadManager::staticMetaObject.indexOfEnumerator("RemovePolicy"));
     const int policy = downloadCleanupCombo->currentData().toInt();

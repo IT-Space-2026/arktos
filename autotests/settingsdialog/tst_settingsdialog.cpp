@@ -1537,6 +1537,10 @@ void tst_SettingsDialog::downloadsPage()
 #endif
         dialog.downloadConnectionsSpin->setValue(12);
         dialog.downloadCleanupCombo->setCurrentIndex(1);   // Exit
+        // DLACC02: the built-in engine's ParallelDownloading toggle —
+        // on by default, persisted downloadmanager/parallelSegments.
+        QVERIFY(dialog.downloadParallelSegments->isChecked());
+        dialog.downloadParallelSegments->setChecked(false);
         dialog.accept();
     }
 
@@ -1545,6 +1549,8 @@ void tst_SettingsDialog::downloadsPage()
              QLatin1String("builtin"));
     QCOMPARE(settings.value(QLatin1String("downloadmanager/connections")).toInt(),
              12);
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/parallelSegments"))
+                 .toBool(), false);
     QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
                  .toString(), QLatin1String("Exit"));
     // The choice live-applied to the running manager, not just the key.
@@ -1557,13 +1563,17 @@ void tst_SettingsDialog::downloadsPage()
         QCOMPARE(reloaded.downloadEngineCombo->currentIndex(), 0);
         QCOMPARE(reloaded.downloadConnectionsSpin->value(), 12);
         QCOMPARE(reloaded.downloadCleanupCombo->currentIndex(), 1);
+        QCOMPARE(reloaded.downloadParallelSegments->isChecked(), false);
         // Restore harness defaults for the tests that follow.
         reloaded.downloadConnectionsSpin->setValue(0);
         reloaded.downloadCleanupCombo->setCurrentIndex(0);
+        reloaded.downloadParallelSegments->setChecked(true);
         reloaded.accept();
     }
     QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
                  .toString(), QLatin1String("Never"));
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/parallelSegments"))
+                 .toBool(), true);
 }
 
 // TABS03: the Tab Settings page replaced the position combo with a
