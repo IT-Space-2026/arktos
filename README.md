@@ -127,7 +127,7 @@ browsing profile:
 ### Tabs, chrome & UI
 
 - **Tab bar positions** — Top/Bottom/Left/Right, live-applied per
-  window.
+  window and picked from clickable preview tiles in Preferences.
 - **Tab groups** — named, color-coded groups on the strip.
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
   history, downloads, notes), lazily built and off by default.

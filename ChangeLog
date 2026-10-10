@@ -132,6 +132,11 @@ UI:
   (the Tools menu's "Web Inspector" entry moved here) and "BiDi Dev
   Tool" is a visible placeholder for the upcoming BiDi backend
   (DEVT01).
+- Tab bar position in Preferences is now a Vivaldi-style row of
+  clickable preview tiles — each sketches a miniature window with
+  the tab strip on its Top/Left/Right/Bottom edge, the selection
+  carries a highlighted frame and check badge, and the picker works
+  by mouse or keyboard (arrows move, Enter/Space commits) (TABS03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
