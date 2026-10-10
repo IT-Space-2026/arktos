@@ -343,6 +343,16 @@ void tst_EngineSwitch::missingArtifactHidesOption()
     // "Artifact missing" is an unregistered backend — the indicator
     // must hide rather than offer a dead menu entry.
     EngineRegistry::unregisterBackend(m_fake);
+    // ENG10: when the build auto-enables servo the real backend
+    // self-registers whenever its cdylib resolves — detach every
+    // non-default backend so the single-backend case is exercised.
+    QList<Engine::Backend *> detached;
+    for (Engine::Backend *backend : EngineRegistry::backends()) {
+        if (backend->id() != QLatin1String("webengine"))
+            detached.append(backend);
+    }
+    for (Engine::Backend *backend : detached)
+        EngineRegistry::unregisterBackend(backend);
     QCOMPARE(EngineRegistry::backends().count(), 1);
 
     BrowserMainWindow *window = new BrowserMainWindow;
@@ -352,6 +362,8 @@ void tst_EngineSwitch::missingArtifactHidesOption()
         0, QStringLiteral("fake")));
     closeWindow(window);
 
+    for (Engine::Backend *backend : detached)
+        EngineRegistry::registerBackend(backend);
     EngineRegistry::registerBackend(m_fake);
     BrowserMainWindow *window2 = new BrowserMainWindow;
     QVERIFY(!navIndicator(window2)->isHidden());

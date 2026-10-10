@@ -446,7 +446,11 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   dlopens the prebuilt `libservo_embed.so` at runtime. The artifact
   is an out-of-tree ~1 GB build (pinned libservo v0.7.0, see
   `.devin/SERVO-SPIKE.md`); when it is absent the Servo option simply
-  never appears — nothing links or loads against it
+  never appears — nothing links or loads against it. While a
+  `libservo_embed.so` exists under `spikes/servo/servo-embed/target/`,
+  `.qmake.conf` auto-adds `CONFIG+=servo` so a plain `qmake && make`
+  cannot silently drop the backend; opt out with `qmake CONFIG-=servo`,
+  `noservo=1` or `servo=0`
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

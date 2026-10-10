@@ -97,6 +97,11 @@ UI:
   the swapped tab's original slot, pin and neighbours are preserved
   (a foreign-engine tab still drops group membership — documented)
   (ENG09).
+- A plain `qmake && make` can no longer silently drop the Servo
+  backend: while the servo-embed artifact exists under
+  `spikes/servo/servo-embed/target/`, the build auto-enables it and
+  qmake announces the resolved engine set; opt out with
+  `qmake CONFIG-=servo`, `noservo=1` or `servo=0` (ENG10).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

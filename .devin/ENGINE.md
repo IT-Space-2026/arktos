@@ -108,6 +108,7 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 | `src/main.cpp` | app init (scheme registration, `QtWebEngineQuick` init note) + every `--*-smoke` harness driving raw `QWebEngineView`/`Profile`/`Script`/interceptors | mixed | App-init lines → `Backend::initialize`. The smoke harnesses are engine-coupled test probes by design — ENG06's engine-matrix work absorbs/replaces them. |
 | `src/src.pri` | `QT += webenginewidgets webchannel quickwidgets` | engine-bound | Backend-0 module deps; a Servo build swaps these for the spike's GL surface deps. |
 | `src/rustdl/include/rustdl.h` | comment only (gate mirrors interceptor semantics) | comment | C FFI header — engine-neutral by design. |
+| `src/rustcore/include/rustcore.h` | comment only (`QtWebEngine/<ver>` token in the `rc_ua_build` doc) | comment | C FFI header — the UA helpers are engine-neutral string functions fed by the backend's factory UA. |
 
 ## Engine-neutral interface surface (`src/engine/engineinterface.h`)
 
