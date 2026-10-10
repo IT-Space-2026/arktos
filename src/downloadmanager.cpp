@@ -655,7 +655,6 @@ void DownloadItem::setExpanded(bool expanded)
     expandButton->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
     detailsWidget->setVisible(expanded);
     updateGeometry();
-    emit expandedChanged();
 }
 
 void DownloadItem::sampleSpeed()

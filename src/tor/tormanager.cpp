@@ -107,11 +107,6 @@ QString TorManager::resolveBinary()
     return QString();
 }
 
-QString TorManager::binaryPath() const
-{
-    return m_binaryPath;
-}
-
 void TorManager::setBinaryPath(const QString &path)
 {
     m_binaryPath = path;

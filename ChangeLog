@@ -154,6 +154,9 @@ UI:
   Settings button is unchanged) (MENU05).
 - Fixed a memory leak when a tab or window was closed while a
   print job was still running (UIAUDIT01).
+- Internal cleanup: removed dead code left over from earlier UI
+  work — unused accessors and a signal nothing listens to
+  (UIAUDIT02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

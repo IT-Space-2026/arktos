@@ -107,7 +107,6 @@ public:
     // Directories searched after PATH — for diagnostics/tests.
     static QStringList binarySearchPaths();
 
-    QString binaryPath() const;
     void setBinaryPath(const QString &path);   // before start()
 
     QString dataDirectory() const;             // default:

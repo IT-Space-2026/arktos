@@ -84,9 +84,6 @@ signals:
     void statusChanged();
     void progress(qint64 bytesReceived = 0, qint64 bytesTotal = 0);
     void downloadFinished();
-    // Emitted when the detail card is shown/hidden so the view can
-    // resize the row to the item's new height.
-    void expandedChanged();
 
 public:
     DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
