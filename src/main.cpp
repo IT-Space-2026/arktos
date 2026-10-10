@@ -6918,7 +6918,18 @@ int main(int argc, char **argv)
                     return;
                 }
                 poll->stop();
-                const bool contentOk = edit->toPlainText() == expected;
+                // Qt 6.12's toHtml() injects a <head> with a
+                // referrer-policy meta that the source bytes never
+                // contained — strip an injected head when the expected
+                // source has none rather than pinning engine-version-
+                // specific serialization.
+                QString shown = edit->toPlainText();
+                if (!expected.contains(QLatin1String("<head"))) {
+                    static const QRegularExpression injectedHead(
+                        QStringLiteral("<head>.*</head>"));
+                    shown.remove(injectedHead);
+                }
+                const bool contentOk = shown == expected;
                 if (!contentOk)
                     qInfo() << "source-smoke:" << what << "shown was:"
                             << edit->toPlainText().left(200)
@@ -9906,7 +9917,11 @@ int main(int argc, char **argv)
                     qint32 tmarker = 0, tversion = 0;
                     tabStream >> tmarker >> tversion
                         >> restoredUrls >> restoredCurrent;
-                    sessionCheck(tmarker == 0xaa && tversion == 1,
+                    // TabWidget::saveState writes the current format
+                    // (v4 — container/group tails); restoreState
+                    // accepts v1..v4, so assert the same range.
+                    sessionCheck(tmarker == 0xaa
+                                     && tversion >= 1 && tversion <= 4,
                                  "tab-state blob header");
                 }
                 sessionCheck(restoredUrls == fixtureUrls,

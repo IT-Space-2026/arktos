@@ -304,15 +304,18 @@ void tst_TorManager::circuitInfo()
     QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 1, 10000);
     QCOMPARE(manager.circuits().size(), 2);
 
-    const TorCircuit *built = nullptr;
+    bool foundBuilt = false;
+    TorCircuit built;
     for (const TorCircuit &circuit : manager.circuits()) {
-        if (circuit.id == 3)
-            built = &circuit;
+        if (circuit.id == 3) {
+            built = circuit;
+            foundBuilt = true;
+        }
     }
-    QVERIFY(built);
-    QCOMPARE(built->status, QLatin1String("BUILT"));
-    QCOMPARE(built->hops.size(), 3);
-    QCOMPARE(built->hops.at(0).nickname, QLatin1String("GuardOne"));
+    QVERIFY(foundBuilt);
+    QCOMPARE(built.status, QLatin1String("BUILT"));
+    QCOMPARE(built.hops.size(), 3);
+    QCOMPARE(built.hops.at(0).nickname, QLatin1String("GuardOne"));
 
     // stream-status gave circuit 3 the most attached streams, and it
     // is BUILT — it wins the display slot.
