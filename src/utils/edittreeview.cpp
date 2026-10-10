@@ -47,7 +47,7 @@ void EditTreeView::keyPressEvent(QKeyEvent *event)
         removeSelected();
         event->setAccepted(true);
     } else {
-        QAbstractItemView::keyPressEvent(event);
+        QTreeView::keyPressEvent(event);
     }
 }
 

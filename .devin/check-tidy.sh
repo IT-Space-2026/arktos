@@ -103,21 +103,31 @@ nl -ba "$CMDS" | while read -r n line; do
     printf '%s\n' "$line" > "$LOGDIR/$(printf '%04d' "$n").cmd"
 done
 export TIDY CHECKS LOGDIR
-ls "$LOGDIR"/*.cmd | xargs -P "$JOBS" -I {} sh -c '
-    f={}
-    n=$(basename "$f" .cmd)
-    # split "cd dir && flags file" back apart
-    line=$(cat "$f")
-    dir=${line#cd \'}
-    dir=${dir%%\' \&\&*}
-    rest=${line#*&& }
-    src=${rest##* }
-    flags=${rest% "$src"}
-    {
-        echo "### $src"
-        cd "$dir" && "$TIDY" "$src" --checks="$CHECKS" --quiet -- $flags
-    } > "'"$LOGDIR"'/$n.log" 2>&1
-'
+# The runner lives in a generated script file: embedding it as a
+# single-quoted `sh -c` argument breaks on the \' sequences in the
+# parameter expansions (sh: Syntax error: Missing '}').
+cat > "$LOGDIR/run.sh" <<'RUNEOF'
+#!/bin/sh
+f=$1
+n=$(basename "$f" .cmd)
+# split "cd dir && flags file" back apart
+line=$(cat "$f")
+dir=${line#cd \'}
+dir=${dir%%\' \&\&*}
+rest=${line#*&& }
+src=${rest##* }
+flags=${rest% "$src"}
+# The compile line shell-escapes -D values (PKGDATADIR=\"/path\").
+# Word-splitting below bypasses shell unquoting, so strip the
+# backslashes or clang sees a bare path token ("expected expression").
+flags=$(printf '%s' "$flags" | sed 's/\\//g')
+{
+    echo "### $src"
+    cd "$dir" && "$TIDY" "$src" --checks="$CHECKS" --quiet -- $flags
+} > "$LOGDIR/$n.log" 2>&1
+RUNEOF
+chmod +x "$LOGDIR/run.sh"
+ls "$LOGDIR"/*.cmd | xargs -P "$JOBS" -n1 "$LOGDIR/run.sh"
 
 FINDINGS="$BUILD/tidy-findings.txt"
 export BUILD FINDINGS

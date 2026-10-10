@@ -100,10 +100,60 @@ passes. Noted honestly rather than silently skipped.
 - qt6 qsharedpointer_impl.h `cplusplus.NewDelete` — upstream Qt header
   noise, not ours. Documented.
 
-**clang-tidy:** results appended when the pipeline reaches it (runs
-last, serialized — .devin/check-tidy.sh, checks
-`bugprone-*,cert-*,clang-analyzer-*`, deduped one run per canonical
-source file).
+**clang-tidy 22.1.8** (`bugprone-*,cert-*,clang-analyzer-*`): 253
+unique TUs analyzed (src + tools; ~29k raw diagnostics collapse to
+~365 unique in-tree findings after dedupe — the bulk are moc/qrc
+generated code and Qt-header noise). Per-class verdicts:
+
+- **Fixed (8 sites, 7 files):**
+  - `downloadmanager.cpp:1583` bugprone-parent-virtual-call —
+    `DownloadModel::flags()` called `QAbstractItemModel::flags`
+    directly, skipping `QAbstractListModel`'s override. Now calls the
+    direct base. REAL.
+  - `edittreeview.cpp:50` bugprone-parent-virtual-call —
+    `EditTreeView::keyPressEvent` fell through to
+    `QAbstractItemView::keyPressEvent`, skipping `QTreeView`'s
+    key handling (type-ahead/navigation). Now calls `QTreeView::`.
+    REAL behavior change.
+  - `main.cpp:4154` bugprone-string-literal-with-embedded-nul —
+    the privacy-smoke loopback server assigned a `GIF89a\x00…`
+    binary literal via `const char*` → `QByteArray`, truncating the
+    1×1 GIF at the first NUL. Now `QByteArrayLiteral` (keeps full
+    length). REAL latent fixture bug.
+  - `history.cpp:853,949` bugprone-misplaced-widening-cast —
+    `quintptr(row + 1)` → `quintptr(row) + 1`; value-identical, but
+    silences the check and matches intent.
+  - `autosaver.cpp:71-72` bugprone-macro-parentheses —
+    `AUTOSAVE_IN`/`MAXWAIT` unparenthesized `1000 * N` defines.
+  - `scopeshortcuts.cpp:28` clang-diagnostic-ignored-qualifiers —
+    `const char *const` function return.
+  - `trie_p.h` clang-diagnostic-deprecated-copy — `Trie<T>` declared
+    a destructor but relied on implicit copy ops; added `= default`
+    copy ctor/assign.
+- **Documented wontfix (Qt-4-era idiom classes, not bugs):**
+  - bugprone-narrowing-conversions (197) — `int`↔`qsizetype`
+    mixing endemic to the Qt4→6 port; each site is index/loop
+    arithmetic on bounded containers. Mass-editing these is the
+    reformat churn the task explicitly bounds out.
+  - bugprone-invalid-enum-default-initialization (147) —
+    `enum Foo { A, B }` in-class enums predate
+    `enum class`; no semantic issue.
+  - bugprone-easily-swappable-parameters (39),
+    derived-method-shadowing (10), switch-missing-default-case (33,
+    enum switches with covered cases), implicit-widening (31),
+    branch-clone (5) — all reviewed; style/idiom, no defect found.
+  - clang-diagnostic-unused-lambda-capture (16) — dead captures in
+    main.cpp smoke harnesses; harmless.
+  - bugprone-suspicious-missing-comma (1, main.cpp PDF fixture) —
+    intentional adjacent-literal concatenation across lines. FP.
+  - clang-diagnostic-unused-const-variable (1, securestore
+    kHeaderSize) — the constant IS used later in the same TU
+    (lines 462+); stale-ast artifact of the deduped command. FP.
+- **Tooling artifact fixed:** two TUs (browserapplication.cpp,
+  languagemanager.cpp) failed tidy with "expected expression" — the
+  `-DPKGDATADIR=\"/path\"` shell-escaping survived word-splitting in
+  the runner; check-tidy.sh now strips the escapes and both TUs
+  analyze clean.
 
 ## (b) Memory/UB — ASan+UBSan+LSan
 
@@ -147,19 +197,56 @@ browser, app, quit-after-load). Tolerated non-zero:
 - ua-smoke live-check SKIP (offline).
 - adblock-rust-smoke SKIP (no-rust config by design).
 
-LSan phase + bounded valgrind: results appended when phases complete.
+**LSan (check-leaks.sh):** one REAL application-owned leak found and
+fixed — `BrowserMainWindow::printRequested` allocated a `QPrinter`
+whose only owner was a `printFinished` connection; if the WebView was
+destroyed mid-print the printer leaked. Fixed by parenting a guard
+QObject to the view (destroyed ⇒ delete printer) and deleting the
+guard on printFinished. Re-verified: `tst_BrowserMainWindow` under
+LSan now reports zero printRequested- or QPrinter-attributed leaks;
+all remaining reports resolve inside libQt6WebEngineCore teardown
+(ProfileAdapter etc.) — upstream, same class as MEM02. Full leak
+inventory in `.devin/LEAKS.md`.
+
+**valgrind memcheck (bounded):** 3 smallest non-WebEngine tests — rc=0
+after the stale-`.obj` ABI-skew rebuild; earlier BookmarkNode
+"invalid read" findings traced to objects compiled against a
+pre-merge layout, not source bugs. Documented, not real.
 
 ## (c) Harness re-runs
 
 check-sanitize.sh result: suite rc=1 (three upstream aborts above),
 10 deduped sanitizer reports written to `.devin/SANITIZER.md` —
 breakdown: 4× getenv SEGV (upstream), 1× tormanager UAF (fixed), rest
-same-class dedupes. check-leaks.sh / valgrind pending in pipeline.
+same-class dedupes. check-leaks.sh rc=1 — QPrinter leak (fixed,
+re-verified clean); remainder upstream engine/Qt teardown noise.
+valgrind rc=0.
+
+**Test-harness fix (audit finding):** `autotests/runTests.sh` ran the
+whole suite against the user's live `~/.config/Arora` — reads leaked
+real settings into tests (`urlloading/searchEngineFallback=false`
+broke tst_TabWidget::omnibox; adblock state flipped
+tst_ContainerManager::tabCookieIsolation) and test writes polluted
+the real profile. Now each run gets a mktemp HOME with redirected
+XDG_CONFIG/DATA/CACHE homes. Both formerly-failing tests pass under
+isolation (tabwidget 3/0, containermanager 34/0).
 
 ## (d) Regression
 
-PENDING — `arora-finalcheck.service` runs `make -j4 check` on the real
-tree after seq.done; the no-rust tree build+suite is driver phase 5.
+- **Default build `make -j4 check`** (`arora-finalcheck2.scope`,
+  isolated HOME): **RC=0 — all 72 test programs passed, 0 failed.**
+- **No-Rust build** (`/tmp/arora-audit01/norust-tree`): built clean;
+  suite ran 71 programs — the single failure
+  (`tst_ContainerManager::tabCookieIsolation`) was the live-profile
+  pollution above; re-verified 34/0 under the isolated HOME.
+- **Key smokes, real tree:** `--session-smoke` + `--restore-smoke`
+  two-phase PASS (3-tab session round-trip, index 1 restored);
+  `--download-smoke file://README.md` PASS (26 841 bytes to managed
+  dir); `--tor-window-smoke` PASS — `IsTor:true` via both NAM and
+  WebEngine over a real bootstrapped circuit
+  (ARORA_TOR_BINARY=~/opt/tor-expert-bundle/tor/tor; one transient
+  exit-node RemoteHostClosedError, PASS on retry — live-network
+  flake, not code).
 
 ## Fixes landed this task
 
@@ -170,3 +257,8 @@ tree after seq.done; the no-rust tree build+suite is driver phase 5.
 - `a645851` — bareView leak fix (clang NewDeleteLeaks, real benign).
 - `ce7f653` — .devin/check-tidy.sh harness (clang-tidy 22.1.8 pip
   wheel; STAT01's "unavailable" note resolved).
+- This commit — QPrinter leak guard in printRequested; clang-tidy
+  real-bug batch (parent-virtual-call ×2, embedded-NUL GIF fixture,
+  misplaced-widening-cast ×2, macro parens, deprecated-copy,
+  ignored-qualifier); runTests.sh HOME/XDG isolation; check-tidy.sh
+  `-D` unescape fix.

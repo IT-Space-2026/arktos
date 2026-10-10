@@ -850,7 +850,7 @@ QModelIndex HistoryTreeModel::index(int row, int column, const QModelIndex &pare
 
     if (!parent.isValid())
         return createIndex(row, column, quintptr(0));
-    return createIndex(row, column, quintptr(parent.row() + 1));
+    return createIndex(row, column, quintptr(parent.row()) + 1);
 }
 
 QModelIndex HistoryTreeModel::parent(const QModelIndex &index) const
@@ -946,7 +946,7 @@ QModelIndex HistoryTreeModel::mapFromSource(const QModelIndex &sourceIndex) cons
         --it;
     int dateRow = qMax(0, int(it - m_sourceRowCache.begin()));
     int row = sourceIndex.row() - m_sourceRowCache.at(dateRow);
-    return createIndex(row, sourceIndex.column(), quintptr(dateRow + 1));
+    return createIndex(row, sourceIndex.column(), quintptr(dateRow) + 1);
 }
 
 bool HistoryTreeModel::removeRows(int row, int count, const QModelIndex &parent)

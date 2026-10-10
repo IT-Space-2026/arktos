@@ -1902,7 +1902,9 @@ void BrowserMainWindow::printRequested(QWebEnginePage *page)
     if (!view)
         return;
     // QWebEngineView::print is asynchronous — the printer must stay
-    // alive until printFinished fires.
+    // alive until printFinished fires. The guard is a child of the
+    // view, so the printer is also freed if the view is destroyed
+    // mid-print (the connection alone would leak it).
     QPrinter *printer = new QPrinter(QPrinter::HighResolution);
     QPrintDialog dialog(printer, this);
     dialog.setWindowTitle(tr("Print Document"));
@@ -1910,8 +1912,11 @@ void BrowserMainWindow::printRequested(QWebEnginePage *page)
         delete printer;
         return;
     }
-    connect(view, &QWebEngineView::printFinished, view,
-            [printer](bool) { delete printer; });
+    QObject *printerGuard = new QObject(view);
+    connect(printerGuard, &QObject::destroyed,
+            [printer] { delete printer; });
+    connect(view, &QWebEngineView::printFinished, printerGuard,
+            [printerGuard](bool) { printerGuard->deleteLater(); });
     view->print(printer);
 }
 

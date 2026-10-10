@@ -1580,7 +1580,7 @@ Qt::ItemFlags DownloadModel::flags(const QModelIndex &index) const
     if (index.row() < 0 || index.row() >= rowCount(index.parent()))
         return Qt::ItemFlags();
 
-    Qt::ItemFlags defaultFlags = QAbstractItemModel::flags(index);
+    Qt::ItemFlags defaultFlags = QAbstractListModel::flags(index);
 
     DownloadItem *item = m_downloadManager->m_downloads.at(index.row());
     if (item->downloadedSuccessfully())

@@ -327,6 +327,13 @@ Build, tests & tools:
   data and cache into a throwaway per-run store instead of the real
   profile — a test killed mid-run can no longer leave the live config
   mutated (SMOKE01).
+- Post-migration hardening audit (AUDIT01): full static-analysis pass
+  (gcc -fanalyzer, clang --analyze, clang-tidy over 253 units) plus
+  ASan/UBSan/LSan and valgrind sweeps — fixed a QPrinter leak when a
+  printing tab closes early, two calls that skipped intermediate base
+  overrides (download-model flags, tree-view key handling), and a
+  truncated GIF fixture; the test suite now runs in an isolated HOME so
+  it can no longer read or mutate the live browser profile.
 
 Rust core credential storage (RCORE01):
     A new shared Rust crate (src/rustcore) provides engine-neutral application components behind a stable C ABI — status codes, owned-string/buffer marshaling, a change-notification callback bridged to a Qt signal, and qmake wiring that builds it with cargo when `CONFIG+=rustcore` is set while leaving no-Rust builds untouched.

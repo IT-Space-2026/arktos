@@ -4151,10 +4151,11 @@ int main(int argc, char **argv)
                         + QByteArray::number(port) + "/img\"></body></html>";
                 } else {
                     extra = "Set-Cookie: arora_priv_third=1\r\n";
-                    body = "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
+                    body = QByteArrayLiteral(
+                           "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
                            "\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00"
                            "\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01"
-                           "\x00;";
+                           "\x00;");
                 }
                 QByteArray reply =
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
