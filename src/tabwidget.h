@@ -67,6 +67,7 @@
 
 #include <qcolor.h>
 #include <qhash.h>
+#include <qset.h>
 #include <qurl.h>
 
 QT_BEGIN_NAMESPACE
@@ -168,6 +169,15 @@ public:
     // tab marker, the menu gates and the child-tab inheritance all
     // key on the page profile, not the window-global private flag.
     bool isTabPrivate(int index) const;
+
+    // TABS04: pinned tabs — a contiguous prefix of the strip rendered
+    // icon-only (favicon + tooltip, no title).  The flag is keyed on
+    // the tab's page widget so it survives drags, group collapse and
+    // container-level filtering; it works on widget tabs too.
+    bool isTabPinned(int index) const;
+    // The leading run of pinned tabs — also the slot new tabs insert
+    // at so the pinned block stays a prefix.
+    int pinnedTabCount() const;
 
     // CONT06 — two-level container strip.  When enabled (the
     // tabs/containerDisplay setting) and more than one container has
@@ -318,9 +328,10 @@ public slots:
     bool isTabSleeping(int index) const;
     int sleepingTabCount() const;
     // Why a tab cannot be auto-slept right now — "current",
-    // "sleeping", "inflight", "loading", "audible", "download",
-    // "form", "empty" — or an empty string when it is eligible.  Used
-    // by the idle sweep and exposed for the smoke test.
+    // "pinned", "sleeping", "inflight", "loading", "audible",
+    // "download", "form", "empty" — or an empty string when it is
+    // eligible.  Used by the idle sweep and exposed for the smoke
+    // test.
     QString sleepBlockReason(int index) const;
     // Auto-suspend sweep: sleep every background tab idle for at
     // least idleMs milliseconds.  The settings-driven timer calls
@@ -338,6 +349,9 @@ public slots:
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
     void closeOtherTabs(int index);
+    // TABS04: pin/unpin — the tab slides to the edge of the pinned
+    // block so the strip keeps pinned tabs as a contiguous prefix.
+    void setTabPinned(int index, bool pinned);
     void reloadTab(int index = -1);
     void reloadAllTabs();
     void nextTab();
@@ -405,6 +419,13 @@ private:
     // no tab drops out of the serialized session.
     QList<WebView*> orderedWebViews() const;
 
+    // TABS04 internals — the raw flag set (no moving; moveTab's
+    // boundary rule and setTabPinned's slide use it), and the prefix
+    // repair batch re-insertions (group expand, container-level
+    // restore) can disturb.
+    void setPinFlag(QWidget *page, bool pinned);
+    void normalizePinnedBlock();
+
     // CONT06 internals — see the public accessors above.  The filter
     // pass detaches every tab not bound to m_activeContainerHeader
     // into its own container's list and re-inserts the active
@@ -442,6 +463,7 @@ private:
         QList<QByteArray> histories;   // parallel: serializePageHistory or empty
         QStringList containers;        // parallel: container binding
         QStringList groupIds;          // parallel: "" = ungrouped
+        QList<qint32> pinned;          // parallel: TABS04 pin flag, 0/1
         QList<TabGroup> groups;        // group table, first-appearance order
         QString activeContainerHeader; // CONT06: window's level-1 selection
     };
@@ -468,6 +490,14 @@ private:
     QHash<QString, QList<HiddenGroupTab>> m_containerHidden;
     QHash<QString, WebView*> m_lastActiveInHeader;
     bool m_containerFilterAdjust = false;
+
+    // TABS04: the pinned set, keyed on the tab's page widget (the
+    // WebViewWithSearch or a widget tab's page) — the same identity
+    // HiddenGroupTab detaches keep, so pin state rides along
+    // untouched.  m_sessionRestore switches new-tab insertion back to
+    // append while restoreState() recreates the saved order.
+    QSet<QWidget*> m_pinnedTabs;
+    bool m_sessionRestore = false;
 
     QAction *m_recentlyClosedTabsAction;
     QAction *m_newTabAction;
