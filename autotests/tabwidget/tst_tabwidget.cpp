@@ -21,6 +21,7 @@
 #include <QtGui/QtGui>
 #include "qtest_arora.h"
 
+#include <engineinterface.h>
 #include <tabwidget.h>
 #include <tabbar.h>
 #include <webview.h>
@@ -143,7 +144,7 @@ void tst_TabWidget::tabwidget_data()
 void tst_TabWidget::tabwidget()
 {
     SubTabWidget widget;
-    widget.addWebAction((QAction*)0, QWebEnginePage::Back);
+    widget.addWebAction((QAction*)0, Engine::StandardAction::Back);
     widget.closeTab();
     QVERIFY(widget.closeTabAction());
     widget.currentWebView();
@@ -159,17 +160,16 @@ void tst_TabWidget::tabwidget()
     QVERIFY(widget.currentLocationBar());
 }
 
-Q_DECLARE_METATYPE(QWebEnginePage::WebAction)
 void tst_TabWidget::addWebAction_data()
 {
-    QTest::addColumn<QWebEnginePage::WebAction>("webAction");
-    QTest::newRow("back") << QWebEnginePage::Back;
+    QTest::addColumn<Engine::StandardAction>("webAction");
+    QTest::newRow("back") << Engine::StandardAction::Back;
 }
 
-// public void addWebAction(QAction *action, QWebEnginePage::WebAction webAction)
+// public void addWebAction(QAction *action, Engine::StandardAction webAction)
 void tst_TabWidget::addWebAction()
 {
-    QFETCH(QWebEnginePage::WebAction, webAction);
+    QFETCH(Engine::StandardAction, webAction);
 
     SubTabWidget widget;
 

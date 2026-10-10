@@ -73,6 +73,12 @@ public:
                        const std::function<void(const QVariant &)> &resultCallback
                            = std::function<void(const QVariant &)>()) override;
 
+    QAction *action(Engine::StandardAction action) override;
+
+    bool isLoading() const override;
+    bool recentlyAudible() const override;
+    bool isOffTheRecord() const override;
+
     void setPageAttribute(const QString &name, bool on) override;
 
     void setLifecycleState(LifecycleState state) override;

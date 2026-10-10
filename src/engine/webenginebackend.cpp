@@ -19,6 +19,7 @@
 
 #include "webenginebackend.h"
 
+#include <qaction.h>
 #include <qfileinfo.h>
 #include <qtwebenginecoreglobal.h>
 #include <qwebenginecertificateerror.h>
@@ -81,6 +82,56 @@ static Engine::NavigationType engineNavigationType(QWebEngineUrlRequestInfo::Nav
     case QWebEngineUrlRequestInfo::NavigationTypeRedirect: return Engine::NavigationType::Redirect;
     default: return Engine::NavigationType::Other;
     }
+}
+
+static QWebEnginePage::WebAction webEngineStandardAction(Engine::StandardAction action)
+{
+    switch (action) {
+    case Engine::StandardAction::Back: return QWebEnginePage::Back;
+    case Engine::StandardAction::Forward: return QWebEnginePage::Forward;
+    case Engine::StandardAction::Stop: return QWebEnginePage::Stop;
+    case Engine::StandardAction::Reload: return QWebEnginePage::Reload;
+    case Engine::StandardAction::ReloadAndBypassCache:
+        return QWebEnginePage::ReloadAndBypassCache;
+    case Engine::StandardAction::Cut: return QWebEnginePage::Cut;
+    case Engine::StandardAction::Copy: return QWebEnginePage::Copy;
+    case Engine::StandardAction::Paste: return QWebEnginePage::Paste;
+    case Engine::StandardAction::Undo: return QWebEnginePage::Undo;
+    case Engine::StandardAction::Redo: return QWebEnginePage::Redo;
+    case Engine::StandardAction::SelectAll: return QWebEnginePage::SelectAll;
+    case Engine::StandardAction::PasteAndMatchStyle:
+        return QWebEnginePage::PasteAndMatchStyle;
+    case Engine::StandardAction::OpenLinkInThisWindow:
+        return QWebEnginePage::OpenLinkInThisWindow;
+    case Engine::StandardAction::OpenLinkInNewWindow:
+        return QWebEnginePage::OpenLinkInNewWindow;
+    case Engine::StandardAction::OpenLinkInNewTab:
+        return QWebEnginePage::OpenLinkInNewTab;
+    case Engine::StandardAction::CopyLinkToClipboard:
+        return QWebEnginePage::CopyLinkToClipboard;
+    case Engine::StandardAction::DownloadLinkToDisk:
+        return QWebEnginePage::DownloadLinkToDisk;
+    case Engine::StandardAction::CopyImageToClipboard:
+        return QWebEnginePage::CopyImageToClipboard;
+    case Engine::StandardAction::CopyImageUrlToClipboard:
+        return QWebEnginePage::CopyImageUrlToClipboard;
+    case Engine::StandardAction::DownloadImageToDisk:
+        return QWebEnginePage::DownloadImageToDisk;
+    case Engine::StandardAction::CopyMediaUrlToClipboard:
+        return QWebEnginePage::CopyMediaUrlToClipboard;
+    case Engine::StandardAction::DownloadMediaToDisk:
+        return QWebEnginePage::DownloadMediaToDisk;
+    case Engine::StandardAction::InspectElement:
+        return QWebEnginePage::InspectElement;
+    case Engine::StandardAction::ExitFullScreen:
+        return QWebEnginePage::ExitFullScreen;
+    case Engine::StandardAction::RequestClose:
+        return QWebEnginePage::RequestClose;
+    case Engine::StandardAction::Unselect: return QWebEnginePage::Unselect;
+    case Engine::StandardAction::SavePage: return QWebEnginePage::SavePage;
+    case Engine::StandardAction::ViewSource: return QWebEnginePage::ViewSource;
+    }
+    return QWebEnginePage::NoWebAction;
 }
 
 static QWebEnginePage::FindFlags webEngineFindFlags(Engine::FindFlags flags)
@@ -313,6 +364,28 @@ void WebEnginePageAdapter::runJavaScript(
         const std::function<void(const QVariant &)> &resultCallback)
 {
     m_page->runJavaScript(source, resultCallback);
+}
+
+QAction *WebEnginePageAdapter::action(Engine::StandardAction action)
+{
+    const QWebEnginePage::WebAction mapped = webEngineStandardAction(action);
+    return mapped == QWebEnginePage::NoWebAction ? nullptr
+                                                 : m_page->action(mapped);
+}
+
+bool WebEnginePageAdapter::isLoading() const
+{
+    return m_page->isLoading();
+}
+
+bool WebEnginePageAdapter::recentlyAudible() const
+{
+    return m_page->recentlyAudible();
+}
+
+bool WebEnginePageAdapter::isOffTheRecord() const
+{
+    return m_page->profile() && m_page->profile()->isOffTheRecord();
 }
 
 void WebEnginePageAdapter::setPageAttribute(const QString &name, bool on)

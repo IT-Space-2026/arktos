@@ -80,6 +80,8 @@ class QStackedWidget;
 class QTimer;
 QT_END_NAMESPACE
 
+namespace Engine { enum class StandardAction; }
+
 class BrowserMainWindow;
 class OmniboxSuggestions;
 class TabBar;
@@ -125,7 +127,7 @@ public:
     void loadSettings();
     TabBar *tabBar() { return m_tabBar; }
     void clear();
-    void addWebAction(QAction *action, QWebEnginePage::WebAction webAction);
+    void addWebAction(QAction *action, Engine::StandardAction webAction);
 
     QAction *newTabAction() const;
     QAction *closeTabAction() const;

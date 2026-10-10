@@ -286,7 +286,7 @@ void TabWidget::moveTab(int fromIndex, int toIndex)
     normalizeTabGroupMove(toIndex);
 }
 
-void TabWidget::addWebAction(QAction *action, QWebEnginePage::WebAction webAction)
+void TabWidget::addWebAction(QAction *action, Engine::StandardAction webAction)
 {
     if (!action)
         return;
@@ -336,7 +336,7 @@ void TabWidget::currentChanged(int index)
 
     for (int i = 0; i < m_actions.count(); ++i) {
         WebActionMapper *mapper = m_actions[i];
-        mapper->updateCurrent(webView->page());
+        mapper->updateCurrent(webView->enginePage());
     }
     // SLEEP01: activating a suspended tab wakes it (the engine
     // reloads the page).
@@ -463,8 +463,8 @@ WebView *TabWidget::makeNewTab(bool makeCurrent)
 // off-the-record on the hardened tor profile.
 WebView *TabWidget::makeNewTabLike(WebView *source, bool makeCurrent)
 {
-    if (source && source->page()
-        && source->page()->profile()->isOffTheRecord()
+    if (source && source->enginePage()
+        && source->enginePage()->isOffTheRecord()
         && !BrowserApplication::isTorMode())
         return makeNewPrivateTab(makeCurrent);
     const QString containerId = source
@@ -484,8 +484,8 @@ QString TabWidget::containerIdForTab(int index) const
 bool TabWidget::isTabPrivate(int index) const
 {
     WebView *view = webView(index);
-    return view && view->page()
-        && view->page()->profile()->isOffTheRecord();
+    return view && view->enginePage()
+        && view->enginePage()->isOffTheRecord();
 }
 
 WebView *TabWidget::makeNewPrivateTab(bool makeCurrent)
@@ -671,7 +671,7 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
     // webview actions
     for (int i = 0; i < m_actions.count(); ++i) {
         WebActionMapper *mapper = m_actions[i];
-        mapper->addChild(webView->page()->action(mapper->webAction()));
+        mapper->addChild(webView->enginePage()->action(mapper->webAction()));
     }
 
     if (count() == 1)
@@ -1523,8 +1523,8 @@ void TabWidget::closeHiddenTab(WebView *view)
             if (!withSearch || withSearch->m_webView != view)
                 continue;
             if (view && !view->url().isEmpty()
-                && !(view->page()
-                     && view->page()->profile()->isOffTheRecord())) {
+                && !(view->enginePage()
+                     && view->enginePage()->isOffTheRecord())) {
                 m_recentlyClosedTabsAction->setEnabled(true);
                 m_recentlyClosedTabs.prepend(view->url());
                 m_recentlyClosedTabsHistory.prepend(
@@ -1627,20 +1627,20 @@ QString TabWidget::sleepBlockReason(int index) const
     if (index == currentIndex())
         return QLatin1String("current");
     WebView *view = const_cast<TabWidget*>(this)->webView(index);
-    if (!view || !view->page() || view->url().isEmpty())
+    if (!view || !view->enginePage() || view->url().isEmpty())
         return QLatin1String("empty");
     const TabSleepState state = m_sleepStates.value(view);
     if (state.sleeping
-        || view->page()->lifecycleState()
-               == QWebEnginePage::LifecycleState::Discarded)
+        || view->enginePage()->lifecycleState()
+               == Engine::Page::LifecycleState::Discarded)
         return QLatin1String("sleeping");
     if (state.sleepInFlight)
         return QLatin1String("inflight");
     if (state.formDirty)
         return QLatin1String("form");
-    if (view->page()->isLoading())
+    if (view->enginePage()->isLoading())
         return QLatin1String("loading");
-    if (view->page()->recentlyAudible())
+    if (view->enginePage()->recentlyAudible())
         return QLatin1String("audible");
     if (DownloadManager::instance()->hasActiveDownloadForPage(view->page()))
         return QLatin1String("download");
@@ -1675,7 +1675,7 @@ void TabWidget::wakeTab(int index)
     if (index < 0)
         index = currentIndex();
     WebView *view = webView(index);
-    if (!view || !view->page())
+    if (!view || !view->enginePage())
         return;
     auto it = m_sleepStates.find(view);
     if (it == m_sleepStates.end() || !it->sleeping)
@@ -1684,9 +1684,9 @@ void TabWidget::wakeTab(int index)
     markTabActivity(view);
     // Active out of Discarded makes the engine rebuild the
     // WebContents and reload the page's current entry.
-    if (view->page()->lifecycleState()
-        == QWebEnginePage::LifecycleState::Discarded)
-        view->page()->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+    if (view->enginePage()->lifecycleState()
+        == Engine::Page::LifecycleState::Discarded)
+        view->enginePage()->setLifecycleState(Engine::Page::LifecycleState::Active);
     applySleepVisuals(index, false);
 }
 
@@ -1698,7 +1698,7 @@ void TabWidget::beginTabSleep(int index, bool automatic)
     if (index < 0 || index >= count() || index == currentIndex())
         return;
     WebView *view = webView(index);
-    if (!view || !view->page() || view->url().isEmpty())
+    if (!view || !view->enginePage() || view->url().isEmpty())
         return;
     TabSleepState &state = m_sleepStates[view];
     if (state.sleeping || state.sleepInFlight)
@@ -1725,7 +1725,7 @@ void TabWidget::beginTabSleep(int index, bool automatic)
         "return JSON.stringify({x:window.scrollX||0,y:window.scrollY||0,"
         "dirty:d});})()");
     QPointer<WebView> guard(view);
-    view->page()->runJavaScript(capture,
+    view->enginePage()->runJavaScript(capture,
         [this, guard, automatic](const QVariant &result) {
         if (guard)
             finishTabSleepCapture(guard.data(), automatic, result);
@@ -1741,7 +1741,7 @@ void TabWidget::finishTabSleepCapture(WebView *webView, bool automatic,
     it->sleepInFlight = false;
     const int index = webViewIndex(webView);
     if (index < 0 || index == currentIndex() || it->sleeping
-        || !webView->page())
+        || !webView->enginePage())
         return;
 
     const QJsonObject captured = QJsonDocument::fromJson(
@@ -1763,8 +1763,8 @@ void TabWidget::finishTabSleepCapture(WebView *webView, bool automatic,
     it->scrollY = captured.value(QLatin1String("y")).toDouble();
     it->restoreScroll = it->scrollX != 0 || it->scrollY != 0;
     it->sleeping = true;
-    webView->page()->setLifecycleState(
-        QWebEnginePage::LifecycleState::Discarded);
+    webView->enginePage()->setLifecycleState(
+        Engine::Page::LifecycleState::Discarded);
     applySleepVisuals(index, true);
 }
 
@@ -2040,7 +2040,7 @@ void TabWidget::closeTab(int index)
     // would load the url in a normal-profile page where the visit is
     // recorded — the very trace private browsing avoids (SEC07).
     const bool recordable = tab && !tab->url().isEmpty()
-        && !(tab->page() && tab->page()->profile()->isOffTheRecord());
+        && !(tab->enginePage() && tab->enginePage()->isOffTheRecord());
     if (recordable) {
         m_recentlyClosedTabsAction->setEnabled(true);
         m_recentlyClosedTabs.prepend(tab->url());
@@ -2164,7 +2164,7 @@ void TabWidget::webViewLoadFinished(bool ok)
     auto sleepIt = m_sleepStates.find(webView);
     if (sleepIt != m_sleepStates.end() && sleepIt->restoreScroll && ok) {
         sleepIt->restoreScroll = false;
-        webView->page()->runJavaScript(QStringLiteral(
+        webView->enginePage()->runJavaScript(QStringLiteral(
             "window.scrollTo(%1, %2);")
             .arg(sleepIt->scrollX).arg(sleepIt->scrollY));
     }
@@ -2516,7 +2516,7 @@ void TabWidget::loadSettings()
 {
     for (int i = 0; i < count(); ++i) {
         WebView *v = webView(i);
-        if (v && v->page())
+        if (v && v->enginePage())
             v->loadSettings();
     }
 
@@ -2678,10 +2678,10 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
                 // is fixed at creation, so the swap is the only
                 // way).  Global private/tor windows already produce
                 // off-the-record first tabs.
-                if (webView && currentView && currentView->page()
-                    && currentView->page()->profile()->isOffTheRecord()
-                    && !(webView->page()
-                         && webView->page()->profile()->isOffTheRecord())) {
+                if (webView && currentView && currentView->enginePage()
+                    && currentView->enginePage()->isOffTheRecord()
+                    && !(webView->enginePage()
+                         && webView->enginePage()->isOffTheRecord())) {
                     if (WebView *privateTab =
                             newMainWindow->tabWidget()->makeNewPrivateTab(true)) {
                         newMainWindow->tabWidget()->closeTab(0);
@@ -2758,7 +2758,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
     for (WebView *tab : ordered) {
         if (!tab)
             continue;
-        if (tab->page() && tab->page()->profile()->isOffTheRecord())
+        if (tab->enginePage() && tab->enginePage()->isOffTheRecord())
             continue;
         if (tab == currentWebView())
             snap.currentIndex = snap.urls.count();

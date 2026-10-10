@@ -247,7 +247,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         bookmarkAction->setData(request->linkUrl());
         menu->addSeparator();
         if (!request->selectedText().isEmpty())
-            menu->addAction(pageAction(QWebEnginePage::Copy));
+            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         QAction *copyLinkAction = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
         copyLinkAction->setData(request->linkUrl());
         // POL01: same copy but with tracking query parameters removed.
@@ -391,7 +391,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
 
     if (!request->selectedText().isEmpty()) {
         if (menu->isEmpty()) {
-            menu->addAction(pageAction(QWebEnginePage::Copy));
+            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         } else {
             menu->addSeparator();
         }
@@ -417,7 +417,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         menu = createStandardContextMenu();
         // The stock menu's own "Inspect element" is the same no-op
         // bare page action — remove it; the hosted one is added below.
-        menu->removeAction(pageAction(QWebEnginePage::InspectElement));
+        menu->removeAction(enginePage()->action(Engine::StandardAction::InspectElement));
     }
     if (!menu->isEmpty())
         menu->addSeparator();
@@ -439,7 +439,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     // route it through the shared inspector host (DVT01).  Triggering
     // InspectElement still uses the stored context-menu position, so
     // the right-clicked element is the one inspected.
-    QAction *inspectPageAction = pageAction(QWebEnginePage::InspectElement);
+    QAction *inspectPageAction = enginePage()->action(Engine::StandardAction::InspectElement);
     QAction *inspectAction = menu->addAction(inspectPageAction->text());
     inspectAction->setIcon(inspectPageAction->icon());
     connect(inspectAction, &QAction::triggered,
@@ -552,7 +552,7 @@ void WebView::copyImageToClipboard()
 {
     // No URL equivalent: copying the image pixels has to go through the
     // page action, which uses the live context-menu request.
-    pageAction(QWebEnginePage::CopyImageToClipboard)->trigger();
+    enginePage()->action(Engine::StandardAction::CopyImageToClipboard)->trigger();
 }
 
 void WebView::copyImageLocationToClipboard()
@@ -727,10 +727,10 @@ void WebView::mousePressEvent(QMouseEvent *event)
     }
     switch (event->button()) {
     case Qt::XButton1:
-        triggerPageAction(QWebEnginePage::Back);
+        enginePage()->back();
         break;
     case Qt::XButton2:
-        triggerPageAction(QWebEnginePage::Forward);
+        enginePage()->forward();
         break;
     default:
         QWebEngineView::mousePressEvent(event);

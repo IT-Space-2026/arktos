@@ -79,6 +79,7 @@
 #include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
+#include "engineinterface.h"
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -736,28 +737,28 @@ void BrowserMainWindow::setupMenu()
     menuBar()->addMenu(m_editMenu);
     m_editUndoAction = new QAction(m_editMenu);
     m_editUndoAction->setShortcuts(QKeySequence::Undo);
-    m_tabWidget->addWebAction(m_editUndoAction, QWebEnginePage::Undo);
+    m_tabWidget->addWebAction(m_editUndoAction, Engine::StandardAction::Undo);
     m_editMenu->addAction(m_editUndoAction);
     m_editRedoAction = new QAction(m_editMenu);
     m_editRedoAction->setShortcuts(QKeySequence::Redo);
-    m_tabWidget->addWebAction(m_editRedoAction, QWebEnginePage::Redo);
+    m_tabWidget->addWebAction(m_editRedoAction, Engine::StandardAction::Redo);
     m_editMenu->addAction(m_editRedoAction);
     m_editMenu->addSeparator();
     m_editCutAction = new QAction(m_editMenu);
     m_editCutAction->setShortcuts(QKeySequence::Cut);
-    m_tabWidget->addWebAction(m_editCutAction, QWebEnginePage::Cut);
+    m_tabWidget->addWebAction(m_editCutAction, Engine::StandardAction::Cut);
     m_editMenu->addAction(m_editCutAction);
     m_editCopyAction = new QAction(m_editMenu);
     m_editCopyAction->setShortcuts(QKeySequence::Copy);
-    m_tabWidget->addWebAction(m_editCopyAction, QWebEnginePage::Copy);
+    m_tabWidget->addWebAction(m_editCopyAction, Engine::StandardAction::Copy);
     m_editMenu->addAction(m_editCopyAction);
     m_editPasteAction = new QAction(m_editMenu);
     m_editPasteAction->setShortcuts(QKeySequence::Paste);
-    m_tabWidget->addWebAction(m_editPasteAction, QWebEnginePage::Paste);
+    m_tabWidget->addWebAction(m_editPasteAction, Engine::StandardAction::Paste);
     m_editMenu->addAction(m_editPasteAction);
     m_editSelectAllAction = new QAction(m_editMenu);
     m_editSelectAllAction->setShortcuts(QKeySequence::SelectAll);
-    m_tabWidget->addWebAction(m_editSelectAllAction, QWebEnginePage::SelectAll);
+    m_tabWidget->addWebAction(m_editSelectAllAction, Engine::StandardAction::SelectAll);
     m_editMenu->addAction(m_editSelectAllAction);
     m_editMenu->addSeparator();
 
@@ -845,7 +846,7 @@ void BrowserMainWindow::setupMenu()
     shortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_Period));
     shortcuts.append(Qt::Key_Escape);
     m_viewStopAction->setShortcuts(shortcuts);
-    m_tabWidget->addWebAction(m_viewStopAction, QWebEnginePage::Stop);
+    m_tabWidget->addWebAction(m_viewStopAction, Engine::StandardAction::Stop);
     m_viewMenu->addAction(m_viewStopAction);
 
     m_viewReloadAction = new QAction(m_viewMenu);
@@ -853,7 +854,7 @@ void BrowserMainWindow::setupMenu()
     shortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_R));
     shortcuts.append(QKeySequence(Qt::Key_F5));
     m_viewReloadAction->setShortcuts(shortcuts);
-    m_tabWidget->addWebAction(m_viewReloadAction, QWebEnginePage::Reload);
+    m_tabWidget->addWebAction(m_viewReloadAction, Engine::StandardAction::Reload);
     m_viewMenu->addAction(m_viewReloadAction);
 
     m_viewZoomInAction = new QAction(m_viewMenu);
@@ -987,14 +988,14 @@ void BrowserMainWindow::setupMenu()
     QList<QAction*> historyActions;
 
     m_historyBackAction = new QAction(this);
-    m_tabWidget->addWebAction(m_historyBackAction, QWebEnginePage::Back);
+    m_tabWidget->addWebAction(m_historyBackAction, Engine::StandardAction::Back);
     m_historyBackAction->setShortcuts(QKeySequence::Back);
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyBackAction->setIconVisibleInMenu(false);
 #endif
 
     m_historyForwardAction = new QAction(this);
-    m_tabWidget->addWebAction(m_historyForwardAction, QWebEnginePage::Forward);
+    m_tabWidget->addWebAction(m_historyForwardAction, Engine::StandardAction::Forward);
     m_historyForwardAction->setShortcuts(QKeySequence::Forward);
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyForwardAction->setIconVisibleInMenu(false);
