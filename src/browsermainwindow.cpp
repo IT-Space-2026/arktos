@@ -1938,7 +1938,10 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    if (m_tabWidget->count() > 1) {
+    // CONT06: count() only sees the active container level — tabs in
+    // filtered levels still die with the window, so they must count.
+    const int openTabs = m_tabWidget->totalTabCount();
+    if (openTabs > 1) {
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         bool confirm = settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool();
@@ -1946,7 +1949,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
             QApplication::alert(this);
             int ret = QMessageBox::warning(this, QString(),
                                            tr("Are you sure you want to close the window?"
-                                              "  There are %1 tabs open").arg(m_tabWidget->count()),
+                                              "  There are %1 tabs open").arg(openTabs),
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
             if (ret == QMessageBox::No) {

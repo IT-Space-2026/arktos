@@ -504,7 +504,8 @@ void BrowserApplication::quitBrowser()
         clean();
         int tabCount = 0;
         for (int i = 0; i < m_mainWindows.count(); ++i) {
-            tabCount += m_mainWindows.at(i)->tabWidget()->count();
+            // CONT06: include tabs hidden in filtered container levels.
+            tabCount += m_mainWindows.at(i)->tabWidget()->totalTabCount();
         }
 
         if (tabCount > 1) {

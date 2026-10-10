@@ -947,8 +947,36 @@ void TabBar::dragEnterEvent(QDragEnterEvent *event)
     QTabBar::dragEnterEvent(event);
 }
 
+// External URL/text drags get the same header hover highlight the
+// internal tab-drag paints — the drop itself is dropEvent's.
+void TabBar::dragMoveEvent(QDragMoveEvent *event)
+{
+    const QMimeData *mimeData = event->mimeData();
+    const int header =
+        (mimeData->hasUrls() || mimeData->hasText())
+        ? containerHeaderAt(event->position().toPoint()) : -1;
+    if (header != m_bandDropHeader) {
+        m_bandDropHeader = header;
+        update();
+    }
+    QTabBar::dragMoveEvent(event);
+}
+
+void TabBar::dragLeaveEvent(QDragLeaveEvent *event)
+{
+    if (m_bandDropHeader >= 0) {
+        m_bandDropHeader = -1;
+        update();
+    }
+    QTabBar::dragLeaveEvent(event);
+}
+
 void TabBar::dropEvent(QDropEvent *event)
 {
+    if (m_bandDropHeader >= 0) {
+        m_bandDropHeader = -1;
+        update();
+    }
     const QMimeData *mimeData = event->mimeData();
     QUrl url;
     if (mimeData->hasUrls())
