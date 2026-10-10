@@ -72,6 +72,7 @@
 #include "browserprofile.h"
 #include "browsermainwindow.h"
 #include "browsertheme.h"
+#include "clearprivatedata.h"
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
@@ -85,16 +86,16 @@
 #include "securestore.h"
 #include "startupprofile.h"
 #include "tabwidget.h"
-#include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torrequestinterceptor.h"
 #include "webview.h"
+
+#include <qjsonarray.h>
 
 #ifdef ARORA_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
-#include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #endif
@@ -784,53 +785,21 @@ void BrowserApplication::clearPrivateDataOnExit()
     if (!QSettings().value(QLatin1String("privacy/clearOnExit"), false).toBool())
         return;
 
-    // Every browsing profile the app materialized: the normal profile
-    // plus any container profiles — a "clear all data" exit wipe that
-    // skipped containers would silently keep their cookies/storage.
-    QList<QWebEngineProfile*> profiles;
-    profiles.append(BrowserProfile::normalProfile());
-    profiles.append(ContainerManager::instance()->createdProfiles());
-
-    HistoryManager *history = HistoryManager::instance();
-    history->clear();
-    history->clearIcons();
-    for (QWebEngineProfile *profile : profiles) {
-        profile->clearAllVisitedLinks();
-        CookieJar::instance(profile)->clear();
-        profile->clearHttpCache();
-    }
-    DownloadManager::instance()->cleanup();
-    // The search-history lists live in every ToolbarSearch; windows
-    // still exist on both call paths, so clear them while they can.
-    const QWidgetList widgets = qApp->allWidgets();
-    for (QWidget *widget : widgets) {
-        if (ToolbarSearch *search = qobject_cast<ToolbarSearch*>(widget))
-            search->clear();
-    }
-    // Sentinel-driven disk wipe at next start — covers the DOM
-    // storage trees AND the cookie/cache network state that async
-    // profile deletes may not flush before this process exits.
-    for (QWebEngineProfile *profile : profiles)
-        BrowserProfile::clearAllStorageOnNextStart(profile);
-
-    // CONT05: registered containers whose profile was never
-    // materialized this session have no live profile to send the
-    // sentinels to — nothing holds their trees open, so remove them
-    // outright.  Without this an exit wipe would silently keep every
-    // unused container's cookies, DOM storage and cache.
-    ContainerManager::instance()->wipeUnmaterializedStorage();
-
-    // The saved session blob is itself browsing history — leaving it
-    // behind would undo the wipe.
-    QSettings settings;
-    settings.beginGroup(QLatin1String("sessions"));
-    settings.remove(QLatin1String("lastSession"));
-    settings.endGroup();
-#ifdef ARORA_RUSTCORE
-    // The Rust-owned session file is browsing history too.
-    rustCoreEnsureDataDir();
-    rc_session_clear();
-#endif
+    // CLR01: the exit wipe is the full category set at persistent
+    // scope plus the two flags no dialog checkbox maps to —
+    // ClearSession (the saved session blob is itself browsing
+    // history; leaving it behind would undo the wipe) and
+    // ClearFullWipe (the PRIV01 sentinel-driven removal of the
+    // Network/+cache trees the async profile deletes may not flush
+    // before exit, and the CONT05 whole-tree removal of
+    // never-materialized containers).  The plan covers every profile
+    // the app materialized — normal plus containers — and executing
+    // the shared plan keeps the exit wipe identical to the dialog's.
+    ClearPrivateData::executePlan(ClearPrivateData::plan(
+        QLatin1String("all"),
+        ClearPrivateData::ClearAll | ClearPrivateData::ClearSession
+            | ClearPrivateData::ClearFullWipe,
+        false));
 }
 
 bool BrowserApplication::restoreLastSession()

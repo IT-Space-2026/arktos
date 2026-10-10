@@ -401,6 +401,27 @@ void HistoryManager::clear()
     emit historyCleared();
 }
 
+void HistoryManager::clearSince(qint64 sinceMs)
+{
+    // The ranged leg of a clear-private-data plan (CLR01): rows at or
+    // after the cutoff leave the mirror and the backing store; icons
+    // are per-host and stay, matching clear() vs clearIcons().
+    m_lastSavedUrl.clear();
+    for (int i = m_history.count() - 1; i >= 0; --i) {
+        if (m_history.at(i).dateTime.toMSecsSinceEpoch() >= sinceMs) {
+            const HistoryEntry item = m_history.takeAt(i);
+            emit entryRemoved(item);
+        }
+    }
+#ifdef ARORA_RUSTCORE
+    rustCoreEnsureDataDir();
+    rc_hist_clear_since(sinceMs);
+#endif
+    m_saveTimer->changeOccurred();
+    m_saveTimer->saveIfNeccessary();
+    emit historyReset();
+}
+
 void HistoryManager::loadSettings()
 {
     // load settings

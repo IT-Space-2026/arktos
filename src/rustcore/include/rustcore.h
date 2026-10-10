@@ -362,6 +362,9 @@ RcStatus rc_hist_update_title(const char *urlUtf8,
 RcStatus rc_hist_remove(const char *urlUtf8, const char *titleUtf8,
                         int64_t tsMs);
 RcStatus rc_hist_clear(void);
+/* Deletes every visit at or after sinceMs — the ranged leg of a
+ * clear-private-data plan (CLR01).  Icons are kept. */
+RcStatus rc_hist_clear_since(int64_t sinceMs);
 
 /* Per-host favicons (the HIST01 persistence folded into the core):
  * PNG blobs keyed by host. */
@@ -707,6 +710,67 @@ RcStatus rc_ua_spoof_remove(const char *hostUtf8);
 
 /* Every spoof row as {"host":"ua"} JSON.  rc_string_free. */
 char *rc_ua_spoof_list(void);
+
+/* ------------------------------------------------------------------ */
+/* CLR01: clear-private-data decision engine                            */
+/*                                                                      */
+/* "Which stores get wiped" is a pure (period, categories, scope) ->  */
+/* ordered operation list function; the shell executes the ops        */
+/* per-store.  The plan carries profile scoping: "persistent" ops     */
+/* cover the normal + materialized container profiles and the         */
+/* persistent shell stores (the OTR profile is absent — a persistent  */
+/* clear never reaches into a live private session); "otr" scope      */
+/* contains only the off-the-record context's own in-memory state,    */
+/* so a private-window clear can never touch the persistent stores    */
+/* either.                                                             */
+/*                                                                      */
+/* Plan JSON:                                                          */
+/*   {"scope":"persistent"|"otr", "period":name, "since_secs":n,       */
+/*    "ops":[{"op":NAME, "since_secs":n, "ranged":bool,                */
+/*            "scope"?:..., "degraded"?:true, ...flags}, ...]}         */
+/* Op names:                                                           */
+/*   containers.unmaterialized   on-disk trees of never-materialized   */
+/*                               containers (cookies/sitedata/cache/   */
+/*                               visited_links flags)                  */
+/*   history.clear               the visit log — the one ranged        */
+/*                               store (since_secs honored via          */
+/*                               rc_hist_clear_since)                   */
+/*   visited_links.clear         Chromium's visited-link db            */
+/*   downloads.clear             whole download list (+hide)           */
+/*   downloads.clear_otr         off-the-record rows only              */
+/*   search.clear                ToolbarSearch recent lists            */
+/*   cookies.clear               per-scope profile cookie stores       */
+/*   sitedata.page_sweep         live-page DOM-storage wipe (must run  */
+/*                               before sitedata.defer_wipe)           */
+/*   sitedata.defer_wipe         storage trees at next profile start   */
+/*   cache.clear                 per-scope profile http caches         */
+/*   nam_cache.clear             the app-side fetch cache              */
+/*   icons.clear                 the per-host favicon store            */
+/*   session.clear               the saved-session blob                */
+/*   storage.defer_full_wipe     PRIV01 network+cache tree removal     */
+/*   containers.wipe_unmaterialized  whole unmaterialized trees        */
+/* "degraded" marks a ranged request a store cannot honor — it        */
+/* executes as a full wipe.                                            */
+
+/* Category bits — the ClearPrivateData::ClearCategory enum mirrors
+ * these exactly (static_assert'd on the Qt side). */
+#define RC_CLEAR_HISTORY    0x01u
+#define RC_CLEAR_DOWNLOADS  0x02u
+#define RC_CLEAR_SEARCH     0x04u
+#define RC_CLEAR_COOKIES    0x08u
+#define RC_CLEAR_SITEDATA   0x10u
+#define RC_CLEAR_CACHE      0x20u
+#define RC_CLEAR_ICONS      0x40u
+#define RC_CLEAR_SESSION    0x80u
+/* Deep storage wipe — the exit-time path only (deferred storage-tree
+ * and unmaterialized-container removal). */
+#define RC_CLEAR_FULL_WIPE  0x100u
+
+/* rc_clearplan(periodUtf8, categories, otrActive) -> plan JSON;
+ * rc_string_free.  period: "all"/"everything"/"" or the "hour"/"day"/
+ * "week" windows; NULL or an unknown name -> NULL + error. */
+char *rc_clearplan(const char *periodUtf8, uint32_t categories,
+                   int otrActive);
 
 #ifdef __cplusplus
 }

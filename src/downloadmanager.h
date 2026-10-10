@@ -228,6 +228,9 @@ public slots:
     void download(QWebEnginePage *page, const QUrl &url, bool requestFileName = false);
     void handleDownloadRequested(QWebEngineDownloadRequest *download);
     void cleanup();
+    // CLR01: the OTR-scoped clear — drops only the off-the-record
+    // rows, keeping the persistent session's download history.
+    void cleanupOffTheRecord();
 
 private slots:
     void save() const;

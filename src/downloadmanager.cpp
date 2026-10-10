@@ -1267,6 +1267,31 @@ void DownloadManager::cleanup()
     m_autoSaver->changeOccurred();
 }
 
+void DownloadManager::cleanupOffTheRecord()
+{
+    // CLR01: an OTR-scoped clear removes only the private rows —
+    // the persistent session's download history is untouched.
+    bool removed = false;
+    for (int i = m_downloads.count() - 1; i >= 0; --i) {
+        DownloadItem *item = m_downloads[i];
+        // Same removability rule as DownloadModel::removeRows —
+        // finished or retryable rows only, never an in-flight one.
+        if (item->m_offTheRecord
+            && (item->downloadedSuccessfully()
+                || item->tryAgainButton->isEnabled())) {
+            m_model->removeRow(i);
+            removed = true;
+        }
+    }
+    if (!removed)
+        return;
+    updateItemCount();
+    updateActiveItemCount();
+    if (m_downloads.isEmpty())
+        m_iconProvider.reset();
+    m_autoSaver->changeOccurred();
+}
+
 void DownloadManager::updateItemCount()
 {
     int count = m_downloads.count();

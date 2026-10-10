@@ -12,6 +12,7 @@ SUBDIRS  = \
     browserapp \
     browsermainwindow \
     certerror \
+    clearplan \
     cookiejar \
     cookiemodel \
     containermanager \
