@@ -73,7 +73,8 @@ public:
         if (m_searchText == text)
             return;
         m_searchText = text;
-        invalidateFilter();
+        beginFilterChange();
+        endFilterChange();
     }
 
     QVariant data(const QModelIndex &index, int role) const override

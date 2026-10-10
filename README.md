@@ -212,7 +212,10 @@ Downloads) — filterable, sortable, and each selected row expands into a
 detail card in the panel's bottom pane. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
 enabled in `CONFIG+=rustdl` builds) — a connections-per-download
-field, and a cleanup policy for the finished-downloads list. An
+field, a cleanup policy for the finished-downloads list, and a
+"Parallel segments" toggle (default on) that has the built-in
+Chromium engine fetch range-capable downloads over multiple
+concurrent byte-range requests; it takes effect at restart. An
 optional Rust reqwest-based engine (`CONFIG+=rustdl`) accelerates
 HTTP(S) downloads as parallel ranged GETs and holds the same privacy
 guarantees as the built-in engine: every request and each redirect hop

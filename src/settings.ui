@@ -3159,6 +3159,19 @@
             </property>
            </widget>
           </item>
+          <item row="2" column="0" colspan="3">
+           <widget class="QCheckBox" name="downloadParallelSegments">
+            <property name="accessibleName">
+             <string>Parallel download segments</string>
+            </property>
+            <property name="toolTip">
+             <string>Splits downloads on the built-in (Chromium) engine into parallel byte-range requests when the server accepts ranges. The engine flag latches at startup, so the change applies on the next launch; it also applies in Tor windows where the engine path stays proxied.</string>
+            </property>
+            <property name="text">
+             <string>Parallel segments (built-in engine, applies at restart)</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -3331,6 +3344,7 @@
   <tabstop>downloadDirectoryButton</tabstop>
   <tabstop>downloadEngineCombo</tabstop>
   <tabstop>downloadConnectionsSpin</tabstop>
+  <tabstop>downloadParallelSegments</tabstop>
   <tabstop>downloadCleanupCombo</tabstop>
   <tabstop>defaultEngineCombo</tabstop>
   <tabstop>privateEngineCombo</tabstop>
