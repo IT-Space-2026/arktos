@@ -289,9 +289,16 @@ cargo-deny/cargo-audit skip the gate cleanly.
 ### Extensions
 
 Chrome Manifest-V3 extensions via Qt WebEngine's tech-preview API:
-install always stops at a permission-review screen, `update_url`
-checks are supported, and extensions are verified not to run in
-private or Tor windows.
+install always stops at a permission-review screen with an extra
+per-permission consent gate on the high-risk set (native messaging,
+debugger, blocking webRequest, cookies, browsing data, all-URLs host
+access), and extensions are verified not to run in private or Tor
+windows. `update_url` checks are supported — fetches are HTTPS-only,
+downloaded packages are hash/structure-verified before they touch
+disk, and applying an update is opt-in: nothing replaces installed
+extension code without a fresh review. CRX3 signature blocks are
+structure-checked only; there is no Chrome Web Store signature
+verification.
 
 ### Credentials & autofill
 

@@ -2193,15 +2193,15 @@ void SettingsDialog::extensionUpdateCheckFinished(
         return;
     m_manualExtensionCheck = false;
 
-    QStringList installed;
+    QStringList offered;
     QStringList downloaded;
     QStringList failed;
     for (const ExtensionManager::UpdateResult &result : results) {
         if (!result.error.isEmpty()) {
             failed << tr("%1: %2").arg(result.name, result.error);
         } else if (!result.availableVersion.isEmpty()) {
-            if (result.installTriggered)
-                installed << tr("%1 (version %2)")
+            if (result.installable && !result.savedTo.isEmpty())
+                offered << tr("%1 (version %2)")
                     .arg(result.name, result.availableVersion);
             else
                 downloaded << tr("%1 (version %2, saved to %3)")
@@ -2211,12 +2211,13 @@ void SettingsDialog::extensionUpdateCheckFinished(
     }
 
     QString text;
-    if (installed.isEmpty() && downloaded.isEmpty() && failed.isEmpty())
+    if (offered.isEmpty() && downloaded.isEmpty() && failed.isEmpty())
         text = tr("All extensions are up to date.");
     else {
         QStringList parts;
-        if (!installed.isEmpty())
-            parts << tr("Updated: %1").arg(installed.join(QLatin1String(", ")));
+        if (!offered.isEmpty())
+            parts << tr("Updates ready to review: %1")
+                         .arg(offered.join(QLatin1String(", ")));
         if (!downloaded.isEmpty())
             parts << tr("Update available, install manually: %1")
                          .arg(downloaded.join(QLatin1String(", ")));
@@ -2225,6 +2226,23 @@ void SettingsDialog::extensionUpdateCheckFinished(
         text = parts.join(QLatin1Char('\n'));
     }
     QMessageBox::information(this, tr("Extension Updates"), text);
+
+    // EXT05: applying an update is opt-in — each downloaded package
+    // passes the same consent review as a manual install, so new or
+    // dangerous permissions are re-acknowledged before new code is
+    // allowed to replace the installed extension.  Declined packages
+    // stay on disk for manual handling.
+    for (const ExtensionManager::UpdateResult &result : results) {
+        if (!result.installable || result.savedTo.isEmpty())
+            continue;
+        if (!ExtensionReviewDialog::review(
+                ExtensionManager::inspectManifest(result.savedTo),
+                result.savedTo,
+                ExtensionReviewDialog::Install, this))
+            continue;
+        // review() recorded the consent this call consumes.
+        ExtensionManager::instance()->installExtension(result.savedTo);
+    }
 }
 
 void SettingsDialog::extensionSelectionChanged()
@@ -2272,9 +2290,10 @@ void SettingsDialog::extensionSelectionChanged()
             if (!update.error.isEmpty())
                 lines << tr("Update check failed: %1").arg(update.error);
             else if (!update.availableVersion.isEmpty())
-                lines << (update.installTriggered
-                    ? tr("Update to version %1 was installed.")
-                        .arg(update.availableVersion)
+                lines << (update.installable
+                    ? tr("Update to version %1 downloaded to %2 — it is "
+                         "offered for review on the next update check.")
+                        .arg(update.availableVersion, update.savedTo)
                     : tr("Update to version %1 downloaded to %2 — "
                          "install it with the Install button.")
                         .arg(update.availableVersion, update.savedTo));

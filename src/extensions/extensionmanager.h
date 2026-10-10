@@ -24,6 +24,8 @@
 
 #include <qhash.h>
 #include <qlist.h>
+#include <qpointer.h>
+#include <qset.h>
 #include <qstring.h>
 #include <qstringlist.h>
 #include <qurl.h>
@@ -54,6 +56,13 @@ class QNetworkReply;
 //   - Every profile ships the built-in Google Hangouts and Chromium
 //     PDF viewer components; they appear in the list and can be
 //     disabled but not uninstalled.
+//
+// EXT05 trust surface: loadExtension()/installExtension() refuse any
+// path that has not passed the consent gate — the review dialog
+// records per-path consent on approval (grantConsent()), callers
+// with no UI must grant explicitly.  Consent is one-shot: the next
+// load/install of the same path needs a fresh review.  The tor
+// profile is never wired at all (isInstalledOnProfile() stays false).
 class ExtensionManager : public QObject
 {
     Q_OBJECT
@@ -93,9 +102,10 @@ public:
         QStringList hostPermissions;
         QStringList unsupported;      // permissions Qt WebEngine cannot serve
         QStringList unverified;       // registered but delegates may be stubs
-        QStringList dangerous;        // EXT06 deny-by-default consent set —
-                                      // populated under CONFIG+=rustcore by
-                                      // rc_ext_manifest_check, empty otherwise
+        QStringList dangerous;        // EXT05 deny-by-default consent set —
+                                      // by rc_ext_manifest_check under
+                                      // CONFIG+=rustcore, or the mirrored
+                                      // dangerousPermissions() lists otherwise
         QString packageNote;          // honesty note for packaged installs
                                       // ("unsigned", "structure-only sig")
         QString updateUrl;            // update_url — self-hosted update manifest
@@ -120,7 +130,10 @@ public:
                                   // for the package (hex), empty when absent
         bool noSource = false;    // no update_url — cannot self-update
         bool upToDate = false;    // remote version not newer
-        bool installTriggered = false; // .zip handed to installExtension()
+        bool installable = false; // a .zip savedTo that installExtension()
+                                  // can apply once consent is granted —
+                                  // update checks NEVER install on their
+                                  // own (EXT05: apply is opt-in)
     };
 
     static ExtensionManager *instance();
@@ -144,6 +157,16 @@ public:
     QList<ExtensionInfo> extensions() const;
     QString installPath() const;
 
+    // Consent gate (EXT05): grantConsent() records one approval for a
+    // path — ExtensionReviewDialog::review() grants on accept, so the
+    // UI needs no extra call; headless callers (smokes, tests) grant
+    // explicitly to stand in for the user.  load/install refuse a
+    // path with no recorded consent via errorOccurred — a silent
+    // extension install is a bug.  Each grant is consumed by the
+    // load/install it authorizes.
+    void grantConsent(const QString &path);
+    bool hasConsent(const QString &path) const;
+
     void loadExtension(const QString &path);     // unpacked dir, this session only
     void installExtension(const QString &path);  // dir or .zip, persists in profile
     void removeExtension(const QString &id);     // unload or uninstall, per state
@@ -157,12 +180,14 @@ public:
     // EXT03 update checks.  checkForUpdates() GETs every extension's
     // update_url through the application-side network manager,
     // compares dotted-quad versions and downloads the package into the
-    // updates directory.  A .zip package is handed to installExtension
-    // (packages carrying the manifest "key" update the extension in
-    // place under the same id); anything else — typically a .crx Qt
-    // cannot install — is saved for manual install and flagged in the
-    // result.  Automatic checks only detect + download; installing is
-    // reserved for the user-initiated check.
+    // updates directory — https only (loopback http is allowed for
+    // local fixtures).  EXT05: a check never installs anything; a
+    // downloaded .zip is flagged installable and the UI offers it
+    // through the same consent review as a manual install (packages
+    // carrying the manifest "key" update the extension in place under
+    // the same id).  Anything else — typically a .crx Qt cannot
+    // install — is saved for manual install and flagged in the
+    // result.
     void checkForUpdates(bool manual = false);
     bool updateCheckInProgress() const;
     UpdateResult updateResultFor(const QString &id) const;
@@ -199,6 +224,13 @@ public:
     // Registered APIs whose Qt delegates are only partially plumbed;
     // functionality may work but is not guaranteed.
     static QStringList unverifiedPermissions();
+    // EXT05 deny-by-default consent set — permissions and host
+    // patterns that require an explicit per-item consent checkbox in
+    // the review dialog (install is refused otherwise).  Mirrors
+    // DANGEROUS_PERMISSIONS/DANGEROUS_HOST_PATTERNS in rustcore's
+    // extverify.rs — keep the lists in sync.
+    static QStringList dangerousPermissions();
+    static QStringList dangerousHostPatterns();
 
     // User scripts: every *.js file in this directory is injected at
     // DocumentReady in the ApplicationWorld on each prepared profile.
@@ -230,7 +262,11 @@ private:
     void fetchUpdatePackage(const UpdateResult &result);
     void finishUpdateCheck();
 
-    QList<QWebEngineProfile *> m_profiles;
+    QList<QPointer<QWebEngineProfile>> m_profiles;
+
+    // One-shot consent grants keyed by the exact path string the
+    // review approved; consumed by the load/install they authorize.
+    QSet<QString> m_consentedPaths;
 
     // In-flight update jobs keyed by the reply currently active for
     // the extension (manifest fetch, then package download).
@@ -243,7 +279,6 @@ private:
     QHash<QString, UpdateResult> m_lastUpdateResults;
     QHash<QString, QString> m_updateUrls;
     bool m_updateCheckRunning = false;
-    bool m_updateCheckManual = false;
     bool m_autoUpdateScheduled = false;
 };
 

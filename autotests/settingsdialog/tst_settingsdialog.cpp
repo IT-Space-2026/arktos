@@ -25,6 +25,7 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qcheckbox.h>
 #include <qdir.h>
 #include <qframe.h>
 #include <qgroupbox.h>
@@ -1842,6 +1843,21 @@ void tst_SettingsDialog::extensionReview()
         QPushButton *approve = dialog.findChild<QPushButton *>(
             QLatin1String("approveButton"));
         QVERIFY(approve);
+        // EXT05: HostileExt declares dangerous access (cookies,
+        // debugger, <all_urls>) — approve stays locked until every
+        // per-permission consent box is ticked.
+        QVERIFY(manifest.dangerous.contains(QLatin1String("cookies")));
+        QVERIFY(manifest.dangerous.contains(QLatin1String("debugger")));
+        QVERIFY(manifest.dangerous.contains(QLatin1String("<all_urls>")));
+        QVERIFY(!approve->isEnabled());
+        const QList<QCheckBox *> consents =
+            dialog.findChildren<QCheckBox *>(
+                QLatin1String("dangerousConsent"));
+        QCOMPARE(consents.size(), manifest.dangerous.size());
+        for (QCheckBox *box : consents) {
+            QVERIFY(!box->isChecked());
+            box->setChecked(true);
+        }
         QVERIFY(approve->isEnabled());
         QCOMPARE(approve->text(), QLatin1String("Install"));
     }
@@ -1890,18 +1906,27 @@ void tst_SettingsDialog::extensionReview()
         QVERIFY(warnings->count() > 0);
     }
 
-    // Consent gate: approve returns true, cancel returns false.
+    // Consent gate: approve returns true, cancel returns false — and
+    // an unchecked dangerous permission keeps approve locked, so the
+    // review can only pass once every consent box is ticked.
     const QString dirPath = dir.path();
     QTimer::singleShot(50, qApp, [dirPath]() {
         QWidget *widget = QApplication::activeModalWidget();
         if (ExtensionReviewDialog *dialog =
                 qobject_cast<ExtensionReviewDialog *>(widget)) {
+            const QList<QCheckBox *> consents =
+                dialog->findChildren<QCheckBox *>(
+                    QLatin1String("dangerousConsent"));
+            for (QCheckBox *box : consents)
+                box->setChecked(true);
             dialog->findChild<QPushButton *>(
                 QLatin1String("approveButton"))->click();
         }
     });
     QVERIFY(ExtensionReviewDialog::review(
         manifest, dirPath, ExtensionReviewDialog::Install));
+    // The approval recorded a one-shot consent for the path.
+    QVERIFY(ExtensionManager::instance()->hasConsent(dirPath));
 
     rejectModal(50);
     QVERIFY(!ExtensionReviewDialog::review(

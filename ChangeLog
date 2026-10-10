@@ -300,6 +300,21 @@ Extensions:
 - Permission-review screen on install (EXT02).
 - update_url update checks (EXT03).
 - Verified inert in private/Tor windows (EXT04).
+- Hardened trust surface (EXT05): every load/install path requires a
+  one-shot consent grant recorded by the review dialog — nothing
+  reaches the profile silently. Dangerous permissions
+  (nativeMessaging, debugger, webRequestBlocking, cookies,
+  browsingData, <all_urls> host access) each need their own consent
+  checkbox; install is refused while any is unticked. The Tor
+  profile is never wired for extensions, and no profile is wired at
+  all in a Tor window. Update checks are HTTPS-only (loopback http
+  for fixtures), hash/structure-verify downloads before they hit
+  disk, and applying an update is opt-in through the same review —
+  nothing silently replaces installed code. The userscripts
+  directory is forced to 0700 and world/group-accessible scripts are
+  tightened to 0600 with a warning. CRX3 signatures are
+  structure-checked only; Chrome Web Store verification is out of
+  scope.
 
 Downloads:
 - QtWebEngine download manager: progress, Try Again, safe names

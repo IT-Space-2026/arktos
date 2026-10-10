@@ -23,8 +23,10 @@
 #include "extensionmanager.h"
 
 #include <qdialog.h>
+#include <qlist.h>
 #include <qstring.h>
 
+class QCheckBox;
 class QDialogButtonBox;
 class QLabel;
 class QListWidget;
@@ -36,6 +38,12 @@ class QPushButton;
 // the support caveats Qt WebEngine has (unsupported chrome.* APIs,
 // partially-plumbed APIs, toolbar actions with no host UI).  Nothing
 // reaches QWebEngineExtensionManager until the user approves here.
+// EXT05: entries on the manifest's dangerous list (nativeMessaging,
+// debugger, webRequestBlocking, cookies, browsingData, all-URLs host
+// access) each get their own consent checkbox — the approve button
+// stays disabled until every one is ticked, so a denied dangerous
+// permission refuses the install rather than warning and proceeding.
+// Approving records per-path consent on the ExtensionManager.
 class ExtensionReviewDialog : public QDialog
 {
     Q_OBJECT
@@ -66,13 +74,17 @@ public:
     static QString describeHostPermission(const QString &pattern);
 
 private:
+    bool approveAllowed() const;
+
     QLabel *m_nameLabel;
     QLabel *m_sourceLabel;
     QLabel *m_permissionsHint;
     QListWidget *m_permissionsList;
     QListWidget *m_warningsList;
+    QList<QCheckBox *> m_dangerousBoxes;
     QDialogButtonBox *m_buttonBox;
     QPushButton *m_approveButton;
+    bool m_fatal;
 };
 
 #endif // EXTENSIONREVIEWDIALOG_H

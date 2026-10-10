@@ -8876,6 +8876,9 @@ int main(int argc, char **argv)
             if (info.id != extensionId)
                 return;
             qInfo() << "extension-smoke: unload PASS";
+            // EXT05: the consent gate requires an explicit grant —
+            // the smoke stands in for the approving user.
+            extensions->grantConsent(extDir);
             extensions->installExtension(extDir);
         });
 
@@ -8924,6 +8927,8 @@ int main(int argc, char **argv)
         QTimer::singleShot(20000, &application, [die]() {
             die(QStringLiteral("timeout"));
         });
+        // Consent gate: headless runs grant explicitly (EXT05).
+        extensions->grantConsent(extDir);
         extensions->loadExtension(extDir);
 
         // exec() must run while this block's locals are still alive:
@@ -9371,9 +9376,13 @@ int main(int argc, char **argv)
                      .arg(info.name, info.error));
                 return;
             }
-            // Feed the next queued fixture install.
-            if (!updateInstallQueue.isEmpty())
-                upm->installExtension(updateInstallQueue.takeFirst());
+            // Feed the next queued fixture install — each grant stands
+            // in for the user's review approval (EXT05 consent gate).
+            if (!updateInstallQueue.isEmpty()) {
+                const QString next = updateInstallQueue.takeFirst();
+                upm->grantConsent(next);
+                upm->installExtension(next);
+            }
             updateNameToId.insert(info.name, info.id);
             if (info.id == updateExtId && updateInstallSeenOnce) {
                 // Second install of the keyed fixture = the update
@@ -9417,8 +9426,13 @@ int main(int argc, char **argv)
                   QStringLiteral("newer version detected"));
             check(!ra.savedTo.isEmpty() && QFile::exists(ra.savedTo),
                   QStringLiteral("update package downloaded"));
-            check(ra.installTriggered,
-                  QStringLiteral("zip package handed to installer"));
+            check(ra.installable,
+                  QStringLiteral("zip package flagged installable"));
+            // EXT05: the check itself installs nothing — applying the
+            // update is an explicit opt-in, driven here the way the
+            // settings UI drives it after the review dialog approves.
+            upm->grantConsent(ra.savedTo);
+            upm->installExtension(ra.savedTo);
             check(findResult(updateNameToId.value(
                       QStringLiteral("upd-b"))).noSource,
                   QStringLiteral("no update_url = no update source"));
@@ -9459,14 +9473,18 @@ int main(int argc, char **argv)
             if (info.name != QLatin1String("upd-b"))
                 return;
             QTimer::singleShot(500, &application, [&]() {
-                if (!updateInstallQueue.isEmpty())
-                    upm->installExtension(updateInstallQueue.takeFirst());
+                if (!updateInstallQueue.isEmpty()) {
+                    const QString next = updateInstallQueue.takeFirst();
+                    upm->grantConsent(next);
+                    upm->installExtension(next);
+                }
             });
         });
 
         QTimer::singleShot(60000, &application, [udie]() {
             udie(QStringLiteral("timeout"));
         });
+        upm->grantConsent(dirB);
         upm->loadExtension(dirB);
 
         // exec() must run while this block's locals are still alive:
