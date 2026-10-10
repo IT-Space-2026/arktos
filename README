@@ -7,31 +7,42 @@ Building:
 Arora uses the qmake build system.  If you already have Qt 6 on your system building is as easy as running the command 'qmake' and then 'make' or 'nmake' on Windows.
 For more detailed information see https://github.com/Arora/arora/wiki/BeginnerStepByStepInstructions
 
-Optional adblock engine: the built-in C++ matcher is the default.  A
-Brave adblock-rust backed engine can be enabled instead — build the
-FFI static library with `cargo build --release` in src/adblock/rust
-(needs a user-local Rust toolchain), then run `qmake CONFIG+=adblock_rust`
-and rebuild.  `./arora --adblock-rust-smoke` compares both engines on a
+Rust components: the crates in src/rustcore, src/rustdl and
+src/adblock/rust are the DEFAULT code path — a plain `qmake`
+auto-detects a cargo toolchain (PATH first, then the user-local
+rustup at ~/.cargo/bin; no sudo, no system packages) and builds them
+via cargo as part of `make`.  Opt out with `qmake CONFIG+=no-rust`
+(all crates) or `CONFIG-=rustcore` / `CONFIG-=rustdl` /
+`CONFIG-=adblock_rust` per crate; with no toolchain at all qmake
+warns loudly and builds the Qt fallback paths, so the tree always
+configures.  The C++ implementations the crates replace stay in the
+tree as those no-toolchain fallbacks.
+
+Adblock engine: matching delegates to the Brave adblock-rust engine
+in src/adblock/rust (C FFI staticlib, built like the other crates).
+The built-in C++ matcher remains for no-rust builds and for
+`./arora --adblock-rust-smoke`, which compares both engines on a
 fixed probe set.
 
-Optional Rust core: `qmake CONFIG+=rustcore` builds src/rustcore (the
+Rust core: src/rustcore (the
 shared engine-neutral component crate behind a C ABI; qmake runs cargo
-itself) and moves credential storage — the AES-256-GCM seal/open,
+itself) holds credential storage — the AES-256-GCM seal/open,
 Argon2id master-passphrase KDF and securestore.key/securestore.kdf file
-handling behind the SecureStore API — into it.  On-disk formats are
+handling behind the SecureStore API.  On-disk formats are
 unchanged, so existing stores open either way; the C++ implementation
-stays the default when the flag is off.  The crate also carries a
+is the fallback in no-rust builds.  The crate also carries a
 ClearURLs-style tracking-parameter stripper (vendored
-urlstrip-rules.json, reloadable from a data-dir override); with the
-flag set the privacy request interceptor redirects GET/HEAD requests
+urlstrip-rules.json, reloadable from a data-dir override); in
+rust-enabled builds the privacy request interceptor redirects
+GET/HEAD requests
 to the stripped URL.  The crate also carries the local
 anti-phishing/malware domain blocklist (vendored seed merged with a
-consent-gated URLhaus+OpenPhish download); flagged builds refuse
+consent-gated URLhaus+OpenPhish download); rust-enabled builds refuse
 main-frame navigations to listed domains behind a warning
 interstitial with a session-only proceed.  The crate also parses
 untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
 extension update manifests and suggestion replies are schema-checked
-behind the FFI before Qt sees them.  With the flag set the crate is
+behind the FFI before Qt sees them.  The crate is
 also the canonical bookmark + history store: bookmarks.xbel stays the
 on-disk format but is parsed and emitted in Rust (queried lazily, one
 node handle per call — no bulk tree marshal), and history lives in a
@@ -43,7 +54,7 @@ corrupt file is rejected whole instead of looping the crash-restore
 prompt — per-tab records carry url, container binding, tab group and
 an engine tag beside an opaque engine-state blob, keeping the format
 engine-neutral (a pre-Rust QSettings session still restores once
-through the legacy reader).  With the flag set the crate also owns the
+through the legacy reader).  The crate also owns the
 omnibox: the location bar's url-or-search routing decision
 (rc_classify_input — a ported QUrl::fromUserInput heuristic plus
 keyword/search-fallback handling, verdict diffed against the old C++
@@ -65,14 +76,14 @@ windows, proxied sessions and private/loopback hosts entirely, and
 does no OCSP/CRL fetch — an unreachable host reports "not verified",
 never a false alarm.
 
-Optional accelerated downloads: `qmake CONFIG+=rustdl` builds
-src/rustdl (reqwest + std::thread behind a C ABI, cargo run by qmake)
-and lets the download settings' "Accelerated (Rust)" engine fetch
+Accelerated downloads: src/rustdl (reqwest + std::thread behind a C
+ABI, cargo run by qmake like the other crates) powers the download
+settings' "Accelerated (Rust)" engine, which fetches
 HTTP(S) files as parallel ranged GETs — 4–16 connections, default 8 —
 merged atomically on completion, with a single-stream fallback when a
 server does not accept ranges.  The built-in Chromium engine stays the
-default; without the flag the selector simply does not offer the Rust
-engine.  The accelerated path holds the same privacy guarantees as the
+default; in a no-rust build the selector simply does not offer the
+Rust engine.  The accelerated path holds the same privacy guarantees as the
 built-in one: every request and each redirect hop is vetted by the same
 interceptor pipeline (HTTPS-first upgrade, HTTPS-Only veto, tracking-
 parameter strip, domain blocklist, adblock rules, public-to-private

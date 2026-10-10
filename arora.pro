@@ -6,6 +6,17 @@ TEMPLATE = subdirs
 SUBDIRS  = src tools autotests
 CONFIG += ordered
 
+# RDEF01: the Rust components are the DEFAULT build path — the root
+# .qmake.conf adds CONFIG+=rustcore/rustdl/adblock_rust whenever a
+# cargo toolchain resolves.  Opt out with CONFIG-=<flag> per crate or
+# CONFIG+=no-rust for all three.  When no toolchain exists the Qt
+# fallback paths build instead; warn loudly so that is never silent.
+isEmpty(ARORA_CARGO):!no-rust {
+    warning("no Rust toolchain found (looked for cargo on PATH and ~/.cargo/bin/cargo)")
+    warning("-> building without the Rust components; install rustup (https://rustup.rs)")
+    warning("   or pass CONFIG+=no-rust to silence this warning")
+}
+
 unix {
     # this is an ugly work around to do .PHONY: doc
     doxygen.target = doc dox

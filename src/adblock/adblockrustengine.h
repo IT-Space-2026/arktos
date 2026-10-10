@@ -31,6 +31,7 @@
 
 #include "adblocknetwork.h"
 
+#include <qhash.h>
 #include <qjsonobject.h>
 #include <qmutex.h>
 
@@ -84,6 +85,10 @@ private:
     Q_DISABLE_COPY_MOVE(AdBlockRustEngine)
 
     AroraAdBlockEngine *m_engine;
+    // resolved data: stub URL -> canonical resource name, so a
+    // $redirect decision can be served through the arora-resource:
+    // handler instead of a data: redirect Chromium refuses.
+    QHash<QByteArray, QByteArray> m_stubUrls;
     mutable QMutex m_mutex;
 };
 

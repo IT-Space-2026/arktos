@@ -1,23 +1,24 @@
-# Optional shared Rust core (RCORE01): credential custody, the
-# rc_cred_* store and future engine-neutral services live in
-# $$PWD (crate "arora-rustcore") behind the C ABI in include/rustcore.h.
+# Shared Rust core (RCORE01, default-on per RDEF01): credential
+# custody, the rc_cred_* store and future engine-neutral services
+# live in $$PWD (crate "arora-rustcore") behind the C ABI in
+# include/rustcore.h.
 #
-# Build the crate once with
-#     cd $$PWD && cargo build --release
-# then configure the tree with `qmake CONFIG+=rustcore`.  The
-# cargo_rustcore target below is also in PRE_TARGETDEPS, so `make`
-# rebuilds the archive when the Rust sources change.  Toolchain is the
-# user-local rustup (~/.cargo/bin); no sudo, no system packages.
+# The flag is set by default in the project-root .qmake.conf whenever a cargo
+# toolchain resolves; `make` then rebuilds the archive via the
+# cargo_rustcore target below when the Rust sources change.
+# Toolchain is the user-local rustup (~/.cargo/bin); no sudo, no
+# system packages.
 #
-# Without CONFIG+=rustcore nothing here is compiled or linked — the
-# tree builds identically on machines with no Rust toolchain.
+# Opt out with `qmake CONFIG-=rustcore` (this crate only) or
+# `qmake CONFIG+=no-rust` (all crates) — nothing here is compiled or
+# linked and the Qt fallback path builds instead.
 #
 # Offline/CI: `cargo vendor` + a .cargo/config.toml source replacement
 # works unchanged; Cargo.lock pins the resolved tree and SEC21's
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
-rustcore {
-    CARGO = $$system(command -v cargo || echo $$HOME/.cargo/bin/cargo)
+rustcore:!no-rust {
+    CARGO = $$system(command -v cargo || echo $$(HOME)/.cargo/bin/cargo)
     RUSTCORE_LIB = $$PWD/target/release/libarora_rustcore.a
 
     cargo_rustcore.target = $$RUSTCORE_LIB

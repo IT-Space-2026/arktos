@@ -6,6 +6,12 @@
 # in-tree build) and fails if the compiler emits ANY warning or error
 # while compiling the shipping code (src/ + tools/).
 #
+# This gate deliberately configures the NO-RUST build
+# (`CONFIG+=no-rust`): RDEF01 made the Rust crates the default code
+# path, so this clean copy stays the gate that proves the tree still
+# configures and compiles warning-free without any Rust toolchain —
+# while the in-tree `make check` build exercises the Rust default.
+#
 # The autotest tree is deliberately not gated here: `make check`
 # already rebuilds those TUs in-tree where warnings are visible in the
 # build output, and gating the ~44x recompiled shared sources would
@@ -60,8 +66,8 @@ cd "$BUILD" || die "cannot cd to $BUILD"
 QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 
 LOG="$BUILD/warnings-build.log"
-echo "check-warnings: qmake ($("$QMAKE" -query QT_VERSION)) + make -j$JOBS (src + tools)"
-"$QMAKE" arora.pro >>"$LOG" 2>&1 || die "qmake failed (see $LOG)"
+echo "check-warnings: qmake ($("$QMAKE" -query QT_VERSION), CONFIG+=no-rust) + make -j$JOBS (src + tools)"
+"$QMAKE" "CONFIG+=no-rust" arora.pro >>"$LOG" 2>&1 || die "qmake failed (see $LOG)"
 # One make invocation per subdir: tools/ shares src/'s OBJECTS_DIR and
 # MOC_DIR (src.pri anchors them at $$PWD), and passing multiple subdir
 # goals at once bypasses the CONFIG+=ordered serialization so two

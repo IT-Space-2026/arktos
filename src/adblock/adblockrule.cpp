@@ -609,10 +609,18 @@ bool AdBlockRule::isEnabled() const
 
 void AdBlockRule::setEnabled(bool enabled)
 {
+    // Only a real state change rewrites the filter text: a disabled
+    // rule carries a "!" prefix and enabling strips it.  Calling this
+    // with the current state must be a no-op — otherwise enabling an
+    // already-enabled rule eats its first pattern character
+    // ("||host^" -> "|host^"), which corrupted the serialized text
+    // handed to the rustcore/adblock-rust feed.
+    if (enabled == m_enabled)
+        return;
     m_enabled = enabled;
     if (!enabled) {
         m_filter = QLatin1String("!") + m_filter;
-    } else {
+    } else if (m_filter.startsWith(QLatin1Char('!'))) {
         m_filter = m_filter.mid(1);
     }
 }

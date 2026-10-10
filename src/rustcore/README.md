@@ -8,16 +8,21 @@ Linux/macOS/Windows/BSD — only the artifact name changes
 
 ## Build
 
-    cd src/rustcore && cargo build --release
-    qmake CONFIG+=rustcore && make
+    qmake && make            # crate builds automatically (RDEF01 default)
+    cd src/rustcore && cargo build --release   # or by hand
 
-`CONFIG+=rustcore` defines `ARORA_RUSTCORE`, adds `include/` to the
+The crate is the DEFAULT code path: the project-root `.qmake.conf`
+adds `CONFIG+=rustcore` whenever a cargo toolchain resolves (PATH,
+then `~/.cargo/bin`).  The `rustcore` scope defines
+`ARORA_RUSTCORE`, adds `include/` to the
 include path, links `target/release/libarora_rustcore.a`, and wires a
 Makefile rule so `make` rebuilds the crate when `src/*.rs` changes.
-Without the flag nothing references the crate — the tree builds with
-no Rust toolchain installed at all (same convention as ADB02's
-`adblock_rust`).  The crate also emits a cdylib; the static archive is
-what qmake links so the browser stays a single self-contained binary.
+Opt out with `qmake CONFIG-=rustcore` (this crate) or
+`CONFIG+=no-rust` (all crates); with no toolchain the flag is simply
+never added and the tree builds the Qt fallback path — the same
+convention as ADB02's `adblock_rust`.  The crate also emits a cdylib;
+the static archive is what qmake links so the browser stays a single
+self-contained binary.
 
 Toolchain: user-local rustup (`~/.cargo/bin/cargo`), no sudo.  For
 offline builds `cargo vendor` + a `.cargo/config.toml` source
@@ -61,7 +66,7 @@ Updates land like filter lists: drop a newer `urlstrip-rules.json`
 into the app data dir and call `rc_urlstrip_reload()` — the override
 wins over the builtin, a malformed override keeps the previous set.
 `rc_urlstrip_load_rules` is the same swap with the JSON handed over
-directly (update/test seam).  Without `CONFIG+=rustcore` the strip
+directly (update/test seam).  In a no-rust build the strip
 stage simply isn't there — the interceptors degrade to no-strip.
 
 ## Domain blocklist (SEC18)
@@ -87,7 +92,7 @@ updates can only *add* coverage, a malformed or missing override falls
 back to the seed.  `rc_blocklist_load` swaps in a caller-supplied body
 (update/test seam); `rc_blocklist_count` reports the merged size.  The
 Rust side never touches the network — fetching is entirely Qt-side and
-consent-gated like remote filter lists.  Without `CONFIG+=rustcore` the
+consent-gated like remote filter lists.  In a no-rust build the
 whole feature is absent and nothing is ever blocked.
 
 ## Second-opinion TLS verification (SEC22)

@@ -355,6 +355,31 @@ void tst_AdBlockNetwork::differential()
     const QList<QPair<QUrl, QUrl> > urls = corpusUrls();
     const int resourceTypes[] = { -1, 0, 2, 3, 4, 13, 254 };
     int checks = 0;
+#if defined(ARORA_ADBLOCK_RUST)
+    // Under the Rust engine match() is rust-primary with a native
+    // residual on allows plus shared document-unbreak handling (see
+    // AdBlockNetwork::match) — the composite must decide identically
+    // to the linear reference on the whole corpus.  Divergences are
+    // collected first so a failure dumps the full inventory.
+    QStringList divergences;
+    for (const QPair<QUrl, QUrl> &pair : urls) {
+        for (const int type : resourceTypes) {
+            const AdBlockDecision indexed =
+                network.match(pair.first, pair.second, type);
+            const AdBlockDecision linear =
+                network.matchLinear(pair.first, pair.second, type);
+            if (!sameDecision(indexed, linear))
+                divergences.append(QString(QLatin1String(
+                    "url=%1 firstParty=%2 type=%3 indexed=%4 linear=%5"))
+                    .arg(pair.first.toString(), pair.second.toString())
+                    .arg(type).arg(indexed.action).arg(linear.action));
+            ++checks;
+        }
+    }
+    QVERIFY2(divergences.isEmpty(),
+             qPrintable(QLatin1String("divergences:\n")
+                        + divergences.join(QLatin1String("\n"))));
+#else
     for (const QPair<QUrl, QUrl> &pair : urls) {
         for (const int type : resourceTypes) {
             const AdBlockDecision indexed =
@@ -369,6 +394,7 @@ void tst_AdBlockNetwork::differential()
             ++checks;
         }
     }
+#endif
     // Ordering across subscriptions: when the first subscription
     // produces no decision the second one's rules still apply — an
     // exception there beats the block there.

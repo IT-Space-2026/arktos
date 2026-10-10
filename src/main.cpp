@@ -4558,14 +4558,23 @@ int main(int argc, char **argv)
                                 << (stored ? "PASS" : "FAIL")
                                 << "forms:" << probe.forms().count();
 
-                        // SEC03 at-rest checks: autofill.dat must be a
-                        // sealed SecureStore blob — magic header, no
-                        // plaintext credential bytes — and the seal
-                        // must round-trip and reject tampering.
+                        // SEC03 at-rest checks: the autofill store must
+                        // be a sealed SecureStore blob — magic header,
+                        // no plaintext credential bytes — and the seal
+                        // must round-trip and reject tampering.  The
+                        // canonical file is autofill-store.dat under
+                        // the rustcore custody (RCORE05); a no-rust
+                        // build still writes autofill.dat.
                         bool sealed = false;
                         {
+#ifdef ARORA_RUSTCORE
+                            const QLatin1String storeName(
+                                "autofill-store.dat");
+#else
+                            const QLatin1String storeName("autofill.dat");
+#endif
                             QFile storeFile(BrowserPaths::dataFilePath(
-                                QLatin1String("autofill.dat")));
+                                storeName));
                             if (storeFile.open(QIODevice::ReadOnly)) {
                                 const QByteArray raw =
                                     storeFile.readAll();

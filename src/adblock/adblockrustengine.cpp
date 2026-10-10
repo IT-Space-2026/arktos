@@ -114,6 +114,12 @@ AdBlockRustEngine *AdBlockRustEngine::create(const QByteArray &ruleText)
             wrapper->m_engine, name.constData(), mime.constData(),
             reinterpret_cast<const unsigned char *>(body.constData()),
             size_t(body.size()));
+        // The crate resolves a registered stub to a data: URL of the
+        // form data:<mime>;base64,<payload>; remember which canonical
+        // resource produced it so check() can hand back the servable
+        // name instead.
+        wrapper->m_stubUrls.insert(
+            "data:" + mime + ";base64," + body.toBase64(), canonical);
     }
     return wrapper;
 }
@@ -136,14 +142,19 @@ AdBlockDecision AdBlockRustEngine::check(const QUrl &url,
     if (result.action == 2) {
         const QString redirect = QString::fromUtf8(
             result.redirect_url ? result.redirect_url : "");
-        if (redirect.startsWith(QLatin1String("data:"))) {
+        const QByteArray stubName = m_stubUrls.value(redirect.toUtf8());
+        if (redirect.startsWith(QLatin1String("data:"))
+                && stubName.isEmpty()) {
             decision.action = AdBlockDecision::Redirect;
             decision.redirectUrl = redirect;
         } else {
-            // Unresolved resource name — route through the same
-            // canonical-name table the native path uses.
-            const QByteArray canonical =
-                AdBlockResourceHandler::canonicalResourceName(redirect);
+            // A resolved bundled stub (or an unresolved resource name)
+            // routes through the same canonical-name table the native
+            // path uses — arora-resource: is servable where a data:
+            // redirect is refused by Chromium.
+            const QByteArray canonical = !stubName.isEmpty()
+                ? stubName
+                : AdBlockResourceHandler::canonicalResourceName(redirect);
             if (!canonical.isEmpty()) {
                 decision.action = AdBlockDecision::Redirect;
                 decision.redirectResource = QString::fromLatin1(canonical);

@@ -55,8 +55,10 @@ include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
-include(rustcore/rustcore.pri)        # RCORE01 — CONFIG+=rustcore gate
-include(rustdl/rustdl.pri)            # DLACC06 — CONFIG+=rustdl gate
+# The two Rust crates are default-on via the root .qmake.conf (RDEF01):
+# opt out with CONFIG-=rustcore / CONFIG-=rustdl / CONFIG+=no-rust.
+include(rustcore/rustcore.pri)        # RCORE01 — default-on, no-rust opt-out
+include(rustdl/rustdl.pri)            # DLACC06 — default-on, no-rust opt-out
 include(tor/tor.pri)                  # TOR01 done
 include(useragent/useragent.pri)      # MIG14 done
 # MIG13: qwebplugins/ deleted (plugin machinery removed per user
