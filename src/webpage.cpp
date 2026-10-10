@@ -109,7 +109,8 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
     QWebEnginePage *page = qobject_cast<QWebEnginePage*>(parent());
     const QString source = page
             ? QString::fromUtf8(page->url().toEncoded()) : QString();
-    QPointer<QWidget> view = page ? QWebEngineView::forPage(page) : nullptr;
+    QPointer<QWidget> view = page
+            ? WebEnginePageAdapter::forPage(page)->view() : nullptr;
 
     // Queued: a modal exec() inside the channel dispatch stack is
     // asking for re-entrancy trouble — same pattern as the
@@ -354,7 +355,7 @@ void WebPage::init()
     connect(this, &QWebEnginePage::permissionRequested,
             this, [this](const QWebEnginePermission &permission) {
         WebPermissionManager::instance()->handleRequest(
-            QWebEngineView::forPage(this), permission,
+            WebEnginePageAdapter::forPage(this)->view(), permission,
             profile()->isOffTheRecord());
     });
 
@@ -557,7 +558,7 @@ void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
     // re-enter Chromium's navigation machinery while it waits for an
     // answer.
     const QString source = this->url().toString();
-    QPointer<QWidget> parent = QWebEngineView::forPage(this);
+    QPointer<QWidget> parent = WebEnginePageAdapter::forPage(this)->view();
     QMetaObject::invokeMethod(qApp, [parent, url, source]() {
         // The percent-encoded form keeps control characters and
         // embedded newlines from spoofing the dialog text.
@@ -603,7 +604,7 @@ bool WebPage::confirmInsecureFormPost(const QUrl &url)
     if (s_formPostPromptActive)
         return false;
     s_formPostPromptActive = true;
-    QWidget *parent = QWebEngineView::forPage(this);
+    QWidget *parent = WebEnginePageAdapter::forPage(this)->view();
     QMessageBox box(QMessageBox::Warning,
         tr("Insecure Form Submission"),
         tr("This form is sending information to %1 over an insecure "
@@ -817,7 +818,7 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // modifiers modifyWithUserBehavior reads.
     if (accepted && isMainFrame
         && type == QWebEnginePage::NavigationTypeLinkClicked) {
-        WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+        WebView *webView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
         if (webView) {
             TabWidget::OpenUrlIn target =
                 TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab);
@@ -905,7 +906,7 @@ bool WebPage::divertToContainerRule(const QUrl &url)
         return false;
     }
 
-    WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    WebView *webView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (webView) {
         if (TabWidget *tabs = webView->tabWidget()) {
             tabs->loadUrlInContainer(url, target);
@@ -1000,7 +1001,7 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
         return new PopupProbePage(profile(), this);
     }
 
-    WebView *sourceView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    WebView *sourceView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (sourceView && sourceView->tabWidget()) {
         if (WebView *webView = sourceView->tabWidget()->getView(
                     m_openTargetBlankLinksIn, sourceView))
@@ -1407,7 +1408,7 @@ void WebPage::handleClientCertificateSelection(
         return;
     }
 
-    QWidget *view = QWebEngineView::forPage(this);
+    QWidget *view = WebEnginePageAdapter::forPage(this)->view();
     if (!view) {   // pages with no chrome (autotests, probes) decline
         selection.selectNone();
         return;
@@ -1587,7 +1588,7 @@ QString WebPage::domainBlockWarningHtml(const QUrl &target)
     if (!warningFile.open(QIODevice::ReadOnly))
         return QString();
     QString html = QLatin1String(warningFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
+    QWidget *view = WebEnginePageAdapter::forPage(this)->view();
     QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
