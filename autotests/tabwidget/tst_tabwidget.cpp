@@ -205,7 +205,7 @@ void tst_TabWidget::addWebAction()
         QVERIFY(spy0.at(i).at(0).toString().isEmpty());
     QVERIFY(spy3.count() > 0);
     QCOMPARE(spy6.count(), 0);
-    QCOMPARE(widget.webView(0)->history()->count(), 2);
+    QCOMPARE(widget.webView(0)->enginePage()->historyCount(), 2);
 }
 
 void tst_TabWidget::closeTab_data()

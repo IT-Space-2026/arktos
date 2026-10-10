@@ -64,6 +64,13 @@ public:
     void back() override;
     void forward() override;
 
+    int historyCount() const override;
+    int currentHistoryIndex() const override;
+    QList<Engine::HistoryEntry> historyItems() const override;
+    QList<Engine::HistoryEntry> backItems(int maxItems) const override;
+    QList<Engine::HistoryEntry> forwardItems(int maxItems) const override;
+    void goToHistoryEntry(const Engine::HistoryEntry &entry) override;
+
     void setZoomFactor(qreal factor) override;
     qreal zoomFactor() const override;
 
