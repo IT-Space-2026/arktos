@@ -46,6 +46,10 @@
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qdebug.h>
 
 // #define ADBLOCKPAGE_DEBUG
@@ -411,6 +415,14 @@ QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
     AdBlockManager *manager = AdBlockManager::instance();
     if (!manager->isEnabled())
         return QString();
+
+#if defined(ARORA_RUSTCORE)
+    // SITED01: a whitelisted site gets no cosmetic filtering, same as
+    // the $document exception the store row replaced.
+    if (SiteDecisionStore::lookup(SiteDecisionStore::KindAdBlock,
+                                  url.host(), nullptr))
+        return QString();
+#endif
 
 #if defined(ARORA_ADBLOCK_RUST)
     // The Rust engine is authoritative when loaded; an empty object

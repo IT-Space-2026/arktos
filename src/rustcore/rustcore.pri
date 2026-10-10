@@ -32,8 +32,10 @@ rustcore:!no-rust {
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustcore.h \
-        $$PWD/../rustcorebridge.h
-    SOURCES += $$PWD/../rustcorebridge.cpp
+        $$PWD/../rustcorebridge.h \
+        $$PWD/../sitedecisionstore.h
+    SOURCES += $$PWD/../rustcorebridge.cpp \
+        $$PWD/../sitedecisionstore.cpp
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm
 }

@@ -48,6 +48,10 @@
 #include "browserapplication.h"
 #include "qtry.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 // Minimal HTTP/1.0 responder: records every request target it sees and
 // answers 200 with a type-appropriate canned body.  Requests the
 // interceptor blocks or redirects never show up here, which is the
@@ -266,6 +270,11 @@ void tst_AdBlockRequestInterceptor::init()
 {
     m_server->requests.clear();
     m_server->indexHtml.clear();
+#if defined(ARORA_RUSTCORE)
+    // The site whitelist moved into the decision store — clear it so
+    // a stale row cannot silently allow every request.
+    SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
+#endif
 }
 
 void tst_AdBlockRequestInterceptor::cleanup()

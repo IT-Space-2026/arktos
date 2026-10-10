@@ -81,6 +81,15 @@ pub fn lock() -> MutexGuard<'static, Store> {
     STORE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// One serialization point for every test that drives the global
+/// store — each module used to keep a private TEST_LOCK, which let a
+/// neighbour's rc_set_data_dir move the dir under a running test.
+#[cfg(test)]
+pub(crate) fn test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl Store {
     pub fn set_data_dir(&mut self, dir: &str) -> RcResult<()> {
         if dir.is_empty() {

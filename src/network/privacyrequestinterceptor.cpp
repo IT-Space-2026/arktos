@@ -35,6 +35,7 @@
 
 #if defined(ARORA_RUSTCORE)
 #include <rustcore.h>
+#include "sitedecisionstore.h"
 #endif
 
 // #define PRIVACYINTERCEPTOR_DEBUG
@@ -132,6 +133,29 @@ void PrivacyRequestInterceptor::loadSettings()
     const bool domainBlocklist =
         settings.value(QLatin1String("domainBlocklist"), true).toBool();
     QSet<QString> persistedHttpAllowed;
+#if defined(ARORA_RUSTCORE)
+    // SITED01: one-shot import — replay the legacy exception list into
+    // the Rust store and retire the key after the writes land.
+    const QStringList legacyExceptions =
+        settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
+    bool allWritten = true;
+    for (const QString &host : legacyExceptions) {
+        const QString lowered = host.toLower();
+        if (!lowered.isEmpty())
+            allWritten = SiteDecisionStore::set(
+                SiteDecisionStore::KindHttpAllow,
+                lowered, QLatin1String("allow")) && allWritten;
+    }
+    if (!legacyExceptions.isEmpty() && allWritten)
+        settings.remove(QLatin1String("httpsOnlyExceptions"));
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindHttpAllow);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        const QString lowered = it.key().toLower();
+        if (!lowered.isEmpty())
+            persistedHttpAllowed.insert(lowered);
+    }
+#else
     const QStringList exceptions =
         settings.value(QLatin1String("httpsOnlyExceptions")).toStringList();
     for (const QString &host : exceptions) {
@@ -139,6 +163,7 @@ void PrivacyRequestInterceptor::loadSettings()
         if (!lowered.isEmpty())
             persistedHttpAllowed.insert(lowered);
     }
+#endif
     settings.endGroup();
     {
         QWriteLocker lock(&s_policyLock);
@@ -693,6 +718,10 @@ void PrivacyRequestInterceptor::allowHttpForHost(const QString &host,
         if (s_persistedHttpAllowed.contains(lowered))
             return;
     }
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::set(SiteDecisionStore::KindHttpAllow,
+                           lowered, QLatin1String("allow"));
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     QStringList exceptions =
@@ -702,6 +731,7 @@ void PrivacyRequestInterceptor::allowHttpForHost(const QString &host,
         settings.setValue(QLatin1String("httpsOnlyExceptions"), exceptions);
     }
     settings.endGroup();
+#endif
     const QMutexLocker lock(&s_httpAllowLock);
     s_persistedHttpAllowed.insert(lowered);
 }
@@ -714,6 +744,9 @@ void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
         s_sessionHttpAllowed.remove(lowered);
         s_persistedHttpAllowed.remove(lowered);
     }
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::remove(SiteDecisionStore::KindHttpAllow, lowered);
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     QStringList exceptions =
@@ -721,6 +754,7 @@ void PrivacyRequestInterceptor::clearHttpAllowance(const QString &host)
     if (exceptions.removeAll(lowered) > 0)
         settings.setValue(QLatin1String("httpsOnlyExceptions"), exceptions);
     settings.endGroup();
+#endif
 }
 
 QStringList PrivacyRequestInterceptor::httpExceptionHosts()

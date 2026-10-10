@@ -54,6 +54,10 @@
 #include "webpage.h"
 #include "webview.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 // Minimal HTTP responder that records every request target — blocked
 // requests never appear here — and answers 200 with a type-appropriate
 // body.  setCookie, when set, rides along on every response.
@@ -230,6 +234,10 @@ void tst_PrivateBrowsing::init()
 {
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // Per-site decisions outlive the QSettings wipe — start clean.
+    SiteDecisionStore::reset();
+#endif
     m_server->requests.clear();
     m_server->indexHtml.clear();
     m_server->setCookie.clear();

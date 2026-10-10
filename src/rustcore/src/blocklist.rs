@@ -298,14 +298,13 @@ pub fn count() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
 
-    // The active list is process-global — serialize like the store
-    // tests do.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
+    // The active list is process-global — serialize on the shared
+    // store lock (sitedecisions showed private per-module locks let a
+    // neighbour's set_data_dir move the store mid-test).
     fn guard() -> MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::store::test_lock()
     }
 
     fn list(text: &str) -> BlockList {

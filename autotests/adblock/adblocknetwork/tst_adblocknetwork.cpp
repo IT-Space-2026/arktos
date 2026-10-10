@@ -33,6 +33,10 @@
 #include "adblocksubscription.h"
 #include "adblockrule.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qdir.h>
 #include <qelapsedtimer.h>
 #include <qfile.h>
@@ -87,6 +91,12 @@ void tst_AdBlockNetwork::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_AdBlockNetwork::init()
 {
+#if defined(ARORA_RUSTCORE)
+    // The site whitelist lives in the decision store — start each
+    // test with a clean one so a leftover row can never silently
+    // unbreak every page.
+    SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
+#endif
 }
 
 // This will be called after every test function.

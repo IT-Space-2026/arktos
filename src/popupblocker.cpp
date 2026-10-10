@@ -23,9 +23,39 @@
 #include <qsettings.h>
 #include <qurl.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 PopupBlocker::PopupBlocker(QObject *parent)
     : QObject(parent)
 {
+#if defined(ARORA_RUSTCORE)
+    // SITED01: one-shot import of the legacy "popupExceptions" list —
+    // replayed into the Rust store and retired after the writes land.
+    QSettings legacy;
+    const QStringList legacyAllowed = legacy
+        .value(QLatin1String("popupExceptions/allowed")).toStringList();
+    if (!legacyAllowed.isEmpty()) {
+        bool allWritten = true;
+        for (const QString &host : legacyAllowed) {
+            const QString normalized = normalizeHost(host);
+            if (!normalized.isEmpty())
+                allWritten = SiteDecisionStore::set(
+                    SiteDecisionStore::KindPopup,
+                    normalized, QLatin1String("allow")) && allWritten;
+        }
+        if (allWritten)
+            legacy.remove(QLatin1String("popupExceptions/allowed"));
+    }
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindPopup);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        const QString normalized = normalizeHost(it.key());
+        if (!normalized.isEmpty() && !m_allowed.contains(normalized))
+            m_allowed.append(normalized);
+    }
+#else
     const QStringList allowed = QSettings()
         .value(QLatin1String("popupExceptions/allowed")).toStringList();
     for (const QString &host : allowed) {
@@ -33,6 +63,7 @@ PopupBlocker::PopupBlocker(QObject *parent)
         if (!normalized.isEmpty() && !m_allowed.contains(normalized))
             m_allowed.append(normalized);
     }
+#endif
 }
 
 PopupBlocker *PopupBlocker::instance()
@@ -163,10 +194,18 @@ void PopupBlocker::clearSessionHosts()
 
 void PopupBlocker::save() const
 {
+#if defined(ARORA_RUSTCORE)
+    // The in-memory list is authoritative — mirror it whole.
+    QHash<QString, QString> rows;
+    for (const QString &host : m_allowed)
+        rows.insert(host, QLatin1String("allow"));
+    SiteDecisionStore::replace(SiteDecisionStore::KindPopup, rows);
+#else
     QSettings settings;
     if (m_allowed.isEmpty())
         settings.remove(QLatin1String("popupExceptions/allowed"));
     else
         settings.setValue(QLatin1String("popupExceptions/allowed"),
                           m_allowed);
+#endif
 }

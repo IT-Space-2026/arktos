@@ -450,6 +450,59 @@ char *rc_tls_check(const char *hostUtf8, uint16_t port, uint32_t flags);
 RcStatus rc_tls_add_root(const uint8_t *der, size_t len);
 RcStatus rc_tls_clear_roots(void);
 
+/* ------------------------------------------------------------------ */
+/* SITED01: consolidated per-site decision store                        */
+/*                                                                      */
+/* One durable, engine-neutral store for every "decision for a site"  */
+/* record: web-permission grants, JavaScript rules, container           */
+/* assignments, pop-up exceptions, HTTPS-only allowances, cookie        */
+/* rules and adblock whitelist entries.  Rows are                       */
+/*   (kind, host-or-origin key) -> small decision value                 */
+/* persisted atomically to sitedecisions.json under the data dir.       */
+/* Mutations emit the "sitedecisions" notification topic.               */
+
+/* Fetch the decision value for (kind, key) into *out (caller frees
+ * with rc_buffer_free).  RC_OK on a hit, RC_NOT_FOUND on a miss. */
+RcStatus rc_sitedec_get(const char *kind, const char *key,
+                        RcBuffer *out);
+
+/* Record value under (kind, key) — persists atomically. */
+RcStatus rc_sitedec_set(const char *kind, const char *key,
+                        const char *value);
+
+/* Drop the row for (kind, key); RC_OK whether or not it existed. */
+RcStatus rc_sitedec_remove(const char *kind, const char *key);
+
+/* Remove every row of kind. */
+RcStatus rc_sitedec_clear(const char *kind);
+
+/* Replace kind's rows wholesale with a {"key":"value"} JSON object —
+ * the mirror-write used by list-shaped stores. */
+RcStatus rc_sitedec_replace(const char *kind, const uint8_t *json,
+                            size_t len);
+
+/* Every row of kind as a {"key":"value"} JSON object — caller frees
+ * with rc_string_free(); NULL on bad arguments. */
+char *rc_sitedec_list(const char *kind);
+
+/* The whole store as
+ * {"version":1,"generation":N,"kinds":{"kind":{"key":"value"}}} —
+ * the IO-thread policy snapshot.  Caller frees with rc_string_free(). */
+char *rc_sitedec_snapshot(void);
+
+/* Host-suffix lookup: {"key":..,"value":..} JSON for the longest
+ * stored host suffix matching host, or NULL when nothing matches. */
+char *rc_sitedec_lookup(const char *kind, const char *host);
+
+/* 1 when the store file exists — the legacy-import gate. */
+int rc_sitedec_store_present(void);
+
+/* Re-read the disk file into memory. */
+RcStatus rc_sitedec_reload(void);
+
+/* Empty every kind (store file removed). */
+RcStatus rc_sitedec_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

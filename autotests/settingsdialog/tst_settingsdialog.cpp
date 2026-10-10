@@ -38,6 +38,10 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "scopeshortcuts.h"
 #include "toolbarsearch.h"
 #include "webview.h"
@@ -108,6 +112,10 @@ void tst_SettingsDialog::initTestCase()
     QCoreApplication::setApplicationName("tst_settingsdialog");
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // Site decisions outlive QSettings cleanup — clear them too.
+    SiteDecisionStore::reset();
+#endif
 }
 
 void tst_SettingsDialog::constructDefaults()

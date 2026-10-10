@@ -76,6 +76,10 @@
 #include <qwebenginecookiestore.h>
 #include <qwebengineprofile.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <algorithm>
 
 #include <qdebug.h>
@@ -197,11 +201,68 @@ void CookieJar::loadSettings()
     m_sessionLength = settings.value(QLatin1String("sessionLength"), -1).toInt();
 
     settings.beginGroup(QLatin1String("exceptions"));
+#if defined(ARORA_RUSTCORE)
+    // SITED01: one-shot import — replay the three legacy exception
+    // lists into the Rust store ("block"/"allow"/"session" values),
+    // then retire the group after the writes land.
+    const QStringList legacyBlock =
+        settings.value(QLatin1String("block")).toStringList();
+    const QStringList legacyAllow =
+        settings.value(QLatin1String("allow")).toStringList();
+    const QStringList legacySession =
+        settings.value(QLatin1String("allowForSession")).toStringList();
+    if (!legacyBlock.isEmpty() || !legacyAllow.isEmpty()
+        || !legacySession.isEmpty()) {
+        bool allWritten = true;
+        for (const QString &host : legacySession) {
+            if (!host.isEmpty())
+                allWritten = SiteDecisionStore::set(
+                    SiteDecisionStore::KindCookie,
+                    host, QLatin1String("session")) && allWritten;
+        }
+        for (const QString &host : legacyAllow) {
+            if (!host.isEmpty())
+                allWritten = SiteDecisionStore::set(
+                    SiteDecisionStore::KindCookie,
+                    host, QLatin1String("allow")) && allWritten;
+        }
+        // Block is written last: a host on multiple lists resolves
+        // to deny, the same precedence the filter applies.
+        for (const QString &host : legacyBlock) {
+            if (!host.isEmpty())
+                allWritten = SiteDecisionStore::set(
+                    SiteDecisionStore::KindCookie,
+                    host, QLatin1String("block")) && allWritten;
+        }
+        if (allWritten) {
+            settings.remove(QLatin1String("block"));
+            settings.remove(QLatin1String("allow"));
+            settings.remove(QLatin1String("allowForSession"));
+        }
+    }
+    settings.endGroup();
+    settings.endGroup();
+    m_exceptions_block.clear();
+    m_exceptions_allow.clear();
+    m_exceptions_allowForSession.clear();
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindCookie);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        if (it.value() == QLatin1String("block"))
+            m_exceptions_block.append(it.key());
+        else if (it.value() == QLatin1String("allow"))
+            m_exceptions_allow.append(it.key());
+        else if (it.value() == QLatin1String("session"))
+            m_exceptions_allowForSession.append(it.key());
+        // Unknown values are corrupt rows — dropped on load.
+    }
+#else
     m_exceptions_block = settings.value(QLatin1String("block")).toStringList();
     m_exceptions_allow = settings.value(QLatin1String("allow")).toStringList();
     m_exceptions_allowForSession = settings.value(QLatin1String("allowForSession")).toStringList();
     settings.endGroup();
     settings.endGroup();
+#endif
 
     std::sort(m_exceptions_block.begin(), m_exceptions_block.end());
     std::sort(m_exceptions_allow.begin(), m_exceptions_allow.end());
@@ -230,10 +291,23 @@ void CookieJar::save()
     settings.setValue(QLatin1String("blockThirdPartyCookies"), m_blockThirdPartyCookies);
     settings.setValue(QLatin1String("sessionLength"), m_sessionLength);
 
+#if defined(ARORA_RUSTCORE)
+    // The three lists mirror into one kind — merged with the same
+    // precedence the filter resolves (block > allow > session).
+    QHash<QString, QString> rows;
+    for (const QString &host : m_exceptions_allowForSession)
+        rows.insert(host, QLatin1String("session"));
+    for (const QString &host : m_exceptions_allow)
+        rows.insert(host, QLatin1String("allow"));
+    for (const QString &host : m_exceptions_block)
+        rows.insert(host, QLatin1String("block"));
+    SiteDecisionStore::replace(SiteDecisionStore::KindCookie, rows);
+#else
     settings.beginGroup(QLatin1String("exceptions"));
     settings.setValue(QLatin1String("block"), m_exceptions_block);
     settings.setValue(QLatin1String("allow"), m_exceptions_allow);
     settings.setValue(QLatin1String("allowForSession"), m_exceptions_allowForSession);
+#endif
 }
 
 void CookieJar::updatePolicySnapshot()

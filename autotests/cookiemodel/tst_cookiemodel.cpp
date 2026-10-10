@@ -20,6 +20,10 @@
 #include <cookieexceptionsmodel.h>
 #include <QWebEngineProfile>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 class tst_CookieModel : public QObject
 {
     Q_OBJECT
@@ -64,6 +68,11 @@ void tst_CookieModel::init()
 {
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // Per-site cookie rules live in the decision store now — clear
+    // rows a previous test wrote, same as the QSettings wipe.
+    SiteDecisionStore::clear(SiteDecisionStore::KindCookie);
+#endif
 }
 
 void tst_CookieModel::cleanup()

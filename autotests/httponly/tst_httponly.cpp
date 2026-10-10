@@ -35,6 +35,10 @@
 #include <qtemporarydir.h>
 
 #include "privacyrequestinterceptor.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "schemeaccesshandler.h"
 #include "webpage.h"
 #include "webview.h"
@@ -381,13 +385,19 @@ void tst_HttpOnly::alwaysPersistsException()
     QVERIFY(clickElement(&view, QLatin1String("always")));
     QTRY_VERIFY_WITH_TIMEOUT(
         PrivacyRequestInterceptor::isHttpAllowedHost(host), 10000);
+#if defined(ARORA_RUSTCORE)
+    QTRY_VERIFY_WITH_TIMEOUT(
+        SiteDecisionStore::entries(SiteDecisionStore::KindHttpAllow)
+            .contains(host), 10000);
+#else
     QTRY_VERIFY_WITH_TIMEOUT(
         QSettings().value(QLatin1String("privacy/httpsOnlyExceptions"))
             .toStringList().contains(host), 10000);
+#endif
 
     // A reload of the exception snapshot keeps the exception — this is
     // the "survives restart" half (a fresh process re-reads the same
-    // QSettings list in loadSettings).
+    // persisted list in loadSettings).
     PrivacyRequestInterceptor::loadSettings();
     QVERIFY(PrivacyRequestInterceptor::isHttpAllowedHost(host));
 }
@@ -427,9 +437,14 @@ void tst_HttpOnly::otrRendersNoAlwaysLink()
     QTRY_VERIFY_WITH_TIMEOUT(
         PrivacyRequestInterceptor::isHttpAllowedHost(host), 10000);
     QTest::qWait(500);
+#if defined(ARORA_RUSTCORE)
+    QVERIFY(!SiteDecisionStore::entries(SiteDecisionStore::KindHttpAllow)
+                .contains(host));
+#else
     QVERIFY(!QSettings().value(
         QLatin1String("privacy/httpsOnlyExceptions"))
             .toStringList().contains(host));
+#endif
 }
 
 void tst_HttpOnly::redirectHopWarns()

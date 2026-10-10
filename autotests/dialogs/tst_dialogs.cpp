@@ -68,6 +68,10 @@
 #include "qtest_arora.h"
 #include "qtry.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 // SEC12 helper: does any file under rootPath contain the needle?
 // Files >= 4 MiB are skipped — nothing we seed gets that large.
 static bool storageTreeContains(const QString &rootPath, const QByteArray &needle)
@@ -148,6 +152,10 @@ void tst_Dialogs::initTestCase()
     QCoreApplication::setApplicationName("tst_dialogs");
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // Per-site decisions outlive the QSettings wipe — start clean.
+    SiteDecisionStore::reset();
+#endif
     // Keep AdBlockManager away from live subscription URLs — point the
     // stored list at a dead local file (same trick as tst_schemehandlers).
     settings.setValue(QLatin1String("AdBlock/subscriptions"),

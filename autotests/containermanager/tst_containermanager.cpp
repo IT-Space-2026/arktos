@@ -52,6 +52,10 @@
 #include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "containermanager.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "cookiejar.h"
 #include "historymanager.h"
 #include "opensearchmanager.h"
@@ -346,6 +350,10 @@ void tst_ContainerManager::init()
     if (qEnvironmentVariable("CONT01_STAGE") != QLatin1String("verify")) {
         QSettings settings;
         settings.clear();
+#if defined(ARORA_RUSTCORE)
+        // Container site rules moved into the decision store.
+        SiteDecisionStore::reset();
+#endif
     }
     m_server->requests.clear();
     m_server->cookieHeaders.clear();

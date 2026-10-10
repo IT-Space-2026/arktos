@@ -27,6 +27,10 @@
 
 #include "popupblocker.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 class tst_PopupBlocker : public QObject
 {
     Q_OBJECT
@@ -137,16 +141,25 @@ void tst_PopupBlocker::sessionExceptions()
     QVERIFY(!blocker->isAllowedHost(QLatin1String("session.test")));
 }
 
-// The persistent layer round-trips through QSettings under
-// popupExceptions/allowed — a fresh instance sees the same rules.
+// The persistent layer round-trips through the site-decision store
+// (QSettings' popupExceptions/allowed in no-rust builds) — a fresh
+// instance sees the same rules.
 void tst_PopupBlocker::persistence()
 {
     PopupBlocker *blocker = PopupBlocker::instance();
     blocker->allowHost(QLatin1String("persistent.example"));
 
+#if defined(ARORA_RUSTCORE)
+    QString stored;
+    QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindPopup,
+                                   QLatin1String("persistent.example"),
+                                   &stored));
+    QCOMPARE(stored, QLatin1String("allow"));
+#else
     const QStringList stored = QSettings().value(
         QLatin1String("popupExceptions/allowed")).toStringList();
     QCOMPARE(stored, QStringList() << QLatin1String("persistent.example"));
+#endif
 
     PopupBlocker reloaded;
     QVERIFY(reloaded.isAllowedHost(QLatin1String("persistent.example")));
@@ -155,8 +168,14 @@ void tst_PopupBlocker::persistence()
              QStringList() << QLatin1String("persistent.example"));
 
     blocker->removeAllowedHost(QLatin1String("persistent.example"));
+#if defined(ARORA_RUSTCORE)
+    QVERIFY(!SiteDecisionStore::get(SiteDecisionStore::KindPopup,
+                                    QLatin1String("persistent.example"),
+                                    &stored));
+#else
     QVERIFY(!QSettings().contains(
         QLatin1String("popupExceptions/allowed")));
+#endif
 }
 
 // Case, surrounding dots and trailing dots all fold to the same rule.

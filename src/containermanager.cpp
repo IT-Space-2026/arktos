@@ -24,6 +24,10 @@
 #include "browserprofile.h"
 #include "twoleveldomains_p.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qapplication.h>
 #include <qcoreapplication.h>
 #include <qdir.h>
@@ -173,6 +177,12 @@ bool ContainerManager::deleteContainer(const QString &id)
         else
             ++it;
     }
+#if defined(ARORA_RUSTCORE)
+    // SITED01: the rules live in the Rust store now — the registry
+    // group removal no longer carries them away.
+    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+                               m_siteRules);
+#endif
 
     removeStorageTree(storagePath);
     if (!cachePath.isEmpty())
@@ -497,12 +507,19 @@ QString ContainerManager::containerIdForHost(const QString &host) const
 
 void ContainerManager::saveSiteRules(const QString &id) const
 {
+#if defined(ARORA_RUSTCORE)
+    // The hash mirror is authoritative — persist it whole.
+    Q_UNUSED(id);
+    SiteDecisionStore::replace(SiteDecisionStore::KindContainer,
+                               m_siteRules);
+#else
     if (!isContainerId(id))
         return;
     QSettings settings;
     settings.beginGroup(QLatin1String("containers"));
     settings.beginGroup(id);
     settings.setValue(QLatin1String("sites"), siteRules(id));
+#endif
 }
 
 // QSettings "containers" group:
@@ -530,16 +547,46 @@ void ContainerManager::loadRegistry()
         container.id = id;
         container.name = settings.value(QLatin1String("name")).toString();
         container.color = settings.value(QLatin1String("color")).value<QColor>();
+#if defined(ARORA_RUSTCORE)
+        // SITED01: one-shot import — replay the legacy per-container
+        // "sites" list into the Rust store, then retire the key.  The
+        // name/color registry itself stays in QSettings.
         const QStringList sites =
             settings.value(QLatin1String("sites")).toStringList();
-        settings.endGroup();
-        m_containers.append(container);
+        bool allWritten = true;
+        for (const QString &site : sites) {
+            const QString key = normalizeSiteHost(site);
+            if (!key.isEmpty())
+                allWritten = SiteDecisionStore::set(
+                    SiteDecisionStore::KindContainer,
+                    key, id) && allWritten;
+        }
+        if (allWritten)
+            settings.remove(QLatin1String("sites"));
+#else
+        const QStringList sites =
+            settings.value(QLatin1String("sites")).toStringList();
         for (const QString &site : sites) {
             const QString key = normalizeSiteHost(site);
             if (!key.isEmpty())
                 m_siteRules.insert(key, id);
         }
+#endif
+        settings.endGroup();
+        m_containers.append(container);
     }
+#if defined(ARORA_RUSTCORE)
+    // Hydrate the hash mirror from the Rust store — dead ids (a rule
+    // outliving its container) are kept but filtered at query time by
+    // isContainerId, same as a stale legacy entry was.
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindContainer);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        const QString key = normalizeSiteHost(it.key());
+        if (!key.isEmpty() && !it.value().isEmpty())
+            m_siteRules.insert(key, it.value());
+    }
+#endif
     // Registry hygiene: a container group that never made the order
     // list (interrupted write) is stale — drop it.
     for (const QString &group : groups) {
