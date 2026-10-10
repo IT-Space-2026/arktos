@@ -262,9 +262,10 @@ fn origin_of(url: &reqwest::Url) -> String {
 ///   0 EngineDefault — Chromium strict-origin-when-cross-origin:
 ///     same-site sends the full source URL, cross-site the source
 ///     origin, https->http nothing.
-///   1 Trimmed  — same-site: source origin; cross-site: the TARGET's
-///     own origin (uBO referrer-spoof — the destination only sees
-///     itself).  https->http still nothing.
+///   1 Trimmed  — the SOURCE's bare origin everywhere (strict-origin
+///     semantics; REFER01 retired the old target-origin spoof, which
+///     broke embed checks like YouTube's iframe Referer test).
+///     https->http still nothing.
 ///   2 Strict   — same-site: source origin; cross-site: nothing.
 ///   3 Never    — nothing, ever.
 fn referer_for(
@@ -288,12 +289,9 @@ fn referer_for(
         } else {
             origin_of(source)
         }),
-        // Trimmed: target-origin spoof cross-site.
-        1 => Some(if same_site {
-            origin_of(source)
-        } else {
-            origin_of(target)
-        }),
+        // Trimmed: strict-origin — the source's bare origin even
+        // cross-site (REFER01).
+        1 => Some(origin_of(source)),
         // Strict (and any unknown level — fail closed toward less
         // leakage, not more).
         _ => {
@@ -1027,15 +1025,15 @@ mod tests {
             referer_for(0, &src, &cross).as_deref(),
             Some("https://page.example/")
         );
-        // Trimmed — same-site: source origin; cross-site: target-origin
-        // spoof (the destination only ever sees itself).
+        // Trimmed — strict-origin: the source's bare origin on both
+        // same-site and cross-site legs (REFER01).
         assert_eq!(
             referer_for(1, &src, &same).as_deref(),
             Some("https://page.example/")
         );
         assert_eq!(
             referer_for(1, &src, &cross).as_deref(),
-            Some("https://other.org/")
+            Some("https://page.example/")
         );
         // Strict — same-site: source origin; cross-site: nothing.
         assert_eq!(

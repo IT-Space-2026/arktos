@@ -1054,11 +1054,12 @@ QByteArray NavigationPolicy::rewrittenReferer(int level, const QUrl &source,
         && target.scheme() == QLatin1String("http"))
         return QByteArray();
     const bool crossSite = !sameSite(source.host(), target.host());
-    if (crossSite) {
-        if (level >= 2)
-            return QByteArray();
-        return refererOrigin(target);
-    }
+    // REFER01: strict-origin — the SOURCE's bare origin goes
+    // cross-site too.  (This used to spoof the target's own origin,
+    // which broke embed-origin checks like YouTube's iframe Referer
+    // test; the source's path/query still never leaves.)
+    if (crossSite && level >= 2)
+        return QByteArray();
     return refererOrigin(source);
 }
 

@@ -112,11 +112,11 @@ public:
     // the PRIV01 privacy/trimReferer bool (false -> EngineDefault,
     // anything else -> the Trimmed default).
     //   EngineDefault  untouched — Chromium strict-origin-when-cross-origin
-    //   Trimmed        cross-site -> the *target's* own origin (uBO
-    //                  referrer-spoof trick: nothing about the source
-    //                  page crosses); same-site -> the referrer's
-    //                  origin only, never path/query.  Redirect
-    //                  follow-ups still carry the source ORIGIN —
+    //   Trimmed        strict-origin semantics: every request carries
+    //                  the *source's* bare origin, never its path/query
+    //                  (REFER01 — the earlier target-origin spoof broke
+    //                  embed checks like YouTube's iframe Referer test).
+    //                  Redirect follow-ups carry the source ORIGIN too —
     //                  Chromium recomputes them past the interceptor.
     //   Strict         cross-site -> no Referer at all (the injected
     //                  meta covers redirect legs too); same-site ->
@@ -216,10 +216,9 @@ public:
     // policy — the source document's policy is what the redirect
     // chain carries.  Maps a level to the <meta name="referrer">
     // content injected into pages that don't set their own:
-    //   Trimmed -> "strict-origin"  (path/query never leaves on any
-    //                              leg; the interceptor's target-
-    //                              origin spoof still covers the legs
-    //                              it can write)
+    //   Trimmed -> "strict-origin"  (the source's bare origin on every
+    //                              leg — exactly what the interceptor
+    //                              writes for the legs it can reach)
     //   Strict  -> "same-origin"    (cross-site gets nothing, incl.
     //                              redirect legs)
     //   Never   -> "no-referrer"

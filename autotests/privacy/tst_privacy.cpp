@@ -553,10 +553,12 @@ void tst_Privacy::refererRewriteMatrix()
     QCOMPARE(P::rewrittenReferer(P::RefererEngineDefault, srcHttp,
                                  crossSite), full);
 
-    // Trimmed: the source's path/query never leave — cross-site sees
-    // only the *target's* origin, same-site sees only its own origin.
+    // Trimmed: strict-origin — the source's path/query never leave;
+    // every request sees the *source's* bare origin, same-site and
+    // cross-site alike (REFER01 — YouTube-embed-shaped: the iframe to
+    // site-b must name site-a, not site-b itself).
     QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, crossSite),
-             QByteArray("http://site-b.test/"));
+             QByteArray("http://site-a.test/"));
     QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, sameSite),
              QByteArray("http://site-a.test/"));
 
@@ -586,12 +588,14 @@ void tst_Privacy::refererRewriteMatrix()
 
     // Sibling hosts under one site are same-site; a different
     // registrable base is not (same two-label rule as adblock).
-    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
+    // The boundary is observable at Strict — cross-site loses the
+    // header while same-site keeps the origin.  (Trimmed sends the
+    // source origin either way since REFER01.)
+    QCOMPARE(P::rewrittenReferer(P::RefererStrict, srcHttp,
                                  QUrl("http://cdn.site-a.test/x")),
              QByteArray("http://site-a.test/"));
-    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
-                                 QUrl("http://a.co.uk/x")),
-             QByteArray("http://a.co.uk/"));
+    QVERIFY(P::rewrittenReferer(P::RefererStrict, srcHttp,
+                              QUrl("http://a.co.uk/x")).isEmpty());
 
     // The injected referrer-meta mapping — the legs the interceptor
     // cannot rewrite (redirect follow-ups) are covered by the page's

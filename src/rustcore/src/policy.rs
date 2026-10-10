@@ -645,9 +645,12 @@ fn should_warn_form_post(
 
 /// The Referer value that should go on the wire — EngineDefault keeps
 /// source verbatim, Never clears it, the strict-origin downgrade rule
-/// clears https->http everywhere, cross-site is spoofed to the
-/// target's own origin at Trimmed and cleared at Strict, and same-site
-/// always collapses to the source's bare origin.
+/// clears https->http everywhere, cross-site carries the SOURCE's bare
+/// origin at Trimmed and nothing at Strict, and same-site always
+/// collapses to the source's bare origin.  (Trimmed used to spoof the
+/// target's own origin — REFER01: that broke embed-origin checks like
+/// YouTube's iframe Referer test, so we settled on real
+/// strict-origin-when-cross-origin semantics.)
 fn rewritten_referer(level: i64, source: &str, target: &str) -> String {
     if level <= REFERER_ENGINE_DEFAULT {
         return source.to_string();
@@ -661,11 +664,8 @@ fn rewritten_referer(level: i64, source: &str, target: &str) -> String {
         return String::new();
     }
     let cross_site = !same_site(&url_host(source), &url_host(target));
-    if cross_site {
-        if level >= REFERER_STRICT {
-            return String::new();
-        }
-        return referer_origin(target);
+    if cross_site && level >= REFERER_STRICT {
+        return String::new();
     }
     referer_origin(source)
 }
@@ -1594,9 +1594,10 @@ mod tests {
                 "headers": [["Referer", referer]],
             })
         };
-        // Trimmed: cross-site -> target's own origin.
+        // Trimmed: cross-site -> the SOURCE's bare origin
+        // (strict-origin, REFER01).
         let v = evaluate_json(&req(1, "https://a.example/deep/path?q=1", "https://b.example/x"));
-        assert_eq!(v["referer"]["value"], "https://b.example/");
+        assert_eq!(v["referer"]["value"], "https://a.example/");
         // Trimmed: same-site -> source origin.
         let v = evaluate_json(&req(1, "https://a.example/deep/path?q=1", "https://sub.a.example/x"));
         assert_eq!(v["referer"]["value"], "https://a.example/");
@@ -1647,7 +1648,7 @@ mod tests {
             "headers": [["Referer", "https://a.example/p"]],
             "tor_mode": true, "min_referer_level": 1,
         }));
-        assert_eq!(v["referer"]["value"], "https://b.example/");
+        assert_eq!(v["referer"]["value"], "https://a.example/");
     }
 
     #[test]

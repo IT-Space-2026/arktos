@@ -298,11 +298,12 @@ void tst_NavigationPolicy::refererLevels()
         return NavigationPolicy::evaluate(r);
     };
 
-    // Trimmed: cross-site -> target's own origin.
+    // Trimmed: cross-site -> the SOURCE's bare origin
+    // (strict-origin, REFER01).
     auto v = reqWithRef(1, QStringLiteral("https://a.example/deep?x=1"),
                         QStringLiteral("https://b.example/x"));
     QVERIFY(v.refererSet);
-    QCOMPARE(v.refererValue, QByteArray("https://b.example/"));
+    QCOMPARE(v.refererValue, QByteArray("https://a.example/"));
     // Trimmed: same-site -> source origin.
     v = reqWithRef(1, QStringLiteral("https://a.example/deep?x=1"),
                    QStringLiteral("https://sub.a.example/x"));
@@ -359,7 +360,7 @@ void tst_NavigationPolicy::torModeUpgradesEverythingButOnion()
                                  QByteArray("https://a.example/p")));
     v = NavigationPolicy::evaluate(req);
     QVERIFY(v.refererSet);
-    QCOMPARE(v.refererValue, QByteArray("https://b.example/"));
+    QCOMPARE(v.refererValue, QByteArray("https://a.example/"));
 }
 
 void tst_NavigationPolicy::cookieGateMatrix()

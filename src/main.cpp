@@ -4135,9 +4135,10 @@ int main(int argc, char **argv)
     // the https-first upgrade).  The first-party page on 127.0.0.1
     // must load un-upgraded (a redirect to https would fail — nothing
     // serves TLS), embeds an <img> on 127.0.0.2 whose request must
-    // arrive with its Referer trimmed to the *target's* origin, and
-    // its Set-Cookie must be rejected as third-party while the
-    // first-party Set-Cookie lands.  Exits 0 on PASS.
+    // arrive with its Referer trimmed to the *source's* bare origin
+    // (REFER01 strict-origin), and its Set-Cookie must be rejected as
+    // third-party while the first-party Set-Cookie lands.  Exits 0 on
+    // PASS.
     if (args.contains(QLatin1String("--privacy-smoke"))) {
         // Hermeticity: downloaded subscription lists could match the
         // fixture paths (EasyList blocks a bare "/img" request) —
@@ -4225,13 +4226,14 @@ int main(int argc, char **argv)
             const bool done = sawImg && !navReferer.isEmpty() && first;
             if (!done && ++*ticks <= 40)
                 return; // retry for ~20s
-            // Navigation referer carries the *target* origin only —
-            // the referring host 127.0.0.1 must not appear in it.
-            // (Subresource referers get the same rewrite since
-            // REF01 — the header write DOES reach the wire on Qt
-            // 6.12; printed for transparency, not gated.)
-            const bool navTrimmed = navReferer.startsWith("http://127.0.0.2:")
-                && !navReferer.contains("127.0.0.1");
+            // Navigation referer carries the *source's* bare origin
+            // (REFER01 strict-origin) — 127.0.0.1's origin is sent but
+            // the /page path must never appear.  (Subresource referers
+            // get the same rewrite since REF01 — the header write DOES
+            // reach the wire on Qt 6.12; printed for transparency, not
+            // gated.)
+            const bool navTrimmed = navReferer.startsWith("http://127.0.0.1:")
+                && !navReferer.contains("/page");
             const bool pass = sawImg && navTrimmed && first && !third;
             qInfo() << "privacy-smoke:" << (pass ? "PASS" : "FAIL")
                     << "imgReferer:" << imgReferer
@@ -4437,21 +4439,24 @@ int main(int argc, char **argv)
                             .arg(QLatin1String(p));
                 };
                 const QByteArray o1 = (h1 + QLatin1Char('/')).toUtf8();
-                const QByteArray o2 = (h2 + QLatin1Char('/')).toUtf8();
-                expectRef("/img", o2);       // cross-site subresource spoof
-                expectRef("/s.js", o2);
-                expectRef("/ifr", o2);
-                expectRef("/xhr", o2);
+                // REFER01: cross-site legs carry the SOURCE's bare
+                // origin — strict-origin semantics, the
+                // YouTube-embed-shaped case (an iframe to site-B must
+                // name site-A, not site-B itself).
+                expectRef("/img", o1);       // cross-site subresource
+                expectRef("/s.js", o1);
+                expectRef("/ifr", o1);
+                expectRef("/xhr", o1);
                 expectRef("/sameimg", o1);   // same-site: origin only
-                expectRef("/nav", o2);       // link click
+                expectRef("/nav", o1);       // link click
                 expectNone("/nref");         // rel=noreferrer stays silent
                 expectRef("/redir", o1);     // chain hop, same-site
                 // Chain end, cross-site: Chromium recomputes the
                 // Referer of a redirect follow-up AFTER the
-                // interceptor ran, so the target-origin spoof can't
-                // reach it — the wire carries the engine-computed
-                // value, which under the injected strict-origin meta
-                // is the source's ORIGIN (never the full path).
+                // interceptor ran — the wire carries the
+                // engine-computed value, which under the injected
+                // strict-origin meta is the source's ORIGIN (never
+                // the full path).
                 expectRef("/final", o1);
                 // Same-site chain end: redirect legs are likewise
                 // engine-computed, but the injected strict-origin
@@ -4459,8 +4464,8 @@ int main(int argc, char **argv)
                 // without it this would be the page's full URL.
                 expectRef("/sredir", o1);
                 expectRef("/sfinal", o1);
-                expectRef("/metadest", o2);  // meta refresh
-                expectRef("/formdest", o2);  // POST form nav
+                expectRef("/metadest", o1);  // meta refresh
+                expectRef("/formdest", o1);  // POST form nav
                 expectNone("/omimg");        // page meta no-referrer
                 expectNone("/hmimg");        // header no-referrer
                 for (const QString &f : std::as_const(failures))

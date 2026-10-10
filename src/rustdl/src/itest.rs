@@ -662,8 +662,9 @@ fn header_parity_ua_and_referer() {
     let cfg = Cfg::new();
     let body = Arc::new(fill_pattern(8192));
     let fx = Fixture::start(Arc::clone(&body), true, 0);
-    // REF01 Trimmed (1): cross-site -> the target's own origin — the
-    // source page's identity must not cross.
+    // REF01/REFER01 Trimmed (1): cross-site -> the SOURCE's bare
+    // origin — path/query never cross, but the destination learns the
+    // originating origin (strict-origin, not the retired spoof).
     let opts = cstr(
         r#"{"user_agent":"ParityUA/9.9","first_party":"http://source.example/secret?page=1","referer_policy":1}"#,
     );
@@ -686,8 +687,9 @@ fn header_parity_ua_and_referer() {
     assert_eq!(fx.header("/file", "user-agent"), "ParityUA/9.9");
     assert_eq!(
         fx.header("/file", "referer"),
-        format!("http://127.0.0.1:{}/", fx.port),
-        "trimmed referer must be the target origin, never the source page"
+        "http://source.example/",
+        "trimmed referer must be the source's bare origin — the page's \
+         identity (never its path/query) is what strict-origin sends"
     );
     unsafe { dl_free(h) };
 }

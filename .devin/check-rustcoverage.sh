@@ -59,8 +59,12 @@ if ! "$CARGO" llvm-cov --version >/dev/null 2>&1; then
     exit 0
 fi
 
+# spikes/ is excluded on purpose — same convention as
+# check-supplychain.sh: spike harnesses are throwaway experiments
+# (servo-embed carries no tests), not shipped rust-made code; a spike
+# that graduates into the tree moves out of spikes/ and gets gated.
 CRATES=$(cd "$ROOT" && git ls-files -c -o --exclude-standard -- '*/Cargo.toml' 'Cargo.toml' \
-    | grep -v '/target/' || true)
+    | grep -v '/target/' | grep -v '^spikes/' || true)
 [ -n "$CRATES" ] || { note "no crates in tree — nothing to measure"; exit 0; }
 
 command -v python3 >/dev/null 2>&1 || die "python3 not found"

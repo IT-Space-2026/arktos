@@ -1798,7 +1798,7 @@
             <item>
              <widget class="QLabel" name="refererPolicyLabel">
               <property name="toolTip">
-               <string>Controls the Referer header other parties receive. Trimmed: other sites see only their own address — nothing about the page you came from — and same-site requests carry just the origin, never the full path or query. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break. Pages that withhold their own referer (noopener links, stricter site policies, insecure downgrades) always stay silent.</string>
+               <string>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break. Pages that withhold their own referer (noopener links, stricter site policies, insecure downgrades) always stay silent.</string>
               </property>
               <property name="text">
                <string>Referer header:</string>
@@ -1817,7 +1817,7 @@
                </sizepolicy>
               </property>
               <property name="toolTip">
-               <string>Controls the Referer header other parties receive. Trimmed: other sites see only their own address — nothing about the page you came from — and same-site requests carry just the origin, never the full path or query. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break.</string>
+               <string>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break.</string>
               </property>
               <item>
                <property name="text">
