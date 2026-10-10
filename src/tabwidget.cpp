@@ -1271,6 +1271,9 @@ QList<WebView*> TabWidget::orderedWebViews() const
 // Defined further down — closeHiddenTab() records the closed page's
 // history for "reopen closed tab" the same way closeTab() does.
 static QByteArray serializePageHistory(Engine::Page *page);
+// Defined further down — resolves the tab a page signal arrived
+// from; senders are the WebView or its Engine::Page adapter.
+static WebView *webViewForSender(QObject *sender);
 
 // CONT06 — two-level container strip ---------------------------------
 //
@@ -1921,11 +1924,11 @@ void TabWidget::lineEditReturnPressed()
 
 void TabWidget::windowCloseRequested()
 {
-    WebPage *webPage = qobject_cast<WebPage*>(sender());
-    if (!webPage)
+    // The signal arrives through the Engine::Page adapter — resolve
+    // the owning tab the same way the webView* slots below do.
+    WebView *webView = webViewForSender(sender());
+    if (!webView)
         return;
-    // QWebEnginePage has no view() — forPage() is the reverse lookup.
-    WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(webPage));
     int index = webViewIndex(webView);
     if (index >= 0) {
         // CONT06: hidden container levels still hold live tabs — the
