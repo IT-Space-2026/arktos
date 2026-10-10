@@ -124,12 +124,22 @@ WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
     init();
 }
 
+WebView::WebView(Engine::Profile *profile, QWidget *parent)
+    : WebView(WebEngineProfileAdapter::of(profile)
+                  ? WebEngineProfileAdapter::of(profile)->webEngineProfile()
+                  : nullptr,
+              parent)
+{
+}
+
 Engine::Page *WebView::enginePage() const
 {
-    // Parented to the page — m_page is stable for the view's lifetime
-    // (init() setPage()s it once), so the adapter shares its clock.
+    // The canonical adapter for the page — every holder of the same
+    // engine page resolves to this object, so Engine::Page pointers
+    // are identity-comparable (forPage is parented to m_page and
+    // shares its clock).
     if (!m_enginePage)
-        m_enginePage = new WebEnginePageAdapter(m_page, m_page);
+        m_enginePage = WebEnginePageAdapter::forPage(m_page);
     return m_enginePage;
 }
 

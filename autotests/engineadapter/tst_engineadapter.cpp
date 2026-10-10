@@ -141,6 +141,16 @@ public:
         return windowResult;
     }
 
+    void insertScript(const Engine::Script &script) override
+    {
+        m_scripts.insert(script.name, script);
+    }
+    void removeScript(const QString &name) override { m_scripts.remove(name); }
+    QList<Engine::Script> scripts() const override { return m_scripts.values(); }
+
+    void download(const QUrl &url) override { lastDownload = url; }
+    QWidget *view() const override { return m_view; }
+
     QUrl m_url;
     qreal m_zoom = 1.0;
     bool m_canBack = false;
@@ -164,6 +174,76 @@ public:
     Engine::Page *windowResult = nullptr;
     int stops = 0;
     int reloads = 0;
+    QHash<QString, Engine::Script> m_scripts;
+    QUrl lastDownload;
+    QWidget *m_view = nullptr;
+};
+
+class FakeDownloadRequest : public Engine::DownloadRequest
+{
+    Q_OBJECT
+
+public:
+    explicit FakeDownloadRequest(QObject *parent = nullptr)
+        : Engine::DownloadRequest(parent) {}
+
+    QUrl url() const override { return m_url; }
+    QString suggestedFileName() const override { return m_name; }
+    QString mimeType() const override { return m_mime; }
+    void accept(const QString &filePath) override
+    {
+        acceptedPath = filePath;
+        setState(State::InProgress);
+    }
+    void cancel() override { setState(State::Cancelled); }
+    void pause() override { ++pauses; }
+    void resume() override { ++resumes; }
+    qint64 receivedBytes() const override { return m_received; }
+    qint64 totalBytes() const override { return m_total; }
+    State state() const override { return m_state; }
+    bool isFinished() const override
+    {
+        return m_state == State::Completed || m_state == State::Cancelled;
+    }
+    QString interruptReasonString() const override { return m_interrupt; }
+    void setDownloadDirectory(const QString &directory) override
+    {
+        m_dir = directory;
+    }
+    void setDownloadFileName(const QString &fileName) override
+    {
+        m_fileName = fileName;
+    }
+    Engine::Page *page() const override { return m_page; }
+
+    void setState(State state)
+    {
+        m_state = state;
+        emit stateChanged(state);
+    }
+    void bump(qint64 received, qint64 total)
+    {
+        m_received = received;
+        emit receivedBytesChanged();
+        if (total != m_total) {
+            m_total = total;
+            emit totalBytesChanged();
+        }
+    }
+
+    QUrl m_url;
+    QString m_name;
+    QString m_mime;
+    State m_state = State::Requested;
+    qint64 m_received = 0;
+    qint64 m_total = -1;
+    QString m_interrupt;
+    QString m_dir;
+    QString m_fileName;
+    QString acceptedPath;
+    int pauses = 0;
+    int resumes = 0;
+    Engine::Page *m_page = nullptr;
 };
 
 class FakeProfile : public Engine::Profile
@@ -251,6 +331,7 @@ private slots:
     void fakePageZoomFindScript();
     void fakePageLifecycleAndPid();
     void fakeProfileSurface();
+    void fakeDownloadSurface();
     void webEngineBackendShape();
     void webEnginePageForwarding();
     void webEngineLiftedScript();
@@ -367,6 +448,20 @@ void tst_EngineAdapter::fakePageZoomFindScript()
 
     page.setPageAttribute(QStringLiteral("JavascriptEnabled"), false);
     QCOMPARE(page.attributes.value(QStringLiteral("JavascriptEnabled")), false);
+
+    // Per-page script collection + download + view: the neutral
+    // surface reaches the fake 1:1.
+    page.insertScript(Engine::Script{
+        QStringLiteral("arora:test"), QStringLiteral("1"),
+        Engine::InjectionPoint::DocumentReady, 0, false });
+    QCOMPARE(page.scripts().count(), 1);
+    QCOMPARE(page.scripts().first().name, QStringLiteral("arora:test"));
+    page.removeScript(QStringLiteral("arora:test"));
+    QVERIFY(page.scripts().isEmpty());
+    page.download(QUrl(QStringLiteral("https://example.org/f.zip")));
+    QCOMPARE(page.lastDownload,
+             QUrl(QStringLiteral("https://example.org/f.zip")));
+    QCOMPARE(page.view(), static_cast<QWidget*>(nullptr));
 }
 
 void tst_EngineAdapter::fakePageLifecycleAndPid()
@@ -402,6 +497,55 @@ void tst_EngineAdapter::fakeProfileSurface()
     QVERIFY(profile.m_cleared & Engine::HttpCacheArea);
     QVERIFY(profile.m_cleared & Engine::CookiesArea);
     QVERIFY(!(profile.m_cleared & Engine::VisitedLinksArea));
+}
+
+void tst_EngineAdapter::fakeDownloadSurface()
+{
+    // The download handoff: a profile emits the request, chrome
+    // drives accept/cancel/pause and watches the translated signals.
+    FakeProfile profile;
+    auto *request = new FakeDownloadRequest(&profile);
+    request->m_url = QUrl(QStringLiteral("https://example.org/f.zip"));
+    request->m_name = QStringLiteral("f.zip");
+    request->m_mime = QStringLiteral("application/zip");
+
+    Engine::DownloadRequest *seen = nullptr;
+    connect(&profile, &Engine::Profile::downloadRequested,
+            this, [&seen](Engine::DownloadRequest *request) {
+        seen = request;
+    });
+    emit profile.downloadRequested(request);
+    QCOMPARE(seen, static_cast<Engine::DownloadRequest*>(request));
+    QCOMPARE(seen->url(), request->m_url);
+    QCOMPARE(seen->suggestedFileName(), QStringLiteral("f.zip"));
+    QCOMPARE(seen->mimeType(), QStringLiteral("application/zip"));
+    QCOMPARE(seen->state(), Engine::DownloadRequest::State::Requested);
+    QVERIFY(!seen->isFinished());
+
+    QSignalSpy stateSpy(seen, &Engine::DownloadRequest::stateChanged);
+    QSignalSpy bytesSpy(seen, &Engine::DownloadRequest::receivedBytesChanged);
+    QSignalSpy totalSpy(seen, &Engine::DownloadRequest::totalBytesChanged);
+    seen->setDownloadDirectory(QStringLiteral("/tmp/dl"));
+    seen->setDownloadFileName(QStringLiteral("g.zip"));
+    QCOMPARE(request->m_dir, QStringLiteral("/tmp/dl"));
+    QCOMPARE(request->m_fileName, QStringLiteral("g.zip"));
+    seen->accept(QStringLiteral("/tmp/dl/g.zip"));
+    QCOMPARE(request->acceptedPath, QStringLiteral("/tmp/dl/g.zip"));
+    request->bump(10, 100);
+    request->bump(20, 100);
+    QCOMPARE(bytesSpy.count(), 2);
+    QCOMPARE(totalSpy.count(), 1);
+    QCOMPARE(seen->receivedBytes(), qint64(20));
+    QCOMPARE(seen->totalBytes(), qint64(100));
+    seen->pause();
+    seen->resume();
+    QCOMPARE(request->pauses, 1);
+    QCOMPARE(request->resumes, 1);
+    request->setState(FakeDownloadRequest::State::Completed);
+    QCOMPARE(stateSpy.count(), 2); // InProgress on accept, Completed here
+    QVERIFY(seen->isFinished());
+    request->setState(FakeDownloadRequest::State::Cancelled);
+    QCOMPARE(stateSpy.count(), 3);
 }
 
 void tst_EngineAdapter::webEngineBackendShape()
@@ -481,6 +625,29 @@ void tst_EngineAdapter::webEnginePageForwarding()
              view.page());
     QCOMPARE(WebEnginePageAdapter::of(nullptr),
              static_cast<WebEnginePageAdapter*>(nullptr));
+
+    // Canonical adapters: every holder of the same engine page
+    // resolves to the same Engine::Page (identity-comparable), and
+    // view() is the engine's forPage reverse lookup.
+    QCOMPARE(WebEnginePageAdapter::forPage(view.page()),
+             static_cast<WebEnginePageAdapter*>(enginePage));
+    QCOMPARE(enginePage->view(), static_cast<QWidget*>(&view));
+
+    // The per-page script collection round-trips through the engine —
+    // the page already arms its own bootstrap scripts, so assert the
+    // named entry lands and leaves rather than a bare count.
+    const int before = enginePage->scripts().count();
+    enginePage->insertScript(Engine::Script{
+        QStringLiteral("arora:eng04-test"), QStringLiteral("void 0"),
+        Engine::InjectionPoint::DocumentReady, 0, false });
+    QCOMPARE(enginePage->scripts().count(), before + 1);
+    QCOMPARE(view.page()->scripts().toList().count(), before + 1);
+    bool found = false;
+    for (const Engine::Script &script : enginePage->scripts())
+        found |= script.name == QStringLiteral("arora:eng04-test");
+    QVERIFY(found);
+    enginePage->removeScript(QStringLiteral("arora:eng04-test"));
+    QCOMPARE(enginePage->scripts().count(), before);
 }
 
 void tst_EngineAdapter::webEngineLiftedScript()

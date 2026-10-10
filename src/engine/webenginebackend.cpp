@@ -165,6 +165,72 @@ static Engine::InjectionPoint engineInjectionPoint(QWebEngineScript::InjectionPo
     }
 }
 
+static QWebEngineScript webEngineScript(const Engine::Script &script)
+{
+    QWebEngineScript engineScript;
+    engineScript.setName(script.name);
+    engineScript.setSourceCode(script.sourceCode);
+    engineScript.setInjectionPoint(webEngineInjectionPoint(script.injectionPoint));
+    engineScript.setWorldId(script.worldId);
+    engineScript.setRunsOnSubFrames(script.runsOnSubFrames);
+    return engineScript;
+}
+
+static Engine::Script engineScript(const QWebEngineScript &script)
+{
+    Engine::Script translated;
+    translated.name = script.name();
+    translated.sourceCode = script.sourceCode();
+    translated.injectionPoint = engineInjectionPoint(script.injectionPoint());
+    translated.worldId = script.worldId();
+    translated.runsOnSubFrames = script.runsOnSubFrames();
+    return translated;
+}
+
+static Engine::DownloadRequest::State engineDownloadState(
+        QWebEngineDownloadRequest::DownloadState state)
+{
+    switch (state) {
+    case QWebEngineDownloadRequest::DownloadInProgress:
+        return Engine::DownloadRequest::State::InProgress;
+    case QWebEngineDownloadRequest::DownloadCompleted:
+        return Engine::DownloadRequest::State::Completed;
+    case QWebEngineDownloadRequest::DownloadCancelled:
+        return Engine::DownloadRequest::State::Cancelled;
+    case QWebEngineDownloadRequest::DownloadInterrupted:
+        return Engine::DownloadRequest::State::Interrupted;
+    default:
+        return Engine::DownloadRequest::State::Requested;
+    }
+}
+
+// Shared script-collection forwarders — a page's scripts() and a
+// profile's scripts() are the same QWebEngineScriptCollection shape.
+static void insertEngineScript(QWebEngineScriptCollection &collection,
+                               const Engine::Script &script)
+{
+    collection.insert(webEngineScript(script));
+}
+
+static void removeEngineScript(QWebEngineScriptCollection &collection,
+                               const QString &name)
+{
+    const QList<QWebEngineScript> matches = collection.find(name);
+    for (const QWebEngineScript &script : matches)
+        collection.remove(script);
+}
+
+static QList<Engine::Script> engineScripts(
+        const QWebEngineScriptCollection &collection)
+{
+    QList<Engine::Script> out;
+    const QList<QWebEngineScript> list = collection.toList();
+    out.reserve(list.size());
+    for (const QWebEngineScript &script : list)
+        out.append(engineScript(script));
+    return out;
+}
+
 static QWebEngineSettings::WebAttribute webEngineAttribute(const QString &name, bool *known)
 {
     static const QHash<QString, QWebEngineSettings::WebAttribute> attributes = {
@@ -310,6 +376,16 @@ QWebEnginePage *WebEnginePageAdapter::webEnginePage() const
 WebEnginePageAdapter *WebEnginePageAdapter::of(Engine::Page *page)
 {
     return qobject_cast<WebEnginePageAdapter*>(page);
+}
+
+WebEnginePageAdapter *WebEnginePageAdapter::forPage(QWebEnginePage *page)
+{
+    if (!page)
+        return nullptr;
+    if (WebEnginePageAdapter *adapter =
+            page->findChild<WebEnginePageAdapter*>())
+        return adapter;
+    return new WebEnginePageAdapter(page, page);
 }
 
 void WebEnginePageAdapter::load(const QUrl &url)
@@ -536,6 +612,31 @@ void WebEnginePageAdapter::runJavaScriptLiftedOn(
     });
 }
 
+void WebEnginePageAdapter::insertScript(const Engine::Script &script)
+{
+    insertEngineScript(m_page->scripts(), script);
+}
+
+void WebEnginePageAdapter::removeScript(const QString &name)
+{
+    removeEngineScript(m_page->scripts(), name);
+}
+
+QList<Engine::Script> WebEnginePageAdapter::scripts() const
+{
+    return engineScripts(m_page->scripts());
+}
+
+void WebEnginePageAdapter::download(const QUrl &url)
+{
+    m_page->download(url);
+}
+
+QWidget *WebEnginePageAdapter::view() const
+{
+    return QWebEngineView::forPage(m_page);
+}
+
 // ---------------------------------------------------------------------------
 
 WebEngineDownloadRequest::WebEngineDownloadRequest(QWebEngineDownloadRequest *request,
@@ -544,9 +645,13 @@ WebEngineDownloadRequest::WebEngineDownloadRequest(QWebEngineDownloadRequest *re
     , m_request(request)
 {
     connect(m_request, &QWebEngineDownloadRequest::stateChanged,
-            this, &Engine::DownloadRequest::stateChanged);
+            this, [this](QWebEngineDownloadRequest::DownloadState state) {
+        emit stateChanged(engineDownloadState(state));
+    });
     connect(m_request, &QWebEngineDownloadRequest::receivedBytesChanged,
             this, &Engine::DownloadRequest::receivedBytesChanged);
+    connect(m_request, &QWebEngineDownloadRequest::totalBytesChanged,
+            this, &Engine::DownloadRequest::totalBytesChanged);
 }
 
 QUrl WebEngineDownloadRequest::url() const
@@ -557,6 +662,11 @@ QUrl WebEngineDownloadRequest::url() const
 QString WebEngineDownloadRequest::suggestedFileName() const
 {
     return m_request->suggestedFileName();
+}
+
+QString WebEngineDownloadRequest::mimeType() const
+{
+    return m_request->mimeType();
 }
 
 void WebEngineDownloadRequest::accept(const QString &filePath)
@@ -591,6 +701,36 @@ qint64 WebEngineDownloadRequest::totalBytes() const
     return m_request->totalBytes();
 }
 
+Engine::DownloadRequest::State WebEngineDownloadRequest::state() const
+{
+    return engineDownloadState(m_request->state());
+}
+
+bool WebEngineDownloadRequest::isFinished() const
+{
+    return m_request->isFinished();
+}
+
+QString WebEngineDownloadRequest::interruptReasonString() const
+{
+    return m_request->interruptReasonString();
+}
+
+void WebEngineDownloadRequest::setDownloadDirectory(const QString &directory)
+{
+    m_request->setDownloadDirectory(directory);
+}
+
+void WebEngineDownloadRequest::setDownloadFileName(const QString &fileName)
+{
+    m_request->setDownloadFileName(fileName);
+}
+
+Engine::Page *WebEngineDownloadRequest::page() const
+{
+    return WebEnginePageAdapter::forPage(m_request->page());
+}
+
 // ---------------------------------------------------------------------------
 
 WebEngineProfileAdapter::WebEngineProfileAdapter(QWebEngineProfile *profile,
@@ -601,9 +741,10 @@ WebEngineProfileAdapter::WebEngineProfileAdapter(QWebEngineProfile *profile,
     if (m_profile) {
         connect(m_profile, &QWebEngineProfile::downloadRequested,
                 this, [this](QWebEngineDownloadRequest *request) {
-            // The adapter outlives each request; the request itself is
-            // engine-owned and dies with the download.
-            emit downloadRequested(new WebEngineDownloadRequest(request, this));
+            // The wrapper is parented to the engine-owned request so
+            // adapters don't accumulate on the profile over a session.
+            emit downloadRequested(
+                    new WebEngineDownloadRequest(request, request));
         });
     }
 }
@@ -611,6 +752,22 @@ WebEngineProfileAdapter::WebEngineProfileAdapter(QWebEngineProfile *profile,
 QWebEngineProfile *WebEngineProfileAdapter::webEngineProfile() const
 {
     return m_profile;
+}
+
+WebEngineProfileAdapter *WebEngineProfileAdapter::of(Engine::Profile *profile)
+{
+    return qobject_cast<WebEngineProfileAdapter*>(profile);
+}
+
+WebEngineProfileAdapter *WebEngineProfileAdapter::forProfile(
+        QWebEngineProfile *profile)
+{
+    if (!profile)
+        return nullptr;
+    if (WebEngineProfileAdapter *adapter =
+            profile->findChild<WebEngineProfileAdapter*>())
+        return adapter;
+    return new WebEngineProfileAdapter(profile, profile);
 }
 
 bool WebEngineProfileAdapter::isOffTheRecord() const
@@ -661,37 +818,17 @@ void WebEngineProfileAdapter::setCookieFilter(
 
 void WebEngineProfileAdapter::insertScript(const Engine::Script &script)
 {
-    QWebEngineScript engineScript;
-    engineScript.setName(script.name);
-    engineScript.setSourceCode(script.sourceCode);
-    engineScript.setInjectionPoint(webEngineInjectionPoint(script.injectionPoint));
-    engineScript.setWorldId(script.worldId);
-    engineScript.setRunsOnSubFrames(script.runsOnSubFrames);
-    m_profile->scripts()->insert(engineScript);
+    insertEngineScript(*m_profile->scripts(), script);
 }
 
 void WebEngineProfileAdapter::removeScript(const QString &name)
 {
-    const QList<QWebEngineScript> matches = m_profile->scripts()->find(name);
-    for (const QWebEngineScript &script : matches)
-        m_profile->scripts()->remove(script);
+    removeEngineScript(*m_profile->scripts(), name);
 }
 
 QList<Engine::Script> WebEngineProfileAdapter::scripts() const
 {
-    QList<Engine::Script> out;
-    const QList<QWebEngineScript> list = m_profile->scripts()->toList();
-    out.reserve(list.size());
-    for (const QWebEngineScript &script : list) {
-        Engine::Script translated;
-        translated.name = script.name();
-        translated.sourceCode = script.sourceCode();
-        translated.injectionPoint = engineInjectionPoint(script.injectionPoint());
-        translated.worldId = script.worldId();
-        translated.runsOnSubFrames = script.runsOnSubFrames();
-        out.append(translated);
-    }
-    return out;
+    return engineScripts(*m_profile->scripts());
 }
 
 void WebEngineProfileAdapter::clear(Engine::StorageAreas areas)

@@ -70,7 +70,7 @@
 
 #include "tabwidget.h"
 
-namespace Engine { class Page; }
+namespace Engine { class Page; class Profile; }
 class QWebEngineProfile;
 class BrowserMainWindow;
 class PictureInPicture;
@@ -86,8 +86,11 @@ class WebView : public QWebEngineView
 public:
     WebView(QWidget *parent = nullptr);
     // Creates the view's WebPage on the given profile (used to point tabs
-    // at the private off-the-record profile, for example).
+    // at the private off-the-record profile, for example).  The
+    // Engine::Profile overload is the neutral spelling chrome code
+    // uses; both land on the same WebPage.
     WebView(QWebEngineProfile *profile, QWidget *parent = nullptr);
+    WebView(Engine::Profile *profile, QWidget *parent = nullptr);
     WebPage *webPage() const { return m_page; }
     // ENG04: the engine-neutral view of this tab's page — the path
     // chrome code migrates onto so it stops naming QWebEngine types.

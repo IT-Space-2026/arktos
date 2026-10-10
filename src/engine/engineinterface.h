@@ -258,6 +258,8 @@ enum class CertificateErrorAction {
 
 // ---- downloads ---------------------------------------------------------------------
 
+class Page;
+
 // Handle a backend hands the app when a download starts (MIG05's
 // QWebEngineDownloadRequest shape — every engine offers roughly this).
 class DownloadRequest : public QObject {
@@ -266,18 +268,40 @@ class DownloadRequest : public QObject {
 public:
     explicit DownloadRequest(QObject *parent = nullptr) : QObject(parent) {}
 
+    // Mirrors QWebEngineDownloadRequest::DownloadState.
+    enum class State {
+        Requested,
+        InProgress,
+        Completed,
+        Cancelled,
+        Interrupted
+    };
+    Q_ENUM(State)
+
     virtual QUrl url() const = 0;
     virtual QString suggestedFileName() const = 0;
+    virtual QString mimeType() const = 0;
     virtual void accept(const QString &filePath) = 0;
     virtual void cancel() = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
     virtual qint64 receivedBytes() const = 0;
     virtual qint64 totalBytes() const = 0;
+    virtual State state() const = 0;
+    virtual bool isFinished() const = 0;
+    virtual QString interruptReasonString() const = 0;
+    // Split target-path setters — DownloadItem picks the name through
+    // its own policy dialog before accept().
+    virtual void setDownloadDirectory(const QString &directory) = 0;
+    virtual void setDownloadFileName(const QString &fileName) = 0;
+    // The page the request originated from — nullptr when the engine
+    // no longer attributes one (e.g. a page that already closed).
+    virtual Page *page() const = 0;
 
 signals:
-    void stateChanged();
+    void stateChanged(Engine::DownloadRequest::State state);
     void receivedBytesChanged();
+    void totalBytesChanged();
 };
 
 // ---- standard actions --------------------------------------------------------------
@@ -424,6 +448,23 @@ public:
     virtual void runJavaScriptLifted(const QString &source,
             const std::function<void(const QVariant &)> &resultCallback
                 = std::function<void(const QVariant &)>()) = 0;
+
+    // Per-page user-script collection (adblock cosmetic, autofill) —
+    // the same Script triple Profile carries, scoped to one document.
+    virtual void insertScript(const Script &script) = 0;
+    virtual void removeScript(const QString &name) = 0;
+    virtual QList<Script> scripts() const = 0;
+
+    // Ask the engine to fetch url as a download — QWebEnginePage::
+    // download's neutral spelling.  Downloads surface back through
+    // Profile::downloadRequested.
+    virtual void download(const QUrl &url) = 0;
+
+    // The widget currently presenting the page — the engine's
+    // forPage reverse lookup.  nullptr while the page is headless or
+    // detached (an engine may attach more than one view; the backend
+    // answers with the primary one).
+    virtual QWidget *view() const = 0;
 
 signals:
     void loadStarted();
