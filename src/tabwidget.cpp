@@ -235,21 +235,26 @@ TabWidget::TabWidget(QWidget *parent)
     loadSettings();
 }
 
-void TabWidget::historyCleared()
+void TabWidget::clearRecentlyClosedTabs()
 {
     m_recentlyClosedTabs.clear();
-    m_recentlyClosedTabsHistory.clear();
-    m_recentlyClosedTabsContainers.clear();
     m_recentlyClosedTabsAction->setEnabled(false);
+}
+
+bool TabWidget::hasRecentlyClosedTabs() const
+{
+    return !m_recentlyClosedTabs.isEmpty();
+}
+
+void TabWidget::historyCleared()
+{
+    clearRecentlyClosedTabs();
 }
 
 void TabWidget::clear()
 {
     // clear the recently closed tabs
-    m_recentlyClosedTabs.clear();
-    m_recentlyClosedTabsHistory.clear();
-    m_recentlyClosedTabsContainers.clear();
-    m_recentlyClosedTabsAction->setEnabled(false);
+    clearRecentlyClosedTabs();
     // clear the line edit history
     for (int i = 0; i < m_locationBars->count(); ++i) {
         if (QLineEdit *qLineEdit = locationBar(i))
@@ -1657,28 +1662,18 @@ void TabWidget::closeHiddenTab(WebView *view)
                 qobject_cast<WebViewWithSearch*>(it->at(k).tab);
             if (!withSearch || withSearch->m_webView != view)
                 continue;
-            if (view && !view->url().isEmpty()
-                && !(view->enginePage()
-                     && view->enginePage()->isOffTheRecord())) {
-                m_recentlyClosedTabsAction->setEnabled(true);
-                m_recentlyClosedTabs.prepend(view->url());
-                m_recentlyClosedTabsHistory.prepend(
-                    serializePageHistory(view->enginePage()));
-                m_recentlyClosedTabsContainers.prepend(it.key());
-                if (m_recentlyClosedTabs.size()
-                    >= TabWidget::m_recentlyClosedTabsSize) {
-                    m_recentlyClosedTabs.removeLast();
-                    m_recentlyClosedTabsHistory.removeLast();
-                    m_recentlyClosedTabsContainers.removeLast();
-                }
-            }
+            const QString closingGroup = m_tabGroups.value(view);
+            // TABS05: off the strip means no index — the record keeps
+            // the level id it was filtered into as its container.
+            pushRecentlyClosedTab(view, -1, it.key(), closingGroup);
             HiddenGroupTab hidden = it->takeAt(k);
             hidden.bar->deleteLater();
-            const QString closingGroup = m_tabGroups.take(view);
+            m_tabGroups.remove(view);
             m_pinnedTabs.remove(hidden.tab);
             hidden.tab->deleteLater();
             m_sleepStates.remove(view);
             m_tabThumbnails.remove(view);
+            m_pendingScrollRestore.remove(view);
             forgetTabGroupIfEmpty(closingGroup);
             emit tabsChanged();
             return;
@@ -2186,22 +2181,11 @@ void TabWidget::closeTab(int index)
 
     // A private tab is never queued for reopen: "Open Last Closed Tab"
     // would load the url in a normal-profile page where the visit is
-    // recorded — the very trace private browsing avoids (SEC07).
-    const bool recordable = tab && !tab->url().isEmpty()
-        && !(tab->enginePage() && tab->enginePage()->isOffTheRecord());
-    if (recordable) {
-        m_recentlyClosedTabsAction->setEnabled(true);
-        m_recentlyClosedTabs.prepend(tab->url());
-        m_recentlyClosedTabsHistory.prepend(serializePageHistory(tab->enginePage()));
-        // CONT02: the container id rides with the entry so "reopen
-        // closed tab" returns to the same browsing context.
-        m_recentlyClosedTabsContainers.prepend(containerIdForTab(index));
-        if (m_recentlyClosedTabs.size() >= TabWidget::m_recentlyClosedTabsSize) {
-            m_recentlyClosedTabs.removeLast();
-            m_recentlyClosedTabsHistory.removeLast();
-            m_recentlyClosedTabsContainers.removeLast();
-        }
-    }
+    // recorded — the very trace private browsing avoids (SEC07).  The
+    // record snapshot happens before the strip slot is torn down.
+    if (tab)
+        pushRecentlyClosedTab(tab, index, containerIdForTab(index),
+                              closingGroup);
     QWidget *lineEdit = m_locationBars->widget(index);
     m_locationBars->removeWidget(lineEdit);
     lineEdit->deleteLater();
@@ -2210,6 +2194,7 @@ void TabWidget::closeTab(int index)
     removeTab(index);
     m_sleepStates.remove(tab);
     m_tabThumbnails.remove(tab);
+    m_pendingScrollRestore.remove(tab);
     // TABGRP01: drop the view's membership; the group record dies with
     // its last member.
     m_tabGroups.remove(tab);
@@ -2315,6 +2300,18 @@ void TabWidget::webViewLoadFinished(bool ok)
         webView->enginePage()->runJavaScript(QStringLiteral(
             "window.scrollTo(%1, %2);")
             .arg(sleepIt->scrollX).arg(sleepIt->scrollY));
+    }
+
+    // TABS05: a reopened tab's recorded scroll position re-applies on
+    // its first finished load — same once-only pattern as the wake
+    // restore above.
+    auto scrollIt = m_pendingScrollRestore.find(webView);
+    if (scrollIt != m_pendingScrollRestore.end()) {
+        const QPointF pos = scrollIt.value();
+        m_pendingScrollRestore.erase(scrollIt);
+        if (ok)
+            webView->enginePage()->runJavaScript(QStringLiteral(
+                "window.scrollTo(%1, %2);").arg(pos.x()).arg(pos.y()));
     }
 
     if (-1 != index) {
@@ -2423,18 +2420,102 @@ void TabWidget::webViewUrlChanged(const QUrl &url)
     emit tabsChanged();
 }
 
+// TABS05: snapshot the tab about to die — shared by closeTab's strip
+// path (index >= 0, visuals readable) and closeHiddenTab's
+// filtered-level path (index -1).  Off-the-record pages never enter:
+// reopening would replay the url into a recorded-profile page, the
+// very trace private browsing avoids (SEC07).
+void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
+                                      const QString &containerId,
+                                      const QString &groupId)
+{
+    if (!view || view->url().isEmpty()
+        || (view->enginePage() && view->enginePage()->isOffTheRecord()))
+        return;
+    RecentlyClosedTab closed;
+    closed.url = view->url();
+    // The page title outlives the strip text — a pinned tab's label is
+    // blank by design.
+    closed.title = view->title().isEmpty()
+        ? QString::fromUtf8(view->url().toEncoded()) : view->title();
+    closed.icon = BrowserApplication::icon(view->url());
+    closed.index = index;
+    closed.historyState = view->enginePage()
+        ? serializePageHistory(view->enginePage()) : QByteArray();
+    // CONT02: the container id rides with the entry so "reopen
+    // closed tab" returns to the same browsing context.
+    closed.containerId = containerId;
+    closed.groupId = groupId;
+    // TABS04: the pin flag keys on the page widget — the view's
+    // WebViewWithSearch parent — so it reads the same on and off the
+    // strip.
+    closed.pinned = m_pinnedTabs.contains(view->parentWidget());
+    if (view->enginePage()) {
+        const QPointF scroll = view->enginePage()->scrollPosition();
+        closed.scrollValid = true;
+        closed.scrollX = scroll.x();
+        closed.scrollY = scroll.y();
+    }
+    m_recentlyClosedTabs.prepend(closed);
+    while (m_recentlyClosedTabs.size() > m_recentlyClosedTabsSize)
+        m_recentlyClosedTabs.removeLast();
+    m_recentlyClosedTabsAction->setEnabled(true);
+}
+
+// Shared undo path for openLastTab() and the recently-closed menu:
+// recreate the tab on its recorded container, then put back the strip
+// slot it was closed from — the pin block first, then a still-living
+// group, otherwise the recorded index clamped to today's strip.
+void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
+{
+    // A container deleted since the close degrades to the default —
+    // makeNewTabInContainer resolves unknown ids that way already.
+    WebView *view = makeNewTabInContainer(closed.containerId, true);
+    if (!view)
+        return;
+    // The engine cannot inject a serialized back/forward stack (see
+    // createTab), so the history blob contributes its current entry;
+    // an unreadable blob falls back to the flat url.
+    const QUrl historyUrl = currentSerializedHistoryUrl(closed.historyState);
+    view->loadUrl(historyUrl.isValid() ? historyUrl : closed.url);
+
+    int index = webViewIndex(view);
+    if (closed.pinned) {
+        if (index >= 0)
+            setTabPinned(index, true);
+    } else if (!closed.groupId.isEmpty()
+               && m_tabGroupInfo.contains(closed.groupId)) {
+        // The group outlived the tab — rejoin it.  A collapsed group
+        // reopens so the restored tab is actually visible (closeTab
+        // expands before closing a chip, so the recorded state was
+        // expanded anyway).
+        assignTabGroup(view, closed.groupId);
+        if (m_tabGroupInfo.value(closed.groupId).collapsed)
+            setTabGroupCollapsed(closed.groupId, false);
+        index = webViewIndex(view);
+        if (index >= 0)
+            moveTabIntoGroupRun(index);
+    } else {
+        const int target =
+            qBound(pinnedTabCount(), closed.index, count() - 1);
+        if (index >= 0 && index != target) {
+            // m_groupAdjust keeps this positional move from rewriting
+            // the tab's group membership (it has none yet anyway).
+            m_groupAdjust = true;
+            m_tabBar->moveTab(index, target);
+            m_groupAdjust = false;
+        }
+    }
+    if (closed.scrollValid && (closed.scrollX != 0 || closed.scrollY != 0))
+        m_pendingScrollRestore.insert(
+            view, QPointF(closed.scrollX, closed.scrollY));
+}
+
 void TabWidget::openLastTab()
 {
     if (m_recentlyClosedTabs.isEmpty())
         return;
-    QUrl url = m_recentlyClosedTabs.takeFirst();
-    QByteArray historyState = m_recentlyClosedTabsHistory.takeFirst();
-    const QString containerId = m_recentlyClosedTabsContainers.isEmpty()
-        ? QString() : m_recentlyClosedTabsContainers.takeFirst();
-    if (!historyState.isEmpty())
-        createTab(historyState, NewTab, containerId);
-    else if (WebView *view = makeNewTabInContainer(containerId, true))
-        view->loadUrl(url);
+    restoreClosedTab(m_recentlyClosedTabs.takeFirst());
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
 }
 
@@ -2442,22 +2523,21 @@ void TabWidget::aboutToShowRecentTabsMenu()
 {
     m_recentlyClosedTabsMenu->clear();
     for (int i = 0; i < m_recentlyClosedTabs.count(); ++i) {
+        const RecentlyClosedTab &closed = m_recentlyClosedTabs.at(i);
         QAction *action = new QAction(m_recentlyClosedTabsMenu);
-        action->setData(m_recentlyClosedTabsHistory.at(i));
-        QString label = m_recentlyClosedTabs.at(i).toString();
-        // CONT02: the container id rides as an action property —
-        // data() already carries the serialized history blob — and
-        // the container name prefixes the label.
-        const QString containerId = m_recentlyClosedTabsContainers.value(i);
-        if (!containerId.isEmpty()) {
-            action->setProperty("aroraContainerId", containerId);
+        // data() carries the record's stack position — the triggered
+        // slot resolves and removes it.
+        action->setData(i);
+        QString label = closed.title;
+        if (!closed.containerId.isEmpty()) {
             const QString name = ContainerManager::instance()
-                ->containerForId(containerId).name;
+                ->containerForId(closed.containerId).name;
             if (!name.isEmpty())
                 label = QStringLiteral("[%1] %2").arg(name, label);
         }
-        QIcon icon = BrowserApplication::icon(m_recentlyClosedTabs.at(i));
-        action->setIcon(icon);
+        action->setIcon(closed.icon.isNull()
+                        ? BrowserApplication::icon(closed.url)
+                        : closed.icon);
         action->setText(SafeText::menu(label));
         m_recentlyClosedTabsMenu->addAction(action);
     }
@@ -2468,10 +2548,11 @@ void TabWidget::aboutToShowRecentTriggeredAction(QAction *action)
     if (!action)
         return;
 
-    QByteArray historyState = action->data().toByteArray();
-    if (!historyState.isEmpty())
-        createTab(historyState, NewTab,
-                  action->property("aroraContainerId").toString());
+    const int i = action->data().toInt();
+    if (i < 0 || i >= m_recentlyClosedTabs.size())
+        return;
+    restoreClosedTab(m_recentlyClosedTabs.takeAt(i));
+    m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
 }
 
 void TabWidget::retranslate()

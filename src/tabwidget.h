@@ -67,6 +67,8 @@
 
 #include <qcolor.h>
 #include <qhash.h>
+#include <qicon.h>
+#include <qpoint.h>
 #include <qset.h>
 #include <qurl.h>
 
@@ -291,6 +293,15 @@ public slots:
     // the page and restores the scroll position.
     void sleepTab(int index = -1);
     void wakeTab(int index = -1);
+    // TABS05: undo closed tab (Ctrl+Shift+T) — pops the newest
+    // memory-only record and rebuilds the tab at its old slot.  The
+    // stack is never written to disk: a persisted undo stack would
+    // be a history leak (SEC07).
+    void openLastTab();
+    bool hasRecentlyClosedTabs() const;
+    // Empties the undo stack — the history-clear signal and the
+    // clear-private-data dialog both land here.
+    void clearRecentlyClosedTabs();
     bool isTabSleeping(int index) const;
     int sleepingTabCount() const;
     // Why a tab cannot be auto-slept right now — "current",
@@ -326,7 +337,6 @@ public slots:
 
 private slots:
     void currentChanged(int index);
-    void openLastTab();
     void aboutToShowRecentTabsMenu();
     void aboutToShowRecentTriggeredAction(QAction *action);
     void webViewLoadStarted();
@@ -399,6 +409,33 @@ private:
     void restoreHiddenContainerTabs(const QString &containerId);
     void closeHiddenTab(WebView *view);
 
+    // TABS05: one undo-close record — url + the session-format
+    // history blob (RCORE03) carry the page, title/icon feed the
+    // recently-closed menus, index/container/group/pinned rebuild the
+    // strip slot, and scrollX/Y restore the viewport on the reopened
+    // tab's first finished load.
+    struct RecentlyClosedTab {
+        QUrl url;
+        QString title;
+        QIcon icon;
+        int index = -1;              // strip index when closed, -1 for hidden
+        QByteArray historyState;
+        QString containerId;
+        QString groupId;
+        bool pinned = false;
+        bool scrollValid = false;
+        double scrollX = 0.0;
+        double scrollY = 0.0;
+    };
+    // pushRecentlyClosedTab snapshots the closing tab (closeTab's
+    // strip path and closeHiddenTab's filtered-level path share it);
+    // restoreClosedTab rebuilds the tab and puts back the recorded
+    // slot.
+    void pushRecentlyClosedTab(WebView *view, int index,
+                               const QString &containerId,
+                               const QString &groupId);
+    void restoreClosedTab(const RecentlyClosedTab &closed);
+
     // A detached member of a collapsed group: its page widget, its
     // location bar and the tab-strip visuals re-applied on expand.
     struct HiddenGroupTab {
@@ -453,12 +490,13 @@ private:
     QAction *m_previousTabAction;
 
     QMenu *m_recentlyClosedTabsMenu;
-    static const int m_recentlyClosedTabsSize = 10;
-    QList<QUrl> m_recentlyClosedTabs;
-    QList<QByteArray> m_recentlyClosedTabsHistory;
-    // CONT02: parallel to m_recentlyClosedTabs — reopening a closed
-    // tab returns it to the container it was closed in.
-    QList<QString> m_recentlyClosedTabsContainers;
+    static const int m_recentlyClosedTabsSize = 25;
+    // TABS05: the undo stack — newest first, capped, memory-only,
+    // private pages never enter (SEC07).
+    QList<RecentlyClosedTab> m_recentlyClosedTabs;
+    // A reopened tab's recorded scroll, consumed on its first
+    // loadFinished (the SLEEP01 wake-restore pattern).
+    QHash<WebView *, QPointF> m_pendingScrollRestore;
     QList<WebActionMapper*> m_actions;
 
     QCompleter *m_lineEditCompleter;

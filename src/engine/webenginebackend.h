@@ -81,6 +81,7 @@ public:
 
     void setZoomFactor(qreal factor) override;
     qreal zoomFactor() const override;
+    QPointF scrollPosition() const override;
 
     void findText(const QString &subString, Engine::FindFlags options) override;
 
