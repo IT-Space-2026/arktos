@@ -7,7 +7,7 @@ CONFIG += qt warn_on
 # (compiler family is tested via CONFIG — the clang spec also sets
 # CONFIG+=gcc, so clang must be checked first)
 clang {
-    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated-warnings -Wdeprecated-declarations
+    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
 } else:gcc {
     QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
 }
