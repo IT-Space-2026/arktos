@@ -121,7 +121,7 @@ void BidiClient::attemptConnect()
     const QByteArray origin = BrowserProfile::bidiDebugOrigin().toUtf8();
     m_impl->inFlight.fetch_add(1);
     // rc_bidi_connect blocks in socket I/O — it MUST NOT run on the
-    // GUI thread: QtWebEngine pumps Chromium's task queue on that same
+    // GUI thread: the engine pumps Chromium's task queue on that same
     // loop, so a blocking connect would starve the devtools HTTP
     // handler it is trying to reach.  Run it on a worker and post the
     // outcome back through the event queue.
