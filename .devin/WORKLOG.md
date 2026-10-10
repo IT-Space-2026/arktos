@@ -229,3 +229,4 @@
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty WORKLOG.md + ChangeLog + browsermainwindow.cpp/h + src.pri in this tree (agent mid-run on bidi panel feature) would be overwritten by merge (TOR05 + MENU04 + DOWN02 + DLACC01 deferred); rust-work even
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog + browsermainwindow.cpp/h + src.pri in this tree (agent mid-run on bidi panel feature) would be overwritten by merge (TOR05 + MENU04 + DOWN02 + DLACC01 deferred); rust-work even
 - 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog + browsermainwindow.cpp/h + src.pri in this tree (agent mid-run on bidi panel feature) would be overwritten by merge (TOR05 + MENU04 + DOWN02 + DLACC01 deferred); rust-work even
+- 2026-10-10 MERGEWATCH: ui-work skipped — dirty ChangeLog + browsermainwindow.cpp/h + src.pri in this tree (agent mid-run on bidi panel feature) would be overwritten by merge (TOR05 + MENU04 + DOWN02 + DLACC01 + SIDE02 deferred); rust-work even
