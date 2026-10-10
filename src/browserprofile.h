@@ -70,6 +70,27 @@ int presentedChromeMajor();
 // with the Chrome/<ver> token presenting presentedChromeMajor() (UA03).
 QString defaultHttpUserAgent();
 
+// UAG01: the effective UA for a context — a non-empty override wins
+// verbatim (a switcher preset or the user's custom string), otherwise
+// the factory UA is de-badged and bumped.  Under ARORA_RUSTCORE the
+// construction runs in rustcore (rc_ua_build); the Qt builder is the
+// no-rust implementation, the FFI-failure fallback and the
+// parity-test seam.
+QString buildHttpUserAgent(const QString &factoryUserAgent,
+                           const QString &overrideUserAgent);
+QString buildHttpUserAgentQt(const QString &factoryUserAgent,
+                             const QString &overrideUserAgent);
+// Convenience wrapper — probes the engine's factory UA once.
+QString effectiveHttpUserAgent(const QString &overrideUserAgent);
+
+// The Sec-CH-UA full version a UA implies (applyClientHints' input) —
+// rc_ua_brand_version under ARORA_RUSTCORE, the Qt version below as
+// fallback/parity seam.
+QString presentedBrandVersion(const QString &httpUserAgent,
+                              const QString &engineVersion);
+QString presentedBrandVersionQt(const QString &httpUserAgent,
+                                const QString &engineVersion);
+
 // UA02: keeps the profile's UA client hints (Sec-CH-UA*) consistent
 // with the UA string actually configured.  Chromium's hints brand the
 // engine "Chromium" while our vanilla UA claims "Chrome/<ver>" — real

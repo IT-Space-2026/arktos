@@ -966,6 +966,33 @@ PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network,
 {
 }
 
+// UAG01: per-site UA spoof — rustcore's "uaspoof" site-decision table.
+// A hit is sent as the request's User-Agent header; subresources to the
+// spoofed host match on their own request host (the decision is keyed
+// on the destination that sniffs the UA).  Fail-open like strippedUrl/
+// isDomainBlocked: an FFI hiccup or a no-rust build sends the profile
+// UA, never a block.  Clearnet only — TorRequestInterceptor never
+// consults the table: a per-site UA on a tor page would re-identify
+// the session the uniform-UA pin exists to protect.
+void PrivacyRequestInterceptor::applyUserAgentSpoof(
+        QWebEngineUrlRequestInfo &info)
+{
+#if defined(ARORA_RUSTCORE)
+    const QString host = info.requestUrl().host().toLower();
+    if (host.isEmpty())
+        return;
+    char *out = rc_ua_spoof(host.toUtf8().constData());
+    if (!out)
+        return;
+    const QByteArray ua(out);
+    rc_string_free(out);
+    if (!ua.isEmpty())
+        info.setHttpHeader("User-Agent", ua);
+#else
+    Q_UNUSED(info);
+#endif
+}
+
 void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
     // Runs on the WebEngine IO thread — only the lock-guarded
@@ -1116,6 +1143,7 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         return;
     }
 
+    applyUserAgentSpoof(info);
     applyRefererPolicy(info);
 
     m_adBlock->interceptRequest(info);

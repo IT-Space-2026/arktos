@@ -67,6 +67,11 @@
 //!     page" — Nayuki's qrcodegen-rs, the same code lineage as the
 //!     vendored C++ encoder it replaces, so the module matrix is
 //!     bit-identical; the Qt side keeps painting it.
+//!   * useragent (UAG01): effective-UA construction (de-badged
+//!     vanilla UA + presented Chrome milestone), the client-hints
+//!     brand version, the useragents.xml preset parse and the
+//!     per-site UA spoof table (a "uaspoof" kind inside the
+//!     sitedecisions store).
 //!
 mod autofill;
 mod blocklist;
@@ -87,6 +92,7 @@ mod sitedecisions;
 mod store;
 mod tlsprobe;
 mod urlstrip;
+mod useragent;
 mod util;
 
 use std::ffi::CString;
@@ -2500,6 +2506,175 @@ pub unsafe extern "C" fn rc_ose_keyword_url(
         match opensearch::keyword_url(keyword, term, language, source) {
             Ok(Some(url)) => util::to_c_string(url),
             _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- UAG01: user-agent construction + per-site spoof table ----
+//
+// The pure UA string logic — the effective-UA decision (override or
+// de-badged/bumped factory UA), the Sec-CH-UA brand version a UA
+// implies, and the useragents.xml preset parse — plus the per-site
+// spoof table stored as the "uaspoof" kind inside the sitedecisions
+// store.  The clearnet interceptor applies a spoof hit as the
+// User-Agent request header; the tor interceptor never consults the
+// table (uniform UA is the anonymity pin).  Writes emit the
+// "sitedecisions" change topic — the table IS a site decision.
+
+/// Builds the effective UA from a JSON context
+/// `{"factory_ua","presented_major","override"}` — a non-empty
+/// override wins verbatim; otherwise the factory UA loses its
+/// "QtWebEngine/<ver>" token and its Chrome/<major> is bumped to the
+/// presented milestone.  NULL on a bad context; rc_string_free.
+///
+/// # Safety
+/// `context` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_build(
+    context: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(ctx) = (unsafe { util::bytes(context, len) }) else {
+            error::set_error("bad ua context pointer");
+            return ptr::null_mut();
+        };
+        match useragent::build_ua(ctx) {
+            Ok(ua) => util::to_c_string(ua),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The Sec-CH-UA full version a UA implies — the UA's own Chrome
+/// major over the engine version's build tail, empty when the UA
+/// does not claim Chrome.  Caller frees with rc_string_free().
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_brand_version(
+    ua: *const c_char,
+    engine_version: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let ua = unsafe { util::cstr(ua) }.unwrap_or("");
+        let version = unsafe { util::cstr(engine_version) }.unwrap_or("");
+        util::to_c_string(useragent::brand_version(ua, version))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Parses a useragentswitcher document into a JSON array preserving
+/// document order:
+/// `[{"type":"separator"},{"type":"agent","description":..,"useragent":..}]`.
+/// A malformed tail keeps the entries that parsed (the Qt reader's
+/// log-and-continue semantic).  Caller frees with rc_string_free().
+///
+/// # Safety
+/// `xml` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_presets(
+    xml: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(data) = (unsafe { util::bytes(xml, len) }) else {
+            error::set_error("bad ua presets pointer");
+            return ptr::null_mut();
+        };
+        match useragent::presets(data) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The stored per-site UA override governing `host` (longest-suffix
+/// match), or NULL when nothing applies.  rc_string_free.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_spoof(host: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(host) = (unsafe { util::cstr(host) }) else {
+            return ptr::null_mut();
+        };
+        match useragent::spoof_for(host) {
+            Ok(Some(ua)) => util::to_c_string(ua),
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Records (or overwrites) the per-site UA override for `host`.
+/// Values carrying control bytes are refused — a spoof lands
+/// verbatim in a User-Agent header, so CR/LF would be an injection.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_spoof_set(
+    host: *const c_char,
+    ua: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let host = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        let ua = unsafe { util::cstr(ua) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad ua pointer".into(),
+        })?;
+        useragent::spoof_set(host, ua).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Drops the per-site override for `host`; RC_OK whether or not it
+/// existed.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_spoof_remove(host: *const c_char) -> RcStatus {
+    let status = status_of(|| {
+        let host = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        useragent::spoof_remove(host).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Every spoof row as `{"host":"ua"}` JSON — caller frees with
+/// rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ua_spoof_list() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match useragent::spoof_list() {
+        Ok(json) => util::to_c_string(json),
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
         }
     }))
     .unwrap_or(ptr::null_mut())

@@ -664,6 +664,50 @@ char *rc_ose_url(const char *nameUtf8, const char *kindUtf8,
 char *rc_ose_keyword_url(const char *keywordUtf8, const char *termUtf8,
                          const char *languageUtf8, const char *sourceUtf8);
 
+/* ------------------------------------------------------------------ */
+/* UAG01: user-agent construction + per-site spoof table               */
+/*                                                                      */
+/* The pure UA string logic — the effective-UA decision (configured   */
+/* override, else the de-badged factory UA presenting the bumped      */
+/* Chrome milestone), the Sec-CH-UA brand version a UA implies, and   */
+/* the useragents.xml switcher-list parse.  The per-site spoof table  */
+/* lives as the "uaspoof" kind inside the sitedecisions store; the    */
+/* clearnet interceptor applies a hit as the User-Agent request       */
+/* header while the tor interceptor never consults it.  Mutations     */
+/* emit the "sitedecisions" change topic.                              */
+
+/* Builds the effective UA from a JSON context
+ * {"factory_ua","presented_major","override"} — a non-empty override
+ * wins verbatim; otherwise the factory UA loses its
+ * "QtWebEngine/<ver>" token and its Chrome/<major> is bumped to the
+ * presented milestone.  NULL on a bad context; rc_string_free. */
+char *rc_ua_build(const uint8_t *contextJsonUtf8, size_t len);
+
+/* The Sec-CH-UA full version a UA implies — the UA's own Chrome
+ * major over the engine version's build tail; empty when the UA does
+ * not claim Chrome.  rc_string_free. */
+char *rc_ua_brand_version(const char *uaUtf8,
+                          const char *engineVersionUtf8);
+
+/* Parses a useragentswitcher document into a JSON array preserving
+ * document order:
+ *   [{"type":"separator"},
+ *    {"type":"agent","description":..,"useragent":..}]
+ * A malformed tail keeps the entries that parsed.  rc_string_free. */
+char *rc_ua_presets(const uint8_t *xmlUtf8, size_t len);
+
+/* The stored per-site UA override governing host (longest-suffix
+ * match), or NULL when nothing applies.  rc_string_free. */
+char *rc_ua_spoof(const char *hostUtf8);
+
+/* Records/drops a per-site override.  Values carrying control bytes
+ * are refused — a spoof lands verbatim in a User-Agent header. */
+RcStatus rc_ua_spoof_set(const char *hostUtf8, const char *uaUtf8);
+RcStatus rc_ua_spoof_remove(const char *hostUtf8);
+
+/* Every spoof row as {"host":"ua"} JSON.  rc_string_free. */
+char *rc_ua_spoof_list(void);
+
 #ifdef __cplusplus
 }
 #endif
