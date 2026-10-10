@@ -36,6 +36,15 @@ Core / Qt 6 port:
   to software — after two consecutive unclean exits, and exposes the
   same mitigation as a Preferences checkbox and the
   ARORA_DISABLE_GPU_COMPOSITING env override (CRASH01).
+- Printing can no longer kill the browser: an accepted print dialog
+  describing an unprintable target (no configured printer, a file
+  output path that can't be written) is refused with a readable error
+  instead of being handed to the engine, and closing Print Preview
+  mid-job now waits for the in-flight print instead of painting into
+  a dead printer. Fatal exits are also observable now — a crash
+  reporter writes a marker + backtrace to stderr and
+  crashreport.log on SIGSEGV/SIGABRT and uncaught exceptions
+  (CRASH02).
 
 UI:
 - Light/dark follows the desktop scheme; ARORA_COLOR_SCHEME override

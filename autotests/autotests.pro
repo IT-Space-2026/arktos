@@ -15,6 +15,7 @@ SUBDIRS  = \
     cookiejar \
     cookiemodel \
     containermanager \
+    crashreporter \
     csp \
     devtools \
     dialogs \

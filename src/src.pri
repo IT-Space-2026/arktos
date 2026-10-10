@@ -134,6 +134,7 @@ HEADERS += \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
     $$PWD/utils/aroraicon.h \
+    $$PWD/utils/crashreporter.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
     $$PWD/utils/languagemanager.h \
@@ -199,6 +200,7 @@ SOURCES += \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
     $$PWD/utils/aroraicon.cpp \
+    $$PWD/utils/crashreporter.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
     $$PWD/utils/languagemanager.cpp \

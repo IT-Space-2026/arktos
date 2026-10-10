@@ -39,6 +39,9 @@
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qplaintextedit.h>
+#include <qprintdialog.h>
+#include <qprintpreviewdialog.h>
+#include <qprinterinfo.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
 #include <qsortfilterproxymodel.h>
@@ -113,6 +116,7 @@ private slots:
     void devToolsSubmenu();
     void stateSerialization();
     void events();
+    void printPaths();
     void closeConfirm();
     void chromeMetrics();
     void searchBoxVisibility();
@@ -659,17 +663,88 @@ void tst_BrowserMainWindow::events()
                            Qt::NoModifier);
     window->sendMousePress(&mouseEvent);
 
-    // printRequested needs a live page; the dialog is rejected.
+    // printRequested needs a live page; the dialog is rejected.  A
+    // repeating dismisser beats the print dialog's variable startup —
+    // a one-shot rejectModal() can fire before the CUPS-backed dialog
+    // becomes the active modal and strand it open forever.
     if (window->currentTab() && window->currentTab()->webPage()) {
-        rejectModal();
+        QTimer modal;
+        modal.setInterval(50);
+        QObject::connect(&modal, &QTimer::timeout, qApp, []() {
+            if (QDialog *dialog = qobject_cast<QDialog *>(
+                    QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        modal.start();
         QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
                        Q_ARG(WebView *, window->currentTab())));
+        modal.stop();
     }
 
     // Last-tab-closed closes the window (and, via WA_DeleteOnClose,
     // schedules its deletion) — leave this last.
     QVERIFY(QMetaObject::invokeMethod(window, "lastTabClosed"));
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// CRASH02: the print paths must never kill the app.  On a host with
+// zero printers an ACCEPTED print dialog still describes an
+// unprintable target (file-format printer pointed at a directory) —
+// the engine's paint into it was the suspected death; the path now
+// warns and refuses before reaching the engine.  The preview path
+// must also survive a mid-print dialog close (its internal printer
+// used to be freed under the engine's async job).
+void tst_BrowserMainWindow::printPaths()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+
+    const bool noPrinters =
+        QPrinterInfo::availablePrinterNames().isEmpty();
+
+    // Dismiss whatever modal comes up: the print dialog gets accepted
+    // (only an accepted dialog reaches the target validation) and a
+    // refusal warning gets recorded then dismissed.
+    bool sawPrintDialog = false;
+    bool sawWarning = false;
+    QTimer modal;
+    modal.setInterval(50);
+    QObject::connect(&modal, &QTimer::timeout, qApp, [&]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(widget)) {
+            sawWarning = true;
+            box->accept();
+            return;
+        }
+        if (QPrintDialog *printDialog =
+                qobject_cast<QPrintDialog *>(widget)) {
+            sawPrintDialog = true;
+            printDialog->accept();
+            return;
+        }
+        if (QDialog *dialog = qobject_cast<QDialog *>(widget))
+            dialog->accept();
+    });
+    modal.start();
+
+    QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
+                                    Q_ARG(WebView *, view)));
+    QVERIFY(sawPrintDialog);
+    if (noPrinters) {
+        // The accepted dialog described a dead target: refusal must
+        // have warned instead of printing.
+        QVERIFY(sawWarning);
+    }
+
+    // filePrintPreview drives the borrowed-printer path; the generic
+    // QDialog accept above closes it mid-print — exactly the case
+    // that used to paint into a dead printer.
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+
+    modal.stop();
+    closeWindow(window);
 }
 
 // With confirmClosingMultipleTabs on, closeEvent() raises a Yes/No

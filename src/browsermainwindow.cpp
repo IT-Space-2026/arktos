@@ -105,17 +105,22 @@
 
 #include <qdockwidget.h>
 #include <qevent.h>
+#include <qeventloop.h>
 #include <qfiledialog.h>
+#include <qfileinfo.h>
 #include <qlabel.h>
+#include <qpointer.h>
 #include <qprintdialog.h>
 #include <qprintpreviewdialog.h>
 #include <qprinter.h>
+#include <qprinterinfo.h>
 #include <qscreen.h>
 #include <qsettings.h>
 #include <qstringconverter.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qstatusbar.h>
+#include <qtimer.h>
 #include <qtoolbar.h>
 #include <qinputdialog.h>
 #include <qlineedit.h>
@@ -1955,14 +1960,43 @@ void BrowserMainWindow::fileOpen()
 
 void BrowserMainWindow::filePrintPreview()
 {
-    if (!currentTab())
+    QPointer<WebView> view = currentTab();
+    if (!view)
         return;
     QPrintPreviewDialog dialog(this);
-    // The engine view's print runs asynchronously; the preview dialog
-    // owns the printer for the duration of exec().
-    connect(&dialog, &QPrintPreviewDialog::paintRequested,
-            currentTab(), &WebView::print);
+    // The engine view's print runs asynchronously while the preview
+    // dialog owns the printer — a mid-print close used to leave the
+    // engine painting into a dead printer (reproduced SIGSEGV).  Track
+    // in-flight jobs and drain them before the dialog can unwind.
+    int printsInFlight = 0;
+    connect(&dialog, &QPrintPreviewDialog::paintRequested, &dialog,
+            [view, &printsInFlight](QPrinter *printer) {
+        if (!view)
+            return;
+        ++printsInFlight;
+        view->print(printer);
+    });
+    connect(view, &WebView::printFinished, &dialog,
+            [&printsInFlight](bool) {
+        if (printsInFlight > 0)
+            --printsInFlight;
+    });
     dialog.exec();
+    // exec() can return while a job is still queued inside the engine;
+    // the dialog's printer must outlive the last printFinished.
+    while (printsInFlight > 0 && view) {
+        QEventLoop drain;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        connect(&timeout, &QTimer::timeout,
+                &drain, &QEventLoop::quit);
+        connect(view, &WebView::printFinished,
+                &drain, &QEventLoop::quit);
+        timeout.start(15000);
+        drain.exec();
+        if (!timeout.isActive())
+            break;
+    }
 }
 
 void BrowserMainWindow::filePrint()
@@ -1984,6 +2018,39 @@ void BrowserMainWindow::printRequested(WebView *view)
     QPrintDialog dialog(printer, this);
     dialog.setWindowTitle(tr("Print Document"));
     if (dialog.exec() != QDialog::Accepted) {
+        delete printer;
+        return;
+    }
+    // CRASH02: an accepted dialog can still describe an unprintable
+    // target — on a CUPS host with zero destinations Qt leaves a
+    // file-format printer pointed at a *directory* (the user's home
+    // dir), and the engine's print path dies trying to paint into it
+    // ("QPainter::begin(): Returned false" then a silent exit).  Fail
+    // visibly instead of handing the engine a dead printer.
+    QString refuseReason;
+    if (!printer->isValid()) {
+        refuseReason = tr("The selected printer is not valid.");
+    } else {
+        const bool fileTarget =
+            printer->outputFormat() != QPrinter::NativeFormat
+            || printer->printerName().isEmpty();
+        if (fileTarget) {
+            const QFileInfo outFile(printer->outputFileName());
+            const QFileInfo outDir(outFile.dir().absolutePath());
+            if (printer->outputFileName().isEmpty() || outFile.isDir()
+                    || (outFile.exists() && !outFile.isWritable())
+                    || (!outFile.exists() && !outDir.isWritable()))
+                refuseReason =
+                    tr("The output file '%1' cannot be written.")
+                        .arg(printer->outputFileName());
+        } else if (QPrinterInfo::printerInfo(printer->printerName())
+                       .isNull()) {
+            refuseReason = tr("The selected printer is not available.");
+        }
+    }
+    if (!refuseReason.isEmpty()) {
+        QMessageBox::warning(this, tr("Print Document"),
+                             tr("Cannot print: %1").arg(refuseReason));
         delete printer;
         return;
     }

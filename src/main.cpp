@@ -34,6 +34,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "crashreporter.h"
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "bwrapgenerator.h"
@@ -170,6 +171,7 @@
 #include <cstring>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 
 #if defined(Q_OS_UNIX)
 #include <arpa/inet.h>
@@ -3009,6 +3011,13 @@ int main(int argc, char **argv)
         }
     }
 
+    // CRASH02: install the crash reporter as early as the data dir
+    // resolves (smoke runs land it in their isolated store).  A fatal
+    // signal or std::terminate now leaves marker + backtrace in
+    // crashreport.log and on stderr instead of a silent exit.
+    CrashReporter::install(BrowserPaths::dataFilePath(
+        QLatin1String("crashreport.log")));
+
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
     // the engine latches the DnsOverHttps feature switch exactly as a
@@ -3264,7 +3273,7 @@ int main(int argc, char **argv)
         "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
         "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
-        "startpage-smoke",
+        "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
         "bidi-smoke", "pdf-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
@@ -10338,6 +10347,27 @@ int main(int argc, char **argv)
         qInfo() << "sigterm-smoke:"
                 << (sigtermFailures ? "FAIL" : "PASS");
         return sigtermFailures ? 1 : 0;
+    }
+
+    // CRASH02: --crash-smoke dies deliberately by the fault named in
+    // ARORA_CRASH_SMOKE (segv|abrt|terminate; default segv) so the
+    // crash reporter's marker + backtrace can be verified end-to-end —
+    // the process exits BY the signal, which is the assertion the
+    // caller checks.
+    if (args.contains(QLatin1String("--crash-smoke"))) {
+        const QByteArray kind = qgetenv("ARORA_CRASH_SMOKE");
+        qInfo() << "crash-smoke: log" << CrashReporter::logPath()
+                << "kind" << (kind.isEmpty() ? "segv" : kind);
+        fflush(nullptr);
+        if (kind == "abrt")
+            std::abort();
+        if (kind == "terminate")
+            throw std::runtime_error(
+                "crash-smoke uncaught exception");
+#if defined(Q_OS_UNIX)
+        ::raise(SIGSEGV);
+#endif
+        return 139;
     }
 
     // Headless measurement for PERF01 — report-only timings for the
