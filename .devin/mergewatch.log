@@ -651,3 +651,110 @@ I'll start by checking the repo state and fetching from origin.Tree is dirty (4 
 
 Pushed `ab31a30..dd60d8c` (merge + worklog commit). Pre-existing dirty files (`.devin/Arora-Task.md`, `.devin/mergewatch.log`, `.devin/taskloop.log`, `src/browsermainwindow.cpp`) were left unstaged and untouched.
 [2026-10-10 11:59:50] merge run exited rc=0
+[2026-10-10 15:20:08] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.`rust-work` is at 0 commits — skip. `ui-work` is 1 ahead. Let me see what that commit touches and whether it collides with the dirty log files.No overlap with the dirty log files. Merging `ui-work`.One conflict in `src/tabwidget.cpp`. Let me inspect it.The lane refactored history access to go through `enginePage()`. Let me check what exactly the lane changed versus the merge base.Master renamed the snapshot fields (`snap.*`) while the lane routed history through `enginePage()`. Resolution: master's structure + lane's engine calls. Let me first verify `enginePage()` can't be null here (the loop only skips when it's non-null AND off-the-record).`enginePage()` lazily creates the adapter, so it's never null — the lane's unguarded call is safe. Resolving: master's `snap.*` structure + lane's `enginePage()` history surface.Now check the merged file is consistent — no leftover old identifiers and the `serializePageHistory` signature matches all callers.Clean. Let me verify the engine interface side merged coherently (new `historyCount`/`historyItems`/`currentHistoryIndex`/`HistoryEntry` API).Interface merged cleanly. Staging the resolved file and committing the merge.Merge committed. Now verifying the build.Build is running. Waiting for it to finish.Build succeeded — binary linked with exit 0. Let me check how prior runs handled the WORKLOG entry (committed before push, or after).Prior runs commit the WORKLOG line as a separate `worklog:` commit before pushing. I'll follow that convention.Appending the MERGEWATCH entry, committing it (matching the `worklog:` convention), then pushing.Merge run complete.
+
+**Results:**
+- `rust-work`: 0 commits ahead — skipped
+- `ui-work`: 1 commit ahead (ENG04: session-history via `Engine::Page`) — merged
+
+**Conflict:** `src/tabwidget.cpp` — master had refactored `saveState()` into `collectSessionSnapshot()` with a `snap.*` struct; the lane rerouted history access through `enginePage()`. Resolved by keeping master's snapshot structure with the lane's `enginePage()->historyCount()` / `serializePageHistory(tab->enginePage())` calls. Verified `enginePage()` is never null (lazy-creates the adapter), so the unguarded call is safe. All other files auto-merged.
+
+**Verification:** `make -C src -j2` — clean build, `arora` binary linked, exit 0.
+
+**Pushed:** `3646ce1..2e8f1df` on master (merge commit + `worklog:` commit with the MERGEWATCH line). Dirty `mergewatch.log`/`taskloop.log` left untouched.
+[2026-10-10 15:22:10] merge run exited rc=0
+[2026-10-10 15:32:11] merge due: ui-work(2) — spawning devin merge run
+I'll start by checking the repo state and fetching.The fetch seems to have completed. Now let me check how far ahead each lane is.`rust-work` is at 0 — skip. `ui-work` is 2 ahead. Let me see what those commits touch and whether they overlap with the dirty files in this tree.No overlap between the dirty files and ui-work's touched files, so the merge can proceed. Merging now.One conflict in `src/browsermainwindow.cpp`. Let me inspect it.The conflict is in `printRequested`: master added a `printerGuard` (frees the printer if the view dies mid-print) using `QWebEngineView::printFinished`, while the lane rerouted printing through `WebView`/`Engine::Page` (`WebView::printFinished`). I need to keep master's guard logic but on the lane's new signal. Let me check what `WebView` looks like post-merge.Let me see the full `printRequested` signatures on both sides — master's starts differently (`QWebEngineView::forPage`).The merged file kept the lane's signature (`printRequested(WebView *view)`), and `browsermainwindow.h` agrees. Now I need to verify `WebView::printFinished` exists in the merged `webview.h` so I can keep master's guard logic on the lane's signal.`WebView` still inherits `QWebEngineView` in the merged tree, so `WebView::printFinished`/`print` resolve to the inherited members. Let me diff the lane's webview against master's to confirm the lane didn't add its own print members that got lost.The lane's `webview.h` is identical to master's — `WebView::printFinished` is just the inherited `QWebEngineView` signal. Let me see the lane's exact `printRequested` and how `filePrintPreview` routes printing, to resolve the conflict faithfully.Both intents are compatible: keep master's `printerGuard` leak fix, but on the lane's `WebView`/`printFinished` API (which is the inherited `QWebEngineView` signal anyway). Resolving.Conflict resolved. Let me verify no markers remain and check that the `printRequested` signal/callers are consistent across the merged tree.All markers cleared and the `printRequested(WebView*)` chain is consistent. Staging and committing the merge.Merge committed. The remaining dirty files are pre-existing working-tree changes — leaving them. Now verifying the build.Build succeeded (link produced `../arora`, exit 0). Let me check how previous MERGEWATCH runs logged to WORKLOG — whether they committed it.Convention confirmed: append the MERGEWATCH line, commit as a `worklog:` commit, push. Let me see the tail of WORKLOG.md to append in the right place.Committing the worklog line and pushing master.Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 2 commits ahead (`228d2b2` ENG04 page-surface/print plumbing, `7f10366` windowCloseRequested sender fix) — merged as `c4aff9e`.
+  - One conflict in `src/browsermainwindow.cpp` `printRequested()`: kept master's `printerGuard` mid-print leak fix, re-applied on the lane's `WebView::printFinished`/`view->print()` API (inherited `QWebEngineView` members — the lane's `webview.h` was identical to master's).
+  - Everything else (engineinterface, webenginebackend, tabwidget, sourceviewer, webview, autotests, taskloop-ui.log) auto-merged clean.
+- **Build**: `make -C src -j2` succeeded — linked `../arora`.
+- **Pushed**: `2e8f1df..ee243af` on master (merge commit + `worklog:` commit).
+- Pre-existing dirty files (`browserapplication.cpp`, `main.cpp`, `.devin` logs/task tables) left untouched; no overlap with the merge.
+[2026-10-10 15:35:21] merge run exited rc=0
+[2026-10-10 15:40:21] merge due: ui-work(1) — spawning devin merge run
+Dirty files present (likely an agent mid-run). I'll note them and check which lanes have new commits.`rust-work` is at 0 — skipping. `ui-work` has 1 commit. Checking what it touches vs. the dirty files.The lane commit only touches `.devin/Arora-Task-UI.md`, `WORKLOG.md`, and `taskloop-ui.log` — none are dirty locally. Safe to merge.Clean merge. Now verifying the build.Build OK (no source changes in this merge). Checking WORKLOG format before appending the merge note.Appending the mergewatch line, committing it with the merge bookkeeping, then pushing master.Done. One pass complete:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit (`6f3be87` ENG04 checkpoint — `.devin` bookkeeping only). Merged cleanly with zero conflicts; none of the pre-existing dirty files (`browserapplication.cpp`, `main.cpp`, task files, logs) overlapped.
+- **Build**: `make -C src -j2` clean — nothing to rebuild since the merge touched only `.devin/` files.
+- **Pushed**: `ee243af..678ba7b` on master, including the appended MERGEWATCH line in `.devin/WORKLOG.md`.
+- Pre-existing uncommitted changes in this tree were left untouched.
+[2026-10-10 15:40:58] merge run exited rc=0
+[2026-10-10 15:50:59] merge due: ui-work(1) — spawning devin merge run
+`rust-work` is even with master — skipping. `ui-work` is 1 commit ahead. Checking what it touches vs. the dirty files:[2026-10-10 15:51:24] merge run exited rc=0
+[2026-10-10 15:56:25] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the state of this tree and fetching origin.The tree has some dirty files (agent mid-run, possibly). Let me check lane counts.rust-work is at 0 (skip). ui-work is 1 ahead — let me check which files it touches versus the dirty files here.ui-work touches `src/main.cpp`, which is dirty in this tree. Let me attempt the merge — git will refuse if the dirty state genuinely conflicts.[2026-10-10 15:57:08] merge run exited rc=0
+[2026-10-10 16:02:08] merge due: ui-work(2) — spawning devin merge run
+Starting the merge pass. First, checking the working tree state and fetching.Working tree has dirty files — I'll need to check overlap before merging. Computing lane ahead-counts.That diff list is tip-to-tip; what matters is what the 2 lane commits changed since the merge-base, and whether that overlaps the dirty files.The lane's 2 commits touch `src/main.cpp`, which is dirty in this tree — git will refuse to merge over it. Let me confirm with a merge attempt (it aborts cleanly if so).[2026-10-10 16:03:13] merge run exited rc=0
+[2026-10-10 16:08:13] merge due: ui-work(2) — spawning devin merge run
+`rust-work` is at 0 — skipping. `ui-work` is 2 ahead; checking which files it touches vs. the dirty files here.`ui-work` touches `src/main.cpp`, which has uncommitted changes in this tree — likely an agent mid-run. Per the rules I'll attempt the merge to confirm Git's verdict, then skip if it refuses.[2026-10-10 16:09:03] merge run exited rc=0
+[2026-10-10 16:14:04] merge due: ui-work(3) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.`ui-work` is 3 commits ahead. Starting the merge.Two conflicts to resolve. Let me look at them.The downloadmanager conflicts are HEAD's `canHandle(url)` + `Engine::Page*` constructor vs the lane's adapter approach. Let me check the current `RustDownloadEngine` signature to decide which is correct.All conflict markers resolved. Verifying none remain, then staging and committing.No conflict markers remain and no unmerged files. Committing the merge.The codebase already has the `of()` escape-hatch pattern for Page/Profile. I'll add the same for `WebEngineDownloadRequest` so master-only `PdfSanitizeFetch::claim` can unwrap the raw request.Rebuilding. Also checking other call sites of `download(` for type mismatches in parallel.Build linked successfully, but my `main.cpp` edits landed while it ran — rerunning `make` incrementally to be sure it compiles cleanly.Build verified — `main.o` was compiled after my edit and the binary linked. Now committing the merge-caused build fixes, updating WORKLOG, and pushing.Merge run complete. Summary:
+
+**Lanes**
+- `rust-work` — 0 commits ahead, skipped
+- `ui-work` — 3 commits ahead (`ef7d88a`, `07aa12d`, `2deef80`: engine-neutral `Engine::Page`/`DownloadRequest` migration), merged as `258597e`
+
+**Conflicts resolved**
+- `src/downloadmanager.cpp` (3 hunks) — kept both includes (`pdfsupport.h` + `webenginebackend.h`); in the two rustdl routing spots, kept master's `canHandle(url)` gate (subsumes the lane's scheme check + adds the tor rule) with the lane's `WebEnginePageAdapter::of()` page unwrap, since `RustDownloadEngine` still takes `QWebEnginePage*`
+- `src/locationbar/sitepanel.cpp` — kept both includes in sorted order
+- `WORKLOG.md`, `ChangeLog`, `Arora-Task-UI.md` — auto-merged clean
+
+**Merge-caused breakage fixed** (`8c2048e`)
+- `PdfSanitizeFetch::claim` still takes `QWebEngineDownloadRequest*` — added `WebEngineDownloadRequest::of()` + `webEngineRequest()` escape hatch matching the existing Page/Profile adapter pattern
+- `main.cpp` download() callers still passed `QWebEnginePage*` — switched to `enginePage()` / `WebEnginePageAdapter::forPage()`
+
+**Verification** — `make -C src -j2` clean, `arora` binary linked. Pushed `master` → `6de33a1`. WORKLOG entry appended.
+
+Left `.devin/mergewatch.log` and `.devin/taskloop.log` dirty (watchdog's own logs, not part of the merge).
+[2026-10-10 16:17:33] merge run exited rc=0
+[2026-10-10 16:22:33] merge due: ui-work(1) — spawning devin merge run
+Starting the merge pass. First, let me check the state of this tree and fetch.Tree is on master with two modified log files (watchdog logs — unlikely to conflict). Now checking lane status.`rust-work` is at 0 (skip). `ui-work` is 1 ahead — let me inspect it before merging.Clean merge. Now verifying the build.Build succeeded. Let me check how previous runs handled the WORKLOG append (committed vs left dirty).Prior runs committed the WORKLOG line (e.g. `6de33a1 MERGEWATCH: log ui-work merge`). I'll follow that convention: append, commit only WORKLOG.md, push.Merge pass complete:
+
+- **rust-work**: 0 commits ahead — skipped
+- **ui-work**: 1 commit ahead (`0b32229` — WebPage self-view lookups through the adapter) — merged cleanly via ort, no conflicts
+- **Build**: `make -C src -j2` succeeded
+- **Pushed**: `master` → origin (`98c0e6b`)
+- **WORKLOG**: appended and committed in `98c0e6b`
+
+Left `.devin/mergewatch.log` and `.devin/taskloop.log` dirty (watchdog's own logs, not part of the merge). Stopping after this one pass.
+[2026-10-10 16:23:16] merge run exited rc=0
+[2026-10-10 16:28:16] merge due: ui-work(1) — spawning devin merge run
+Starting merge run. First, checking the working tree state and fetching origin.Working tree has two dirty log files (watchdog logs — unrelated to merges). Fetching origin and checking lane counts.`rust-work` is at 0 (skip). `ui-work` is 1 ahead. Checking what that commit touches before merging.Lane touches only its own files; no overlap with this tree's dirty files (`mergewatch.log`, `taskloop.log`). Proceeding with merge.Clean merge, no conflicts. Verifying the build.Build passes (nothing to rebuild — lane touched only autotests/.devin files). Checking prior WORKLOG/mergewatch conventions before pushing and logging.Convention established: prior runs appended the WORKLOG line, committed just that file, and pushed. Appending the line now.Merge run complete.
+
+- **rust-work**: 0 commits ahead — skipped
+- **ui-work**: 1 commit ahead (`2a4892c` — ENG04 autotest call-site updates + queue bookkeeping) — merged cleanly via ort, no conflicts
+- **Build**: `make -C src -j2` ok (nothing to rebuild; lane touched only autotests + `.devin/`)
+- **Pushed**: `master` → origin (`98c0e6b..744de30`, merge + worklog commit)
+- **WORKLOG**: one line appended and committed
+
+Left `.devin/mergewatch.log` / `.devin/taskloop.log` dirty (watchdog's own logs). Stopping after this one pass.
+[2026-10-10 16:29:02] merge run exited rc=0
+[2026-10-10 17:24:07] merge due: rust-work(1) — spawning devin merge run
+Starting merge runner pass. First, checking repo state and fetching.Tree has unrelated dirty files (watchdog logs — leave alone). Checking lane ahead-counts:`rust-work` is 1 ahead, `ui-work` is 0 (skip). Inspecting the incoming commit:Only touches `.devin/Arora-Task-Rust.md` — no overlap with dirty files. Merging:Clean merge. Verifying build:Build ok (up to date). Pushing master:Pushed. Appending the worklog entry:Committing just the WORKLOG entry (leaving watchdog log files untouched) and pushing:Merge pass complete:
+
+- **rust-work**: 1 commit ahead (`9dadc8c` — task queue additions) → clean merge, no conflicts (`.devin/Arora-Task-Rust.md` only)
+- **ui-work**: 0 commits ahead → skipped
+- **Build**: `make -C src -j2` ok (tree already up to date)
+- **Push**: `744de30..ee23d00` on master, including the WORKLOG entry
+- Dirty `.devin/mergewatch.log` / `.devin/taskloop.log` left untouched (watchdog files)
+
+Stopping after this one pass per the watchdog protocol.
+[2026-10-10 17:24:42] merge run exited rc=0
+[2026-10-10 17:39:43] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.`rust-work` is at 0 (skip). `ui-work` is 1 ahead, but the working tree is dirty — I need to check whether ui-work's changes touch the dirty files.ui-work's commit touches `browsermainwindow.cpp`, `ChangeLog`, and `.devin` files — none of which are dirty in this tree. Safe to merge.One conflict in `src/browsermainwindow.cpp`. Let me examine it.Both sides rewrote the same `printRequested` printer-lifetime fix — two incompatible implementations of the same change (keeping both would double-delete the printer). Per the merge rules, I keep master's structure; it already covers the lane's intent (printer deleted on view destruction, cleanup on `printFinished`, no double-free).Conflict resolved — kept master's printer-guard implementation (same fix, equivalent semantics). Committing the merge, then building.Merge committed. Now building to verify (dirty files are an in-progress agent's work — leaving them untouched).The failure is in `src/engine/enginetab.cpp` — an untracked file from the in-progress agent's uncommitted work, not anything the merge touched. To verify the merge itself, I'll compile the file the merge actually changed.`browsermainwindow.o` compiles cleanly — the merge result is good. The full-build failure is pre-existing dirty-tree work (`enginetab.cpp` bad include), not merge-caused, so I won't touch it. Pushing master now.Merge run complete.
+
+**Results:**
+- `rust-work`: 0 commits ahead — skipped
+- `ui-work`: merged `da408fd` into master (`f92f8b4`), pushed to origin
+
+**Conflict:** `src/browsermainwindow.cpp` — both sides rewrote `printRequested`'s QPrinter lifetime handling with different but equivalent fixes. Kept master's `printerGuard` implementation (per the "prefer master's structure" rule); it already covers the lane's intent. `WORKLOG.md`/`ChangeLog` auto-merged.
+
+**Build:** `make -C src` fails on `engine/enginetab.cpp:24` (`qvboxlayout.h` not found) — that's an untracked file in this dirty working tree belonging to a mid-run agent's uncommitted engine work, not merge-caused. Verified the merged file compiles cleanly (`browsermainwindow.o` built successfully). Left the working tree untouched.
+
+**WORKLOG:** appended the MERGEWATCH line noting the conflict and the pre-existing build failure.
+[2026-10-10 17:40:52] merge run exited rc=0

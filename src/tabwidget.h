@@ -79,9 +79,10 @@ class QStackedWidget;
 class QTimer;
 QT_END_NAMESPACE
 
-namespace Engine { class Profile; enum class StandardAction; }
+namespace Engine { class Backend; class Profile; enum class StandardAction; }
 
 class BrowserMainWindow;
+class EngineTab;
 class OmniboxSuggestions;
 class TabBar;
 class WebView;
@@ -202,6 +203,20 @@ public:
     // Returns the new tab's strip index.
     int addWidgetTab(QWidget *page, const QString &title,
                      const QIcon &icon, bool makeCurrent = true);
+
+    // ENG05 — per-tab engine tracking + the engine swap.  A browsing
+    // tab is either a WebView (webengine) or an EngineTab hosting a
+    // foreign backend; tabEngineId() reports which, "" for
+    // non-browsing widget tabs.  reloadTabInEngine() replaces the
+    // tab's page widget with the same url on the target backend —
+    // the same swap shape as reopenTabInContainer (the page's engine
+    // is fixed at creation).  The swap refuses — returns false — in
+    // Tor windows (locked to Chromium: servo has no SOCKS5), on
+    // private tabs (no off-the-record equivalent on other backends)
+    // and for unknown backend ids.
+    QString tabEngineId(int index) const;
+    EngineTab *engineTab(int index) const;
+    bool reloadTabInEngine(int index, const QString &engineId);
 
     // TABGRP01 — named, color-coded tab groups (Chrome/Vivaldi style).
     // Membership is keyed on the tab's WebView so drags never lose it;
@@ -351,6 +366,10 @@ private:
     // The shared body of makeNewTabInContainer()/makeNewPrivateTab():
     // a location bar plus a WebView bound to the resolved profile.
     WebView *makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent);
+    // ENG05: the engine-tab half of newTab()/reloadTabInEngine() —
+    // an EngineTab on the backend's profile plus a read-only location
+    // bar carrying the engine indicator, inserted like addWidgetTab.
+    EngineTab *addEngineTab(Engine::Backend *backend, bool makeCurrent);
     // Child-tab inheritance for the container AND the private context
     // of source (the current tab for Ctrl+T, the opener page for
     // window.open / open-in-new-tab).

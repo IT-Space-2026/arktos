@@ -75,6 +75,7 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torsocks5.h"
+#include "engineregistry.h"
 #include "webenginebackend.h"
 #include "webpage.h"
 #include "webview.h"
@@ -3305,23 +3306,26 @@ int main(int argc, char **argv)
         return sandboxSmoke();
 
     // ENG04: print the active engine backend + its capability surface.
+    // ENG05: every registered backend reports — an absent servo-embed
+    // artifact shows up as "no servo line" rather than a dead entry.
     // Pure diagnostic — no profile, no window, exits 0.
     if (args.contains(QLatin1String("--engine-list"))) {
-        Engine::Backend *backend = WebEngineBackend::instance();
-        const Engine::Capabilities caps = backend->capabilities();
-        qInfo() << "engine:" << backend->id()
-                << "-" << backend->displayName();
-        qInfo() << "  requestInterception:" << caps.requestInterception
-                << "scriptInjection:" << caps.scriptInjection
-                << "scriptEvaluation:" << caps.scriptEvaluation
-                << "cookieFilter:" << caps.cookieFilter
-                << "perPageSettings:" << caps.perPageSettings
-                << "lifecycleDiscard:" << caps.lifecycleDiscard
-                << "contextMenuInfo:" << caps.contextMenuInfo
-                << "certificateOverride:" << caps.certificateOverride
-                << "devTools:" << caps.devTools
-                << "extensions:" << caps.extensions
-                << "downloads:" << caps.downloads;
+        for (Engine::Backend *backend : EngineRegistry::backends()) {
+            const Engine::Capabilities caps = backend->capabilities();
+            qInfo() << "engine:" << backend->id()
+                    << "-" << backend->displayName();
+            qInfo() << "  requestInterception:" << caps.requestInterception
+                    << "scriptInjection:" << caps.scriptInjection
+                    << "scriptEvaluation:" << caps.scriptEvaluation
+                    << "cookieFilter:" << caps.cookieFilter
+                    << "perPageSettings:" << caps.perPageSettings
+                    << "lifecycleDiscard:" << caps.lifecycleDiscard
+                    << "contextMenuInfo:" << caps.contextMenuInfo
+                    << "certificateOverride:" << caps.certificateOverride
+                    << "devTools:" << caps.devTools
+                    << "extensions:" << caps.extensions
+                    << "downloads:" << caps.downloads;
+        }
         return 0;
     }
 

@@ -2,6 +2,7 @@ INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
 HEADERS += \
+  $$PWD/engineindicator.h \
   $$PWD/locationbar.h \
   $$PWD/locationbarsiteicon.h \
   $$PWD/omniboxsuggestions.h \
@@ -12,6 +13,7 @@ HEADERS += \
   $$PWD/siteshield.h
 
 SOURCES += \
+  $$PWD/engineindicator.cpp \
   $$PWD/locationbar.cpp \
   $$PWD/locationbarsiteicon.cpp \
   $$PWD/omniboxsuggestions.cpp \

@@ -20,6 +20,7 @@
 #include "locationbar.h"
 
 #include "clearbutton.h"
+#include "engineindicator.h"
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
 #include "privacyindicator.h"
@@ -48,6 +49,7 @@ LocationBar::LocationBar(QWidget *parent)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
     , m_readerButton(nullptr)
+    , m_engineIndicator(nullptr)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);
@@ -83,6 +85,12 @@ LocationBar::LocationBar(QWidget *parent)
     // left of the privacy indicator (widgets land at index 1).
     m_readerButton = new ReaderButton(this);
     addWidget(m_readerButton, RightSide);
+
+    // ENG05: engine indicator — innermost of the right-side cluster,
+    // next to the clear button.  Hidden while only one backend is
+    // registered or the tab can't swap.
+    m_engineIndicator = new EngineIndicator(this);
+    addWidget(m_engineIndicator, RightSide);
 
     // clear button on the right
     ClearButton *m_clearButton = new ClearButton(this);

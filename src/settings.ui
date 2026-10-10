@@ -2459,6 +2459,54 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="renderEngineGroup">
+         <property name="title">
+          <string>Rendering Engine</string>
+         </property>
+         <layout class="QHBoxLayout" name="engineLayout">
+          <item>
+           <widget class="QLabel" name="renderEngineLabel">
+            <property name="text">
+             <string>Default engine:</string>
+            </property>
+            <property name="buddy">
+             <cstring>renderEngineCombo</cstring>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="renderEngineCombo">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="toolTip">
+             <string>Engine new tabs render with. Experimental engines can render pages but lack browser features like ad blocking, downloads and site permissions.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Default rendering engine</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="engineSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer_4">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

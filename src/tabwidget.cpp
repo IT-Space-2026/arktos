@@ -71,10 +71,14 @@
 #include "browsermainwindow.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
+#include "engineindicator.h"
 #include "engineinterface.h"
+#include "engineregistry.h"
+#include "enginetab.h"
 #include "history.h"
 #include "historycompleter.h"
 #include "historymanager.h"
+#include "lineedit.h"
 #include "locationbar.h"
 #include "omniboxsuggestions.h"
 #include "opensearchengine.h"
@@ -322,7 +326,10 @@ void TabWidget::currentChanged(int index)
             mapper->updateCurrent(nullptr);
         }
         emit setCurrentTitle(tabText(index));
-        emit loadProgress(100);
+        if (EngineTab *foreign = engineTab(index))
+            emit loadProgress(foreign->progress());
+        else
+            emit loadProgress(100);
         emit showStatusBarMessage(QString());
         if (QWidget *page = widget(index))
             page->setFocus();
@@ -441,6 +448,17 @@ int TabWidget::webViewIndex(WebView *webView) const
 
 void TabWidget::newTab()
 {
+    // ENG05: the default-engine setting applies to explicit new tabs
+    // only — context-bound spawns (link targets, session restore,
+    // container/private inheritance) stay on WebEngine because a
+    // degraded co-engine cannot take over those contracts honestly.
+    Engine::Backend *backend = EngineRegistry::defaultBackend();
+    if (backend && backend->id() != QLatin1String("webengine")
+        && !BrowserApplication::isTorMode()
+        && !BrowserApplication::isPrivate()
+        && !isTabPrivate(currentIndex())
+        && addEngineTab(backend, true))
+        return;
     makeNewTab(true);
 }
 
@@ -621,6 +639,15 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
 
     WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
+    // ENG05: the engine indicator's swap path resolves the tab through
+    // the bar's stack index — identical to how the indicator on an
+    // engine tab's bar resolves through indexOf(tab).
+    locationBar->engineIndicator()->setSwappable(
+        !profile->isOffTheRecord());
+    connect(locationBar->engineIndicator(), &EngineIndicator::switchRequested,
+            this, [this, locationBar](const QString &engineId) {
+        reloadTabInEngine(m_locationBars->indexOf(locationBar), engineId);
+    });
     Engine::Page *enginePage = webView->enginePage();
     connect(enginePage, &Engine::Page::loadStarted,
             this, &TabWidget::webViewLoadStarted);
@@ -728,6 +755,200 @@ int TabWidget::addWidgetTab(QWidget *page, const QString &title,
         currentChanged(currentIndex());
     emit tabsChanged();
     return index;
+}
+
+EngineTab *TabWidget::engineTab(int index) const
+{
+    return qobject_cast<EngineTab*>(widget(index));
+}
+
+QString TabWidget::tabEngineId(int index) const
+{
+    if (EngineTab *tab = engineTab(index))
+        return tab->backend()->id();
+    if (webView(index))
+        return QStringLiteral("webengine");
+    return QString();
+}
+
+EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
+{
+    if (!backend)
+        return nullptr;
+
+    Engine::Profile *profile =
+        backend->createProfile(Engine::ProfileOptions(), nullptr);
+    EngineTab *tab = new EngineTab(backend, profile, this);
+    if (!tab->page()) {
+        delete tab;
+        return nullptr;
+    }
+
+    // The parallel location-bar stack needs one widget per tab.  An
+    // engine tab's bar is a read-only url echo carrying the engine
+    // indicator — the swap affordance back — since the degraded page
+    // cannot take typed navigations through loadUrl (loadUrl resolves
+    // through currentWebView(), which is null here).
+    LineEdit *bar = new LineEdit(this);
+    bar->setReadOnly(true);
+    EngineIndicator *indicator = new EngineIndicator(bar);
+    indicator->setEngineId(backend->id());
+    bar->addWidget(indicator, LineEdit::RightSide);
+    m_locationBars->addWidget(bar);
+    connect(indicator, &EngineIndicator::switchRequested,
+            this, [this, tab](const QString &id) {
+        const int at = indexOf(tab);
+        if (at >= 0)
+            reloadTabInEngine(at, id);
+    });
+
+    // Tab-strip plumbing mirroring the WebView wiring in
+    // makeNewTabOnProfile — senders are the EngineTab, not a WebView,
+    // so the shared webView* slots don't apply.
+    connect(tab, &EngineTab::titleChanged,
+            this, [this, tab](const QString &title) {
+        const int at = indexOf(tab);
+        if (at < 0)
+            return;
+        QString tabTitle = title;
+        if (tabTitle.isEmpty())
+            tabTitle = QString::fromUtf8(tab->url().toEncoded());
+        // Page-controlled text — same escaping as webViewTitleChanged.
+        setTabText(at, SafeText::menu(tabTitle));
+        setTabToolTip(at, SafeText::escaped(tabTitle));
+        if (at == currentIndex())
+            emit setCurrentTitle(title);
+    });
+    connect(tab, &EngineTab::urlChanged,
+            this, [this, tab](const QUrl &url) {
+        const int at = indexOf(tab);
+        if (at < 0)
+            return;
+        m_tabBar->setTabData(at, url);
+        if (QLineEdit *bar = locationBar(at))
+            bar->setText(QString::fromUtf8(url.toEncoded()));
+        emit tabsChanged();
+    });
+    connect(tab, &EngineTab::loadStarted,
+            this, [this, tab]() {
+        const int at = indexOf(tab);
+        if (at < 0)
+            return;
+        QLabel *label = animationLabel(at, true);
+        if (label->movie())
+            label->movie()->start();
+        if (at == currentIndex())
+            emit showStatusBarMessage(tr("Loading..."));
+    });
+    connect(tab, &EngineTab::loadProgress,
+            this, [this, tab](int progress) {
+        if (indexOf(tab) == currentIndex() && indexOf(tab) >= 0) {
+            emit loadProgress(progress);
+            emit showStatusBarMessage(tr("Loading %1%...").arg(progress));
+        }
+    });
+    connect(tab, &EngineTab::loadFinished,
+            this, [this, tab](bool ok) {
+        const int at = indexOf(tab);
+        if (at < 0)
+            return;
+        QLabel *label = animationLabel(at, false);
+        QMovie *movie = label->movie();
+        delete movie;
+        label->setMovie(nullptr);
+        label->setPixmap(QIcon(QLatin1String(":graphics/defaulticon.png"))
+                             .pixmap(16, 16));
+        if (at == currentIndex())
+            emit showStatusBarMessage(ok ? tr("Finished loading")
+                                         : tr("Failed to load"));
+    });
+
+    const int index = addTab(tab,
+        QIcon(QLatin1String(":graphics/defaulticon.png")),
+        backend->displayName());
+    setTabToolTip(index, backend->displayName());
+    // CONT06: same strip bookkeeping as addWidgetTab — engine tabs
+    // live under the default header.
+    if (m_twoLevelStrip && !m_containerFilterAdjust
+        && !m_activeContainerHeader.isEmpty()) {
+        if (makeCurrent)
+            setActiveContainerHeader(QString());
+        else
+            detachTabIntoContainerStore(index);
+        syncContainerStrip();
+    }
+    if (makeCurrent)
+        setCurrentIndex(indexOf(tab));
+    if (count() == 1)
+        currentChanged(currentIndex());
+    emit tabsChanged();
+    return tab;
+}
+
+bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
+{
+    if (index < 0 || index >= count())
+        return false;
+    // Tor windows are locked to Chromium — servo has no SOCKS5
+    // support, so a swapped tab would leak traffic off the proxy.
+    if (BrowserApplication::isTorMode())
+        return false;
+    // A private tab has no off-the-record equivalent on a foreign
+    // backend — the swap would land its url on a persistent profile.
+    if (isTabPrivate(index))
+        return false;
+    // CONT06: while a non-default container level is active the
+    // append+move+close swap would re-filter the strip mid-swap —
+    // refuse rather than corrupt the strip.  Engine tabs live on the
+    // default level anyway, and a hidden tab's bar is unreachable.
+    if (m_twoLevelStrip && containerStripActive()
+        && !m_activeContainerHeader.isEmpty())
+        return false;
+    const QString currentId = tabEngineId(index);
+    if (currentId.isEmpty() || currentId == engineId)
+        return false;
+    Engine::Backend *backend = EngineRegistry::backendForId(engineId);
+    if (!backend)
+        return false;
+
+    WebView *view = webView(index);
+    EngineTab *foreign = engineTab(index);
+    const QUrl url = view ? view->url()
+                          : (foreign ? foreign->url() : QUrl());
+    const bool wasCurrent = (index == currentIndex());
+    // TABGRP01: membership keys on WebView — a webengine target keeps
+    // the group, a foreign tab drops it (no slot to hang the tag on).
+    const QString gid = tabGroupId(index);
+
+    QWidget *replacement = nullptr;
+    if (engineId == QLatin1String("webengine")) {
+        WebView *newView = makeNewTabInContainer(
+            ContainerManager::defaultContainerId(), wasCurrent);
+        if (!newView)
+            return false;
+        if (url.isValid())
+            newView->loadUrl(url);
+        if (!gid.isEmpty())
+            assignTabGroup(newView, gid);
+        replacement = widget(webViewIndex(newView));
+    } else {
+        EngineTab *tab = addEngineTab(backend, wasCurrent);
+        if (!tab)
+            return false;
+        if (url.isValid())
+            tab->load(url);
+        replacement = tab;
+    }
+    if (!replacement)
+        return false;
+
+    // Land the replacement on the old tab's slot, then close the
+    // shifted original — same shape as reopenTabInContainer.
+    const int newIndex = indexOf(replacement);
+    if (newIndex >= 0 && newIndex != index)
+        m_tabBar->moveTab(newIndex, index);
+    closeTab(index + 1);
+    return true;
 }
 
 void TabWidget::reopenTabInContainer(int index, const QString &containerId)

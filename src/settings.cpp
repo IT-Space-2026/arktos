@@ -76,6 +76,8 @@
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "engineinterface.h"
+#include "engineregistry.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
@@ -300,6 +302,19 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                          id, QLatin1String("view-refresh")));
         }
     }
+    // ENG05: one entry per registered engine backend — the whole
+    // group hides while WebEngine is the only option (a missing
+    // servo-embed artifact leaves nothing to pick).
+    for (Engine::Backend *backend : EngineRegistry::backends()) {
+        renderEngineCombo->addItem(backend->displayName(),
+                                    backend->id());
+        renderEngineCombo->setItemIcon(
+            renderEngineCombo->count() - 1,
+            EngineRegistry::backendIcon(backend->id(),
+                                        renderEngineCombo->palette()));
+    }
+    renderEngineGroup->setVisible(EngineRegistry::backends().count() >= 2);
+
     // SIDE02: the Panels checklist mirrors SidebarPanel's registered
     // sections — a panel added through registerPanel() shows up here
     // automatically.  Check states are applied in loadFromSettings.
@@ -798,6 +813,9 @@ void SettingsDialog::loadFromSettings()
     const QString iconTheme = AroraIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
+    const int engineIndex =
+        renderEngineCombo->findData(EngineRegistry::defaultBackendId());
+    renderEngineCombo->setCurrentIndex(engineIndex < 0 ? 0 : engineIndex);
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("history"));
@@ -1153,6 +1171,9 @@ void SettingsDialog::saveToSettings()
     }
     const QString iconTheme = iconThemeCombo->currentData().toString();
     settings.setValue(QLatin1String("iconTheme"), iconTheme);
+    // ENG05: new tabs pick the engine up on creation — no live apply.
+    settings.setValue(QLatin1String("defaultEngine"),
+                      renderEngineCombo->currentData().toString());
     settings.endGroup();
     // Applies to existing icons live — QIcon theme lookups re-resolve
     // on setThemeName, no widget rewiring needed.

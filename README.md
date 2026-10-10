@@ -167,6 +167,11 @@ browsing profile:
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing
   their place.
+- **Per-tab engine switcher** — an engine glyph at the right end of
+  the URL bar names the active engine and offers "Reload in …" on
+  the other backends; Servo (`qmake servo=1` + the servo-embed
+  artifact) is an experimental degraded co-engine — Tor windows stay
+  Chromium-locked and private tabs refuse the swap.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -429,6 +434,12 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   stay the default without it)
 - `CONFIG+=rustdl` — Rust accelerated downloader (reqwest +
   std::thread, segmented ranged downloads behind a C ABI)
+- `servo=1` — experimental Servo co-engine (ENG05): compiles the
+  Servo backend against `spikes/servo/servo-embed/include`, then
+  dlopens the prebuilt `libservo_embed.so` at runtime. The artifact
+  is an out-of-tree ~1 GB build (pinned libservo v0.7.0, see
+  `.devin/SERVO-SPIKE.md`); when it is absent the Servo option simply
+  never appears — nothing links or loads against it
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

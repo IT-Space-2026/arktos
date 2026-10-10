@@ -26,6 +26,7 @@
 #include <qurl.h>
 
 class WebView;
+class EngineIndicator;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
 class ReaderButton;
@@ -39,6 +40,10 @@ public:
     LocationBar(QWidget *parent = nullptr);
     void setWebView(WebView *webView);
     WebView *webView() const;
+    // ENG05: the per-tab engine glyph at the right end of the bar —
+    // the swap affordance lives on the indicator; the tab widget
+    // resolves the bar's index and performs the swap.
+    EngineIndicator *engineIndicator() const { return m_engineIndicator; }
 
     // SAFE03: anti-phishing display aids.
     //
@@ -79,6 +84,7 @@ private:
     PopupBlockerButton *m_popupBlockerButton;
     PrivacyIndicator *m_privacyIndicator;
     ReaderButton *m_readerButton;
+    EngineIndicator *m_engineIndicator;
 };
 
 #endif // LOCATIONBAR_H
