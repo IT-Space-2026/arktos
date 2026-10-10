@@ -1568,6 +1568,59 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
                 .contains(QLatin1String("ParallelDownloading")));
 
+    // CRASH01: the GPU-compositor safe mode — off by default, armed by
+    // the websettings toggle, by ARORA_DISABLE_GPU_COMPOSITING (an
+    // explicit =0 overrides a stored "on"), and auto-engaged — with
+    // the toggle persisted — once browser/gpuCrashCount records an
+    // unclean start (a stored 1 already means two consecutive
+    // crashes: the counter is written by the crashed run's SUCCESSOR,
+    // after applyChromiumFlags already read it).
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+
+    QSettings().setValue(QLatin1String("websettings/disableGpuCompositing"),
+                         true);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+
+    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "0");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "1");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+
+    // No recorded crash leaves it off; a recorded one — which only
+    // exists after two consecutive unclean exits — engages the safe
+    // mode and persists the toggle so the settings dialog reflects it.
+    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 1);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+    QVERIFY(QSettings().value(
+        QLatin1String("websettings/disableGpuCompositing")).toBool());
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.
     init();

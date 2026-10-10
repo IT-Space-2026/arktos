@@ -29,6 +29,13 @@ Core / Qt 6 port:
   losing changes still inside the debounce window (SESS02). SIGKILL
   remains unflushed by design — it cannot be caught.
 - Command-line URL arguments treated as untrusted input (SEC09).
+- GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
+  display-compositor CHECK on some driver stacks, killing the whole
+  browser. Arora now arms Chromium's --disable-gpu-compositing —
+  which keeps WebGL/canvas acceleration while moving page compositing
+  to software — after two consecutive unclean exits, and exposes the
+  same mitigation as a Preferences checkbox and the
+  ARORA_DISABLE_GPU_COMPOSITING env override (CRASH01).
 
 UI:
 - Light/dark follows the desktop scheme; ARORA_COLOR_SCHEME override

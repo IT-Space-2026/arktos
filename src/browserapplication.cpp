@@ -790,6 +790,11 @@ void BrowserApplication::saveSession()
 
 void BrowserApplication::flushSessionsForTermination()
 {
+    // CRASH01: a signal-driven shutdown is a clean exit — clear the
+    // crash-loop sentinel/counter so logoff/service-stop kills aren't
+    // scored against the next run's GPU safe-mode check.  Done first:
+    // the watchdog may kill the process mid-flush.
+    BrowserProfile::markSessionCleanExit();
     clean();
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         if (BrowserMainWindow *window = m_mainWindows.at(i))

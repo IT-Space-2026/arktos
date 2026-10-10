@@ -961,6 +961,11 @@ void SettingsDialog::loadFromSettings()
     middleClickAutoscroll->setChecked(settings.value(
         QLatin1String("middleClickAutoscroll"),
         autoscrollDefault).toBool());
+    // CRASH01: GPU-compositor safe mode — the crash counter in
+    // applyChromiumFlags() can also set this key, so the checkbox may
+    // appear checked without the user ever touching it.
+    disableGpuCompositing->setChecked(settings.value(
+        QLatin1String("disableGpuCompositing"), false).toBool());
     userStyleSheet->setText(QString::fromUtf8(settings.value(QLatin1String("userStyleSheet")).toUrl().toEncoded()));
     int minimumFontSize = settings.value(QLatin1String("minimumFontSize"), 0).toInt();
     minimFontSizeCheckBox->setChecked(minimumFontSize != 0);
@@ -1283,6 +1288,10 @@ void SettingsDialog::saveToSettings()
     // Latched by applyChromiumFlags() at engine startup — the tooltip
     // on the checkbox already tells the user it needs a restart.
     settings.setValue(QLatin1String("middleClickAutoscroll"), middleClickAutoscroll->isChecked());
+    // CRASH01: same latch point — applyChromiumFlags() reads it at
+    // engine startup; the tooltip says a restart is needed.
+    settings.setValue(QLatin1String("disableGpuCompositing"),
+                      disableGpuCompositing->isChecked());
     QString userStyleSheetString = userStyleSheet->text();
     if (QFile::exists(userStyleSheetString))
         settings.setValue(QLatin1String("userStyleSheet"), QUrl::fromLocalFile(userStyleSheetString));

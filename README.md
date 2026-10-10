@@ -473,6 +473,11 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 - `./arora --write-sandbox-launcher` — print the `arora-sandbox`
   launcher script (used to regenerate src/sandbox/arora-sandbox)
 - `./arora --profile-startup` — millisecond startup timeline
+- `ARORA_DISABLE_GPU_COMPOSITING=1` — GPU-crash workaround: forces
+  Chromium's `--disable-gpu-compositing` (software page compositing;
+  WebGL/canvas acceleration stays on). The same mitigation lives in
+  Preferences and engages automatically after two consecutive unclean
+  exits; `=0` overrides even a stored "on" for a run.
 - `make doc` — doxygen API reference into `doc/html` (needs `doxygen`
   + `dot`; both optional, nothing else uses them)
 

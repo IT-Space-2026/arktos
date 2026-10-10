@@ -210,8 +210,25 @@ bool addClientCertificateFile(QWebEngineProfile *profile,
 //     are unaffected; the escape hatch exists for ancient TLS sites.
 //     A --cipher-suite-blacklist already present in the environment
 //     takes precedence over the built-in list.
+//   websettings/disableGpuCompositing (default off) -> CRASH01
+//     --disable-gpu-compositing — Qt 6.12's WebEngine traps (SIGTRAP)
+//     on a CHECK in the in-process GPU thread when the viz display
+//     compositor binds; software compositing sidesteps the CHECK while
+//     the GPU process — and therefore WebGL/canvas acceleration —
+//     stays alive.  Also armed by ARORA_DISABLE_GPU_COMPOSITING=1 or
+//     automatically once two consecutive starts end uncleanly.
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();
+
+// CRASH01: crash-loop bookkeeping feeding the compositor safe mode in
+// applyChromiumFlags().  markSessionStart() runs once per committed
+// browser process (after single-instance arbitration and the parser's
+// --help/--version exits); markSessionCleanExit() runs on every
+// normal exit path.  A fatal engine CHECK kills the process without
+// unwinding, so only crashes leave the sentinel set for the next
+// start to count into browser/gpuCrashCount.
+void markSessionStart();
+void markSessionCleanExit();
 
 // DOH01: pushes the privacy/secureDns* settings to
 // QWebEngineGlobalSettings::setDnsMode — the Qt6.6+ API for

@@ -858,3 +858,33 @@ I'll start by checking the repo state and fetching.`rust-work` is at 0 — skip.
 
 The pre-existing dirty files in this tree (`Arora-Task.md`, `mergewatch.log`, `taskloop.log`) were left untouched — none overlapped the merge set. Stopping after this pass.
 [2026-10-10 21:30:11] merge run exited rc=0
+[2026-10-10 22:05:14] merge due: rust-work(1) — spawning devin merge run
+I'll start by checking the repository state and fetching.`rust-work` is 1 commit ahead; `ui-work` has nothing new. Checking what rust-work's commit touches before merging:Three conflicts to resolve. Let me examine each.Regeneration works but resolves to highest compatible versions — larger diff than needed. A cleaner merge: restore master's lockfile and let cargo minimally add rust-work's new deps.Hard cap at 1.5 GB — can't raise it. Let me check how the qmake/make build invokes cargo; the required verification may hit the same limit.The Makefile invokes `cargo build --release` inside `src/rustcore`. The earlier failure was a `cargo check` (debug profile) — release artifacts may partially exist. Checking both worktrees' target dirs:The `--threads=1` workaround is working — proc-macro links are passing. Waiting for the check to complete.`cargo check` passes on the merged source — the union resolution compiles. Now let me finish the merge: verify no stray conflict markers, stage the resolved files, and check prior merge conventions.No conflict markers remain. Prior runs commit the merge, then add a separate MERGEWATCH log commit. Staging and committing the merge now.Merge committed (`088821b`). Now the build verification. `make -C src` runs `cargo build --release`, which will hit the same VM cap on proc-macro links — so I'll export the `RUSTFLAGS` threads workaround and `CARGO_BUILD_JOBS=1` for safety.Build running in the background — a full release rebuild of ~220 Rust crates plus the C++ tree takes a while. Checking progress periodically.Build is progressing — Rust deps are compiling and the C++/moc side is running in parallel. Continuing to wait.Appending the MERGEWATCH line and committing per convention:Pushing master:Merge run complete.
+
+**Results:**
+- **ui-work**: 0 commits ahead — skipped.
+- **rust-work**: 1 commit ahead (RDR01 reader-mode extraction) — merged as `088821b`.
+
+**Conflicts (3, all in `src/rustcore/`):**
+- `include/rustcore.h` + `src/lib.rs`: adjacent feature blocks (master's PDF01 sanitize vs lane's RDR01 readability) — resolved as union, both features kept.
+- `Cargo.lock`: restored master's version, then let `cargo` minimally add the lane's new `dom_query`/`dom_smoothie` deps offline (avoids hand-editing a lockfile).
+- `WORKLOG.md`, `ChangeLog`, `main.cpp`, `readermode.*`: auto-merged union-clean.
+
+**Build:** `make -C src -j2` succeeded — `../arora` linked. One environment note: this shell caps virtual memory at 1.5 GB, which kills parallel lld links on the new proc-macro crates. I worked around it with `RUSTFLAGS="-C link-args=-Wl,--threads=1" CARGO_BUILD_JOBS=1` — no code changes, but worth knowing if future builds OOM in `src/rustcore`.
+
+**Pushed:** `a2c50cb..9282ec7` on master (merge + `MERGEWATCH: log rust-work merge` commit). Pre-existing dirty files in this tree (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log`) were left untouched.
+
+Stopping after this one pass.
+[2026-10-10 22:13:01] merge run exited rc=0
+[2026-10-10 22:23:02] merge due: rust-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). I'll keep that in mind — if a lane touches those files, I skip it. Now checking lane ahead counts.`rust-work` is 1 commit ahead; `ui-work` is at 0 — skipping it. Let me check which files the rust-work commit touches.No overlap with dirty files — safe to merge `rust-work`.Clean merge, no conflicts. Now verifying the build.Build succeeded. Now appending the WORKLOG line and pushing.Merge run complete. Summary:
+
+- **Lanes:** `rust-work` 1 commit ahead (`CPAL01: move command-palette matching into rustcore`); `ui-work` at 0 — skipped.
+- **Merge:** `git merge rust-work` — fully clean, no conflicts. The CPAL01 commit touched `src/rustcore` (new `palette.rs`, `lib.rs`, `rustcore.h`), `src/commandpalette.*`, new `autotests/palette/`, plus `WORKLOG.md`/`ChangeLog` — all auto-merged. None of the dirty working-tree files overlapped, so no lane-skip needed.
+- **Build:** `source .devin/qt-env.sh && make -C src -j2` — succeeded, `../arora` linked (includes the cargo rustcore rebuild).
+- **Log:** appended `- 2026-10-10 MERGEWATCH: rust-work merged — no conflicts ..., build ok` to `.devin/WORKLOG.md` and committed it.
+- **Push:** `master` pushed, `9282ec7..d617129`.
+- Working-tree changes from the in-progress agent (privacy/profile/settings files) left untouched.
+
+Stopping after this one pass per instructions.
+[2026-10-10 22:24:29] merge run exited rc=0

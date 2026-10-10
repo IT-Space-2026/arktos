@@ -1244,7 +1244,17 @@
          </property>
         </widget>
        </item>
-       <item row="8" column="0" colspan="5">
+       <item row="8" column="0" colspan="3">
+        <widget class="QCheckBox" name="disableGpuCompositing">
+         <property name="toolTip">
+          <string>Workaround for QtWebEngine GPU-process crashes (SIGTRAP in the display compositor): page compositing moves to software while WebGL/canvas acceleration stays on. Takes effect after a restart and is enabled automatically after repeated crashy exits.</string>
+         </property>
+         <property name="text">
+          <string>Disable GPU compositing (crash workaround)</string>
+         </property>
+        </widget>
+       </item>
+       <item row="9" column="0" colspan="5">
         <widget class="QGroupBox" name="sidebarGroupBox">
          <property name="title">
           <string>Sidebar</string>
@@ -1334,7 +1344,7 @@
          </layout>
         </widget>
        </item>
-       <item row="9" column="3">
+       <item row="10" column="3">
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

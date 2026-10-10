@@ -879,6 +879,49 @@ void applyChromiumFlags()
             == QLatin1String("offscreen"))
         addFlag(QLatin1String("--disable-gpu"));
 
+    // CRASH01: Qt 6.12's WebEngine traps (SIGTRAP) on a CHECK in the
+    // in-process GPU thread (Chrome_InProcGp, fixed offset 0x76e6481)
+    // when the viz display compositor binds — reproduced on
+    // Intel/Wayland during normal browsing and under the offscreen
+    // QPA; the release-build CHECK logs no text.  Flag bisect ruled
+    // out Vulkan (--disable-vulkan / --disable-features=Vulkan),
+    // the GPU sandbox (--disable-gpu-sandbox), the process model
+    // (--in-process-gpu), the Ozone backend and the ANGLE/GL
+    // selection — only --disable-gpu-compositing (and the broader
+    // --disable-gpu) avoids the trap.  It moves the display
+    // compositor to software while the GPU process — and therefore
+    // WebGL/canvas acceleration — stays alive, which is why it is
+    // the surgical pick over --disable-gpu.  Three arming paths:
+    // the websettings toggle, ARORA_DISABLE_GPU_COMPOSITING (an
+    // explicit =0 even overrides a stored "on", for a one-shot
+    // verification run), and the crash-loop counter — two
+    // consecutive unclean starts auto-engage it and persist the
+    // toggle so the settings dialog shows the engaged state.  The
+    // counter is written by markSessionStart() AFTER this function
+    // ran, so a stored 1 already means the previous run both counted
+    // an earlier crash and then died uncleanly itself — i.e. two
+    // consecutive crashes, which is the arming threshold.
+    bool disableGpuCompositing;
+    if (qEnvironmentVariableIsSet("ARORA_DISABLE_GPU_COMPOSITING")) {
+        disableGpuCompositing =
+            qEnvironmentVariableIntValue("ARORA_DISABLE_GPU_COMPOSITING")
+                != 0;
+    } else {
+        if (settings.value(QLatin1String("browser/gpuCrashCount"), 0)
+                    .toInt() >= 1
+            && !settings.value(
+                QLatin1String("websettings/disableGpuCompositing"),
+                false).toBool()) {
+            settings.setValue(
+                QLatin1String("websettings/disableGpuCompositing"), true);
+        }
+        disableGpuCompositing = settings.value(
+            QLatin1String("websettings/disableGpuCompositing"),
+            false).toBool();
+    }
+    if (disableGpuCompositing)
+        addFlag(QLatin1String("--disable-gpu-compositing"));
+
     if (webrtcProtection) {
         // Strongest WebRTC IP policy Chromium exposes: every ICE
         // transport goes through the configured proxy (SOCKS5 cannot
@@ -967,6 +1010,43 @@ void applyChromiumFlags()
         }
     }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
+}
+
+// CRASH01: see the header comment — a fatal GPU CHECK never unwinds,
+// so the sentinel surviving to the next start IS the crash signal.
+// The tor window gets its own sentinel: it is a second committed
+// browser process on the same settings store, and sharing one key
+// would read the main window's healthy run as a tor crash.
+void markSessionStart()
+{
+    QSettings settings;
+    const QLatin1String sentinel = BrowserApplication::isTorMode()
+        ? QLatin1String("browser/sessionActiveTor")
+        : QLatin1String("browser/sessionActive");
+    if (settings.value(sentinel, false).toBool()) {
+        settings.setValue(QLatin1String("browser/gpuCrashCount"),
+            settings.value(QLatin1String("browser/gpuCrashCount"), 0)
+                .toInt() + 1);
+    }
+    settings.setValue(sentinel, true);
+    // The crash this detects never lets a destructor flush — force the
+    // sentinel onto disk before the engine window opens.
+    settings.sync();
+}
+
+void markSessionCleanExit()
+{
+    QSettings settings;
+    // Only this process's own sentinel — a clean tor exit must not
+    // clear the still-running main window's marker.  The shared
+    // counter does reset on any clean run: one healthy session proves
+    // the current configuration works.
+    const QLatin1String sentinel = BrowserApplication::isTorMode()
+        ? QLatin1String("browser/sessionActiveTor")
+        : QLatin1String("browser/sessionActive");
+    settings.setValue(sentinel, false);
+    settings.setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    settings.sync();
 }
 
 quint16 bidiDebugPort()

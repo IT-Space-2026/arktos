@@ -117,6 +117,7 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
 #include <QtCore/QProcessEnvironment>
+#include <QtCore/QScopeGuard>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
@@ -3277,6 +3278,19 @@ int main(int argc, char **argv)
         QLatin1String("sigterm-signal"),
         QString(), QLatin1String("name")));
     parser.process(application);
+
+    // CRASH01: crash-loop bookkeeping feeding the
+    // --disable-gpu-compositing safe mode in applyChromiumFlags().
+    // Deliberately after parser.process() — its --help/--version paths
+    // exit() inside the parser and must not score as a browser run —
+    // and after the single-instance arbitration above, so a
+    // url-forwarding helper can neither set nor clear the sentinel.
+    // The guard marks the exit clean on every normal return below; a
+    // fatal GPU CHECK kills the process without unwinding, which is
+    // precisely how the next start tells a crash from a clean exit.
+    BrowserProfile::markSessionStart();
+    const auto cleanExitGuard = qScopeGuard(
+        [] { BrowserProfile::markSessionCleanExit(); });
 
     if (!application.isStandalone()) {
         // Normal launch: postLaunch() (queued by the constructor)
