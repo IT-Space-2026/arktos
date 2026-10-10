@@ -901,7 +901,7 @@ static int browserAuditSmoke(BrowserApplication &application,
         // cache or storage — and prepareProfile() never sees it, so no
         // app services reach this page: the bare-engine baseline.
         QWebEngineProfile *profile = new QWebEngineProfile(&application);
-        QWebEngineView *bareView = new QWebEngineView;
+        QWebEngineView *bareView = nullptr;
 
         // SEC15 bisection aid: ARORA_AUDIT_WIRE=<csv> applies selected
         // pieces of prepareProfile()/WebPage wiring onto the OTR profile
@@ -940,6 +940,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                 webView->webPage()->setInjectedScriptsEnabled(false);
             view = webView;
         } else {
+            bareView = new QWebEngineView;
             if (wire.contains(QLatin1String("webpage")))
                 bareView->setPage(new WebPage(profile, bareView));
             else
