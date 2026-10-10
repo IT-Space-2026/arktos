@@ -169,8 +169,19 @@ UI:
   with View → Reader Mode (Ctrl+Alt+R) (READ02).
 - Removed the duplicated reader-mode button embedded at the right end
   of the URL bar — the navigation toolbar toggle is now the single
-  reader control on the chrome row, still tracking the active tab and
-  appearing on article-like pages (READ03).
+  reader control on the chrome row, still tracking the active tab
+  (READ03).
+- The Reader Mode button is now always present on web tabs instead of
+  disappearing whenever the article heuristic misses — the option to
+  try reader mode is never taken away. Pages judged non-article still
+  allow the toggle and report "Reader view is not available on this
+  page."; article-like pages get an accent-dot "suggested" highlight
+  instead. The control hides only where reader mode can never apply
+  (History/Preferences-style tabs). Article detection also got more
+  forgiving: the probe retries briefly while a page hydrates, re-runs
+  on client-side SPA navigations (e.g. telex.hu), and accepts
+  short-lead paragraphs and article/main containers carrying
+  substantial copy (READ04).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).

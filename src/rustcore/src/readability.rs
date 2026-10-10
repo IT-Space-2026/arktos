@@ -244,11 +244,34 @@ fn document(html: &[u8]) -> RcResult<Document> {
     Ok(Document::from(String::from_utf8_lossy(html).into_owned()))
 }
 
+/// READ04: the article-likeness verdict shared by the probe and the
+/// extraction gate.  Three tiers, first true wins:
+///  1. the strict upstream heuristic (min_score 20 / 140 chars),
+///  2. a relaxed pass (score 10 / 100 chars) — real articles with a
+///     short lead or thin early paragraphs miss the strict bar,
+///  3. a semantic fallback — an article/main container carrying
+///     substantial copy marks a long-form page even when the scoring
+///     regexes disagree (SPA markup that skips <p>/<article> shapes,
+///     e.g. telex.hu's hydrated layout).
+fn probably_readable_doc(doc: &Document) -> bool {
+    if dom_smoothie::is_probably_readable(doc, None, None)
+        || dom_smoothie::is_probably_readable(doc, Some(10.0), Some(100))
+    {
+        return true;
+    }
+    const SEMANTIC_BLOCKS: &str =
+        "article,main,[role='main'],[itemprop='articleBody']";
+    doc.select(SEMANTIC_BLOCKS)
+        .nodes()
+        .iter()
+        .any(|node| node.text().trim().chars().count() > 1200)
+}
+
 /// The isProbablyReaderable verdict — the affordance check the
 /// post-load probe runs on every page.
 pub fn probably_readable(html: &[u8]) -> RcResult<bool> {
     let doc = document(html)?;
-    Ok(dom_smoothie::is_probably_readable(&doc, None, None))
+    Ok(probably_readable_doc(&doc))
 }
 
 /// The reader.js sanitize() ruleset, re-applied to the extracted
@@ -280,7 +303,7 @@ fn sanitize(content: &str) -> String {
 /// surface has exactly one error-free shape.
 pub fn extract_json(html: &[u8], url: Option<&str>) -> RcResult<String> {
     let doc = document(html)?;
-    let probably = dom_smoothie::is_probably_readable(&doc, None, None);
+    let probably = probably_readable_doc(&doc);
     let mut verdict = json!({
         "ok": false,
         "probably": probably,
@@ -380,6 +403,53 @@ mod tests {
     #[test]
     fn probe_matches_extract_verdict() {
         assert!(probably_readable(&article_page()).unwrap());
+    }
+
+    #[test]
+    fn relaxed_probe_accepts_short_paragraph_articles() {
+        // READ04: several ~120-char paragraphs — below the strict
+        // 140-char content bound, so tier 1 alone misses a real
+        // article.  The relaxed pass must still call it article-like.
+        let mut paragraphs = String::new();
+        for _ in 0..8 {
+            paragraphs.push_str(
+                "<p>Mid-length paragraph of article copy that is not \
+                 quite long enough to trip the strict one hundred \
+                 forty character bound.</p>",
+            );
+        }
+        let html = format!("<html><body>{paragraphs}</body></html>");
+        let doc = document(html.as_bytes()).unwrap();
+        assert!(!dom_smoothie::is_probably_readable(&doc, None, None));
+        assert!(probably_readable(html.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn semantic_probe_accepts_main_only_articles() {
+        // READ04 / telex.hu shape: a hydrated <main> holds the article
+        // text in bare divs — no <article>, few <p> — the tier-3
+        // semantic fallback must carry the verdict.
+        let body_copy: String = (0..40)
+            .map(|_| {
+                "A div-held block of real article copy, several \
+                 sentences long, that a SPA-style page lays out \
+                 without any paragraph markup at all."
+            })
+            .collect();
+        let html = format!(
+            "<html><body><nav><a href=\"#\">x</a></nav><main>{body_copy}</main></body></html>"
+        );
+        assert!(probably_readable(html.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn semantic_fallback_does_not_promote_thin_pages() {
+        // A <main> wrapper alone must not turn a thin page
+        // article-like — the container needs real copy inside.
+        let html = b"<html><body><main><p>short</p></main></body></html>";
+        assert!(!probably_readable(html).unwrap());
+        let v = verdict(html, Some("https://example.com/"));
+        assert!(!v["ok"].as_bool().unwrap());
     }
 
     #[test]

@@ -1236,14 +1236,16 @@ void BrowserMainWindow::updateReaderState()
     m_viewReaderAction->setEnabled(view != nullptr);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
-    // READ02: the nav-row button follows the same tab — it manages
-    // its own checked state off the view's ReaderMode, while the
-    // toolbar item's visibility goes through its widget action.
+    // READ02/READ04: the nav-row button follows the same tab — it
+    // manages its own checked/suggested state off the view's
+    // ReaderMode, and it stays visible on every engine tab.  The
+    // article heuristic no longer gates presence; it only drives the
+    // "suggested" accent.  Only tabs where reader mode can never
+    // apply (widget pages like History/Preferences, non-WebView
+    // engine tabs) hide the control.
     m_readerModeButton->setWebView(view);
-    const bool readerAvailable = view && view->readerMode()
-                                 && view->readerMode()->isAvailable();
-    m_navReaderAction->setVisible(readerAvailable);
-    m_readerModeButton->setVisible(readerAvailable);
+    m_navReaderAction->setVisible(view != nullptr);
+    m_readerModeButton->setVisible(view != nullptr);
     m_viewPipAction->setEnabled(view != nullptr);
     m_viewPipAction->setChecked(view && view->pictureInPicture()
                                 && view->pictureInPicture()->isActive());
@@ -1433,10 +1435,12 @@ void BrowserMainWindow::setupToolBar()
     // READ02: reader-mode toggle in the nav row — after stop/reload,
     // before the location bar starts.  READ03: the only reader
     // control — the in-bar duplicate is gone.  Palette-painted glyph
-    // (no icon theme ships a reader glyph), hidden until the current
-    // page reports itself article-like, checked while the overlay is
-    // up.  updateReaderState() re-points it at the current tab along
-    // with the View-menu action, so the two can never disagree.
+    // (no icon theme ships a reader glyph), hidden until the first
+    // updateReaderState() — READ04 keeps it present on every engine
+    // tab, accent-marked on article-like pages, checked while the
+    // overlay is up.  updateReaderState() re-points it at the
+    // current tab along with the View-menu action, so the two can
+    // never disagree.
     m_readerModeButton = new ReaderButton(m_navigationBar);
     m_readerModeButton->setObjectName(QLatin1String("navReaderButton"));
     // addWidget() wraps the button in a QWidgetAction — a toolbar

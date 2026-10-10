@@ -38,6 +38,9 @@ ReaderButton::ReaderButton(QWidget *parent)
     connect(this, &QToolButton::clicked, this, [this]() {
         if (m_webView)
             m_webView->readerMode()->toggle();
+        // Auto-checkable flips the check before this slot runs; a
+        // refused enter() emits no activeChanged, so re-assert.
+        refresh();
     });
     hide();
 }
@@ -58,28 +61,36 @@ void ReaderButton::setWebView(WebView *webView)
     refresh();
 }
 
-QIcon ReaderButton::makeIcon(bool active) const
+QIcon ReaderButton::makeIcon(bool active, bool suggested) const
 {
     // A page-with-lines glyph, painted so no icon theme is required.
-    // Active state fills the page with the accent color.
+    // Active state fills the page with the accent color; suggested
+    // pages get an accent outline + dot so availability still hints
+    // at reader mode without gating the button itself.
     QPixmap pixmap(16, 16);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
     const QColor fg = palette().color(
-        active ? QPalette::HighlightedText : QPalette::ButtonText);
+        active ? QPalette::HighlightedText
+               : suggested ? QPalette::Accent : QPalette::ButtonText);
     const QRectF page(2.5, 1.5, 11, 13);
     if (active) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(palette().color(QPalette::Accent));
         painter.drawRoundedRect(page, 1.5, 1.5);
     }
-    painter.setPen(QPen(fg, 1.1));
+    painter.setPen(QPen(fg, suggested ? 1.4 : 1.1));
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(page, 1.5, 1.5);
     painter.drawLine(QPointF(4.5, 5), QPointF(11.5, 5));
     painter.drawLine(QPointF(4.5, 8), QPointF(11.5, 8));
     painter.drawLine(QPointF(4.5, 11), QPointF(11.5, 11));
+    if (suggested) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().color(QPalette::Accent));
+        painter.drawEllipse(QPointF(12.6, 3.0), 1.8, 1.8);
+    }
     painter.end();
     return QIcon(pixmap);
 }
@@ -89,12 +100,20 @@ void ReaderButton::refresh()
     ReaderMode *mode =
         (m_webView && m_webView->readerMode()) ? m_webView->readerMode()
                                                : nullptr;
-    const bool available = mode && mode->isAvailable();
     const bool active = mode && mode->isActive();
-    setVisible(available);
+    const bool suggested = mode && mode->isAvailable() && !active;
+    // READ04: presence follows the tab — a WebView always offers
+    // reader mode (BrowserMainWindow hides the control where it can
+    // never apply: widget/engine tabs); the heuristic verdict only
+    // changes the "suggested" affordance.
+    setVisible(m_webView != nullptr);
     setChecked(active);
-    setIcon(makeIcon(active));
+    setProperty("suggested", suggested);
+    setIcon(makeIcon(active, suggested));
     setToolTip(active
         ? tr("Exit reader view (Ctrl+Alt+R)")
-        : tr("Enter reader view (Ctrl+Alt+R)"));
+        : suggested
+            ? tr("Enter reader view — page looks like an article "
+                 "(Ctrl+Alt+R)")
+            : tr("Enter reader view (Ctrl+Alt+R)"));
 }

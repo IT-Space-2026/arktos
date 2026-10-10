@@ -956,10 +956,12 @@ void tst_BrowserMainWindow::torCircuitStatusLabel()
     QVERIFY(!tooltip.isEmpty());
 }
 
-// READ02: the navigation toolbar carries a reader-mode toggle between
-// stop/reload and the location bar — hidden until the page probes
-// article-like, checked while the overlay is up, and always agreeing
-// with the View-menu action.
+// READ02/READ04: the navigation toolbar carries a reader-mode toggle
+// between stop/reload and the location bar — always present on engine
+// tabs (the article heuristic only sets the "suggested" accent),
+// checked while the overlay is up, agreeing with the View-menu
+// action, and hidden only where reader mode can never apply
+// (widget tabs like History).
 void tst_BrowserMainWindow::readerModeButton()
 {
     SubWindow *window = new SubWindow;
@@ -975,9 +977,11 @@ void tst_BrowserMainWindow::readerModeButton()
     QVERIFY(reader);
     QVERIFY(reader->autoRaise());
     QVERIFY(reader->isCheckable());
-    // about:blank is not article-like — nothing to read.
-    QVERIFY(reader->isHidden());
+    // READ04: about:blank is not article-like but the button still
+    // shows — the user may always try reader mode.
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 5000);
     QVERIFY(!reader->isChecked());
+    QVERIFY(!reader->property("suggested").toBool());
     QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
 
     // Slot order in the toolbar's action list: Back, Forward,
@@ -1011,7 +1015,8 @@ void tst_BrowserMainWindow::readerModeButton()
     QCOMPARE(reader->isChecked(), viewAction->isChecked());
 
     // A page the Readability heuristic calls readerable flips
-    // availability -> the button appears; click enters reader mode.
+    // availability -> the "suggested" accent lights up (the button
+    // was already there); click enters reader mode.
     QTcpServer server;
     QVERIFY(server.listen(QHostAddress::LocalHost));
     const QByteArray paragraph =
@@ -1036,7 +1041,10 @@ void tst_BrowserMainWindow::readerModeButton()
     window->currentTab()->loadUrl(
         QUrl(QStringLiteral("http://127.0.0.1:%1/article")
                  .arg(server.serverPort())));
-    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(reader->property("suggested").toBool(),
+                             20000);
+    QVERIFY(reader->toolTip().contains(
+        QLatin1String("article")));
 
     reader->click();
     QTRY_VERIFY_WITH_TIMEOUT(reader->isChecked(), 20000);
@@ -1047,12 +1055,41 @@ void tst_BrowserMainWindow::readerModeButton()
     QTRY_VERIFY_WITH_TIMEOUT(!viewAction->isChecked(), 20000);
     QTRY_VERIFY_WITH_TIMEOUT(!reader->isChecked(), 5000);
 
-    // Tab switches re-point the button at the current view: the fresh
-    // tab is no article, switching back shows the toggle again.
+    // Tab switches re-point the button at the current view.  READ04:
+    // the fresh tab stays visible even though it is no article — only
+    // the "suggested" accent drops.
     window->tabWidget()->newTab();
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->property("suggested").toBool(),
+                             10000);
+    QVERIFY(!reader->isHidden());
+    QVERIFY(!reader->isChecked());
+    QVERIFY(!viewAction->isChecked());
+
+    // Clicking on a non-article page is allowed — reader mode just
+    // reports it cannot apply rather than hiding the option up front.
+    WebView *blankView = window->currentTab();
+    QVERIFY(blankView && blankView->readerMode());
+    QSignalSpy messageSpy(blankView->readerMode(),
+                          &ReaderMode::message);
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(messageSpy.count() >= 1, 20000);
+    QVERIFY(!reader->isChecked());
+    QVERIFY(!blankView->readerMode()->isActive());
+
+    // Back on the article tab the suggested state returns.
+    window->tabWidget()->setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(reader->property("suggested").toBool(),
+                             10000);
+    QVERIFY(!reader->isHidden());
+
+    // Widget tabs are where the control really hides — reader mode
+    // can never apply to a History/Preferences page.
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
     QTRY_VERIFY_WITH_TIMEOUT(reader->isHidden(), 10000);
+    QVERIFY(!viewAction->isEnabled());
     window->tabWidget()->setCurrentIndex(0);
     QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 10000);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     closeWindow(window);
 }

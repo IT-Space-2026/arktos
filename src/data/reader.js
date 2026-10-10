@@ -277,12 +277,20 @@ color: var(--byline); }\
             if (host())
                 return true;
             try {
-                if (typeof isProbablyReaderable == "function")
-                    return !!isProbablyReaderable(document);
+                if (typeof isProbablyReaderable == "function") {
+                    if (isProbablyReaderable(document))
+                        return true;
+                    // READ04: relaxed second pass — the strict
+                    // thresholds miss real articles with short lead
+                    // paragraphs or div-shaped copy (telex.hu).
+                    if (isProbablyReaderable(document,
+                            { minContentLength: 100, minScore: 10 }))
+                        return true;
+                }
             } catch (e) {
             }
-            // Fallback heuristic if the helper is missing: the page is
-            // article-like when it holds enough paragraph text.
+            // Fallback heuristic: the page is article-like when it
+            // holds enough paragraph text…
             var total = 0;
             var paragraphs = document.querySelectorAll("p");
             for (var i = 0; i < paragraphs.length; ++i) {
@@ -290,6 +298,14 @@ color: var(--byline); }\
                 if (text.length > 120)
                     total += text.length;
                 if (total > 600)
+                    return true;
+            }
+            // …or when a semantic article container carries
+            // substantial copy (SPA markup that skips <p>).
+            var blocks = document.querySelectorAll(
+                "article, main, [role='main'], [itemprop='articleBody']");
+            for (var j = 0; j < blocks.length; ++j) {
+                if (blocks[j].textContent.trim().length > 1200)
                     return true;
             }
             return false;
