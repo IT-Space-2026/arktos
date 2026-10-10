@@ -182,6 +182,10 @@ public:
     // Tabs bound to a container — visible plus hidden — so the
     // level-1 badges keep counting while a level is filtered out.
     int containerTabCount(const QString &containerId) const;
+    // Every live tab in the window — count() only sees the visible
+    // level, so window-close confirmations must use this or filtered
+    // levels would silently close without warning.
+    int totalTabCount() const;
     void setActiveContainerHeader(const QString &containerId);
     // Drag-reorder of the level-1 headers (the default header is
     // pinned first and cannot move).

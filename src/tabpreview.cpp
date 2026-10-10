@@ -173,7 +173,10 @@ void TabPreview::positionFor(int index)
                      tab.bottom() + 6);
         break;
     }
-    pos = m_bar->mapToGlobal(pos);
+    // tabRect() is strip-space — when the container-header band is up
+    // its height sits between the widget top and the tab row, so the
+    // physical point is shifted down by the band.
+    pos = m_bar->mapToGlobal(pos + QPoint(0, m_bar->containerStripHeight()));
 
     QScreen *screen = QGuiApplication::screenAt(pos);
     if (!screen)

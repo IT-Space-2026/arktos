@@ -1342,6 +1342,16 @@ bool TabWidget::containerStripActive() const
     return m_twoLevelStrip && containerHeaders().count() > 1;
 }
 
+int TabWidget::totalTabCount() const
+{
+    int total = count();
+    for (const QList<HiddenGroupTab> &hidden : m_containerHidden)
+        total += hidden.size();
+    for (const TabGroup &group : m_tabGroupInfo)
+        total += group.hidden.size();
+    return total;
+}
+
 // Rebuild the strip so it shows exactly m_activeContainerHeader's
 // tabs: everything else detaches into its own container's list (in
 // strip order), then the active container's detached tabs re-insert
@@ -1365,6 +1375,9 @@ void TabWidget::applyContainerFilter()
     updateGeometry();
     m_tabBar->updateAccessibleStrip();
     m_tabBar->update();
+    // Header switches change the persisted session (the active level
+    // is serialized) — the AutoSaver hook needs to know.
+    emit tabsChanged();
 }
 
 // The detach half of a filter pass — identical mechanics to a
@@ -1866,8 +1879,10 @@ void TabWidget::bookmarkTabs()
     if (!folder)
         return;
 
-    for (int i = 0; i < count(); ++i) {
-        WebView *tab = webView(i);
+    // orderedWebViews() covers the filtered container levels and
+    // collapsed-group members too — "all tabs" means the window, not
+    // just the visible row.
+    for (WebView *tab : orderedWebViews()) {
         if (!tab)
             continue;
 
@@ -1905,7 +1920,9 @@ void TabWidget::windowCloseRequested()
     WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(webPage));
     int index = webViewIndex(webView);
     if (index >= 0) {
-        if (count() == 1) {
+        // CONT06: hidden container levels still hold live tabs — the
+        // window should only close when nothing is left anywhere.
+        if (totalTabCount() == 1) {
             if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this))
                 window->close();
         } else {
