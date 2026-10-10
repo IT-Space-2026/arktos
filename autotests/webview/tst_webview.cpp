@@ -32,6 +32,8 @@
 #include <qwebenginesettings.h>
 #include <qwebengineview.h>
 #include <qmimedata.h>
+#include <qfile.h>
+#include <qdir.h>
 #include <qlineedit.h>
 #include <qlabel.h>
 #include <qtoolbutton.h>
@@ -47,6 +49,9 @@
 #include "webpage.h"
 #include "webviewsearch.h"
 #include "browserapplication.h"
+#include "browsermainwindow.h"
+#include "tabwidget.h"
+#include "tormanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -133,6 +138,7 @@ private slots:
     void forceDarkMode();
     void webViewWithSearch();
     void contextMenuLinkActions();
+    void contextMenuLinkPrivateTorActions();
     void contextMenuPageActions();
     void contextMenuImageActions();
     void contextMenuImageLinkActions();
@@ -199,6 +205,11 @@ static bool driveRightClick(WebView *view, const QPoint &pos,
     timer.stop();
     return seen;
 }
+
+// CTX01 detached-view helpers — defined below ahead of the image
+// tests; the CONT07 link test uses them too.
+static WebView *awaitDetachedView(WebView *source, const QString &scheme);
+static void closeDetached(WebView *view);
 
 void tst_WebView::initTestCase()
 {
@@ -616,6 +627,218 @@ void tst_WebView::contextMenuLinkActions()
     QVERIFY(foundQr);
     QCOMPARE(QApplication::clipboard()->text(),
              QStringLiteral("https://example.com/path?id=42"));
+}
+
+// CONT07: a link right-click offers the full cross-context open set —
+// New Tab, New Window, New Private Tab, New Private Window, New Tor
+// Window — in that order.  The private entries disappear wherever
+// they could not honestly deliver a fresh isolated context (global
+// private mode and tor mode), and a dangerous-scheme link disables
+// every open entry.  Opens land where they claim: the private tab is
+// a real off-the-record view, the private window is a real
+// BrowserMainWindow whose first tab is OTR.
+void tst_WebView::contextMenuLinkPrivateTorActions()
+{
+    // The strict gate all five targets funnel through.
+    QVERIFY(WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("https://example.com/"))));
+    QVERIFY(WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("file:///tmp/x"))));
+    QVERIFY(!WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("javascript:alert(1)"))));
+    QVERIFY(!WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("JAVASCRIPT:alert(1)"))));
+    QVERIFY(!WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("data:text/html,<h1>x</h1>"))));
+    QVERIFY(!WebView::isUrlAllowedFromPageLink(
+        QUrl(QLatin1String("blob:https://example.com/uuid"))));
+    // The base gate stays permissive — internally generated data:
+    // urls (the canvas serializer) still ride it.
+    QVERIFY(WebView::isUrlAllowedOnUntrustedInput(
+        QUrl(QLatin1String("data:text/plain,x"))));
+
+    // A file: link target loads without a network, so the opened
+    // view's url settles deterministically.
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-cont07-target.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>cont07-target</title>"
+                      "</head><body>t</body></html>");
+    }
+    const QUrl linkTarget = QUrl::fromLocalFile(fixturePath);
+
+    // On the app's named browsing profile — the default-constructed
+    // WebPage binds QWebEngineProfile::defaultProfile(), which is
+    // itself off-the-record in Qt6 and would make the same-context
+    // opens look private.
+    TestWebView view(BrowserApplication::webEngineProfile());
+    view.resize(800, 600);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    const QString html = QStringLiteral(
+        "<html><body>"
+        "<a href='%1' style='position:fixed;left:0;top:0;display:block;"
+        "width:300px;height:60px'>link</a>"
+        "<a href='javascript:alert(1)' style='position:fixed;left:0;"
+        "top:80px;display:block;width:300px;height:60px'>bad</a>"
+        "</body></html>").arg(linkTarget.toString());
+    view.loadUrl(QUrl(QStringLiteral("data:text/html,")
+        + QString::fromUtf8(QUrl::toPercentEncoding(html))));
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+
+    const auto collectOpenEntries = [](QMenu *menu,
+            QStringList *order, QHash<QString, bool> *enabled) {
+        const QList<QAction *> actions = menu->actions();
+        for (QAction *action : actions) {
+            const QString text = action->text().remove(QLatin1Char('&'));
+            if (text.startsWith(QLatin1String("Open in New"))) {
+                order->append(text);
+                enabled->insert(text, action->isEnabled());
+            }
+        }
+    };
+
+    // Menu shape and order on an ordinary link.
+    QStringList order;
+    QHash<QString, bool> enabled;
+    const bool popped = driveRightClick(&view, QPoint(30, 30),
+                                        [&](QMenu *menu) {
+        collectOpenEntries(menu, &order, &enabled);
+    });
+    QVERIFY2(popped, "no context menu on link right-click");
+    QCOMPARE(order, (QStringList{
+        QStringLiteral("Open in New Tab"),
+        QStringLiteral("Open in New Window"),
+        QStringLiteral("Open in New Private Tab"),
+        QStringLiteral("Open in New Private Window"),
+        QStringLiteral("Open in New Tor Window")}));
+    const bool torAvailable = !TorManager::resolveBinary().isEmpty();
+    for (const QString &text : order) {
+        const bool expected = text == QLatin1String("Open in New Tor Window")
+            ? torAvailable : true;
+        QVERIFY2(enabled.value(text) == expected,
+                 qPrintable(QStringLiteral("%1 enabled=%2 expected=%3")
+                     .arg(text).arg(enabled.value(text)).arg(expected)));
+    }
+
+    // 'Open in New Private Tab' produces a detached OTR view (there is
+    // no TabWidget above the detached source) and loads the link.
+    const bool poppedPrivateTab = driveRightClick(&view, QPoint(30, 30),
+                                                  [&](QMenu *menu) {
+        if (QAction *action = findMenuAction(
+                menu, QStringLiteral("Open in New Private Tab")))
+            action->trigger();
+    });
+    QVERIFY(poppedPrivateTab);
+    WebView *privateTab = awaitDetachedView(&view, QLatin1String("file"));
+    QVERIFY2(privateTab, "private-tab open produced no view");
+    QCOMPARE(privateTab->webPage()->profile(),
+             BrowserApplication::privateWebEngineProfile());
+    QVERIFY(privateTab->webPage()->profile()->isOffTheRecord());
+    QCOMPARE(privateTab->url(), linkTarget);
+    closeDetached(privateTab);
+
+    // 'Open in New Private Window' spawns a real BrowserMainWindow
+    // whose first tab is off-the-record.
+    BrowserApplication *application = BrowserApplication::instance();
+    const QList<BrowserMainWindow *> beforeWindows =
+        application->mainWindows();
+    const bool poppedPrivateWindow = driveRightClick(
+        &view, QPoint(30, 30), [&](QMenu *menu) {
+        if (QAction *action = findMenuAction(
+                menu, QStringLiteral("Open in New Private Window")))
+            action->trigger();
+    });
+    QVERIFY(poppedPrivateWindow);
+    QPointer<BrowserMainWindow> privateWindow;
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<BrowserMainWindow *> windows =
+            application->mainWindows();
+        for (BrowserMainWindow *window : windows) {
+            if (!beforeWindows.contains(window)) {
+                privateWindow = window;
+                return true;
+            }
+        }
+        return false;
+    }(), 5000);
+    QVERIFY(privateWindow);
+    WebView *windowTab = privateWindow->tabWidget()->currentWebView();
+    QVERIFY(windowTab);
+    QCOMPARE(windowTab->webPage()->profile(),
+             BrowserApplication::privateWebEngineProfile());
+    QVERIFY(windowTab->webPage()->profile()->isOffTheRecord());
+    QTRY_VERIFY_WITH_TIMEOUT(windowTab->url() == linkTarget, 15000);
+    privateWindow->close();
+    QTRY_VERIFY_WITH_TIMEOUT(privateWindow.isNull(), 5000);
+
+    // The plain 'Open in New Tab' still lands on this page's profile.
+    const bool poppedTab = driveRightClick(&view, QPoint(30, 30),
+                                           [&](QMenu *menu) {
+        if (QAction *action = findMenuAction(
+                menu, QStringLiteral("Open in New Tab")))
+            action->trigger();
+    });
+    QVERIFY(poppedTab);
+    WebView *normalTab = awaitDetachedView(&view, QLatin1String("file"));
+    QVERIFY2(normalTab, "new-tab open produced no view");
+    // Same context as the source page — that is also what keeps the
+    // Referer header attached (cross-profile opens drop it).
+    QCOMPARE(normalTab->webPage()->profile(), view.webPage()->profile());
+    QVERIFY(!normalTab->webPage()->profile()->isOffTheRecord());
+    QCOMPARE(normalTab->url(), linkTarget);
+    closeDetached(normalTab);
+
+    // A javascript: link disables every open entry — the menu is
+    // honest instead of offering a click that opens nothing.
+    QStringList badOrder;
+    QHash<QString, bool> badEnabled;
+    const bool poppedBad = driveRightClick(&view, QPoint(30, 100),
+                                           [&](QMenu *menu) {
+        collectOpenEntries(menu, &badOrder, &badEnabled);
+    });
+    QVERIFY2(poppedBad, "no context menu on javascript: link");
+    QVERIFY2(!badOrder.isEmpty(),
+             "javascript: link reported no link menu entries");
+    for (const QString &text : badOrder)
+        QVERIFY2(!badEnabled.value(text),
+                 qPrintable(text + QLatin1String(" stayed enabled")));
+
+    // Global private mode (a private-window process) collapses the
+    // private entries — New Tab/Window are already private there.
+    BrowserApplication::setPrivate(true);
+    QStringList privateModeOrder;
+    QHash<QString, bool> privateModeEnabled;
+    driveRightClick(&view, QPoint(30, 30), [&](QMenu *menu) {
+        collectOpenEntries(menu, &privateModeOrder, &privateModeEnabled);
+    });
+    BrowserApplication::setPrivate(false);
+    QVERIFY(!privateModeOrder.contains(
+        QLatin1String("Open in New Private Tab")));
+    QVERIFY(!privateModeOrder.contains(
+        QLatin1String("Open in New Private Window")));
+    QVERIFY(privateModeOrder.contains(
+        QLatin1String("Open in New Tor Window")));
+
+    // Tor mode does the same — a private entry could only ever land
+    // on the clearnet OTR profile from a tor window.
+    BrowserApplication::setTorMode(true);
+    QStringList torModeOrder;
+    QHash<QString, bool> torModeEnabled;
+    driveRightClick(&view, QPoint(30, 30), [&](QMenu *menu) {
+        collectOpenEntries(menu, &torModeOrder, &torModeEnabled);
+    });
+    BrowserApplication::setTorMode(false);
+    QVERIFY(!torModeOrder.contains(
+        QLatin1String("Open in New Private Tab")));
+    QVERIFY(!torModeOrder.contains(
+        QLatin1String("Open in New Private Window")));
+    QVERIFY(torModeOrder.contains(
+        QLatin1String("Open in New Tor Window")));
+
+    QFile::remove(fixturePath);
 }
 
 // POL01: right-clicking plain page content gets the stock menu plus

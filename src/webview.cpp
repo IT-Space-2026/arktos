@@ -80,6 +80,7 @@
 #include "scriptblockinfobar.h"
 #include "scriptcontrolmanager.h"
 #include "toolbarsearch.h"
+#include "tormanager.h"
 #include "urlcleaner.h"
 #include "webenginebackend.h"
 #include "webpage.h"
@@ -282,10 +283,41 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     QMenu *menu = new QMenu(this);
 
     if (!info.linkUrl.isEmpty()) {
-        QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(info.linkUrl);
-        QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openActionUrlInNewTab);
+        // CONT07: every entry hands an attacker-influenced page url to
+        // a new browsing context — the slots gate the scheme through
+        // isUrlAllowedFromPageLink, and entries that can never succeed
+        // are disabled at build time rather than refused on trigger.
+        const bool allowed = isUrlAllowedFromPageLink(info.linkUrl);
+        QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openLinkInNewTab);
         newTabAction->setData(info.linkUrl);
+        newTabAction->setEnabled(allowed);
+        QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openLinkInNewWindow);
+        newWindowAction->setData(info.linkUrl);
+        newWindowAction->setEnabled(allowed);
+        // The private entries are hidden wherever they could not
+        // honestly deliver a new isolated context: a fully private
+        // window already routes every new tab/window through the OTR
+        // profile, and inside a tor window they would have to land on
+        // the CLEARNET OTR profile — a leak (isPrivate() covers tor
+        // mode).  'Open in New Tor Window' always works — it spawns a
+        // real --tor process.
+        if (!BrowserApplication::isPrivate()) {
+            QAction *privateTabAction = menu->addAction(tr("Open in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+            privateTabAction->setData(info.linkUrl);
+            privateTabAction->setEnabled(allowed);
+            QAction *privateWindowAction = menu->addAction(tr("Open in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+            privateWindowAction->setData(info.linkUrl);
+            privateWindowAction->setEnabled(allowed);
+        }
+        QAction *torWindowAction = menu->addAction(tr("Open in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        torWindowAction->setData(info.linkUrl);
+        torWindowAction->setEnabled(allowed);
+        if (TorManager::resolveBinary().isEmpty()) {
+            torWindowAction->setEnabled(false);
+            torWindowAction->setToolTip(
+                tr("No tor binary found — install tor or run "
+                   "BuildProcess/fetch-tor.sh"));
+        }
         menu->addSeparator();
         QAction *saveLinkAction = menu->addAction(tr("Save Lin&k"), this, &WebView::downloadLinkToDisk);
         saveLinkAction->setData(info.linkUrl);
@@ -307,10 +339,32 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     if (isImage && !info.mediaUrl.isEmpty()) {
         if (!menu->isEmpty())
             menu->addSeparator();
-        QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(info.mediaUrl);
+        // The same-profile opens keep the permissive base gate — a
+        // blob: media url is only resolvable inside this profile.  The
+        // private/tor entries hand the page-supplied url to another
+        // context and take the strict page-link gate (CONT07).
         QAction *newTabAction = menu->addAction(tr("Open Image in New &Tab"), this, &WebView::openActionUrlInNewTab);
         newTabAction->setData(info.mediaUrl);
+        QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
+        newWindowAction->setData(info.mediaUrl);
+        const bool allowed = isUrlAllowedFromPageLink(info.mediaUrl);
+        if (!BrowserApplication::isPrivate()) {
+            QAction *privateTabAction = menu->addAction(tr("Open Image in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+            privateTabAction->setData(info.mediaUrl);
+            privateTabAction->setEnabled(allowed);
+            QAction *privateWindowAction = menu->addAction(tr("Open Image in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+            privateWindowAction->setData(info.mediaUrl);
+            privateWindowAction->setEnabled(allowed);
+        }
+        QAction *torWindowAction = menu->addAction(tr("Open Image in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        torWindowAction->setData(info.mediaUrl);
+        torWindowAction->setEnabled(allowed);
+        if (TorManager::resolveBinary().isEmpty()) {
+            torWindowAction->setEnabled(false);
+            torWindowAction->setToolTip(
+                tr("No tor binary found — install tor or run "
+                   "BuildProcess/fetch-tor.sh"));
+        }
         menu->addSeparator();
         QAction *saveImageAction = menu->addAction(tr("&Save Image"), this, &WebView::downloadImageToDisk);
         saveImageAction->setData(info.mediaUrl);
@@ -553,6 +607,117 @@ void WebView::openActionUrlInNewWindow()
         openUrlInTarget(action->data().toUrl(), TabWidget::NewWindow);
 }
 
+// CONT07: the link-menu New Tab/New Window slots take the strict
+// page-link gate — the same-profile image opens above stay permissive
+// so a blob: media url keeps working inside its own profile.
+void WebView::openLinkInNewTab()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTarget(action->data().toUrl(),
+                            TabWidget::NewNotSelectedTab);
+}
+
+void WebView::openLinkInNewWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTarget(action->data().toUrl(),
+                            TabWidget::NewWindow);
+}
+
+void WebView::openUrlInNewPrivateTab()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInPrivateTab(action->data().toUrl());
+}
+
+void WebView::openUrlInNewPrivateWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInPrivateWindow(action->data().toUrl());
+}
+
+void WebView::openUrlInNewTorWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTorWindow(action->data().toUrl());
+}
+
+void WebView::openPageUrlInTarget(const QUrl &linkUrl,
+                                  TabWidget::OpenUrlIn target)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    openUrlInTarget(linkUrl, target);
+}
+
+void WebView::openPageUrlInPrivateTab(const QUrl &linkUrl)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    WebView *newView = nullptr;
+    if (TabWidget *tabs = tabWidget())
+        // Background placement, matching 'Open in New Tab'.  Reached
+        // from a tor window anyway (the entry is hidden there), this
+        // resolves to a tor-profile tab — never clearnet OTR.
+        newView = tabs->makeNewPrivateTab(false);
+    if (!newView) {
+        // Detached view (no TabWidget above us): a standalone OTR
+        // WebView.  privateWebEngineProfile() is always the CLEARNET
+        // off-the-record profile — a tor process must hand out its
+        // own profile here.
+        newView = new WebView(BrowserApplication::isTorMode()
+            ? BrowserApplication::webEngineProfile()
+            : BrowserApplication::privateWebEngineProfile());
+        newView->setAttribute(Qt::WA_DeleteOnClose);
+        newView->show();
+    }
+    loadUrlInView(newView, linkUrl);
+}
+
+void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    WebView *newView = nullptr;
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        // The same first-tab swap getView(NewWindow) performs for an
+        // off-the-record source: a page's profile is fixed at
+        // creation, so the fresh window's default tab is replaced by
+        // an off-the-record one — which also means no container
+        // binding is carried across.
+        BrowserMainWindow *window = application->newMainWindow();
+        if (WebView *privateTab =
+                window->tabWidget()->makeNewPrivateTab(true)) {
+            window->tabWidget()->closeTab(0);
+            newView = privateTab;
+        } else {
+            // The OTR tab could not be bound — closing the window is
+            // safer than letting the link land in its default tab.
+            window->close();
+        }
+    }
+    if (!newView) {
+        newView = new WebView(BrowserApplication::isTorMode()
+            ? BrowserApplication::webEngineProfile()
+            : BrowserApplication::privateWebEngineProfile());
+        newView->setAttribute(Qt::WA_DeleteOnClose);
+        newView->show();
+    }
+    loadUrlInView(newView, linkUrl);
+}
+
+void WebView::openPageUrlInTorWindow(const QUrl &linkUrl)
+{
+    // The url travels to the new --tor process as its own argv
+    // element — never through a shell — and is re-gated there as
+    // untrusted input (BrowserApplication::torStartup).  Refusing the
+    // dangerous schemes on this side too keeps a dead hand-off from
+    // ever being offered.
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    BrowserApplication::openTorWindow(linkUrl);
+}
+
 void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
 {
     WebView *newView = nullptr;
@@ -565,17 +730,26 @@ void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
         newView->setAttribute(Qt::WA_DeleteOnClose);
         newView->show();
     }
-    // CTX01: keep the request-based load for http(s) — the Referer
-    // header preserves hotlink-protection behavior.  Everything else
-    // (data: canvas dumps, blob: media, file:, view-source:) has no
-    // use for the header and QWebEngineHttpRequest only applies extra
-    // headers to http(s) anyway; the plain url load keeps javascript:
-    // refused through isUrlAllowedOnUntrustedInput (SEC02).
+    loadUrlInView(newView, linkUrl);
+}
+
+// CTX01: keep the request-based load for http(s) — the Referer header
+// preserves hotlink-protection behavior, but only when the target
+// page lives on THIS page's profile: attaching it to a private or
+// tor hand-off would leak the source page's url across a privacy
+// boundary (CONT07).  Everything else (data: canvas dumps, blob:
+// media, file:, view-source:) has no use for the header and
+// QWebEngineHttpRequest only applies extra headers to http(s)
+// anyway; the plain url load keeps javascript: refused through
+// isUrlAllowedOnUntrustedInput (SEC02).
+void WebView::loadUrlInView(WebView *newView, const QUrl &linkUrl)
+{
     const QString scheme = linkUrl.scheme();
     if (scheme == QLatin1String("http")
         || scheme == QLatin1String("https")) {
         QWebEngineHttpRequest request(linkUrl);
-        request.setHeader("Referer", url().toEncoded());
+        if (newView->webPage()->profile() == m_page->profile())
+            request.setHeader("Referer", url().toEncoded());
         newView->load(request);
         return;
     }
@@ -729,6 +903,14 @@ void WebView::loadFinished()
 bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)
 {
     return url.scheme() != QLatin1String("javascript");
+}
+
+bool WebView::isUrlAllowedFromPageLink(const QUrl &url)
+{
+    const QString scheme = url.scheme();
+    return isUrlAllowedOnUntrustedInput(url)
+        && scheme != QLatin1String("data")
+        && scheme != QLatin1String("blob");
 }
 
 void WebView::loadUrl(const QUrl &url, const QString &title)

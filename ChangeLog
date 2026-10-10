@@ -75,6 +75,13 @@ UI:
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and
   child tabs inherit the private context (PTAB01).
+- Link context menu gains "Open in New Private Tab", "Open in New
+  Private Window" and "Open in New Tor Window" alongside New
+  Tab/Window. All five entries share one strict link gate —
+  javascript:, data: and blob: links are refused everywhere — Referer
+  is sent only for same-profile opens, private targets never inherit
+  the page's container, and inside a Tor window the menu stays
+  Tor-bound so a link can never escape to clearnet (CONT07).
 - Preferences opens as a tab instead of a modal dialog, one per
   window — re-opening focuses the existing tab, OK applies + closes,
   Cancel or closing the tab discards, and settings deep links (Search

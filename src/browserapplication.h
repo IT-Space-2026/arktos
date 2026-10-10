@@ -156,8 +156,11 @@ public:
     static void setTorMode(bool torMode);
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
-    // Spawns an independent `arora --tor` process.
-    static void openTorWindow();
+    // Spawns an independent `arora --tor` process.  An optional start
+    // url (CONT07's 'Open in New Tor Window') rides as its own argv
+    // element — never a shell string — and is re-gated as untrusted
+    // input on the receiving side (torStartup).
+    static void openTorWindow(const QUrl &url = QUrl());
 
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);

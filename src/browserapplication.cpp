@@ -640,7 +640,16 @@ void BrowserApplication::torStartup(const QString &url)
         return;
     BrowserMainWindow *window = mainWindow();
     if (!url.isEmpty()) {
-        window->tabWidget()->loadStringFromUntrustedSource(url);
+        // CONT07: the argv operand may be a hand-off from a link
+        // context menu in another process — it gets the stricter
+        // page-link gate, so a javascript:/data:/blob: operand is
+        // refused outright instead of executing in this fresh chrome
+        // context.
+        if (WebView::isUrlAllowedFromPageLink(QUrl(url))) {
+            window->tabWidget()->loadStringFromUntrustedSource(url);
+        } else {
+            qWarning() << "Ignoring untrusted --tor argv url:" << url;
+        }
         return;
     }
     // startupBehavior: homepage (0) still applies; restore-session (2)
@@ -1221,15 +1230,23 @@ TorManager *BrowserApplication::torManager() const
     return m_torManager;
 }
 
-void BrowserApplication::openTorWindow()
+void BrowserApplication::openTorWindow(const QUrl &url)
 {
     // TOR02: a separate process — the application proxy is
     // process-global, so tor routing can never share this one.  Each
     // tor process manages its own daemon (TAKEOWNERSHIP binds its
     // lifetime to the process), so several tor windows coexist
     // independently.
+    QStringList arguments{QStringLiteral("--tor")};
+    // CONT07: an optional start url travels as its own argv element —
+    // startDetached never involves a shell, so no quoting/escaping
+    // hazard exists — and the receiver re-gates it as untrusted
+    // input.  Refuse the dangerous schemes on this side too.
+    if (url.isValid() && !url.isEmpty()
+        && WebView::isUrlAllowedFromPageLink(url))
+        arguments << QString::fromUtf8(url.toEncoded());
     QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                          QStringList() << QStringLiteral("--tor"));
+                          arguments);
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const
