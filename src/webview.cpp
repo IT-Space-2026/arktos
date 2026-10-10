@@ -235,6 +235,41 @@ QString WebView::containerId() const
         ->containerIdForProfile(m_page->profile());
 }
 
+// Translates the engine's context-menu payload into the interface's
+// neutral shape — the menu logic below consumes only Engine::
+// ContextMenuInfo so the request type never crosses the boundary.
+static Engine::ContextMenuInfo contextMenuInfo(
+        const QWebEngineContextMenuRequest *request)
+{
+    Engine::ContextMenuInfo info;
+    info.position = request->position();
+    info.linkUrl = request->linkUrl();
+    info.linkText = request->linkText();
+    info.mediaUrl = request->mediaUrl();
+    info.selectedText = request->selectedText();
+    // QWebEngineContextMenuRequest carries no pageUrl — the struct's
+    // field stays empty and the menu reads the page url from the view.
+    info.isContentEditable = request->isContentEditable();
+    switch (request->mediaType()) {
+    case QWebEngineContextMenuRequest::MediaTypeImage:
+        info.hasImage = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeVideo:
+        info.hasMedia = true;
+        info.hasVideo = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeAudio:
+        info.hasMedia = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeCanvas:
+        info.isCanvas = true;
+        break;
+    default:
+        break;
+    }
+    return info;
+}
+
 void WebView::contextMenuEvent(QContextMenuEvent *event)
 {
     QWebEngineContextMenuRequest *request = lastContextMenuRequest();
@@ -242,48 +277,47 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         QWebEngineView::contextMenuEvent(event);
         return;
     }
+    const Engine::ContextMenuInfo info = contextMenuInfo(request);
 
     QMenu *menu = new QMenu(this);
 
-    if (!request->linkUrl().isEmpty()) {
+    if (!info.linkUrl.isEmpty()) {
         QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(request->linkUrl());
+        newWindowAction->setData(info.linkUrl);
         QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openActionUrlInNewTab);
-        newTabAction->setData(request->linkUrl());
+        newTabAction->setData(info.linkUrl);
         menu->addSeparator();
         QAction *saveLinkAction = menu->addAction(tr("Save Lin&k"), this, &WebView::downloadLinkToDisk);
-        saveLinkAction->setData(request->linkUrl());
+        saveLinkAction->setData(info.linkUrl);
         QAction *bookmarkAction = menu->addAction(tr("&Bookmark This Link"), this, &WebView::bookmarkLink);
-        bookmarkAction->setData(request->linkUrl());
+        bookmarkAction->setData(info.linkUrl);
         menu->addSeparator();
-        if (!request->selectedText().isEmpty())
+        if (!info.selectedText.isEmpty())
             menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         QAction *copyLinkAction = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
-        copyLinkAction->setData(request->linkUrl());
+        copyLinkAction->setData(info.linkUrl);
         // POL01: same copy but with tracking query parameters removed.
         QAction *cleanLinkAction = menu->addAction(tr("Copy &Clean Link"), this, &WebView::copyCleanLinkToClipboard);
-        cleanLinkAction->setData(request->linkUrl());
+        cleanLinkAction->setData(info.linkUrl);
     }
 
-    const bool isImage = request->mediaType()
-            == QWebEngineContextMenuRequest::MediaTypeImage;
-    const bool isCanvas = request->mediaType()
-            == QWebEngineContextMenuRequest::MediaTypeCanvas;
+    const bool isImage = info.hasImage;
+    const bool isCanvas = info.isCanvas;
 
-    if (isImage && !request->mediaUrl().isEmpty()) {
+    if (isImage && !info.mediaUrl.isEmpty()) {
         if (!menu->isEmpty())
             menu->addSeparator();
         QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(request->mediaUrl());
+        newWindowAction->setData(info.mediaUrl);
         QAction *newTabAction = menu->addAction(tr("Open Image in New &Tab"), this, &WebView::openActionUrlInNewTab);
-        newTabAction->setData(request->mediaUrl());
+        newTabAction->setData(info.mediaUrl);
         menu->addSeparator();
         QAction *saveImageAction = menu->addAction(tr("&Save Image"), this, &WebView::downloadImageToDisk);
-        saveImageAction->setData(request->mediaUrl());
+        saveImageAction->setData(info.mediaUrl);
         menu->addAction(tr("&Copy Image"), this, &WebView::copyImageToClipboard);
-        menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(request->mediaUrl().toString());
+        menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(info.mediaUrl.toString());
         menu->addSeparator();
-        menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(request->mediaUrl().toString());
+        menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(info.mediaUrl.toString());
 
         // SRCH04: reverse-image search through the configured image
         // engine — only offered when an engine actually advertises an
@@ -294,7 +328,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                 tr("Search Image with %1")
                     .arg(SafeText::menu(imageEngine->name())),
                 this, &WebView::imageSearchRequested);
-            imageSearchAction->setData(request->mediaUrl());
+            imageSearchAction->setData(info.mediaUrl);
         }
     } else if (isImage || isCanvas) {
         // CTX01: a <canvas> reports no mediaUrl (its pixels only exist
@@ -305,7 +339,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         // canvas has no location to copy or block rule to write.
         if (!menu->isEmpty())
             menu->addSeparator();
-        const QPoint position = request->position();
+        const QPoint position = info.position;
         menu->addAction(tr("Open Image in New &Window"), this,
                 [this, position, isCanvas]() {
             grabContextImage(position, isCanvas,
@@ -377,11 +411,11 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
 
     // PIP01: right-click on a <video> offers the pop-out.  The
     // element itself is resolved in-page (click point + media url).
-    if (request->mediaType() == QWebEngineContextMenuRequest::MediaTypeVideo) {
+    if (info.hasVideo) {
         if (!menu->isEmpty())
             menu->addSeparator();
-        const QUrl mediaUrl = request->mediaUrl();
-        const QPoint position = request->position();
+        const QUrl mediaUrl = info.mediaUrl;
+        const QPoint position = info.position;
         menu->addAction(tr("Picture-in-Picture"), this,
                 [this, mediaUrl, position]() {
             m_pip->popOutContext(mediaUrl, position);
@@ -399,7 +433,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         });
     }
 
-    if (!request->selectedText().isEmpty()) {
+    if (!info.selectedText.isEmpty()) {
         if (menu->isEmpty()) {
             menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         } else {
@@ -417,7 +451,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         }
     }
 
-    if (request->isContentEditable()) {
+    if (info.isContentEditable) {
         // TODO(MIG08): "Add to the toolbar search" — needs the input element's
         // form data via runJavaScript (was synchronous QWebElement access).
     }
@@ -435,7 +469,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     // Link' was already added against the link URL above; here it
     // cleans the page address itself.  The QR action is always for
     // the current page.
-    if (request->linkUrl().isEmpty()) {
+    if (info.linkUrl.isEmpty()) {
         menu->addAction(tr("Copy &Clean Link"), this, [this]() {
             QApplication::clipboard()->setText(
                 UrlCleaner::cleanedUrl(url()).toString());

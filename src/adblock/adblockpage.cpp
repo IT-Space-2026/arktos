@@ -37,14 +37,13 @@
 #include "adblocknetwork.h"
 #endif
 
+#include "engineinterface.h"
+
 #include <qfile.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qurl.h>
-#include <qwebenginepage.h>
-#include <qwebenginescript.h>
-#include <qwebenginescriptcollection.h>
 
 #include <qdebug.h>
 
@@ -386,24 +385,17 @@ static QString rustCosmeticScript(const QJsonObject &cosmetic)
 
 // Replaces the named per-page user script — removing it entirely when
 // the payload is empty so a disabled feature leaves nothing armed.
-static void replacePageScript(QWebEnginePage *page, const QString &name,
+static void replacePageScript(Engine::Page *page, const QString &name,
         const QString &source)
 {
-    QWebEngineScriptCollection &scripts = page->scripts();
-    const QList<QWebEngineScript> installed = scripts.toList();
-    for (const QWebEngineScript &script : installed) {
-        if (script.name() == name)
-            scripts.remove(script);
-    }
+    page->removeScript(name);
     if (source.isEmpty())
         return;
-    QWebEngineScript script;
-    script.setName(name);
-    script.setInjectionPoint(QWebEngineScript::DocumentReady);
-    script.setWorldId(QWebEngineScript::MainWorld);
-    script.setRunsOnSubFrames(false);
-    script.setSourceCode(source);
-    scripts.insert(script);
+    // worldId 0 is the page's main world — the payload must run where
+    // the document's DOM lives, not an isolated world.
+    page->insertScript(Engine::Script{
+        name, source, Engine::InjectionPoint::DocumentReady,
+        0 /* main world */, false });
 }
 
 QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
@@ -570,7 +562,7 @@ QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const
     return parts.join(QLatin1Char('\n'));
 }
 
-void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
+void AdBlockPage::applyRulesToPage(Engine::Page *page)
 {
     if (!page)
         return;
@@ -579,7 +571,7 @@ void AdBlockPage::applyRulesToPage(QWebEnginePage *page)
         page->runJavaScript(script);
 }
 
-void AdBlockPage::scheduleRulesOnPage(QWebEnginePage *page,
+void AdBlockPage::scheduleRulesOnPage(Engine::Page *page,
         const QUrl &url)
 {
     if (!page)

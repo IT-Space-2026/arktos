@@ -726,6 +726,16 @@ void WebEngineDownloadRequest::setDownloadFileName(const QString &fileName)
     m_request->setDownloadFileName(fileName);
 }
 
+QString WebEngineDownloadRequest::downloadDirectory() const
+{
+    return m_request->downloadDirectory();
+}
+
+QString WebEngineDownloadRequest::downloadFileName() const
+{
+    return m_request->downloadFileName();
+}
+
 Engine::Page *WebEngineDownloadRequest::page() const
 {
     return WebEnginePageAdapter::forPage(m_request->page());

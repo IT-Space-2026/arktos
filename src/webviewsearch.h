@@ -24,9 +24,6 @@
 
 #include "engineinterface.h"
 
-QT_BEGIN_NAMESPACE
-class QWebEngineView;
-QT_END_NAMESPACE
 class WebView;
 
 class WebViewSearch : public SearchBar
@@ -34,10 +31,11 @@ class WebViewSearch : public SearchBar
     Q_OBJECT
 
 public:
-    // Takes the engine view type rather than WebView so the bar still
-    // hosts on a bare QWebEngineView — the find paths then no-op
-    // (enginePage() only exists on the app's WebView).
-    WebViewSearch(QWebEngineView *webView, QWidget *parent = nullptr);
+    // Takes the widget type rather than WebView so the bar still
+    // hosts on a bare engine view (main.cpp's smoke harnesses) — the
+    // find paths then no-op (enginePage() only exists on the app's
+    // WebView).
+    WebViewSearch(QWidget *webView, QWidget *parent = nullptr);
 
 public slots:
     void findNext() override;

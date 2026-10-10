@@ -37,6 +37,7 @@
 #include "scriptcontrolmanager.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "webenginebackend.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -1798,11 +1799,12 @@ void WebPage::schedulePageScripts(const QUrl &url)
     m_scheduledScriptUrl = url;
     if (!m_injectedScriptsEnabled)
         return;
-    AdBlockManager::instance()->page()->scheduleRulesOnPage(this, url);
+    Engine::Page *enginePage = WebEnginePageAdapter::forPage(this);
+    AdBlockManager::instance()->page()->scheduleRulesOnPage(enginePage, url);
     // TOR02: no autofill fill/capture in a tor window — stored
     // credentials are a cross-context identity leak.
     if (!BrowserApplication::isTorMode())
-        AutoFillManager::instance()->scheduleOnPage(this, url);
+        AutoFillManager::instance()->scheduleOnPage(enginePage, url);
 }
 
 void WebPage::setInjectedScriptsEnabled(bool enabled)

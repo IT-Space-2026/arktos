@@ -35,7 +35,6 @@
 #include <qvariantmap.h>
 
 class QDataStream;
-class QWebEnginePage;
 class AutoSaver;
 namespace Engine { class Page; }
 
@@ -109,7 +108,7 @@ public:
     // at DocumentReady keyed to the navigation's target url — the
     // injection rides Chromium's own script pipeline instead of
     // competing with paint-gated subresource scheduling after load.
-    void scheduleOnPage(QWebEnginePage *page, const QUrl &url);
+    void scheduleOnPage(Engine::Page *page, const QUrl &url);
 
     void setForms(const QList<Form> &forms);
     QList<Form> forms() const;
@@ -128,8 +127,8 @@ private:
     static QString autoFillDataFile();
     bool allowedToAutoFill(bool password) const;
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
-    QString scriptForPage(QWebEnginePage *page, const QUrl &url);
-    bool captureEnabledForPage(QWebEnginePage *page) const;
+    QString scriptForPage(Engine::Page *page, const QUrl &url);
+    bool captureEnabledForPage(Engine::Page *page) const;
     QString autoFillScript(const QList<Form> &forms, bool capture,
                            const QString &reportToken) const;
     bool promptToSave(const QUrl &url);

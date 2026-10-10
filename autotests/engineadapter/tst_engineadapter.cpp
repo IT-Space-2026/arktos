@@ -214,6 +214,8 @@ public:
     {
         m_fileName = fileName;
     }
+    QString downloadDirectory() const override { return m_dir; }
+    QString downloadFileName() const override { return m_fileName; }
     Engine::Page *page() const override { return m_page; }
 
     void setState(State state)

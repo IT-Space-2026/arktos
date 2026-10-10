@@ -1626,12 +1626,8 @@ void BrowserMainWindow::fileSaveAs()
 {
     if (!currentTab())
         return;
-    // DownloadManager is still engine-typed internally — the adapter
-    // hands it the wrapped page until the download surface wraps too.
-    if (WebEnginePageAdapter *adapter =
-            WebEnginePageAdapter::of(currentTab()->enginePage()))
-        BrowserApplication::downloadManager()->download(
-            adapter->webEnginePage(), currentTab()->url(), true);
+    BrowserApplication::downloadManager()->download(
+        currentTab()->enginePage(), currentTab()->url(), true);
 }
 
 void BrowserMainWindow::preferences()

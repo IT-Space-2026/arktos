@@ -294,6 +294,8 @@ public:
     // its own policy dialog before accept().
     virtual void setDownloadDirectory(const QString &directory) = 0;
     virtual void setDownloadFileName(const QString &fileName) = 0;
+    virtual QString downloadDirectory() const = 0;
+    virtual QString downloadFileName() const = 0;
     // The page the request originated from — nullptr when the engine
     // no longer attributes one (e.g. a page that already closed).
     virtual Page *page() const = 0;
@@ -337,8 +339,11 @@ struct ContextMenuInfo {
     bool isContentEditable = false;
     // media/link classification — the "media type" enum collapses to
     // flags since only Image/Video/Audio/Canvas drive menu entries.
+    // hasVideo stays distinct from hasMedia (which includes audio):
+    // the PiP/poster entries discriminate video from audio.
     bool hasImage = false;
     bool hasMedia = false;
+    bool hasVideo = false;
     bool isCanvas = false;
 };
 

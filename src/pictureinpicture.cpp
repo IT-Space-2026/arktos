@@ -92,7 +92,7 @@ PictureInPicture::PictureInPicture(WebView *view)
 
     // A real navigation kills the popped-out element's document — the
     // window cannot be returned to anything, so close it outright.
-    connect(m_view->page(), &QWebEnginePage::loadStarted,
+    connect(m_view->enginePage(), &Engine::Page::loadStarted,
             this, [this]() {
         if (m_window)
             m_window->close();

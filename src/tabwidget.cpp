@@ -113,8 +113,6 @@
 #include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qurlquery.h>
-#include <qwebenginehistory.h>
-#include <qwebengineprofile.h>
 
 #include <qdebug.h>
 
@@ -493,7 +491,8 @@ WebView *TabWidget::makeNewPrivateTab(bool makeCurrent)
         return makeNewTabInContainer(
             ContainerManager::defaultContainerId(), makeCurrent);
     return makeNewTabOnProfile(
-        BrowserApplication::privateWebEngineProfile(), makeCurrent);
+        WebEngineProfileAdapter::forProfile(
+            BrowserApplication::privateWebEngineProfile()), makeCurrent);
 }
 
 WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeCurrent)
@@ -506,17 +505,20 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     // over a private tab, and ContainerManager::profileFor() refuses
     // outright under tor or for unknown/deleted ids.  The accessor is
     // static, so this is also safe under autotests that never
-    // instantiate the application object.
-    QWebEngineProfile *profile = BrowserApplication::webEngineProfile();
+    // instantiate the application object.  The engine profiles are
+    // wrapped in their canonical Engine::Profile adapters — the tab
+    // layer stays on the neutral side of the boundary.
+    Engine::Profile *profile = WebEngineProfileAdapter::forProfile(
+        BrowserApplication::webEngineProfile());
     if (!containerId.isEmpty() && !BrowserApplication::isPrivate()) {
-        if (QWebEngineProfile *containerProfile =
+        if (auto *containerProfile =
                 ContainerManager::instance()->profileFor(containerId))
-            profile = containerProfile;
+            profile = WebEngineProfileAdapter::forProfile(containerProfile);
     }
     return makeNewTabOnProfile(profile, makeCurrent);
 }
 
-WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCurrent)
+WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent)
 {
     // line edit
     LocationBar *locationBar = new LocationBar;
@@ -1644,13 +1646,9 @@ QString TabWidget::sleepBlockReason(int index) const
         return QLatin1String("loading");
     if (view->enginePage()->recentlyAudible())
         return QLatin1String("audible");
-    // DownloadManager is still engine-typed internally — hand it the
-    // wrapped page through the adapter's escape hatch.
-    if (WebEnginePageAdapter *adapter =
-            WebEnginePageAdapter::of(view->enginePage()))
-        if (DownloadManager::instance()->hasActiveDownloadForPage(
-                adapter->webEnginePage()))
-            return QLatin1String("download");
+    if (DownloadManager::instance()->hasActiveDownloadForPage(
+            view->enginePage()))
+        return QLatin1String("download");
     return QString();
 }
 
@@ -2121,8 +2119,7 @@ static WebView *webViewForSender(QObject *sender)
         return view;
     if (WebEnginePageAdapter *adapter =
             qobject_cast<WebEnginePageAdapter*>(sender))
-        return qobject_cast<WebView*>(
-                QWebEngineView::forPage(adapter->webEnginePage()));
+        return qobject_cast<WebView*>(adapter->view());
     return nullptr;
 }
 
@@ -2665,8 +2662,9 @@ WebView *TabWidget::getView(OpenUrlIn tab, WebView *currentView)
             // detached WebView on the source page's profile.
             BrowserApplication *application = BrowserApplication::instance();
             if (!application) {
-                WebView *detachedView = new WebView(currentView ? currentView->webPage()->profile()
-                                                                : BrowserApplication::webEngineProfile());
+                WebView *detachedView = new WebView(WebEngineProfileAdapter::forProfile(
+                    currentView ? currentView->webPage()->profile()
+                                : BrowserApplication::webEngineProfile()));
                 detachedView->setAttribute(Qt::WA_DeleteOnClose);
                 detachedView->show();
                 webView = detachedView;

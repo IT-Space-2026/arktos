@@ -33,7 +33,7 @@
 
 class AdBlockRule;
 class QUrl;
-class QWebEnginePage;
+namespace Engine { class Page; }
 class AdBlockPage : public QObject
 {
     Q_OBJECT
@@ -43,14 +43,14 @@ public:
 
     // Injects the page's cosmetic payload into the already-loaded
     // document through runJavaScript (immediate path, used by tests).
-    void applyRulesToPage(QWebEnginePage *page);
+    void applyRulesToPage(Engine::Page *page);
 
     // SEC16: arms the same payload as a named per-page
     // QWebEngineScript at DocumentReady keyed to the navigation's
     // target url.  Running inside Chromium's own script pipeline keeps
     // the injection off the post-load turn where it competed with
     // paint-gated subresource scheduling (browseraudit latency group).
-    void scheduleRulesOnPage(QWebEnginePage *page, const QUrl &url);
+    void scheduleRulesOnPage(Engine::Page *page, const QUrl &url);
 
 private:
     QString cosmeticScriptForUrl(const QUrl &url) const;

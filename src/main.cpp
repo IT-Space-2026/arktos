@@ -697,7 +697,8 @@ static int browserAuditSmoke(BrowserApplication &application,
                         &QWebEnginePage::urlChanged, bareView,
                         [wp](const QUrl &url) {
                             AutoFillManager::instance()
-                                ->scheduleOnPage(wp, url);
+                                ->scheduleOnPage(
+                                    WebEnginePageAdapter::forPage(wp), url);
                         });
             }
             if (wire.contains(QLatin1String("cosmetic"))) {
@@ -710,7 +711,8 @@ static int browserAuditSmoke(BrowserApplication &application,
                         &QWebEnginePage::urlChanged, bareView,
                         [wp](const QUrl &url) {
                             AdBlockManager::instance()->page()
-                                ->scheduleRulesOnPage(wp, url);
+                                ->scheduleRulesOnPage(
+                                    WebEnginePageAdapter::forPage(wp), url);
                         });
             }
             if (wire.contains(QLatin1String("bar"))) {
@@ -741,13 +743,13 @@ static int browserAuditSmoke(BrowserApplication &application,
         view->window()->show();
     }
 
-    QWebEngineScript capture;
-    capture.setName(QStringLiteral("arora-browseraudit-capture"));
-    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    capture.setWorldId(QWebEngineScript::MainWorld);
-    capture.setRunsOnSubFrames(false);
-    capture.setSourceCode(QString::fromUtf8(kBrowserAuditCaptureJs));
-    view->page()->scripts().insert(capture);
+    Engine::Page *enginePage =
+        WebEnginePageAdapter::forPage(view->page());
+    enginePage->insertScript(Engine::Script{
+        QStringLiteral("arora-browseraudit-capture"),
+        QString::fromUtf8(kBrowserAuditCaptureJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
     const QUrl suiteUrl(qEnvironmentVariable("ARORA_AUDIT_URL",
         QStringLiteral("https://browseraudit.com/test"
@@ -764,7 +766,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                      [=, &application]() {
         if (*finished)
             return;
-        view->page()->runJavaScript(
+        enginePage->runJavaScript(
             QStringLiteral("JSON.stringify({"
                            "done: window.__aroraDone === true,"
                            " n: (window.__aroraResults || []).length,"
@@ -789,7 +791,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                     return;
                 }
                 *finished = true;
-                view->page()->runJavaScript(
+                enginePage->runJavaScript(
                     QStringLiteral("JSON.stringify({"
                                    "userAgent: navigator.userAgent,"
                                    "summary: window.__aroraSummary || null,"
@@ -977,13 +979,11 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
     view->window()->resize(1024, 768);
     view->window()->show();
 
-    QWebEngineScript iceProbe;
-    iceProbe.setName(QStringLiteral("arora-anon-ice-probe"));
-    iceProbe.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    iceProbe.setWorldId(QWebEngineScript::MainWorld);
-    iceProbe.setRunsOnSubFrames(false);
-    iceProbe.setSourceCode(QString::fromUtf8(kAnonIceProbeJs));
-    view->page()->scripts().insert(iceProbe);
+    view->enginePage()->insertScript(Engine::Script{
+        QStringLiteral("arora-anon-ice-probe"),
+        QString::fromUtf8(kAnonIceProbeJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
     const QUrl target(qEnvironmentVariable("ARORA_ANON_URL",
         QStringLiteral("https://ipduh.com/privacy-test/")));
@@ -1649,13 +1649,11 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     view->window()->resize(1024, 768);
     view->window()->show();
 
-    QWebEngineScript capture;
-    capture.setName(QStringLiteral("arora-xsleak-capture"));
-    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    capture.setWorldId(QWebEngineScript::MainWorld);
-    capture.setRunsOnSubFrames(false);
-    capture.setSourceCode(QString::fromUtf8(kXsLeakCaptureJs));
-    view->page()->scripts().insert(capture);
+    view->enginePage()->insertScript(Engine::Script{
+        QStringLiteral("arora-xsleak-capture"),
+        QString::fromUtf8(kXsLeakCaptureJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
     // Restore the caller's real settings on the way out — the
     // permissive run pinned them on the live store before the
@@ -2840,21 +2838,22 @@ int main(int argc, char **argv)
         // A save-as prompt can't be answered under offscreen QPA.
         QSettings().setValue(
             QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
-        QObject::connect(profile, &QWebEngineProfile::downloadRequested,
+        QObject::connect(WebEngineProfileAdapter::forProfile(profile),
+                         &Engine::Profile::downloadRequested,
                          &application,
-                         [&application](QWebEngineDownloadRequest *request) {
-            QObject::connect(request, &QWebEngineDownloadRequest::stateChanged,
+                         [&application](Engine::DownloadRequest *request) {
+            QObject::connect(request, &Engine::DownloadRequest::stateChanged,
                              &application,
-                             [&application, request](QWebEngineDownloadRequest::DownloadState state) {
-                if (state == QWebEngineDownloadRequest::DownloadCompleted) {
+                             [&application, request](Engine::DownloadRequest::State state) {
+                if (state == Engine::DownloadRequest::State::Completed) {
                     const QString path = request->downloadDirectory()
                         + QLatin1Char('/') + request->downloadFileName();
                     const bool ok = QFile::exists(path) && QFileInfo(path).size() > 0;
                     qInfo() << "download-smoke:" << (ok ? "PASS" : "FAIL")
                             << path << request->receivedBytes() << "bytes";
                     application.exit(ok ? 0 : 1);
-                } else if (state == QWebEngineDownloadRequest::DownloadInterrupted
-                           || state == QWebEngineDownloadRequest::DownloadCancelled) {
+                } else if (state == Engine::DownloadRequest::State::Interrupted
+                           || state == Engine::DownloadRequest::State::Cancelled) {
                     qInfo() << "download-smoke: FAIL"
                             << request->interruptReasonString();
                     application.exit(1);
@@ -2863,7 +2862,7 @@ int main(int argc, char **argv)
         });
         QTimer::singleShot(30000, &application,
                            [&application]() { application.exit(1); });
-        view->webPage()->download(downloadUrl);
+        view->enginePage()->download(downloadUrl);
     }
 
     // DLACC02: --parallel-download-smoke proves the ParallelDownloading
@@ -3014,24 +3013,25 @@ int main(int argc, char **argv)
         QSettings().setValue(
             QLatin1String("downloadmanager/alwaysPromptForFileName"),
             false);
-        QObject::connect(profile, &QWebEngineProfile::downloadRequested,
+        QObject::connect(WebEngineProfileAdapter::forProfile(profile),
+                         &Engine::Profile::downloadRequested,
                          &application,
                          [&application, finish, stats, blobSize,
                           parallelDownloadOffSmoke]
-                         (QWebEngineDownloadRequest *request) {
+                         (Engine::DownloadRequest *request) {
             QObject::connect(request,
-                &QWebEngineDownloadRequest::stateChanged,
+                &Engine::DownloadRequest::stateChanged,
                 &application,
                 [finish, stats, blobSize, parallelDownloadOffSmoke,
                  request]
-                (QWebEngineDownloadRequest::DownloadState state) {
-                if (state == QWebEngineDownloadRequest::DownloadInterrupted
-                    || state == QWebEngineDownloadRequest::DownloadCancelled) {
+                (Engine::DownloadRequest::State state) {
+                if (state == Engine::DownloadRequest::State::Interrupted
+                    || state == Engine::DownloadRequest::State::Cancelled) {
                     finish(1, QStringLiteral("FAIL (download %1)")
                         .arg(request->interruptReasonString()));
                     return;
                 }
-                if (state != QWebEngineDownloadRequest::DownloadCompleted)
+                if (state != Engine::DownloadRequest::State::Completed)
                     return;
                 const QString path = request->downloadDirectory()
                     + QLatin1Char('/') + request->downloadFileName();
@@ -3080,7 +3080,7 @@ int main(int argc, char **argv)
         QTimer::singleShot(90000, &application, [finish]() {
             finish(1, QStringLiteral("FAIL (timeout)"));
         });
-        view->webPage()->download(QUrl(QStringLiteral(
+        view->enginePage()->download(QUrl(QStringLiteral(
             "http://127.0.0.1:%1/blob.bin").arg(server->serverPort())));
     }
 
@@ -6734,8 +6734,9 @@ int main(int argc, char **argv)
                 cb(QVariant());
                 return;
             }
-            w->playerView()->page()->runJavaScript(script,
-                [cb](const QVariant &result) { cb(result); });
+            WebEnginePageAdapter::forPage(w->playerView()->page())
+                ->runJavaScript(script,
+                    [cb](const QVariant &result) { cb(result); });
         };
         auto settle = [](int ms, std::function<void()> fn) {
             QTimer::singleShot(ms, qApp, fn);

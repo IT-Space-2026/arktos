@@ -156,6 +156,8 @@ public:
     QString interruptReasonString() const override;
     void setDownloadDirectory(const QString &directory) override;
     void setDownloadFileName(const QString &fileName) override;
+    QString downloadDirectory() const override;
+    QString downloadFileName() const override;
     Engine::Page *page() const override;
 
 private:
