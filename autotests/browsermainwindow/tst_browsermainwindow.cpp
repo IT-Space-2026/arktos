@@ -380,6 +380,10 @@ void tst_BrowserMainWindow::toolsMenuDedup()
                  qPrintable(action->text()));
         QVERIFY2(!action->text().contains(QLatin1String("Preferences")),
                  qPrintable(action->text()));
+        // MENU05: filter management moved into Preferences > Privacy
+        // (Content Blocking > Manage...) — no Ad Block entry in Tools.
+        QVERIFY2(!action->text().contains(QLatin1String("Ad Block")),
+                 qPrintable(action->text()));
     }
     // The separator that used to precede Options... went with it.
     QVERIFY(!toolsMenu->actions().isEmpty());

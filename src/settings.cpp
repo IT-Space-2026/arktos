@@ -451,6 +451,12 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     }
 #endif
 
+    // MENU05: the Tools-menu "Ad Block..." entry is gone — this
+    // button is now the Preferences-side path to the same filter
+    // dialog the site panel opens.
+    connect(adblockManageButton, &QPushButton::clicked,
+            AdBlockManager::instance(), &AdBlockManager::showDialog);
+
     // DOH01: the DoH endpoint field only matters to the two Custom
     // modes — keep it greyed otherwise.
     connect(secureDnsMode, QOverload<int>::of(&QComboBox::currentIndexChanged),

@@ -65,7 +65,6 @@
 #include "browsermainwindow.h"
 
 #include "aboutdialog.h"
-#include "adblockmanager.h"
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
 #include "autosaver.h"
@@ -1125,10 +1124,9 @@ void BrowserMainWindow::setupMenu()
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
 
-    m_adBlockDialogAction = new QAction(m_toolsMenu);
-    connect(m_adBlockDialogAction, &QAction::triggered,
-            AdBlockManager::instance(), &AdBlockManager::showDialog);
-    m_toolsMenu->addAction(m_adBlockDialogAction);
+    // MENU05: filter management lives on the Preferences Privacy
+    // page (Content Blocking > Manage...) — the Tools menu no
+    // longer carries it.
 
     // Help
     m_helpMenu = new QMenu(menuBar());
@@ -1327,7 +1325,6 @@ void BrowserMainWindow::retranslate()
     m_toolsClearPrivateDataAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Delete", "Clear Private Data")));
     m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
-    m_adBlockDialogAction->setText(tr("&Ad Block..."));
 
     m_helpMenu->setTitle(tr("&Help"));
     m_helpChangeLanguageAction->setText(tr("Switch application language "));

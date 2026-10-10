@@ -143,6 +143,10 @@ UI:
   while a network indicator shows down/up rates only while traffic
   moves (auto-hides when idle; exact download bytes are used while
   a file downloads) (SBAR01).
+- Tools menu no longer carries "Ad Block..." — filter management
+  moved to Preferences → Privacy → Content Blocking → "Manage
+  content-blocking filters..." (the site shield's Ad Block
+  Settings button is unchanged) (MENU05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
