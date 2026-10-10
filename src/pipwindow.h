@@ -54,8 +54,6 @@ public:
     PipWindow(QWebEngineProfile *profile, const QVariantMap &video,
               const QUrl &baseUrl, QWidget *parent = nullptr);
 
-    // Last playback state the player page pushed: time, paused, ended.
-    QVariantMap lastState() const { return m_lastState; }
     // Player document constructed its video element (channel hello).
     bool isReady() const { return m_ready; }
     // The media errored in the player (unreachable blob:, DRM, ...).
