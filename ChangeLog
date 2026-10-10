@@ -242,6 +242,20 @@ Security:
   `ARORA_DL_NO_SANDBOX=1` or `downloadmanager/sandboxedWorker=false`.
   Seatbelt/AppContainer/unveil worker policies generate from the
   same inputs but are untested off-Linux.
+- In-browser PDF viewer + sanitize-on-view pipeline (PDF01): PDFs open
+  in Chromium's built-in PDFium viewer instead of falling through to
+  the download path (Preferences → Privacy → PDF Documents; the viewer
+  is on by default). In `CONFIG+=rustcore` builds the sanitize pass is
+  also on by default: a .pdf navigation is refused, the bytes are
+  fetched through the page's own profile (cookies, Tor SOCKS routing
+  and container isolation ride along by construction), rewritten by a
+  Rust policy pass that strips JavaScript, /Launch, auto-actions
+  (/OpenAction, /AA), embedded files, XFA/AcroForm remnants and remote
+  submit/import actions, and only then displayed — from a randomized
+  owner-only temp file, not from the remote origin. Outbound http(s)
+  links work; links to local files from the staged viewer document are
+  refused. Saving a PDF still stores the original unsanitized bytes
+  for the external reader — sanitization covers the viewing path only.
 
 Containers:
 - Isolated container profiles (CONT01).

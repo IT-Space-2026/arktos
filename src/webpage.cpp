@@ -31,6 +31,7 @@
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pdfsupport.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
@@ -388,11 +389,13 @@ void WebPage::init()
         connect(this, &QWebEnginePage::loadFinished, this,
                 [this, history](bool ok) {
             // The warning interstitials are chrome, not visited
-            // pages — keep them out of history.
+            // pages — keep them out of history.  PDF01: sanitized
+            // temp-dir copies are viewer staging, not destinations.
             const QString scheme = url().scheme();
             if (ok && scheme != QLatin1String("arora-cert-error")
                 && scheme != QLatin1String("arora-http-warning")
-                && scheme != QLatin1String("arora-site-block"))
+                && scheme != QLatin1String("arora-site-block")
+                && !PdfSupport::isManagedPath(url().toLocalFile()))
                 history->addHistoryEntry(url().toString());
         });
         connect(this, &QWebEnginePage::titleChanged, this,
@@ -683,6 +686,17 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // PDF01: the staged viewer document is file://-origin — an
+    // embedded file:///etc/passwd-style link would read as a
+    // local-to-local navigation Chromium has no reason to refuse.
+    // Clamp non-remote targets while a staged copy is displayed;
+    // placed ahead of the directory reroute so a file:///etc/ link
+    // is refused rather than listed.  A web-served pdf viewed raw
+    // keeps http(s) origin, where Chromium's own file-nav block
+    // already applies — no extra rule is needed there.
+    if (isMainFrame && !PdfSupport::managedViewerNavAllowed(this->url(), url))
+        return false;
+
     // file:// is built into Chromium and cannot take a custom scheme
     // handler; directories are rerouted to arora-file:// so the
     // FileAccessHandler can render Arora's own directory listing.
@@ -807,6 +821,24 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
                 return false;
             m_insecureFormApprovedHosts.insert(targetHost);
         }
+    }
+
+    // PDF01: the sanitize-on-view pipeline owns .pdf main-frame
+    // navigations when the viewer and sanitizer are both on — the
+    // navigation is refused here, the bytes are fetched through this
+    // page's own profile (cookies, SOCKS/Tor routing, container
+    // binding all ride along), rewritten by the rustcore policy pass
+    // and displayed from the managed temp dir; the built-in viewer
+    // never sees remote bytes.  consumeBypass lets the pipeline's
+    // one-shot raw-view fallback through so a failed fetch or
+    // sanitizer pass never loops.  Every refusal gate above
+    // (container divert, domain blocklist, HTTPS-Only, insecure
+    // POST) keeps precedence — a refused navigation never reaches
+    // the fetch.
+    if (isMainFrame && PdfSupport::shouldIntercept(url, type)
+        && !PdfSupport::consumeBypass(this, url)) {
+        PdfSanitizeFetch::start(this, url);
+        return false;
     }
 
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);

@@ -456,6 +456,15 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
         !QSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
 
+    // PDF01: Chromium's built-in PDFium viewer, bound to the
+    // privacy/pdfViewer toggle (default on) — PDFium parses inside
+    // the sandboxed renderer, and the privacy/pdfSanitize rustcore
+    // pass rewrites what the viewer gets to see on .pdf navigations.
+    // Applied per profile, so normal, private, tor and container
+    // profiles all follow the toggle.
+    engineSettings->setAttribute(QWebEngineSettings::PdfViewerEnabled,
+        QSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
+
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
     // settings — the privacy group lives outside websettings/network.

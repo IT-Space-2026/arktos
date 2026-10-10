@@ -97,6 +97,7 @@ HEADERS += \
     $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
+    $$PWD/pdfsupport.h \
     $$PWD/pictureinpicture.h \
     $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
@@ -163,6 +164,7 @@ SOURCES += \
     $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
+    $$PWD/pdfsupport.cpp \
     $$PWD/pictureinpicture.cpp \
     $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \

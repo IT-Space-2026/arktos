@@ -54,6 +54,7 @@
 #include "opensearchmanager.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
+#include "pdfsupport.h"
 #include "pictureinpicture.h"
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
@@ -3339,7 +3340,7 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke",
+        "bidi-smoke", "pdf-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
     };
     for (const char *option : internalOptions)
@@ -11857,6 +11858,335 @@ int main(int argc, char **argv)
         return failures == 0 ? 0 : 1;
     }
 #endif
+
+    // PDF01: in-browser PDF viewer + sanitize-on-view pipeline.
+    // Covers the settings defaults + toggle round-trips, the rustcore
+    // rewrite unit pass, and the end-to-end loopback flow: a hostile
+    // fixture navigated to is fetched through the page's profile,
+    // sanitized, and displayed from the managed temp dir; a save-as
+    // download of the same url keeps raw bytes; sanitize off reverts
+    // to the raw viewer; a non-PDF body on a .pdf url falls back to
+    // the real response.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--pdf-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass) {
+            qInfo() << "pdf-smoke:" << (pass ? "PASS" : "FAIL") << what;
+            ok = ok && pass;
+        };
+
+        // Adversarial fixture: structurally valid PDF whose page tree
+        // still renders, carrying JS, auto-exec triggers, a Launch
+        // action, embedded files, XFA and a remote-submit action.
+        const QByteArray pdfBytes = []() {
+            const QList<QByteArray> objs = {
+                "<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R"
+                " /AA << /O 5 0 R >>"
+                " /Names << /EmbeddedFiles 7 0 R >>"
+                " /AcroForm << /Fields [] /XFA << /preamble [] >> >> >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 << /Type /Font"
+                " /Subtype /Type1 /BaseFont /Helvetica >> >> >>"
+                " /Contents 4 0 R /Annots [9 0 R] >>",
+                "<< /Length 30 >>\nstream\nBT /F1 12 Tf 10 100 Td (x) Tj ET\nendstream",
+                "<< /Type /Action /S /JavaScript /JS (app.alert('pwned')) >>",
+                "<< /Type /Action /S /Launch /F (calc.exe) >>",
+                "<< /Names [(a) << /EF << /F 10 0 R >> /F (a) >>] >>",
+                "<< /Type /Action /S /SubmitForm /F (http://e/c) >>",
+                "<< /Subtype /Link /Rect [0 0 9 9] /A 6 0 R >>",
+                "<< /Type /EmbeddedFile /Length 4 >>\nstream\nevil\nendstream",
+            };
+            QByteArray out("%PDF-1.4\n");
+            QList<int> offsets;
+            for (int i = 0; i < objs.count(); ++i) {
+                offsets << out.size();
+                out += QByteArray::number(i + 1) + " 0 obj\n"
+                    + objs.at(i) + "\nendobj\n";
+            }
+            const int xref = out.size();
+            out += "xref\n0 " + QByteArray::number(objs.count() + 1)
+                + "\n0000000000 65535 f \n";
+            for (const int off : offsets)
+                out += QByteArray::number(off).rightJustified(10, '0')
+                    + " 00000 n \n";
+            out += "trailer\n<</Size " + QByteArray::number(objs.count() + 1)
+                + " /Root 1 0 R>>\nstartxref\n"
+                + QByteArray::number(xref) + "\n%%EOF\n";
+            return out;
+        }();
+        const QList<QByteArray> dangerNeedles = {
+            "JavaScript", "Launch", "OpenAction", "EmbeddedFiles",
+            "XFA", "SubmitForm", "app.alert", "pwned",
+        };
+
+        // (c) unit-level rewrite pass.
+        const QByteArray cleaned = PdfSupport::sanitize(pdfBytes);
+        check(QStringLiteral("sanitize returns a standalone pdf"),
+              cleaned.startsWith("%PDF-"));
+        for (const QByteArray &needle : dangerNeedles)
+            check(QStringLiteral("sanitize strips ")
+                      + QString::fromLatin1(needle),
+                  !cleaned.contains(needle));
+        check(QStringLiteral("non-pdf input refused"),
+              PdfSupport::sanitize("<html>not a pdf</html>").isEmpty());
+        check(QStringLiteral("looksLikePdfUrl"),
+              PdfSupport::looksLikePdfUrl(
+                  QUrl(QLatin1String("http://h/A.PDF?x=1")))
+              && !PdfSupport::looksLikePdfUrl(
+                  QUrl(QLatin1String("http://h/a.txt"))));
+
+        // (a) defaults + toggle round-trips.
+        QSettings settings;
+        const QVariant savedViewer =
+            settings.value(QLatin1String("privacy/pdfViewer"));
+        const QVariant savedSanitize =
+            settings.value(QLatin1String("privacy/pdfSanitize"));
+        // The raw-download leg must not trip a real save dialog or a
+        // configured external handler — pin both for the run.
+        const QVariant savedPrompt =
+            settings.value(QLatin1String("downloadmanager/alwaysPromptForFileName"));
+        const QVariant savedExternal =
+            settings.value(QLatin1String("downloadmanager/external"));
+        check(QStringLiteral("viewer+sanitize default on"),
+              PdfSupport::viewerEnabled() && PdfSupport::sanitizeEnabled());
+        check(QStringLiteral("profile PdfViewerEnabled on"),
+              profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        settings.setValue(QLatin1String("privacy/pdfViewer"), false);
+        BrowserProfile::applySettings(profile);
+        check(QStringLiteral("viewer toggle off -> attribute off"),
+              !profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        check(QStringLiteral("viewer off -> shouldIntercept false"),
+              !PdfSupport::shouldIntercept(
+                  QUrl(QLatin1String("http://h/a.pdf")),
+                  QWebEnginePage::NavigationTypeLinkClicked));
+        settings.setValue(QLatin1String("privacy/pdfViewer"), true);
+        BrowserProfile::applySettings(profile);
+        check(QStringLiteral("viewer toggle on -> attribute on"),
+              profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        settings.setValue(QLatin1String("privacy/pdfSanitize"), false);
+        check(QStringLiteral("sanitize toggle off"),
+              !PdfSupport::sanitizeEnabled());
+        settings.setValue(QLatin1String("privacy/pdfSanitize"), true);
+        check(QStringLiteral("sanitize toggle on"),
+              PdfSupport::sanitizeEnabled());
+        check(QStringLiteral("form-post pdf nav not intercepted"),
+              !PdfSupport::shouldIntercept(
+                  QUrl(QLatin1String("http://h/a.pdf")),
+                  QWebEnginePage::NavigationTypeFormSubmitted));
+
+        // Tor: the pipeline fetches with QWebEnginePage::download()
+        // on the viewing page's own profile and claim() matches the
+        // request back by page identity, so a tor window's managed
+        // SOCKS routing and OTR storage apply by construction — the
+        // staged bytes can never arrive through another profile's
+        // stack.  The viewer attribute itself follows the same
+        // toggle on the tor profile; bring it up the way a tor
+        // window would and verify.
+        QWebEngineProfile *torProf = BrowserProfile::torProfile();
+        BrowserApplication::prepareProfile(torProf);
+        check(QStringLiteral("tor profile PdfViewerEnabled on"),
+              torProf->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        check(QStringLiteral("tor profile is off the record"),
+              torProf->isOffTheRecord());
+
+        // (b)+(d) end-to-end over loopback.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "pdf-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto hits = std::make_shared<QHash<QString, int>>();
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, hits, pdfBytes]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, hits, pdfBytes]() {
+                const QByteArray request = client->readAll();
+                QByteArray path = request.mid(4);
+                const int end = path.indexOf(" HTTP/");
+                path = end < 0 ? path : path.left(end);
+                (*hits)[QString::fromLatin1(path)] += 1;
+                QByteArray body, mime;
+                if (path == "/doc.pdf") {
+                    mime = "application/pdf";
+                    body = pdfBytes;
+                } else {
+                    mime = "text/html";
+                    body = "<html><head><title>fake-pdf-landing</title>"
+                           "</head><body>not a pdf</body></html>";
+                }
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                    + "\r\nContent-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+        const QUrl pdfUrl(QStringLiteral("http://127.0.0.1:%1/doc.pdf").arg(port));
+        const QUrl fakeUrl(QStringLiteral("http://127.0.0.1:%1/fake.pdf").arg(port));
+        const QString downloadDir = QDir::temp().filePath(
+            QStringLiteral("arora-pdf-smoke-%1").arg(QCoreApplication::applicationPid()));
+
+        auto phase = std::make_shared<int>(0);
+        auto gotLoad = std::make_shared<bool>(false);
+        auto ticks = std::make_shared<int>(0);
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [gotLoad](bool ok) {
+            if (ok)
+                *gotLoad = true;
+        });
+        QTimer *poll = new QTimer(&application);
+        const auto finish = [&application, poll, &ok](bool pass) {
+            poll->stop();
+            qInfo() << "pdf-smoke:" << (pass && ok ? "PASS" : "FAIL");
+            application.exit(pass && ok ? 0 : 1);
+        };
+        QObject::connect(poll, &QTimer::timeout, &application,
+            [&, phase, gotLoad, ticks, hits, pdfUrl, fakeUrl,
+             downloadDir, dangerNeedles, server]() {
+            if (++*ticks > 200) {   // ~60s ceiling
+                qInfo() << "pdf-smoke: FAIL (timeout in phase" << *phase
+                        << ") url:" << view->url();
+                finish(false);
+                return;
+            }
+            switch (*phase) {
+            case 0: {
+                // Sanitized viewing: the nav is refused, the profile
+                // fetches the body, and the tab ends on a managed
+                // file:// copy that already lost the dangerous keys.
+                const QUrl u = view->url();
+                if (!u.isLocalFile()
+                        || !PdfSupport::isManagedPath(u.toLocalFile()))
+                    return;
+                QFile f(u.toLocalFile());
+                if (!f.open(QIODevice::ReadOnly))
+                    return;
+                const QByteArray bytes = f.readAll();
+                check(QStringLiteral("sanitized view file is a pdf"),
+                      bytes.startsWith("%PDF-"));
+                for (const QByteArray &needle : dangerNeedles)
+                    check(QStringLiteral("viewed pdf strips ")
+                              + QString::fromLatin1(needle),
+                          !bytes.contains(needle));
+                qInfo() << "pdf-smoke: interceptor requestsSeen:"
+                        << PrivacyRequestInterceptor::requestsSeen()
+                        << "doc.pdf hits:"
+                        << hits->value(QLatin1String("/doc.pdf"));
+                check(QStringLiteral("fetch went through profile network"),
+                      hits->value(QStringLiteral("/doc.pdf")) >= 1);
+                // The staged viewer is file://-origin — a hostile
+                // pdf's local links must not ride it into local
+                // content, while remote links still pass.
+                check(QStringLiteral("viewer file:// link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("file:///etc/passwd"))));
+                check(QStringLiteral("viewer dir link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("file:///etc/"))));
+                check(QStringLiteral("viewer arora-file link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("arora-file:///etc/"))));
+                check(QStringLiteral("viewer https link allowed"),
+                      PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("https://example.com/"))));
+                check(QStringLiteral("viewer staged reload allowed"),
+                      PdfSupport::managedViewerNavAllowed(u, u));
+                check(QStringLiteral("non-viewer page unclamped"),
+                      PdfSupport::managedViewerNavAllowed(
+                          QUrl(QLatin1String("https://example.com/")),
+                          QUrl(QLatin1String("file:///etc/passwd"))));
+                // (d) the download path keeps raw bytes.
+                QSettings().setValue(
+                    QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
+                QSettings().setValue(
+                    QLatin1String("downloadmanager/external"), false);
+                downloadManager->setDownloadDirectory(downloadDir);
+                // A user "save" from a pdf page is issued by the shell,
+                // not the viewing document — use a fresh page on the
+                // same profile (a download initiated from the local
+                // file:// viewer document would be refused by the
+                // engine before a byte is written).
+                QWebEnginePage *savePage =
+                    new QWebEnginePage(view->webPage()->profile(), view);
+                downloadManager->download(savePage, pdfUrl, false);
+                *phase = 1;
+                return;
+            }
+            case 1: {
+                const QDir dir(downloadDir);
+                const QStringList files = dir.entryList(
+                    QStringList{QStringLiteral("*.pdf")}, QDir::Files);
+                if (files.isEmpty())
+                    return;
+                QFile f(dir.filePath(files.first()));
+                if (!f.open(QIODevice::ReadOnly))
+                    return;
+                const QByteArray bytes = f.readAll();
+                check(QStringLiteral("download path saved raw pdf"),
+                      bytes.contains("app.alert")
+                          && bytes.contains("/Launch"));
+                // sanitize off -> the raw viewer path is unchanged.
+                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), false);
+                *gotLoad = false;
+                *phase = 2;
+                view->loadUrl(pdfUrl);
+                return;
+            }
+            case 2: {
+                if (view->url() != pdfUrl || !*gotLoad)
+                    return;
+                check(QStringLiteral("sanitize off -> raw viewer at url"),
+                      view->url() == pdfUrl);
+                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), true);
+                *gotLoad = false;
+                *phase = 3;
+                view->loadUrl(fakeUrl);
+                return;
+            }
+            case 3: {
+                // A non-PDF body on a .pdf url takes the one-shot
+                // bypass and renders as its true type.
+                if (view->url() != fakeUrl || !*gotLoad)
+                    return;
+                check(QStringLiteral("non-pdf fallback renders html"),
+                      view->title().contains(
+                          QLatin1String("fake-pdf-landing")));
+                finish(true);
+                return;
+            }
+            }
+        });
+        poll->start(300);
+        PrivacyRequestInterceptor::resetRequestsSeen();
+        view->loadUrl(pdfUrl);
+
+        // Restore toggles + drop the downloaded raw file when done.
+        auto *restorer = new QObject(&application);
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         restorer, [savedViewer, savedSanitize,
+                                    savedPrompt, savedExternal,
+                                    downloadDir]() {
+            QSettings st;
+            const auto restore = [&st](const QString &key,
+                                       const QVariant &saved) {
+                if (saved.isValid())
+                    st.setValue(key, saved);
+                else
+                    st.remove(key);
+            };
+            restore(QLatin1String("privacy/pdfViewer"), savedViewer);
+            restore(QLatin1String("privacy/pdfSanitize"), savedSanitize);
+            restore(QLatin1String("downloadmanager/alwaysPromptForFileName"),
+                    savedPrompt);
+            restore(QLatin1String("downloadmanager/external"), savedExternal);
+            QDir(downloadDir).removeRecursively();
+        });
+    }
 
     // TELEM02: child half of the DNS-prefetch probe — boots with
     // privacy/dnsPrefetch pre-pinned by the parent and a netlog path

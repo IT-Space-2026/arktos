@@ -23,6 +23,7 @@
 #include "navigationpolicy.h"
 #include "scriptcontrolmanager.h"
 
+#include <qatomic.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
 #include <qwebengineurlrequestinfo.h>
@@ -44,6 +45,9 @@ using Engine::HeaderList;
 using Engine::NavigationPolicy;
 using Engine::PolicyRequest;
 using Engine::PolicyVerdict;
+
+// PDF01 audit probe — counts every request the interceptor sees.
+static QAtomicInteger<qint64> s_requestsSeen;
 
 static HeaderList toHeaderList(const QHash<QByteArray, QByteArray> &headers)
 {
@@ -125,6 +129,9 @@ PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network,
 
 void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
+    // PDF01 audit probe — counts every request the interceptor sees.
+    s_requestsSeen.fetchAndAddRelaxed(1);
+
     // Runs on the WebEngine IO thread — only the lock-guarded policy
     // state may be read here (inside NavigationPolicy / rustcore).
     const PolicyRequest req =
@@ -480,4 +487,14 @@ QByteArray PrivacyRequestInterceptor::rewrittenReferer(
         int level, const QUrl &source, const QUrl &target)
 {
     return NavigationPolicy::rewrittenReferer(level, source, target);
+}
+
+qint64 PrivacyRequestInterceptor::requestsSeen()
+{
+    return s_requestsSeen.loadRelaxed();
+}
+
+void PrivacyRequestInterceptor::resetRequestsSeen()
+{
+    s_requestsSeen.storeRelaxed(0);
 }

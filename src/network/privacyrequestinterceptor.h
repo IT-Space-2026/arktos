@@ -373,6 +373,12 @@ public:
     static void recordBlockedDomainNav(const QUrl &url);
     static bool takeBlockedDomainNav(const QUrl &url);
 
+    // PDF01: audit probe — the PDF smoke asserts the sanitize fetch
+    // and any viewer-side traffic actually traverse this interceptor.
+    // Monotonic count of interceptRequest calls since reset.
+    static qint64 requestsSeen();
+    static void resetRequestsSeen();
+
 private:
     AdBlockRequestInterceptor *m_adBlock;
     QString m_scope;   // SAFE07: downgradeScope() of the owning profile

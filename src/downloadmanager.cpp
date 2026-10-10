@@ -60,6 +60,7 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#include "pdfsupport.h"
 #ifdef ARORA_RUSTDL
 #include "rustdownloadengine.h"
 #endif
@@ -1191,6 +1192,13 @@ void DownloadManager::download(QWebEnginePage *page, const QUrl &url, bool reque
 void DownloadManager::handleDownloadRequested(QWebEngineDownloadRequest *download)
 {
     if (!download || download->url().isEmpty())
+        return;
+
+    // PDF01: a sanitize-on-view fetch claims its request before any
+    // UI item is made — the temp-dir write is the pipeline's staging
+    // area, not a user download.  Save-as PDF traffic still lands in
+    // the ordinary item path below with raw bytes.
+    if (PdfSanitizeFetch::claim(download))
         return;
 
 #ifdef DOWNLOADMANAGER_DEBUG

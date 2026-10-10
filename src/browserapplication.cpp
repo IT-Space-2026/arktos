@@ -80,6 +80,7 @@
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
@@ -532,6 +533,10 @@ void BrowserApplication::quitBrowser()
 void BrowserApplication::postLaunch()
 {
     StartupProfile::mark("postLaunch: begin");
+
+    // PDF01: staging copies from the sanitize-on-view pipeline live
+    // only for the session — sweep leftovers from the previous run.
+    PdfSupport::sweepTempDir();
 
     // The WebKit icon database is gone in Qt WebEngine — icons are
     // delivered per-page via QWebEnginePage::iconChanged and cached by

@@ -254,6 +254,19 @@ RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
 RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
                           RcBuffer *outJson);
 
+/* --- PDF sanitization (PDF01) --------------------------------------
+ * The built-in viewer only ever opens the rewrite this produces: the
+ * Qt side fetches the PDF body through the profile, calls this and
+ * displays the sanitized copy from a 0700 temp dir.  Strips the
+ * action surface the renderer sandbox does not policy — /JS and
+ * /JavaScript payloads, /Launch, /AA and /OpenAction triggers,
+ * /Names->/EmbeddedFiles attachments, AcroForm /XFA and remote
+ * submit/import actions — then re-serializes a standalone PDF.
+ * RC_CORRUPT when the input is not a parseable PDF: the caller
+ * refuses the view rather than showing unsanitized bytes. */
+RcStatus rc_pdf_sanitize(const uint8_t *data, size_t len,
+                         RcBuffer *out);
+
 /* --- bookmark store (RCORE02a) ---------------------------------------
  * The canonical bookmark tree.  Nodes are addressed by uint64
  * handles; 0 is the null handle and rc_bm_root() is the root.

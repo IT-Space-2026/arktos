@@ -451,3 +451,88 @@ Stopping after this one pass as instructed.
 [2026-10-10 05:48:43] merge due: ui-work(1) — spawning devin merge run
 I'll start by fetching and checking the state of both lanes.The lane's single commit touches `ChangeLog`, which is dirty in this tree. Let me attempt the merge — git will tell us if the dirty file blocks it.[2026-10-10 05:49:25] merge run exited rc=0
 [2026-10-10 05:54:26] merge due: ui-work(1) — spawning devin merge run
+The `ui-work` lane touches `ChangeLog`, which is dirty in this tree (agent mid-run). Per the rules, I'll skip that lane and note it. Let me check the worklog format first.This tree is in the same state as the previous run — `ChangeLog` is still dirty from the in-progress SESS02 work, and `ui-work`'s commit (MENU05) touches `ChangeLog`, so git would refuse the merge. I'll skip the lane again per the rules and check how the prior skip was recorded.The SESS02 work was committed (`eed97a1`), yet the same files still show dirty — the agent may still be mid-run making further edits. Let me confirm what's in the dirty `ChangeLog` and whether it still overlaps.The SESS02 agent just committed its work (`eed97a1`) between my two status checks. Let me re-check the current dirty state.The blocker is gone — `ChangeLog` was committed in `eed97a1`, and remaining dirty files (task logs) don't overlap the lane's changes. Proceeding with the merge.Clean merge, no conflicts. Now verifying the build.Build is running in the background — waiting for it to finish.Build succeeded — `arora` linked cleanly. Now appending the worklog line, committing only `WORKLOG.md`, and pushing.Merge pass complete.
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`6c1bf31` MENU05 — remove 'Ad Block...' from Tools menu). Initially blocked by a dirty `ChangeLog`, but the mid-run SESS02 agent committed its work (`eed97a1`) during my checks, clearing the path. Merged clean — zero conflicts; `WORKLOG.md`, `ChangeLog`, `browsermainwindow.cpp/h`, `commandpalette.cpp`, and `settings.cpp/settings.ui` all auto-merged.
+- **Build**: `make -C src -j2` under `CONFIG+=rustcore` linked `arora` successfully.
+- **Worklog**: appended the MERGEWATCH line, committed `1aa7025`, pushed `master` (`eed97a1..1aa7025`).
+
+The remaining dirty files in this tree (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log`) are the live agent's bookkeeping — left untouched.
+[2026-10-10 06:13:05] merge run exited rc=0
+[2026-10-10 07:03:10] merge due: ui-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository.`rust-work` is at 0 — skip. `ui-work` has 1 commit. Let me see which files it touches (dirty files here are `.devin/Arora-Task.md`, `.devin/mergewatch.log`, `.devin/taskloop.log`).No overlap with the dirty files — proceeding with the merge.`check-coverage.sh` is a flag-list union — keep both sides' smoke flags. Now checking README.md and main.cpp conflicts.All conflicts are additive/union cases. Resolving each — keeping both sides' content.
+
+**1. `check-coverage.sh`** — union the smoke-flag lists:**2. `README.md`** — fold the lane's "Parallel segments" sentence into master's expanded Downloads text (the lane's "in development" closer is superseded by master's full Rust-engine description):Removing the leftover conflict tail:**3. `src/main.cpp`** — three union conflicts, keep both sides:All markers resolved, and the lane's smoke-handler code merged cleanly. Staging the three resolved files and committing the merge:Only merge files are staged — the three pre-existing dirty files stay untouched. Committing:Merge committed. Now verifying the build:The build is running. Waiting for it to finish:Build passed — `arora` linked cleanly. Now the worklog entry. Checking the existing format:Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`5d02dce` DLACC02 parallel downloads) — merged as `32ad8ec`.
+- **Conflicts resolved** (all union/both-sides):
+  - `.devin/check-coverage.sh` — kept both sides' smoke flags (master's telemetry-browse/startpage/sandbox/bidi + lane's parallel-download flags)
+  - `README.md` — folded the lane's "Parallel segments" toggle sentence into master's expanded Rust-engine Downloads paragraph; dropped the lane's stale "engine in development" closer
+  - `src/main.cpp` — kept both argv-scan blocks, both pre-`applyChromiumFlags` settings pins (SEC20 tor + DLACC02 parallelSegments), and both `internalOptions` rows
+- **Build**: `make -C src -j2` linked `arora` cleanly — no merge-caused breakage.
+- **Pushed**: `1aa7025..bb0c2cd master` (merge commit + `bb0c2cd` MERGEWATCH worklog entry).
+- Pre-existing dirty files (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log`) left untouched — none overlapped the merge.
+[2026-10-10 07:05:53] merge run exited rc=0
+[2026-10-10 07:35:56] merge due: ui-work(1) — spawning devin merge run
+Working tree has uncommitted changes in `.devin/Arora-Task.md`, `.devin/mergewatch.log`, `.devin/taskloop.log` — likely another agent mid-run. I'll note those and check lane divergence.`rust-work` is at 0 (skip). `ui-work` is 1 ahead — checking what it touches before merging.No overlap with the dirty files (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log` vs lane's `Arora-Task-UI.md`, `taskloop-ui.log`). Merging.One conflict in `src/tabwidget.cpp`. Let me look at it.The conflict is structural — master refactored session saving into `collectSessionSnapshot()` returning a `TabSessionSnapshot`, while ui-work bumped the session format to v4 with a container header. I need to see both sides fully.Now let me see master's refactored version.Let me see the tail of ui-work's restoreState where it applies `savedHeader`.Now I'll check the merged `tabwidget.h` — it auto-merged, so the `TabSessionSnapshot` struct may need a new field for the header.The header merged cleanly. Now let me see the end of master's `restoreSessionState` (JSON path) and how the conflict region's surrounding code looks in the working file.The auto-merge left real breakage: `restoreSessionSnapshot` uses `savedHeader` (out of scope — it was a local in ui-work's monolithic `restoreState`), and `saveState` writes the v4 header tail while still declaring `version = 3`. I'll thread the header through `TabSessionSnapshot` instead — that matches master's refactor.
+
+Edits in `src/tabwidget.cpp`:Now checking for leftover conflict markers and stray `savedHeader` references, then building before committing.Build is running — `tabwidget.cpp` and `tabbar.cpp` already compiled cleanly. Waiting for the link to finish.Build succeeded — `arora` linked cleanly. Now I'll check the WORKLOG tail format and append the MERGEWATCH line before committing the merge.Merge committed. Pushing master.Merge run complete.
+
+**Results:**
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (`afab07d` CONT06 two-level container tab strip) — merged and pushed as `b8f332b`.
+
+**Conflict resolution** (`src/tabwidget.cpp`, single conflict):
+- Master had refactored `saveState`/`restoreState` into `collectSessionSnapshot()` + `restoreSessionSnapshot()` around a `TabSessionSnapshot` struct (RCORE03); the lane still had the monolithic version with a v4 stream tail.
+- Kept master's snapshot structure and re-applied the lane's intent: added `activeContainerHeader` to `TabSessionSnapshot`, populated it in `collectSessionSnapshot()`, bumped the blob format to **v4** (the auto-merge had left it writing a v4 tail while declaring v3), read it back in `restoreState()`, and consumed it in `restoreSessionSnapshot()`'s CONT06 level-filter rebuild — fixing a `savedHeader` scope break the auto-merge introduced.
+- Also carried the field through the rustcore JSON manifest (`sessionStateJson`/`restoreSessionState` as `activeContainer`) so the two serializers stay in parity per the struct's contract.
+- `.devin/WORKLOG.md`, `ChangeLog`, `settings.*`, `tabbar.*`, autotests — auto-merged clean, no union needed.
+
+**Verification**: `source .devin/qt-env.sh && make -C src -j2` — full compile + link of `arora` clean.
+
+**Log**: MERGEWATCH line appended to `.devin/WORKLOG.md` inside the merge commit.
+
+Pre-existing dirty files (`.devin/Arora-Task.md`, `.devin/mergewatch.log`, `.devin/taskloop.log`) were left untouched. Stopping after this pass.
+[2026-10-10 07:38:27] merge run exited rc=0
+[2026-10-10 08:08:30] merge due: ui-work(2) — spawning devin merge run
+I'll start by checking the state of this repository and fetching the lanes.ui-work's commits don't touch the dirty files, so it's safe to merge. Proceeding.Three conflicts to resolve: `.devin/ENGINE.md`, `src/engine/engine.pri`, `src/src.pri`. Let me examine each.The conflicts are straightforward:
+
+- **`src/engine/engine.pri`** (add/add): master's side already includes the lane's `engineinterface.h/.cpp` plus `navigationpolicy.*` — master's is the union.
+- **`src/src.pri`**: only a comment differs; master's text is accurate for this tree.
+- **`.devin/ENGINE.md`** (add/add): all four hunks are the same table rows — master's versions carry newer ENG02-complete detail; the lane's are stale subsets. Keeping master's preserves all unique info.
+
+Let me verify the lane's ENGINE.md has no unique content outside those hunks, then resolve.Confirmed — master's ENGINE.md is strictly newer; the lane adds nothing unique. Resolving all three conflicts with master's side.All conflicts resolved. Verifying the WORKLOG auto-merge kept both sides, then committing.WORKLOG union is clean (0 lane lines missing). Committing the merge, then building.Merge committed. Now building to verify.Build is running. Waiting for it to finish.Build succeeded — `arora` linked cleanly. Now let me see how previous runs committed the WORKLOG line, then append mine.Previous runs commit the WORKLOG line separately. Appending the line and committing only that file (the other dirty files are an agent's mid-run changes — leaving them).Pushing master.Merge run complete. Summary:
+
+**Lanes scanned** (after `git fetch origin`):
+- `rust-work`: 0 commits ahead of master — skipped.
+- `ui-work`: 2 commits ahead (`CONT06 follow-up` + `ENG04 graft`) — merged.
+
+**Merge result** (`e72a6ac`): three conflicts, all resolved to master's side since it was the strict superset:
+- `.devin/ENGINE.md` (add/add): 4 hunks were the same coupling-map rows — master's carried ENG02-complete detail; lane's were stale subsets. Verified via full diff that the lane added nothing unique.
+- `src/engine/engine.pri` (add/add): master's list already contained the lane's `engineinterface.*` plus `navigationpolicy.*`.
+- `src/src.pri`: only an include comment differed; kept master's accurate text.
+- `.devin/WORKLOG.md` auto-merged clean (union verified — 0 lane lines missing).
+
+**Build**: `make -C src -j2` under `qt-env.sh` — compiled and linked `arora` cleanly. No merge-caused breakage.
+
+**Logged & pushed**: WORKLOG line committed as `3b3509b`, pushed `b8f332b..3b3509b` to origin/master.
+
+Pre-existing dirty files (`.devin/Arora-Task.md`, `mergewatch.log`, `taskloop.log`) belong to a mid-run agent — left untouched. Sibling worktrees never modified. Stopping after this pass as instructed.
+[2026-10-10 08:10:44] merge run exited rc=0
+[2026-10-10 08:30:46] merge due: ui-work(3) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching from origin.The working tree is dirty — an agent appears mid-run on PDF support work. Let me check lane status and whether the dirty files would conflict.[2026-10-10 08:33:45] merge run exited rc=0
+[2026-10-10 08:38:45] merge due: ui-work(4) — spawning devin merge run
+I'll start by checking the repo state and fetching.The working tree has uncommitted changes (likely an agent mid-run on master). I'll check lane ahead-counts next.`rust-work` is 0 ahead — skipping. `ui-work` is 4 ahead. Let me check what files it touched and whether they overlap with the dirty files in this tree.The lane's changes overlap with dirty files in this tree — `src/main.cpp` and `.devin/WORKLOG.md` are both modified locally and touched by `ui-work`, so a merge would refuse or collide with the in-progress work. Per the rules, this lane gets skipped. Let me check the log format for noting it.Both `src/main.cpp` and `.devin/WORKLOG.md` are dirty here and modified by the lane — the merge will be refused. I'll confirm with a merge attempt (git aborts cleanly upfront if local changes would be overwritten).[2026-10-10 08:39:34] merge run exited rc=0
+[2026-10-10 08:44:35] merge due: ui-work(4) — spawning devin merge run
+Starting merge run. First, checking working tree state and fetching.Working tree is dirty (agent mid-run — PDF/rustcore work). I'll check lane commit counts, then determine which files each merge would touch to avoid stomping on in-flight work.rust-work is at 0 — skipped. ui-work has 4 commits. Checking which files the ui-work merge would touch vs. the dirty files:ui-work's merge touches two files that are dirty in this tree: `.devin/WORKLOG.md` and `src/main.cpp` (overlap computed: `comm -12 /tmp/dirty.txt /tmp/lane_files.txt` would show them). Per the rules, a dirty file conflicting with the merge means skipping the lane. Let me confirm master's push state:Both lanes are a skip: rust-work has 0 commits, and ui-work's merge set overlaps dirty files (`WORKLOG.md`, `src/main.cpp`) — an agent is mid-run in this tree, so git would refuse the merge. Master is already in sync with origin, so nothing to push. Let me check the WORKLOG tail format and append the skip note:Same situation as the previous run — identical skip. Appending this run's note in the established format:Merge run complete — no merges this pass:
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 4 commits ahead (ENG04 engine-adapter work), but the merge would touch `.devin/WORKLOG.md` and `src/main.cpp`, both dirty in this tree from an agent mid-run on PDF support. Skipped per rules rather than stomping in-flight work.
+- **Build**: n/a — no merge performed, and the dirty tree isn't mine to verify.
+- **Push**: nothing to push; master is already in sync with `origin/master`.
+- **Log**: skip noted in `.devin/WORKLOG.md` (matching the prior run's identical skip entry).
+
+Stopping here — the watchdog will relaunch a fresh run once the in-flight work commits.
+[2026-10-10 08:45:04] merge run exited rc=0

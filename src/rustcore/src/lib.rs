@@ -47,6 +47,7 @@ mod error;
 mod history;
 mod notify;
 mod parsers;
+mod pdfsanitize;
 mod policy;
 mod session;
 mod store;
@@ -823,6 +824,40 @@ pub unsafe extern "C" fn rc_suggest_parse(
         })?;
         let json = parsers::suggestions(data)?;
         buffer_out(out, json);
+        Ok(())
+    })
+}
+
+// ---- PDF sanitization (PDF01) ----------------------------------------
+//
+// The in-browser viewer never sees remote PDF bytes directly: the Qt
+// side downloads the file, hands the body here and displays only the
+// sanitized rewrite.  RC_CORRUPT means the input was not a parseable
+// PDF — the caller then refuses the view rather than falling back to
+// unsanitized bytes.
+
+/// Rewrites a PDF body with its action surface stripped (JS/Launch/
+/// OpenAction/AA triggers, embedded files, XFA, remote submits).
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdf_sanitize(
+    data: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let input = unsafe { util::bytes(data, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad input pointer".into(),
+        })?;
+        let cleaned = pdfsanitize::sanitize(input).map_err(|msg| error::Fail {
+            status: RcStatus::Corrupt,
+            msg,
+        })?;
+        buffer_out(out, cleaned);
         Ok(())
     })
 }

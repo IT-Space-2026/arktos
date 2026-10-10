@@ -2018,6 +2018,41 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="pdfGroupBox">
+         <property name="title">
+          <string>PDF Documents</string>
+         </property>
+         <layout class="QVBoxLayout">
+          <item>
+           <widget class="QCheckBox" name="pdfViewer">
+            <property name="toolTip">
+             <string>Open PDF links in Chromium's built-in PDFium viewer instead of downloading them — the parser runs inside the sandboxed renderer. Turn off to keep the old save-everything behavior.</string>
+            </property>
+            <property name="text">
+             <string>Open PDFs in the built-in viewer</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="pdfSanitize">
+            <property name="toolTip">
+             <string>Before a fetched PDF reaches the viewer, a Rust policy pass rewrites it — removing JavaScript payloads, auto-execute triggers (OpenAction/AA), Launch commands, embedded files, XFA forms and remote-submit actions. Only the in-browser view is sanitized; saving a PDF still gives your external reader the original bytes.</string>
+            </property>
+            <property name="text">
+             <string>Sanitize PDFs before viewing</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="fingerprintGroupBox">
          <property name="title">
           <string>Fingerprint Resistance</string>

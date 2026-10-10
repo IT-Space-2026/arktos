@@ -107,6 +107,16 @@ browsing profile:
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
+- **In-browser PDFs, sanitized before view** — PDFs open in Chromium's
+  built-in PDFium viewer (Preferences → Privacy → PDF Documents).
+  In `CONFIG+=rustcore` builds the bytes are first fetched through the
+  page's own profile (cookies, Tor SOCKS routing and container
+  isolation ride along) and rewritten by a Rust policy pass that strips
+  JavaScript, /Launch and auto-actions, embedded files and
+  XFA/AcroForm submit remnants before the viewer ever sees them;
+  embedded links to local files are refused. Saving a PDF to disk
+  still stores the original, unsanitized bytes — sanitization applies
+  to in-browser viewing only.
 - **Filesystem sandbox** — browsing sessions re-exec inside a
   permissive bubblewrap sandbox on Linux: credential stores (`~/.ssh`,
   `~/.gnupg`, keyrings, CLI/cloud config) and other browsers' profile
