@@ -645,7 +645,7 @@ void BrowserApplication::torStartup(const QString &url)
         // page-link gate, so a javascript:/data:/blob: operand is
         // refused outright instead of executing in this fresh chrome
         // context.
-        if (WebView::isUrlAllowedFromPageLink(QUrl(url))) {
+        if (isUrlAllowedOnTorArgv(url)) {
             window->tabWidget()->loadStringFromUntrustedSource(url);
         } else {
             qWarning() << "Ignoring untrusted --tor argv url:" << url;
@@ -1230,13 +1230,13 @@ TorManager *BrowserApplication::torManager() const
     return m_torManager;
 }
 
-void BrowserApplication::openTorWindow(const QUrl &url)
+bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)
 {
-    // TOR02: a separate process — the application proxy is
-    // process-global, so tor routing can never share this one.  Each
-    // tor process manages its own daemon (TAKEOWNERSHIP binds its
-    // lifetime to the process), so several tor windows coexist
-    // independently.
+    return WebView::isUrlAllowedFromPageLink(QUrl(operand));
+}
+
+QStringList BrowserApplication::torWindowArguments(const QUrl &url)
+{
     QStringList arguments{QStringLiteral("--tor")};
     // CONT07: an optional start url travels as its own argv element —
     // startDetached never involves a shell, so no quoting/escaping
@@ -1245,8 +1245,18 @@ void BrowserApplication::openTorWindow(const QUrl &url)
     if (url.isValid() && !url.isEmpty()
         && WebView::isUrlAllowedFromPageLink(url))
         arguments << QString::fromUtf8(url.toEncoded());
+    return arguments;
+}
+
+void BrowserApplication::openTorWindow(const QUrl &url)
+{
+    // TOR02: a separate process — the application proxy is
+    // process-global, so tor routing can never share this one.  Each
+    // tor process manages its own daemon (TAKEOWNERSHIP binds its
+    // lifetime to the process), so several tor windows coexist
+    // independently.
     QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                          arguments);
+                          torWindowArguments(url));
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const

@@ -41,6 +41,7 @@
 #include <qclipboard.h>
 #include <qpointer.h>
 #include <qdialog.h>
+#include <qset.h>
 
 #include <functional>
 #include <memory>
@@ -50,6 +51,8 @@
 #include "webviewsearch.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
+#include "historymanager.h"
 #include "tabwidget.h"
 #include "tormanager.h"
 #include "qtest_arora.h"
@@ -118,6 +121,104 @@ public:
     }
 };
 
+// CONT08: minimal loopback HTTP responder that records every request
+// target AND its Referer header — a cross-profile open that leaked
+// the source page's url would show up on the wire here, not just in
+// the request object.
+class RecordedHttpServer : public QObject
+{
+    Q_OBJECT
+
+public:
+    struct Request {
+        QString target;
+        QString referer;
+    };
+
+    QList<Request> requests;
+    QByteArray indexHtml;
+
+    explicit RecordedHttpServer(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            QTcpSocket *socket = m_server.nextPendingConnection();
+            socket->setParent(&m_server);
+            connect(socket, &QTcpSocket::readyRead, this,
+                    [this, socket]() {
+                if (!socket->peek(16384).contains("\r\n\r\n"))
+                    return;
+                respond(socket, socket->readAll());
+            });
+        });
+    }
+
+    bool start() { return m_server.listen(QHostAddress::LocalHost); }
+
+    QUrl url(const QString &path) const
+    {
+        return QUrl(QString::fromLatin1("http://127.0.0.1:%1%2")
+                    .arg(m_server.serverPort()).arg(path));
+    }
+
+    QList<Request> requestsFor(const QString &target) const
+    {
+        QList<Request> out;
+        for (const Request &request : requests)
+            if (request.target == target)
+                out.append(request);
+        return out;
+    }
+
+private:
+    void respond(QTcpSocket *socket, const QByteArray &request)
+    {
+        const QList<QByteArray> lines = request.split('\n');
+        Request record;
+        record.target = QString::fromUtf8(
+            lines.value(0).split(' ').value(1));
+        for (const QByteArray &line : lines) {
+            if (line.startsWith("Referer:"))
+                record.referer = QString::fromUtf8(
+                    line.mid(8).trimmed());
+        }
+        requests.append(record);
+
+        const QByteArray body = indexHtml.isEmpty()
+            ? QByteArray("<html><body>ok</body></html>") : indexHtml;
+        socket->write("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                      "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    }
+
+    QTcpServer m_server;
+};
+
+// Resets the process-global privacy flags no matter which assertion
+// exits the test early — a leaked setPrivate()/setTorMode() would
+// poison every later case.
+struct PrivacyFlagGuard {
+    ~PrivacyFlagGuard()
+    {
+        BrowserApplication::setPrivate(false);
+        BrowserApplication::setTorMode(false);
+    }
+};
+
+// Deletes every window the test spawned, including ones still open
+// when an assertion ends the function early.
+struct WindowListGuard {
+    QList<QPointer<BrowserMainWindow>> windows;
+    ~WindowListGuard()
+    {
+        for (const QPointer<BrowserMainWindow> &window : windows)
+            if (window)
+                delete window;
+    }
+};
+
 class tst_WebView : public QObject
 {
     Q_OBJECT
@@ -139,6 +240,8 @@ private slots:
     void webViewWithSearch();
     void contextMenuLinkActions();
     void contextMenuLinkPrivateTorActions();
+    void contextMenuLinkCrossProfileMatrix();
+    void linkOpenRefererDiscipline();
     void contextMenuPageActions();
     void contextMenuImageActions();
     void contextMenuImageLinkActions();
@@ -206,8 +309,98 @@ static bool driveRightClick(WebView *view, const QPoint &pos,
     return seen;
 }
 
+// All five CONT07 link-open entries start with 'Open in New' —
+// records order and enabled-state of each.
+static void collectOpenEntries(QMenu *menu, QStringList *order,
+                               QHash<QString, bool> *enabled)
+{
+    const QList<QAction *> actions = menu->actions();
+    for (QAction *action : actions) {
+        const QString text = action->text().remove(QLatin1Char('&'));
+        if (text.startsWith(QLatin1String("Open in New"))) {
+            order->append(text);
+            enabled->insert(text, action->isEnabled());
+        }
+    }
+}
+
+// CONT08 matrix helpers — plain wait loops, no QTest macros, so a
+// timeout surfaces as a clean nullptr/empty return the test can
+// QVERIFY on.
+static QSet<WebView *> tabViews(TabWidget *tabs)
+{
+    QSet<WebView *> views;
+    for (int i = 0; i < tabs->count(); ++i)
+        if (WebView *view = tabs->webView(i))
+            views.insert(view);
+    return views;
+}
+
+static WebView *awaitNewTabView(TabWidget *tabs,
+                                const QSet<WebView *> &before)
+{
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + 5000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+        for (int i = 0; i < tabs->count(); ++i) {
+            WebView *view = tabs->webView(i);
+            if (view && !before.contains(view))
+                return view;
+        }
+        QTest::qWait(50);
+    }
+    return nullptr;
+}
+
+static BrowserMainWindow *awaitNewWindow(
+        BrowserApplication *application,
+        const QList<BrowserMainWindow *> &before)
+{
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + 5000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+        const QList<BrowserMainWindow *> windows =
+            application->mainWindows();
+        for (BrowserMainWindow *window : windows)
+            if (!before.contains(window))
+                return window;
+        QTest::qWait(50);
+    }
+    return nullptr;
+}
+
+// The 'blob' anchor's href is minted by page script — poll until it
+// is a blob: url (or give up, in which case the blob menu cell is
+// skipped: the slot-level probes still lock the scheme).
+static bool awaitBlobHref(WebView *view)
+{
+    std::shared_ptr<bool> probed(new bool(false));
+    std::shared_ptr<QString> href(new QString);
+    const auto deadline =
+        QDateTime::currentMSecsSinceEpoch() + 15000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+        view->page()->runJavaScript(
+            QLatin1String("document.getElementById('blob').href"),
+            [probed, href](const QVariant &result) {
+                *href = result.toString();
+                *probed = true;
+            });
+        const auto innerDeadline =
+            QDateTime::currentMSecsSinceEpoch() + 5000;
+        while (!*probed
+               && QDateTime::currentMSecsSinceEpoch() < innerDeadline)
+            QTest::qWait(50);
+        *probed = false;
+        if (href->startsWith(QLatin1String("blob:")))
+            return true;
+        QTest::qWait(100);
+    }
+    return false;
+}
+
 // CTX01 detached-view helpers — defined below ahead of the image
 // tests; the CONT07 link test uses them too.
+static WebView *findDetachedView(WebView *source);
 static WebView *awaitDetachedView(WebView *source, const QString &scheme);
 static void closeDetached(WebView *view);
 
@@ -688,18 +881,6 @@ void tst_WebView::contextMenuLinkPrivateTorActions()
         + QString::fromUtf8(QUrl::toPercentEncoding(html))));
     QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
 
-    const auto collectOpenEntries = [](QMenu *menu,
-            QStringList *order, QHash<QString, bool> *enabled) {
-        const QList<QAction *> actions = menu->actions();
-        for (QAction *action : actions) {
-            const QString text = action->text().remove(QLatin1Char('&'));
-            if (text.startsWith(QLatin1String("Open in New"))) {
-                order->append(text);
-                enabled->insert(text, action->isEnabled());
-            }
-        }
-    };
-
     // Menu shape and order on an ordinary link.
     QStringList order;
     QHash<QString, bool> enabled;
@@ -839,6 +1020,577 @@ void tst_WebView::contextMenuLinkPrivateTorActions()
         QLatin1String("Open in New Tor Window")));
 
     QFile::remove(fixturePath);
+}
+
+// CONT08: the adversarial source-context x open-target matrix —
+// every combination must land the created page on EXACTLY the
+// expected profile (named profile / shared clearnet OTR / tor), and
+// the tor/OTR isolations must be structural (entries absent or
+// remapped), never just a refused load.  'Open in New Tor Window' is
+// asserted present but never triggered here — it would spawn a real
+// `arora --tor` process; its argv shape and receiving-side re-gate
+// are locked by tst_browserapp::torWindowHandoffGate.
+void tst_WebView::contextMenuLinkCrossProfileMatrix()
+{
+    PrivacyFlagGuard flagGuard;
+    WindowListGuard windowGuard;
+    BrowserApplication *application = BrowserApplication::instance();
+    QVERIFY(application);
+
+    // A file: target loads with no network so opened views settle
+    // deterministically.
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-cont08-target.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>cont08-target</title>"
+                      "</head><body>t</body></html>");
+    }
+    const QUrl linkTarget = QUrl::fromLocalFile(fixturePath);
+
+    // The source page: a good link plus one of each refused scheme.
+    const QString sourceHtml = QStringLiteral(
+        "<html><body style='margin:0'>"
+        "<a href='%1' style='position:fixed;left:0;top:0;display:block;"
+        "width:300px;height:60px'>ok</a>"
+        "<a href='data:text/html,refused' "
+        "style='position:fixed;left:0;top:80px;display:block;"
+        "width:300px;height:60px'>d</a>"
+        "<a href='javascript:alert(1)' style='position:fixed;left:0;"
+        "top:160px;display:block;width:300px;height:60px'>j</a>"
+        "<a id='blob' style='position:fixed;left:0;top:240px;"
+        "display:block;width:300px;height:60px'>b</a>"
+        "<script>document.getElementById('blob').href="
+        "URL.createObjectURL(new Blob(['<h1>x</h1>'],"
+        "{type:'text/html'}));</script>"
+        "</body></html>").arg(linkTarget.toString());
+    const QUrl sourceUrl(QStringLiteral("data:text/html,")
+        + QString::fromUtf8(QUrl::toPercentEncoding(sourceHtml)));
+
+    const auto loadSource = [&sourceUrl](WebView *view) {
+        QSignalSpy loaded(view, SIGNAL(loadFinished(bool)));
+        view->loadUrl(sourceUrl);
+        const auto deadline =
+            QDateTime::currentMSecsSinceEpoch() + 15000;
+        while (loaded.count() < 1
+               && QDateTime::currentMSecsSinceEpoch() < deadline)
+            QTest::qWait(50);
+        return loaded.count() >= 1;
+    };
+    const auto triggerOpen = [](WebView *view, const QString &text) {
+        bool found = false;
+        const bool popped = driveRightClick(view, QPoint(30, 30),
+                                            [&](QMenu *menu) {
+            if (QAction *action = findMenuAction(menu, text)) {
+                found = true;
+                action->trigger();
+            }
+        });
+        return popped && found;
+    };
+    const auto awaitUrl = [&linkTarget](WebView *view) {
+        const auto deadline =
+            QDateTime::currentMSecsSinceEpoch() + 15000;
+        while (view->url() != linkTarget
+               && QDateTime::currentMSecsSinceEpoch() < deadline)
+            QTest::qWait(50);
+        return view->url() == linkTarget;
+    };
+
+    // ==== source context 1: a normal window ====
+    BrowserMainWindow *window = application->newMainWindow();
+    windowGuard.windows << window;
+    window->resize(900, 700);
+    TabWidget *tabs = window->tabWidget();
+    WebView *source = tabs->currentWebView();
+    QVERIFY(source);
+    QVERIFY2(loadSource(source), "source fixture never loaded");
+    QVERIFY(!source->webPage()->profile()->isOffTheRecord());
+    QCOMPARE(source->webPage()->profile(),
+             BrowserApplication::webEngineProfile());
+
+    // A refused-scheme link must disable every open entry — the
+    // menu is honest instead of offering a click that goes nowhere.
+    // The blob: link's entries may not surface at all when Chromium
+    // declines to report the url — either way nothing is offered.
+    const bool blobMinted = awaitBlobHref(source);
+    const struct { QPoint pos; bool expectEntries; } refusedCells[] = {
+        { QPoint(30, 110), true },   // data: link
+        { QPoint(30, 190), true },   // javascript: link
+        { QPoint(30, 270), false },  // blob: link
+    };
+    for (int i = 0; i < 3; ++i) {
+        if (i == 2 && !blobMinted)
+            break;
+        QStringList order;
+        QHash<QString, bool> enabled;
+        const bool popped = driveRightClick(source, refusedCells[i].pos,
+                                            [&](QMenu *menu) {
+            collectOpenEntries(menu, &order, &enabled);
+        });
+        QVERIFY2(popped, "no context menu on refused-scheme link");
+        if (refusedCells[i].expectEntries)
+            QVERIFY(!order.isEmpty());
+        for (const QString &text : order) {
+            QVERIFY2(!enabled.value(text),
+                     qPrintable(text + QLatin1String(
+                                    " stayed enabled on refused link")));
+        }
+    }
+
+    // New Tab -> a background tab on THIS page's named profile.
+    {
+        const QSet<WebView *> before = tabViews(tabs);
+        QVERIFY2(triggerOpen(source, QStringLiteral("Open in New Tab")),
+                 "New Tab entry missing or menu never popped");
+        WebView *created = awaitNewTabView(tabs, before);
+        QVERIFY2(created, "New Tab produced no tab");
+        QCOMPARE(created->webPage()->profile(),
+                 source->webPage()->profile());
+        QVERIFY(!created->webPage()->profile()->isOffTheRecord());
+        QVERIFY2(awaitUrl(created), "New Tab never loaded the link");
+    }
+    // New Window -> a window on the named profile.
+    {
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerOpen(source,
+                            QStringLiteral("Open in New Window")));
+        BrowserMainWindow *created = awaitNewWindow(application, before);
+        QVERIFY2(created, "New Window produced no window");
+        windowGuard.windows << created;
+        WebView *view = created->tabWidget()->currentWebView();
+        QVERIFY(view);
+        QCOMPARE(view->webPage()->profile(),
+                 source->webPage()->profile());
+        QVERIFY(!view->webPage()->profile()->isOffTheRecord());
+        QVERIFY2(awaitUrl(view), "New Window never loaded the link");
+    }
+    // New Private Tab -> the shared clearnet OTR profile.
+    WebView *openedPrivate = nullptr;
+    {
+        const QSet<WebView *> before = tabViews(tabs);
+        QVERIFY(triggerOpen(source,
+                    QStringLiteral("Open in New Private Tab")));
+        openedPrivate = awaitNewTabView(tabs, before);
+        QVERIFY2(openedPrivate, "New Private Tab produced no tab");
+        QCOMPARE(openedPrivate->webPage()->profile(),
+                 BrowserApplication::privateWebEngineProfile());
+        QVERIFY(openedPrivate->webPage()->profile()->isOffTheRecord());
+        QVERIFY2(awaitUrl(openedPrivate),
+                 "New Private Tab never loaded the link");
+    }
+    // New Private Window -> an OTR first tab in a new window.
+    {
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerOpen(source,
+                    QStringLiteral("Open in New Private Window")));
+        BrowserMainWindow *created = awaitNewWindow(application, before);
+        QVERIFY2(created, "New Private Window produced no window");
+        windowGuard.windows << created;
+        WebView *view = created->tabWidget()->currentWebView();
+        QVERIFY(view);
+        QCOMPARE(view->webPage()->profile(),
+                 BrowserApplication::privateWebEngineProfile());
+        QVERIFY2(awaitUrl(view),
+                 "New Private Window never loaded the link");
+    }
+
+    // The OTR tabs the menu created are invisible to session state —
+    // only the named-profile tabs survive a save/restore round trip.
+    {
+        int namedCount = 0;
+        for (int i = 0; i < tabs->count(); ++i)
+            if (!tabs->isTabPrivate(i))
+                ++namedCount;
+        QVERIFY(namedCount >= 2); // source + the New Tab above
+        TabWidget restored;
+        QVERIFY(restored.restoreState(tabs->saveState()));
+        QCOMPARE(restored.count(), namedCount);
+        for (int i = 0; i < restored.count(); ++i)
+            QVERIFY(!restored.isTabPrivate(i));
+    }
+    // Closing a menu-opened private tab must not queue it for
+    // reopen — the undo stack is part of the residue.
+    {
+        const bool wasEnabled =
+            tabs->recentlyClosedTabsAction()->isEnabled();
+        const int index = [&]() {
+            for (int i = 0; i < tabs->count(); ++i)
+                if (tabs->webView(i) == openedPrivate)
+                    return i;
+            return -1;
+        }();
+        QVERIFY(index != -1);
+        tabs->closeTab(index);
+        QCOMPARE(tabs->recentlyClosedTabsAction()->isEnabled(),
+                 wasEnabled);
+    }
+
+    // ==== source context 2: a private tab inside the normal window ====
+    WebView *privateSource = tabs->makeNewPrivateTab(true);
+    QVERIFY(privateSource);
+    QVERIFY(privateSource->webPage()->profile()->isOffTheRecord());
+    QVERIFY2(loadSource(privateSource), "private source never loaded");
+
+    // Plain 'New Tab' from an OTR page can only ever be another OTR
+    // page — a named-profile child would record the visit.
+    {
+        const QSet<WebView *> before = tabViews(tabs);
+        QVERIFY(triggerOpen(privateSource,
+                            QStringLiteral("Open in New Tab")));
+        WebView *created = awaitNewTabView(tabs, before);
+        QVERIFY2(created, "private-tab New Tab produced no tab");
+        QVERIFY(created->webPage()->profile()->isOffTheRecord());
+        QCOMPARE(created->webPage()->profile(),
+                 BrowserApplication::privateWebEngineProfile());
+    }
+    // 'New Window' from an OTR page gets the OTR first-tab swap.
+    {
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerOpen(privateSource,
+                            QStringLiteral("Open in New Window")));
+        BrowserMainWindow *created = awaitNewWindow(application, before);
+        QVERIFY2(created, "private-tab New Window produced no window");
+        windowGuard.windows << created;
+        WebView *view = created->tabWidget()->currentWebView();
+        QVERIFY(view);
+        QVERIFY(view->webPage()->profile()->isOffTheRecord());
+        QCOMPARE(view->webPage()->profile(),
+                 BrowserApplication::privateWebEngineProfile());
+    }
+    // 'New Private Tab' from an OTR page is a real second context —
+    // not a no-op — and lands OTR like any other private open.
+    {
+        const QSet<WebView *> before = tabViews(tabs);
+        QVERIFY(triggerOpen(privateSource,
+                    QStringLiteral("Open in New Private Tab")));
+        WebView *created = awaitNewTabView(tabs, before);
+        QVERIFY2(created, "private-tab Private Tab produced no tab");
+        QVERIFY(created->webPage()->profile()->isOffTheRecord());
+    }
+    {
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerOpen(privateSource,
+                    QStringLiteral("Open in New Private Window")));
+        BrowserMainWindow *created = awaitNewWindow(application, before);
+        QVERIFY2(created,
+                 "private-tab Private Window produced no window");
+        windowGuard.windows << created;
+        QVERIFY(created->tabWidget()->currentWebView()
+                    ->webPage()->profile()->isOffTheRecord());
+    }
+
+    // ==== slot-level defense in depth ====
+    // A refused url pushed through the real slot (a QAction sender is
+    // all the slot asks for) must still open nothing — the gate below
+    // the menu is the second line of defense.  The tor slot is
+    // omitted: an allowed url would spawn a real process, and its
+    // refusal order is identical by inspection.
+    {
+        TestWebView probeSource(BrowserApplication::webEngineProfile());
+        QAction goodPrivateTab;
+        goodPrivateTab.setData(linkTarget);
+        QVERIFY(QObject::connect(&goodPrivateTab, SIGNAL(triggered()),
+                                 &probeSource,
+                                 SLOT(openUrlInNewPrivateTab())));
+        // Positive control first: the probe genuinely reaches the
+        // slot's open path.
+        goodPrivateTab.trigger();
+        WebView *control =
+            awaitDetachedView(&probeSource, QLatin1String("file"));
+        QVERIFY2(control, "slot probe never reached the open path");
+        QVERIFY(control->webPage()->profile()->isOffTheRecord());
+        closeDetached(control);
+
+        QAction badNewTab, badNewWindow, badPrivateTab, badPrivateWindow;
+        QVERIFY(QObject::connect(&badNewTab, SIGNAL(triggered()),
+                                 &probeSource,
+                                 SLOT(openLinkInNewTab())));
+        QVERIFY(QObject::connect(&badNewWindow, SIGNAL(triggered()),
+                                 &probeSource,
+                                 SLOT(openLinkInNewWindow())));
+        QVERIFY(QObject::connect(&badPrivateTab, SIGNAL(triggered()),
+                                 &probeSource,
+                                 SLOT(openUrlInNewPrivateTab())));
+        QVERIFY(QObject::connect(&badPrivateWindow, SIGNAL(triggered()),
+                                 &probeSource,
+                                 SLOT(openUrlInNewPrivateWindow())));
+        const int windowsBefore = application->mainWindows().count();
+        const char *badUrls[] = {
+            "javascript:alert(1)",
+            "data:text/html,<h1>x</h1>",
+            "blob:https://example.com/uuid",
+        };
+        for (const char *bad : badUrls) {
+            const QUrl url = QUrl(QLatin1String(bad));
+            badNewTab.setData(url);
+            badNewWindow.setData(url);
+            badPrivateTab.setData(url);
+            badPrivateWindow.setData(url);
+            badNewTab.trigger();
+            badNewWindow.trigger();
+            badPrivateTab.trigger();
+            badPrivateWindow.trigger();
+        }
+        QTest::qWait(100);
+        QCOMPARE(application->mainWindows().count(), windowsBefore);
+        QVERIFY2(!findDetachedView(&probeSource),
+                 "a refused url still spawned a view");
+    }
+
+    // ==== source context 3: a fully private window ====
+    BrowserApplication::setPrivate(true);
+    BrowserMainWindow *privateWindow = application->newMainWindow();
+    windowGuard.windows << privateWindow;
+    privateWindow->resize(900, 700);
+    WebView *pwSource = privateWindow->tabWidget()->currentWebView();
+    QVERIFY(pwSource);
+    QVERIFY(pwSource->webPage()->profile()->isOffTheRecord());
+    QVERIFY2(loadSource(pwSource), "private-window source never loaded");
+    {
+        // The private entries do not exist here — that is the
+        // structural guarantee, not a refused load.
+        QStringList order;
+        QHash<QString, bool> enabled;
+        QVERIFY(driveRightClick(pwSource, QPoint(30, 30),
+                                [&](QMenu *menu) {
+            collectOpenEntries(menu, &order, &enabled);
+        }));
+        QVERIFY(!order.contains(
+            QLatin1String("Open in New Private Tab")));
+        QVERIFY(!order.contains(
+            QLatin1String("Open in New Private Window")));
+        QVERIFY(order.contains(QLatin1String("Open in New Tab")));
+        QVERIFY(order.contains(
+            QLatin1String("Open in New Tor Window")));
+    }
+    {
+        TabWidget *pwTabs = privateWindow->tabWidget();
+        const QSet<WebView *> before = tabViews(pwTabs);
+        QVERIFY(triggerOpen(pwSource,
+                            QStringLiteral("Open in New Tab")));
+        WebView *created = awaitNewTabView(pwTabs, before);
+        QVERIFY2(created, "private-window New Tab produced no tab");
+        QVERIFY(created->webPage()->profile()->isOffTheRecord());
+    }
+    {
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerOpen(pwSource,
+                            QStringLiteral("Open in New Window")));
+        BrowserMainWindow *created = awaitNewWindow(application, before);
+        QVERIFY2(created, "private-window New Window produced none");
+        windowGuard.windows << created;
+        QVERIFY(created->tabWidget()->currentWebView()
+                    ->webPage()->profile()->isOffTheRecord());
+    }
+    BrowserApplication::setPrivate(false);
+
+    // ==== source context 4: tor mode ====
+    // No real tor daemon exists in the test — the profile identity
+    // assertions are the boundary that matters: a tor tab's private
+    // semantics resolve to the tor profile and can never reach the
+    // clearnet OTR profile.
+    BrowserApplication::setTorMode(true);
+    {
+        TabWidget torTabs;
+        torTabs.newTab();
+        WebView *torTab = torTabs.webView(0);
+        QVERIFY(torTab);
+        QCOMPARE(torTab->webPage()->profile(),
+                 BrowserProfile::torProfile());
+        // 'Private tab' under tor resolves to a tor-profile tab —
+        // never the shared clearnet OTR profile.
+        WebView *torPrivate = torTabs.makeNewPrivateTab(true);
+        QVERIFY(torPrivate);
+        QCOMPARE(torPrivate->webPage()->profile(),
+                 BrowserProfile::torProfile());
+        QVERIFY(torPrivate->webPage()->profile()
+                != BrowserApplication::privateWebEngineProfile());
+        // A child of a tor tab stays tor-bound.
+        torTabs.setCurrentIndex(0);
+        const int countBefore = torTabs.count();
+        torTabs.newTab();
+        QCOMPARE(torTabs.count(), countBefore + 1);
+        QCOMPARE(torTabs.webView(torTabs.count() - 1)
+                     ->webPage()->profile(),
+                 BrowserProfile::torProfile());
+    }
+    {
+        // The detached-view fallback of the private-tab open picks the
+        // tor profile under tor mode, not the clearnet OTR one.
+        TestWebView torSource(BrowserProfile::torProfile());
+        QAction probe;
+        probe.setData(linkTarget);
+        QVERIFY(QObject::connect(&probe, SIGNAL(triggered()),
+                                 &torSource,
+                                 SLOT(openUrlInNewPrivateTab())));
+        probe.trigger();
+        WebView *detached =
+            awaitDetachedView(&torSource, QLatin1String("file"));
+        QVERIFY2(detached, "tor private-tab open produced no view");
+        QCOMPARE(detached->webPage()->profile(),
+                 BrowserProfile::torProfile());
+        QVERIFY(detached->webPage()->profile()
+                != BrowserApplication::privateWebEngineProfile());
+        closeDetached(detached);
+    }
+    BrowserApplication::setTorMode(false);
+
+    QFile::remove(fixturePath);
+}
+
+// CONT08: the Referer discipline — a link opened into the SAME
+// profile keeps the hotlink-compat Referer header; a private or tor
+// hand-off must send none, because the header would carry the source
+// page's url across a privacy boundary.  Asserted on the wire, not on
+// the request object: the loopback server records exactly what
+// arrived.  Each open gets its own target path so a request maps
+// back to exactly one menu entry — which also makes the history
+// residue checks unambiguous.
+void tst_WebView::linkOpenRefererDiscipline()
+{
+    PrivacyFlagGuard flagGuard;
+    WindowListGuard windowGuard;
+    RecordedHttpServer server;
+    QVERIFY(server.start());
+    server.indexHtml = QByteArray(
+        "<html><body style='margin:0'>"
+        "<a href='/t-tab.html' style='position:fixed;left:0;top:0;"
+        "display:block;width:300px;height:60px'>t</a>"
+        "<a href='/t-win.html' style='position:fixed;left:0;top:80px;"
+        "display:block;width:300px;height:60px'>w</a>"
+        "<a href='/t-ptab.html' style='position:fixed;left:0;top:160px;"
+        "display:block;width:300px;height:60px'>p</a>"
+        "<a href='/t-pwin.html' style='position:fixed;left:0;top:240px;"
+        "display:block;width:300px;height:60px'>q</a>"
+        "</body></html>");
+
+    const QUrl sourceUrl = server.url(QLatin1String("/source.html"));
+    TestWebView view(BrowserApplication::webEngineProfile());
+    view.resize(900, 700);
+    view.show();
+    QSignalSpy loaded(&view, SIGNAL(loadFinished(bool)));
+    view.loadUrl(sourceUrl);
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 15000);
+    QTRY_VERIFY(server.requestsFor(QLatin1String("/source.html"))
+                    .count() >= 1);
+
+    const auto triggerEntry = [&view](const QPoint &pos,
+                                      const QString &text) {
+        bool found = false;
+        const bool popped = driveRightClick(&view, pos,
+                                            [&](QMenu *menu) {
+            if (QAction *action = findMenuAction(menu, text)) {
+                found = true;
+                action->trigger();
+            }
+        });
+        return popped && found;
+    };
+    const auto awaitRequest = [&server](const QString &target,
+                                        int expected) {
+        const auto deadline =
+            QDateTime::currentMSecsSinceEpoch() + 15000;
+        while (server.requestsFor(target).count() < expected
+               && QDateTime::currentMSecsSinceEpoch() < deadline)
+            QTest::qWait(50);
+        return server.requestsFor(target).count() == expected;
+    };
+
+    // AUDIT FINDING (CONT08): Chromium clamps our custom 'Referer'
+    // request header through its referrer policy — the wire value is
+    // the source page's ORIGIN, not the full url loadUrlInView sets.
+    // That is still hotlink-adequate and strictly more private; the
+    // lock here is presence-vs-absence plus the clamped shape.
+    const QString sourceOrigin = server.url(QLatin1String("/"))
+                                     .toString();
+
+    // Same-profile opens keep a Referer — both the new-tab and the
+    // new-window slot take loadUrlInView's same-profile branch.
+    // Results are captured before cleanup so an assertion can't leak
+    // the spawned view.
+    for (int i = 0; i < 2; ++i) {
+        const QString entry = i == 0
+            ? QStringLiteral("Open in New Tab")
+            : QStringLiteral("Open in New Window");
+        const QString target = i == 0
+            ? QStringLiteral("/t-tab.html")
+            : QStringLiteral("/t-win.html");
+        const QPoint pos = i == 0 ? QPoint(30, 30) : QPoint(30, 110);
+        QVERIFY2(triggerEntry(pos, entry),
+                 qPrintable(entry + QLatin1String(" missing")));
+        WebView *detached =
+            awaitDetachedView(&view, QLatin1String("http"));
+        QVERIFY2(detached,
+                 qPrintable(entry + QLatin1String(" produced no view")));
+        const bool sameProfile =
+            detached->webPage()->profile() == view.webPage()->profile();
+        const bool got = awaitRequest(target, 1);
+        const QString seenReferer = got
+            ? server.requestsFor(target).first().referer
+            : QStringLiteral("<none>");
+        closeDetached(detached);
+        QVERIFY(sameProfile);
+        QVERIFY2(got,
+                 qPrintable(target + QLatin1String(" never requested")));
+        QCOMPARE(seenReferer, sourceOrigin);
+        QTRY_VERIFY(HistoryManager::instance()->historyContains(
+            server.url(target).toString()));
+    }
+
+    // The private hand-offs send NO Referer — a leak here would carry
+    // the source page's url into the OTR context.
+    {
+        QVERIFY(triggerEntry(QPoint(30, 190),
+                    QStringLiteral("Open in New Private Tab")));
+        WebView *detached =
+            awaitDetachedView(&view, QLatin1String("http"));
+        QVERIFY2(detached, "private-tab open produced no view");
+        const bool otr =
+            detached->webPage()->profile()->isOffTheRecord()
+            && detached->webPage()->profile()
+                == BrowserApplication::privateWebEngineProfile();
+        const bool got = awaitRequest(QLatin1String("/t-ptab.html"), 1);
+        const QString seenReferer = got
+            ? server.requestsFor(QLatin1String("/t-ptab.html"))
+                  .first().referer
+            : QStringLiteral("<none>");
+        closeDetached(detached);
+        QVERIFY(otr);
+        QVERIFY2(got, "private target never requested");
+        QCOMPARE(seenReferer, QString());
+        QTest::qWait(200);
+        QVERIFY(!HistoryManager::instance()->historyContains(
+            server.url(QLatin1String("/t-ptab.html")).toString()));
+    }
+    {
+        BrowserApplication *application =
+            BrowserApplication::instance();
+        const QList<BrowserMainWindow *> before =
+            application->mainWindows();
+        QVERIFY(triggerEntry(QPoint(30, 270),
+                    QStringLiteral("Open in New Private Window")));
+        QPointer<BrowserMainWindow> created =
+            awaitNewWindow(application, before);
+        QVERIFY2(created, "private-window open produced no window");
+        windowGuard.windows << created;
+        WebView *tab = created->tabWidget()->currentWebView();
+        QVERIFY(tab);
+        QVERIFY(tab->webPage()->profile()->isOffTheRecord());
+        QVERIFY2(awaitRequest(QLatin1String("/t-pwin.html"), 1),
+                 "private-window target never requested");
+        QVERIFY(server.requestsFor(QLatin1String("/t-pwin.html"))
+                    .first().referer.isEmpty());
+        QTest::qWait(200);
+        QVERIFY(!HistoryManager::instance()->historyContains(
+            server.url(QLatin1String("/t-pwin.html")).toString()));
+    }
 }
 
 // POL01: right-clicking plain page content gets the stock menu plus

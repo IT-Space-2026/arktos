@@ -58,6 +58,7 @@ private slots:
     void privateBrowsing();
     void zoomTextOnly();
     void askDesktop();
+    void torWindowHandoffGate();
 };
 
 void tst_BrowserApp::initTestCase()
@@ -184,6 +185,58 @@ void tst_BrowserApp::askDesktop()
 {
     BrowserApplication::instance()->askDesktopToOpenUrl(
         QUrl(QLatin1String("mailto:nobody@example.com")));
+}
+
+// CONT08: 'Open in New Tor Window' hands the link url to a fresh
+// `arora --tor` process.  The hand-off must carry it as its own argv
+// element — a QStringList element is passed verbatim to execvp and no
+// shell ever re-parses it, so shell metacharacters in the url are
+// inert by construction — and refused schemes must not leave this
+// process at all.  The receiving side applies the same page-link
+// gate to whatever operand actually arrives.
+void tst_BrowserApp::torWindowHandoffGate()
+{
+    // No url: just the mode switch.
+    QCOMPARE(BrowserApplication::torWindowArguments(QUrl()),
+             (QStringList{QStringLiteral("--tor")}));
+
+    // A good url is exactly one verbatim element — including content
+    // a shell would otherwise reinterpret.
+    const QUrl good(QStringLiteral(
+        "https://example.com/a?x=$(id)&y=`whoami` z'q"));
+    const QStringList arguments =
+        BrowserApplication::torWindowArguments(good);
+    QCOMPARE(arguments.count(), 2);
+    QCOMPARE(arguments.at(0), QStringLiteral("--tor"));
+    QCOMPARE(arguments.at(1),
+             QString::fromUtf8(good.toEncoded()));
+    QCOMPARE(QUrl::fromEncoded(arguments.at(1).toUtf8()), good);
+
+    // The dangerous schemes are dropped on this side — the spawned
+    // process sees a bare --tor.
+    const char *badUrls[] = {
+        "javascript:alert(1)",
+        "data:text/html,<h1>x</h1>",
+        "blob:https://example.com/uuid",
+    };
+    for (const char *bad : badUrls) {
+        QCOMPARE(BrowserApplication::torWindowArguments(QUrl(bad)),
+                 (QStringList{QStringLiteral("--tor")}));
+    }
+
+    // The receiving process re-gates the raw operand: an argv url
+    // that somehow still arrives with a refused scheme loads
+    // nothing.
+    QVERIFY(BrowserApplication::isUrlAllowedOnTorArgv(
+        QStringLiteral("https://example.com/")));
+    QVERIFY(BrowserApplication::isUrlAllowedOnTorArgv(
+        QStringLiteral("file:///tmp/x")));
+    QVERIFY(!BrowserApplication::isUrlAllowedOnTorArgv(
+        QStringLiteral("javascript:alert(1)")));
+    QVERIFY(!BrowserApplication::isUrlAllowedOnTorArgv(
+        QStringLiteral("data:text/html,<h1>x</h1>")));
+    QVERIFY(!BrowserApplication::isUrlAllowedOnTorArgv(
+        QStringLiteral("blob:https://example.com/uuid")));
 }
 
 QTEST_MAIN(tst_BrowserApp)

@@ -296,6 +296,11 @@ Security:
   `--tor` process provably stays outside single-instance IPC, and a
   forwarded URL lands on the private profile when private browsing is
   on. Covered by `--ingress-smoke`.
+- Adversarial regression lock on link context opens: the full
+  source-profile x open-target matrix, refused javascript:/data:/blob:
+  schemes at both menu and slot level, Referer only on same-profile
+  opens, an argv-only Tor hand-off re-gated on receipt, and zero
+  history/session/reopen residue from private opens (CONT08).
 
 Containers:
 - Isolated container profiles (CONT01).
