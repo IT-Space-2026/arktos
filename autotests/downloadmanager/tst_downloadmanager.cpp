@@ -256,7 +256,7 @@ void tst_DownloadManager::cleanupButton()
         QVERIFY(model);
         QCOMPARE(model->rowCount(), 0);
 
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         QVERIFY(page);
         manager.download(page, waitForDownload ? downloadUrl() : stalledUrl);
         // The first real HTTP request boots the WebEngine network
@@ -313,7 +313,7 @@ void tst_DownloadManager::download()
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
 
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         QVERIFY(page);
         for (int i = 0; i < request.count(); ++i)
             manager.download(page, QUrl(request[i]));
@@ -350,7 +350,7 @@ void tst_DownloadManager::removePolicy()
         QCOMPARE(manager.removePolicy(), removePolicy);
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, downloadUrl());
         if (removePolicy == DownloadManager::SuccessFullDownload) {
             // A completed download is dropped immediately, so the row
@@ -388,7 +388,7 @@ void tst_DownloadManager::modelAccessors()
         QCOMPARE(model->flags(QModelIndex()), Qt::ItemFlags());
         QCOMPARE(model->rowCount(model->index(0, 0)), 0);
 
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, downloadUrl());
         QTRY_COMPARE(model->rowCount(), 1);
 
@@ -510,7 +510,7 @@ void tst_DownloadManager::hostileSuggestedName()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_VERIFY(QDir(downloadDir.path())
                         .entryInfoList(QDir::Files).count() >= 1);
@@ -569,7 +569,7 @@ void tst_DownloadManager::dangerousDownload()
         QVERIFY(model);
         ModalAnswer answer(keep ? QMessageBox::Save : QMessageBox::Discard,
                            &manager);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_COMPARE(model->rowCount(), 1);
 
@@ -608,7 +608,7 @@ void tst_DownloadManager::overwriteKeepsExisting()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_VERIFY(QDir(downloadDir.path())
                         .entryInfoList(QDir::Files).count() == 2);
@@ -638,7 +638,7 @@ void tst_DownloadManager::partialCleanup()
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
 
         // A quick completed download whose file must survive cleanup.
         manager.download(page, downloadUrl());
@@ -790,7 +790,7 @@ void tst_DownloadManager::cardDetails()
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
@@ -874,7 +874,7 @@ void tst_DownloadManager::cardRestart()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_VERIFY_WITH_TIMEOUT(
             QFile::exists(downloadDir.path()
@@ -921,7 +921,7 @@ void tst_DownloadManager::speedSeries()
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, stalledUrl);
         QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
@@ -966,7 +966,7 @@ void tst_DownloadManager::restoredCard()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         manager.download(page, url);
         QTRY_VERIFY_WITH_TIMEOUT(
             QFile::exists(downloadDir.path()

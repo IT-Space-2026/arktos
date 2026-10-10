@@ -244,7 +244,7 @@ void tst_Accessibility::downloadModelAccessibleText()
 
         QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         QVERIFY(page);
         manager.download(page, QUrl(QStringLiteral(
             "data:text/plain;base64,") +

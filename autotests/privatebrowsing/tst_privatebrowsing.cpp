@@ -500,8 +500,8 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
     QAbstractItemModel *model = manager.model();
     QVERIFY(model);
 
-    QWebEnginePage *otrPage = manager.retryPage(true);
-    QVERIFY(otrPage->profile()->isOffTheRecord());
+    Engine::Page *otrPage = manager.retryPage(true);
+    QVERIFY(otrPage->isOffTheRecord());
     manager.download(otrPage, url);
     QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
@@ -520,8 +520,8 @@ void tst_PrivateBrowsing::otrDownloadNotPersisted()
     serveStalledDownload(&normalServer, "sec07-normal.bin");
     const QUrl normalUrl(QString::fromLatin1("http://127.0.0.1:%1/sec07-normal.bin")
                              .arg(normalServer.serverPort()));
-    QWebEnginePage *normalPage = manager.retryPage(false);
-    QVERIFY(!normalPage->profile()->isOffTheRecord());
+    Engine::Page *normalPage = manager.retryPage(false);
+    QVERIFY(!normalPage->isOffTheRecord());
     manager.download(normalPage, normalUrl);
     QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 2, 30000);
 
