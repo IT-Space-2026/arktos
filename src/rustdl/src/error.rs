@@ -101,3 +101,48 @@ pub fn last_error_copy() -> *mut c_char {
             .unwrap_or(std::ptr::null_mut())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn io_and_reqwest_error_mapping() {
+        let f = Fail::from(std::io::Error::new(std::io::ErrorKind::NotFound, "nope"));
+        assert_eq!(f.status, DlStatus::Io);
+        assert!(f.msg.starts_with("io:"));
+
+        // A refused localhost connect maps to Network/"connect failed"
+        // and never echoes the token-bearing request URL (DLACC05).
+        let e = reqwest::blocking::get("http://127.0.0.1:1/x?sig=SECRETTOKEN").unwrap_err();
+        let f = Fail::from(e);
+        assert_eq!(f.status, DlStatus::Network);
+        assert_eq!(f.msg, "connect failed");
+        assert!(!f.msg.contains("SECRETTOKEN"));
+    }
+
+    #[test]
+    fn last_error_roundtrip_and_nul_safety() {
+        set_error("something failed");
+        let p = last_error_copy();
+        assert!(!p.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(p) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { drop(CString::from_raw(p)) };
+        assert_eq!(s, "something failed");
+
+        // Interior-NUL input degrades to the empty message instead of
+        // panicking across the boundary.
+        set_error("a\0b");
+        let p = last_error_copy();
+        if !p.is_null() {
+            let s = unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { drop(CString::from_raw(p)) };
+            assert_eq!(s, "");
+        }
+        clear_error();
+    }
+}

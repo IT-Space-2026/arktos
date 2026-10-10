@@ -949,3 +949,204 @@ fn errors_redact_query() {
     assert!(!e.contains("SECRETTOKEN"), "error leaked url: {e}");
     unsafe { dl_free(h) };
 }
+
+// ---- COV05: FFI surface coverage --------------------------------------
+// Every dl_* entry point over the C ABI — argument validation, the
+// temp-dir residue sweep, and the completed-handle accessors — so the
+// marshaling layer in lib.rs is measured inside the crate, not only
+// through the Qt wrapper.
+
+/// Consume an FFI string: copy it out, release it via dl_string_free.
+fn take_cstr(p: *mut std::os::raw::c_char) -> Option<String> {
+    if p.is_null() {
+        return None;
+    }
+    let s = unsafe { std::ffi::CStr::from_ptr(p) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { dl_string_free(p) };
+    Some(s)
+}
+
+#[test]
+fn ffi_bad_args_and_error_channel() {
+    let _g = lock();
+    assert_eq!(
+        unsafe { dl_set_temp_dir(std::ptr::null()) },
+        DlStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { dl_is_available() }, 1);
+    assert_eq!(
+        unsafe { dl_set_gate(None, std::ptr::null_mut()) },
+        DlStatus::Ok
+    );
+
+    let cfg = Cfg::new();
+    let body = Arc::new(fill_pattern(4096));
+    let fx = Fixture::start(Arc::clone(&body), true, 0);
+    let dest = cstr(cfg.dest.path().to_str().unwrap());
+    let mut h: DlHandle = 0;
+    // Every required argument is validated before work starts.
+    assert_eq!(
+        unsafe {
+            dl_start(
+                std::ptr::null(),
+                dest.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut h,
+            )
+        },
+        DlStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            dl_start(
+                fx.url("/file").as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut h,
+            )
+        },
+        DlStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            dl_start(
+                fx.url("/file").as_ptr(),
+                dest.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            )
+        },
+        DlStatus::InvalidArgument
+    );
+    let bad_opts = cstr("{nope");
+    assert_eq!(
+        unsafe {
+            dl_start(
+                fx.url("/file").as_ptr(),
+                dest.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                bad_opts.as_ptr(),
+                &mut h,
+            )
+        },
+        DlStatus::InvalidArgument
+    );
+    // The per-thread error channel reports the failed call.
+    let msg = take_cstr(unsafe { dl_last_error_message() }).unwrap();
+    assert!(!msg.is_empty());
+    // NULL-tolerant free.
+    unsafe { dl_string_free(std::ptr::null_mut()) };
+
+    // Unknown / bad handles on the polled family.
+    let mut p = DlProgress {
+        state: -1,
+        bytes_done: 0,
+        bytes_total: 0,
+        speed_bps: 0,
+        connections: 0,
+        reserved: 0,
+    };
+    assert_eq!(unsafe { dl_poll(0xDEAD, &mut p) }, DlStatus::NotFound);
+    let h0 = cfg.start(&fx.url("/file"), "p.bin", 1);
+    assert_eq!(
+        unsafe { dl_poll(h0, std::ptr::null_mut()) },
+        DlStatus::InvalidArgument
+    );
+    wait_state(h0, &[3, 4], Duration::from_secs(15));
+    unsafe { dl_free(h0) };
+
+    assert_eq!(unsafe { dl_cancel(0xDEAD) }, DlStatus::NotFound);
+    unsafe { dl_free(0xDEAD) }; // freeing an unknown handle is a no-op
+    assert_eq!(
+        take_cstr(unsafe { dl_error_message(0xDEAD) }).as_deref(),
+        Some("unknown download handle")
+    );
+    assert!(unsafe { dl_file_name(0xDEAD) }.is_null());
+    assert!(unsafe { dl_output_path(0xDEAD) }.is_null());
+}
+
+#[test]
+fn ffi_options_json_and_done_accessors() {
+    let _g = lock();
+    let cfg = Cfg::new();
+    let body = Arc::new(fill_pattern(8192));
+    let fx = Fixture::start(Arc::clone(&body), true, 0);
+    // Every documented options field present exercises the parse.
+    let opts = cstr(
+        r#"{"user_agent":"ffi-test/1.0","first_party":"http://x/","scope":"persistent","proxy":null,"referer_policy":0,"require_proxy":false}"#,
+    );
+    let mut h: DlHandle = 0;
+    assert_eq!(
+        unsafe {
+            dl_start(
+                fx.url("/file").as_ptr(),
+                cstr(cfg.dest.path().to_str().unwrap()).as_ptr(),
+                cstr("done.bin").as_ptr(),
+                4,
+                std::ptr::null(),
+                opts.as_ptr(),
+                &mut h,
+            )
+        },
+        DlStatus::Ok
+    );
+    wait_state(h, &[3], Duration::from_secs(15));
+    assert_eq!(
+        take_cstr(unsafe { dl_file_name(h) }).as_deref(),
+        Some("done.bin")
+    );
+    let outp = take_cstr(unsafe { dl_output_path(h) }).unwrap();
+    assert!(outp.ends_with("done.bin"));
+    // Terminal state: cancel reports Busy, no worker error.
+    assert_eq!(unsafe { dl_cancel(h) }, DlStatus::Busy);
+    assert_eq!(take_cstr(unsafe { dl_error_message(h) }).as_deref(), Some(""));
+    unsafe { dl_free(h) };
+}
+
+#[test]
+fn ffi_temp_dir_sweeps_stale_residue() {
+    let _g = lock();
+    let root = tempfile::tempdir().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(300);
+    // Open read-only: futimens needs no write access, and a directory
+    // cannot be opened for writing anyway.
+    let age = |p: &std::path::Path| {
+        std::fs::File::open(p).unwrap().set_modified(old).unwrap();
+    };
+
+    // A dead download dir (stale inside and out) and a stale cookies
+    // export are residue; a live work dir survives the sweep.
+    let dead = root.path().join("dl-dead");
+    std::fs::create_dir_all(&dead).unwrap();
+    let part = dead.join("part0");
+    std::fs::write(&part, b"x").unwrap();
+    age(&part);
+    age(&dead);
+    let cookies = root.path().join("cookies-stale");
+    std::fs::write(&cookies, b"c").unwrap();
+    age(&cookies);
+    let live = root.path().join("dl-live");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("part0"), b"x").unwrap();
+
+    assert_eq!(
+        unsafe { dl_set_temp_dir(cstr(root.path().to_str().unwrap()).as_ptr()) },
+        DlStatus::Ok
+    );
+    assert!(!dead.exists(), "stale dl-* dir survived the sweep");
+    assert!(!cookies.exists(), "stale cookies export survived");
+    assert!(live.exists(), "in-flight dl-* dir was swept");
+}

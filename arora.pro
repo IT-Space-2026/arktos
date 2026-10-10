@@ -35,7 +35,7 @@ unix {
 # suite before a single test executes.
 check.target = check
 check.commands = cd autotests && ./runTests.sh
-check.depends = check-warnings check-supplychain check-engine-audit sub-src sub-autotests
+check.depends = check-warnings check-supplychain check-engine-audit check-rustcoverage sub-src sub-autotests
 QMAKE_EXTRA_TARGETS += check
 
 # `make check-engine-audit` is the ENG01 coupling-map gate — every
@@ -55,6 +55,14 @@ QMAKE_EXTRA_TARGETS += check-engine-audit
 check-supplychain.target = check-supplychain
 check-supplychain.commands = ./.devin/check-supplychain.sh
 QMAKE_EXTRA_TARGETS += check-supplychain
+
+# `make check-rustcoverage` is the COV05 Rust coverage gate — per-crate
+# `cargo llvm-cov` line coverage must meet ARORA_RUSTCOV_MIN (default
+# 85).  Machines without cargo/cargo-llvm-cov skip cleanly, same as a
+# no-rust build; the per-crate table lands in .devin/COVERAGE.md.
+check-rustcoverage.target = check-rustcoverage
+check-rustcoverage.commands = ./.devin/check-rustcoverage.sh
+QMAKE_EXTRA_TARGETS += check-rustcoverage
 
 # `make bundle` produces the self-contained relocatable Linux bundle in
 # dist/ (PACK01). `make check-bundle` rebuilds it in a scratch dir and
