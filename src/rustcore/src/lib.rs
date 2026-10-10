@@ -59,6 +59,10 @@
 //!     removed-bundled blocklist in <data dir>/searchengines.json,
 //!     plus the byte-identical {searchTerms} URL expansion the old
 //!     Qt buildUrl produced.
+//!   * palette (CPAL01): the command palette's matching decision —
+//!     the ported subsequence fuzzy scorer plus MRU recency ranking;
+//!     the Qt shell keeps the item registry and marshals {match, id}
+//!     rows in, ordered indices back.
 //!
 mod autofill;
 mod blocklist;
@@ -70,6 +74,7 @@ mod history;
 mod notify;
 mod omnibox;
 mod opensearch;
+mod palette;
 mod parsers;
 mod readability;
 mod session;
@@ -1672,6 +1677,73 @@ pub unsafe extern "C" fn rc_history_suggest(
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         match history::with(|h| h.suggest(term, limit, now)) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- command palette (CPAL01) ------------------------------------------
+//
+// The palette's query -> ranked-items decision.  The row registry
+// stays Qt-side (QActions, WebViews, bookmark handles cannot cross
+// the FFI) — the shell marshals {match text, id} per row and reads
+// ordered indices back.
+
+/// The palette fuzzy scorer — the CommandPalette::fuzzyScore port
+/// plus the documented camel-hump boundary bonus.  Returns >= 0 on a
+/// match (higher is better), -1 on no match or a bad pointer.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pal_score(
+    query: *const c_char,
+    candidate: *const c_char,
+) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match (unsafe { util::cstr(query) }, unsafe { util::cstr(candidate) }) {
+            (Some(q), Some(c)) => palette::fuzzy_score(q, c),
+            _ => -1,
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Rank a whole palette item set: request JSON
+///   {"items":[{"match":"...","id":"..."},...], "mru":["id",...]}
+/// -> JSON array [{"index":n,"score":n},...] of the matched rows in
+/// display order (score desc, ties keep item order; mru position adds
+/// the legacy 60-index boost).  NULL on a bad pointer or malformed
+/// request (rc_last_error_message).  Free with rc_string_free().
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pal_match(
+    query: *const c_char,
+    items_json: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let q = match unsafe { util::cstr(query) } {
+            Some(s) => s,
+            None => {
+                error::set_error("bad query pointer");
+                return ptr::null_mut();
+            }
+        };
+        let text = match unsafe { util::cstr(items_json) } {
+            Some(s) => s,
+            None => {
+                error::set_error("bad items pointer");
+                return ptr::null_mut();
+            }
+        };
+        match palette::match_json(q, text) {
             Ok(json) => util::to_c_string(json),
             Err(e) => {
                 error::set_error(&e.msg);
