@@ -111,6 +111,15 @@ public:
     // dwell — exposed for the smoke test.
     TabPreview *tabPreview() const;
 
+    // TABS02: the drag-resizable width of a Left/Right tab strip
+    // (tabs/verticalTabWidth, clamped 120-400, default 180).
+    // reloadVerticalTabWidth() re-reads the persisted value — the
+    // settings-save path calls it so a drag on one window (or a
+    // later edit of the key) lands on every window.
+    int verticalTabWidth() const;
+    void setVerticalTabWidth(int width);
+    void reloadVerticalTabWidth();
+
 protected:
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
@@ -122,6 +131,8 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     QSize tabSizeHint(int index) const override;
+    QSize minimumTabSizeHint(int index) const override;
+    void tabLayoutChange() override;
     void tabInserted(int position) override;
     void tabRemoved(int position) override;
 
@@ -160,6 +171,13 @@ private:
     QString groupIdForTab(int index) const;
     bool isFirstInGroupRun(int index) const;
     QString groupChipLabel(int index) const;
+    // TABS02: vertical-strip helpers — the resize grip on the
+    // strip's inner edge, the row-anchored side-button layout (Qt
+    // positions them transposed for West/East shapes), and hiding
+    // Qt's private rotated moving-tab pixmap during a move drag.
+    bool inResizeGrip(const QPoint &pos) const;
+    void layoutRowTabButtons();
+    void hideNativeMovingTab();
     friend class TabWidget;
 
     QPoint m_dragStartPos;
@@ -175,6 +193,18 @@ private:
     // POL02: lazily-created hover card + its dwell timer.
     TabPreview *m_preview;
     QTimer *m_previewTimer;
+    // TABS02: vertical-strip state — the persisted strip width, the
+    // active edge-drag resize, and the tracked press/move-drag used
+    // to float the dragged row horizontally in paintEvent.
+    int m_verticalTabWidth;
+    bool m_resizing;
+    int m_resizeStartX;
+    int m_resizeStartWidth;
+    int m_pressedTabIndex;
+    bool m_moveDragActive;
+    bool m_moveDragVertical;
+    int m_moveDragMouseY;
+    int m_moveDragGrabOffset;
 };
 
 

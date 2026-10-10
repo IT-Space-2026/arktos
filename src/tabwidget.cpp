@@ -2133,6 +2133,9 @@ void TabWidget::loadSettings()
     }
     setTabPosition(position);
     const bool horizontal = (position == North || position == South);
+    // TABS02: re-read the persisted vertical strip width so the same
+    // live-apply path that carries the position lands it everywhere.
+    m_tabBar->reloadVerticalTabWidth();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS

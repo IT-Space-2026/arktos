@@ -84,6 +84,7 @@ private slots:
     void restoreStateCorrupt();
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
+    void verticalTabStripWidth();
     void omnibox();
     void omniboxTabScope();
     void tabGroups();
@@ -834,6 +835,56 @@ void tst_TabWidget::tabBarPositionSetting()
         QCOMPARE(int(widget.tabPosition()), int(QTabWidget::South));
     }
 
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
+}
+
+// TABS02: tabs/verticalTabWidth drives the Left/Right strip's actual
+// width inside a real QTabWidget — read on construction, re-applied
+// live through loadSettings() (the path SettingsDialog::saveToSettings
+// calls on every window), and reflected in the tab rects.
+void tst_TabWidget::verticalTabStripWidth()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+    settings.setValue(QLatin1String("verticalTabWidth"), 200);
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QCOMPARE(bar->verticalTabWidth(), 200);
+    // The strip's widget width follows the persisted value (the
+    // QTabWidget layout adds a small frame margin around it).
+    QVERIFY(bar->width() >= 200 && bar->width() <= 210);
+    QCOMPARE(bar->tabRect(0).width(), 200);
+
+    // Live resize — what the edge-drag does per move.
+    bar->setVerticalTabWidth(300);
+    QApplication::processEvents();   // LayoutRequest -> setUpLayout
+    QVERIFY(bar->width() >= 300 && bar->width() <= 310);
+    QCOMPARE(bar->tabRect(0).width(), 300);
+
+    // loadSettings() (the settings-save fan-out) re-reads the key.
+    settings.setValue(QLatin1String("verticalTabWidth"), 160);
+    widget.loadSettings();
+    QApplication::processEvents();
+    QCOMPARE(bar->verticalTabWidth(), 160);
+    QVERIFY(bar->width() >= 160 && bar->width() <= 175);
+
+    // The Right strip picks the same persisted width.
+    settings.setValue(QLatin1String("tabBarPosition"), 3);   // Right
+    widget.loadSettings();
+    QApplication::processEvents();
+    QCOMPARE(int(widget.tabPosition()), int(QTabWidget::East));
+    QVERIFY(bar->width() >= 160 && bar->width() <= 175);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
     settings.remove(QLatin1String("tabBarPosition"));
     settings.endGroup();
 }
