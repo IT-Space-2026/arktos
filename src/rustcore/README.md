@@ -198,6 +198,30 @@ counts, file size).
 In a no-rust build none of this exists — each manager keeps its
 original QSettings (or custom-rules file) path verbatim.
 
+## Reader-mode extraction (RDR01)
+
+`rc_readability_probe(html)` and `rc_readability_extract(html, base_url)`
+run the reader-mode article detection/extraction that used to live in
+injected JavaScript — dom_smoothie is a maintained Rust port of the
+same Mozilla Readability.js, so parity with the retired JS path is
+structural.  The shell hands over the serialized DOM (no extra
+network, no page-side eval — the feature works on a script-one-way
+engine) and gets back a JSON verdict: `ok`/`probably` flags plus
+`title`, `byline`, `siteName`, `excerpt`, `dir`, `length` and the
+article `content` fragment.
+
+- The fragment is re-sanitized at the boundary — the dead-tag list
+  reader.js applied plus `on*`/`javascript:` attribute stripping — a
+  hostile page can never smuggle interactive markup into the reader
+  surface.
+- Input is bounded: 24 MiB bytes, a nesting-depth pre-scan that
+  refuses quadratic-depth trees before the DOM build, and
+  `max_elements_to_parse` inside.  Oversized or malformed input
+  returns `RC_INVALID_ARGUMENT` or an `ok:false` verdict — never a
+  crash.
+- In a no-rust build ReaderMode keeps its injected-JS reader as the
+  fallback path.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

@@ -22,28 +22,42 @@
 
 #include <qobject.h>
 #include <qpointer.h>
+#include <qvariant.h>
 
 #include <functional>
 
+class QEvent;
 class ReaderBridge;
 class WebView;
+class QWidget;
 
 // READ01: per-view controller for Reader Mode — a clutter-free article
 // view rendered by the vendored Mozilla Readability.js + reader.js
 // driver (src/data/, injected via runJavaScript).
 //
-// The reader overlay is Shadow DOM on top of the live document, so
+// RDR01: under the Rust core the extraction runs in rustcore
+// (rc_readability_probe/extract over the page's serialized DOM) and
+// the article renders into a dedicated overlay web view with
+// Qt-widget chrome — no page-side script eval at all, so the feature
+// works identically on a JS-one-way engine and on channel-less tor
+// pages (preferences persist via QSettings directly).  Without the
+// crate this stays the JS shadow-DOM overlay described below.
+//
+// The JS reader overlay is Shadow DOM on top of the live document, so
 // exiting restores the page exactly (scroll, form state, JS world) —
 // there is no reload.  The in-overlay chrome (font size, light/dark,
 // exit) talks back through the "aroraReader" QWebChannel bridge when
 // the page has one; tor pages (no channel) still get the overlay, the
 // settings just don't persist and C++ is only told about JS-side exits
-// via the next probe.
+// via the next probe.  The Rust overlay preserves the same "page is
+// never touched" contract — it is a sibling widget on top of the view.
 //
 // JavascriptEnabled off (JSCTL rules, Safer/Safest tiers): runJavaScript
 // never executes while the attribute is off, so enter()/probe() lift it
 // for the injection window only — parse-time-blocked page scripts do
-// not retro-run, so the page stays scriptless.
+// not retro-run, so the page stays scriptless.  The Rust path's
+// serialized-DOM grab (toHtml) rides the same injection channel and
+// gets the same lift treatment.
 class ReaderMode : public QObject
 {
     Q_OBJECT
@@ -92,6 +106,17 @@ private:
                    const std::function<void(const QVariant &)> &callback
                        = std::function<void(const QVariant &)>());
     QString scriptBundle() const;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+#ifdef ARORA_RUSTCORE
+    // The Rust path: collect the page's serialized DOM (toHtml with
+    // the same JS-lift workaround as runDriver), extract in the core,
+    // render the returned fragment into the overlay view.
+    void collectHtml(const std::function<void(const QString &)> &callback);
+    void showOverlay(const QVariantMap &article);
+    void closeOverlay();
+    QWidget *m_overlay = nullptr;
+#endif
 
     WebView *m_view;
     ReaderBridge *m_bridge;
