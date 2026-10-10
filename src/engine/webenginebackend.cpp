@@ -654,6 +654,16 @@ WebEngineDownloadRequest::WebEngineDownloadRequest(QWebEngineDownloadRequest *re
             this, &Engine::DownloadRequest::totalBytesChanged);
 }
 
+QWebEngineDownloadRequest *WebEngineDownloadRequest::webEngineRequest() const
+{
+    return m_request;
+}
+
+WebEngineDownloadRequest *WebEngineDownloadRequest::of(Engine::DownloadRequest *request)
+{
+    return qobject_cast<WebEngineDownloadRequest*>(request);
+}
+
 QUrl WebEngineDownloadRequest::url() const
 {
     return m_request->url();

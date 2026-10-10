@@ -1206,7 +1206,12 @@ void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)
     // UI item is made — the temp-dir write is the pipeline's staging
     // area, not a user download.  Save-as PDF traffic still lands in
     // the ordinary item path below with raw bytes.
-    if (PdfSanitizeFetch::claim(download))
+    // The sanitize fetch still speaks in raw requests — unwrap the
+    // engine request through the adapter hatch (null on a foreign
+    // backend, which cannot have started a sanitize fetch anyway).
+    WebEngineDownloadRequest *rawRequest =
+        WebEngineDownloadRequest::of(download);
+    if (rawRequest && PdfSanitizeFetch::claim(rawRequest->webEngineRequest()))
         return;
 
 #ifdef DOWNLOADMANAGER_DEBUG

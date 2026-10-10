@@ -11400,7 +11400,7 @@ int main(int argc, char **argv)
         downloadManager->setDownloadDirectory(downloadDir);
         {
             const int before = downloadManager->model()->rowCount();
-            downloadManager->download(view->page(),
+            downloadManager->download(view->enginePage(),
                 QUrl(QStringLiteral("https://example.com/")), false);
             QElapsedTimer deadline;
             deadline.start();
@@ -11843,7 +11843,9 @@ int main(int argc, char **argv)
                 // engine before a byte is written).
                 QWebEnginePage *savePage =
                     new QWebEnginePage(view->webPage()->profile(), view);
-                downloadManager->download(savePage, pdfUrl, false);
+                downloadManager->download(
+                    WebEnginePageAdapter::forPage(savePage),
+                    pdfUrl, false);
                 *phase = 1;
                 return;
             }

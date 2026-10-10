@@ -142,6 +142,10 @@ public:
     explicit WebEngineDownloadRequest(QWebEngineDownloadRequest *request,
                                       QObject *parent = nullptr);
 
+    QWebEngineDownloadRequest *webEngineRequest() const;
+    // Escape-hatch downcast — nullptr on a foreign backend's request.
+    static WebEngineDownloadRequest *of(Engine::DownloadRequest *request);
+
     QUrl url() const override;
     QString suggestedFileName() const override;
     QString mimeType() const override;
