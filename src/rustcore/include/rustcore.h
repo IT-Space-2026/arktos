@@ -66,8 +66,10 @@ typedef struct RcBuffer {
 } RcBuffer;
 
 #define RC_CREDENTIALS_FILE "credentials.dat"
+#define RC_AUTOFILL_FILE "autofill-store.dat"
 
-/* Change topics emitted so far: "credentials" (rc_cred_* map). */
+/* Change topics emitted so far: "credentials" (rc_cred_* map),
+ * "autofill" (rc_autofill_* record set). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -133,6 +135,26 @@ char *rc_cred_list(void);       /* JSON array; rc_string_free() */
 RcStatus rc_cred_change_passphrase(const uint8_t *passUtf8, size_t len);
 /* Re-seal the credential file between explicit keys mid-transition. */
 RcStatus rc_cred_reseal(const uint8_t *from32, const uint8_t *to32);
+
+/* --- autofill record store (RCORE05) --------------------------------
+ * The saved-form records live in <data dir>/autofill-store.dat — a
+ * sealed ARSEC1 blob under the same custody key as credentials.dat:
+ * one unlock opens both, passphrase/lock/reseal transitions cover it.
+ * The legacy autofill.dat is a read-only import source the Qt side
+ * parses itself and replays through rc_autofill_set_forms.
+ *
+ * Form JSON (both directions):
+ *   [{"url","name","has_password":bool,"elements":[["k","v"],...]}]
+ * Mutations emit the "autofill" change topic. */
+/* Whether the Rust store file exists — gates the legacy import. */
+int rc_autofill_store_present(void);
+/* Whole record list as a JSON array; rc_string_free.  NULL on error
+ * (locked store, corrupt file — rc_last_error_message says which). */
+char *rc_autofill_forms(void);
+/* Atomic whole-set replace; RC_INVALID_ARGUMENT keeps the old set. */
+RcStatus rc_autofill_set_forms(const uint8_t *jsonUtf8, size_t len);
+/* Re-seal the autofill file between explicit keys mid-transition. */
+RcStatus rc_autofill_reseal(const uint8_t *from32, const uint8_t *to32);
 
 /* --- URL cleaning (SEC17) --------------------------------------------
  * ClearURLs-style tracking-parameter stripping.  The ruleset is a

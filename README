@@ -49,7 +49,12 @@ omnibox: the location bar's url-or-search routing decision
 keyword/search-fallback handling, verdict diffed against the old C++
 routing in autotests/omnibox) and the frecency-ranked history
 suggestions the completion dropdown shows (rc_history_suggest queries
-history.db directly so only the visible rows cross the FFI).
+history.db directly so only the visible rows cross the FFI).  The
+autofill form store follows the credentials into the same encrypted
+custody: saved field name/value records (including typed passwords and
+card numbers) live in a dedicated sealed autofill-store.dat under the
+shared unlock/passphrase lifecycle, with a one-shot import of the old
+autofill.dat — sealed or plaintext — on first run.
 
 Optional accelerated downloads: `qmake CONFIG+=rustdl` builds
 src/rustdl (reqwest + std::thread behind a C ABI, cargo run by qmake)

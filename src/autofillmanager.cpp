@@ -34,6 +34,12 @@
 #include "startupprofile.h"
 #include "streamingutils.h"
 
+#ifdef ARORA_RUSTCORE
+#include "rustcorebridge.h"
+
+#include <rustcore.h>
+#endif
+
 #include <qdatastream.h>
 #include <qfile.h>
 #include <qsavefile.h>
@@ -147,10 +153,130 @@ QString AutoFillManager::autoFillDataFile()
     return BrowserPaths::dataFilePath(QLatin1String("autofill.dat"));
 }
 
+#ifdef ARORA_RUSTCORE
+// RCORE05: the canonical store is rustcore's autofill-store.dat — a
+// sealed ARSEC1 blob under the same custody key as credentials.dat,
+// so one unlock opens both and every passphrase/lock transition
+// covers it.  The legacy autofill.dat is parsed once below by the
+// original bounded reader, replayed through rc_autofill_set_forms,
+// and retired — it is never re-read afterwards, which keeps a
+// no-Rust build free of a payload it cannot parse either (the new
+// file has its own name).
+
+static QByteArray formsToJson(const QList<AutoFillManager::Form> &forms)
+{
+    QJsonArray all;
+    for (const AutoFillManager::Form &form : forms) {
+        QJsonObject formJson;
+        formJson[QLatin1String("url")] =
+            QString::fromUtf8(form.url.toEncoded());
+        formJson[QLatin1String("name")] = form.name;
+        formJson[QLatin1String("has_password")] = form.hasAPassword;
+        QJsonArray elementsJson;
+        for (const AutoFillManager::Element &element : form.elements)
+            elementsJson.append(
+                QJsonArray{element.first, element.second});
+        formJson[QLatin1String("elements")] = elementsJson;
+        all.append(formJson);
+    }
+    return QJsonDocument(all).toJson(QJsonDocument::Compact);
+}
+
+static QList<AutoFillManager::Form> formsFromJson(const QByteArray &json)
+{
+    QList<AutoFillManager::Form> forms;
+    const QJsonArray all = QJsonDocument::fromJson(json).array();
+    for (const QJsonValue &value : all) {
+        const QJsonObject formJson = value.toObject();
+        AutoFillManager::Form form;
+        form.url = QUrl::fromEncoded(
+            formJson.value(QLatin1String("url")).toString().toUtf8());
+        form.name = formJson.value(QLatin1String("name")).toString();
+        form.hasAPassword =
+            formJson.value(QLatin1String("has_password")).toBool();
+        const QJsonArray elementsJson =
+            formJson.value(QLatin1String("elements")).toArray();
+        for (const QJsonValue &entry : elementsJson) {
+            const QJsonArray pair = entry.toArray();
+            if (pair.size() == 2) {
+                form.elements.append(qMakePair(
+                    pair.at(0).toString(), pair.at(1).toString()));
+            }
+        }
+        if (form.isValid())
+            forms.append(form);
+    }
+    return forms;
+}
+
+// Decodes raw autofill.dat contents — a sealed ARSEC1 blob or the
+// Qt4-era plaintext QDataStream — through the original bounded
+// reader.  Returns false on an unopenable/corrupt blob.
+static bool decodeLegacyForms(const QByteArray &raw,
+                              QList<AutoFillManager::Form> *out)
+{
+    QByteArray payload = raw;
+    if (SecureStore::isSealed(raw)) {
+        bool ok = false;
+        payload = SecureStore::open(raw, &ok);
+        if (!ok)
+            return false;
+    }
+    QList<AutoFillManager::Form> forms;
+    QDataStream stream(payload);
+    StreamingUtils::readBoundedList(stream, forms);
+    if (stream.status() != QDataStream::Ok)
+        return false;
+    *out = forms;
+    return true;
+}
+
+// The import consumed the legacy file: move it out of the live path
+// so neither store re-reads it.  The renamed copy (still sealed
+// ciphertext) is kept as a recoverable backup.
+static void retireLegacyFile(const QString &fileName)
+{
+    if (!QFile::exists(fileName))
+        return;
+    const QString retired = fileName + QLatin1String(".migrated");
+    QFile::remove(retired);
+    if (!QFile::rename(fileName, retired))
+        qWarning() << "AutoFillManager: cannot retire" << fileName;
+}
+#endif // ARORA_RUSTCORE
+
 void AutoFillManager::saveFormData() const
 {
     QString fileName = autoFillDataFile();
 
+#ifdef ARORA_RUSTCORE
+    // Persist into the Rust store.  There is deliberately no
+    // plaintext fallback here: the old degrade wrote the legacy file
+    // only when no crypto backend existed at all, while a failed
+    // write now means the user declined the unlock or the disk
+    // refused — serializing PII outside custody in either case would
+    // be a leak, so the data stays in memory for this session.
+    rustCoreEnsureDataDir();
+    if (rc_passphrase_enabled() && !rc_is_unlocked())
+        SecureStore::ensureUnlocked(nullptr);
+
+    const QByteArray json = formsToJson(m_forms);
+    const RcStatus status = rc_autofill_set_forms(
+        reinterpret_cast<const uint8_t *>(json.constData()),
+        size_t(json.size()));
+    if (status == RC_OK) {
+        // Retire a straggler legacy file too (e.g. one written while
+        // the store was locked and never re-imported).
+        retireLegacyFile(fileName);
+        return;
+    }
+    char *error = rc_last_error_message();
+    qWarning() << "AutoFillManager: the autofill store refused the"
+                  " write — keeping the data in memory only:"
+               << QString::fromUtf8(error ? error : "");
+    rc_string_free(error);
+    return;
+#else
     // Stored forms can carry passwords: the file is sealed with
     // AES-256-GCM (SecureStore) instead of the Qt4-era plaintext
     // QDataStream.  The blob keeps the same stream payload inside, so
@@ -195,11 +321,62 @@ void AutoFillManager::saveFormData() const
     if (!file.commit())
         qWarning() << "Unable to commit" << fileName;
     QFile::setPermissions(fileName, QFile::ReadUser | QFile::WriteUser);
+#endif // ARORA_RUSTCORE
 }
 
 void AutoFillManager::loadFormData()
 {
     QString fileName = autoFillDataFile();
+
+#ifdef ARORA_RUSTCORE
+    rustCoreEnsureDataDir();
+    if (rc_passphrase_enabled() && !rc_is_unlocked())
+        SecureStore::ensureUnlocked(nullptr);
+
+    // One-shot import: when the Rust store does not exist yet the
+    // legacy file is decoded by the original reader, replayed into
+    // the core and retired.  An undecodable blob is left in place
+    // for the next attempt (same outcome as the no-Rust path: an
+    // empty list plus a warning).
+    if (rc_autofill_store_present() == 0 && QFile::exists(fileName)) {
+        QList<Form> legacy;
+        QFile file(fileName);
+        const bool decoded = file.open(QFile::ReadOnly)
+            && decodeLegacyForms(file.readAll(), &legacy);
+        if (decoded) {
+            const QByteArray json = formsToJson(legacy);
+            const RcStatus status = rc_autofill_set_forms(
+                reinterpret_cast<const uint8_t *>(json.constData()),
+                size_t(json.size()));
+            if (status == RC_OK) {
+                retireLegacyFile(fileName);
+            } else {
+                char *error = rc_last_error_message();
+                qWarning() << "AutoFillManager: legacy import could not"
+                              " be stored —" << fileName
+                           << "stays in place:"
+                           << QString::fromUtf8(error ? error : "");
+                rc_string_free(error);
+            }
+            m_forms = legacy;
+            return;
+        }
+        qWarning() << "AutoFillManager: cannot decode" << fileName
+                   << "(key missing or file tampered)";
+    }
+
+    char *json = rc_autofill_forms();
+    if (!json) {
+        char *error = rc_last_error_message();
+        qWarning() << "AutoFillManager: cannot read the autofill store:"
+                   << QString::fromUtf8(error ? error : "");
+        rc_string_free(error);
+        return;
+    }
+    m_forms = formsFromJson(QByteArray(json));
+    rc_string_free(json);
+    return;
+#else
     QFile file(fileName);
     if (!file.open(QFile::ReadOnly))
         return;
@@ -223,6 +400,7 @@ void AutoFillManager::loadFormData()
     // a corrupt count prefix in the unauthenticated legacy file.
     QDataStream stream(raw);
     StreamingUtils::readBoundedList(stream, m_forms);
+#endif // ARORA_RUSTCORE
 }
 
 // Builds the injected bundle for a document at url and re-arms the
