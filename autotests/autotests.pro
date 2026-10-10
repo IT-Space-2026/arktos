@@ -51,6 +51,7 @@ SUBDIRS  = \
     searchlineedit \
     settingsdialog \
     singleapplication \
+    sitedecisions \
     sitepanel \
     tabbar \
     tabwidget \

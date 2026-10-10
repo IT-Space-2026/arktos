@@ -111,7 +111,10 @@ public:
     // optional Rust engine.
     // siteWhitelistFilter returns an empty string for hosts that can
     // not be expressed safely inside an ABP domain anchor.
+    // siteWhitelistKey is the canonical host the SITED01 store keys
+    // the whitelist row by (ACE/lowercase, same validation).
     static QString siteWhitelistFilter(const QString &host);
+    static QString siteWhitelistKey(const QString &host);
     bool isSiteWhitelisted(const QString &host);
     void setSiteWhitelisted(const QString &host, bool whitelisted);
 

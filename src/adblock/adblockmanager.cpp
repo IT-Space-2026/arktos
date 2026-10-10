@@ -40,6 +40,10 @@
 #include "domainblocklist.h"
 #include "networkaccessmanager.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qdatetime.h>
 #include <qhash.h>
 #include <qmessagebox.h>
@@ -485,11 +489,56 @@ void AdBlockManager::load()
         connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
         m_subscriptions.append(adBlockSubscription);
     }
+
+#if defined(ARORA_RUSTCORE)
+    // SITED01: retire site-whitelist rules from the custom-rules file
+    // into the Rust store — they are per-site decisions, not list
+    // content.  Only an already-loaded custom subscription is
+    // scanned: materializing one just to migrate would be a write
+    // side-effect on a read path.  A canonical row is
+    // "@@||<host>^$document" exactly as siteWhitelistFilter produces;
+    // anything else stays where it is.
+    AdBlockSubscription *custom = nullptr;
+    for (AdBlockSubscription *subscription : m_subscriptions) {
+        if (subscription->location() == customSubscriptionLocation()) {
+            custom = subscription;
+            break;
+        }
+    }
+    if (custom) {
+        const QList<AdBlockRule> rules = custom->allRules();
+        bool migrated = false;
+        // Walk backwards so removeRule keeps earlier offsets valid.
+        for (int i = rules.count() - 1; i >= 0; --i) {
+            const AdBlockRule &rule = rules.at(i);
+            if (!rule.isEnabled())
+                continue;
+            const QString filter = rule.filter();
+            if (!filter.startsWith(QLatin1String("@@||"))
+                || !filter.endsWith(QLatin1String("^$document")))
+                continue;
+            const QString host = filter.mid(
+                4, filter.size() - 4 - 10);
+            if (siteWhitelistFilter(host) != filter)
+                continue;
+            // The rule only leaves the file once its store row is
+            // written — a failed write keeps the legacy entry for the
+            // next run.
+            if (!SiteDecisionStore::set(SiteDecisionStore::KindAdBlock,
+                                        host, QLatin1String("allow")))
+                continue;
+            custom->removeRule(i);
+            migrated = true;
+        }
+        if (migrated)
+            custom->saveRules();
+    }
+#endif
 }
 
-QString AdBlockManager::siteWhitelistFilter(const QString &host)
+QString AdBlockManager::siteWhitelistKey(const QString &host)
 {
-    // IDN hosts ride the filter in punycode — that is the spelling the
+    // IDN hosts ride the store in punycode — that is the spelling the
     // matcher sees in the encoded request url.
     const QByteArray ace = QUrl::toAce(host);
     const QString encoded = ace.isEmpty()
@@ -500,27 +549,54 @@ QString AdBlockManager::siteWhitelistFilter(const QString &host)
         QStringLiteral("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"));
     if (!validHost.match(encoded).hasMatch())
         return QString();
-    return QLatin1String("@@||") + encoded + QLatin1String("^$document");
+    return encoded;
+}
+
+QString AdBlockManager::siteWhitelistFilter(const QString &host)
+{
+    const QString key = siteWhitelistKey(host);
+    if (key.isEmpty())
+        return QString();
+    return QLatin1String("@@||") + key + QLatin1String("^$document");
 }
 
 bool AdBlockManager::isSiteWhitelisted(const QString &host)
 {
-    const QString filter = siteWhitelistFilter(host);
-    if (filter.isEmpty())
+    const QString key = siteWhitelistKey(host);
+    if (key.isEmpty())
         return false;
+#if defined(ARORA_RUSTCORE)
+    // subscriptions() forces load() — the one-shot custom-rules
+    // migration — before the store is consulted.
+    subscriptions();
+    return SiteDecisionStore::get(SiteDecisionStore::KindAdBlock,
+                                  key, nullptr);
+#else
+    const QString filter = siteWhitelistFilter(host);
     const QList<AdBlockRule> rules = customRules()->allRules();
     for (const AdBlockRule &rule : rules) {
         if (rule.isEnabled() && rule.filter() == filter)
             return true;
     }
     return false;
+#endif
 }
 
 void AdBlockManager::setSiteWhitelisted(const QString &host, bool whitelisted)
 {
-    const QString filter = siteWhitelistFilter(host);
-    if (filter.isEmpty())
+    const QString key = siteWhitelistKey(host);
+    if (key.isEmpty())
         return;
+#if defined(ARORA_RUSTCORE)
+    subscriptions();
+    if (whitelisted)
+        SiteDecisionStore::set(SiteDecisionStore::KindAdBlock,
+                               key, QLatin1String("allow"));
+    else
+        SiteDecisionStore::remove(SiteDecisionStore::KindAdBlock, key);
+    emit rulesChanged();
+#else
+    const QString filter = siteWhitelistFilter(host);
     AdBlockSubscription *custom = customRules();
     const QList<AdBlockRule> rules = custom->allRules();
     bool found = false;
@@ -534,6 +610,7 @@ void AdBlockManager::setSiteWhitelisted(const QString &host, bool whitelisted)
     }
     if (whitelisted && !found)
         custom->addRule(AdBlockRule(filter));
+#endif
 }
 
 AdBlockDialog *AdBlockManager::showDialog()

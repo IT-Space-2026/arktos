@@ -53,6 +53,10 @@
 #include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "containermanager.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "cookiejar.h"
 #include "historymanager.h"
 #include "opensearchmanager.h"
@@ -361,6 +365,10 @@ void tst_ContainerManager::init()
         // single-row (inline chips) strip — pin that mode; the
         // two-level tests opt back in explicitly.
         settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+#if defined(ARORA_RUSTCORE)
+        // Container site rules moved into the decision store.
+        SiteDecisionStore::reset();
+#endif
     }
     m_server->requests.clear();
     m_server->cookieHeaders.clear();

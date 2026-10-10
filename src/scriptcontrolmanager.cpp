@@ -33,9 +33,92 @@
 static QReadWriteLock s_snapshotLock;
 static QStringList s_allowedSnapshot;
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+
+// SITED01: one-shot import of the legacy "scriptcontrol" QSettings
+// group into the Rust store; the keys are retired after the writes
+// land so an interrupted run re-imports on next start.
+static void importLegacyScriptRules()
+{
+    QSettings settings;
+    // Same normalization the loader applies: lowercase, trim edge
+    // dots, drop empties.
+    const auto normalize = [](const QString &host) {
+        QString normalized = host.toLower();
+        while (normalized.endsWith(QLatin1Char('.')))
+            normalized.chop(1);
+        while (normalized.startsWith(QLatin1Char('.')))
+            normalized = normalized.mid(1);
+        return normalized;
+    };
+    settings.beginGroup(QLatin1String("scriptcontrol"));
+    const QStringList allowed =
+        settings.value(QLatin1String("allowed")).toStringList();
+    const QStringList blocked =
+        settings.value(QLatin1String("blocked")).toStringList();
+    if (allowed.isEmpty() && blocked.isEmpty()) {
+        settings.endGroup();
+        return;
+    }
+    bool allWritten = true;
+    for (const QString &host : allowed) {
+        const QString normalized = normalize(host);
+        if (!normalized.isEmpty())
+            allWritten = SiteDecisionStore::set(
+                SiteDecisionStore::KindJavaScript,
+                normalized, QLatin1String("allow")) && allWritten;
+    }
+    for (const QString &host : blocked) {
+        const QString normalized = normalize(host);
+        if (!normalized.isEmpty())
+            allWritten = SiteDecisionStore::set(
+                SiteDecisionStore::KindJavaScript,
+                normalized, QLatin1String("block")) && allWritten;
+    }
+    settings.endGroup();
+    if (allWritten)
+        settings.remove(QLatin1String("scriptcontrol"));
+}
+
+// The in-memory lists are authoritative; mirror them into the store
+// in one whole-kind write.  A host can never be in both lists (a
+// mutation removes it from the other first), but on a hand-edited
+// file block wins — the conservative answer.
+static void persistScriptRules(const QStringList &allowed,
+                               const QStringList &blocked)
+{
+    QHash<QString, QString> rows;
+    for (const QString &host : allowed)
+        rows.insert(host, QLatin1String("allow"));
+    for (const QString &host : blocked)
+        rows.insert(host, QLatin1String("block"));
+    SiteDecisionStore::replace(SiteDecisionStore::KindJavaScript, rows);
+}
+#endif
+
 ScriptControlManager::ScriptControlManager(QObject *parent)
     : QObject(parent)
 {
+#if defined(ARORA_RUSTCORE)
+    importLegacyScriptRules();
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindJavaScript);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        const QString normalized = normalizeHost(it.key());
+        if (normalized.isEmpty())
+            continue;
+        if (it.value() == QLatin1String("allow")) {
+            if (!m_allowed.contains(normalized))
+                m_allowed.append(normalized);
+        } else if (it.value() == QLatin1String("block")) {
+            if (!m_blocked.contains(normalized))
+                m_blocked.append(normalized);
+        }
+        // Unknown values are corrupt rows — dropped on load and gone
+        // after the next mirror-write.
+    }
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("scriptcontrol"));
     const QStringList allowed =
@@ -53,6 +136,7 @@ ScriptControlManager::ScriptControlManager(QObject *parent)
         if (!normalized.isEmpty() && !m_blocked.contains(normalized))
             m_blocked.append(normalized);
     }
+#endif
     refreshSnapshot();
 }
 
@@ -163,6 +247,9 @@ void ScriptControlManager::setRuleForHost(const QString &host, Rule rule,
         else if (rule == Block)
             m_blocked.append(normalized);
 
+#if defined(ARORA_RUSTCORE)
+        persistScriptRules(m_allowed, m_blocked);
+#else
         QSettings settings;
         settings.beginGroup(QLatin1String("scriptcontrol"));
         if (m_allowed.isEmpty())
@@ -174,6 +261,7 @@ void ScriptControlManager::setRuleForHost(const QString &host, Rule rule,
         else
             settings.setValue(QLatin1String("blocked"), m_blocked);
         settings.endGroup();
+#endif
     } else {
         m_sessionAllowed.remove(normalized);
         m_sessionBlocked.remove(normalized);
@@ -191,11 +279,15 @@ void ScriptControlManager::clearPersistentRules()
 {
     m_allowed.clear();
     m_blocked.clear();
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::clear(SiteDecisionStore::KindJavaScript);
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("scriptcontrol"));
     settings.remove(QLatin1String("allowed"));
     settings.remove(QLatin1String("blocked"));
     settings.endGroup();
+#endif
     refreshSnapshot();
     emit changed();
 }

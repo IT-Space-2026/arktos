@@ -27,10 +27,51 @@
 #include <qsettings.h>
 #include <qwebenginepage.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+
+// SITED01: one-shot import of the legacy "webpermissions" QSettings
+// group.  Every origin/type row is replayed into the Rust store; the
+// group is retired only after the writes land, so an interrupted run
+// re-imports on the next start.  Malformed rows are dropped rather
+// than migrated — no valid decision is ever lost.
+static void importLegacyWebPermissions()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("webpermissions"));
+    const QStringList origins = settings.childGroups();
+    if (origins.isEmpty()) {
+        settings.endGroup();
+        return;
+    }
+    bool allWritten = true;
+    for (const QString &originKey : origins) {
+        settings.beginGroup(originKey);
+        const QStringList keys = settings.childKeys();
+        for (const QString &key : keys) {
+            const QString value = settings.value(key).toString();
+            if (value != QLatin1String("grant")
+                && value != QLatin1String("deny"))
+                continue;
+            allWritten = SiteDecisionStore::set(
+                SiteDecisionStore::KindWebPermission,
+                originKey + QLatin1Char('/') + key, value) && allWritten;
+        }
+        settings.endGroup();
+    }
+    settings.endGroup();
+    if (allWritten)
+        settings.remove(QLatin1String("webpermissions"));
+}
+#endif
+
 WebPermissionManager::WebPermissionManager(QObject *parent)
     : QObject(parent)
     , m_inPrompt(false)
 {
+#if defined(ARORA_RUSTCORE)
+    importLegacyWebPermissions();
+#endif
 }
 
 WebPermissionManager *WebPermissionManager::instance()
@@ -146,6 +187,27 @@ QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
 {
     QList<Entry> result;
     const QMetaEnum metaEnum = permissionTypeEnum();
+#if defined(ARORA_RUSTCORE)
+    // Keys round-trip as "<enc-origin>/<Type>" rows in the Rust store.
+    const QHash<QString, QString> rows =
+        SiteDecisionStore::entries(SiteDecisionStore::KindWebPermission);
+    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
+        const int slash = it.key().lastIndexOf(QLatin1Char('/'));
+        if (slash < 0)
+            continue;
+        const QString originKey = it.key().left(slash);
+        const QString typeKey = it.key().mid(slash + 1);
+        int value = metaEnum.keyToValue(typeKey.toUtf8().constData());
+        if (value == -1)
+            continue;
+        Entry entry;
+        entry.origin = QUrl::fromEncoded(
+            QByteArray::fromPercentEncoding(originKey.toUtf8()));
+        entry.type = static_cast<QWebEnginePermission::PermissionType>(value);
+        entry.granted = it.value() == QLatin1String("grant");
+        result.append(entry);
+    }
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     const QStringList origins = settings.childGroups();
@@ -165,27 +227,39 @@ QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
         }
         settings.endGroup();
     }
+#endif
     return result;
 }
 
 void WebPermissionManager::setEntry(const QUrl &origin,
         QWebEnginePermission::PermissionType type, bool granted)
 {
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::set(SiteDecisionStore::KindWebPermission,
+                           keyFor(origin, type),
+                           QLatin1String(granted ? "grant" : "deny"));
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     settings.setValue(keyFor(origin, type),
                       QLatin1String(granted ? "grant" : "deny"));
     settings.endGroup();
+#endif
     emit changed();
 }
 
 void WebPermissionManager::removeEntry(const QUrl &origin,
         QWebEnginePermission::PermissionType type)
 {
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::remove(SiteDecisionStore::KindWebPermission,
+                              keyFor(origin, type));
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     settings.remove(keyFor(origin, type));
     settings.endGroup();
+#endif
     m_sessionDecisions.remove(sessionKeyFor(origin, type, false));
     m_sessionDecisions.remove(sessionKeyFor(origin, type, true));
     emit changed();
@@ -193,8 +267,12 @@ void WebPermissionManager::removeEntry(const QUrl &origin,
 
 void WebPermissionManager::clearEntries()
 {
+#if defined(ARORA_RUSTCORE)
+    SiteDecisionStore::clear(SiteDecisionStore::KindWebPermission);
+#else
     QSettings settings;
     settings.remove(QLatin1String("webpermissions"));
+#endif
     m_sessionDecisions.clear();
     emit changed();
 }
@@ -211,12 +289,21 @@ bool WebPermissionManager::storedDecision(const QUrl &origin,
         bool offTheRecord) const
 {
     const QString key = keyFor(origin, type);
+#if defined(ARORA_RUSTCORE)
+    QString stored;
+    if (SiteDecisionStore::get(SiteDecisionStore::KindWebPermission,
+                               key, &stored)) {
+        *granted = stored == QLatin1String("grant");
+        return true;
+    }
+#else
     QSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     if (settings.contains(key)) {
         *granted = settings.value(key).toString() == QLatin1String("grant");
         return true;
     }
+#endif
     const QString sessionKey = sessionKeyFor(origin, type, offTheRecord);
     if (m_sessionDecisions.contains(sessionKey)) {
         *granted = m_sessionDecisions.value(sessionKey);

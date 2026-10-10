@@ -163,6 +163,41 @@ webRequestBlocking, cookies, browsingData, `<all_urls>`/`*://*/*`),
 plus a non-fatal `errors` list — the Qt side never parses raw
 package JSON itself.
 
+## Per-site decisions (SITED01)
+
+`rc_sitedec_*` is the consolidated store for "a decision scoped to a
+site" — the engine-neutral home for what used to be seven scattered
+QSettings groups and an adblock custom-rules file: web-permission
+grants (`webperm`), per-site JavaScript rules (`js`), container
+"always open" assignments (`container`), pop-up exceptions (`popup`),
+HTTPS-Only host allowances (`http-allow`), cookie rules (`cookie`)
+and the adblock site whitelist (`adblock`).  Rows are
+`kind -> {key -> value}` inside `sitedecisions.json`, persisted
+atomically and bounded on every axis (kind/key/value length, entry
+counts, file size).
+
+- `rc_sitedec_get/set/remove/clear` — row and kind CRUD;
+  `rc_sitedec_replace` mirrors a whole kind in one write (the
+  "in-memory list is authoritative" shape the Qt managers hold).
+- `rc_sitedec_list` answers a kind's rows as JSON;
+  `rc_sitedec_snapshot` marshals the entire store plus a generation
+  counter under a read lock — the IO-thread policy-snapshot pattern.
+- `rc_sitedec_lookup` walks host suffixes (a rule on `example.com`
+  governs `www.example.com`) — the shared semantics the legacy
+  per-store suffix matchers each re-implemented.
+- `rc_sitedec_store_present` gates the Qt-side one-shot legacy
+  imports; `rc_sitedec_reload` re-reads the file (test/repair seam);
+  `rc_sitedec_reset` empties everything (clear-site-data path).
+- Corruption is row-scoped: a malformed kind or row is dropped on
+  load while its valid neighbours survive, and a wholly unparsable
+  file degrades to an empty store rather than an error state that
+  would wedge every per-site check behind it.
+- Mutations announce the `"sitedecisions"` change topic, which
+  `RustCoreBridge` re-emits as a queued Qt signal.
+
+In a no-rust build none of this exists — each manager keeps its
+original QSettings (or custom-rules file) path verbatim.
+
 ## Post-quantum posture — read before "adding PQ"
 
 At rest this store is **already post-quantum-sufficient**: AES-256-GCM

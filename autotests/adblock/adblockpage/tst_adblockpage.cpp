@@ -41,6 +41,10 @@
 #include "adblockrule.h"
 #include "webenginebackend.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qwebengineview.h>
 #include <qwebenginepage.h>
 #include <qelapsedtimer.h>
@@ -97,6 +101,10 @@ void tst_AdBlockPage::cleanupTestCase()
 // This will be called before each test function is executed.
 void tst_AdBlockPage::init()
 {
+#if defined(ARORA_RUSTCORE)
+    // A whitelisted site gets no cosmetic filtering — clear stale rows.
+    SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
+#endif
 }
 
 // This will be called after every test function.

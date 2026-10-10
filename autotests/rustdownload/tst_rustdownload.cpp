@@ -50,6 +50,7 @@
 
 #if defined(ARORA_RUSTCORE)
 #include "rustcore.h"
+#include "sitedecisionstore.h"
 #endif
 #endif
 
@@ -128,6 +129,11 @@ void tst_RustDownload::init()
     // The gate consults the interceptor's lock-guarded snapshot —
     // reload it against the cleared settings so defaults apply.
     PrivacyRequestInterceptor::loadSettings();
+#endif
+#if defined(ARORA_RUSTCORE)
+    // The gate's adblock step consults the decision-store whitelist —
+    // a stale row must not leak between tests.
+    SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
 #endif
 }
 

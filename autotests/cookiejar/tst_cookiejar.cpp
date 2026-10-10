@@ -26,6 +26,10 @@
 #include <QNetworkCookie>
 #include <cookiejar.h>
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 class tst_CookieJar : public QObject
 {
     Q_OBJECT
@@ -110,6 +114,10 @@ void tst_CookieJar::init()
     // AutoSaver in ~CookieJar; start each test from a clean slate.
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // Per-site cookie rules live in the decision store now.
+    SiteDecisionStore::clear(SiteDecisionStore::KindCookie);
+#endif
 }
 
 // This will be called after every test function.

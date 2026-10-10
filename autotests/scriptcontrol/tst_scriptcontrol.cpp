@@ -39,6 +39,10 @@
 #include "scriptblockinfobar.h"
 #include "scriptcontrolmanager.h"
 #include "webpage.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "webview.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -211,20 +215,42 @@ void tst_ScriptControl::persistence()
 {
     ScriptControlManager *scripts = ScriptControlManager::instance();
 
-    // A persistent rule lands in the QSettings group.
+    // A persistent rule lands in the durable store.
     scripts->setRuleForHost(QLatin1String("persist.example"),
                           ScriptControlManager::Allow, true);
+#if defined(ARORA_RUSTCORE)
+    {
+        QString stored;
+        QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindJavaScript,
+                                       QLatin1String("persist.example"),
+                                       &stored));
+        QCOMPARE(stored, QLatin1String("allow"));
+    }
+#else
     {
         QSettings settings;
         settings.beginGroup(QLatin1String("scriptcontrol"));
         QCOMPARE(settings.value(QLatin1String("allowed")).toStringList(),
                  QStringList() << QLatin1String("persist.example"));
     }
+#endif
 
     // A session rule writes nothing — new settings objects and a fresh
     // manager see only the persistent entry.
     scripts->setRuleForHost(QLatin1String("session.example"),
                           ScriptControlManager::Block, false);
+#if defined(ARORA_RUSTCORE)
+    {
+        QString stored;
+        QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindJavaScript,
+                                       QLatin1String("persist.example"),
+                                       &stored));
+        QCOMPARE(stored, QLatin1String("allow"));
+        QVERIFY(!SiteDecisionStore::get(SiteDecisionStore::KindJavaScript,
+                                        QLatin1String("session.example"),
+                                        &stored));
+    }
+#else
     {
         QSettings settings;
         settings.beginGroup(QLatin1String("scriptcontrol"));
@@ -232,6 +258,7 @@ void tst_ScriptControl::persistence()
                  QStringList() << QLatin1String("persist.example"));
         QVERIFY(!settings.contains(QLatin1String("blocked")));
     }
+#endif
 
     // A second manager instance reloads the persistent lists only.
     ScriptControlManager reloaded;

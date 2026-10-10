@@ -37,6 +37,10 @@
 #include "adblockpresetsdialog.h"
 #include "adblocksubscription.h"
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
+
 #include <qcheckbox.h>
 #include <qdebug.h>
 #include <qset.h>
@@ -111,6 +115,11 @@ void tst_AdBlockManager::init()
     // so the seed is written only after it is gone.
     QSettings settings;
     settings.clear();
+#if defined(ARORA_RUSTCORE)
+    // The site whitelist moved out of the custom-rules file into the
+    // decision store — start each test from an empty set.
+    SiteDecisionStore::clear(SiteDecisionStore::KindAdBlock);
+#endif
     QString customUrl;
     {
         SubAdBlockManager manager;

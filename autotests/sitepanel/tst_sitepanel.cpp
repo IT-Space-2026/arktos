@@ -37,6 +37,10 @@
 #include <qwidgetaction.h>
 
 #include "adblockmanager.h"
+
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+#endif
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "cookiejar.h"
@@ -177,12 +181,29 @@ void tst_SitePanel::siteWhitelistToggle()
 {
     AdBlockManager *manager = AdBlockManager::instance();
     QVERIFY(!manager->isSiteWhitelisted(QLatin1String("example.com")));
+#if defined(ARORA_RUSTCORE)
+    const int rowsBefore =
+        SiteDecisionStore::entries(SiteDecisionStore::KindAdBlock).count();
+#endif
 
     manager->setSiteWhitelisted(QLatin1String("example.com"), true);
     QVERIFY(manager->isSiteWhitelisted(QLatin1String("example.com")));
 
     // Toggling twice must not stack duplicate rules.
     manager->setSiteWhitelisted(QLatin1String("example.com"), true);
+#if defined(ARORA_RUSTCORE)
+    // The whitelist is a keyed row in the decision store — a second
+    // toggle rewrites the same row, so duplication is impossible.
+    {
+        QString stored;
+        QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindAdBlock,
+                                       QLatin1String("example.com"),
+                                       &stored));
+        QCOMPARE(stored, QLatin1String("allow"));
+        QCOMPARE(SiteDecisionStore::entries(SiteDecisionStore::KindAdBlock)
+                     .count(), rowsBefore + 1);
+    }
+#else
     int count = 0;
     const QList<AdBlockRule> rules = manager->customRules()->allRules();
     for (const AdBlockRule &rule : rules) {
@@ -190,6 +211,7 @@ void tst_SitePanel::siteWhitelistToggle()
             ++count;
     }
     QCOMPARE(count, 1);
+#endif
 
     manager->setSiteWhitelisted(QLatin1String("example.com"), false);
     QVERIFY(!manager->isSiteWhitelisted(QLatin1String("example.com")));

@@ -69,6 +69,7 @@ mod parsers;
 mod pdfsanitize;
 mod policy;
 mod session;
+mod sitedecisions;
 mod store;
 mod tlsprobe;
 mod urlstrip;
@@ -1842,19 +1843,265 @@ pub unsafe extern "C" fn rc_tls_clear_roots() -> RcStatus {
     status_of(tlsprobe::clear_roots)
 }
 
+// ---- SITED01: consolidated per-site decision store ----
+//
+// One durable kind/key/value store behind sitedecisions.json — the
+// Qt side reaches it through sitedecisionstore.{h,cpp}; every mutating
+// call persists atomically and emits the "sitedecisions" notification
+// topic so UI consumers refresh through the queued bridge.
+
+/// Reads `kind`'s row for `key` into `out`.  RC_OK with len>0 on a
+/// hit, RC_NOT_FOUND on a miss.
+///
+/// # Safety
+/// `kind`/`key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_get(
+    kind: *const c_char,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let kind = unsafe { util::cstr(kind) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad kind pointer".into(),
+        })?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        match sitedecisions::get(kind, key)? {
+            Some(value) => {
+                buffer_out(out, value.into_bytes());
+                Ok(())
+            }
+            None => Err(error::Fail {
+                status: RcStatus::NotFound,
+                msg: "no such site decision".into(),
+            }),
+        }
+    })
+}
+
+/// Records `value` under (`kind`, `key`), persists atomically, and
+/// emits the change notification only when the stored row changed.
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_set(
+    kind: *const c_char,
+    key: *const c_char,
+    value: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let kind = unsafe { util::cstr(kind) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad kind pointer".into(),
+        })?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let value =
+            unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: "bad value pointer".into(),
+            })?;
+        sitedecisions::set(kind, key, value).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Drops the row for (`kind`, `key`); RC_OK whether or not it existed
+/// (decision removal is idempotent).
+///
+/// # Safety
+/// Pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_remove(
+    kind: *const c_char,
+    key: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let kind = unsafe { util::cstr(kind) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad kind pointer".into(),
+        })?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        sitedecisions::remove(kind, key).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Removes every row of `kind` — the adapters' "clear all" path.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_clear(kind: *const c_char) -> RcStatus {
+    let status = status_of(|| {
+        let kind = unsafe { util::cstr(kind) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad kind pointer".into(),
+        })?;
+        sitedecisions::clear_kind(kind).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Replaces `kind`'s rows wholesale with a JSON object
+/// `{"key":"value",...}` — the "in-memory list is authoritative"
+/// mirror-write used by the list-shaped stores (popup/cookie/js).
+///
+/// # Safety
+/// `json` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_replace(
+    kind: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let kind = unsafe { util::cstr(kind) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad kind pointer".into(),
+        })?;
+        let json = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        sitedecisions::replace_kind(kind, json).map(|_| ())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("sitedecisions");
+    }
+    status
+}
+
+/// Every row of `kind` as `{"key":"value",...}` JSON — caller frees
+/// with rc_string_free().
+///
+/// # Safety
+/// `kind` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_list(kind: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(kind) } {
+            Some(kind) => match sitedecisions::list_json(kind) {
+                Ok(json) => util::to_c_string(json),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad kind pointer");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The whole store — `{"version":1,"generation":N,"kinds":{...}}` —
+/// for read-locked IO-thread policy snapshots.
+/// Caller frees with rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_snapshot() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match sitedecisions::snapshot_json() {
+        Ok(json) => util::to_c_string(json),
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Host-suffix lookup: returns `{"key":"matched-key","value":"..."}`
+/// for the longest matching stored host suffix of `host`, or NULL when
+/// nothing matches.
+///
+/// # Safety
+/// `kind`/`host` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_lookup(
+    kind: *const c_char,
+    host: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let kind = match unsafe { util::cstr(kind) } {
+            Some(k) => k,
+            None => {
+                error::set_error("bad kind pointer");
+                return ptr::null_mut();
+            }
+        };
+        let host = match unsafe { util::cstr(host) } {
+            Some(h) => h,
+            None => {
+                error::set_error("bad host pointer");
+                return ptr::null_mut();
+            }
+        };
+        match sitedecisions::lookup(kind, host) {
+            Ok(Some((key, value))) => util::to_c_string(
+                serde_json::json!({"key": key, "value": value}).to_string(),
+            ),
+            Ok(None) => ptr::null_mut(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// 1 when the store file exists — the Qt migration code's
+/// "has anything been stored yet?" gate.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_store_present() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        i32::from(sitedecisions::store_present())
+    }))
+    .unwrap_or(0)
+}
+
+/// Re-reads the disk file into the in-memory store.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
+    status_of(sitedecisions::reload)
+}
+
+/// Empties every kind (file removed) — the "clear site data" and
+/// test-suite reset path.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
+    status_of(sitedecisions::reset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CStr;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
 
     // Every test here drives the one process-global STORE — they must
     // run serialized or a parallel test's rc_set_data_dir switches
     // the dir mid-test.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn guard() -> MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::store::test_lock()
     }
 
     fn tmpdir(tag: &str) -> String {

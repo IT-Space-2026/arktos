@@ -38,6 +38,22 @@
 #include <qjsonobject.h>
 #endif
 
+#if defined(ARORA_RUSTCORE)
+#include "sitedecisionstore.h"
+
+// SITED01: the site whitelist lives in the Rust store — a stored host
+// acts as the page-level $document exception the custom-rules filter
+// used to provide.  The suffix walk matches the ||host^ anchor's
+// "host or any subdomain" semantics.
+static bool siteWhitelistedDocument(const QString &documentHost)
+{
+    if (documentHost.isEmpty())
+        return false;
+    return SiteDecisionStore::lookup(SiteDecisionStore::KindAdBlock,
+                                     documentHost, nullptr);
+}
+#endif
+
 #include <qdebug.h>
 #include <qset.h>
 #include <qurl.h>
@@ -134,6 +150,10 @@ AdBlockDecision AdBlockNetwork::match(const QUrl &url,
 int AdBlockNetwork::documentUnbreakUnlocked(
         const QString &documentString, const QString &documentHost) const
 {
+#if defined(ARORA_RUSTCORE)
+    if (siteWhitelistedDocument(documentHost))
+        return 1;
+#endif
     int result = 0;
     for (const SubscriptionRules &rules : m_subscriptions) {
         for (const int i : rules.exceptionIndex.pageRules) {
@@ -279,6 +299,10 @@ AdBlockDecision AdBlockNetwork::matchNativeUnlocked(
     // Document-level exceptions (uBO/ABP unbreak options): a $document
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
+#if defined(ARORA_RUSTCORE)
+    if (siteWhitelistedDocument(documentHost))
+        return decision;
+#endif
     bool genericBlock = false;
     for (const SubscriptionRules &rules : m_subscriptions) {
         for (const int i : rules.exceptionIndex.pageRules) {
@@ -400,6 +424,10 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
     // Document-level exceptions (uBO/ABP unbreak options): a $document
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
+#if defined(ARORA_RUSTCORE)
+    if (siteWhitelistedDocument(documentHost))
+        return decision;
+#endif
     bool genericBlock = false;
     for (const SubscriptionRules &rules : m_subscriptions) {
         for (const AdBlockRule &rule : rules.exceptionRules) {
