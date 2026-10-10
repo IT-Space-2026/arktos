@@ -167,6 +167,27 @@ public:
     // key on the page profile, not the window-global private flag.
     bool isTabPrivate(int index) const;
 
+    // CONT06 — two-level container strip.  When enabled (the
+    // tabs/containerDisplay setting) and more than one container has
+    // tabs, the strip shows the ACTIVE header's tabs only; the rest
+    // are detached into m_containerHidden — same mechanics as a
+    // collapsed group's hidden members, the widgets are never
+    // destroyed.  The level-1 header row itself is painted by
+    // TabBar at the strip's top edge.
+    bool twoLevelStrip() const;          // the setting's current value
+    // Non-empty only when the band actually renders — the default
+    // header plus every container that currently owns tabs.
+    bool containerStripActive() const;
+    QString activeContainerHeader() const;
+    QStringList containerHeaders() const;
+    // Tabs bound to a container — visible plus hidden — so the
+    // level-1 badges keep counting while a level is filtered out.
+    int containerTabCount(const QString &containerId) const;
+    void setActiveContainerHeader(const QString &containerId);
+    // Drag-reorder of the level-1 headers (the default header is
+    // pinned first and cannot move).
+    void moveContainerHeader(int from, int to);
+
     // PREFS01: hosts a plain widget (settings page, later the history
     // manager) in a tab slot.  The page has no WebView, so
     // webView()/webViewSearch() return nullptr for it — every
@@ -347,9 +368,20 @@ private:
     // opener's group (and hides itself when that group is collapsed).
     void inheritTabGroup(WebView *webView, WebView *opener);
     // Every tab in strip order — with a collapsed group's hidden
-    // members spliced in right after their chip.  Used by saveState so
+    // members spliced in right after its chip.  Used by saveState so
     // no tab drops out of the serialized session.
     QList<WebView*> orderedWebViews() const;
+
+    // CONT06 internals — see the public accessors above.  The filter
+    // pass detaches every tab not bound to m_activeContainerHeader
+    // into its own container's list and re-inserts the active
+    // container's detached tabs in order.
+    void setTwoLevelStrip(bool enabled);
+    void applyContainerFilter();
+    void syncContainerStrip();
+    void detachTabIntoContainerStore(int index);
+    void restoreHiddenContainerTabs(const QString &containerId);
+    void closeHiddenTab(WebView *view);
 
     // A detached member of a collapsed group: its page widget, its
     // location bar and the tab-strip visuals re-applied on expand.
@@ -378,6 +410,7 @@ private:
         QStringList containers;        // parallel: container binding
         QStringList groupIds;          // parallel: "" = ungrouped
         QList<TabGroup> groups;        // group table, first-appearance order
+        QString activeContainerHeader; // CONT06: window's level-1 selection
     };
     TabSessionSnapshot collectSessionSnapshot() const;
     bool restoreSessionSnapshot(const TabSessionSnapshot &snapshot);
@@ -388,6 +421,20 @@ private:
     // Reentrancy guard: our own membership-driven moveTab() calls feed
     // back through tabMoved.
     bool m_groupAdjust = false;
+
+    // CONT06: two-level strip state.  m_activeContainerHeader is the
+    // container id whose tabs the strip shows ("" = the default
+    // header); m_containerHeaderOrder is the session ordering of the
+    // non-default headers; m_containerHidden holds each filtered-out
+    // level's detached tabs in strip order; m_lastActiveInHeader
+    // remembers a level's last current tab so switching back lands
+    // on it.
+    bool m_twoLevelStrip = false;
+    QString m_activeContainerHeader;
+    QStringList m_containerHeaderOrder;
+    QHash<QString, QList<HiddenGroupTab>> m_containerHidden;
+    QHash<QString, WebView*> m_lastActiveInHeader;
+    bool m_containerFilterAdjust = false;
 
     QAction *m_recentlyClosedTabsAction;
     QAction *m_newTabAction;

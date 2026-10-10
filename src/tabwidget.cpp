@@ -223,10 +223,12 @@ TabWidget::TabWidget(QWidget *parent)
 
     // CONT02: a container rename/recolor/delete must repaint the tab
     // strip's chips and recompute the size hints the chip feeds.
+    // CONT06: the same change renames/recolors a level-1 header.
     connect(ContainerManager::instance(), &ContainerManager::containersChanged,
             m_tabBar, [this]() {
         m_tabBar->updateGeometry();
         m_tabBar->update();
+        syncContainerStrip();
     });
 
     // Initialize Actions' labels
@@ -640,6 +642,26 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
     // also drops any state a recycled pointer might have inherited.
     m_sleepStates.insert(webView, TabSleepState());
     markTabActivity(webView);
+    // CONT06: a tab bound to a non-active header either pulls the
+    // strip to its level (when it is raised) or joins that level's
+    // detached row in place — a background-opened container tab must
+    // not leak into the visible level.
+    if (m_twoLevelStrip && !m_containerFilterAdjust) {
+        const QString containerId = webView->containerId();
+        if (!containerId.isEmpty()
+            && !m_containerHeaderOrder.contains(containerId))
+            m_containerHeaderOrder.append(containerId);
+        if (containerId != m_activeContainerHeader) {
+            if (makeCurrent) {
+                setActiveContainerHeader(containerId);
+            } else {
+                const int index = webViewIndex(webView);
+                if (index >= 0)
+                    detachTabIntoContainerStore(index);
+            }
+        }
+        syncContainerStrip();
+    }
     if (makeCurrent)
         setCurrentWidget(webViewWithSearch);
 
@@ -669,8 +691,20 @@ int TabWidget::addWidgetTab(QWidget *page, const QString &title,
 
     const int index = addTab(page, icon, title);
     setTabToolTip(index, title);
+    // CONT06: widget tabs live under the default header — a
+    // Preferences/History tab raised in a filtered strip switches to
+    // it; a background one waits in the default level's store.
+    if (m_twoLevelStrip && !m_containerFilterAdjust
+        && !m_activeContainerHeader.isEmpty()) {
+        if (makeCurrent)
+            setActiveContainerHeader(QString());
+        else
+            detachTabIntoContainerStore(index);
+        syncContainerStrip();
+    }
+    // The filter pass reorders the strip — re-resolve the slot.
     if (makeCurrent)
-        setCurrentIndex(index);
+        setCurrentIndex(indexOf(page));
     if (count() == 1)
         currentChanged(currentIndex());
     emit tabsChanged();
@@ -705,6 +739,19 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
     WebView *newTab = makeNewTabInContainer(containerId, true);
     if (!newTab)
         return;
+    if (m_twoLevelStrip) {
+        // CONT06: raising the replacement pulled the strip to the
+        // target level — the old tab already detached into its own
+        // level's hidden store, so the index captured above is stale.
+        // Close it there and leave the new tab at the end of its
+        // level's row.
+        if (!gid.isEmpty())
+            assignTabGroup(newTab, gid);
+        if (!url.isEmpty() && url.isValid())
+            newTab->loadUrl(url);
+        closeHiddenTab(tab);
+        return;
+    }
     // The fresh tab appended at the end; slide it into the old tab's
     // slot (moveTab emits tabMoved, which keeps m_locationBars in
     // sync) so the strip order survives the swap.
@@ -1085,6 +1132,10 @@ void TabWidget::expandTabGroup(const QString &groupId)
 #endif
         ++insertPos;
     }
+    // CONT06: a member re-appearing under a filtered-out level goes
+    // straight back to that level's store.
+    if (m_twoLevelStrip)
+        applyContainerFilter();
 }
 
 void TabWidget::setTabGroupCollapsed(const QString &groupId, bool collapsed)
@@ -1189,7 +1240,320 @@ QList<WebView*> TabWidget::orderedWebViews() const
                 ordered.append(withSearch->m_webView);
         }
     }
+    // CONT06: tabs filtered off the strip by a non-active level append
+    // after the visible row, grouped by their header in strip order —
+    // every tab serializes.  A container-hidden collapsed-group chip
+    // still carries its hidden members with it, or they would drop
+    // out of the session entirely.
+    for (const QString &containerId : containerHeaders()) {
+        for (const HiddenGroupTab &hidden : m_containerHidden.value(containerId)) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(hidden.tab);
+            if (!withSearch)
+                continue;
+            ordered.append(withSearch->m_webView);
+            const QString gid = m_tabGroups.value(withSearch->m_webView);
+            const TabGroup group = m_tabGroupInfo.value(gid);
+            if (gid.isEmpty() || !group.collapsed)
+                continue;
+            for (const HiddenGroupTab &member : group.hidden) {
+                if (WebViewWithSearch *memberSearch =
+                        qobject_cast<WebViewWithSearch*>(member.tab))
+                    ordered.append(memberSearch->m_webView);
+            }
+        }
+    }
     return ordered;
+}
+
+// Defined further down — closeHiddenTab() records the closed page's
+// history for "reopen closed tab" the same way closeTab() does.
+static QByteArray serializePageHistory(const QWebEngineHistory *history);
+
+// CONT06 — two-level container strip ---------------------------------
+//
+// The level-1 row lives inside TabBar's top band (it paints and
+// hit-tests the headers itself); this side owns the model: which
+// header is active, which tabs each header holds, and the detach /
+// re-insert mechanics that swap the strip's contents when the active
+// header changes.  Detaching reuses the collapsed-group pattern —
+// the page widget, its location bar and the tab visuals are kept and
+// restored verbatim, so pages in filtered levels keep loading and
+// retain their state.
+
+bool TabWidget::twoLevelStrip() const
+{
+    return m_twoLevelStrip;
+}
+
+QString TabWidget::activeContainerHeader() const
+{
+    return m_activeContainerHeader;
+}
+
+int TabWidget::containerTabCount(const QString &containerId) const
+{
+    int total = m_containerHidden.value(containerId).size();
+    for (int i = 0; i < count(); ++i) {
+        if (const_cast<TabWidget*>(this)->containerIdForTab(i)
+            == containerId)
+            ++total;
+    }
+    // Collapsed-group members sit in a second hidden store — a
+    // level's badge counts them even when the whole level is already
+    // filtered out.
+    for (const TabGroup &group : m_tabGroupInfo) {
+        for (const HiddenGroupTab &hidden : group.hidden) {
+            if (WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(hidden.tab)) {
+                if (withSearch->m_webView->containerId() == containerId)
+                    ++total;
+            }
+        }
+    }
+    return total;
+}
+
+QStringList TabWidget::containerHeaders() const
+{
+    // The default header always exists; every other container earns a
+    // header only while it owns at least one tab (a level empties out
+    // of the strip entirely — there is no pinned state yet).
+    QStringList headers;
+    headers.append(ContainerManager::defaultContainerId());
+    ContainerManager *manager = ContainerManager::instance();
+    for (const QString &id : std::as_const(m_containerHeaderOrder)) {
+        if (containerTabCount(id) > 0 && manager->isContainerId(id)
+            && !headers.contains(id))
+            headers.append(id);
+    }
+    // A container that gained tabs without an order entry yet (a
+    // restored session, a diverted load) lands at the end in
+    // registry order.
+    for (const ContainerManager::Container &container : manager->containers()) {
+        if (containerTabCount(container.id) > 0
+            && !headers.contains(container.id))
+            headers.append(container.id);
+    }
+    return headers;
+}
+
+bool TabWidget::containerStripActive() const
+{
+    return m_twoLevelStrip && containerHeaders().count() > 1;
+}
+
+// Rebuild the strip so it shows exactly m_activeContainerHeader's
+// tabs: everything else detaches into its own container's list (in
+// strip order), then the active container's detached tabs re-insert
+// in the order they left.
+void TabWidget::applyContainerFilter()
+{
+    if (!m_twoLevelStrip || m_containerFilterAdjust)
+        return;
+    m_containerFilterAdjust = true;
+    for (int i = 0; i < count();) {
+        if (containerIdForTab(i) != m_activeContainerHeader)
+            detachTabIntoContainerStore(i);
+        else
+            ++i;
+    }
+    restoreHiddenContainerTabs(m_activeContainerHeader);
+    m_containerFilterAdjust = false;
+    if (currentIndex() < 0 && count() > 0)
+        setCurrentIndex(0);
+    m_tabBar->updateGeometry();
+    updateGeometry();
+    m_tabBar->updateAccessibleStrip();
+    m_tabBar->update();
+}
+
+// The detach half of a filter pass — identical mechanics to a
+// collapsed group's hidden member: the page widget and its location
+// bar are kept, the transient tab buttons are dropped (tabInserted()
+// re-creates them on the way back).
+void TabWidget::detachTabIntoContainerStore(int index)
+{
+    QWidget *page = widget(index);
+    if (!page)
+        return;
+    const QString containerId = containerIdForTab(index);
+    HiddenGroupTab hidden;
+    hidden.tab = page;
+    hidden.bar = m_locationBars->widget(index);
+    hidden.text = tabText(index);
+    hidden.toolTip = tabToolTip(index);
+    hidden.data = m_tabBar->tabData(index);
+    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
+                                               QTabBar::RightSide };
+    for (const QTabBar::ButtonPosition side : sides) {
+        if (QWidget *button = m_tabBar->tabButton(index, side)) {
+            m_tabBar->setTabButton(index, side, nullptr);
+            button->deleteLater();
+        }
+    }
+    m_locationBars->removeWidget(hidden.bar);
+    removeTab(index);
+    m_containerHidden[containerId].append(hidden);
+}
+
+void TabWidget::restoreHiddenContainerTabs(const QString &containerId)
+{
+    const QList<HiddenGroupTab> hidden =
+        m_containerHidden.take(containerId);
+    int insertPos = count();
+    for (const HiddenGroupTab &entry : hidden) {
+        const int idx = insertTab(insertPos, entry.tab, entry.text);
+        setTabToolTip(idx, entry.toolTip);
+        m_tabBar->setTabData(idx, entry.data);
+        m_locationBars->insertWidget(idx, entry.bar);
+#if !defined(Q_OS_MACOS)
+        if (WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(entry.tab)) {
+            QLabel *label = animationLabel(idx, false);
+            label->setPixmap(BrowserApplication::icon(
+                withSearch->m_webView->url()).pixmap(16, 16));
+        }
+#endif
+        ++insertPos;
+    }
+}
+
+void TabWidget::setActiveContainerHeader(const QString &containerId)
+{
+    QString resolved = containerId;
+    if (!resolved.isEmpty()
+        && !ContainerManager::instance()->isContainerId(resolved))
+        resolved = ContainerManager::defaultContainerId();
+    if (m_activeContainerHeader == resolved)
+        return;
+    if (WebView *current = currentWebView())
+        m_lastActiveInHeader[m_activeContainerHeader] = current;
+    m_activeContainerHeader = resolved;
+    applyContainerFilter();
+    // Land on the level's last current tab when it is still around.
+    if (WebView *preferred = m_lastActiveInHeader.value(resolved)) {
+        const int index = webViewIndex(preferred);
+        if (index >= 0)
+            setCurrentIndex(index);
+    }
+}
+
+void TabWidget::moveContainerHeader(int from, int to)
+{
+    // Header indices include the pinned default header at 0 — the
+    // order list only carries the movable non-default entries.
+    --from;
+    --to;
+    // Re-sync the order list with the live headers first — it only
+    // grows at tab-creation time, so a restored session (or any path
+    // that skipped registration) would silently make every move a
+    // no-op.
+    const QStringList headers = containerHeaders();
+    QStringList order;
+    for (const QString &id : std::as_const(m_containerHeaderOrder)) {
+        if (headers.contains(id))
+            order.append(id);
+    }
+    for (const QString &id : headers) {
+        if (!id.isEmpty() && !order.contains(id))
+            order.append(id);
+    }
+    m_containerHeaderOrder = order;
+    if (from < 0 || to < 0 || from >= m_containerHeaderOrder.count()
+        || to >= m_containerHeaderOrder.count() || from == to)
+        return;
+    m_containerHeaderOrder.move(from, to);
+    m_tabBar->update();
+}
+
+// Called after tab-strip mutations that can change the level model —
+// a new tab's container registration and the "last tab of the active
+// header closed" fallback.  Filtering itself only runs through
+// setActiveContainerHeader/applyContainerFilter.
+void TabWidget::syncContainerStrip()
+{
+    if (!m_twoLevelStrip || m_containerFilterAdjust)
+        return;
+    if (containerTabCount(m_activeContainerHeader) == 0) {
+        // The active level emptied — fall back to the default header,
+        // or to whatever still has tabs.
+        QString fallback = ContainerManager::defaultContainerId();
+        if (containerTabCount(fallback) == 0) {
+            const QStringList headers = containerHeaders();
+            fallback = headers.count() > 1 ? headers.at(1)
+                                         : fallback;
+        }
+        m_activeContainerHeader = fallback;
+        applyContainerFilter();
+    }
+    m_tabBar->updateGeometry();
+    updateGeometry();
+    m_tabBar->updateAccessibleStrip();
+    m_tabBar->update();
+}
+
+// The hidden-store counterpart of closeTab()'s tail — a tab that
+// detached into a non-active level still needs the recently-closed
+// entry and the bookkeeping teardown when it dies off-strip (the
+// reopen-in-container swap is the one caller today).
+void TabWidget::closeHiddenTab(WebView *view)
+{
+    for (auto it = m_containerHidden.begin();
+         it != m_containerHidden.end(); ++it) {
+        for (int k = 0; k < it->size(); ++k) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(it->at(k).tab);
+            if (!withSearch || withSearch->m_webView != view)
+                continue;
+            if (view && !view->url().isEmpty()
+                && !(view->page()
+                     && view->page()->profile()->isOffTheRecord())) {
+                m_recentlyClosedTabsAction->setEnabled(true);
+                m_recentlyClosedTabs.prepend(view->url());
+                m_recentlyClosedTabsHistory.prepend(
+                    serializePageHistory(view->history()));
+                m_recentlyClosedTabsContainers.prepend(it.key());
+                if (m_recentlyClosedTabs.size()
+                    >= TabWidget::m_recentlyClosedTabsSize) {
+                    m_recentlyClosedTabs.removeLast();
+                    m_recentlyClosedTabsHistory.removeLast();
+                    m_recentlyClosedTabsContainers.removeLast();
+                }
+            }
+            HiddenGroupTab hidden = it->takeAt(k);
+            hidden.bar->deleteLater();
+            const QString closingGroup = m_tabGroups.take(view);
+            hidden.tab->deleteLater();
+            m_sleepStates.remove(view);
+            m_tabThumbnails.remove(view);
+            forgetTabGroupIfEmpty(closingGroup);
+            emit tabsChanged();
+            return;
+        }
+    }
+}
+
+void TabWidget::setTwoLevelStrip(bool enabled)
+{
+    if (m_twoLevelStrip == enabled)
+        return;
+    m_twoLevelStrip = enabled;
+    if (enabled) {
+        // Keep showing what the user is looking at — the current
+        // tab's container becomes the active header.
+        m_activeContainerHeader = containerIdForTab(currentIndex());
+        applyContainerFilter();
+    } else {
+        // Fold every hidden level back onto the strip.  Tabs append
+        // in header order — per-container order is preserved, the
+        // original cross-container interleave is not.
+        m_activeContainerHeader = ContainerManager::defaultContainerId();
+        for (const QString &containerId : containerHeaders())
+            restoreHiddenContainerTabs(containerId);
+        m_containerHidden.clear();
+    }
+    syncContainerStrip();
 }
 
 // SLEEP01 — sleeping tabs -------------------------------------------------
@@ -1685,6 +2049,11 @@ void TabWidget::closeTab(int index)
     webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
 
+    // CONT06: the active level may have emptied — fall back and
+    // refill the strip before the zero-count check below decides
+    // lastTabClosed (filtered-out tabs still count as open).
+    syncContainerStrip();
+
     emit tabsChanged();
     if (hasFocus && count() > 0 && currentWebView())
         currentWebView()->setFocus();
@@ -2164,6 +2533,13 @@ void TabWidget::loadSettings()
     // tab; the single corner close button remains the opt-out.
     m_tabBar->setPerTabCloseButtons(!oneCloseButton);
 
+    // CONT06: container display — 0 keeps CONT02's inline chips on
+    // every tab, 1 (the default) splits the strip into the two-level
+    // container headers + filtered row once more than one container
+    // owns tabs.
+    setTwoLevelStrip(
+        settings.value(QLatin1String("containerDisplay"), 1).toInt() != 0);
+
     // SLEEP01: opt-in idle suspend — disabled unless the user turns
     // it on in Settings > Tabs.
     const bool suspend =
@@ -2380,12 +2756,15 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
         if (!listed)
             snap.groups.append(*it);
     }
+    // CONT06: the window's active level-1 selection —
+    // restoreSessionSnapshot() re-applies it once the strip is rebuilt.
+    snap.activeContainerHeader = m_activeContainerHeader;
     return snap;
 }
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 3; // TABGRP01: v3 tails with group ids + a group table
+    int version = 4; // CONT06: v4 tails with the active container header
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -2403,6 +2782,10 @@ QByteArray TabWidget::saveState() const
         stream << group.id << group.name << group.color
                << qint32(group.collapsed ? 1 : 0);
 
+    // CONT06: the window's active level-1 selection — restoreState()
+    // re-applies it once the strip is rebuilt.
+    stream << snap.activeContainerHeader;
+
     return data;
 }
 
@@ -2417,7 +2800,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 3)
+    if (marker != TabWidgetMagic || v < 1 || v > 4)
         return false;
 
     TabSessionSnapshot snap;
@@ -2445,6 +2828,10 @@ bool TabWidget::restoreState(const QByteArray &state)
             snap.groups.append(group);
         }
     }
+    // CONT06: v4 tails with the window's active container header — a
+    // truncated tail restores on the default header.
+    if (v >= 4)
+        stream >> snap.activeContainerHeader;
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -2545,6 +2932,29 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         selectIndex = currentTab;
     if (selectIndex >= 0)
         setCurrentIndex(selectIndex);
+    // CONT06: rebuild the level filter — the saved header wins when
+    // it still owns tabs, otherwise the saved current tab's container
+    // (a window restored on "Work" lands there, not on "Tabs").
+    if (m_twoLevelStrip) {
+        QString header = snap.activeContainerHeader;
+        if (header.isEmpty() || containerTabCount(header) == 0) {
+            if (WebView *current = currentWebView())
+                header = current->containerId();
+        }
+        if (!header.isEmpty()
+            && !ContainerManager::instance()->isContainerId(header))
+            header = ContainerManager::defaultContainerId();
+        if (header != m_activeContainerHeader
+            || containerTabCount(m_activeContainerHeader) < count()) {
+            m_activeContainerHeader = header;
+            applyContainerFilter();
+        }
+        if (WebView *preferred = savedCurrent) {
+            const int index = webViewIndex(preferred);
+            if (index >= 0)
+                setCurrentIndex(index);
+        }
+    }
     m_tabBar->updateVisibility();
     m_tabBar->update();
     return true;
@@ -2582,6 +2992,7 @@ QJsonObject TabWidget::sessionStateJson() const
     }
     QJsonObject state;
     state.insert(QLatin1String("current"), snap.currentIndex);
+    state.insert(QLatin1String("activeContainer"), snap.activeContainerHeader);
     state.insert(QLatin1String("tabs"), tabs);
     state.insert(QLatin1String("groups"), groups);
     return state;
@@ -2591,6 +3002,8 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
 {
     TabSessionSnapshot snap;
     snap.currentIndex = state.value(QLatin1String("current")).toInt(-1);
+    snap.activeContainerHeader =
+        state.value(QLatin1String("activeContainer")).toString();
     const QJsonArray tabs = state.value(QLatin1String("tabs")).toArray();
     for (const QJsonValue &v : tabs) {
         const QJsonObject tab = v.toObject();
