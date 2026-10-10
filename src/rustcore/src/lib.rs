@@ -71,6 +71,7 @@ mod notify;
 mod omnibox;
 mod opensearch;
 mod parsers;
+mod readability;
 mod session;
 mod sitedecisions;
 mod store;
@@ -827,6 +828,56 @@ pub unsafe extern "C" fn rc_suggest_parse(
         })?;
         let json = parsers::suggestions(data)?;
         buffer_out(out, json);
+        Ok(())
+    })
+}
+
+// ---- reader-mode extraction (RDR01) ---------------------------------
+
+/// The isProbablyReaderable verdict on the page's serialized DOM —
+/// the affordance check ReaderMode::probe() runs on every load.
+/// 1 when the document looks article-like, 0 otherwise (bad input
+/// reads as "not an article", never an error).
+///
+/// # Safety
+/// `html` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_readability_probe(html: *const u8, len: usize) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(html, len) } {
+            Some(b) => readability::probably_readable(b).unwrap_or(false) as i32,
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// Probe + extract in one pass — the ReaderMode::enter() path.  The
+/// JSON verdict (rc_buffer_free) always carries
+/// {"ok","probably","title","byline","siteName","excerpt","dir",
+/// "length","content"} — "content" is the article fragment sanitized
+/// against the reader-view ruleset and is populated only when "ok".
+/// RC_INVALID_ARGUMENT on bad pointers or oversized input.
+///
+/// # Safety
+/// `html` must point to `len` readable bytes; `base_url` is a
+/// NUL-terminated absolute page URL or NULL; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_readability_extract(
+    html: *const u8,
+    len: usize,
+    base_url: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(html, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad document pointer".into(),
+        })?;
+        let url = unsafe { util::cstr(base_url) };
+        let json = readability::extract_json(data, url)?;
+        buffer_out(out, json.into_bytes());
         Ok(())
     })
 }

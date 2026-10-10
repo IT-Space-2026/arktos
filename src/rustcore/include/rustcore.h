@@ -231,6 +231,33 @@ RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
 RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
                           RcBuffer *outJson);
 
+/* --- reader-mode extraction (RDR01) ----------------------------------
+ * The article extraction that used to run as injected JS (vendored
+ * Mozilla Readability.js + isProbablyReaderable) lives in the core —
+ * the feature no longer needs page-side script eval, so a JS-one-way
+ * engine supports reader mode too.  The Qt side hands over the
+ * serialized DOM and renders the returned fragment in its own reader
+ * surface.
+ *
+ * rc_readability_probe: 1 when the document looks article-like
+ * (isProbablyReaderable), 0 otherwise — bad input reads as "not an
+ * article", never an error.  Input bound: 24 MiB.
+ *
+ * rc_readability_extract: JSON verdict to outJson (rc_buffer_free):
+ *   {"ok":bool, "probably":bool, "title", "byline", "siteName",
+ *    "excerpt", "dir", "length":n, "content":"..."}
+ * "ok" mirrors the JS enter() contract — false when the page is not
+ * article-like or the extractor found nothing; "content" is populated
+ * only when ok and arrives re-sanitized against the reader-view
+ * ruleset (dead tags removed, on* and javascript: attributes
+ * stripped).  base_url is the page's absolute URL (NULL allowed;
+ * non-authority URLs degrade to "no base").  RC_INVALID_ARGUMENT on
+ * bad pointers or oversized input. */
+int rc_readability_probe(const uint8_t *html, size_t len);
+RcStatus rc_readability_extract(const uint8_t *html, size_t len,
+                                const char *base_urlUtf8,
+                                RcBuffer *outJson);
+
 /* --- extension-package verification (EXT06) --------------------------
  * The untrusted-bytes boundary of the extension system: downloaded
  * packages (.zip/.crx) and update payloads are verified in Rust

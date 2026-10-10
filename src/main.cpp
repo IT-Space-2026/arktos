@@ -5282,6 +5282,90 @@ int main(int argc, char **argv)
             QTimer::singleShot(ms, qApp, fn);
         };
 
+#ifdef ARORA_RUSTCORE
+        // Under the Rust core (RDR01) the reader surface is a
+        // dedicated overlay web view ("aroraReaderView") with
+        // Qt-widget chrome — assertions eval JS inside its own page
+        // and click the real buttons instead of poking a shadow DOM.
+        auto overlayView = [&]() -> QWebEngineView * {
+            return view->findChild<QWebEngineView *>(
+                QLatin1String("aroraReaderView"));
+        };
+        auto surfaceJs = [&](const QString &script,
+                             std::function<void(const QVariant &)> cb) {
+            QWebEngineView *readerView = overlayView();
+            if (!readerView) {
+                cb(QVariant());
+                return;
+            }
+            readerView->page()->runJavaScript(script,
+                [cb](const QVariant &result) { cb(result); });
+        };
+        auto clickControls = [&](std::function<void()> then) {
+            QToolButton *inc = view->findChild<QToolButton *>(
+                QLatin1String("aroraReaderFontInc"));
+            QToolButton *themeBtn = view->findChild<QToolButton *>(
+                QLatin1String("aroraReaderTheme"));
+            if (inc)
+                inc->click();
+            if (themeBtn)
+                themeBtn->click();
+            then();
+        };
+        auto clickExit = [&](std::function<void()> then) {
+            QToolButton *btn = view->findChild<QToolButton *>(
+                QLatin1String("aroraReaderExit"));
+            if (btn)
+                btn->click();
+            then();
+        };
+        // The surface's setHtml document loads async — retry the
+        // readiness probe until the article fragment is in the DOM.
+        auto whenSurfaceReady = [&](std::function<void()> done) {
+            QTimer *poll = new QTimer(qApp);
+            auto tries = std::make_shared<int>(0);
+            QObject::connect(poll, &QTimer::timeout, qApp,
+                [&, poll, tries, done]() {
+                if (++*tries > 100) {
+                    poll->stop();
+                    poll->deleteLater();
+                    done();
+                    return;
+                }
+                surfaceJs(QLatin1String(
+                    "document.readyState==='complete'&&"
+                    "!!document.querySelector('.content');"),
+                    [poll, done](const QVariant &r) {
+                    if (r.toBool()) {
+                        poll->stop();
+                        poll->deleteLater();
+                        done();
+                    }
+                });
+            });
+            poll->start(100);
+        };
+#else
+        // The JS driver renders the overlay as shadow DOM inside the
+        // page — evals target it through the host element.
+        auto surfaceJs = evalJs;
+        auto clickControls = [&](std::function<void()> then) {
+            evalJs(QLatin1String(
+                "var h=document.getElementById('arora-reader-host');"
+                "h.shadowRoot.querySelector('.font-inc').click();"
+                "h.shadowRoot.querySelector('.theme').click();"
+                "'clicked';"),
+                [&](const QVariant &) { then(); });
+        };
+        auto clickExit = [&](std::function<void()> then) {
+            evalJs(QLatin1String(
+                "document.getElementById('arora-reader-host').shadowRoot"
+                ".querySelector('.exit').click();"
+                "'ok';"),
+                [&](const QVariant &) { then(); });
+        };
+#endif
+
         // Mutually-referencing tail stages are declared before use.
         std::function<void()> stageJsBlocked;
         std::function<void()> stageNonArticle;
@@ -5328,6 +5412,24 @@ int main(int argc, char **argv)
 
         // Stage: a stub page must not probe article-like and enter()
         // must refuse with the "not available" message.
+        auto nonArticleEnter = [&]() {
+            reader->enter();
+            pollUntil([&]() {
+                return *nonArticleMessageSeen
+                    || reader->isActive();
+            }, [&](bool) {
+                const bool pass = *nonArticleMessageSeen
+                    && !reader->isActive();
+                qInfo() << "reader-smoke: non-article refusal"
+                        << (pass ? "PASS" : "FAIL");
+                if (!pass) {
+                    fail("non-article-enter");
+                    return;
+                }
+                qInfo() << "reader-smoke: DONE";
+                application.exit(0);
+            });
+        };
         stageNonArticle = [&]() {
             QObject::connect(reader, &ReaderMode::message, qApp,
                 [nonArticleMessageSeen](const QString &) {
@@ -5340,6 +5442,18 @@ int main(int argc, char **argv)
                 // The post-load probe is async; give it a beat, then
                 // ask the driver directly.
                 settle(600, [&]() {
+#ifdef ARORA_RUSTCORE
+                    // The Rust probe already ran post-load; a stub
+                    // page must report not-article-like.
+                    const bool probePass = !reader->isAvailable();
+                    qInfo() << "reader-smoke: non-article probe"
+                            << (probePass ? "PASS" : "FAIL");
+                    if (!probePass) {
+                        fail("non-article-probe");
+                        return;
+                    }
+                    nonArticleEnter();
+#else
                     evalJs(QLatin1String("window.__aroraReader.probe();"),
                         [&](const QVariant &probe) {
                         const bool probePass = probe.isValid()
@@ -5351,23 +5465,9 @@ int main(int argc, char **argv)
                             fail("non-article-probe");
                             return;
                         }
-                        reader->enter();
-                        pollUntil([&]() {
-                            return *nonArticleMessageSeen
-                                || reader->isActive();
-                        }, [&](bool) {
-                            const bool pass = *nonArticleMessageSeen
-                                && !reader->isActive();
-                            qInfo() << "reader-smoke: non-article refusal"
-                                    << (pass ? "PASS" : "FAIL");
-                            if (!pass) {
-                                fail("non-article-enter");
-                                return;
-                            }
-                            qInfo() << "reader-smoke: DONE";
-                            application.exit(0);
-                        });
+                        nonArticleEnter();
                     });
+#endif
                 });
             });
             view->loadUrl(plainUrl);
@@ -5376,7 +5476,23 @@ int main(int argc, char **argv)
         // Stage: overlay structure — title kept, marker paragraphs
         // present, clutter nav dropped, image carried over.
         auto stageVerifyOverlay = [&]() {
-            evalJs(QLatin1String(
+#ifdef ARORA_RUSTCORE
+            if (!overlayView()) {
+                fail("shadow-host");
+                return;
+            }
+            // The reader document loads async inside the surface.
+            whenSurfaceReady([&]() {
+#endif
+            surfaceJs(QLatin1String(
+#ifdef ARORA_RUSTCORE
+                "(function(){var c=document.querySelector('.content');"
+                "return {ok:!!c,"
+                "title:document.querySelector('.title').textContent,"
+                "text:c.innerText,"
+                "imgs:c.querySelectorAll('img').length,"
+                "clutter:!!document.querySelector('#clutter')};}())"
+#else
                 "(function(){var h=document.getElementById('arora-reader-host');"
                 "if(!h||!h.shadowRoot)return {ok:false};"
                 "var r=h.shadowRoot;var c=r.querySelector('.content');"
@@ -5384,7 +5500,9 @@ int main(int argc, char **argv)
                 "title:r.querySelector('.title').textContent,"
                 "text:c.innerText,"
                 "imgs:c.querySelectorAll('img').length,"
-                "clutter:!!r.querySelector('#clutter')};}())"),
+                "clutter:!!r.querySelector('#clutter')};}())"
+#endif
+                ),
                 [&](const QVariant &result) {
                 const QVariantMap m = result.toMap();
                 const bool pass = m.value(QLatin1String("ok")).toBool()
@@ -5404,8 +5522,13 @@ int main(int argc, char **argv)
                 }
 
                 // Stage: the in-overlay controls — A+ bumps the font
-                // and persists through the channel bridge; the theme
-                // button flips to dark.
+                // and persists; the theme button flips to dark.
+#ifdef ARORA_RUSTCORE
+                overlayFontSizeBefore =
+                    QSettings().value(QLatin1String("reader/fontSize"), 19)
+                        .toInt();
+                clickControls([&]() {
+#else
                 evalJs(QLatin1String(
                     "getComputedStyle(document.getElementById("
                     "'arora-reader-host').shadowRoot.querySelector("
@@ -5413,12 +5536,8 @@ int main(int argc, char **argv)
                     [&](const QVariant &before) {
                     overlayFontSizeBefore = before.toString()
                         .remove(QLatin1String("px")).toInt();
-                    evalJs(QLatin1String(
-                        "var h=document.getElementById('arora-reader-host');"
-                        "h.shadowRoot.querySelector('.font-inc').click();"
-                        "h.shadowRoot.querySelector('.theme').click();"
-                        "'clicked';"),
-                        [&](const QVariant &) {
+                    clickControls([&]() {
+#endif
                         // The bridge round-trip to QSettings is async.
                         pollUntil([&]() {
                             QSettings s;
@@ -5451,7 +5570,11 @@ int main(int argc, char **argv)
                                         m.value(QLatin1String("gone"))
                                             .toBool()
                                         && m.value(QLatin1String("nav"))
-                                            .toBool();
+                                            .toBool()
+#ifdef ARORA_RUSTCORE
+                                        && !overlayView()
+#endif
+                                        ;
                                     qInfo() << "reader-smoke: exit restores dom"
                                             << (pass ? "PASS" : "FAIL");
                                     if (!pass) {
@@ -5461,7 +5584,8 @@ int main(int argc, char **argv)
 
                                     // Stage: re-enter, then the
                                     // in-overlay Exit button must reach
-                                    // C++ via the bridge.
+                                    // C++ (bridge under JS, widget
+                                    // signal under the Rust core).
                                     reader->enter();
                                     pollUntil([&]() {
                                         return reader->isActive();
@@ -5470,12 +5594,7 @@ int main(int argc, char **argv)
                                             fail("reenter");
                                             return;
                                         }
-                                        evalJs(QLatin1String(
-                                            "document.getElementById("
-                                            "'arora-reader-host').shadowRoot"
-                                            ".querySelector('.exit').click();"
-                                            "'ok';"),
-                                            [&](const QVariant &) {
+                                        clickExit([&]() {
                                             pollUntil([&]() {
                                                 return !reader->isActive();
                                             }, [&](bool exited) {
