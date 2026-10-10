@@ -84,6 +84,8 @@ class BookmarksMenuBarMenu;
 class UserAgentMenu;
 class LoadingIndicator;
 class ZoomControl;
+class MemIndicator;
+class NetIndicator;
 
 /*!
     The MainWindow of the Browser Application.
@@ -309,6 +311,9 @@ private:
     // UIP04: permanent status-bar widgets bound to the current tab.
     LoadingIndicator *m_loadingIndicator;
     ZoomControl *m_zoomControl;
+    // SBAR01: per-tab renderer memory + live engine bandwidth.
+    MemIndicator *m_memIndicator;
+    NetIndicator *m_netIndicator;
     // TOR04: permanent status-bar circuit chain — tor windows only.
     QLabel *m_torCircuitLabel = nullptr;
 
