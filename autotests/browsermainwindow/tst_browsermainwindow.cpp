@@ -1343,7 +1343,7 @@ void tst_BrowserMainWindow::downloadsSidebarPanel()
     // Seed a real download so there is a row to filter and select.
     const QUrl url(QString::fromLatin1("data:text/plain;base64,")
         + QString::fromLatin1(QByteArray("hello world").toBase64()));
-    QWebEnginePage *page = DownloadManager::instance()->retryPage(false);
+    Engine::Page *page = DownloadManager::instance()->retryPage(false);
     QVERIFY(page);
     DownloadManager::instance()->download(page, url);
     QTRY_COMPARE(model->rowCount(), 1);
