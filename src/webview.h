@@ -106,6 +106,14 @@ public:
     // page's origin.  Typed input and bookmarklets reach loadUrl()
     // through the trusted path (SEC02/SEC09).
     static bool isUrlAllowedOnUntrustedInput(const QUrl &url);
+    // CONT07: stricter variant for urls pulled out of page content —
+    // context-menu link/media urls and the argv carry-over to a fresh
+    // --tor process.  In addition to javascript:, data: and blob: are
+    // refused: a data: document would plant attacker markup in a new
+    // chrome context and a blob: url is only resolvable inside the
+    // context that minted it.  Internally generated urls (the canvas
+    // serializer's png data url) keep the base gate.
+    static bool isUrlAllowedFromPageLink(const QUrl &url);
     QUrl url() const;
 
     QString lastStatusBarText() const;
@@ -157,6 +165,19 @@ private:
     int levelForZoom(int zoom);
     void init();
     void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
+    // The load half of an open-in-target operation — shared by the
+    // same-profile targets and the cross-profile private hand-offs so
+    // the Referer discipline cannot drift between them.
+    void loadUrlInView(WebView *newView, const QUrl &linkUrl);
+    // CONT07: the context-menu page-content opens — every target
+    // funnels the page-supplied url through isUrlAllowedFromPageLink
+    // first.  The private/tor helpers serve both the link entries and
+    // their 'Open Image …' counterparts.
+    void openPageUrlInTarget(const QUrl &linkUrl,
+                             TabWidget::OpenUrlIn target);
+    void openPageUrlInPrivateTab(const QUrl &linkUrl);
+    void openPageUrlInPrivateWindow(const QUrl &linkUrl);
+    void openPageUrlInTorWindow(const QUrl &linkUrl);
     void updateScriptBlockBar(bool blocked);
     void allowScriptsOnThisSite(bool persistent);
     // CTX01: context-menu shapes Chromium's request cannot express —
@@ -178,6 +199,11 @@ private slots:
     void setStatusBarText(QString string);
     void openActionUrlInNewTab();
     void openActionUrlInNewWindow();
+    void openLinkInNewTab();
+    void openLinkInNewWindow();
+    void openUrlInNewPrivateTab();
+    void openUrlInNewPrivateWindow();
+    void openUrlInNewTorWindow();
     void downloadLinkToDisk();
     void copyLinkToClipboard();
     void copyCleanLinkToClipboard();
