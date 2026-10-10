@@ -67,7 +67,6 @@
 
 #include <qcolor.h>
 #include <qhash.h>
-#include <qwebenginepage.h>
 #include <qurl.h>
 
 QT_BEGIN_NAMESPACE
@@ -77,6 +76,7 @@ class QLineEdit;
 class QMenu;
 class QStackedWidget;
 class QTimer;
+class QWebEngineProfile;
 QT_END_NAMESPACE
 
 namespace Engine { enum class StandardAction; }
@@ -109,7 +109,7 @@ signals:
     void showStatusBarMessage(const QString &message);
     void linkHovered(const QString &link);
     void loadProgress(int progress);
-    void printRequested(QWebEnginePage *page);
+    void printRequested(WebView *view);
 
 public:
     enum OpenUrlIn {

@@ -97,6 +97,7 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "useragentmenu.h"
+#include "webenginebackend.h"
 #include "webview.h"
 #include "webviewsearch.h"
 
@@ -931,8 +932,13 @@ void BrowserMainWindow::setupMenu()
     m_viewChromiumDevToolAction = new QAction(m_viewDevToolsMenu);
     connect(m_viewChromiumDevToolAction, &QAction::triggered,
             this, [this]() {
-        if (currentTab())
-            DevToolsWindow::inspectElement(currentTab()->page());
+        if (!currentTab())
+            return;
+        // DevTools is engine-bound (capabilities().devTools) — reach
+        // the wrapped page through the adapter's escape hatch.
+        if (WebEnginePageAdapter *adapter =
+                WebEnginePageAdapter::of(currentTab()->enginePage()))
+            DevToolsWindow::inspectElement(adapter->webEnginePage());
     });
     m_viewDevToolsMenu->addAction(m_viewChromiumDevToolAction);
 
@@ -1241,8 +1247,15 @@ void BrowserMainWindow::viewTextEncoding(QAction *action)
     // The default only applies to future page loads, so set the
     // encoding on all currently open pages too.
     for (int i = 0; i < m_tabWidget->count(); ++i) {
-        if (WebView *view = m_tabWidget->webView(i))
-            view->page()->settings()->setDefaultTextEncoding(codec);
+        WebView *view = m_tabWidget->webView(i);
+        if (!view)
+            continue;
+        // The encoding override is a per-page engine setting — no
+        // engine-neutral surface, so the escape hatch applies.
+        if (WebEnginePageAdapter *adapter =
+                WebEnginePageAdapter::of(view->enginePage()))
+            adapter->webEnginePage()->settings()
+                ->setDefaultTextEncoding(codec);
     }
 }
 
@@ -1613,7 +1626,12 @@ void BrowserMainWindow::fileSaveAs()
 {
     if (!currentTab())
         return;
-    BrowserApplication::downloadManager()->download(currentTab()->page(), currentTab()->url(), true);
+    // DownloadManager is still engine-typed internally — the adapter
+    // hands it the wrapped page until the download surface wraps too.
+    if (WebEnginePageAdapter *adapter =
+            WebEnginePageAdapter::of(currentTab()->enginePage()))
+        BrowserApplication::downloadManager()->download(
+            adapter->webEnginePage(), currentTab()->url(), true);
 }
 
 void BrowserMainWindow::preferences()
@@ -1839,10 +1857,10 @@ void BrowserMainWindow::filePrintPreview()
     if (!currentTab())
         return;
     QPrintPreviewDialog dialog(this);
-    // Qt6: QWebEngineView::print runs asynchronously; the preview
-    // dialog owns the printer for the duration of exec().
+    // The engine view's print runs asynchronously; the preview dialog
+    // owns the printer for the duration of exec().
     connect(&dialog, &QPrintPreviewDialog::paintRequested,
-            currentTab(), &QWebEngineView::print);
+            currentTab(), &WebView::print);
     dialog.exec();
 }
 
@@ -1850,18 +1868,15 @@ void BrowserMainWindow::filePrint()
 {
     if (!currentTab())
         return;
-    printRequested(currentTab()->page());
+    printRequested(currentTab());
 }
 
-void BrowserMainWindow::printRequested(QWebEnginePage *page)
+void BrowserMainWindow::printRequested(WebView *view)
 {
-    if (!page)
-        return;
-    QWebEngineView *view = QWebEngineView::forPage(page);
     if (!view)
         return;
-    // QWebEngineView::print is asynchronous — the printer must stay
-    // alive until printFinished fires.
+    // Engine printing is asynchronous — the printer must stay alive
+    // until printFinished fires.
     QPrinter *printer = new QPrinter(QPrinter::HighResolution);
     QPrintDialog dialog(printer, this);
     dialog.setWindowTitle(tr("Print Document"));
@@ -1869,7 +1884,7 @@ void BrowserMainWindow::printRequested(QWebEnginePage *page)
         delete printer;
         return;
     }
-    connect(view, &QWebEngineView::printFinished, view,
+    connect(view, &WebView::printFinished, view,
             [printer](bool) { delete printer; });
     view->print(printer);
 }
@@ -2007,9 +2022,9 @@ void BrowserMainWindow::viewPageSource()
 
     QString title = currentTab()->title();
     QUrl url = currentTab()->url();
-    // Qt6: QWebEnginePage::toHtml answers asynchronously — the viewer
-    // opens once the serialized DOM arrives from the render process.
-    currentTab()->page()->toHtml([title, url](const QString &markup) {
+    // toHtml answers asynchronously — the viewer opens once the
+    // serialized DOM arrives from the render process.
+    currentTab()->enginePage()->toHtml([title, url](const QString &markup) {
         SourceViewer *viewer = new SourceViewer(markup, title, url);
         viewer->setAttribute(Qt::WA_DeleteOnClose);
         viewer->show();

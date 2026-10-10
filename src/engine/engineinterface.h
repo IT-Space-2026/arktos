@@ -375,6 +375,11 @@ public:
                                const std::function<void(const QVariant &)> &resultCallback
                                    = std::function<void(const QVariant &)>()) = 0;
 
+    // Serialized page source for "View Source" — async on every real
+    // engine (Chromium pulls the DOM out of the render process).
+    virtual void toHtml(
+            const std::function<void(const QString &)> &resultCallback) = 0;
+
     // The engine-owned QAction behind a standard chrome entry —
     // nullptr when the backend has no equivalent (chrome disables the
     // entry rather than synthesizing one).

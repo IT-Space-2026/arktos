@@ -622,7 +622,7 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
     connect(enginePage, &Engine::Page::windowCloseRequested,
             this, &TabWidget::windowCloseRequested);
     connect(enginePage, &Engine::Page::printRequested,
-            this, [this, webView]() { emit printRequested(webView->page()); });
+            this, [this, webView]() { emit printRequested(webView); });
     // Qt WebEngine does not surface WebKit's window-feature requests
     // (geometryChangeRequested / *VisibilityChangeRequested); window.open
     // chrome handling is internal to Chromium.
@@ -1641,8 +1641,13 @@ QString TabWidget::sleepBlockReason(int index) const
         return QLatin1String("loading");
     if (view->enginePage()->recentlyAudible())
         return QLatin1String("audible");
-    if (DownloadManager::instance()->hasActiveDownloadForPage(view->page()))
-        return QLatin1String("download");
+    // DownloadManager is still engine-typed internally — hand it the
+    // wrapped page through the adapter's escape hatch.
+    if (WebEnginePageAdapter *adapter =
+            WebEnginePageAdapter::of(view->enginePage()))
+        if (DownloadManager::instance()->hasActiveDownloadForPage(
+                adapter->webEnginePage()))
+            return QLatin1String("download");
     return QString();
 }
 

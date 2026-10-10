@@ -35,6 +35,7 @@
 #include "networkaccessmanager.h"
 #include "plaintexteditsearch.h"
 #include "sourcehighlighter.h"
+#include "webenginebackend.h"
 
 SourceViewer::SourceViewer(const QString &source, const QString &title,
                            const QUrl &url, QWidget *parent)
@@ -122,15 +123,18 @@ void SourceViewer::loadingFinished()
        QWebFrame::setContent, so the comparison runs on a throwaway
        page asynchronously. */
     QWebEnginePage *probe = new QWebEnginePage(this);
+    // The probe is engine-bound infra (a throwaway DOM parser) — its
+    // serialization still goes through the interface surface.
+    WebEnginePageAdapter *probeAdapter = new WebEnginePageAdapter(probe, probe);
     QPointer<SourceViewer> self(this);
     connect(probe, &QWebEnginePage::loadFinished, this,
-            [self, probe, response](bool ok) {
+            [self, probe, probeAdapter, response](bool ok) {
         if (!ok) {
             self->m_edit->setPlainText(self->m_source);
             probe->deleteLater();
             return;
         }
-        probe->toHtml([self, probe, response](const QString &markup) {
+        probeAdapter->toHtml([self, probe, response](const QString &markup) {
             if (self) {
                 self->m_edit->setPlainText(
                     markup == self->m_source

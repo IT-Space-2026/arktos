@@ -99,6 +99,12 @@ public:
             resultCallback(QVariant(QStringLiteral("fake-result")));
     }
 
+    void toHtml(const std::function<void(const QString &)> &resultCallback) override
+    {
+        if (resultCallback)
+            resultCallback(m_markup);
+    }
+
     QAction *action(Engine::StandardAction which) override
     {
         return actions.value(which);
@@ -141,6 +147,7 @@ public:
     QString lastFind;
     Engine::FindFlags lastFindFlags;
     QString lastScript;
+    QString m_markup;
     QHash<QString, bool> attributes;
     Engine::WebWindowType lastWindowType = Engine::WebWindowType::BrowserWindow;
     Engine::Page *windowResult = nullptr;
@@ -332,6 +339,11 @@ void tst_EngineAdapter::fakePageZoomFindScript()
     QCOMPARE(page.lastScript, QStringLiteral("1+1"));
     QCOMPARE(seen.toString(), QStringLiteral("fake-result"));
 
+    page.m_markup = QStringLiteral("<html>fake</html>");
+    QString markup;
+    page.toHtml([&markup](const QString &html) { markup = html; });
+    QCOMPARE(markup, QStringLiteral("<html>fake</html>"));
+
     page.setPageAttribute(QStringLiteral("JavascriptEnabled"), false);
     QCOMPARE(page.attributes.value(QStringLiteral("JavascriptEnabled")), false);
 }
@@ -435,6 +447,19 @@ void tst_EngineAdapter::webEnginePageForwarding()
     QCOMPARE(enginePage->backItems(10).count(), back);
     QCOMPARE(enginePage->forwardItems(10).count(),
              enginePage->historyCount() - back - 1);
+
+    // toHtml forwards to the wrapped page — the data: document's
+    // serialized DOM arrives asynchronously from the render process.
+    QString markup;
+    enginePage->toHtml([&markup](const QString &html) { markup = html; });
+    QTRY_VERIFY_WITH_TIMEOUT(markup.contains(QLatin1String("ENG04")),
+                             15000);
+
+    // The escape-hatch downcast resolves on this backend's adapter.
+    QCOMPARE(WebEnginePageAdapter::of(enginePage)->webEnginePage(),
+             view.page());
+    QCOMPARE(WebEnginePageAdapter::of(nullptr),
+             static_cast<WebEnginePageAdapter*>(nullptr));
 }
 
 void tst_EngineAdapter::webEngineProfileSurface()
