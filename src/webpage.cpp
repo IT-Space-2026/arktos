@@ -513,9 +513,8 @@ void WebPage::setUserAgent(const QString &userAgent)
     // Qt6 and Arora never browses on it — setting the UA there had no
     // effect.)  An empty override restores the vanilla UA, not Qt's
     // QtWebEngine-badged default.
-    const QString effectiveAgent = userAgent.isEmpty()
-        ? BrowserProfile::defaultHttpUserAgent()
-        : userAgent;
+    const QString effectiveAgent =
+        BrowserProfile::effectiveHttpUserAgent(userAgent);
     const auto applyTo = [effectiveAgent](QWebEngineProfile *profile) {
         profile->setHttpUserAgent(effectiveAgent);
         // UA02: the client hints must tell the same story as the UA.

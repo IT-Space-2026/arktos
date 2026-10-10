@@ -233,6 +233,13 @@ public:
     static void applyRefererPolicy(QWebEngineUrlRequestInfo &info,
                                    int minimumLevel = RefererEngineDefault);
 
+    // UAG01: apply a per-site UA override — a hit in rustcore's
+    // "uaspoof" site-decision table is sent as the request's
+    // User-Agent header.  IO-thread safe (the same FFI call family
+    // the blocklist/strip decisions make); fail-open like them.
+    // Clearnet only — the tor interceptor never consults the table.
+    static void applyUserAgentSpoof(QWebEngineUrlRequestInfo &info);
+
     // The pure decision behind applyRefererPolicy(): the Referer value
     // that should go on the wire for a request to `target` whose
     // renderer-computed referer is `source`.  An empty return means

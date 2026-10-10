@@ -42,6 +42,10 @@ inline constexpr char KindPopup[] = "popup";
 inline constexpr char KindHttpAllow[] = "http-allow";
 inline constexpr char KindCookie[] = "cookie";
 inline constexpr char KindAdBlock[] = "adblock";
+// UAG01: per-site User-Agent overrides — host -> UA string.  The
+// clearnet interceptor applies a hit as the User-Agent request
+// header; tor never consults the kind.
+inline constexpr char KindUserAgent[] = "uaspoof";
 
 // Fetch the stored value; false when no row exists (or the call
 // failed — callers treat both as "no decision").

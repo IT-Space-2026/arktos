@@ -60,6 +60,7 @@ SUBDIRS  = \
     tlsverify \
     toolbarsearch \
     tormanager \
+    useragent \
     urlcleaner \
     utils \
     webactionmapper \

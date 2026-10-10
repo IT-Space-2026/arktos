@@ -30,6 +30,8 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
@@ -46,6 +48,10 @@
 #include <qwebenginescript.h>
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
+
+#if defined(ARORA_RUSTCORE)
+#include <rustcore.h>
+#endif
 
 #include <ctime>
 
@@ -111,6 +117,64 @@ int presentedChromeMajor()
     return 155;
 }
 
+QString buildHttpUserAgentQt(const QString &factoryUserAgent,
+                             const QString &overrideUserAgent)
+{
+    // The Qt builder — the no-rust implementation, the FFI-failure
+    // fallback and the parity-test seam (CPAL01's convention).
+    if (!overrideUserAgent.isEmpty())
+        return overrideUserAgent;
+    QString ua = factoryUserAgent;
+    ua.remove(QRegularExpression(QLatin1String("\\s*QtWebEngine/\\S+")));
+    ua.replace(QRegularExpression(QLatin1String("Chrome/\\d+")),
+               QLatin1String("Chrome/")
+                   + QString::number(presentedChromeMajor()));
+    return ua;
+}
+
+QString buildHttpUserAgent(const QString &factoryUserAgent,
+                           const QString &overrideUserAgent)
+{
+#if defined(ARORA_RUSTCORE)
+    // UAG01: the construction decision lives in rustcore — the Qt
+    // builder below is byte-identical (the autotest corpus proves
+    // it) and serves as the no-rust/FFI-failure path.
+    const QJsonObject context{
+        {QLatin1String("factory_ua"), factoryUserAgent},
+        {QLatin1String("presented_major"), presentedChromeMajor()},
+        {QLatin1String("override"), overrideUserAgent},
+    };
+    const QByteArray json =
+        QJsonDocument(context).toJson(QJsonDocument::Compact);
+    if (char *out = rc_ua_build(
+            reinterpret_cast<const uint8_t *>(json.constData()),
+            size_t(json.size()))) {
+        const QString ua = QString::fromUtf8(out);
+        rc_string_free(out);
+        return ua;
+    }
+#endif
+    return buildHttpUserAgentQt(factoryUserAgent, overrideUserAgent);
+}
+
+// The engine's own factory UA, probed once: a throwaway anonymous
+// profile is asked because the browsing profiles cannot be —
+// applySettings() may already have overridden their UA by the time
+// this first runs.
+static QString factoryHttpUserAgent()
+{
+    static const QString ua = [] {
+        QWebEngineProfile probe;
+        return probe.httpUserAgent();
+    }();
+    return ua;
+}
+
+QString effectiveHttpUserAgent(const QString &overrideUserAgent)
+{
+    return buildHttpUserAgent(factoryHttpUserAgent(), overrideUserAgent);
+}
+
 QString defaultHttpUserAgent()
 {
     // UA01: Qt's factory UA carries a "QtWebEngine/<ver>" product
@@ -121,19 +185,8 @@ QString defaultHttpUserAgent()
     // Chrome/<major> milestone is bumped to presentedChromeMajor() —
     // sites version-sniff it to nag "browser out of date" once the
     // bundled Chromium lags stable.  Only the version digits change;
-    // the engine is still the bundled Chromium.  A throwaway anonymous
-    // profile is asked because the browsing profiles cannot be —
-    // applySettings() may already have overridden their UA by the
-    // time this runs.
-    static const QString userAgent = [] {
-        QWebEngineProfile probe;
-        QString ua = probe.httpUserAgent();
-        ua.remove(QRegularExpression(QLatin1String("\\s*QtWebEngine/\\S+")));
-        ua.replace(QRegularExpression(QLatin1String("Chrome/\\d+")),
-                   QLatin1String("Chrome/")
-                       + QString::number(presentedChromeMajor()));
-        return ua;
-    }();
+    // the engine is still the bundled Chromium.
+    static const QString userAgent = effectiveHttpUserAgent(QString());
     return userAgent;
 }
 
@@ -143,8 +196,8 @@ QString defaultHttpUserAgent()
 // "140.0.7339.225" engine — which is the shape real Chrome uses (a
 // reduced UA token alongside full-version hints).  Empty when the UA
 // does not claim Chrome.
-static QString presentedBrandVersion(const QString &httpUserAgent,
-                                     const QString &engineVersion)
+QString presentedBrandVersionQt(const QString &httpUserAgent,
+                                const QString &engineVersion)
 {
     const QRegularExpressionMatch match =
         QRegularExpression(QLatin1String("Chrome/(\\d+)"))
@@ -154,6 +207,21 @@ static QString presentedBrandVersion(const QString &httpUserAgent,
     const int dot = engineVersion.indexOf(QLatin1Char('.'));
     return match.captured(1)
         + (dot > 0 ? engineVersion.mid(dot) : QLatin1String(".0.0.0"));
+}
+
+QString presentedBrandVersion(const QString &httpUserAgent,
+                              const QString &engineVersion)
+{
+#if defined(ARORA_RUSTCORE)
+    if (char *out = rc_ua_brand_version(
+            httpUserAgent.toUtf8().constData(),
+            engineVersion.toUtf8().constData())) {
+        const QString version = QString::fromUtf8(out);
+        rc_string_free(out);
+        return version;
+    }
+#endif
+    return presentedBrandVersionQt(httpUserAgent, engineVersion);
 }
 
 void applyClientHints(QWebEngineProfile *profile)
@@ -520,8 +588,7 @@ void applySettings(QWebEngineProfile *profile)
     // default — the "QtWebEngine/<ver>" token trips Google's bot check.
     const QString userAgent =
         settings.value(QLatin1String("userAgent")).toString();
-    profile->setHttpUserAgent(
-        userAgent.isEmpty() ? defaultHttpUserAgent() : userAgent);
+    profile->setHttpUserAgent(effectiveHttpUserAgent(userAgent));
     applyClientHints(profile);
 
     // SEC12: the profile tree must stay owner-only.  This runs at

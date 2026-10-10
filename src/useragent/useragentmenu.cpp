@@ -36,8 +36,15 @@
 #include <qactiongroup.h>
 #include <qfile.h>
 #include <qinputdialog.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qsettings.h>
 #include <qxmlstream.h>
+
+#if defined(ARORA_RUSTCORE)
+#include <rustcore.h>
+#endif
 
 #include <qdebug.h>
 
@@ -97,6 +104,52 @@ void UserAgentMenu::addActionsFromFile(const QString &fileName)
         return;
 
     QString currentUserAgentString = WebPage::userAgent();
+#if defined(ARORA_RUSTCORE)
+    // UAG01: the document is an installable data file — third-party-
+    // shaped input, so the parse runs in memory-safe rustcore and the
+    // Qt XML reader never sees it (the SEC19 discipline).  The JSON
+    // preserves document order; a malformed tail keeps the entries
+    // that parsed, same as the stream reader below.
+    const QByteArray document = file.readAll();
+    if (char *out = rc_ua_presets(
+            reinterpret_cast<const uint8_t *>(document.constData()),
+            size_t(document.size()))) {
+        // QByteArray(const char*) copies — the FFI buffer is freed
+        // right after; fromRawData would dangle (SEC19 discipline:
+        // parse a snapshot, never freed memory).
+        const QByteArray json(out);
+        rc_string_free(out);
+        const QJsonArray entries = QJsonDocument::fromJson(json).array();
+        for (const QJsonValue &entry : entries) {
+            const QJsonObject obj = entry.toObject();
+            if (obj.value(QLatin1String("type")).toString()
+                == QLatin1String("separator")) {
+                addSeparator();
+                continue;
+            }
+            if (obj.value(QLatin1String("type")).toString()
+                != QLatin1String("agent"))
+                continue;
+            const QString title =
+                obj.value(QLatin1String("description")).toString();
+            const QString userAgent =
+                obj.value(QLatin1String("useragent")).toString();
+
+            QAction *action = new QAction(this);
+            // The xml is an installable data file — treat its strings
+            // as untrusted display text.
+            action->setText(SafeText::menu(title));
+            action->setData(userAgent);
+            action->setToolTip(SafeText::escaped(userAgent));
+            action->setCheckable(true);
+            action->setChecked(userAgent == currentUserAgentString);
+            connect(action, &QAction::triggered,
+                    this, &UserAgentMenu::changeUserAgent);
+            addAction(action);
+        }
+    }
+    return;
+#else
     QXmlStreamReader xml(&file);
     while (!xml.atEnd()) {
         xml.readNext();
@@ -125,6 +178,7 @@ void UserAgentMenu::addActionsFromFile(const QString &fileName)
         qDebug() << "Error reading custom user agents" << xml.errorString();
          // ... do error handling
     }
+#endif
 }
 
 void UserAgentMenu::changeUserAgent()
