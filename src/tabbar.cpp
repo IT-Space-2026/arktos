@@ -294,6 +294,12 @@ void TabBar::updateHoveredTab(const QPoint &pos)
     updatePreviewDwell();
 }
 
+bool TabBar::isTabPinned(int index) const
+{
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    return tabWidget && tabWidget->isTabPinned(index);
+}
+
 void TabBar::updateCloseButtonVisibility()
 {
     if (!m_perTabCloseButtons)
@@ -301,8 +307,11 @@ void TabBar::updateCloseButtonVisibility()
     const int current = currentIndex();
     const QTabBar::ButtonPosition side = closeButtonSide();
     for (int i = 0; i < count(); ++i) {
+        // TABS04: a pinned tab has no close affordance at all —
+        // unpinning is the way to make it closable again.
         if (QWidget *button = tabButton(i, side))
-            button->setVisible(i == current || i == m_hoveredTab);
+            button->setVisible(!isTabPinned(i)
+                               && (i == current || i == m_hoveredTab));
     }
 }
 
@@ -362,6 +371,15 @@ void TabBar::contextMenuRequested(const QPoint &position)
         QAction *action = menu.addAction(tr("Duplicate Tab"),
                                          this, QOverload<>::of(&TabBar::cloneTab));
         action->setData(index);
+
+        // TABS04: pin/unpin — the toggle carries no default shortcut
+        // (Ctrl+P et al. stay untouched).
+        menu.addAction(tabWidget->isTabPinned(index)
+                       ? tr("Unpin Tab") : tr("Pin Tab"),
+                       this, [tabWidget, index]() {
+            tabWidget->setTabPinned(index,
+                                    !tabWidget->isTabPinned(index));
+        });
 
         // CONT02: "Reopen in Container" moves the tab's page onto
         // another container's profile.  Off-the-record tabs hide the
@@ -700,8 +718,12 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
     }
     if (event->button() == Qt::MiddleButton && !inBand) {
         int index = tabAt(stripPos(pos));
+        // TABS04: middle-click on a pinned tab is ignored — Vivaldi's
+        // semantics — rather than closing it or falling through to
+        // the selection-paste path.
         if (index != -1) {
-            emit closeTab(index);
+            if (!isTabPinned(index))
+                emit closeTab(index);
             return;
         } else {
             // SEC02: a javascript: selection must not turn into script
@@ -1486,12 +1508,19 @@ void TabBar::paintEvent(QPaintEvent *event)
             option.shape = QTabBar::RoundedNorth;
             // initStyleOption already elided the text against the
             // vertical shape's narrow text rect — redo it for the
-            // row's width.
-            const QRect textRect = style()->subElementRect(
-                QStyle::SE_TabBarTabText, &option, this);
-            option.text = fontMetrics().elidedText(
-                tabText(index), elideMode(), textRect.width(),
-                Qt::TextShowMnemonic);
+            // row's width.  A pinned tab stays icon-only (group
+            // chips keep their pill label).
+            const TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            const bool iconOnly = isTabPinned(index)
+                && !(tabWidget && tabWidget->isTabGroupChip(index));
+            if (!iconOnly) {
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                option.text = fontMetrics().elidedText(
+                    tabText(index), elideMode(), textRect.width(),
+                    Qt::TextShowMnemonic);
+            }
             if (!(option.state & QStyle::State_Enabled))
                 option.palette.setCurrentColorGroup(QPalette::Disabled);
             style()->drawControl(QStyle::CE_TabBarTab, &option,
@@ -1506,11 +1535,18 @@ void TabBar::paintEvent(QPaintEvent *event)
             option.shape = QTabBar::RoundedNorth;
             option.position = QStyleOptionTab::Moving;
             option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
-            const QRect textRect = style()->subElementRect(
-                QStyle::SE_TabBarTabText, &option, this);
-            option.text = fontMetrics().elidedText(
-                tabText(m_pressedTabIndex), elideMode(),
-                textRect.width(), Qt::TextShowMnemonic);
+            const TabWidget *tabWidget =
+                qobject_cast<TabWidget*>(parentWidget());
+            const bool iconOnly = isTabPinned(m_pressedTabIndex)
+                && !(tabWidget
+                     && tabWidget->isTabGroupChip(m_pressedTabIndex));
+            if (!iconOnly) {
+                const QRect textRect = style()->subElementRect(
+                    QStyle::SE_TabBarTabText, &option, this);
+                option.text = fontMetrics().elidedText(
+                    tabText(m_pressedTabIndex), elideMode(),
+                    textRect.width(), Qt::TextShowMnemonic);
+            }
             style()->drawControl(QStyle::CE_TabBarTab, &option,
                                  &painter, this);
         }
@@ -1751,6 +1787,21 @@ void TabBar::paintEvent(QPaintEvent *event)
     }
 }
 
+// TABS04: a pinned tab paints icon-only — the favicon label is a
+// tab-button widget and stays, the style just never sees the title.
+// A collapsed group's chip keeps its text: the pill IS the label and
+// a 36px tab could not carry it.
+void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
+{
+    QTabBar::initStyleOption(option, tabIndex);
+    if (isTabPinned(tabIndex)) {
+        const TabWidget *tabWidget =
+            qobject_cast<TabWidget*>(parentWidget());
+        if (!tabWidget || !tabWidget->isTabGroupChip(tabIndex))
+            option->text.clear();
+    }
+}
+
 QSize TabBar::tabSizeHint(int index) const
 {
     QSize sizeHint = QTabBar::tabSizeHint(index);
@@ -1778,8 +1829,20 @@ QSize TabBar::tabSizeHint(int index) const
                 && !tabWidget->tabGroupName(gid).isEmpty())
                 rowHeight += QFontMetrics(containerChipFont()).height() + 6;
         }
+        // TABS04: a pinned row keeps the strip's shared width and row
+        // height — only its text is suppressed.
         return QSize(m_verticalTabWidth + qMax(0, chip.width()),
                      rowHeight + qMax(0, chip.height()));
+    }
+    // TABS04: a pinned tab shrinks to the favicon and its margins —
+    // the close button is hidden and the title is not painted.
+    if (isTabPinned(index)) {
+        const TabWidget *tabWidget =
+            qobject_cast<TabWidget*>(parentWidget());
+        if (!tabWidget || !tabWidget->isTabGroupChip(index))
+            return QSize(iconSize().width() + 20,
+                         qMax(sizeHint.height(), thickness)
+                             + chip.height());
     }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
     // of the member's title; the first member of a run widens to carry
@@ -1807,7 +1870,8 @@ QSize TabBar::minimumTabSizeHint(int index) const
 {
     // TABS02: rows never compress below their line height — when the
     // strip overflows, the scroll buttons take over.
-    if (verticalTabShape(shape()))
+    // TABS04: neither does a pinned tab — icon-only IS its minimum.
+    if (verticalTabShape(shape()) || isTabPinned(index))
         return tabSizeHint(index);
     return QTabBar::minimumTabSizeHint(index);
 }

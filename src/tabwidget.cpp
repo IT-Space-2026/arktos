@@ -281,6 +281,29 @@ void TabWidget::moveTab(int fromIndex, int toIndex)
     // TABGRP01: after every user drag, reconcile the moved tab's group
     // membership with where it landed.
     normalizeTabGroupMove(toIndex);
+    // TABS04: the pin boundary converts by position — a tab dropped
+    // inside the pinned block pins, a pinned tab dragged past the
+    // block's edge unpins, so the strip stays a contiguous prefix
+    // either way.  "others" counts the pinned tabs excluding the one
+    // that just landed, which makes the comparison the same for both
+    // directions of the crossing.
+    QWidget *page = widget(toIndex);
+    if (page) {
+        const bool pinned = m_pinnedTabs.contains(page);
+        int others = 0;
+        for (int i = 0; i < count(); ++i) {
+            if (i != toIndex && isTabPinned(i))
+                ++others;
+        }
+        if (pinned ? toIndex > others : toIndex < others) {
+            setPinFlag(page, !pinned);
+            // Same layout re-arm trick setVerticalTabWidth uses — the
+            // size hint flipped between icon-only and titled.
+            m_tabBar->setIconSize(m_tabBar->iconSize());
+            m_tabBar->updateGeometry();
+            m_tabBar->update();
+        }
+    }
 }
 
 void TabWidget::addWebAction(QAction *action, Engine::StandardAction webAction)
@@ -485,6 +508,95 @@ bool TabWidget::isTabPrivate(int index) const
         && view->enginePage()->isOffTheRecord();
 }
 
+// TABS04 — pinned tabs ------------------------------------------------
+//
+// A pinned tab renders icon-only (favicon + tooltip, no title, no
+// close button) and holds a slot in the strip's leading pinned block.
+// The flag is keyed on the tab's page widget — the same pointer the
+// collapsed-group and container-level hidden stores keep — so pin
+// state survives every detach/re-insert cycle untouched.  Pinning is
+// deliberately a strip-only concept: private tabs can be pinned for
+// the session but are never serialized (SEC07), and a group or
+// container membership is unaffected by the flag.
+
+bool TabWidget::isTabPinned(int index) const
+{
+    return index >= 0 && index < count()
+        && m_pinnedTabs.contains(widget(index));
+}
+
+int TabWidget::pinnedTabCount() const
+{
+    int pinned = 0;
+    while (pinned < count() && isTabPinned(pinned))
+        ++pinned;
+    return pinned;
+}
+
+// Flag-only update — no repositioning.  The size hint flips between
+// icon-only and titled, so callers follow with the bar's layout
+// re-arm (setIconSize(iconSize()), same trick setVerticalTabWidth
+// uses).
+void TabWidget::setPinFlag(QWidget *page, bool pinned)
+{
+    if (!page)
+        return;
+    if (pinned)
+        m_pinnedTabs.insert(page);
+    else
+        m_pinnedTabs.remove(page);
+}
+
+void TabWidget::setTabPinned(int index, bool pinned)
+{
+    if (index < 0 || index >= count() || isTabPinned(index) == pinned)
+        return;
+    // Slide the tab to the edge of the pinned block so the prefix
+    // invariant holds: a newly pinned tab joins the block's end (the
+    // index of the first non-pinned slot), an unpinned one lands just
+    // past the tabs that stay pinned.  "others" is a full count, not
+    // the contiguous prefix — the tab being toggled may sit beyond
+    // the block, where the prefix scan stops early.
+    int others = 0;
+    for (int i = 0; i < count(); ++i) {
+        if (i != index && isTabPinned(i))
+            ++others;
+    }
+    setPinFlag(widget(index), pinned);
+    const int target = others;
+    // The m_groupAdjust guard keeps this positioning move from
+    // rewriting group membership.
+    if (index != target) {
+        m_groupAdjust = true;
+        m_tabBar->moveTab(index, target);
+        m_groupAdjust = false;
+    }
+    m_tabBar->setIconSize(m_tabBar->iconSize());
+    m_tabBar->updateGeometry();
+    updateGeometry();
+    m_tabBar->update();
+    emit tabsChanged();
+}
+
+// Re-establish the pinned-prefix invariant after a batch re-insertion
+// that preserves order but not positions (a collapsed group
+// expanding, a container level rejoining the strip).  Each pinned tab
+// bubbles ahead of the first unpinned one; relative order is kept.
+void TabWidget::normalizePinnedBlock()
+{
+    int boundary = 0;
+    for (int i = 0; i < count(); ++i) {
+        if (!isTabPinned(i))
+            continue;
+        if (i != boundary) {
+            m_groupAdjust = true;
+            m_tabBar->moveTab(i, boundary);
+            m_groupAdjust = false;
+        }
+        ++boundary;
+    }
+}
+
 WebView *TabWidget::makeNewPrivateTab(bool makeCurrent)
 {
     if (BrowserApplication::isTorMode())
@@ -594,7 +706,15 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
     connect(locationBar, &QLineEdit::textEdited,
             m_omniboxSuggestions, &OmniboxSuggestions::scheduleSuggestions);
     connect(locationBar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
-    m_locationBars->addWidget(locationBar);
+    // TABS04: a new tab lands right after the pinned block — the
+    // pinned prefix never gains a straggler at its far side.  With
+    // nothing pinned (or while restoreState() rebuilds the saved
+    // order, which already places pinned tabs first) the tab appends
+    // at the end as before.
+    const int insertPos =
+        (pinnedTabCount() > 0 && !m_sessionRestore)
+        ? pinnedTabCount() : count();
+    m_locationBars->insertWidget(insertPos, locationBar);
     m_locationBars->setSizePolicy(locationBar->sizePolicy());
 
 #ifndef AUTOTESTS
@@ -630,7 +750,7 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
     // chrome handling is internal to Chromium.
 
     WebViewWithSearch *webViewWithSearch = new WebViewWithSearch(webView, this);
-    addTab(webViewWithSearch, tr("Untitled"));
+    insertTab(insertPos, webViewWithSearch, tr("Untitled"));
     // PTAB01: mark the private tab immediately — the favicon badge and
     // the tooltip are refreshed from here on by webViewIconChanged()
     // and webViewTitleChanged().
@@ -691,9 +811,13 @@ int TabWidget::addWidgetTab(QWidget *page, const QString &title,
     // Ctrl+L focus path working on it.
     QLineEdit *bar = new QLineEdit(title);
     bar->setReadOnly(true);
-    m_locationBars->addWidget(bar);
+    // TABS04: widget tabs obey the same pinned-prefix insert rule.
+    const int insertPos =
+        (pinnedTabCount() > 0 && !m_sessionRestore)
+        ? pinnedTabCount() : count();
+    m_locationBars->insertWidget(insertPos, bar);
 
-    const int index = addTab(page, icon, title);
+    const int index = insertTab(insertPos, page, icon, title);
     setTabToolTip(index, title);
     // CONT06: widget tabs live under the default header — a
     // Preferences/History tab raised in a filtered strip switches to
@@ -756,10 +880,11 @@ void TabWidget::reopenTabInContainer(int index, const QString &containerId)
         closeHiddenTab(tab);
         return;
     }
-    // The fresh tab appended at the end; slide it into the old tab's
-    // slot (moveTab emits tabMoved, which keeps m_locationBars in
-    // sync) so the strip order survives the swap.
-    const int appendedIndex = count() - 1;
+    // Slide the fresh tab into the old tab's slot (moveTab emits
+    // tabMoved, which keeps m_locationBars in sync) so the strip
+    // order survives the swap.  It is NOT necessarily the last tab —
+    // TABS04 inserts new tabs after the pinned block.
+    const int appendedIndex = webViewIndex(newTab);
     if (appendedIndex > index)
         m_tabBar->moveTab(appendedIndex, index);
     if (!gid.isEmpty())
@@ -1136,6 +1261,9 @@ void TabWidget::expandTabGroup(const QString &groupId)
 #endif
         ++insertPos;
     }
+    // TABS04: a pinned member can resurface past the pinned block —
+    // bubble it back to the prefix.
+    normalizePinnedBlock();
     // CONT06: a member re-appearing under a filtered-out level goes
     // straight back to that level's store.
     if (m_twoLevelStrip)
@@ -1437,6 +1565,9 @@ void TabWidget::restoreHiddenContainerTabs(const QString &containerId)
 #endif
         ++insertPos;
     }
+    // TABS04: a level's pinned tabs re-insert at the end of the row —
+    // restore the prefix within the visible strip.
+    normalizePinnedBlock();
 }
 
 void TabWidget::setActiveContainerHeader(const QString &containerId)
@@ -1544,6 +1675,7 @@ void TabWidget::closeHiddenTab(WebView *view)
             HiddenGroupTab hidden = it->takeAt(k);
             hidden.bar->deleteLater();
             const QString closingGroup = m_tabGroups.take(view);
+            m_pinnedTabs.remove(hidden.tab);
             hidden.tab->deleteLater();
             m_sleepStates.remove(view);
             m_tabThumbnails.remove(view);
@@ -1630,6 +1762,10 @@ QString TabWidget::sleepBlockReason(int index) const
         return QLatin1String("invalid");
     if (index == currentIndex())
         return QLatin1String("current");
+    // TABS04: pinned tabs are keep-alive by definition — the idle
+    // sweep must never discard their page.
+    if (isTabPinned(index))
+        return QLatin1String("pinned");
     WebView *view = const_cast<TabWidget*>(this)->webView(index);
     if (!view || !view->enginePage() || view->url().isEmpty())
         return QLatin1String("empty");
@@ -1944,10 +2080,17 @@ void TabWidget::closeOtherTabs(int index)
 {
     if (-1 == index)
         return;
-    for (int i = count() - 1; i > index; --i)
-        closeTab(i);
-    for (int i = index - 1; i >= 0; --i)
-        closeTab(i);
+    // TABS04: pinned tabs survive "Close Other Tabs" in both
+    // directions — closing indices above first keeps each lower
+    // index stable when the check runs.
+    for (int i = count() - 1; i > index; --i) {
+        if (!isTabPinned(i))
+            closeTab(i);
+    }
+    for (int i = index - 1; i >= 0; --i) {
+        if (!isTabPinned(i))
+            closeTab(i);
+    }
 }
 
 // When index is -1 index chooses the current tab
@@ -2070,6 +2213,7 @@ void TabWidget::closeTab(int index)
     // TABGRP01: drop the view's membership; the group record dies with
     // its last member.
     m_tabGroups.remove(tab);
+    m_pinnedTabs.remove(webViewWithSearch);
     forgetTabGroupIfEmpty(closingGroup);
     webViewWithSearch->setParent(nullptr);
     webViewWithSearch->deleteLater();
@@ -2753,7 +2897,7 @@ static const qint32 TabWidgetMagic = 0xaa;
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 4; // CONT06: v4 tails with the active container header
+    int version = 5; // TABS04: v5 tails with each tab's pinned flag
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -2764,6 +2908,7 @@ QByteArray TabWidget::saveState() const
     QList<QByteArray> tabsHistory;
     QStringList tabContainers;
     QStringList tabGroups;
+    QList<qint32> tabPinned;
     // Private tabs live on the off-the-record profile — their urls and
     // history are never written into the saved session (SEC07).  The
     // current index is remapped onto the filtered list.
@@ -2785,6 +2930,11 @@ QByteArray TabWidget::saveState() const
             tabsHistory.append(QByteArray());
         tabContainers.append(tab->containerId());
         tabGroups.append(m_tabGroups.value(tab));
+        // TABS04: the pin flag keys on the page widget — the view's
+        // WebViewWithSearch parent, which is also what the strip and
+        // the hidden stores hold.
+        tabPinned.append(m_pinnedTabs.contains(tab->parentWidget())
+                         ? 1 : 0);
     }
     stream << tabs;
     stream << savedCurrentIndex;
@@ -2822,6 +2972,9 @@ QByteArray TabWidget::saveState() const
     // re-applies it once the strip is rebuilt.
     stream << m_activeContainerHeader;
 
+    // TABS04: the per-tab pinned flags — read back under v>=5.
+    stream << tabPinned;
+
     return data;
 }
 
@@ -2836,7 +2989,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 4)
+    if (marker != TabWidgetMagic || v < 1 || v > 5)
         return false;
 
     QStringList openTabs;
@@ -2880,6 +3033,12 @@ bool TabWidget::restoreState(const QByteArray &state)
     QString savedHeader;
     if (v >= 4)
         stream >> savedHeader;
+    // TABS04: v5 tails with each tab's pinned flag — a missing or
+    // truncated tail restores everything unpinned, the same
+    // defensive floor the earlier tails established.
+    QList<qint32> savedPinned;
+    if (v >= 5)
+        StreamingUtils::readBoundedList(stream, savedPinned);
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -2888,7 +3047,12 @@ bool TabWidget::restoreState(const QByteArray &state)
     // it for a container tab would put the restored page on the wrong
     // profile, so it is closed after the loop instead.
     bool leftoverPlaceholder = false;
+    WebView *placeholderView = nullptr;
     QList<WebView*> createdViews;
+    // TABS04: saved order already has the pinned prefix — appending
+    // (rather than the interactive insert-after-pinned rule) keeps the
+    // unpinned tabs in their serialized sequence.
+    m_sessionRestore = true;
     for (int i = 0; i < openTabs.count(); ++i) {
         QUrl url = QUrl::fromEncoded(openTabs.at(i).toUtf8());
         const QByteArray historyState = tabHistory.value(i);
@@ -2912,17 +3076,35 @@ bool TabWidget::restoreState(const QByteArray &state)
             && currentWebView() && currentWebView()->url() == QUrl()
             && containerIdForTab(currentIndex()) == containerId;
         if (i == 0 && !reusePlaceholder
-            && currentWebView() && currentWebView()->url() == QUrl())
+            && currentWebView() && currentWebView()->url() == QUrl()) {
             leftoverPlaceholder = true;
+            placeholderView = currentWebView();
+        }
         WebView *webView = reusePlaceholder
             ? currentWebView()
             : makeNewTabInContainer(containerId, false);
         createdViews.append(webView);
-        if (webView)
+        if (webView) {
+            // TABS04: flag the restored pin before the next saved tab
+            // is created — the pinned-prefix insert then keeps the
+            // strip order identical to the one that was saved.
+            if (savedPinned.value(i)) {
+                const int index = webViewIndex(webView);
+                if (index >= 0)
+                    setPinFlag(widget(index), true);
+            }
             webView->loadUrl(url);
+        }
     }
-    if (leftoverPlaceholder && count() > 1)
-        closeTab(0);
+    m_sessionRestore = false;
+    if (leftoverPlaceholder && count() > 1) {
+        // Resolve by view, not index 0 — TABS04 inserts restored tabs
+        // after the pinned block, which may sit ahead of the
+        // placeholder.
+        const int index = webViewIndex(placeholderView);
+        if (index >= 0)
+            closeTab(index);
+    }
 
     // TABGRP01: rebuild the group table under fresh ids, then attach
     // each saved tab to its group.  Groups go in expanded — the
@@ -2950,6 +3132,12 @@ bool TabWidget::restoreState(const QByteArray &state)
     }
     for (const QString &gid : std::as_const(collapsedGroups))
         setTabGroupCollapsed(gid, true);
+
+    // TABS04: pin flags were applied during creation, where a
+    // non-prefix flag list (a crafted blob — a real session always
+    // saves pinned tabs first) may have shuffled the order — repair
+    // the prefix before selection indices are resolved.
+    normalizePinnedBlock();
 
     // The saved index is only selectable once the restored tabs exist —
     // setting it before creating them is a no-op against the single

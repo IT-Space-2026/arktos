@@ -145,6 +145,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void initStyleOption(QStyleOptionTab *option, int tabIndex) const override;
     QSize tabSizeHint(int index) const override;
     QSize minimumTabSizeHint(int index) const override;
     void tabLayoutChange() override;
@@ -167,6 +168,9 @@ private:
     void installCloseButton(int index);
     void updateHoveredTab(const QPoint &pos);
     void updateCloseButtonVisibility();
+    // TABS04: the pin flag lives on the TabWidget — the bar only reads
+    // it for rendering and the close protections.
+    bool isTabPinned(int index) const;
     // POL02: hover-preview plumbing — the dwell timer arms on a fresh
     // hover, retargets instantly once a card is up, and the card drops
     // whenever the pointer leaves, presses, or the strip mutates.

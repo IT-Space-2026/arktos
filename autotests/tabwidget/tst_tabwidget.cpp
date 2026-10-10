@@ -89,6 +89,7 @@ private slots:
     void omnibox();
     void omniboxTabScope();
     void tabGroups();
+    void pinnedTabs();
 };
 
 // Subclass that exposes the protected functions.
@@ -1198,6 +1199,194 @@ void tst_TabWidget::tabGroups()
         QCOMPARE(w4.count(), 1);
         QVERIFY(w4.tabGroupIds().isEmpty());
     }
+}
+
+// TABS04: pinned tabs — a contiguous icon-only prefix that survives
+// "Close Other Tabs", ignores middle-click, exempts the idle-sleep
+// sweep, converts on a drag across the boundary, seats new tabs right
+// after it, and round-trips through the v5 session tail.
+void tst_TabWidget::pinnedTabs()
+{
+    SubTabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 4);
+    WebView *v0 = widget.webView(0);
+    WebView *v1 = widget.webView(1);
+    WebView *v2 = widget.webView(2);
+    WebView *v3 = widget.webView(3);
+    QVERIFY(v0 && v1 && v2 && v3);
+
+    // Out-of-range queries are safe no-ops.
+    QVERIFY(!widget.isTabPinned(-1));
+    QVERIFY(!widget.isTabPinned(4));
+    QCOMPARE(widget.pinnedTabCount(), 0);
+
+    // Pinning a middle tab slides it to the front of the block.
+    widget.setTabPinned(2, true);          // strip [v2, v0, v1, v3]
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v0);
+    // A redundant set is a no-op.
+    widget.setTabPinned(0, true);
+    QCOMPARE(widget.webView(0), v2);
+
+    widget.setTabPinned(3, true);          // strip [v2, v3, v0, v1]
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QCOMPARE(widget.webView(1), v3);
+    QCOMPARE(widget.webView(2), v0);
+
+    // New tabs insert right after the pinned block, not at the end.
+    WebView *fresh = widget.makeNewTab(false);
+    QVERIFY(fresh);
+    QCOMPARE(widget.webViewIndex(fresh), 2);
+    QCOMPARE(widget.count(), 5);
+
+    // Icon-only rendering: the pinned tab's rect collapses to the
+    // favicon width while unpinned tabs keep their title extent.
+    TabBar *bar = widget.bar();
+    widget.resize(720, 480);
+    widget.show();
+    QApplication::processEvents();
+    const int pinnedWidth = bar->tabRect(0).width();
+    QVERIFY(pinnedWidth > 0 && pinnedWidth <= 60);
+    QVERIFY(bar->tabRect(2).width() > pinnedWidth);
+
+    // Pinned tabs hide their per-tab close button entirely.
+    bar->setPerTabCloseButtons(true);
+    QApplication::processEvents();
+    const QTabBar::ButtonPosition side =
+        bar->freeSide() == QTabBar::LeftSide ? QTabBar::RightSide
+                                             : QTabBar::LeftSide;
+    QWidget *pinnedClose = bar->tabButton(0, side);
+    if (pinnedClose)
+        QVERIFY(pinnedClose->isHidden() || !pinnedClose->isVisibleTo(bar));
+
+    // Middle-click on a pinned tab is ignored — Vivaldi semantics.
+    QTest::mouseClick(bar, Qt::MiddleButton, Qt::NoModifier,
+                      bar->tabRect(0).center());
+    QCOMPARE(widget.count(), 5);
+    // ...but still closes an ordinary tab.
+    QTest::mouseClick(bar, Qt::MiddleButton, Qt::NoModifier,
+                      bar->tabRect(2).center());
+    QCOMPARE(widget.count(), 4);
+    QVERIFY(widget.isTabPinned(0));
+    QVERIFY(widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+
+    // A pinned background tab is exempt from the idle-sleep sweep.
+    widget.setCurrentIndex(0);
+    QCOMPARE(widget.sleepBlockReason(1), QLatin1String("pinned"));
+
+    // "Close Other Tabs" skips pinned tabs in both directions.
+    widget.closeOtherTabs(1);              // keep v3, drop the rest unpinned
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.isTabPinned(0));
+    QVERIFY(widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+
+    // An explicit close still works on a pinned tab.
+    widget.closeTab(1);
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(widget.isTabPinned(0));
+
+    // Drag conversion: an unpinned tab dropped inside the pinned
+    // block pins, a pinned tab dragged past the boundary unpins.
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    WebView *u0 = widget.webView(1);
+    WebView *u1 = widget.webView(2);
+    QVERIFY(u0 && u1);
+    bar->moveTab(2, 0);                    // u1 into the pinned block
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.webView(0), u1);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    bar->moveTab(0, 2);                    // u1 back out past the edge
+    QVERIFY(!widget.isTabPinned(2));
+    QCOMPARE(widget.webView(2), u1);
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), u0);
+
+    // Unpin slides the tab to just past the remaining pinned block.
+    widget.setTabPinned(1, true);          // [v2, u0] pinned, u1 not
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    widget.setTabPinned(0, false);         // v2 slides to index 1
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QVERIFY(!widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), u0);
+    QCOMPARE(widget.webView(1), v2);
+    QCOMPARE(widget.webView(2), u1);
+    widget.setTabPinned(0, false);         // nothing left pinned
+    QCOMPARE(widget.pinnedTabCount(), 0);
+
+    // Session round-trip: the v5 tail carries the per-tab flags and a
+    // v4 blob (no tail) restores unpinned.
+    {
+        SubTabWidget w2;
+        for (int i = 0; i < 3; ++i)
+            w2.newTab();
+        w2.setTabPinned(1, true);          // v[1] leads the strip
+        WebView *pv = w2.webView(0);
+        QVERIFY(w2.isTabPinned(0));
+        const QByteArray state = w2.saveState();
+
+        SubTabWidget w3;
+        QVERIFY(w3.restoreState(state));
+        QCOMPARE(w3.count(), 3);
+        QVERIFY(w3.isTabPinned(0));
+        QVERIFY(!w3.isTabPinned(1));
+        QVERIFY(!w3.isTabPinned(2));
+        QCOMPARE(w3.webView(0)->url(), pv->url());
+    }
+    {
+        QByteArray v4blob;
+        QDataStream out(&v4blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(4)
+            << (QStringList() << QStringLiteral("data:text/plain,v4a")
+                              << QStringLiteral("data:text/plain,v4b"))
+            << qint32(0)
+            << (QList<QByteArray>() << QByteArray() << QByteArray())
+            << (QStringList() << QString() << QString())
+            << (QStringList() << QString() << QString())
+            << qint32(0)
+            << QString();
+        SubTabWidget w4;
+        QVERIFY(w4.restoreState(v4blob));
+        QCOMPARE(w4.count(), 2);
+        QVERIFY(!w4.isTabPinned(0));
+        QVERIFY(!w4.isTabPinned(1));
+    }
+
+    // Vertical strip: pinned rows stay on top and new tabs still
+    // seat right behind them.
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+        SubTabWidget wv;
+        for (int i = 0; i < 3; ++i)
+            wv.newTab();
+        wv.setTabPinned(2, true);
+        QCOMPARE(wv.pinnedTabCount(), 1);
+        wv.resize(720, 480);
+        wv.show();
+        QApplication::processEvents();
+        TabBar *vbar = wv.bar();
+        QVERIFY(vbar->tabRect(0).top() < vbar->tabRect(1).top());
+        WebView *nv = wv.makeNewTab(false);
+        QCOMPARE(wv.webViewIndex(nv), 1);
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+
+    widget.closeTab();
+    widget.closeTab();
+    widget.closeTab();
 }
 
 QTEST_MAIN(tst_TabWidget)
