@@ -107,16 +107,54 @@ source file).
 
 ## (b) Memory/UB — ASan+UBSan+LSan
 
-PENDING — instrumented suite + smokes running in the pipeline
-(`/tmp/arora-san.2G69yK`, post-merge sources). Extra AUDIT01-named
-smokes appended after the stock list: --session-smoke, --restore-smoke,
---tor-window-smoke, --sigterm-smoke, --download-smoke. LSan on the same
-tree via check-leaks.sh. Findings land here.
+Instrumented build `/tmp/arora-san.2G69yK` (no-rust config, post-merge
+sources), clang ASan+UBSan, isolated HOME, offscreen:
+
+**Suite:** ~67 test programs ran; 3 aborted on ONE upstream crash —
+`AddressSanitizer:DEADLYSIGNAL SEGV getenv()` inside
+libexpat→libfontconfig→libQt6WebEngineCore on a Chromium
+ThreadPoolForeg worker during `QWebEngineProfile` construction
+(tst_engineadapter, tst_ToolbarSearch, tst_TorManager). Read address
+0x0029000076de is a torn `environ` entry — Chromium rewrites environ
+during profile/zygote setup while fontconfig parses on the worker
+thread; glibc getenv-vs-concurrent-setenv is a documented POSIX UB
+class, exposed here by ASan's interceptor. UPSTREAM — not Arora-owned
+(18 frames deep in uninstrumented system libs); same fontconfig/expat
+family MEM02 already tags upstream for leaks. All other programs that
+completed reported `0 failed`.
+
+**Real finding (fixed):** `tst_tormanager.cpp` circuitInfo() —
+heap-use-after-free: `const TorCircuit *built` pointed into the
+`QList<TorCircuit>` temporary `manager.circuits()` returned; the temp
+dies at range-for scope end and QCOMPAREs then read a freed QString
+member. Fixed by copying the TorCircuit value (5b05025); test passes
+uninstrumented.
+
+**Smokes (18 run):** 15 PASS (incl. download, cookie, history,
+bookmarks, search, settings, autofill, find, adblock, extension-otr,
+browser, app, quit-after-load). Tolerated non-zero:
+- nam-smoke + extension-smoke: exit 134 = the same upstream getenv
+  SEGV (ASan abort) — profile-init path.
+- session-smoke: FAIL "tab-state blob header" — STALE smoke, not a
+  bug: TabWidget::saveState writes format v4 (container/group tails);
+  the smoke asserted tversion==1. Fixed to accept v1..v4 (5b05025);
+  re-verified PASS on the uninstrumented build.
+- source-smoke: FAIL raw compare — Qt 6.12 toHtml() injects
+  `<head><meta name="referrer" content="strict-origin"></head>` into
+  serialized DOM; smoke expected verbatim fixture bytes. Fixed by
+  tolerating an engine-injected head (5b05025); re-verified PASS
+  (highlighter/raw/fallback all green).
+- ua-smoke live-check SKIP (offline).
+- adblock-rust-smoke SKIP (no-rust config by design).
+
+LSan phase + bounded valgrind: results appended when phases complete.
 
 ## (c) Harness re-runs
 
-check-sanitize.sh and check-leaks.sh are the (b) phases. Bounded
-valgrind (autosaver/xbel/bookmarknode) is phase 4. Results land here.
+check-sanitize.sh result: suite rc=1 (three upstream aborts above),
+10 deduped sanitizer reports written to `.devin/SANITIZER.md` —
+breakdown: 4× getenv SEGV (upstream), 1× tormanager UAF (fixed), rest
+same-class dedupes. check-leaks.sh / valgrind pending in pipeline.
 
 ## (d) Regression
 
