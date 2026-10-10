@@ -253,6 +253,10 @@ private:
     QAction *m_viewFullScreenAction;
     QAction *m_viewTextEncodingAction;
     QMenu *m_viewTextEncodingMenu;
+    // DEVT01: engine-facing tools under View > Development Tools.
+    QMenu *m_viewDevToolsMenu;
+    QAction *m_viewChromiumDevToolAction;
+    QAction *m_viewBidiDevToolAction;
     QPointer<WebView> m_readerWatchedView;
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
@@ -282,7 +286,6 @@ private:
     QAction *m_toolsDownloadsAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
-    QAction *m_toolsEnableInspectorAction;
     UserAgentMenu *m_toolsUserAgentMenu;
     QAction *m_adBlockDialogAction;
 

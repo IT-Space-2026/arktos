@@ -110,6 +110,7 @@ private slots:
     void toolsMenuDedup();
     void fileMenuOrder();
     void downloadsMenuHome();
+    void devToolsSubmenu();
     void stateSerialization();
     void events();
     void closeConfirm();
@@ -544,6 +545,83 @@ void tst_BrowserMainWindow::downloadsMenuHome()
     QVERIFY(panel);
     QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
     QVERIFY(!BrowserApplication::downloadManager()->isVisible());
+
+    closeWindow(window);
+}
+
+// DEVT01: View > Development Tools holds the engine-tool entries —
+// "Chromium Dev Tool" (the working inspector) and "BiDi Dev Tool"
+// (disabled placeholder until DEVT02 lands).  The Tools menu drops
+// its Web Inspector copy and keeps clean separators.
+void tst_BrowserMainWindow::devToolsSubmenu()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *viewMenu = nullptr;
+    QMenu *toolsMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu())
+            continue;
+        if (menuAction->text().contains(QLatin1String("View")))
+            viewMenu = menuAction->menu();
+        if (menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+    }
+    QVERIFY(viewMenu);
+    QVERIFY(toolsMenu);
+
+    // The submenu sits in the View menu's developer group, right
+    // after Page Source.
+    QMenu *devToolsMenu = nullptr;
+    int sourceIndex = -1;
+    int devToolsIndex = -1;
+    const QList<QAction *> viewActions = viewMenu->actions();
+    for (int i = 0; i < viewActions.size(); ++i) {
+        QAction *action = viewActions.at(i);
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Page Source"))
+            sourceIndex = i;
+        if (action->menu()
+            && action->menu()->title()
+                   == QLatin1String("Development Tools")) {
+            devToolsMenu = action->menu();
+            devToolsIndex = i;
+        }
+    }
+    QVERIFY(devToolsMenu);
+    QVERIFY(sourceIndex != -1);
+    QCOMPARE(devToolsIndex, sourceIndex + 1);
+
+    // Exactly two entries: the live inspector and the BiDi
+    // placeholder (disabled, with a tooltip explaining why).
+    QStringList entries;
+    QAction *chromium = nullptr;
+    QAction *bidi = nullptr;
+    for (QAction *action : devToolsMenu->actions()) {
+        if (action->isSeparator())
+            continue;
+        entries << action->text();
+        if (action->text() == QLatin1String("Chromium Dev Tool"))
+            chromium = action;
+        if (action->text() == QLatin1String("BiDi Dev Tool"))
+            bidi = action;
+    }
+    QCOMPARE(entries.size(), 2);
+    QVERIFY(chromium);
+    QVERIFY(chromium->isEnabled());
+    QVERIFY(bidi);
+    QVERIFY(!bidi->isEnabled());
+    QVERIFY(!bidi->toolTip().isEmpty());
+
+    // One source of truth: Tools has no inspector entry left.
+    for (QAction *action : toolsMenu->actions()) {
+        QVERIFY2(!action->text().contains(QLatin1String("Inspector")),
+                 qPrintable(action->text()));
+        QVERIFY2(!action->text().contains(QLatin1String("Dev Tool")),
+                 qPrintable(action->text()));
+    }
+    QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
     closeWindow(window);
 }
