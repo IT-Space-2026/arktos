@@ -37,6 +37,7 @@
 class QDataStream;
 class QWebEnginePage;
 class AutoSaver;
+namespace Engine { class Page; }
 
 // Per-page bridge exposed to JavaScript as "aroraAutofill" through the
 // page's QWebChannel (registered in WebPage::init).  The injected
@@ -100,8 +101,9 @@ public:
 
     // Immediate path: inject the bundle into the already-loaded
     // document through runJavaScript (tests + the audit-bisection
-    // harness).
-    void attachToPage(QWebEnginePage *page);
+    // harness).  ENG04: takes the engine-neutral page — the engine
+    // page is resolved inside.
+    void attachToPage(Engine::Page *page);
 
     // SEC16: arms the same bundle as a named per-page QWebEngineScript
     // at DocumentReady keyed to the navigation's target url — the

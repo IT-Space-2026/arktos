@@ -182,7 +182,10 @@ Security:
 - Private-browsing store audit (SEC07).
 - WebChannel bridge hardening (SEC08).
 - Chrome markup-injection fixes (SEC10).
-- Clear Private Data removes DOM storage too (SEC12).
+- Clear Private Data removes DOM storage too (SEC12); the wipe now
+  also reaches pages where JavaScript is blocked — the injected
+  storage-clear runs through a lifted path instead of being silently
+  dropped (SEC12, ENG04).
 - Weak TLS cipher suites removed (TLS01).
 - Per-site JavaScript control + security-level tiers (JSCTL, SECLVL).
 - Referer level selector (REF01).
@@ -280,7 +283,7 @@ Accelerated downloads in Rust (DLACC03/DLACC06):
     Untrusted server input is handled in memory-safe Rust: Content-Disposition and suggested file names are sanitized against path traversal, control characters and overwrite (existing files dedup with a -N suffix), part files stage under a private app-data directory, and the finished file lands via an atomic rename with executable bits stripped. No-Rust builds behave exactly as before.
 
 Engine-adapter groundwork (ENG01/ENG04, in progress):
-    The browser shell is being decoupled from QtWebEngine behind an engine-neutral interface (src/engine): Engine::Page/Profile/Backend carry navigation, signals, zoom, find, script and request-policy calls, and src/engine/webenginebackend.* is the first backend implementing it over QWebEngineView/QWebEnginePage. Find-in-page, the status-bar load/memory indicators, and the per-tab load/title/icon/url signal wiring already go through the adapter, so a future backend (e.g. Servo) can implement the same boundary without touching chrome code.
+    The browser shell is being decoupled from QtWebEngine behind an engine-neutral interface (src/engine): Engine::Page/Profile/Backend carry navigation, signals, zoom, find, script and request-policy calls, and src/engine/webenginebackend.* is the first backend implementing it over QWebEngineView/QWebEnginePage. Find-in-page, the status-bar load/memory indicators, the per-tab load/title/icon/url signal wiring, session-history probes, page source/printing and the script-evaluation paths already go through the adapter — including Engine::Page::runJavaScriptLifted, the chrome-script channel that still reaches pages whose scripts are blocked (reader mode, picture-in-picture, storage wipes) — so a future backend (e.g. Servo) can implement the same boundary without touching chrome code.
     Running `arora --engine-list` prints the active backend's id, display name and capability flags and exits — the diagnostic the interface tests and future engine selection build on.
 
 0.11.0

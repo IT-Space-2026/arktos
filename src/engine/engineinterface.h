@@ -414,6 +414,17 @@ public:
     // Returning nullptr refuses the window.
     virtual Page *createWindow(WebWindowType type) = 0;
 
+    // Trusted chrome-script injection for callers whose work must
+    // still reach a page while page scripting is off (JSCTL/SECLVL
+    // block): reader-mode's driver, PiP's pop-out, the context-image
+    // resolver and the storage wipes all need it.  The backend lifts
+    // its script gate for the injection window only — page scripts
+    // refused at parse time do not retro-run while the gate is up.
+    // A backend with no script gate just runs runJavaScript.
+    virtual void runJavaScriptLifted(const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>()) = 0;
+
 signals:
     void loadStarted();
     void loadProgress(int progress);

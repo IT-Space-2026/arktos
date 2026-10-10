@@ -105,6 +105,17 @@ public:
     void setCreateWindowHandler(
             const std::function<Engine::Page *(Engine::WebWindowType)> &handler);
 
+    void runJavaScriptLifted(const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>()) override;
+    // The same lift on a raw engine page — escape hatch for callers
+    // still holding QWebEnginePage*/QWebEngineView* (the
+    // clear-private-data sweep walks views, not WebView tabs).
+    static void runJavaScriptLiftedOn(QWebEnginePage *page,
+            const QString &source,
+            const std::function<void(const QVariant &)> &resultCallback
+                = std::function<void(const QVariant &)>());
+
 private:
     QWebEnginePage *m_page;
     std::function<Engine::Page *(Engine::WebWindowType)> m_createWindow;

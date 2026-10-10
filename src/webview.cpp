@@ -879,40 +879,11 @@ void WebView::runContextImageScript(
 {
     const QString program = contextImageBundle()
         + QLatin1Char('\n') + call;
-    if (m_page->settings()->testAttribute(
-            QWebEngineSettings::JavascriptEnabled)) {
-        enginePage()->runJavaScript(program, callback);
-        return;
-    }
-    // JSCTL/SECLVL: runJavaScript is silently dropped while
-    // JavascriptEnabled is off, but a video poster or canvas content
-    // is still rendered — the click is an explicit gesture on it, so
-    // lift the attribute for the injection window the same way
-    // PictureInPicture::runPageJs does (page scripts blocked at parse
-    // time do not retro-run while the flag is up).
-    m_page->settings()->setAttribute(
-        QWebEngineSettings::JavascriptEnabled, true);
-    QPointer<WebPage> livePage(m_page);
-    QTimer::singleShot(700, this, [livePage, program, callback]() {
-        if (!livePage)
-            return;
-        livePage->runJavaScript(program,
-                [callback, livePage](const QVariant &result) {
-            callback(result);
-            QTimer::singleShot(400, qApp, [livePage]() {
-                if (livePage) {
-                    livePage->settings()->setAttribute(
-                        QWebEngineSettings::JavascriptEnabled, false);
-                }
-            });
-        });
-    });
-    QTimer::singleShot(5000, this, [livePage]() {
-        if (livePage) {
-            livePage->settings()->setAttribute(
-                QWebEngineSettings::JavascriptEnabled, false);
-        }
-    });
+    // JSCTL/SECLVL: a video poster or canvas content is still
+    // rendered while JavascriptEnabled is off — the click is an
+    // explicit gesture on it, so the script goes through the lifted
+    // path (Engine::Page owns the attribute juggling now).
+    enginePage()->runJavaScriptLifted(program, callback);
 }
 
 // Resolves the image content under a context-menu click point:

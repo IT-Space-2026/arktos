@@ -1015,7 +1015,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                      [=, &application]() {
         if (!*loaded || deadline.elapsed() > settleMs)
             return;
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QString::fromUtf8(kAnonSettleJs),
             [=, &application](const QVariant &status) {
                 const QJsonObject state = QJsonDocument::fromJson(
@@ -1033,7 +1033,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                     return;
                 }
                 poller->stop();
-                view->page()->runJavaScript(
+                view->enginePage()->runJavaScript(
                     QString::fromUtf8(kAnonExtractJs),
                     [=, &application](const QVariant &payload) {
                         const QByteArray json =
@@ -1430,7 +1430,7 @@ static int badSslSmoke(BrowserApplication &application, WebView *view)
         // Probe the settled DOM — on interstitial/error pages this
         // captures the chrome page's own title; on real pages the
         // badssl self-report markers.
-        r->page->runJavaScript(QString::fromUtf8(kBadSslProbeJs),
+        r->view->enginePage()->runJavaScript(QString::fromUtf8(kBadSslProbeJs),
             [r, writeAndExit, advance, timedOut, c](
                 const QVariant &payload) {
             QJsonObject rec;
@@ -1689,7 +1689,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
 
     const auto dumpResults = [view, &application, outPath, mode,
                               finish](bool complete) {
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QStringLiteral(
                 "JSON.stringify(window.xsLeakDump && "
                 "window.xsLeakDump())"),
@@ -1760,7 +1760,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
                      [=, &application]() {
         if (*finished)
             return;
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QString::fromUtf8(kXsLeakStatusJs),
             [=, &application](const QVariant &status) {
                 const QJsonObject state = QJsonDocument::fromJson(
@@ -1794,7 +1794,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     QTimer::singleShot(timeoutMs, &application, [=, &application]() {
         // Still dump whatever the suite produced — a partial result
         // table distinguishes a stalled run from a dead page.
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QStringLiteral("window.__aroraTimedOut = true"),
             [=, &application](const QVariant &) { dumpResults(false); });
     });
@@ -1831,7 +1831,7 @@ static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
     QObject::connect(poller, &QTimer::timeout, &application,
                      [&application, view, clicked]() {
         if (!*clicked) {
-            view->page()->runJavaScript(QStringLiteral(
+            view->enginePage()->runJavaScript(QStringLiteral(
                 "var b = document.querySelector('.start-button');"
                 "if (b) { b.click(); 'clicked'; } else { ''; }"),
                 [clicked](const QVariant &result) {
@@ -1840,7 +1840,7 @@ static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
                 });
             return;
         }
-        view->page()->runJavaScript(QStringLiteral(
+        view->enginePage()->runJavaScript(QStringLiteral(
             "JSON.stringify(Array.prototype.map.call("
             "  document.querySelectorAll('.request-status-text'),"
             "  function (e) { return e.textContent.trim(); }))"),
@@ -2770,7 +2770,7 @@ int main(int argc, char **argv)
                 application.exit(1);
                 return;
             }
-            view->webPage()->runJavaScript(
+            view->enginePage()->runJavaScript(
                 QStringLiteral("document.title + '\\n' + "
                                "document.body.innerText.slice(0, 400)"),
                 [&application](const QVariant &result) {
@@ -3334,7 +3334,7 @@ int main(int argc, char **argv)
             if (!ok)
                 return;
             if (view->url().path() == QLatin1String("/page"))
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "location.href='http://127.0.0.2:%1/nav'").arg(port));
         });
     }
@@ -3591,7 +3591,7 @@ int main(int argc, char **argv)
                 if (*phase2Step == 0) {
                     ++*phase2Step;
                     qInfo() << "referer-smoke: phase-2 click n-redir";
-                    view->webPage()->runJavaScript(QStringLiteral(
+                    view->enginePage()->runJavaScript(QStringLiteral(
                         "document.getElementById('redlnk').click()"));
                     return;
                 }
@@ -3625,7 +3625,7 @@ int main(int argc, char **argv)
             if (!step.url.isEmpty())
                 view->loadUrl(QUrl(step.url));
             else
-                view->webPage()->runJavaScript(QString::fromLatin1(step.js));
+                view->enginePage()->runJavaScript(QString::fromLatin1(step.js));
         });
         // A new navigation cancels any pending settle; a completed one
         // starts the quiet period.  Failed loads don't advance steps —
@@ -3768,7 +3768,7 @@ int main(int argc, char **argv)
             if ((*state == 0 && path == QLatin1String("/page"))
                 || (*state == 1 && path == QLatin1String("/page2"))) {
                 *jsFired = true;
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "navigator.sendBeacon('/beacon','ping-smoke');"
                     "document.getElementById('lnk').click();"));
             }
@@ -3963,7 +3963,7 @@ int main(int argc, char **argv)
             const QString path = view->url().path();
             if (path == QStringLiteral("/page%1").arg(*state + 1)) {
                 *jsFired = true;
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "var l=document.createElement('link');"
                     "l.rel='prefetch';l.href='/prefetch-target';"
                     "document.head.appendChild(l);"
@@ -5079,7 +5079,7 @@ int main(int argc, char **argv)
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
                          [rtcView, poll, verdict]() {
-            rtcView->webPage()->runJavaScript(
+            rtcView->enginePage()->runJavaScript(
                 QStringLiteral("JSON.stringify(window.__rtc||null)"),
                 [poll, verdict](const QVariant &result) {
                 const QJsonObject rtc = QJsonDocument::fromJson(
@@ -5358,7 +5358,7 @@ int main(int argc, char **argv)
             // WebPage::schedulePageScripts armed the "arora:adblock-
             // cosmetic" DocumentReady script at commit, so the style
             // element must already exist by loadFinished.
-            view->webPage()->runJavaScript(
+            view->enginePage()->runJavaScript(
                 QLatin1String("!!document.getElementById('arora-adblock')"),
                 [&application](const QVariant &result) {
                     const bool pass = result.toBool();
@@ -5567,7 +5567,7 @@ int main(int argc, char **argv)
                              [&application, otrView, hasElement, fixtureUrl](bool ok) {
                 if (!ok || otrView->url() != fixtureUrl)
                     return;
-                otrView->webPage()->runJavaScript(
+                otrView->enginePage()->runJavaScript(
                     QLatin1String("document.getElementById('u').value"),
                     [&application, otrView, hasElement](const QVariant &result) {
                     // The stored entry holds the values captured in the
@@ -5583,7 +5583,7 @@ int main(int argc, char **argv)
                     }
                     // Give the (supposedly absent) capture hook no
                     // chance: submit and check nothing was stored.
-                    otrView->webPage()->runJavaScript(QLatin1String(
+                    otrView->enginePage()->runJavaScript(QLatin1String(
                         "document.getElementById('u').value='otruser';"
                         "document.getElementById('p').value='otrpass';"
                         "document.forms[0].requestSubmit();"));
@@ -5676,7 +5676,7 @@ int main(int argc, char **argv)
             autofillSmokeStage = 1;
             // Fill check, then rewrite the fields and submit once the
             // channel handshake has had time to install the listener.
-            view->webPage()->runJavaScript(
+            view->enginePage()->runJavaScript(
                 QLatin1String("document.getElementById('u').value"),
                 [&application, view](const QVariant &result) {
                 const bool filled =
@@ -5688,7 +5688,7 @@ int main(int argc, char **argv)
                     return;
                 }
                 QTimer::singleShot(700, &application, [view]() {
-                    view->webPage()->runJavaScript(QLatin1String(
+                    view->enginePage()->runJavaScript(QLatin1String(
                         "document.getElementById('u').value='newuser';"
                         "document.getElementById('p').value='newpass';"
                         "document.forms[0].requestSubmit();"));
@@ -6348,7 +6348,7 @@ int main(int argc, char **argv)
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {
-            view->webPage()->runJavaScript(script,
+            view->enginePage()->runJavaScript(script,
                 [cb](const QVariant &result) { cb(result); });
         };
         auto settle = [](int ms, std::function<void()> fn) {
@@ -6724,7 +6724,7 @@ int main(int argc, char **argv)
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {
-            view->webPage()->runJavaScript(script,
+            view->enginePage()->runJavaScript(script,
                 [cb](const QVariant &result) { cb(result); });
         };
         auto evalPipJs = [&](const QString &script,
@@ -7155,7 +7155,7 @@ int main(int argc, char **argv)
             // WebPage::createWindow -> TabWidget::getView and must grow
             // the tab strip to three tabs.  (Synthesized JS has no user
             // activation, so Chromium would block it as a popup.)
-            firstTab->webPage()->runJavaScript(
+            firstTab->enginePage()->runJavaScript(
                 QLatin1String("JSON.stringify("
                               "document.getElementById('l').getBoundingClientRect())"),
                 [tabWidget](const QVariant &rectVar) {
@@ -7811,9 +7811,9 @@ int main(int argc, char **argv)
             WebView *formView = tabWidget->webView(5);
             WebView *heavy2 = tabWidget->webView(2);
             WebView *audioView = tabWidget->webView(1);
-            formView->page()->runJavaScript(
+            formView->enginePage()->runJavaScript(
                 QLatin1String("document.getElementById('f').value='x';"));
-            heavy2->page()->runJavaScript(
+            heavy2->enginePage()->runJavaScript(
                 QLatin1String("window.scrollTo(0, 5000);"));
             // recentlyAudible latches a few seconds of playback —
             // wait for it before the sweep so the exemption is live.
@@ -7939,7 +7939,7 @@ int main(int argc, char **argv)
                     fail("wake");
                     return;
                 }
-                heavy2->page()->runJavaScript(
+                heavy2->enginePage()->runJavaScript(
                     QLatin1String("JSON.stringify({"
                                   "y:window.scrollY,"
                                   "title:document.title})"),
@@ -9610,7 +9610,7 @@ int main(int argc, char **argv)
                                   torWinFail, circuitLabel](bool ok) {
                     if (!ok || view->url() != pageUrl)
                         return;
-                    view->page()->runJavaScript(
+                    view->enginePage()->runJavaScript(
                         QStringLiteral(
                             "(function(){"
                             "var x=new XMLHttpRequest();"
@@ -9953,7 +9953,7 @@ int main(int argc, char **argv)
             if (!ok || view->url().isEmpty()
                 || view->url().scheme() != QLatin1String("http"))
                 return;
-            view->page()->runJavaScript(QStringLiteral(
+            view->enginePage()->runJavaScript(QStringLiteral(
                 "JSON.stringify({"
                 "tz: Intl.DateTimeFormat().resolvedOptions().timeZone,"
                 "offset: new Date().getTimezoneOffset(),"

@@ -99,6 +99,16 @@ public:
             resultCallback(QVariant(QStringLiteral("fake-result")));
     }
 
+    void runJavaScriptLifted(const QString &source,
+                       const std::function<void(const QVariant &)> &resultCallback
+                           = std::function<void(const QVariant &)>()) override
+    {
+        ++liftedCalls;
+        lastScript = source;
+        if (resultCallback)
+            resultCallback(QVariant(QStringLiteral("fake-lifted")));
+    }
+
     void toHtml(const std::function<void(const QString &)> &resultCallback) override
     {
         if (resultCallback)
@@ -147,6 +157,7 @@ public:
     QString lastFind;
     Engine::FindFlags lastFindFlags;
     QString lastScript;
+    int liftedCalls = 0;
     QString m_markup;
     QHash<QString, bool> attributes;
     Engine::WebWindowType lastWindowType = Engine::WebWindowType::BrowserWindow;
@@ -242,6 +253,7 @@ private slots:
     void fakeProfileSurface();
     void webEngineBackendShape();
     void webEnginePageForwarding();
+    void webEngineLiftedScript();
     void webEngineProfileSurface();
 };
 
@@ -338,6 +350,15 @@ void tst_EngineAdapter::fakePageZoomFindScript()
         [&seen](const QVariant &value) { seen = value; });
     QCOMPARE(page.lastScript, QStringLiteral("1+1"));
     QCOMPARE(seen.toString(), QStringLiteral("fake-result"));
+
+    // The lifted entry point is a separate capability — a backend
+    // with no script gate may alias it to runJavaScript, but chrome
+    // calls it by name.
+    page.runJavaScriptLifted(QStringLiteral("2+2"),
+        [&seen](const QVariant &value) { seen = value; });
+    QCOMPARE(page.liftedCalls, 1);
+    QCOMPARE(page.lastScript, QStringLiteral("2+2"));
+    QCOMPARE(seen.toString(), QStringLiteral("fake-lifted"));
 
     page.m_markup = QStringLiteral("<html>fake</html>");
     QString markup;
@@ -460,6 +481,46 @@ void tst_EngineAdapter::webEnginePageForwarding()
              view.page());
     QCOMPARE(WebEnginePageAdapter::of(nullptr),
              static_cast<WebEnginePageAdapter*>(nullptr));
+}
+
+void tst_EngineAdapter::webEngineLiftedScript()
+{
+    // runJavaScriptLifted is the chrome-script path for JSCTL-blocked
+    // pages: with scripting on it is the plain evaluation; with
+    // scripting off the backend lifts the gate, runs, and restores.
+    WebView view;
+    Engine::Page *enginePage = view.enginePage();
+    QSignalSpy loadSpy(enginePage, &Engine::Page::loadFinished);
+    enginePage->load(
+        QUrl(QStringLiteral("data:text/html,<title>lift</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 15000);
+
+    QVariant seen;
+    enginePage->runJavaScriptLifted(QStringLiteral("1+1"),
+        [&seen](const QVariant &value) { seen = value; });
+    QTRY_VERIFY_WITH_TIMEOUT(seen.isValid(), 15000);
+    QCOMPARE(seen.toInt(), 2);
+
+    // Scripts off: the lifted path still lands (queued behind the
+    // attribute IPC, hence the generous timeout) and the gate is
+    // restored afterwards.
+    view.page()->settings()->setAttribute(
+        QWebEngineSettings::JavascriptEnabled, false);
+    seen = QVariant();
+    enginePage->runJavaScriptLifted(QStringLiteral("6*7"),
+        [&seen](const QVariant &value) { seen = value; });
+    QTRY_VERIFY_WITH_TIMEOUT(seen.isValid(), 15000);
+    QCOMPARE(seen.toInt(), 42);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !view.page()->settings()->testAttribute(
+            QWebEngineSettings::JavascriptEnabled), 15000);
+
+    // A null page handle refuses cleanly through the static hatch.
+    bool called = false;
+    WebEnginePageAdapter::runJavaScriptLiftedOn(nullptr,
+        QStringLiteral("void 0"),
+        [&called](const QVariant &) { called = true; });
+    QVERIFY(called);
 }
 
 void tst_EngineAdapter::webEngineProfileSurface()

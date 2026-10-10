@@ -30,9 +30,11 @@
 
 #include "autosaver.h"
 #include "browserpaths.h"
+#include "engineinterface.h"
 #include "securestore.h"
 #include "startupprofile.h"
 #include "streamingutils.h"
+#include "webenginebackend.h"
 
 #include <qdatastream.h>
 #include <qfile.h>
@@ -276,11 +278,18 @@ static void replacePageScript(QWebEnginePage *page, const QString &name,
     scripts.insert(script);
 }
 
-void AutoFillManager::attachToPage(QWebEnginePage *page)
+void AutoFillManager::attachToPage(Engine::Page *page)
 {
     if (!page)
         return;
-    const QString script = scriptForPage(page, page->url());
+    // ENG04: the bridge/script-collection plumbing below is still
+    // engine-bound — resolve the wrapped page via the adapter while
+    // callers stay on the interface.
+    QWebEnginePage *enginePage =
+        WebEnginePageAdapter::of(page)
+            ? WebEnginePageAdapter::of(page)->webEnginePage()
+            : nullptr;
+    const QString script = scriptForPage(enginePage, page->url());
     if (!script.isEmpty())
         page->runJavaScript(script);
 }

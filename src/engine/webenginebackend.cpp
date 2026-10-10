@@ -20,7 +20,10 @@
 #include "webenginebackend.h"
 
 #include <qaction.h>
+#include <qapplication.h>
 #include <qfileinfo.h>
+#include <qpointer.h>
+#include <qtimer.h>
 #include <qtwebenginecoreglobal.h>
 #include <qwebenginecertificateerror.h>
 #include <qwebenginecookiestore.h>
@@ -474,6 +477,63 @@ void WebEnginePageAdapter::setCreateWindowHandler(
         const std::function<Engine::Page *(Engine::WebWindowType)> &handler)
 {
     m_createWindow = handler;
+}
+
+void WebEnginePageAdapter::runJavaScriptLifted(
+        const QString &source,
+        const std::function<void(const QVariant &)> &resultCallback)
+{
+    runJavaScriptLiftedOn(m_page, source, resultCallback);
+}
+
+void WebEnginePageAdapter::runJavaScriptLiftedOn(
+        QWebEnginePage *page,
+        const QString &source,
+        const std::function<void(const QVariant &)> &resultCallback)
+{
+    if (!page) {
+        if (resultCallback)
+            resultCallback(QVariant());
+        return;
+    }
+    if (page->settings()->testAttribute(
+            QWebEngineSettings::JavascriptEnabled)) {
+        page->runJavaScript(source, resultCallback);
+        return;
+    }
+    // JSCTL/SECLVL: WebEngine silently drops runJavaScript while
+    // JavascriptEnabled is off.  Lift the attribute for the injection
+    // window only — the attribute's IPC lands asynchronously, so the
+    // script is queued behind a delay and the attribute is restored a
+    // beat after the callback (with a hard fallback in case it never
+    // arrives).  Page scripts blocked at parse time do not retro-run
+    // while the flag is up, so the page stays scriptless.
+    page->settings()->setAttribute(
+        QWebEngineSettings::JavascriptEnabled, true);
+    QPointer<QWebEnginePage> livePage(page);
+    QTimer::singleShot(700, page, [livePage, source, resultCallback]() {
+        if (!livePage)
+            return;
+        livePage->runJavaScript(source,
+                [resultCallback, livePage](const QVariant &result) {
+            if (resultCallback)
+                resultCallback(result);
+            QTimer::singleShot(400, qApp, [livePage]() {
+                if (livePage) {
+                    livePage->settings()->setAttribute(
+                        QWebEngineSettings::JavascriptEnabled, false);
+                }
+            });
+        });
+    });
+    // Fallback restore: the attribute must not stay lifted if the
+    // injection above is wedged by a dying renderer.
+    QTimer::singleShot(5000, page, [livePage]() {
+        if (livePage) {
+            livePage->settings()->setAttribute(
+                QWebEngineSettings::JavascriptEnabled, false);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
