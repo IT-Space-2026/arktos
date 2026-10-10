@@ -2499,12 +2499,27 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
         query = trimmed;
     }
     if (searchFallback) {
-        if (OpenSearchEngine *engine = manager->engineForContext(
-                privateContext)) {
+        // SRCH07 parity with guessUrlFromStringCpp's fallbackUrl: a
+        // stale saved engine name (no context engine) degrades to the
+        // compiled-in default engine, and an engine whose template
+        // produces no usable url degrades to its endpoint directly —
+        // a bare http://<term> could only DNS-fail.
+        OpenSearchEngine *engine = manager->engineForContext(
+            privateContext);
+        if (!engine)
+            engine = manager->engine(QLatin1String("DuckDuckGo"));
+        if (engine) {
             const QUrl searchUrl = engine->searchUrl(query);
             if (!searchUrl.isEmpty() && searchUrl.isValid())
                 return searchUrl;
         }
+        QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
+        QUrlQuery queryItems;
+        queryItems.addQueryItem(QLatin1String("q"), query);
+        lastResort.setQuery(queryItems);
+        qWarning() << "guessUrlFromString: no usable search engine —"
+                      "falling back to" << lastResort;
+        return lastResort;
     }
     return QUrl::fromEncoded(
         (QLatin1String("http://") + trimmed).toUtf8(),
