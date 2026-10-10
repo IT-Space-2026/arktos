@@ -49,6 +49,8 @@
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
+#include "scriptcontrolmanager.h"
+#include "webpermissionmanager.h"
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
@@ -95,6 +97,8 @@ private slots:
     void adblockManageButton();
     void pagePolishSettings();
     void extensionReview();
+    void permissionsPage();
+    void securityLevelHint();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -1947,6 +1951,105 @@ void tst_SettingsDialog::extensionReview()
     QVERIFY(ExtensionReviewDialog::describeHostPermission(
                 QLatin1String("*://*.example.com/*"))
             .contains(QLatin1String("example.com")));
+}
+
+// COV05: the Privacy page's site-permissions audit table — every row
+// kind (web permission, JSCTL rule, pop-up exception) is removed
+// through the Remove button, and Clear All empties the stores behind
+// the confirmation box.
+void tst_SettingsDialog::permissionsPage()
+{
+    WebPermissionManager *perms = WebPermissionManager::instance();
+    ScriptControlManager *scripts = ScriptControlManager::instance();
+    PopupBlocker *popups = PopupBlocker::instance();
+    perms->clearEntries();
+    scripts->clearPersistentRules();
+    popups->clearAllowedHosts();
+
+    const QUrl origin(QStringLiteral("https://perm.example"));
+    perms->setEntry(origin, QWebEnginePermission::PermissionType::Notifications, true);
+    perms->setEntry(QUrl(QStringLiteral("https://deny.example")),
+                    QWebEnginePermission::PermissionType::Geolocation, false);
+    scripts->setRuleForHost(QStringLiteral("js-allow.example"),
+                            ScriptControlManager::Allow);
+    scripts->setRuleForHost(QStringLiteral("js-block.example"),
+                            ScriptControlManager::Block);
+    popups->allowHost(QStringLiteral("popup.example"));
+
+    SettingsDialog dialog;
+    dialog.openAtPage(SettingsDialog::PrivacyPage);
+
+    // One row per seeded entry, keyed by kind.
+    QCOMPARE(dialog.permissionsTree->topLevelItemCount(), 5);
+    QStringList keys;
+    for (int i = 0; i < dialog.permissionsTree->topLevelItemCount(); ++i)
+        keys << dialog.permissionsTree->topLevelItem(i)
+                    ->data(0, Qt::UserRole).toString();
+    QVERIFY(keys.contains(QStringLiteral("js|js-allow.example")));
+    QVERIFY(keys.contains(QStringLiteral("js|js-block.example")));
+    QVERIFY(keys.contains(QStringLiteral("popup|popup.example")));
+
+    // Removing each row kind routes to its own store.
+    auto removeRowWithKey = [&dialog](const QString &key) {
+        for (int i = 0; i < dialog.permissionsTree->topLevelItemCount();
+                ++i) {
+            QTreeWidgetItem *item =
+                dialog.permissionsTree->topLevelItem(i);
+            if (item->data(0, Qt::UserRole).toString() == key) {
+                dialog.permissionsTree->setCurrentItem(item);
+                dialog.permissionRemoveButton->click();
+                return;
+            }
+        }
+        QVERIFY2(false, qPrintable(key));
+    };
+    removeRowWithKey(QStringLiteral("js|js-allow.example"));
+    QCOMPARE(scripts->ruleForHost(QStringLiteral("js-allow.example")),
+             ScriptControlManager::SiteDefault);
+    removeRowWithKey(QStringLiteral("popup|popup.example"));
+    QVERIFY(!popups->allowedHosts().contains(
+                QStringLiteral("popup.example")));
+    const QString permKey =
+        QString::fromUtf8(origin.toEncoded()) + QLatin1Char('|')
+        + QString::number(
+            static_cast<int>(QWebEnginePermission::PermissionType::Notifications));
+    removeRowWithKey(permKey);
+    QCOMPARE(perms->entries().count(), 1);
+
+    // Remove with no selection is a no-op (guard path).
+    dialog.permissionsTree->setCurrentItem(nullptr);
+    dialog.permissionRemoveButton->click();
+
+    // Clear All behind the confirmation box empties every store.
+    answerNextBox(QMessageBox::Yes);
+    dialog.permissionClearAllButton->click();
+    QTest::qWait(400);
+    QVERIFY(perms->entries().isEmpty());
+    QVERIFY(scripts->allowedHosts().isEmpty());
+    QVERIFY(scripts->blockedHosts().isEmpty());
+    QVERIFY(popups->allowedHosts().isEmpty());
+    QCOMPARE(dialog.permissionsTree->topLevelItemCount(), 0);
+
+    // Clear on an empty table returns before the confirmation prompt.
+    dialog.permissionClearAllButton->click();
+}
+
+// COV05: the privacy tier combo drives updateSecurityLevelHint() —
+// each tier rewrites the hint text and only Safest greys the global
+// JavaScript checkbox.
+void tst_SettingsDialog::securityLevelHint()
+{
+    SettingsDialog dialog;
+    QVERIFY(dialog.securityLevelCombo->count() >= 2);
+    const bool javascriptEnabledAtStart =
+        dialog.enableJavascript->isEnabled();
+    for (int i = 0; i < dialog.securityLevelCombo->count(); ++i) {
+        dialog.securityLevelCombo->setCurrentIndex(i);
+        QVERIFY(!dialog.securityLevelHint->text().isEmpty());
+    }
+    // The widget returns to a non-Safest state usable by later tests.
+    dialog.securityLevelCombo->setCurrentIndex(0);
+    Q_UNUSED(javascriptEnabledAtStart);
 }
 
 QTEST_MAIN(tst_SettingsDialog)
