@@ -167,11 +167,12 @@ browsing profile:
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing
   their place.
-- **Per-tab engine switcher** — an engine glyph at the right end of
-  the URL bar names the active engine and offers "Reload in …" on
-  the other backends; Servo (`qmake servo=1` + the servo-embed
-  artifact) is an experimental degraded co-engine — Tor windows stay
-  Chromium-locked and private tabs refuse the swap.
+- **Per-tab engine switcher** — an engine button in the navigation
+  toolbar, immediately right of the URL bar, names the active tab's
+  engine and offers "Reload in …" on the other backends; Servo
+  (`qmake servo=1` + the servo-embed artifact) is an experimental
+  degraded co-engine — Tor windows stay Chromium-locked and private
+  tabs refuse the swap.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.

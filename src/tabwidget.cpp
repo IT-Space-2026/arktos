@@ -757,22 +757,22 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
 
 #ifndef AUTOTESTS
     if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
-        if (ToolbarSearch *toolbarSearch = window->findChild<ToolbarSearch *>())
-            QWidget::setTabOrder(locationBar, toolbarSearch);
+        // ENG08: the nav row's focus chain runs location bar ->
+        // engine indicator -> dedicated search box; whichever piece
+        // is absent gets skipped so the chain still terminates on
+        // the search field.
+        QWidget *afterBar = window->findChild<EngineIndicator *>();
+        if (!afterBar)
+            afterBar = window->findChild<ToolbarSearch *>();
+        else if (ToolbarSearch *toolbarSearch = window->findChild<ToolbarSearch *>())
+            QWidget::setTabOrder(afterBar, toolbarSearch);
+        if (afterBar)
+            QWidget::setTabOrder(locationBar, afterBar);
     }
 #endif
 
     WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
-    // ENG05: the engine indicator's swap path resolves the tab through
-    // the bar's stack index — identical to how the indicator on an
-    // engine tab's bar resolves through indexOf(tab).
-    locationBar->engineIndicator()->setSwappable(
-        !profile->isOffTheRecord());
-    connect(locationBar->engineIndicator(), &EngineIndicator::switchRequested,
-            this, [this, locationBar](const QString &engineId) {
-        reloadTabInEngine(m_locationBars->indexOf(locationBar), engineId);
-    });
     Engine::Page *enginePage = webView->enginePage();
     connect(enginePage, &Engine::Page::loadStarted,
             this, &TabWidget::webViewLoadStarted);
@@ -914,22 +914,15 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     }
 
     // The parallel location-bar stack needs one widget per tab.  An
-    // engine tab's bar is a read-only url echo carrying the engine
-    // indicator — the swap affordance back — since the degraded page
+    // engine tab's bar is a read-only url echo — the degraded page
     // cannot take typed navigations through loadUrl (loadUrl resolves
-    // through currentWebView(), which is null here).
+    // through currentWebView(), which is null here).  ENG08: the swap
+    // affordance lives on the chrome's shared toolbar indicator now,
+    // which tracks the ACTIVE tab — it offers "Reload in Chromium"
+    // while this tab is current, which is the swap-back path.
     LineEdit *bar = new LineEdit(this);
     bar->setReadOnly(true);
-    EngineIndicator *indicator = new EngineIndicator(bar);
-    indicator->setEngineId(backend->id());
-    bar->addWidget(indicator, LineEdit::RightSide);
     m_locationBars->addWidget(bar);
-    connect(indicator, &EngineIndicator::switchRequested,
-            this, [this, tab](const QString &id) {
-        const int at = indexOf(tab);
-        if (at >= 0)
-            reloadTabInEngine(at, id);
-    });
 
     // Tab-strip plumbing mirroring the WebView wiring in
     // makeNewTabOnProfile — senders are the EngineTab, not a WebView,

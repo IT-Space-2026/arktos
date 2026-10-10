@@ -20,11 +20,12 @@
 #ifndef ENGINEINDICATOR_H
 #define ENGINEINDICATOR_H
 
-// ENG05 — the per-tab engine glyph at the right end of the URL bar
-// (Edge IE-mode style).  Shows which engine the tab runs on; clicking
-// opens a menu offering a reload of the current url on each OTHER
-// registered backend.  The button reports the request — the tab
-// widget resolves which tab the bar belongs to and performs the swap.
+// ENG05/ENG08 — the per-tab engine glyph as a toolbar button at the
+// right of the url-bar stack (Edge IE-mode style).  One window-level
+// instance shows which engine the ACTIVE tab runs on; clicking opens
+// a menu offering a reload of the current url on each OTHER
+// registered backend.  The button reports the request — the window
+// resolves it against the current tab and performs the swap.
 //
 // Hidden entirely while fewer than two backends are registered (a
 // missing servo-embed artifact leaves no dead menu), in Tor windows

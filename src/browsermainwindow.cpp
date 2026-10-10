@@ -79,6 +79,7 @@
 #include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
+#include "engineindicator.h"
 #include "engineinterface.h"
 #include "history.h"
 #include "languagemanager.h"
@@ -131,6 +132,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
+    , m_engineIndicatorHost(nullptr)
+    , m_engineIndicator(nullptr)
     , m_readerModeButton(nullptr)
     , m_navReaderAction(nullptr)
     , m_toolbarSearch(nullptr)
@@ -1440,7 +1443,41 @@ void BrowserMainWindow::setupToolBar()
     m_navReaderAction->setEnabled(true);
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
+    m_navigationSplitter->setObjectName(QLatin1String("navigationSplitter"));
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());
+
+    // ENG08: the engine switcher is chrome, not part of the field —
+    // one shared button hugging the url bar's right edge, replacing
+    // the per-bar embedded indicators.  A fixed-width host keeps the
+    // cell from stretching inside the splitter and vertically centers
+    // the button at nav-row height; hiding the cell (single backend,
+    // tor, private or widget tab — see updateEngineIndicator) hands
+    // the width back to the location bar with no dead padding.
+    m_engineIndicator = new EngineIndicator(m_navigationBar);
+    m_engineIndicator->setObjectName(QLatin1String("navEngineIndicator"));
+    m_engineIndicator->setIconSize(m_navigationBar->iconSize());
+    m_engineIndicatorHost = new QWidget(m_navigationBar);
+    m_engineIndicatorHost->setObjectName(
+        QLatin1String("navEngineIndicatorHost"));
+    QHBoxLayout *indicatorLayout = new QHBoxLayout(m_engineIndicatorHost);
+    indicatorLayout->setContentsMargins(2, 0, 2, 0);
+    indicatorLayout->addWidget(m_engineIndicator);
+    m_engineIndicatorHost->setFixedWidth(
+        m_engineIndicator->sizeHint().width() + 4);
+    m_navigationSplitter->insertWidget(1, m_engineIndicatorHost);
+    m_navigationSplitter->setCollapsible(1, false);
+    m_navigationSplitter->setStretchFactor(1, 0);
+    // One owner, one path: the request always resolves against the
+    // current tab — the button's state mirrors it (below), so the
+    // choice can never land on a background tab.
+    connect(m_engineIndicator, &EngineIndicator::switchRequested,
+            this, [this](const QString &engineId) {
+        m_tabWidget->reloadTabInEngine(
+            m_tabWidget->currentIndex(), engineId);
+    });
+    connect(m_tabWidget, &QTabWidget::currentChanged,
+            this, [this](int) { updateEngineIndicator(); });
+    updateEngineIndicator();
 
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
     m_navigationSplitter->addWidget(m_toolbarSearch);
@@ -1464,7 +1501,9 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_viewSidebarAction);
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
-    sizes << (int)((double)splitterWidth * .80) << (int)((double)splitterWidth * .20);
+    sizes << (int)((double)splitterWidth * .80)
+          << m_engineIndicatorHost->sizeHint().width()
+          << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
 
     applySearchBoxVisibility();
@@ -1495,6 +1534,31 @@ void BrowserMainWindow::applySearchBoxVisibility()
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
     m_toolbarSearch->setButtonMode(false);
     m_toolbarSearch->setVisible(field);
+}
+
+// ENG08: one toolbar-level indicator mirrors the ACTIVE tab.  The
+// rules are the same ones the embedded indicators enforced, now
+// computed per tab switch instead of baked per bar:
+//   - a private tab refuses the swap (no OTR profile on foreign
+//     backends) -> swappable off, hidden;
+//   - a tor window is Chromium-locked -> hidden;
+//   - a widget tab (Preferences, History, ...) has no engine -> the
+//     whole cell hides;
+//   - an engine tab reports its own backend id and stays swappable
+//     — "Reload in Chromium" on the menu is the swap-back path.
+void BrowserMainWindow::updateEngineIndicator()
+{
+    const int index = m_tabWidget->currentIndex();
+    const QString engineId = index >= 0
+        ? m_tabWidget->tabEngineId(index) : QString();
+    m_engineIndicator->setSwappable(
+        index >= 0 && !m_tabWidget->isTabPrivate(index));
+    m_engineIndicator->setEngineId(engineId);
+    // The setters refresh() the button's own availability (2+
+    // backends, swappable, not tor); the host cell gates the one
+    // case the button cannot see — a tab with no engine at all.
+    m_engineIndicatorHost->setVisible(
+        !engineId.isEmpty() && !m_engineIndicator->isHidden());
 }
 
 // SIDE01: the panel is built on first show so a hidden sidebar is

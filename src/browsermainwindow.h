@@ -70,6 +70,7 @@ class AutoSaver;
 class BookmarksToolBar;
 class BidiPanel;
 class CommandPalette;
+class EngineIndicator;
 class QDockWidget;
 class QLabel;
 class ReaderButton;
@@ -208,6 +209,11 @@ private:
     void ensureSidebarPanel();
     void ensureBidiPanel();
     void updateStopReloadActionText(bool loading);
+    // ENG08: mirrors the ACTIVE tab's engine onto the shared nav-row
+    // EngineIndicator — engine id, swappability and visibility all
+    // follow the current tab (private tabs refuse swaps, tor windows
+    // are Chromium-locked, widget tabs have no engine).
+    void updateEngineIndicator();
 
 private:
     QMenu *m_fileMenu;
@@ -302,6 +308,11 @@ private:
     QIcon m_reloadIcon;
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
+    // ENG08: one engine switcher for the whole window — a fixed-width
+    // cell between the url-bar stack and the dedicated search box,
+    // replacing the per-bar embedded indicators.
+    QWidget *m_engineIndicatorHost;
+    EngineIndicator *m_engineIndicator;
     ReaderButton *m_readerModeButton;
     QAction *m_navReaderAction;
     ToolbarSearch *m_toolbarSearch;
