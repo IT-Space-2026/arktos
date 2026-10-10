@@ -167,6 +167,10 @@ UI:
   reload/stop button — it appears only on article-like pages, shows
   a filled icon while the reader overlay is up, and stays in sync
   with View → Reader Mode (Ctrl+Alt+R) (READ02).
+- Removed the duplicated reader-mode button embedded at the right end
+  of the URL bar — the navigation toolbar toggle is now the single
+  reader control on the chrome row, still tracking the active tab and
+  appearing on article-like pages (READ03).
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).

@@ -39,6 +39,7 @@
 #include "locationbar.h"
 #include "locationbarsiteicon.h"
 #include "privacyindicator.h"
+#include "readerbutton.h"
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "clearbutton.h"
@@ -172,6 +173,9 @@ void tst_LocationBar::widgets()
     for (QToolButton *button : buttons)
         QVERIFY(button->accessibleName()
                 != QLatin1String("Content Blocker"));
+    // READ03: no reader control inside the URL field — the single
+    // toggle lives on the navigation toolbar (navReaderButton).
+    QVERIFY(!bar.findChild<ReaderButton*>());
     QVERIFY(!bar.webView());
 }
 

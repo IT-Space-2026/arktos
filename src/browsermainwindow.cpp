@@ -1431,8 +1431,8 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_stopReloadAction);
 
     // READ02: reader-mode toggle in the nav row — after stop/reload,
-    // before the location bar starts.  Same ReaderButton the location
-    // bar uses for its in-field page action: palette-painted glyph
+    // before the location bar starts.  READ03: the only reader
+    // control — the in-bar duplicate is gone.  Palette-painted glyph
     // (no icon theme ships a reader glyph), hidden until the current
     // page reports itself article-like, checked while the overlay is
     // up.  updateReaderState() re-points it at the current tab along

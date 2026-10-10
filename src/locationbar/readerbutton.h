@@ -25,9 +25,11 @@
 
 class WebView;
 
-// READ01: the location-bar reader-mode icon — visible only while the
-// current page looks article-like (ReaderMode::isAvailable), checked
-// while the reader overlay is up.  Click toggles reader mode.
+// READ02: the navigation-toolbar reader-mode button — the browser's
+// single reader control (READ03 removed the in-bar twin).  Visible
+// only while the current page looks article-like
+// (ReaderMode::isAvailable), checked while the reader overlay is up.
+// Click toggles reader mode.
 class ReaderButton : public QToolButton
 {
     Q_OBJECT
