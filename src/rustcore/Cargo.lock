@@ -97,6 +97,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "getrandom 0.2.15",
+ "libc",
  "lopdf",
  "quick-xml",
  "rusqlite",

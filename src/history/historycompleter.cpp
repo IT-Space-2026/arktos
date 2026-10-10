@@ -24,6 +24,17 @@
 #include "historymanager.h"
 #include "safetext.h"
 
+#ifdef ARORA_RUSTCORE
+#include "rustcorebridge.h"
+
+#include <qfileinfo.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <rustcore.h>
+#endif
+
 #include <qevent.h>
 #include <qfontmetrics.h>
 #include <qheaderview.h>
@@ -107,6 +118,13 @@ void HistoryCompletionModel::setSearchString(QString str)
     m_wordMatcher.setPattern(QLatin1String("\\b") + QRegularExpression::escape(str));
     m_wordMatcher.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
     m_searchString = std::move(str);
+#ifdef ARORA_RUSTCORE
+    // OMNI01: the rustcore source re-queries its ranked rows for the
+    // new term; the legacy filter model needs no such push.
+    if (RustHistorySuggestModel *suggest =
+            qobject_cast<RustHistorySuggestModel*>(sourceModel()))
+        suggest->setTerm(m_searchString);
+#endif
     beginFilterChange();
     endFilterChange();
 }
@@ -169,6 +187,115 @@ bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex
     // sort results in descending frecency-derived score
     return (frecency_r < frecency_l);
 }
+
+#ifdef ARORA_RUSTCORE
+RustHistorySuggestModel::RustHistorySuggestModel(QObject *parent)
+    : QAbstractTableModel(parent)
+{
+    // The store is the authority: a visit landing mid-completion
+    // re-queries exactly like the legacy in-memory model's
+    // rowsInserted did.
+    connect(RustCoreBridge::instance(), &RustCoreBridge::storeChanged,
+            this, [this](const QString &topic) {
+        if (topic == QLatin1String("history"))
+            refresh();
+    });
+}
+
+void RustHistorySuggestModel::setTerm(const QString &term)
+{
+    if (term == m_term)
+        return;
+    m_term = term;
+    refresh();
+}
+
+QString RustHistorySuggestModel::term() const
+{
+    return m_term;
+}
+
+void RustHistorySuggestModel::refresh()
+{
+    beginResetModel();
+    m_rows.clear();
+    // The cap bounds the FFI marshal; the dropdown never shows more.
+    const QByteArray t = m_term.toUtf8();
+    if (char *json = rc_history_suggest(t.constData(), 500)) {
+        const QJsonArray rows =
+            QJsonDocument::fromJson(QByteArray(json)).array();
+        rc_string_free(json);
+        m_rows.reserve(rows.size());
+        for (const QJsonValue &value : rows) {
+            const QJsonObject o = value.toObject();
+            Row row;
+            row.url = o.value(QLatin1String("url")).toString();
+            row.title = o.value(QLatin1String("title")).toString();
+            row.ts = o.value(QLatin1String("ts")).toInteger();
+            row.frecency =
+                o.value(QLatin1String("frecency")).toInteger();
+            m_rows.append(row);
+        }
+    }
+    endResetModel();
+}
+
+int RustHistorySuggestModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : m_rows.count();
+}
+
+int RustHistorySuggestModel::columnCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : 2;
+}
+
+QVariant RustHistorySuggestModel::data(const QModelIndex &index,
+                                       int role) const
+{
+    if (index.row() < 0 || index.row() >= m_rows.count())
+        return QVariant();
+
+    const Row &row = m_rows.at(index.row());
+    // HistoryEntry::userTitle() parity — a missing title falls back
+    // to the url path's filename, then the url itself.
+    const QString userTitle = [&row]() {
+        if (!row.title.isEmpty())
+            return row.title;
+        const QString page =
+            QFileInfo(QUrl(row.url).path()).fileName();
+        return page.isEmpty() ? row.url : page;
+    }();
+
+    switch (role) {
+    case HistoryModel::DateTimeRole:
+        return QDateTime::fromMSecsSinceEpoch(row.ts);
+    case HistoryModel::DateRole:
+        return QDateTime::fromMSecsSinceEpoch(row.ts).date();
+    case HistoryModel::UrlRole:
+        return QUrl(row.url);
+    case HistoryModel::UrlStringRole:
+    case Qt::ToolTipRole:
+        return row.url;
+    case HistoryModel::TitleRole:
+        return userTitle;
+    case HistoryFilterModel::FrecencyRole:
+        // The raw sum — the completion proxy's lessThan applies the
+        // word-boundary doubling itself, so the derived score matches
+        // the store's ordering key.
+        return row.frecency;
+    case Qt::DisplayRole:
+    case Qt::EditRole:
+        return index.column() == 0 ? QVariant(row.url)
+                                   : QVariant(userTitle);
+    case Qt::DecorationRole:
+        if (index.column() == 0)
+            return HistoryManager::instance()->icon(QUrl(row.url));
+        return QVariant();
+    }
+    return QVariant();
+}
+#endif // ARORA_RUSTCORE
 
 OmniboxCompletionModel::OmniboxCompletionModel(
         HistoryCompletionModel *historyCompletionModel, QObject *parent)

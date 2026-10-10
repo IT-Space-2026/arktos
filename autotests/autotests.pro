@@ -30,6 +30,7 @@ SUBDIRS  = \
     navigationpolicy \
     networkaccessmanager \
     networkcookiejar \
+    omnibox \
     opensearchengine \
     opensearchmanager \
     opensearchreader \

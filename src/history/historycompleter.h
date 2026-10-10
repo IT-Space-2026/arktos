@@ -84,6 +84,44 @@ private:
     bool m_isValid;
 };
 
+#ifdef ARORA_RUSTCORE
+// OMNI01: the rustcore history store serves the completer's rows —
+// rc_history_suggest() returns them already filtered on the term and
+// ranked by the summed frecency + word-boundary score, so this is a
+// flat model behind the roles HistoryCompletionModel's filter/sort
+// pipeline consumes (it re-applies the same predicate/comparator, so
+// behavior is identical and the no-rust path is untouched).  The store
+// is the authority: a visit landing mid-completion refreshes through
+// the RustCoreBridge "history" change topic.
+class RustHistorySuggestModel : public QAbstractTableModel
+{
+    Q_OBJECT
+
+public:
+    explicit RustHistorySuggestModel(QObject *parent = nullptr);
+
+    void setTerm(const QString &term);
+    QString term() const;
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index,
+                  int role = Qt::DisplayRole) const override;
+
+private:
+    void refresh();
+
+    struct Row {
+        QString url;
+        QString title;
+        qint64 ts;
+        qint64 frecency;
+    };
+    QString m_term;
+    QList<Row> m_rows;
+};
+#endif // ARORA_RUSTCORE
+
 // SRCH01: prepends live search-engine suggestions to the history
 // completion so the location bar acts like a modern omnibox.  The
 // model is flat: suggestion rows occupy the top, history rows are

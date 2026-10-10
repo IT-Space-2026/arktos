@@ -260,6 +260,15 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    // OMNI01: the routing decision is split so the autotest can
+    // corpus-diff the implementations — under CONFIG+=rustcore
+    // guessUrlFromString() resolves the rustcore verdict first and
+    // only falls back to the in-tree heuristic on FFI trouble;
+    // no-rust builds always take the reference path.
+    static QUrl guessUrlFromStringCpp(const QString &url, bool privateContext);
+#ifdef ARORA_RUSTCORE
+    static QUrl guessUrlFromStringRust(const QString &url, bool privateContext);
+#endif
 
 public slots:
     void loadString(const QString &string, OpenUrlIn tab = CurrentTab);

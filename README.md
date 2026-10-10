@@ -103,7 +103,14 @@ browsing profile:
   per-tab records carry url, container binding, tab group and an
   engine tag beside an opaque engine-state blob, keeping the format
   engine-neutral (a pre-Rust QSettings session still restores once
-  through the legacy reader).
+  through the legacy reader). With the flag set the crate also owns
+  the omnibox: the location bar's url-or-search routing decision
+  (rc_classify_input — a ported QUrl::fromUserInput heuristic plus
+  keyword/search-fallback handling, verdict diffed against the old
+  C++ routing in autotests/omnibox) and the frecency-ranked history
+  suggestions the completion dropdown shows (rc_history_suggest
+  queries history.db directly so only the visible rows cross the
+  FFI).
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
