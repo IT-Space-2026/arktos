@@ -71,6 +71,7 @@
 #include "browsermainwindow.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
+#include "engineinterface.h"
 #include "history.h"
 #include "historycompleter.h"
 #include "historymanager.h"
@@ -84,6 +85,7 @@
 #include "tabbar.h"
 #include "toolbarsearch.h"
 #include "webactionmapper.h"
+#include "webenginebackend.h"
 #include "webpage.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -299,9 +301,9 @@ void TabWidget::currentChanged(int index)
     if (oldWebView) {
         disconnect(oldWebView, &WebView::statusBarMessage,
                    this, &TabWidget::showStatusBarMessage);
-        disconnect(oldWebView->page(), &QWebEnginePage::linkHovered,
+        disconnect(oldWebView->enginePage(), &Engine::Page::linkHovered,
                    this, &TabWidget::linkHovered);
-        disconnect(oldWebView, &QWebEngineView::loadProgress,
+        disconnect(oldWebView->enginePage(), &Engine::Page::loadProgress,
                    this, &TabWidget::loadProgress);
     }
     // SLEEP01: the outgoing tab's idle clock starts now.
@@ -327,9 +329,9 @@ void TabWidget::currentChanged(int index)
 
     connect(webView, &WebView::statusBarMessage,
             this, &TabWidget::showStatusBarMessage);
-    connect(webView->page(), &QWebEnginePage::linkHovered,
+    connect(webView->enginePage(), &Engine::Page::linkHovered,
             this, &TabWidget::linkHovered);
-    connect(webView, &QWebEngineView::loadProgress,
+    connect(webView->enginePage(), &Engine::Page::loadProgress,
             this, &TabWidget::loadProgress);
 
     for (int i = 0; i < m_actions.count(); ++i) {
@@ -603,23 +605,24 @@ WebView *TabWidget::makeNewTabOnProfile(QWebEngineProfile *profile, bool makeCur
 
     WebView *webView = new WebView(profile);
     locationBar->setWebView(webView);
-    connect(webView, &QWebEngineView::loadStarted,
+    Engine::Page *enginePage = webView->enginePage();
+    connect(enginePage, &Engine::Page::loadStarted,
             this, &TabWidget::webViewLoadStarted);
-    connect(webView, &QWebEngineView::loadProgress,
+    connect(enginePage, &Engine::Page::loadProgress,
             this, &TabWidget::webViewLoadProgress);
-    connect(webView, &QWebEngineView::loadFinished,
+    connect(enginePage, &Engine::Page::loadFinished,
             this, &TabWidget::webViewLoadFinished);
-    connect(webView, &QWebEngineView::iconChanged,
+    connect(enginePage, &Engine::Page::iconChanged,
             this, [this]() { webViewIconChanged(); });
-    connect(webView, &QWebEngineView::titleChanged,
+    connect(enginePage, &Engine::Page::titleChanged,
             this, &TabWidget::webViewTitleChanged);
-    connect(webView, &QWebEngineView::urlChanged,
+    connect(enginePage, &Engine::Page::urlChanged,
             this, &TabWidget::webViewUrlChanged);
     connect(webView, &WebView::search,
             this, [this](const QUrl &url, TabWidget::OpenUrlIn tab) { loadUrl(url, tab); });
-    connect(webView->page(), &QWebEnginePage::windowCloseRequested,
+    connect(enginePage, &Engine::Page::windowCloseRequested,
             this, &TabWidget::windowCloseRequested);
-    connect(webView, &QWebEngineView::printRequested,
+    connect(enginePage, &Engine::Page::printRequested,
             this, [this, webView]() { emit printRequested(webView->page()); });
     // Qt WebEngine does not surface WebKit's window-feature requests
     // (geometryChangeRequested / *VisibilityChangeRequested); window.open
@@ -2101,9 +2104,24 @@ QLabel *TabWidget::animationLabel(int index, bool addMovie)
     return loadingAnimation;
 }
 
+// The tab a page signal arrived from.  Senders are either the WebView
+// itself or — through the ENG04 adapter — the page's Engine::Page
+// wrapper; forPage() is the engine's reverse lookup (the same path
+// windowCloseRequested uses below).
+static WebView *webViewForSender(QObject *sender)
+{
+    if (WebView *view = qobject_cast<WebView*>(sender))
+        return view;
+    if (WebEnginePageAdapter *adapter =
+            qobject_cast<WebEnginePageAdapter*>(sender))
+        return qobject_cast<WebView*>(
+                QWebEngineView::forPage(adapter->webEnginePage()));
+    return nullptr;
+}
+
 void TabWidget::webViewLoadStarted()
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
     // SLEEP01: a navigation both counts as activity and clears the
     // unsaved-form latch — the page that held the input is gone.
@@ -2125,7 +2143,7 @@ void TabWidget::webViewLoadStarted()
 
 void TabWidget::webViewLoadProgress(int progress)
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
 
     if (index != currentIndex()
@@ -2137,7 +2155,7 @@ void TabWidget::webViewLoadProgress(int progress)
 
 void TabWidget::webViewLoadFinished(bool ok)
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
 
     // SLEEP01: fresh activity + the scroll restore a waking tab asked
@@ -2198,7 +2216,7 @@ static QPixmap privateBadgedPixmap(const QIcon &icon)
 
 void TabWidget::webViewIconChanged()
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
     if (-1 != index) {
 #if !defined(Q_OS_MACOS)
@@ -2216,7 +2234,7 @@ void TabWidget::webViewIconChanged()
 
 void TabWidget::webViewTitleChanged(const QString &title)
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
     markTabActivity(webView);
     if (-1 == index)
@@ -2248,7 +2266,7 @@ void TabWidget::webViewTitleChanged(const QString &title)
 
 void TabWidget::webViewUrlChanged(const QUrl &url)
 {
-    WebView *webView = qobject_cast<WebView*>(sender());
+    WebView *webView = webViewForSender(sender());
     int index = webViewIndex(webView);
     markTabActivity(webView);
     if (-1 == index)

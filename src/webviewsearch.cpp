@@ -27,9 +27,6 @@
 #include <qtimeline.h>
 #include <qtoolbutton.h>
 
-#include <qwebenginefindtextresult.h>
-#include <qwebengineview.h>
-
 #include <qdebug.h>
 
 WebViewSearch::WebViewSearch(QWebEngineView *webView, QWidget *parent)
@@ -41,18 +38,39 @@ WebViewSearch::WebViewSearch(QWebEngineView *webView, QWidget *parent)
             this, &WebViewSearch::highlightAll);
     connect(ui.searchLineEdit, &QLineEdit::textEdited,
             this, &WebViewSearch::highlightAll);
+    // findText answers asynchronously from the render process; the
+    // result carries the total match count and the active ordinal
+    // (verified 1-based on Qt 6.12 — it displays as-is).  One page
+    // feeds exactly one search bar, so the broadcast result slot can
+    // own the label outright.
+    if (WebView *view = this->webView()) {
+        connect(view->enginePage(), &Engine::Page::findTextFinished,
+                this, [this](const Engine::FindResult &result) {
+            // Clearing finds (empty needle) leave the label blank —
+            // the counter only narrates a real query.
+            if (ui.searchLineEdit->text().isEmpty())
+                return;
+            if (result.numberOfMatches > 0) {
+                ui.searchInfo->setText(WebViewSearch::tr("%1/%2")
+                    .arg(result.activeMatch)
+                    .arg(result.numberOfMatches));
+            } else {
+                ui.searchInfo->setText(WebViewSearch::tr("Not Found"));
+            }
+        });
+    }
 }
 
 void WebViewSearch::findNext()
 {
     // Qt WebEngine's find always wraps around the document; the
     // WebKit FindWrapsAroundDocument flag is gone.
-    find(QWebEnginePage::FindFlags());
+    find(Engine::FindFlags());
 }
 
 void WebViewSearch::findPrevious()
 {
-    find(QWebEnginePage::FindBackward);
+    find(Engine::FindBackward);
 }
 
 void WebViewSearch::highlightAll()
@@ -65,14 +83,14 @@ void WebViewSearch::highlightAll()
     // and clearing them (findText with an empty string); the next
     // findNext()/findPrevious() re-highlights either way.
     if (ui.highlightAllButton->isChecked())
-        find(QWebEnginePage::FindFlags());
+        find(Engine::FindFlags());
     else {
-        webView()->findText(QString());
+        webView()->enginePage()->findText(QString(), Engine::FindFlags());
         ui.searchInfo->setText(QString());
     }
 }
 
-void WebViewSearch::find(QWebEnginePage::FindFlags flags)
+void WebViewSearch::find(Engine::FindFlags flags)
 {
     QString searchString = ui.searchLineEdit->text();
     if (!webView())
@@ -80,31 +98,16 @@ void WebViewSearch::find(QWebEnginePage::FindFlags flags)
     // An emptied field clears both the renderer's highlights and the
     // counter — leaving them stale would claim matches that are gone.
     if (searchString.isEmpty()) {
-        webView()->findText(QString());
+        webView()->enginePage()->findText(QString(), Engine::FindFlags());
         ui.searchInfo->setText(QString());
         return;
     }
-    // findText answers asynchronously from the render process; the
-    // result carries the total match count and the active ordinal
-    // (verified 1-based on Qt 6.12 — it displays as-is).
-    QPointer<WebViewSearch> guard(this);
-    webView()->findText(searchString, flags,
-                        [guard](const QWebEngineFindTextResult &result) {
-        if (!guard)
-            return;
-        if (result.numberOfMatches() > 0) {
-            guard->ui.searchInfo->setText(WebViewSearch::tr("%1/%2")
-                .arg(result.activeMatch())
-                .arg(result.numberOfMatches()));
-        } else {
-            guard->ui.searchInfo->setText(WebViewSearch::tr("Not Found"));
-        }
-    });
+    webView()->enginePage()->findText(searchString, flags);
 }
 
-QWebEngineView *WebViewSearch::webView() const
+WebView *WebViewSearch::webView() const
 {
-    return qobject_cast<QWebEngineView*>(searchObject());
+    return qobject_cast<WebView*>(searchObject());
 }
 
 WebViewWithSearch::WebViewWithSearch(WebView *webView, QWidget *parent)

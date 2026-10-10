@@ -75,6 +75,7 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torsocks5.h"
+#include "webenginebackend.h"
 #include "webpage.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -3342,6 +3343,7 @@ int main(int argc, char **argv)
         "sandbox-smoke", "write-sandbox-launcher",
         "bidi-smoke", "pdf-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
+        "engine-list",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -3377,6 +3379,27 @@ int main(int argc, char **argv)
     }
     if (args.contains(QLatin1String("--sandbox-smoke")))
         return sandboxSmoke();
+
+    // ENG04: print the active engine backend + its capability surface.
+    // Pure diagnostic — no profile, no window, exits 0.
+    if (args.contains(QLatin1String("--engine-list"))) {
+        Engine::Backend *backend = WebEngineBackend::instance();
+        const Engine::Capabilities caps = backend->capabilities();
+        qInfo() << "engine:" << backend->id()
+                << "-" << backend->displayName();
+        qInfo() << "  requestInterception:" << caps.requestInterception
+                << "scriptInjection:" << caps.scriptInjection
+                << "scriptEvaluation:" << caps.scriptEvaluation
+                << "cookieFilter:" << caps.cookieFilter
+                << "perPageSettings:" << caps.perPageSettings
+                << "lifecycleDiscard:" << caps.lifecycleDiscard
+                << "contextMenuInfo:" << caps.contextMenuInfo
+                << "certificateOverride:" << caps.certificateOverride
+                << "devTools:" << caps.devTools
+                << "extensions:" << caps.extensions
+                << "downloads:" << caps.downloads;
+        return 0;
+    }
 
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
@@ -6961,8 +6984,11 @@ int main(int argc, char **argv)
             searchBar->findNext();
             awaitResult(base1, [=]() {
                 settle([=]() {
+                // A hit lands the "1/2" counter on the info label —
+                // the MIG12 expectation here was inverted (asserted
+                // empty) and the smoke never reached stage 2.
                 const bool pass = *lastMatches == 2 && *lastActive >= 0
-                    && searchInfo->text().isEmpty();
+                    && !searchInfo->text().isEmpty();
                 qInfo() << "find-smoke: next" << (pass ? "PASS" : "FAIL")
                         << "matches:" << *lastMatches
                         << "active:" << *lastActive;

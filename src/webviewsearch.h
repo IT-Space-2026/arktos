@@ -22,17 +22,21 @@
 
 #include "searchbar.h"
 
-#include <qwebenginepage.h>
+#include "engineinterface.h"
 
 QT_BEGIN_NAMESPACE
 class QWebEngineView;
 QT_END_NAMESPACE
+class WebView;
 
 class WebViewSearch : public SearchBar
 {
     Q_OBJECT
 
 public:
+    // Takes the engine view type rather than WebView so the bar still
+    // hosts on a bare QWebEngineView — the find paths then no-op
+    // (enginePage() only exists on the app's WebView).
     WebViewSearch(QWebEngineView *webView, QWidget *parent = nullptr);
 
 public slots:
@@ -41,8 +45,8 @@ public slots:
     void highlightAll();
 
 private:
-    void find(QWebEnginePage::FindFlags flags);
-    QWebEngineView *webView() const;
+    void find(Engine::FindFlags flags);
+    WebView *webView() const;
 };
 
 #include "webview.h"

@@ -19,6 +19,7 @@
 #include "statusbarwidgets.h"
 
 #include "downloadmanager.h"
+#include "engineinterface.h"
 #include "webview.h"
 #include "utils/aroraicon.h"
 
@@ -30,8 +31,6 @@
 #include <qprogressbar.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
-#include <qwebenginepage.h>
-#include <qwebengineview.h>
 
 LoadingIndicator::LoadingIndicator(QWidget *parent)
     : QWidget(parent)
@@ -76,7 +75,7 @@ void LoadingIndicator::setWebView(WebView *view)
     if (m_view == view)
         return;
     if (m_view)
-        m_view->disconnect(this);
+        m_view->enginePage()->disconnect(this);
     m_view = view;
     m_loading = false;
     m_tick->stop();
@@ -84,11 +83,11 @@ void LoadingIndicator::setWebView(WebView *view)
     setVisible(false);
     if (!m_view)
         return;
-    connect(m_view, &QWebEngineView::loadStarted,
+    connect(m_view->enginePage(), &Engine::Page::loadStarted,
             this, &LoadingIndicator::pageLoadStarted);
-    connect(m_view, &QWebEngineView::loadProgress,
+    connect(m_view->enginePage(), &Engine::Page::loadProgress,
             this, &LoadingIndicator::pageLoadProgress);
-    connect(m_view, &QWebEngineView::loadFinished,
+    connect(m_view->enginePage(), &Engine::Page::loadFinished,
             this, &LoadingIndicator::pageLoadFinished);
     // Attaching mid-load (tab switch during a load) — the elapsed
     // timer can only start from here, so that page under-reports.
@@ -264,12 +263,12 @@ void MemIndicator::setWebView(WebView *view)
     if (m_view == view)
         return;
     if (m_view)
-        m_view->disconnect(this);
+        m_view->enginePage()->disconnect(this);
     m_view = view;
-    if (m_view && m_view->page()) {
+    if (m_view) {
         // Renderer swaps/crashes re-issue the page's pid — refresh
         // immediately instead of waiting out the poll interval.
-        connect(m_view->page(), &QWebEnginePage::renderProcessPidChanged,
+        connect(m_view->enginePage(), &Engine::Page::renderProcessIdChanged,
                 this, [this](qint64) { refresh(); });
     }
     refresh();
@@ -278,8 +277,8 @@ void MemIndicator::setWebView(WebView *view)
 void MemIndicator::refresh()
 {
     qint64 pid = -1;
-    if (m_view && m_view->page())
-        pid = m_view->page()->renderProcessPid();
+    if (m_view)
+        pid = m_view->enginePage()->renderProcessId();
     const qint64 kb = residentMemoryKb(pid);
     m_label->setText(kb > 0
                      ? tr("MEM %1").arg(formatRss(kb))
@@ -436,7 +435,7 @@ bool NetIndicator::engineIoTotals(qint64 *readBytes, qint64 *writeBytes)
         QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &entry : procs) {
         bool isPid = false;
-        const qint64 pid = entry.toLongLong(&isPid);
+        entry.toLongLong(&isPid);
         if (!isPid)
             continue;
         QFile statFile(QLatin1String("/proc/") + entry

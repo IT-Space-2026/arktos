@@ -362,6 +362,13 @@ signals:
     void urlChanged(const QUrl &url);
     void titleChanged(const QString &title);
     void iconChanged(const QIcon &icon);
+    // Per-page chrome signals the sketch missed — every engine can
+    // emit them (ENG04: TabWidget's tab-label plumbing, SBAR01's
+    // memory widget, and the print/close paths consume these).
+    void linkHovered(const QString &url);
+    void windowCloseRequested();
+    void printRequested();
+    void renderProcessIdChanged(qint64 pid);
     void findTextFinished(const Engine::FindResult &result);
     void contextMenuRequested(const Engine::ContextMenuInfo &info);
     void certificateError(const Engine::CertificateErrorInfo &error,
@@ -479,6 +486,11 @@ public:
 };
 
 } // namespace Engine
+
+// Signal payloads need metatypes for queued delivery + QSignalSpy.
+Q_DECLARE_METATYPE(Engine::FindResult)
+Q_DECLARE_METATYPE(Engine::ContextMenuInfo)
+Q_DECLARE_METATYPE(Engine::CertificateErrorInfo)
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(Engine::StorageAreas)
 Q_DECLARE_OPERATORS_FOR_FLAGS(Engine::FindFlags)
