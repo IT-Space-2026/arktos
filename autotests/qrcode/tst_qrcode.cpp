@@ -26,6 +26,12 @@
 #include <qrcodedialog.h>
 #include <qrcodegen.hpp>
 
+#ifdef ARORA_RUSTCORE
+#include <qendian.h>
+
+#include <rustcore.h>
+#endif
+
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -35,6 +41,7 @@ class tst_QrCode : public QObject
 
 private slots:
     void encodeMatchesReferenceMatrix();
+    void rustMatchesCppCorpus();
     void imageRendersModules();
     void imageHonorsMinSize();
     void deterministic();
@@ -91,6 +98,68 @@ void tst_QrCode::encodeMatchesReferenceMatrix()
         for (int x = 0; x < qr.getSize(); ++x)
             QCOMPARE(qr.getModule(x, y),
                      kReferenceMatrix[y][x] == '1');
+}
+
+// QRC01: rc_qr_encode must reproduce the vendored encoder's matrix
+// bit-for-bit — qrcodegen-rs is the same code lineage, so segmenting,
+// ECC boosting and mask choice all agree.  The corpus spans the
+// mode/size space: numeric, alphanumeric, byte-mode UTF-8, a WIFI:
+// payload, near-capacity and over-capacity inputs at every ECC level.
+void tst_QrCode::rustMatchesCppCorpus()
+{
+#ifdef ARORA_RUSTCORE
+    const QStringList corpus = {
+        QString(),
+        QStringLiteral("x"),
+        QString::fromLatin1(kReferenceText),
+        QStringLiteral("01234567890123456789012345"),
+        QStringLiteral("HELLO WORLD $%*+-./:"),
+        QStringLiteral("WIFI:T:WPA;S:HomeNet;P:s3cret;;"),
+        QStringLiteral("https://arora.example/x?a=1&b=two%20words#frag"),
+        QString::fromUtf8("Grüße, 世界, 𝕏"),
+        QString(2900, QLatin1Char('a')),
+        QString(4000, QLatin1Char('z')),
+    };
+    for (const QString &text : corpus) {
+        const QByteArray utf8 = text.toUtf8();
+        for (int e = 0; e < 4; ++e) {
+            RcBuffer buf = { nullptr, 0 };
+            const RcStatus st =
+                rc_qr_encode(utf8.constData(), e, &buf);
+
+            qrcodegen::QrCode cpp = qrcodegen::QrCode::encodeText(
+                "", qrcodegen::QrCode::Ecc::LOW);
+            try {
+                cpp = qrcodegen::QrCode::encodeText(
+                    utf8.constData(), qrcodegen::QrCode::Ecc(e));
+            } catch (const std::length_error &) {
+                // Over-capacity: the Rust side must refuse the same
+                // payloads the C++ encoder throws on.
+                QVERIFY2(st != RC_OK,
+                         qPrintable(QStringLiteral(
+                             "rust accepted an over-capacity payload "
+                             "(ecc %1)").arg(e)));
+                if (buf.data)
+                    rc_buffer_free(buf);
+                continue;
+            }
+
+            QCOMPARE(st, RC_OK);
+            QVERIFY(buf.data);
+            QVERIFY(buf.len >= 4);
+            const quint32 n = qFromLittleEndian<quint32>(buf.data);
+            QCOMPARE(int(n), cpp.getSize());
+            QCOMPARE(buf.len, size_t(4 + n * n));
+            for (int y = 0; y < int(n); ++y)
+                for (int x = 0; x < int(n); ++x)
+                    QCOMPARE(bool(buf.data[4 + y * n + x]),
+                             cpp.getModule(x, y));
+            rc_buffer_free(buf);
+        }
+    }
+#else
+    QSKIP("rustcore build only");
+#endif
 }
 
 void tst_QrCode::imageRendersModules()

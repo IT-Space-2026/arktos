@@ -52,3 +52,8 @@ sha2 = "=0.10.9"
 miniz_oxide = "=0.8.9"
 dom_smoothie = "=0.18.2"
 dom_query = "=0.28.0"
+# QR encoding (QRC01): Nayuki's qrcodegen-rs — the same code lineage
+# (and MIT license) as the vendored C++ qrcodegen.cpp it replaces, so
+# the module matrix is bit-identical.  Exact-pinned like the rest of
+# the reviewed tree.
+qrcodegen = "=1.8.0"

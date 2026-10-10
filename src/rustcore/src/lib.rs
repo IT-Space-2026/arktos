@@ -63,6 +63,10 @@
 //!     the ported subsequence fuzzy scorer plus MRU recency ranking;
 //!     the Qt shell keeps the item registry and marshals {match, id}
 //!     rows in, ordered indices back.
+//!   * qrcode (QRC01): QR symbol encoding for "Show QR for this
+//!     page" — Nayuki's qrcodegen-rs, the same code lineage as the
+//!     vendored C++ encoder it replaces, so the module matrix is
+//!     bit-identical; the Qt side keeps painting it.
 //!
 mod autofill;
 mod bidi;
@@ -79,6 +83,7 @@ mod palette;
 mod parsers;
 mod pdfsanitize;
 mod policy;
+mod qrcode;
 mod readability;
 mod session;
 mod sitedecisions;
@@ -1898,6 +1903,36 @@ pub unsafe extern "C" fn rc_pal_match(
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- QR encoding (QRC01) ---------------------------------------------
+//
+// Nayuki's qrcodegen-rs behind the ABI — same code lineage as the
+// vendored C++ encoder, so the module matrix is bit-identical.
+
+/// Encodes `text` (UTF-8) into a QR symbol at `ecc_level`
+/// (0=Low 1=Medium 2=Quartile 3=High — the qrcodegen Ecc ordinals).
+/// `out` receives u32le size followed by size*size module bytes,
+/// row-major, 1=dark (no quiet zone).  RC_INVALID_ARGUMENT on a bad
+/// pointer, out-of-range level or over-capacity payload.
+///
+/// # Safety
+/// `text` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_qr_encode(
+    text: *const c_char,
+    ecc_level: i32,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let t = unsafe { util::cstr(text) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad text pointer".into(),
+        })?;
+        let v = qrcode::encode(t, ecc_level)?;
+        buffer_out(out, v);
+        Ok(())
+    })
 }
 
 // ---- tlsprobe (SEC22) -----------------------------------------------
