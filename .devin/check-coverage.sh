@@ -15,7 +15,7 @@
 #
 # Env:
 #   ARORA_COVERAGE_MIN=N   exit non-zero when src/ line coverage < N
-#                          (default 80 — the COV04 gate; set 0 for
+#                          (default 85 — the COV05 gate; set 0 for
 #                          report-only)
 #   ARORA_COVERAGE_JOBS=N  parallel make jobs (default: nproc, max 4)
 #   ARORA_COVERAGE_KEEP=1  keep the instrumented build tree for
@@ -28,7 +28,7 @@ REPORT_MD="$ROOT/.devin/COVERAGE.md"
 
 JOBS=${ARORA_COVERAGE_JOBS:-$(nproc 2>/dev/null || echo 2)}
 [ "$JOBS" -gt 4 ] && JOBS=4
-MIN=${ARORA_COVERAGE_MIN:-80}
+MIN=${ARORA_COVERAGE_MIN:-85}
 KEEP=${ARORA_COVERAGE_KEEP:-0}
 
 die() { echo "check-coverage: $*" >&2; exit 1; }
@@ -68,6 +68,13 @@ mkdir -p "$PROFDIR"
 # first writer.
 export LLVM_PROFILE_FILE="$PROFDIR/%m%c.profraw"
 
+# Same headless contract `make check` runs under: qt-env.sh already
+# exports QT_QPA_PLATFORM=offscreen, but WebEngine's GPU process still
+# CHECKs on the offscreen Vulkan path without --disable-gpu (the known
+# Trace/breakpoint trap in the WebEngine-backed suites — kills the
+# binary mid-suite and silently drops the rest of its coverage).
+export QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu${QTWEBENGINE_CHROMIUM_FLAGS:+ $QTWEBENGINE_CHROMIUM_FLAGS}"
+
 # Isolate HOME: the tests and smokes read/write the real app profile
 # dirs (~/.local/share/Arora, ~/.qttest) — a scratch HOME keeps runs
 # deterministic and leaves the user's data untouched.
@@ -81,15 +88,24 @@ TESTS_RC=$?
 [ "$TESTS_RC" -eq 0 ] || echo "check-coverage: WARNING: autotests exited $TESTS_RC"
 
 # --download-smoke takes a URL operand (a file:// URL works headless);
-# run it separately, the rest take no argument.
+# run it separately, the rest take no argument.  The live-site
+# measurement flags (--browseraudit-smoke, --anon-smoke, --xsleak-smoke)
+# stay excluded by design — see their comments in src/main.cpp.
+# --restore-smoke must run after --session-smoke: it restores the
+# session the save-phase smoke writes into the shared scratch HOME.
 SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --settings-smoke --autofill-smoke --find-smoke --source-smoke
---adblock-smoke --adblock-list-smoke --extension-smoke
+--adblock-smoke --adblock-list-smoke --adblock-rust-smoke --extension-smoke
 --extension-otr-smoke --extension-update-smoke --ua-smoke
 --container-smoke --palette-smoke --pip-smoke --tabstrip-smoke
---icons-smoke --fingerprint-smoke --ping-smoke --httpsonly-smoke --telemetry-smoke
---tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke"
+--icons-smoke --fingerprint-smoke --fingerprint-child-smoke --ping-smoke
+--httpsonly-smoke --telemetry-smoke
+--tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke
+--doh-smoke --seclvl-smoke --privacy-smoke --referer-smoke
+--resourceblock-smoke --reader-smoke --sorry-smoke --perf-smoke
+--sleep-smoke --session-smoke --restore-smoke --tor-smoke
+--tor-window-smoke"
 for flag in $SMOKE_FLAGS; do
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"
@@ -163,6 +179,15 @@ EOF
 
 cp "$BUILD/report-src.txt" "$BUILD/report-rel.txt"
 
+# Preserve the COV05 rustcov block: this script rewrites the whole file,
+# so stash the marked section and re-attach it below the C++ report.
+RUSTCOV_BLOCK="$BUILD/rustcov-block.txt"
+if grep -q 'rustcov:start' "$REPORT_MD" 2>/dev/null; then
+    sed -n '/rustcov:start/,/rustcov:end/p' "$REPORT_MD" > "$RUSTCOV_BLOCK"
+else
+    : > "$RUSTCOV_BLOCK"
+fi
+
 {
     echo "# Coverage baseline (COV01)"
     echo
@@ -192,6 +217,10 @@ cp "$BUILD/report-src.txt" "$BUILD/report-rel.txt"
     echo '```'
     cat "$BUILD/report-rel.txt"
     echo '```'
+    if [ -s "$RUSTCOV_BLOCK" ]; then
+        echo
+        cat "$RUSTCOV_BLOCK"
+    fi
 } > "$REPORT_MD"
 
 echo "check-coverage: src/ line coverage = ${LINES_PCT}% (gate ${MIN}%)"

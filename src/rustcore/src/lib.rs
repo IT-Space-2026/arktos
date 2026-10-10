@@ -100,6 +100,10 @@ mod urlstrip;
 mod useragent;
 mod util;
 
+// COV05: C-ABI surface coverage — drives every rc_* entry point.
+#[cfg(test)]
+mod ffi_surface;
+
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
