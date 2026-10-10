@@ -36,6 +36,13 @@
 #                             cap; -j2 is fine on unconstrained runs)
 #   ARORA_STATIC_CLANG_JOBS=N parallel jobs for clang --analyze
 #                             (default: 3 — ~400MB peak per TU)
+#   ARORA_STATIC_TARGETS="goals"  pass-1 make goals instead of the
+#                             whole tree (e.g. "sub-src sub-tools" —
+#                             autotest dirs recompile every src object
+#                             ~44x, which dominates pass-1 cost)
+#   ARORA_STATIC_DIRS="dirs"  pass-2 Makefile search roots relative to
+#                             the build tree (e.g. "src tools") —
+#                             analyses then cover only those dirs' TUs
 #   ARORA_STATIC_KEEP=1       keep a fresh analysis build tree
 #
 # Exit status: 0 unless a build/analysis pass failed.  This is a
@@ -51,6 +58,8 @@ GCC_JOBS=${ARORA_STATIC_GCC_JOBS:-1}
 CLANG_JOBS=${ARORA_STATIC_CLANG_JOBS:-3}
 KEEP=${ARORA_STATIC_KEEP:-0}
 RESUME=${ARORA_STATIC_BUILD:-}
+TARGETS=${ARORA_STATIC_TARGETS:-}
+DIRS=${ARORA_STATIC_DIRS:-}
 
 die() { echo "check-static: $*" >&2; exit 1; }
 
@@ -87,9 +96,9 @@ QMAKE=$(command -v qmake6 || command -v qmake) || die "qmake not found"
 # --- pass 1: gcc -fanalyzer full build --------------------------------
 # On a resumed tree objects already exist, so only the tail recompiles;
 # the log is appended so earlier warnings are not lost.
-echo "check-static: pass 1/2 — make -j$GCC_JOBS (gcc -fanalyzer)"
+echo "check-static: pass 1/2 — make -j$GCC_JOBS $TARGETS (gcc -fanalyzer)"
 GCC_LOG="$BUILD/gcc-analyzer.log"
-if ! make -j"$GCC_JOBS" >>"$GCC_LOG" 2>&1; then
+if ! make -j"$GCC_JOBS" $TARGETS >>"$GCC_LOG" 2>&1; then
     tail -50 "$GCC_LOG" >&2
     die "analyzer build failed (see $GCC_LOG)"
 fi
@@ -108,7 +117,14 @@ rm -rf "$CLANG_LOGDIR"
 mkdir -p "$CLANG_LOGDIR"
 CMDS="$BUILD/clang-cmds.txt"
 : > "$CMDS"
-find "$BUILD" -name Makefile -type f | while read -r mf; do
+if [ -n "$DIRS" ]; then
+    MFROOTS=""
+    for d in $DIRS; do MFROOTS="$MFROOTS $BUILD/$d"; done
+else
+    MFROOTS="$BUILD"
+fi
+# shellcheck disable=SC2086
+find $MFROOTS -name Makefile -type f | while read -r mf; do
     d=$(dirname "$mf")
     make -Bn MAKE=true -C "$d" 2>/dev/null \
         | grep '^g++ ' | grep ' -c ' \
