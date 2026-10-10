@@ -54,6 +54,11 @@
 //!     structure checks, update-payload SHA-256 vs the declared hash,
 //!     and the manifest.json schema+permission parse — all before Qt
 //!     sees a byte of the package.
+//!   * opensearch (OSE01): the canonical search-engine registry —
+//!     engine records, keyword bindings, display order and the
+//!     removed-bundled blocklist in <data dir>/searchengines.json,
+//!     plus the byte-identical {searchTerms} URL expansion the old
+//!     Qt buildUrl produced.
 //!
 mod autofill;
 mod blocklist;
@@ -64,6 +69,7 @@ mod extverify;
 mod history;
 mod notify;
 mod omnibox;
+mod opensearch;
 mod parsers;
 mod session;
 mod sitedecisions;
@@ -1943,6 +1949,402 @@ pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
     status_of(sitedecisions::reset)
+}
+
+// ---- OSE01: OpenSearch engine registry ----
+//
+// The canonical search-engine store — searchengines.json under the
+// data dir holds engine records (the rc_opensearch_parse field map
+// plus "keywords"), the display order and the removed-bundled
+// blocklist.  The vendored bundled descriptors seed through
+// rc_ose_seed_bundled / rc_ose_restore_bundled; the Qt manager
+// hydrates OpenSearchEngine objects from these records and every
+// mutation writes through.  Mutations emit the "searchengines"
+// change topic.
+
+/// 1 when the store file exists — the legacy-import gate.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_store_present() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        i32::from(opensearch::store_present())
+    }))
+    .unwrap_or(0)
+}
+
+/// Engine names in display order — JSON array; rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_list() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match opensearch::list_json() {
+        Ok(json) => util::to_c_string(json),
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// One engine record as JSON — NULL when absent; rc_string_free().
+///
+/// # Safety
+/// `name` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_get(name: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(name) = (unsafe { util::cstr(name) }) else {
+            error::set_error("bad name pointer");
+            return ptr::null_mut();
+        };
+        match opensearch::get_json(name) {
+            Ok(Some(json)) => util::to_c_string(json),
+            Ok(None) => ptr::null_mut(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Upserts an engine record (JSON — name + search template required;
+/// "keywords" replaces the bindings when present, preserved when
+/// absent).  Persists and notifies on change.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_put(json: *const u8, len: usize) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        changed = opensearch::put_json(data)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Parses an OpenSearch descriptor (bounded, DTD-refused) and upserts
+/// it — the .xml import path; keywords survive a replace.
+///
+/// # Safety
+/// `xml` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_import(xml: *const u8, len: usize) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(xml, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad descriptor pointer".into(),
+        })?;
+        changed = opensearch::import_descriptor(data)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Drops an engine by name; RC_OK whether or not it existed.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_remove(name: *const c_char) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        changed = opensearch::remove(name)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Re-keys an engine keeping its order slot and keywords —
+/// RC_NOT_FOUND on a missing source, RC_INVALID_ARGUMENT on an
+/// empty/taken target.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_rename(
+    old: *const c_char,
+    new: *const c_char,
+) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let old = unsafe { util::cstr(old) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad old-name pointer".into(),
+        })?;
+        let new = unsafe { util::cstr(new) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad new-name pointer".into(),
+        })?;
+        changed = opensearch::rename(old, new)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Replaces the display order with a JSON name array.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_reorder(json: *const u8, len: usize) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        changed = opensearch::reorder(data)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Replaces an engine's keyword bindings (JSON string array);
+/// RC_NOT_FOUND when the engine does not exist.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_set_keywords(
+    name: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        changed = opensearch::set_keywords(name, data)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// The engine name a keyword resolves to — NULL when unbound;
+/// rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_engine_for_keyword(
+    keyword: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(keyword) = (unsafe { util::cstr(keyword) }) else {
+            return ptr::null_mut();
+        };
+        match opensearch::engine_for_keyword(keyword) {
+            Ok(Some(name)) => util::to_c_string(name),
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Every bound keyword — JSON array; rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_keywords() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match opensearch::keywords_json() {
+        Ok(json) => util::to_c_string(json),
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The removed-bundled blocklist — JSON array; rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_removed_bundled() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match opensearch::removed_bundled_json() {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Adds `name` to the bundled-removal blocklist.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_block_bundled(name: *const c_char) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        changed = opensearch::block_bundled(name)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Drops `name` from the blocklist.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_unblock_bundled(name: *const c_char) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        changed = opensearch::unblock_bundled(name)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// The vendored bundled engine names — JSON array; rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_bundled_names() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        util::to_c_string(opensearch::bundled_names_json())
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Inserts every bundled engine that is absent and not blocked.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_seed_bundled() -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        changed = opensearch::seed_bundled()?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Clears the blocklist and re-adds every bundled engine, replacing
+/// same-named records but keeping their keyword bindings — the
+/// "restore defaults" semantic.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_restore_bundled() -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        changed = opensearch::restore_bundled()?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("searchengines");
+    }
+    st
+}
+
+/// Wipes the registry and removes searchengines.json — the
+/// test-suite reset seam (re-arms the Qt legacy-migration gate).
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_reset() -> RcStatus {
+    status_of(|| opensearch::reset())
+}
+
+/// The buildUrl()/parseTemplate() expansion: spec JSON
+/// {"template","method","params":[[k,v],...],"term","language",
+/// "source"} -> the encoded URL string; NULL on a bad spec.
+/// rc_string_free().
+///
+/// # Safety
+/// `spec` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_expand(spec: *const u8, len: usize) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(data) = (unsafe { util::bytes(spec, len) }) else {
+            return ptr::null_mut();
+        };
+        match opensearch::expand_json(data) {
+            Some(url) => util::to_c_string(url),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Engine + slot kind ("search"|"suggestions"|"image") + term ->
+/// expanded URL; NULL when the engine or slot is absent.
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_url(
+    name: *const c_char,
+    kind: *const c_char,
+    term: *const c_char,
+    language: *const c_char,
+    source: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(name) = (unsafe { util::cstr(name) }) else {
+            return ptr::null_mut();
+        };
+        let kind = unsafe { util::cstr(kind) }.unwrap_or("");
+        let term = unsafe { util::cstr(term) }.unwrap_or("");
+        let language = unsafe { util::cstr(language) }.unwrap_or("");
+        let source = unsafe { util::cstr(source) }.unwrap_or("");
+        match opensearch::engine_url(name, kind, term, language, source) {
+            Ok(Some(url)) => util::to_c_string(url),
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// keyword + terms -> the bound engine's search URL; NULL when the
+/// keyword is unbound.
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ose_keyword_url(
+    keyword: *const c_char,
+    term: *const c_char,
+    language: *const c_char,
+    source: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(keyword) = (unsafe { util::cstr(keyword) }) else {
+            return ptr::null_mut();
+        };
+        let term = unsafe { util::cstr(term) }.unwrap_or("");
+        let language = unsafe { util::cstr(language) }.unwrap_or("");
+        let source = unsafe { util::cstr(source) }.unwrap_or("");
+        match opensearch::keyword_url(keyword, term, language, source) {
+            Ok(Some(url)) => util::to_c_string(url),
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]
