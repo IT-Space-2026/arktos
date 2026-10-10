@@ -49,6 +49,7 @@
 #include "popupblocker.h"
 #include "scopeshortcuts.h"
 #include "sidebarpanel.h"
+#include "tabpositionpicker.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -83,6 +84,7 @@ private slots:
     void popupExceptions();
     void containersPage();
     void downloadsPage();
+    void tabPositionPicker();
     void contentBlockerEngine();
     void pagePolishSettings();
     void extensionReview();
@@ -1560,6 +1562,89 @@ void tst_SettingsDialog::downloadsPage()
     }
     QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
                  .toString(), QLatin1String("Never"));
+}
+
+// TABS03: the Tab Settings page replaced the position combo with a
+// Vivaldi-style tile picker inside a "Tab Bar Position" group.  The
+// tiles display in Vivaldi's Top/Left/Right/Bottom order but commit
+// the persisted combo indices Top/Bottom/Left/Right = 0/1/2/3 — the
+// click, keyboard and clamp paths all prove the decoupled order.
+void tst_SettingsDialog::tabPositionPicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/tabBarPosition"));
+
+    SettingsDialog dialog;
+    QVERIFY(dialog.tabBarPositionGroup);
+    QCOMPARE(dialog.tabBarPositionGroup->title(),
+             QLatin1String("Tab Bar Position"));
+    QCOMPARE(dialog.tabBarPosition->count(), 4);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 0);
+
+    // Four tile children, one per position, in display order.
+    const QList<QWidget *> tiles =
+        dialog.tabBarPosition->findChildren<QWidget *>();
+    QCOMPARE(tiles.count(), 4);
+    QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Top"));
+    QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Left"));
+    QCOMPARE(tiles.at(2)->accessibleName(), QLatin1String("Right"));
+    QCOMPARE(tiles.at(3)->accessibleName(), QLatin1String("Bottom"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    QSignalSpy spy(dialog.tabBarPosition,
+                   &TabPositionPicker::positionChanged);
+
+    // Clicking Left (display slot 1) commits persisted index 2;
+    // clicking Bottom (slot 3) commits index 1.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 2);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 2);
+    QTest::mouseClick(tiles.at(3), Qt::LeftButton);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 1);
+    QCOMPARE(spy.count(), 1);
+
+    // Keyboard: arrows move focus between tiles in display order
+    // (wrapping); Enter commits the focused tile's persisted index.
+    tiles.at(0)->setFocus();
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Left);      // wraps to Bottom
+    QVERIFY(tiles.at(3)->hasFocus());
+    QTest::keyClick(tiles.at(3), Qt::Key_Right);
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Right);
+    QVERIFY(tiles.at(1)->hasFocus());
+    QTest::keyClick(tiles.at(1), Qt::Key_Return);    // Left -> index 2
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 2);
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.last().at(0).toInt(), 2);
+    QTest::keyClick(tiles.at(1), Qt::Key_Space);     // re-commit: no-op
+    QCOMPARE(spy.count(), 2);
+    dialog.close();
+
+    // Persisted round-trip through accept().
+    {
+        SettingsDialog persist;
+        persist.tabBarPosition->setCurrentIndex(3);  // Right
+        persist.accept();
+        QCOMPARE(QSettings().value(QLatin1String("tabs/tabBarPosition"))
+                     .toInt(), 3);
+    }
+
+    // Out-of-range saved values clamp onto the edge tiles.
+    settings.setValue(QLatin1String("tabs/tabBarPosition"), 99);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.tabBarPosition->currentIndex(), 3);
+    }
+    settings.setValue(QLatin1String("tabs/tabBarPosition"), -2);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.tabBarPosition->currentIndex(), 0);
+    }
+    settings.remove(QLatin1String("tabs/tabBarPosition"));
 }
 
 // ADB06: the Content Blocking group on the Privacy page carries the
