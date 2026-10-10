@@ -328,3 +328,4 @@
 
 - build: qmake + make -C src -j2 clean (incremental), link OK
 - make check: check-warnings PASS + 64 test programs 0 failed offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu
+- 2026-10-10 MERGEWATCH: ui-work merged (UIAUDIT02 dead-code sweep + task-loop logs, f4adff2) — no conflicts, clean ort merge, build ok
