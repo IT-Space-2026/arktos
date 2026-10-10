@@ -12,7 +12,7 @@
 #
 # Without CONFIG+=rustdl nothing here is compiled or linked — the tree
 # builds identically on machines with no Rust toolchain, and the
-# download-engine selector simply never offers "Accelerated".
+# download-engine selector (DLACC01) shows "Accelerated" disabled.
 #
 # Offline/CI: `cargo vendor` + a .cargo/config.toml source replacement
 # works unchanged; Cargo.lock pins the resolved tree and SEC21's

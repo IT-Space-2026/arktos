@@ -114,6 +114,11 @@ UI:
 - Downloads moved from the Window menu to the Tools menu — the
   Ctrl+Y shortcut and icon are unchanged, and the Window menu now
   holds only tab/window-switching entries (MENU04).
+- Preferences → Downloads gains a download-engine selector —
+  "Built-in (Chromium)" or "Accelerated (Rust)", greyed out in builds
+  without the rustdl backend — plus a connections-per-download field
+  and a cleanup policy for the finished-downloads list (keep, clear
+  on exit, or remove each entry as it completes) (DLACC01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -74,6 +74,7 @@
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
@@ -110,6 +111,7 @@
 #include <qscrollarea.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
+#include <qstandarditemmodel.h>
 #include <qstandardpaths.h>
 #include <qstyle.h>
 #include <qtabwidget.h>
@@ -302,6 +304,37 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(languageButton, &QPushButton::clicked, this, &SettingsDialog::chooseAcceptLanguage);
     connect(downloadDirectoryButton, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadDirectory);
     connect(externalDownloadBrowse, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadProgram);
+
+    // DLACC01: the engine selector persists downloadmanager/engine —
+    // the same key RustDownloadEngine::isSelected() consults.  Item
+    // data carries the persisted id.  Without a rustdl build the
+    // Accelerated row stays listed but disabled so a persisted pick
+    // round-trips instead of being silently rewritten to built-in.
+    downloadEngineCombo->setItemData(0, QLatin1String("builtin"));
+    downloadEngineCombo->setItemData(1, QLatin1String("rust"));
+#ifndef ARORA_RUSTDL
+    if (QStandardItemModel *engineModel =
+            qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
+        if (QStandardItem *accelerated = engineModel->item(1)) {
+            accelerated->setEnabled(false);
+            accelerated->setText(tr("Accelerated (Rust) — not in this build"));
+        }
+    }
+#endif
+    // The segment count only means something to the accelerated
+    // engine; it greys out while Built-in is selected.
+    connect(downloadEngineCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+        downloadConnectionsSpin->setEnabled(index == 1);
+    });
+    downloadConnectionsSpin->setEnabled(false);
+
+    // DLACC01: index order mirrors DownloadManager::RemovePolicy
+    // (Never / Exit / SuccessFullDownload); itemData carries the enum
+    // so a reorder can't remap the persisted key.
+    downloadCleanupCombo->setItemData(0, int(DownloadManager::Never));
+    downloadCleanupCombo->setItemData(1, int(DownloadManager::Exit));
+    downloadCleanupCombo->setItemData(2, int(DownloadManager::SuccessFullDownload));
     connect(styleSheetBrowseButton, &QPushButton::clicked, this, &SettingsDialog::chooseStyleSheet);
 
     connect(editAutoFillUserButton, &QPushButton::clicked, this, &SettingsDialog::editAutoFillUser);
@@ -782,6 +815,27 @@ void SettingsDialog::loadFromSettings()
     downloadsLocation->setText(downloadDirectory);
     externalDownloadButton->setChecked(settings.value(QLatin1String("external"), false).toBool());
     externalDownloadPath->setText(settings.value(QLatin1String("externalPath")).toString());
+    // DLACC01: engine id lives in the combo's itemData; an unknown or
+    // absent value falls back to built-in.
+    const int engineRow = downloadEngineCombo->findData(
+        settings.value(QLatin1String("engine"),
+                       QLatin1String("builtin")).toString());
+    downloadEngineCombo->setCurrentIndex(engineRow < 0 ? 0 : engineRow);
+    downloadConnectionsSpin->setValue(
+        settings.value(QLatin1String("connections"), 0).toInt());
+    downloadConnectionsSpin->setEnabled(
+        downloadEngineCombo->currentIndex() == 1);
+    // The list-cleanup combo persists the RemovePolicy enum key
+    // DownloadManager::save() writes.
+    const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
+        DownloadManager::staticMetaObject.indexOfEnumerator("RemovePolicy"));
+    int policy = policyEnum.keyToValue(settings.value(
+        QLatin1String("removeDownloadsPolicy"),
+        QByteArray("Never")).toByteArray().constData());
+    if (policy < 0)
+        policy = int(DownloadManager::Never);
+    const int policyRow = downloadCleanupCombo->findData(policy);
+    downloadCleanupCombo->setCurrentIndex(policyRow < 0 ? 0 : policyRow);
     settings.endGroup();
 
     // Appearance
@@ -1017,7 +1071,21 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("downloadDirectory"), downloadsLocation->text());
     settings.setValue(QLatin1String("external"), externalDownloadButton->isChecked());
     settings.setValue(QLatin1String("externalPath"), externalDownloadPath->text());
+    settings.setValue(QLatin1String("engine"),
+                      downloadEngineCombo->currentData().toString());
+    settings.setValue(QLatin1String("connections"),
+                      downloadConnectionsSpin->value());
+    const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
+        DownloadManager::staticMetaObject.indexOfEnumerator("RemovePolicy"));
+    const int policy = downloadCleanupCombo->currentData().toInt();
+    settings.setValue(QLatin1String("removeDownloadsPolicy"),
+                      QLatin1String(policyEnum.valueToKey(policy)));
     settings.endGroup();
+    // Live-apply: DownloadManager::save() serializes the policy from
+    // its in-memory member, so without this the running manager would
+    // overwrite the new choice on its next autosave.
+    DownloadManager::instance()->setRemovePolicy(
+        static_cast<DownloadManager::RemovePolicy>(policy));
 
     settings.beginGroup(QLatin1String("history"));
     int historyExpire = expireHistory->currentIndex();

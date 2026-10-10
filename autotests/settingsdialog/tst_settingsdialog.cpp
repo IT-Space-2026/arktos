@@ -41,6 +41,7 @@
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -78,6 +79,7 @@ private slots:
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void downloadsPage();
     void pagePolishSettings();
     void extensionReview();
 };
@@ -1452,6 +1454,73 @@ void tst_SettingsDialog::pagePolishSettings()
                  .toBool(), false);
     QCOMPARE(settings.value(QLatin1String("websettings/middleClickAutoscroll"))
                  .toBool(), autoscrollDefault);
+}
+
+// DLACC01: the Downloads page carries the engine selector — persisted
+// under downloadmanager/engine, the same key the routing stub in
+// handleDownloadRequested reads — plus the accelerated segment count
+// and the finished-downloads cleanup policy, which had no UI before.
+void tst_SettingsDialog::downloadsPage()
+{
+    {
+        SettingsDialog dialog;
+        dialog.openAtPage(SettingsDialog::DownloadsPage);
+        QVERIFY(dialog.tabWidget->currentWidget());
+        QCOMPARE(dialog.pagesList->currentItem()->text(),
+                 QStringLiteral("Downloads"));
+
+        QCOMPARE(dialog.downloadEngineCombo->count(), 2);
+        QCOMPARE(dialog.downloadEngineCombo->itemData(0).toString(),
+                 QLatin1String("builtin"));
+        QCOMPARE(dialog.downloadEngineCombo->itemData(1).toString(),
+                 QLatin1String("rust"));
+        QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
+            dialog.downloadEngineCombo->model());
+        QVERIFY(model);
+#ifdef ARORA_RUSTDL
+        QVERIFY(model->item(1)->isEnabled());
+        // Picking Accelerated arms the segment spin; back to built-in
+        // greys it out again.
+        dialog.downloadEngineCombo->setCurrentIndex(1);
+        QVERIFY(dialog.downloadConnectionsSpin->isEnabled());
+        dialog.downloadEngineCombo->setCurrentIndex(0);
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#else
+        // Without a rustdl build the Accelerated row stays listed but
+        // disabled (a persisted pick round-trips), and the segment
+        // spin greys out under Built-in.
+        QVERIFY(!model->item(1)->isEnabled());
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#endif
+        dialog.downloadConnectionsSpin->setValue(12);
+        dialog.downloadCleanupCombo->setCurrentIndex(1);   // Exit
+        dialog.accept();
+    }
+
+    QSettings settings;
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/engine")).toString(),
+             QLatin1String("builtin"));
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/connections")).toInt(),
+             12);
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Exit"));
+    // The choice live-applied to the running manager, not just the key.
+    QCOMPARE(int(DownloadManager::instance()->removePolicy()),
+             int(DownloadManager::Exit));
+
+    // Reopen: the saved engine, segment count, and policy read back.
+    {
+        SettingsDialog reloaded;
+        QCOMPARE(reloaded.downloadEngineCombo->currentIndex(), 0);
+        QCOMPARE(reloaded.downloadConnectionsSpin->value(), 12);
+        QCOMPARE(reloaded.downloadCleanupCombo->currentIndex(), 1);
+        // Restore harness defaults for the tests that follow.
+        reloaded.downloadConnectionsSpin->setValue(0);
+        reloaded.downloadCleanupCombo->setCurrentIndex(0);
+        reloaded.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Never"));
 }
 
 // EXT02: the permission-review dialog is the consent gate every

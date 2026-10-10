@@ -161,8 +161,12 @@ page), open-folder/open-with actions, server-suggested names sanitized
 and de-duplicated, and an external download-program handoff. Downloads
 surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, and each selected row expands into a
-detail card in the panel's bottom pane. A Rust
-reqwest-based multi-connection engine is in development (DLACC tasks).
+detail card in the panel's bottom pane. Preferences → Downloads hosts
+a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
+enabled in `CONFIG+=rustdl` builds) — a connections-per-download
+field, and a cleanup policy for the finished-downloads list. The Rust
+reqwest-based multi-connection engine itself is in development (DLACC
+tasks).
 
 ### Extensions
 

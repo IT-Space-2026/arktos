@@ -2988,6 +2988,71 @@
      <widget class="QWidget" name="tab_downloads">
       <layout class="QVBoxLayout" name="downloadsPageLayout">
        <item>
+        <widget class="QGroupBox" name="downloadEngineGroup">
+         <property name="title">
+          <string>Download Engine</string>
+         </property>
+         <layout class="QGridLayout" name="downloadEngineLayout" columnstretch="0,0,1">
+          <item row="0" column="0">
+           <widget class="QLabel" name="downloadEngineLabel">
+            <property name="text">
+             <string>Engine:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="downloadEngineCombo">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="accessibleName">
+             <string>Download engine</string>
+            </property>
+            <property name="toolTip">
+             <string>Which backend transfers downloads. Accelerated needs a rustdl-enabled build; the external program option below overrides either engine.</string>
+            </property>
+            <item>
+             <property name="text">
+              <string>Built-in (Chromium)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Accelerated (Rust)</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="downloadConnectionsLabel">
+            <property name="text">
+             <string>Connections per download:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QSpinBox" name="downloadConnectionsSpin">
+            <property name="accessibleName">
+             <string>Connections per download</string>
+            </property>
+            <property name="toolTip">
+             <string>Parallel segments used by the accelerated engine (4-16; 0 = engine default of 8)</string>
+            </property>
+            <property name="specialValueText">
+             <string>Engine default (8)</string>
+            </property>
+            <property name="maximum">
+             <number>16</number>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="groupBox_2">
          <property name="title">
           <string>Downloads</string>
@@ -3068,6 +3133,52 @@
             </item>
            </layout>
           </item>
+          <item>
+           <layout class="QHBoxLayout" name="downloadCleanupLayout">
+            <item>
+             <widget class="QLabel" name="downloadCleanupLabel">
+              <property name="text">
+               <string>Finished downloads list:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="downloadCleanupCombo">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="accessibleName">
+               <string>Finished downloads list cleanup policy</string>
+              </property>
+              <item>
+               <property name="text">
+                <string>Keep entries</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Clear on application exit</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Remove each download when it finishes</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+            <item>
+             <spacer name="downloadCleanupSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
          </layout>
         </widget>
        </item>
@@ -3103,6 +3214,9 @@
   <tabstop>downloadAsk</tabstop>
   <tabstop>downloadDestination</tabstop>
   <tabstop>downloadDirectoryButton</tabstop>
+  <tabstop>downloadEngineCombo</tabstop>
+  <tabstop>downloadConnectionsSpin</tabstop>
+  <tabstop>downloadCleanupCombo</tabstop>
   <tabstop>defaultEngineCombo</tabstop>
   <tabstop>privateEngineCombo</tabstop>
   <tabstop>imageEngineCombo</tabstop>
