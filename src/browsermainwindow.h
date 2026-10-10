@@ -279,6 +279,7 @@ private:
     QMenu *m_toolsMenu;
     QAction *m_toolsCommandPaletteAction;
     QAction *m_toolsWebSearchAction;
+    QAction *m_toolsDownloadsAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
     QAction *m_toolsEnableInspectorAction;

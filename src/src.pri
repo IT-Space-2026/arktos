@@ -73,7 +73,6 @@ FORMS += \
     $$PWD/acceptlanguagedialog.ui \
     $$PWD/autofilldialog.ui \
     $$PWD/downloaditem.ui \
-    $$PWD/downloads.ui \
     $$PWD/searchbanner.ui \
     $$PWD/settings.ui
 HEADERS += \

@@ -328,6 +328,17 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
     });
+    // DOWN02: a new download no longer pops a separate window — the
+    // Downloads section is selected when the dock is already up, and
+    // the window flashes so the arrival is still noticeable when the
+    // panel is hidden.
+    connect(BrowserApplication::downloadManager(),
+            &DownloadManager::itemAdded, this, [this]() {
+        if (m_sidebarPanel)
+            m_sidebarPanel->showDownloads();
+        if (isActiveWindow())
+            QApplication::alert(this);
+    });
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
 
@@ -1054,6 +1065,15 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu->addAction(m_toolsCommandPaletteAction);
     m_toolsMenu->addSeparator();
 
+    // MENU04: Downloads heads the Tools menu's utility cluster — the
+    // Window menu keeps only tab/window-management entries.
+    m_toolsDownloadsAction = new QAction(m_toolsMenu);
+    m_toolsDownloadsAction->setIcon(
+        AroraIcon::get(QLatin1String("emblem-downloads")));
+    connect(m_toolsDownloadsAction, &QAction::triggered,
+            this, &BrowserMainWindow::downloadManager);
+    m_toolsMenu->addAction(m_toolsDownloadsAction);
+
     // MENU01: no Tools-menu entry — the action lives on the window
     // itself so the Ctrl+K shortcut keeps reaching webSearch()
     // without a menu item to show.
@@ -1303,6 +1323,9 @@ void BrowserMainWindow::retranslate()
 
     m_toolsMenu->setTitle(tr("&Tools"));
     m_toolsCommandPaletteAction->setText(tr("Command &Palette..."));
+    m_toolsDownloadsAction->setText(tr("Downloads"));
+    m_toolsDownloadsAction->setShortcut(
+        QKeySequence(tr("Ctrl+Y", "Download Manager")));
     m_toolsWebSearchAction->setText(tr("Web &Search"));
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
@@ -1452,6 +1475,10 @@ void BrowserMainWindow::ensureSidebarPanel()
                                 const QString &title) {
         m_tabWidget->loadUrl(url, tab, title);
     });
+    // DOWN02: the Downloads page header's X folds the dock away (the
+    // toggle action + persistence follow via visibilityChanged).
+    connect(m_sidebarPanel, &SidebarPanel::closeRequested,
+            m_sidebarDock, &QWidget::hide);
     m_sidebarDock->setWidget(m_sidebarPanel);
 }
 
@@ -1481,6 +1508,10 @@ void BrowserMainWindow::applySidebarSettings()
             .toBool();
     if (show)
         ensureSidebarPanel();
+    // SIDE02: an already-built panel picks up per-panel visibility
+    // changes here too (a hidden dock re-reads on next show anyway).
+    if (m_sidebarPanel)
+        m_sidebarPanel->applyPanelVisibility();
     m_sidebarDock->setVisible(show);
 }
 
@@ -1578,7 +1609,13 @@ void BrowserMainWindow::viewStatusbar()
 
 void BrowserMainWindow::downloadManager()
 {
-    BrowserApplication::downloadManager()->show();
+    // DOWN02: downloads live in the sidebar — Ctrl+Y / Tools >
+    // Downloads raises the dock on the Downloads section instead of
+    // opening the (removed) standalone window.
+    ensureSidebarPanel();
+    m_sidebarPanel->showDownloads();
+    m_sidebarDock->setVisible(true);
+    m_sidebarDock->raise();
 }
 
 void BrowserMainWindow::selectLineEdit()
@@ -1691,8 +1728,10 @@ void BrowserMainWindow::updateStatusbar(const QString &string)
 
 // TOR04: renders the circuit chain ("Tor: guard -> middle -> exit")
 // on the tor window's status-bar label.  Hop labels prefer the relay
-// nickname and fall back to a short fingerprint; the tooltip carries
-// the full chain, circuit id, status and purpose.
+// nickname and fall back to a short fingerprint; TOR05 appends each
+// hop's country code ("(DE)", "--" while unknown) resolved by
+// TorManager via the control port; the tooltip carries the full
+// chain, circuit id, status and purpose.
 void BrowserMainWindow::updateTorCircuitLabel()
 {
     if (!m_torCircuitLabel)
@@ -1739,13 +1778,19 @@ void BrowserMainWindow::updateTorCircuitLabel()
     QStringList names;
     QStringList detail;
     for (const TorCircuitHop &hop : circuit->hops) {
-        names << (hop.nickname.isEmpty()
-                      ? hop.fingerprint.left(8)
-                      : hop.nickname);
+        const QString country = hop.country.isEmpty()
+            ? QStringLiteral("--") : hop.country;
+        names << QStringLiteral("%1 (%2)")
+                     .arg(hop.nickname.isEmpty()
+                              ? hop.fingerprint.left(8)
+                              : hop.nickname,
+                          country);
         detail << (hop.nickname.isEmpty()
-                       ? hop.fingerprint
-                       : QStringLiteral("%1 (%2)")
-                             .arg(hop.nickname, hop.fingerprint));
+                       ? QStringLiteral("%1 [%2]")
+                             .arg(hop.fingerprint, country)
+                       : QStringLiteral("%1 (%2) [%3]")
+                             .arg(hop.nickname, hop.fingerprint,
+                                  country));
     }
     m_torCircuitLabel->setText(
         tr("Tor: %1").arg(names.join(QLatin1String(" -> "))));
@@ -2162,16 +2207,13 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     m_windowMenu->addAction(m_tabWidget->nextTabAction());
     m_windowMenu->addAction(m_tabWidget->previousTabAction());
     m_windowMenu->addAction(m_windowTabSearchAction);
-    m_windowMenu->addSeparator();
-    QAction *downloadManagerAction = m_windowMenu->addAction(tr("Downloads"), QKeySequence(tr("Ctrl+Y", "Download Manager")), this, &BrowserMainWindow::downloadManager);
-
-    downloadManagerAction->setIcon(AroraIcon::get(QLatin1String("emblem-downloads")));
-
-    m_windowMenu->addSeparator();
     BrowserApplication *application = BrowserApplication::instance();
     if (!application)
         return;
     QList<BrowserMainWindow*> windows = application->mainWindows();
+    if (windows.isEmpty())
+        return;
+    m_windowMenu->addSeparator();
     for (int i = 0; i < windows.count(); ++i) {
         BrowserMainWindow *window = windows.at(i);
         QAction *action = m_windowMenu->addAction(SafeText::menu(window->windowTitle()), this, &BrowserMainWindow::showWindow);

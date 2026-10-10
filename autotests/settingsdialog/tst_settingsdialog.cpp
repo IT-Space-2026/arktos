@@ -41,10 +41,12 @@
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
 #include "scopeshortcuts.h"
+#include "sidebarpanel.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -78,6 +80,7 @@ private slots:
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void downloadsPage();
     void pagePolishSettings();
     void extensionReview();
 };
@@ -748,7 +751,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 10);
+        QCOMPARE(dialog.pagesList->count(), 11);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -766,6 +769,8 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("Extensions"));
         QCOMPARE(dialog.pagesList->item(9)->text(),
                  QStringLiteral("Containers"));
+        QCOMPARE(dialog.pagesList->item(10)->text(),
+                 QStringLiteral("Downloads"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -788,24 +793,46 @@ void tst_SettingsDialog::sidebarNavigation()
     }
 }
 
-// SIDE01: the General page's sidebar controls — off by default,
-// Left/Right dock side round-trips through MainWindow/sidebarDockArea.
+// SIDE02: the sidebar controls live in the Appearance page's
+// "Sidebar" group — off by default, Left/Right dock side round-trips
+// through MainWindow/sidebarDockArea, and the Panels checklist
+// persists each registered section under sidebar/panels/<id>.
 void tst_SettingsDialog::sidebarSettings()
 {
     QSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
-    // Fresh dialog defaults: unchecked, Left.
     {
         SettingsDialog dialog;
         QVERIFY(!dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
-    }
+        // The whole group moved off General onto the Appearance page.
+        QWidget *host = dialog.sidebarGroupBox;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::AppearancePage));
 
-    // Enabling + Right persists and reads back.
-    {
-        SettingsDialog dialog;
+        // The Panels checklist mirrors the registered rail entries —
+        // every one on by default.
+        QCOMPARE(dialog.sidebarPanelsList->count(),
+                 SidebarPanel::panels().count());
+        QListWidgetItem *history = nullptr;
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QVERIFY(item->flags() & Qt::ItemIsUserCheckable);
+            QCOMPARE(item->checkState(), Qt::Checked);
+            QVERIFY(!item->icon().isNull());
+            if (item->data(Qt::UserRole).toByteArray() == "history")
+                history = item;
+        }
+        QVERIFY(history);
+
+        // Unchecking persists under sidebar/panels/history.
+        history->setCheckState(Qt::Unchecked);
         dialog.showSidebar->setChecked(true);
         dialog.sidebarDockArea->setCurrentIndex(1);
         dialog.accept();
@@ -814,18 +841,31 @@ void tst_SettingsDialog::sidebarSettings()
              true);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::RightDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             false);
+    QVERIFY(!SidebarPanel::isPanelVisible("history"));
     {
         SettingsDialog dialog;
         QVERIFY(dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QCOMPARE(item->checkState(),
+                     item->data(Qt::UserRole).toByteArray() == "history"
+                         ? Qt::Unchecked : Qt::Checked);
+        }
         dialog.showSidebar->setChecked(false);
         dialog.sidebarDockArea->setCurrentIndex(0);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i)
+            dialog.sidebarPanelsList->item(i)->setCheckState(Qt::Checked);
         dialog.accept();
     }
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar")).toBool(),
              false);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::LeftDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             true);
 }
 
 // PREFUI03: the nav filter field narrows the sidebar by page title
@@ -1069,7 +1109,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 10);
+    QCOMPARE(dialog.tabWidget->count(), 11);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));
@@ -1450,6 +1490,73 @@ void tst_SettingsDialog::pagePolishSettings()
                  .toBool(), false);
     QCOMPARE(settings.value(QLatin1String("websettings/middleClickAutoscroll"))
                  .toBool(), autoscrollDefault);
+}
+
+// DLACC01: the Downloads page carries the engine selector — persisted
+// under downloadmanager/engine, the same key the routing stub in
+// handleDownloadRequested reads — plus the accelerated segment count
+// and the finished-downloads cleanup policy, which had no UI before.
+void tst_SettingsDialog::downloadsPage()
+{
+    {
+        SettingsDialog dialog;
+        dialog.openAtPage(SettingsDialog::DownloadsPage);
+        QVERIFY(dialog.tabWidget->currentWidget());
+        QCOMPARE(dialog.pagesList->currentItem()->text(),
+                 QStringLiteral("Downloads"));
+
+        QCOMPARE(dialog.downloadEngineCombo->count(), 2);
+        QCOMPARE(dialog.downloadEngineCombo->itemData(0).toString(),
+                 QLatin1String("builtin"));
+        QCOMPARE(dialog.downloadEngineCombo->itemData(1).toString(),
+                 QLatin1String("rust"));
+        QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
+            dialog.downloadEngineCombo->model());
+        QVERIFY(model);
+#ifdef ARORA_RUSTDL
+        QVERIFY(model->item(1)->isEnabled());
+        // Picking Accelerated arms the segment spin; back to built-in
+        // greys it out again.
+        dialog.downloadEngineCombo->setCurrentIndex(1);
+        QVERIFY(dialog.downloadConnectionsSpin->isEnabled());
+        dialog.downloadEngineCombo->setCurrentIndex(0);
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#else
+        // Without a rustdl build the Accelerated row stays listed but
+        // disabled (a persisted pick round-trips), and the segment
+        // spin greys out under Built-in.
+        QVERIFY(!model->item(1)->isEnabled());
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#endif
+        dialog.downloadConnectionsSpin->setValue(12);
+        dialog.downloadCleanupCombo->setCurrentIndex(1);   // Exit
+        dialog.accept();
+    }
+
+    QSettings settings;
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/engine")).toString(),
+             QLatin1String("builtin"));
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/connections")).toInt(),
+             12);
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Exit"));
+    // The choice live-applied to the running manager, not just the key.
+    QCOMPARE(int(DownloadManager::instance()->removePolicy()),
+             int(DownloadManager::Exit));
+
+    // Reopen: the saved engine, segment count, and policy read back.
+    {
+        SettingsDialog reloaded;
+        QCOMPARE(reloaded.downloadEngineCombo->currentIndex(), 0);
+        QCOMPARE(reloaded.downloadConnectionsSpin->value(), 12);
+        QCOMPARE(reloaded.downloadCleanupCombo->currentIndex(), 1);
+        // Restore harness defaults for the tests that follow.
+        reloaded.downloadConnectionsSpin->setValue(0);
+        reloaded.downloadCleanupCombo->setCurrentIndex(0);
+        reloaded.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Never"));
 }
 
 // EXT02: the permission-review dialog is the consent gate every

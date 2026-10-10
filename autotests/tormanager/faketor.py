@@ -23,6 +23,25 @@ SOCKS_REP = {
     "refuse": b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00",
 }
 
+# TOR05: relay directory + geoip answers for the circuit hops below.
+# ns/id/<fp> replies carry a 'r' line whose 7th field is the relay's
+# OR address; ip-to-country/<addr> maps it to an ISO code.  Every
+# ns/id query is appended to <datadir>/ns-query-log so tests can
+# assert the fingerprint cache prevents re-queries.  FAKETOR_NOGEOIP=1
+# makes every ip-to-country answer "??" like a tor without GeoIPFile.
+NS_RELAYS = {
+    "AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11": ("GuardOne",
+                                               "5.9.80.11"),
+    "BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22": ("MiddleTwo",
+                                               "185.220.101.4"),
+    "CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33": ("ExitThree",
+                                               "171.25.193.9"),
+    "DD55DD55DD55DD55DD55DD55DD55DD55DD55DD55": ("SoloHop",
+                                               "203.0.113.7"),
+}
+GEOIP = {"5.9.80.11": "de", "185.220.101.4": "nl",
+         "171.25.193.9": "is", "203.0.113.7": "us"}
+
 
 def main():
     args = sys.argv[1:]
@@ -70,6 +89,7 @@ def main():
     sys.stderr.flush()
 
     state = {"progress": 10, "owner": False}
+    no_geoip = os.environ.get("FAKETOR_NOGEOIP") == "1"
 
     def socks_worker():
         while True:
@@ -173,6 +193,27 @@ def main():
                       "$DD55DD55DD55DD55DD55DD55DD55DD55DD55DD55"
                       "~SoloHop PURPOSE=HS_CLIENT_HSDIR\r\n")
                 reply(".\r\n250 OK\r\n")
+            elif cmd.startswith("GETINFO ns/id/"):
+                fp = cmd.split("/", 2)[2].upper()
+                if fp in NS_RELAYS:
+                    nick, addr = NS_RELAYS[fp]
+                    reply("250+ns/id/%s=\r\n" % fp)
+                    reply("r %s aGVsbG8 aGVsbG8gd29ybGQg "
+                          "2026-10-09 00:00:00 %s 9001 0\r\n"
+                          % (nick, addr))
+                    reply("s Running Stable Valid V2Dir\r\n")
+                    reply(".\r\n250 OK\r\n")
+                    with open(os.path.join(data_dir,
+                                           "ns-query-log"),
+                              "a") as f:
+                        f.write(fp + "\n")
+                else:
+                    reply("552 Unrecognized key\r\n")
+            elif cmd.startswith("GETINFO ip-to-country/"):
+                addr = cmd.split("/", 1)[1]
+                cc = "??" if no_geoip else GEOIP.get(addr, "??")
+                reply("250-ip-to-country/%s=%s\r\n" % (addr, cc))
+                reply("250 OK\r\n")
             elif cmd.startswith("GETINFO stream-status"):
                 reply("250+stream-status=\r\n")
                 reply("8 SUCCEEDED 3 127.0.0.1:80\r\n")

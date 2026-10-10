@@ -127,6 +127,11 @@
          <string>Containers</string>
         </property>
        </item>
+       <item>
+        <property name="text">
+         <string>Downloads</string>
+        </property>
+       </item>
       </widget>
        </item>
       </layout>
@@ -289,132 +294,6 @@
           <string>Show dedicated search box</string>
          </property>
         </widget>
-       </item>
-       <item row="5" column="0" colspan="3">
-        <widget class="QGroupBox" name="groupBox_2">
-         <property name="title">
-          <string>Downloads</string>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
-          <item>
-           <widget class="QRadioButton" name="downloadAsk">
-            <property name="text">
-             <string>Ask for a destination each time</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="horizontalLayout">
-            <item>
-             <widget class="QRadioButton" name="downloadDestination">
-              <property name="text">
-               <string>Use this destination:</string>
-              </property>
-              <property name="checked">
-               <bool>true</bool>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="downloadsLocation">
-              <property name="layoutDirection">
-               <enum>Qt::LeftToRight</enum>
-              </property>
-              <property name="accessibleName">
-               <string>Download directory</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="downloadDirectoryButton">
-              <property name="text">
-               <string>Choose Directory...</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="horizontalLayout_2">
-            <item>
-             <widget class="QCheckBox" name="externalDownloadButton">
-              <property name="text">
-               <string>Use this external download program:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="externalDownloadPath">
-              <property name="accessibleName">
-               <string>External download program</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="externalDownloadBrowse">
-              <property name="text">
-               <string>Choose Program...</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="6" column="0" colspan="3">
-        <layout class="QHBoxLayout" name="sidebarSettingsLayout">
-         <item>
-          <widget class="QCheckBox" name="showSidebar">
-           <property name="toolTip">
-            <string>Show a side panel with bookmarks, history, downloads and notes.</string>
-           </property>
-           <property name="text">
-            <string>Show sidebar</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="sidebarDockAreaLabel">
-           <property name="text">
-            <string>Sidebar position:</string>
-           </property>
-           <property name="buddy">
-            <cstring>sidebarDockArea</cstring>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QComboBox" name="sidebarDockArea">
-           <property name="accessibleName">
-            <string>Sidebar position</string>
-           </property>
-           <item>
-            <property name="text">
-             <string>Left</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>Right</string>
-            </property>
-           </item>
-          </widget>
-         </item>
-         <item>
-          <spacer name="sidebarSettingsSpacer">
-           <property name="orientation">
-            <enum>Qt::Horizontal</enum>
-           </property>
-           <property name="sizeHint" stdset="0">
-            <size>
-             <width>40</width>
-             <height>20</height>
-            </size>
-           </property>
-          </spacer>
-         </item>
-        </layout>
        </item>
        <item row="7" column="0" colspan="3">
         <widget class="QCheckBox" name="middleClickAutoscroll">
@@ -1365,7 +1244,97 @@
          </property>
         </widget>
        </item>
-       <item row="8" column="3">
+       <item row="8" column="0" colspan="5">
+        <widget class="QGroupBox" name="sidebarGroupBox">
+         <property name="title">
+          <string>Sidebar</string>
+         </property>
+         <layout class="QGridLayout" name="sidebarGridLayout" columnstretch="0,0,1">
+          <item row="0" column="0" colspan="3">
+           <widget class="QCheckBox" name="showSidebar">
+            <property name="toolTip">
+             <string>Show a side panel with bookmarks, history, downloads and notes.</string>
+            </property>
+            <property name="text">
+             <string>Show sidebar</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="sidebarDockAreaLabel">
+            <property name="text">
+             <string>Sidebar position:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="buddy">
+             <cstring>sidebarDockArea</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="sidebarDockArea">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="accessibleName">
+             <string>Sidebar position</string>
+            </property>
+            <item>
+             <property name="text">
+              <string>Left</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Right</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="sidebarPanelsLabel">
+            <property name="text">
+             <string>Panels:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignTop</set>
+            </property>
+            <property name="buddy">
+             <cstring>sidebarPanelsList</cstring>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1" colspan="2">
+           <widget class="QListWidget" name="sidebarPanelsList">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Maximum">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>96</height>
+             </size>
+            </property>
+            <property name="toolTip">
+             <string>Which panels appear in the sidebar rail. Hidden panels are not loaded.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Sidebar panels</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item row="9" column="3">
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -3078,6 +3047,212 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="tab_downloads">
+      <layout class="QVBoxLayout" name="downloadsPageLayout">
+       <item>
+        <widget class="QGroupBox" name="downloadEngineGroup">
+         <property name="title">
+          <string>Download Engine</string>
+         </property>
+         <layout class="QGridLayout" name="downloadEngineLayout" columnstretch="0,0,1">
+          <item row="0" column="0">
+           <widget class="QLabel" name="downloadEngineLabel">
+            <property name="text">
+             <string>Engine:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="downloadEngineCombo">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="accessibleName">
+             <string>Download engine</string>
+            </property>
+            <property name="toolTip">
+             <string>Which backend transfers downloads. Accelerated needs a rustdl-enabled build; the external program option below overrides either engine.</string>
+            </property>
+            <item>
+             <property name="text">
+              <string>Built-in (Chromium)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Accelerated (Rust)</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="downloadConnectionsLabel">
+            <property name="text">
+             <string>Connections per download:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QSpinBox" name="downloadConnectionsSpin">
+            <property name="accessibleName">
+             <string>Connections per download</string>
+            </property>
+            <property name="toolTip">
+             <string>Parallel segments used by the accelerated engine (4-16; 0 = engine default of 8)</string>
+            </property>
+            <property name="specialValueText">
+             <string>Engine default (8)</string>
+            </property>
+            <property name="maximum">
+             <number>16</number>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBox_2">
+         <property name="title">
+          <string>Downloads</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_2">
+          <item>
+           <widget class="QRadioButton" name="downloadAsk">
+            <property name="text">
+             <string>Ask for a destination each time</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout">
+            <item>
+             <widget class="QRadioButton" name="downloadDestination">
+              <property name="text">
+               <string>Use this destination:</string>
+              </property>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="downloadsLocation">
+              <property name="layoutDirection">
+               <enum>Qt::LeftToRight</enum>
+              </property>
+              <property name="accessibleName">
+               <string>Download directory</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="downloadDirectoryButton">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="text">
+               <string>Choose Directory...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayout_2">
+            <item>
+             <widget class="QCheckBox" name="externalDownloadButton">
+              <property name="text">
+               <string>Use this external download program:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="externalDownloadPath">
+              <property name="accessibleName">
+               <string>External download program</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="externalDownloadBrowse">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="text">
+               <string>Choose Program...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="downloadCleanupLayout">
+            <item>
+             <widget class="QLabel" name="downloadCleanupLabel">
+              <property name="text">
+               <string>Finished downloads list:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="downloadCleanupCombo">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="accessibleName">
+               <string>Finished downloads list cleanup policy</string>
+              </property>
+              <item>
+               <property name="text">
+                <string>Keep entries</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Clear on application exit</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Remove each download when it finishes</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+            <item>
+             <spacer name="downloadCleanupSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="downloadsPageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
      </widget>
      </item>
     </layout>
@@ -3101,6 +3276,9 @@
   <tabstop>downloadAsk</tabstop>
   <tabstop>downloadDestination</tabstop>
   <tabstop>downloadDirectoryButton</tabstop>
+  <tabstop>downloadEngineCombo</tabstop>
+  <tabstop>downloadConnectionsSpin</tabstop>
+  <tabstop>downloadCleanupCombo</tabstop>
   <tabstop>defaultEngineCombo</tabstop>
   <tabstop>privateEngineCombo</tabstop>
   <tabstop>imageEngineCombo</tabstop>

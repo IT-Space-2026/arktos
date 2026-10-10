@@ -74,6 +74,7 @@
 #include "cookiedialog.h"
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
@@ -86,6 +87,7 @@
 #include "scopeshortcuts.h"
 #include "scriptcontrolmanager.h"
 #include "securestore.h"
+#include "sidebarpanel.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webpermissionmanager.h"
@@ -110,6 +112,7 @@
 #include <qscrollarea.h>
 #include <qsettings.h>
 #include <qstackedwidget.h>
+#include <qstandarditemmodel.h>
 #include <qstandardpaths.h>
 #include <qstyle.h>
 #include <qtabwidget.h>
@@ -186,6 +189,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         "system-run",       // Advanced
         "list-add",         // Extensions
         "folder-new",       // Containers
+        "emblem-downloads", // Downloads
     };
     for (int i = 0;
          i < pagesList->count()
@@ -295,12 +299,57 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                          id, QLatin1String("view-refresh")));
         }
     }
+    // SIDE02: the Panels checklist mirrors SidebarPanel's registered
+    // sections — a panel added through registerPanel() shows up here
+    // automatically.  Check states are applied in loadFromSettings.
+    for (const SidebarPanel::Panel &panel : SidebarPanel::panels()) {
+        QListWidgetItem *item = new QListWidgetItem(
+            AroraIcon::get(QLatin1String(panel.iconName)), panel.title,
+            sidebarPanelsList);
+        item->setData(Qt::UserRole, panel.id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    }
+    sidebarPanelsList->setIconSize(
+        QSize(chromeIconExtent, chromeIconExtent));
+
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
     connect(fixedFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFixedFont);
     connect(languageButton, &QPushButton::clicked, this, &SettingsDialog::chooseAcceptLanguage);
     connect(downloadDirectoryButton, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadDirectory);
     connect(externalDownloadBrowse, &QPushButton::clicked, this, &SettingsDialog::chooseDownloadProgram);
+
+    // DLACC01: the engine selector persists downloadmanager/engine —
+    // the same key RustDownloadEngine::isSelected() consults.  Item
+    // data carries the persisted id.  Without a rustdl build the
+    // Accelerated row stays listed but disabled so a persisted pick
+    // round-trips instead of being silently rewritten to built-in.
+    downloadEngineCombo->setItemData(0, QLatin1String("builtin"));
+    downloadEngineCombo->setItemData(1, QLatin1String("rust"));
+#ifndef ARORA_RUSTDL
+    if (QStandardItemModel *engineModel =
+            qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
+        if (QStandardItem *accelerated = engineModel->item(1)) {
+            accelerated->setEnabled(false);
+            accelerated->setText(tr("Accelerated (Rust) — not in this build"));
+        }
+    }
+#endif
+    // The segment count only means something to the accelerated
+    // engine; it greys out while Built-in is selected.
+    connect(downloadEngineCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+        downloadConnectionsSpin->setEnabled(index == 1);
+    });
+    downloadConnectionsSpin->setEnabled(false);
+
+    // DLACC01: index order mirrors DownloadManager::RemovePolicy
+    // (Never / Exit / SuccessFullDownload); itemData carries the enum
+    // so a reorder can't remap the persisted key.
+    downloadCleanupCombo->setItemData(0, int(DownloadManager::Never));
+    downloadCleanupCombo->setItemData(1, int(DownloadManager::Exit));
+    downloadCleanupCombo->setItemData(2, int(DownloadManager::SuccessFullDownload));
     connect(styleSheetBrowseButton, &QPushButton::clicked, this, &SettingsDialog::chooseStyleSheet);
 
     connect(editAutoFillUserButton, &QPushButton::clicked, this, &SettingsDialog::editAutoFillUser);
@@ -539,7 +588,7 @@ void SettingsDialog::openAtPage(Page page)
 
 int SettingsDialog::pageCount()
 {
-    return int(ContainersPage) + 1;
+    return int(DownloadsPage) + 1;
 }
 
 QString SettingsDialog::pageTitle(Page page)
@@ -555,6 +604,7 @@ QString SettingsDialog::pageTitle(Page page)
         QT_TR_NOOP("Advanced"),
         QT_TR_NOOP("Extensions"),
         QT_TR_NOOP("Containers"),
+        QT_TR_NOOP("Downloads"),
     };
     const int index = int(page);
     if (index < 0 || index >= int(sizeof(titles) / sizeof(titles[0])))
@@ -706,6 +756,17 @@ void SettingsDialog::loadFromSettings()
         settings.value(QLatin1String("sidebarDockArea"),
                        int(Qt::LeftDockWidgetArea)).toInt()
             == int(Qt::RightDockWidgetArea) ? 1 : 0);
+    // SIDE02: which panels the rail offers — default on, keyed under
+    // sidebar/panels/<id> by the registered id in each row's UserRole.
+    for (int row = 0; row < sidebarPanelsList->count(); ++row) {
+        QListWidgetItem *item = sidebarPanelsList->item(row);
+        if (!item)
+            continue;
+        item->setCheckState(
+            SidebarPanel::isPanelVisible(
+                item->data(Qt::UserRole).toByteArray())
+                ? Qt::Checked : Qt::Unchecked);
+    }
     const QString iconTheme = AroraIcon::theme();
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
@@ -791,6 +852,27 @@ void SettingsDialog::loadFromSettings()
     downloadsLocation->setText(downloadDirectory);
     externalDownloadButton->setChecked(settings.value(QLatin1String("external"), false).toBool());
     externalDownloadPath->setText(settings.value(QLatin1String("externalPath")).toString());
+    // DLACC01: engine id lives in the combo's itemData; an unknown or
+    // absent value falls back to built-in.
+    const int engineRow = downloadEngineCombo->findData(
+        settings.value(QLatin1String("engine"),
+                       QLatin1String("builtin")).toString());
+    downloadEngineCombo->setCurrentIndex(engineRow < 0 ? 0 : engineRow);
+    downloadConnectionsSpin->setValue(
+        settings.value(QLatin1String("connections"), 0).toInt());
+    downloadConnectionsSpin->setEnabled(
+        downloadEngineCombo->currentIndex() == 1);
+    // The list-cleanup combo persists the RemovePolicy enum key
+    // DownloadManager::save() writes.
+    const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
+        DownloadManager::staticMetaObject.indexOfEnumerator("RemovePolicy"));
+    int policy = policyEnum.keyToValue(settings.value(
+        QLatin1String("removeDownloadsPolicy"),
+        QByteArray("Never")).toByteArray().constData());
+    if (policy < 0)
+        policy = int(DownloadManager::Never);
+    const int policyRow = downloadCleanupCombo->findData(policy);
+    downloadCleanupCombo->setCurrentIndex(policyRow < 0 ? 0 : policyRow);
     settings.endGroup();
 
     // Appearance
@@ -1006,6 +1088,17 @@ void SettingsDialog::saveToSettings()
                       sidebarDockArea->currentIndex() == 1
                       ? int(Qt::RightDockWidgetArea)
                       : int(Qt::LeftDockWidgetArea));
+    // SIDE02: persist the rail's per-panel checkboxes (the keys live
+    // under sidebar/panels/, not this group — write through the
+    // panel's own helpers).  Live application happens below via each
+    // window's applySidebarSettings().
+    for (int row = 0; row < sidebarPanelsList->count(); ++row) {
+        QListWidgetItem *item = sidebarPanelsList->item(row);
+        if (item)
+            SidebarPanel::setPanelVisible(
+                item->data(Qt::UserRole).toByteArray(),
+                item->checkState() == Qt::Checked);
+    }
     const QString iconTheme = iconThemeCombo->currentData().toString();
     settings.setValue(QLatin1String("iconTheme"), iconTheme);
     settings.endGroup();
@@ -1032,7 +1125,21 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("downloadDirectory"), downloadsLocation->text());
     settings.setValue(QLatin1String("external"), externalDownloadButton->isChecked());
     settings.setValue(QLatin1String("externalPath"), externalDownloadPath->text());
+    settings.setValue(QLatin1String("engine"),
+                      downloadEngineCombo->currentData().toString());
+    settings.setValue(QLatin1String("connections"),
+                      downloadConnectionsSpin->value());
+    const QMetaEnum policyEnum = DownloadManager::staticMetaObject.enumerator(
+        DownloadManager::staticMetaObject.indexOfEnumerator("RemovePolicy"));
+    const int policy = downloadCleanupCombo->currentData().toInt();
+    settings.setValue(QLatin1String("removeDownloadsPolicy"),
+                      QLatin1String(policyEnum.valueToKey(policy)));
     settings.endGroup();
+    // Live-apply: DownloadManager::save() serializes the policy from
+    // its in-memory member, so without this the running manager would
+    // overwrite the new choice on its next autosave.
+    DownloadManager::instance()->setRemovePolicy(
+        static_cast<DownloadManager::RemovePolicy>(policy));
 
     settings.beginGroup(QLatin1String("history"));
     int historyExpire = expireHistory->currentIndex();

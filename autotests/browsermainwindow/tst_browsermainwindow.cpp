@@ -29,20 +29,25 @@
 #include <QtGui/QtGui>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qcombobox.h>
 #include <qdockwidget.h>
+#include <qframe.h>
 #include <qlabel.h>
 #include <qlineedit.h>
+#include <qlistview.h>
 #include <qmenu.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qplaintextedit.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
+#include <qsortfilterproxymodel.h>
 #include <qsplitter.h>
 #include <qstatusbar.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
+#include <qtemporarydir.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
 
@@ -104,6 +109,7 @@ private slots:
     void historyTab();
     void toolsMenuDedup();
     void fileMenuOrder();
+    void downloadsMenuHome();
     void stateSerialization();
     void events();
     void closeConfirm();
@@ -114,6 +120,7 @@ private slots:
     void readerModeButton();
     void statusBarWidgets();
     void sidebarPanel();
+    void downloadsSidebarPanel();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -273,19 +280,21 @@ void tst_BrowserMainWindow::dialogSlots()
         window->tabWidget()->currentIndex()));
     QVERIFY(!BrowserApplication::isPrivate());
 
-    // fileNew spins up a second window; downloadManager shows the
-    // non-modal download dialog.
+    // fileNew spins up a second window; downloadManager raises the
+    // sidebar dock on the Downloads section (DOWN02 — the standalone
+    // dialog is gone).
     QVERIFY(QMetaObject::invokeMethod(window, "fileNew"));
     QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
 
     const QWidgetList topLevel = QApplication::topLevelWidgets();
     for (QWidget *widget : topLevel) {
         if (widget != window && widget->inherits("QMainWindow"))
             widget->close();
     }
-    if (QDialog *downloads = qobject_cast<QDialog *>(
-            BrowserApplication::downloadManager()))
-        downloads->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     closeWindow(window);
 }
@@ -478,6 +487,64 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateAction->shortcut(),
              QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
                           | Qt::Key_N));
+    closeWindow(window);
+}
+
+// MENU04: Downloads moved out of the Window menu into the Tools
+// menu's utility cluster — same text, icon, and Ctrl+Y shortcut, and
+// neither menu keeps a doubled/orphaned separator.
+void tst_BrowserMainWindow::downloadsMenuHome()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *toolsMenu = nullptr;
+    QMenu *windowMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu())
+            continue;
+        if (menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+        if (menuAction->text().contains(QLatin1String("Window")))
+            windowMenu = menuAction->menu();
+    }
+    QVERIFY(toolsMenu);
+    QVERIFY(windowMenu);
+
+    // The Tools copy is the only Downloads entry.
+    QAction *downloads = nullptr;
+    for (QAction *action : toolsMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Downloads"))
+            downloads = action;
+    }
+    QVERIFY(downloads);
+    QCOMPARE(downloads->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+Y")));
+    QVERIFY(!downloads->icon().isNull());
+    for (QAction *action : windowMenu->actions())
+        QVERIFY(!action->text().contains(QLatin1String("Downloads")));
+
+    // No doubled or dangling separators in either menu after the move.
+    for (QMenu *menu : {toolsMenu, windowMenu}) {
+        bool previousWasSeparator = true;
+        for (QAction *action : menu->actions()) {
+            QVERIFY2(!(previousWasSeparator && action->isSeparator()),
+                     qPrintable(menu->title()));
+            previousWasSeparator = action->isSeparator();
+        }
+        QVERIFY(!menu->actions().constLast()->isSeparator());
+    }
+
+    // Triggering it reveals the sidebar focused on Downloads (DOWN02);
+    // the manager object is a hidden controller, never a window.
+    downloads->trigger();
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
+    QVERIFY(!BrowserApplication::downloadManager()->isVisible());
+
     closeWindow(window);
 }
 
@@ -969,6 +1036,7 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
     SubWindow *window = new SubWindow;
     window->show();
@@ -998,6 +1066,41 @@ void tst_BrowserMainWindow::sidebarPanel()
     QVERIFY(panel->findChild<QWidget *>(
                 QLatin1String("sidebarDownloadsView")));
     QVERIFY(panel->notes());
+
+    // SIDE02: the switcher is a vertical icon rail — entries carry
+    // their title as text (a11y) + tooltip plus a themed glyph, but
+    // the rail only paints the icon.
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::West);
+    for (int i = 0; i < panel->tabs()->count(); ++i) {
+        QVERIFY(!panel->tabs()->tabIcon(i).isNull());
+        QVERIFY(!panel->tabs()->tabText(i).isEmpty());
+        QCOMPARE(panel->tabs()->tabToolTip(i),
+                 panel->tabs()->tabText(i));
+    }
+
+    // Unchecking a section in settings drops its tab on apply; the
+    // rail keeps registry order when it comes back.
+    SidebarPanel::setPanelVisible("history", false);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 3);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!panel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    SidebarPanel::setPanelVisible("history", true);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
+
+    // Offscreen panel grab for visual review — set
+    // ARORA_SIDEBAR_GRAB_DIR to a directory and the panel lands there
+    // as sidebar-panel.png (same convention as ARORA_SETTINGS_GRAB_DIR).
+    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    if (!sidebarGrabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
+        qApp->processEvents();
+        panel->grab().save(QString::fromLocal8Bit(sidebarGrabDir)
+            + QStringLiteral("/sidebar-panel.png"));
+    }
 
     // Toggling writes the persisted key; hiding is remembered.
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
@@ -1037,7 +1140,112 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
     closeWindow(window);
+}
+
+// DOWN02: the sidebar's Downloads page is the only download surface —
+// Ctrl+Y / Tools > Downloads focuses it, the filter narrows rows, the
+// sort combo reorders, a selected row hosts the item's expanded detail
+// card, and the header X folds the dock away.
+void tst_BrowserMainWindow::downloadsSidebarPanel()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
+    // The manager is a hidden controller — never a window.
+    QVERIFY(!DownloadManager::instance()->isVisible());
+
+    QListView *view = panel->findChild<QListView *>(
+        QLatin1String("sidebarDownloadsView"));
+    QVERIFY(view);
+    QAbstractItemModel *model = view->model();
+    QVERIFY(model);
+
+    // Seed a real download so there is a row to filter and select.
+    const QUrl url(QString::fromLatin1("data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64()));
+    QWebEnginePage *page = DownloadManager::instance()->retryPage(false);
+    QVERIFY(page);
+    DownloadManager::instance()->download(page, url);
+    QTRY_COMPARE(model->rowCount(), 1);
+    QVERIFY(DownloadManager::instance()->itemAt(0));
+    QVERIFY(!model->index(0, 0).data(Qt::DisplayRole)
+                 .toString().isEmpty());
+
+    // Search filters on file name / source url; clearing restores.
+    QLineEdit *search = panel->findChild<QLineEdit *>(
+        QLatin1String("sidebarDownloadsSearch"));
+    QVERIFY(search);
+    search->setText(QLatin1String("zzz-no-match"));
+    QTRY_COMPARE(model->rowCount(), 0);
+    search->clear();
+    QTRY_COMPARE(model->rowCount(), 1);
+
+    // The sort combo drives the proxy's sort role (Date default).
+    QComboBox *sort = panel->findChild<QComboBox *>(
+        QLatin1String("sidebarDownloadsSort"));
+    QVERIFY(sort);
+    QCOMPARE(sort->count(), 3);
+    QSortFilterProxyModel *proxy = qobject_cast<QSortFilterProxyModel *>(model);
+    QVERIFY(proxy);
+    QCOMPARE(proxy->sortRole(), int(DownloadModel::StartedTimeRole));
+    for (int i = 0; i < sort->count(); ++i) {
+        sort->setCurrentIndex(i);
+        emit sort->activated(i);
+        QCOMPARE(proxy->sortRole(), sort->itemData(i).toInt());
+    }
+
+    // Selecting a row hosts the item's expanded detail card in the
+    // bottom pane.
+    view->setCurrentIndex(model->index(0, 0));
+    QFrame *detail = panel->findChild<QFrame *>(
+        QLatin1String("sidebarDownloadDetail"));
+    QVERIFY(detail);
+    QVERIFY(detail->isVisibleTo(detail->parentWidget()));
+    DownloadItem *card = detail->findChild<DownloadItem *>();
+    QVERIFY(card);
+    QVERIFY(card->isExpanded());
+    QCOMPARE(card, DownloadManager::instance()->itemAt(
+                proxy->mapToSource(view->currentIndex()).row()));
+
+    // Clearing the selection folds the pane and parks the card back on
+    // the hidden manager.
+    view->setCurrentIndex(QModelIndex());
+    QVERIFY(!detail->isVisibleTo(detail->parentWidget()));
+    QCOMPARE(card->parentWidget(),
+             static_cast<QWidget *>(DownloadManager::instance()));
+
+    // The header's X folds the whole dock.
+    QToolButton *closeButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(closeButton);
+    closeButton->click();
+    QVERIFY(!dock->isVisible());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+
+    // The seeded download left a retry page on the singleton manager;
+    // drop it before process teardown or the profile dies with a live
+    // page (and segfaults).
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

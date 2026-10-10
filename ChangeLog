@@ -82,6 +82,12 @@ UI:
   live speed and a speed-over-time sparkline, plus "Restart" and
   "Show in File Manager" actions — Restart works on completed
   downloads too and re-downloads to a fresh "-N" name (DOWN01).
+- The separate Downloads window is gone — downloads live in the
+  sidebar's Downloads panel (Ctrl+Y / Tools → Downloads focuses it),
+  with a filter field, Date/Name/Size sorting, compact icon+size rows,
+  Open and Open Location item actions, and the selected download's
+  detail card in a bottom pane; download preferences moved to a
+  dedicated Preferences → Downloads page (DOWN02).
 - Preferences layout normalized across all ten pages: label/field
   pairs sit on shared grid columns, "Select…"-style buttons and combo
   boxes are capped at content width instead of stretching, group
@@ -105,6 +111,20 @@ UI:
   reload/stop button — it appears only on article-like pages, shows
   a filled icon while the reader overlay is up, and stays in sync
   with View → Reader Mode (Ctrl+Alt+R) (READ02).
+- Downloads moved from the Window menu to the Tools menu — the
+  Ctrl+Y shortcut and icon are unchanged, and the Window menu now
+  holds only tab/window-switching entries (MENU04).
+- Preferences → Downloads gains a download-engine selector —
+  "Built-in (Chromium)" or "Accelerated (Rust)", greyed out in builds
+  without the rustdl backend — plus a connections-per-download field
+  and a cleanup policy for the finished-downloads list (keep, clear
+  on exit, or remove each entry as it completes) (DLACC01).
+- Sidebar reworked Vivaldi-style: the panel picker is now a slim
+  icon-only vertical rail instead of horizontal tabs eating the
+  dock's height, and a new Preferences → Appearance → Sidebar
+  section holds the enable toggle, Left/Right placement and a
+  checkable per-panel list (Bookmarks/History/Downloads/Notes —
+  hidden panels are never built, toggles apply live) (SIDE02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -210,6 +230,9 @@ Tor:
 - A configured DNS-over-HTTPS mode is ignored inside a Tor window —
   names resolve remotely through the SOCKS proxy, so a local resolver
   would bypass the tunnel with the whole lookup stream (SEC20).
+- Each Tor circuit hop now carries its exit-country code ("(DE)",
+  "--" when unknown), resolved via the tor control port and cached
+  per relay fingerprint (TOR05).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

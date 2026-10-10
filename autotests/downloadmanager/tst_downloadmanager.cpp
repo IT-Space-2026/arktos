@@ -250,19 +250,18 @@ void tst_DownloadManager::cleanupButton()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
-        QCOMPARE(view->model()->rowCount(), 0);
-        QPushButton *cleanupButton = manager.findChild<QPushButton*>();
-        QVERIFY(cleanupButton);
-        QVERIFY(!cleanupButton->isEnabled());
+        // DOWN02: the dialog (with its table and Clear button) is gone;
+        // drive the model the sidebar panel renders directly.
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
+        QCOMPARE(model->rowCount(), 0);
 
         QWebEnginePage *page = manager.retryPage(false);
         QVERIFY(page);
         manager.download(page, waitForDownload ? downloadUrl() : stalledUrl);
         // The first real HTTP request boots the WebEngine network
         // service, which can take well over the default QTRY timeout.
-        QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 1, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
         QProgressBar *bar = manager.findChild<QProgressBar*>();
         QVERIFY(bar);
@@ -285,10 +284,9 @@ void tst_DownloadManager::cleanupButton()
         } else {
             QTRY_VERIFY(bar->value() == bar->maximum());
         }
-        QCOMPARE(cleanupButton->isEnabled(), waitForDownload);
-        QCOMPARE(view->model()->rowCount(), 1);
+        QCOMPARE(model->rowCount(), 1);
         manager.cleanup();
-        QCOMPARE(view->model()->rowCount(), waitForDownload ? 0 : 1);
+        QCOMPARE(model->rowCount(), waitForDownload ? 0 : 1);
     }
 }
 
@@ -312,18 +310,15 @@ void tst_DownloadManager::download()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
-        QPushButton *cleanupButton = manager.findChild<QPushButton*>();
-        QVERIFY(cleanupButton);
-        QVERIFY(!cleanupButton->isEnabled());
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
 
         QWebEnginePage *page = manager.retryPage(false);
         QVERIFY(page);
         for (int i = 0; i < request.count(); ++i)
             manager.download(page, QUrl(request[i]));
 
-        QTRY_COMPARE(view->model()->rowCount(), rowCount);
+        QTRY_COMPARE(model->rowCount(), rowCount);
         QList<QProgressBar*>bars = manager.findChildren<QProgressBar*>();
         QCOMPARE(bars.count(), rowCount);
     }
@@ -353,8 +348,8 @@ void tst_DownloadManager::removePolicy()
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
         manager.setRemovePolicy(removePolicy);
         QCOMPARE(manager.removePolicy(), removePolicy);
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
         QWebEnginePage *page = manager.retryPage(false);
         manager.download(page, downloadUrl());
         if (removePolicy == DownloadManager::SuccessFullDownload) {
@@ -362,9 +357,9 @@ void tst_DownloadManager::removePolicy()
             // can appear and disappear before any poll sees it; verify
             // via the file that landed and the model settling empty.
             QTRY_VERIFY(QDir(downloadDir.path()).entryInfoList(QDir::Files).count() == 1);
-            QTRY_COMPARE(view->model()->rowCount(), 0);
+            QTRY_COMPARE(model->rowCount(), 0);
         } else {
-            QTRY_COMPARE(view->model()->rowCount(), 1);
+            QTRY_COMPARE(model->rowCount(), 1);
             QProgressBar *bar = manager.findChild<QProgressBar*>();
             QVERIFY(bar);
             QTRY_VERIFY(bar->value() == bar->maximum());
@@ -373,9 +368,7 @@ void tst_DownloadManager::removePolicy()
 
     // The finished download is persisted unless the policy dropped it.
     SubDownloadManager manager;
-    QTableView *view = manager.findChild<QTableView*>();
-    QVERIFY(view);
-    QCOMPARE(view->model()->rowCount(), removePolicy == DownloadManager::Never ? 1 : 0);
+    QCOMPARE(manager.model()->rowCount(), removePolicy == DownloadManager::Never ? 1 : 0);
 }
 
 // DownloadModel row accessors: flags, mime data, removeRows — plus the
@@ -387,9 +380,7 @@ void tst_DownloadManager::modelAccessors()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
-        QAbstractItemModel *model = view->model();
+        QAbstractItemModel *model = manager.model();
         QVERIFY(model);
 
         // Out-of-range accessors on an empty model.
@@ -574,13 +565,13 @@ void tst_DownloadManager::dangerousDownload()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
         ModalAnswer answer(keep ? QMessageBox::Save : QMessageBox::Discard,
                            &manager);
         QWebEnginePage *page = manager.retryPage(false);
         manager.download(page, url);
-        QTRY_COMPARE(view->model()->rowCount(), 1);
+        QTRY_COMPARE(model->rowCount(), 1);
 
         const QString landed = downloadDir.path() + QLatin1Char('/') + fileName;
         if (!promptExpected || keep) {
@@ -645,14 +636,14 @@ void tst_DownloadManager::partialCleanup()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
         QWebEnginePage *page = manager.retryPage(false);
 
         // A quick completed download whose file must survive cleanup.
         manager.download(page, downloadUrl());
         manager.download(page, stalledUrl);
-        QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 2, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 2, 30000);
 
         QList<DownloadItem*> items = manager.findChildren<DownloadItem*>();
         QCOMPARE(items.count(), 2);
@@ -669,7 +660,7 @@ void tst_DownloadManager::partialCleanup()
         // Cleanup removes both rows (the cancelled one is removable via
         // its Try Again state); the partial file is deleted with it.
         manager.cleanup();
-        QCOMPARE(view->model()->rowCount(), 0);
+        QCOMPARE(model->rowCount(), 0);
         const QStringList after = QDir(downloadDir.path())
                                       .entryList(QDir::Files);
         // Only the completed download's file may remain.
@@ -797,11 +788,11 @@ void tst_DownloadManager::cardDetails()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
         QWebEnginePage *page = manager.retryPage(false);
         manager.download(page, url);
-        QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 1, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
         QList<DownloadItem*> items = manager.findChildren<DownloadItem*>();
         QCOMPARE(items.count(), 1);
@@ -812,21 +803,28 @@ void tst_DownloadManager::cardDetails()
 
         // The finished row is the compact baseline — stop/progress
         // are hidden by then, so it is shorter than the live row.
+        // DOWN02: no table view hosts the card anymore — expansion is
+        // measured through the widget's own size hint.  A hidden
+        // widget's layout caches its hint until a real layout pass
+        // runs, so force one with adjustSize().
         QTRY_VERIFY_WITH_TIMEOUT(item->downloadedSuccessfully(), 30000);
         QVERIFY(!item->isExpanded());
         QVERIFY(details->isHidden());
-        const int compactHeight = view->rowHeight(0);
+        item->adjustSize();
+        const int compactHeight = item->sizeHint().height();
         item->setExpanded(true);
         QVERIFY(item->isExpanded());
         QVERIFY(!details->isHidden());
-        QTRY_VERIFY(view->rowHeight(0) > compactHeight);
+        item->adjustSize();
+        QVERIFY(item->sizeHint().height() > compactHeight);
         QToolButton *chevron = item->findChild<QToolButton*>(
             QLatin1String("expandButton"));
         QVERIFY(chevron);
         QVERIFY(chevron->isChecked());
         item->setExpanded(false);
         QVERIFY(details->isHidden());
-        QCOMPARE(view->rowHeight(0), item->sizeHint().height());
+        item->adjustSize();
+        QCOMPARE(item->sizeHint().height(), compactHeight);
         chevron->click();
         QVERIFY(item->isExpanded());
 
@@ -921,11 +919,11 @@ void tst_DownloadManager::speedSeries()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
-        QVERIFY(view);
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
         QWebEnginePage *page = manager.retryPage(false);
         manager.download(page, stalledUrl);
-        QTRY_COMPARE_WITH_TIMEOUT(view->model()->rowCount(), 1, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 1, 30000);
 
         DownloadItem *item = manager.findChildren<DownloadItem*>().first();
         QVERIFY(item->downloading());

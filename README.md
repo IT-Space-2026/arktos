@@ -194,14 +194,21 @@ no suggestions, no dedicated search box — the omnibox covers it, no
 local DNS resolver: names resolve remotely through SOCKS5 and a
 configured DNS-over-HTTPS mode is ignored).
 The status bar shows the live circuit's hop chain
-(guard -> middle -> exit, fingerprints on hover).
+(guard -> middle -> exit, each hop tagged with its country code,
+fingerprints on hover).
 
 ### Downloads
 
 The download manager drives QWebEngineDownloadRequest: progress, speed
 and ETA per item, Try Again (re-issues through the page or a hidden
 page), open-folder/open-with actions, server-suggested names sanitized
-and de-duplicated, and an external download-program handoff. An
+and de-duplicated, and an external download-program handoff. Downloads
+surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
+Downloads) — filterable, sortable, and each selected row expands into a
+detail card in the panel's bottom pane. Preferences → Downloads hosts
+a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
+enabled in `CONFIG+=rustdl` builds) — a connections-per-download
+field, and a cleanup policy for the finished-downloads list. An
 optional Rust reqwest-based engine (`CONFIG+=rustdl`) accelerates
 HTTP(S) downloads as parallel ranged GETs and holds the same privacy
 guarantees as the built-in engine: every request and each redirect hop
