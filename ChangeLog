@@ -256,6 +256,15 @@ Security:
   links work; links to local files from the staged viewer document are
   refused. Saving a PDF still stores the original unsanitized bytes
   for the external reader — sanitization covers the viewing path only.
+- External-URL ingress audit (SEC23): every path an untrusted URL can
+  enter a running process — positional argv, the single-instance
+  socket, the QDesktopServices `http` handler and the `--tor` operand —
+  now funnels through the same untrusted-source gate; `openUrl()` was
+  the one bypass and is fixed. The socket control channel
+  (`aroramessage://`) can never be reached by a URL-shaped payload, a
+  `--tor` process provably stays outside single-instance IPC, and a
+  forwarded URL lands on the private profile when private browsing is
+  on. Covered by `--ingress-smoke`.
 
 Containers:
 - Isolated container profiles (CONT01).

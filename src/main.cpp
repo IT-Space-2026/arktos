@@ -127,6 +127,8 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QEventLoop>
 #include <QtNetwork/QHostAddress>
+#include <QtNetwork/QLocalServer>
+#include <QtNetwork/QLocalSocket>
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkReply>
@@ -3266,6 +3268,7 @@ int main(int argc, char **argv)
         "sandbox-smoke", "write-sandbox-launcher",
         "bidi-smoke", "pdf-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
+        "ingress-smoke",
         "engine-list",
     };
     for (const char *option : internalOptions)
@@ -12027,6 +12030,489 @@ int main(int argc, char **argv)
             application.exit(pass ? 0 : 1);
         });
         return application.exec();
+    }
+
+    // SEC23: external-URL ingress — every untrusted lane (the argv
+    // operand, the single-instance socket and the QDesktopServices
+    // 'http' handler) must funnel through the same
+    // WebView::isUrlAllowedOnUntrustedInput gate, control-channel
+    // messages must never be reachable from a url-shaped payload, a
+    // --tor process must stay outside the single-instance handshake
+    // and a forwarded url must land on a profile at least as private
+    // as the receiving context.  Synchronous where possible — the
+    // lanes are exercised through the same entry points the real
+    // code uses.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--ingress-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "ingress-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto waitFor = [](const std::function<bool()> &predicate,
+                                int timeoutMs) -> bool {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < timeoutMs) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (predicate())
+                    return true;
+                telemetryWait(10);
+            }
+            return predicate();
+        };
+        // Modal auto-dismisser: nothing here should ever raise a
+        // prompt — if an unexpected consent dialog appears anyway,
+        // answering it Cancel keeps the run from hanging instead of
+        // silently allowing an external handoff.
+        QTimer dismisser;
+        QObject::connect(&dismisser, &QTimer::timeout, &application,
+                         []() {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (QMessageBox *box = qobject_cast<QMessageBox*>(modal)) {
+                qInfo() << "ingress-smoke: unexpected modal dismissed:"
+                        << box->text();
+                box->reject();
+            }
+        });
+        dismisser.start(20);
+
+        BrowserMainWindow *browserWindow = application.newMainWindow();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+        WebView *view = tabWidget->currentWebView();
+
+        // The fresh window's first tab is still running its startup
+        // load — let it commit and finish or later assertions race it.
+        waitFor([&view]() {
+            return !view->url().isEmpty() && !view->page()->isLoading();
+        }, 30000);
+
+        // Did any javascript: payload execute in the current page?
+        // loadUrl()'s runJavaScript path would leave this marker.
+        const auto pwned = [&view, &waitFor]() -> bool {
+            bool done = false;
+            bool result = true;   // fail closed on eval trouble
+            view->page()->runJavaScript(
+                QLatin1String("window.__aroraIngressPwned === true"),
+                [&done, &result](const QVariant &v) {
+                    result = v.toBool();
+                    done = true;
+                });
+            if (!waitFor([&done]() { return done; }, 5000))
+                qInfo() << "ingress-smoke: js probe timed out (fails closed)";
+            return result;
+        };
+
+        // Positive control fixture — an allowed operand really does
+        // navigate on every lane.  Loaded FIRST: a live document gives
+        // the runJavaScript probes and the navigation->consent-prompt
+        // path a real renderer to work against.
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-ingress-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)
+                    || fixture.write("<title>ingress</title>ok") < 0) {
+                qInfo() << "ingress-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+        tabWidget->loadStringFromUntrustedSource(fixtureUrl.toString());
+        check(waitFor([&view, fixtureUrl]() {
+                  return view->url() == fixtureUrl; }, 10000),
+              QStringLiteral("argv lane navigates allowed file: url"));
+
+        // (a) argv/postLaunch lane — loadStringFromUntrustedSource is
+        // exactly what postLaunch() feeds the operand into.
+        {
+            const QUrl before = view->url();
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses javascript:"));
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("   javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses padded javascript:"));
+            check(QUrl(QLatin1String("JaVaScRiPt:x")).scheme()
+                      == QLatin1String("javascript"),
+                  QStringLiteral("QUrl lowercases the scheme"));
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("JaVaScRiPt:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses case-mangled javascript:"));
+
+            // Non-browser scheme operands: the engine drops a
+            // programmatic load() of an unknown scheme before a
+            // navigation request exists — the safe outcome is no
+            // navigation, no script and no external handoff.
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("vbscript:msgbox(1)"));
+            telemetryWait(500);
+            QCoreApplication::processEvents();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("vbscript: operand dead-ends, never script"));
+
+            // The consent prompt that backs genuine external-protocol
+            // navigations (magnet:, intent:, …) is hook-level covered
+            // by tst_webpage's externalPrompt rows — SAFE05.  Engine-
+            // level unknown schemes dead-end even earlier: deny by
+            // default either way.
+
+            // An aroramessage:// operand takes the NAVIGATION lane —
+            // the socket control channel only exists inside
+            // messageReceived(), which argv never reaches.
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("aroramessage://getwinid"));
+            telemetryWait(500);
+            QCoreApplication::processEvents();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("aroramessage:// operand dead-ends, not the control channel"));
+
+            check(WebView::isUrlAllowedOnUntrustedInput(
+                      QUrl(QLatin1String("data:text/html,<p>x</p>"))),
+                  QStringLiteral("data: passes the gate (typed-equivalent)"));
+            check(WebView::isUrlAllowedOnUntrustedInput(
+                      QUrl(QLatin1String("file:///etc/passwd"))),
+                  QStringLiteral("file: passes the gate (SEC09 decision)"));
+        }
+
+        // (b) single-instance socket lane — drive messageReceived()
+        // with a real socket pair; the first whitespace-delimited
+        // token chooses the lane, exclusively.
+        QLocalServer pairServer;
+        QLocalSocket *client = nullptr;
+        QLocalSocket *serverSide = nullptr;
+        {
+            const QString pairPath = QDir::temp().filePath(
+                QLatin1String("arora-ingress-pair"));
+            QFile::remove(pairPath);
+            const bool pairOk =
+                pairServer.listen(pairPath);
+            client = new QLocalSocket(&application);
+            client->connectToServer(pairPath);
+            check(pairOk && client->waitForConnected(3000)
+                      && pairServer.waitForNewConnection(3000),
+                  QStringLiteral("socket pair established"));
+            serverSide = pairServer.nextPendingConnection();
+        }
+        const auto feed = [&application, client, serverSide](
+                const QByteArray &payload) {
+            if (!client || !serverSide)
+                return;
+            client->write(payload);
+            client->flush();
+            client->waitForBytesWritten(2000);
+            serverSide->waitForReadyRead(2000);
+            QMetaObject::invokeMethod(
+                &application, "messageReceived",
+                Q_ARG(QLocalSocket *, serverSide));
+            // messageReceived() reads only the first token — drain
+            // leftovers so the next case starts from a clean buffer.
+            serverSide->readAll();
+            QCoreApplication::processEvents();
+        };
+        if (serverSide) {
+            const QUrl before = view->url();
+            // Control lane: getwinid answers on the wire and must
+            // not navigate.
+            feed(QByteArrayLiteral("aroramessage://getwinid"));
+            const bool replyReady = client->waitForReadyRead(3000);
+            const QByteArray reply = client->readAll();
+            const bool gotWinid =
+                reply.startsWith(QByteArrayLiteral("aroramessage://winid"));
+            if (!gotWinid || view->url() != before)
+                qInfo() << "ingress-smoke: getwinid diagnostics ready"
+                        << replyReady << "reply" << reply
+                        << "url" << view->url();
+            check(gotWinid && view->url() == before,
+                  QStringLiteral("getwinid control answers, no navigation"));
+
+            // Unknown control token — ignored entirely.
+            feed(QByteArrayLiteral("aroramessage://bogus"));
+            const bool silent = !client->waitForReadyRead(300);
+            check(silent && view->url() == before,
+                  QStringLiteral("unknown control message ignored"));
+
+            // Namespace confusion: a control token carrying a url
+            // stays in the control lane — the first token wins.
+            feed(QByteArrayLiteral(
+                "aroramessage://getwinid javascript:window.__aroraIngressPwned=true"));
+            client->waitForReadyRead(3000);
+            client->readAll();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("control token + url payload: no navigation, no script"));
+
+            // Url lane: javascript: refused, an allowed url navigates.
+            feed(QByteArrayLiteral(
+                "javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("socket lane refuses javascript:"));
+            feed(fixtureUrl.toEncoded());
+            check(waitFor([&view, fixtureUrl]() {
+                      return view->url() == fixtureUrl; }, 10000),
+                  QStringLiteral("socket lane navigates allowed url"));
+        }
+
+        // (c) QDesktopServices 'http' handler — the slot is public
+        // surface for in-app paths; SEC23 gives it the same gate.
+        {
+            const QUrl before = view->url();
+            QMetaObject::invokeMethod(
+                &application, "openUrl",
+                Q_ARG(QUrl, QUrl(QLatin1String(
+                    "javascript:window.__aroraIngressPwned=true"))));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("openUrl refuses javascript:"));
+            QMetaObject::invokeMethod(
+                &application, "openUrl", Q_ARG(QUrl, fixtureUrl));
+            check(waitFor([&view, fixtureUrl]() {
+                      return view->url() == fixtureUrl; }, 10000),
+                  QStringLiteral("openUrl navigates allowed url"));
+        }
+
+        // (f) forwarded url while private browsing is on — lands on
+        // the OTR profile regardless of the openLinksFromAppsIn
+        // target; it is never downgraded onto a persistent profile.
+        // The phase's own window is the only window so mainWindow()
+        // picks it deterministically.
+        delete browserWindow;
+        browserWindow = nullptr;
+        {
+            BrowserApplication::setPrivate(true);
+            BrowserMainWindow *privWindow = application.newMainWindow();
+            check(privWindow->tabWidget()->currentWebView()
+                      ->enginePage()->isOffTheRecord(),
+                  QStringLiteral("private window creates OTR first tab"));
+            QSettings().setValue(
+                QLatin1String("tabs/openLinksFromAppsIn"),
+                int(TabWidget::NewSelectedTab));
+            const int tabsBefore = privWindow->tabWidget()->count();
+            feed(QByteArrayLiteral("about:blank"));
+            check(privWindow->tabWidget()->count() > tabsBefore
+                      && privWindow->tabWidget()->currentWebView()
+                             ->enginePage()->isOffTheRecord(),
+                  QStringLiteral("forwarded url lands in an OTR tab"));
+            // A NewWindow target spawns an OTR window too — the
+            // opener's private context is never dropped.
+            const int windowsBefore = application.mainWindows().count();
+            QSettings().setValue(
+                QLatin1String("tabs/openLinksFromAppsIn"),
+                int(TabWidget::NewWindow));
+            feed(QByteArrayLiteral("about:blank"));
+            const bool spawnedOtr =
+                waitFor([&application, windowsBefore]() {
+                    return application.mainWindows().count()
+                           > windowsBefore; }, 10000)
+                && application.mainWindows().first()
+                       ->tabWidget()->currentWebView()
+                       ->enginePage()->isOffTheRecord();
+            check(spawnedOtr,
+                  QStringLiteral("NewWindow forward spawns an OTR window"));
+            BrowserApplication::setPrivate(false);
+            // Leaving private browsing clears every window's tabs —
+            // delete the smoke windows outright.
+            const QList<BrowserMainWindow*> windows =
+                application.mainWindows();
+            for (BrowserMainWindow *window : windows)
+                delete window;
+        }
+
+        // (d) --tor operand parsing — the url is positional, never an
+        // option value, never shell-adjacent.  --tor=<value> is a
+        // parse error so nothing reaches the navigation machinery.
+        {
+            const auto parseTor = [](const QStringList &argv,
+                                     QStringList *positional,
+                                     bool *torSet) -> bool {
+                QCommandLineParser parser;
+                parser.addPositionalArgument(
+                    QLatin1String("url"), QString(),
+                    QLatin1String("[url...]"));
+                parser.addOption(QCommandLineOption(QLatin1String("tor")));
+                const bool parsed = parser.parse(argv);
+                if (positional)
+                    *positional = parser.positionalArguments();
+                if (torSet)
+                    *torSet = parser.isSet(QLatin1String("tor"));
+                return parsed;
+            };
+            QStringList positional;
+            bool torSet = false;
+            check(parseTor({QLatin1String("arora"),
+                            QLatin1String("--tor"),
+                            QLatin1String("http://example.invalid")},
+                           &positional, &torSet)
+                      && torSet
+                      && positional == QStringList(
+                             QLatin1String("http://example.invalid")),
+                  QStringLiteral("--tor operand lands in the positional slot"));
+            check(parseTor({QLatin1String("arora"),
+                            QLatin1String("--tor"),
+                            QLatin1String("javascript:alert(1)")},
+                           &positional, nullptr)
+                      && positional == QStringList(
+                             QLatin1String("javascript:alert(1)"))
+                      && !WebView::isUrlAllowedOnUntrustedInput(
+                             QUrl(QLatin1String("javascript:alert(1)"))),
+                  QStringLiteral("--tor javascript: operand is positional + gated downstream"));
+            check(!parseTor({QLatin1String("arora"),
+                             QLatin1String("--tor=javascript:x")},
+                            nullptr, nullptr),
+                  QStringLiteral("--tor=<value> is a parser error"));
+        }
+
+        // (d)+(e) child processes — hermetic HOME/XDG so neither the
+        // real profile nor the real runtime socket is touched.
+        // ARORA_NO_SANDBOX keeps the launch paths deterministic.
+        {
+            QTemporaryDir childHome;
+            QTemporaryDir runtimeDir;
+            QTemporaryDir fakeTorDir;
+            const QString fakeTor =
+                fakeTorDir.filePath(QLatin1String("tor"));
+            {
+                QFile fake(fakeTor);
+                if (fake.open(QIODevice::WriteOnly)) {
+                    fake.write("#!/bin/sh\nexit 1\n");
+                    fake.close();
+                }
+                QFile::setPermissions(fakeTor,
+                    QFile::ReadOwner | QFile::WriteOwner
+                        | QFile::ExeOwner);
+            }
+            QFile::setPermissions(runtimeDir.path(),
+                QFile::ReadUser | QFile::WriteUser | QFile::ExeUser);
+
+            QProcessEnvironment childEnv =
+                QProcessEnvironment::systemEnvironment();
+            childEnv.insert(QLatin1String("HOME"), childHome.path());
+            childEnv.insert(QLatin1String("XDG_RUNTIME_DIR"),
+                            runtimeDir.path());
+            childEnv.insert(QLatin1String("XDG_CONFIG_HOME"),
+                            childHome.filePath(QLatin1String("config")));
+            childEnv.insert(QLatin1String("XDG_DATA_HOME"),
+                            childHome.filePath(QLatin1String("data")));
+            childEnv.insert(QLatin1String("XDG_CACHE_HOME"),
+                            childHome.filePath(QLatin1String("cache")));
+            childEnv.insert(QLatin1String("ARORA_TOR_BINARY"), fakeTor);
+            childEnv.insert(QLatin1String("ARORA_NO_SANDBOX"),
+                            QLatin1String("1"));
+
+            const QString self = QCoreApplication::applicationFilePath();
+            const auto runtimeSockets = [&runtimeDir]() {
+                // A unix socket is S_IFSOCK — QDir::System, not Files.
+                return QDir(runtimeDir.path()).entryList(
+                    {QLatin1String("Arora*")},
+                    QDir::Files | QDir::System);
+            };
+
+            // A --tor process is standalone by construction — the
+            // ctor's any-dash-arg rule never connects the handshake,
+            // so no listener may appear for it.
+            QProcess torChild;
+            torChild.setProcessEnvironment(childEnv);
+            torChild.setProgram(self);
+            torChild.setArguments({QLatin1String("--tor")});
+            torChild.start();
+            const bool torSpawns = waitFor(
+                [&torChild]() {
+                    return torChild.state() != QProcess::NotRunning; },
+                10000);
+            telemetryWait(5000);   // give a misbehaving server time
+            check(torSpawns && runtimeSockets().isEmpty(),
+                  QStringLiteral("--tor process never starts the single-instance server"));
+
+            // A normal arora cannot forward into the tor process:
+            // with no listener it must become its own instance — the
+            // socket file appearing proves that.
+            QProcess plainChild;
+            plainChild.setProcessEnvironment(childEnv);
+            plainChild.setProgram(self);
+            plainChild.setArguments({QLatin1String("about:blank")});
+            plainChild.start();
+            const bool socketAppeared = waitFor(
+                [&runtimeSockets]() {
+                    return !runtimeSockets().isEmpty(); }, 45000);
+            if (!socketAppeared)
+                qInfo() << "ingress-smoke: plain-child diagnostics state"
+                        << plainChild.state() << "error"
+                        << plainChild.error()
+                        << "runtimeDir:" << runtimeDir.path()
+                        << "stderr-tail:"
+                        << plainChild.readAllStandardError().right(600);
+            check(socketAppeared,
+                  QStringLiteral("plain arora becomes its own instance "
+                                 "(nothing forwarded to --tor)"));
+            if (socketAppeared) {
+                const QFileInfo dirInfo(runtimeDir.path());
+                const QFileInfo sockInfo(
+                    runtimeDir.filePath(runtimeSockets().constFirst()));
+                const QFile::Permissions ownerOnlyDir =
+                    QFile::ReadUser | QFile::WriteUser | QFile::ExeUser;
+                const QFile::Permissions groupOther =
+                    QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+                    | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+                check((dirInfo.permissions() & ownerOnlyDir) == ownerOnlyDir
+                          && !(dirInfo.permissions() & groupOther),
+                      QStringLiteral("socket dir is user-only (0700)"));
+                check((sockInfo.permissions()
+                           & (QFile::ReadUser | QFile::WriteUser))
+                              == (QFile::ReadUser | QFile::WriteUser)
+                          && !(sockInfo.permissions() & groupOther),
+                      QStringLiteral("socket file is user-only (0600)"));
+            }
+            torChild.kill();
+            torChild.waitForFinished(5000);
+            plainChild.kill();
+            plainChild.waitForFinished(5000);
+
+            // End-to-end argv operand: the standalone harness gate
+            // refuses javascript: before any load.
+            QProcess argvChild;
+            argvChild.setProcessEnvironment(childEnv);
+            argvChild.setProgram(self);
+            argvChild.setArguments(
+                {QLatin1String("--quit-after-load"),
+                 QLatin1String("javascript:alert(1)")});
+            argvChild.start();
+            const bool argvDone = argvChild.waitForFinished(45000);
+            if (!argvDone)
+                argvChild.kill();
+            const QByteArray argvOut =
+                argvChild.readAllStandardError()
+                + argvChild.readAllStandardOutput();
+            check(argvDone && argvChild.exitCode() == 0
+                      && argvOut.contains("Ignoring untrusted argv url"),
+                  QStringLiteral("argv javascript: operand refused end-to-end"));
+
+            // --tor=<value> is a parser error — the operand slot can
+            // never be smuggled through an option value.
+            QProcess badTor;
+            badTor.setProcessEnvironment(childEnv);
+            badTor.setProgram(self);
+            badTor.setArguments({QLatin1String("--tor=javascript:x")});
+            badTor.start();
+            const bool badDone = badTor.waitForFinished(15000);
+            if (!badDone)
+                badTor.kill();
+            check(badDone && badTor.exitCode() != 0,
+                  QStringLiteral("--tor=<value> child exits on parser error"));
+        }
+
+        client->disconnectFromServer();
+        delete client;
+        pairServer.close();
+        QFile::remove(fixturePath);
+        const QList<BrowserMainWindow*> leftovers =
+            application.mainWindows();
+        for (BrowserMainWindow *window : leftovers)
+            delete window;
+
+        qInfo() << "ingress-smoke:" << (failures == 0 ? "PASS" : "FAIL")
+                << "failures:" << failures;
+        return failures == 0 ? 0 : 1;
     }
 
     return application.exec();

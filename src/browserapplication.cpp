@@ -1010,6 +1010,16 @@ void BrowserApplication::openUrl(const QUrl &url)
 {
     setEventMouseButtons(mouseButtons());
     setEventKeyboardModifiers(keyboardModifiers());
+    // SEC23: this slot backs the registered QDesktopServices 'http'
+    // handler — any in-app path can invoke it, so the url gets the
+    // same untrusted-source gate as argv and single-instance socket
+    // input (a javascript: url here would execute script in the
+    // current page).
+    if (!WebView::isUrlAllowedOnUntrustedInput(url)) {
+        qWarning() << "BrowserApplication: refusing untrusted url"
+                      " from the QDesktopServices handler:" << url;
+        return;
+    }
     mainWindow()->tabWidget()->loadUrl(url);
 }
 
