@@ -127,6 +127,11 @@ UI:
   section holds the enable toggle, Left/Right placement and a
   checkable per-panel list (Bookmarks/History/Downloads/Notes —
   hidden panels are never built, toggles apply live) (SIDE02).
+- View menu gains a "Development Tools" submenu holding the engine
+  tools: "Chromium Dev Tool" opens the inspector on the current page
+  (the Tools menu's "Web Inspector" entry moved here) and "BiDi Dev
+  Tool" is a visible placeholder for the upcoming BiDi backend
+  (DEVT01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

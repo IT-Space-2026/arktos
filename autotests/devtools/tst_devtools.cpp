@@ -20,9 +20,10 @@
 // DVT01: the DevTools host window — InspectElement is a no-op without
 // a bound devToolsPage, so every entry point routes through
 // DevToolsWindow::inspectElement().  Covered: binding on the right
-// profile, re-pointing on tab/page switch, the Tools-menu action,
-// clean teardown (window close unbinds, inspected-page death closes
-// the window), and the devtools frontend actually loading.
+// profile, re-pointing on tab/page switch, the View > Development
+// Tools menu action, clean teardown (window close unbinds,
+// inspected-page death closes the window), and the devtools frontend
+// actually loading.
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
@@ -50,7 +51,7 @@ private slots:
     void inspectBindsHostPage();
     void devToolsFrontendLoads();
     void rebindsToCurrentPage();
-    void toolsMenuOpensInspector();
+    void devToolsMenuOpensInspector();
     void closeReleasesBinding();
     void inspectedPageDestroyedClosesWindow();
 };
@@ -139,7 +140,7 @@ void tst_DevTools::rebindsToCurrentPage()
     QVERIFY(!viewA.page()->devToolsPage());
 }
 
-void tst_DevTools::toolsMenuOpensInspector()
+void tst_DevTools::devToolsMenuOpensInspector()
 {
     BrowserMainWindow *window = new BrowserMainWindow;
     window->setAttribute(Qt::WA_DeleteOnClose);
@@ -147,13 +148,23 @@ void tst_DevTools::toolsMenuOpensInspector()
     WebView *view = window->currentTab();
     QVERIFY(view);
 
+    // DEVT01: the entry lives under View > Development Tools as
+    // "Chromium Dev Tool" — the Tools menu no longer carries it.
+    QMenu *devToolsMenu = nullptr;
+    const QList<QMenu *> menus = window->findChildren<QMenu *>();
+    for (QMenu *menu : menus) {
+        if (menu->title() == QLatin1String("Development Tools"))
+            devToolsMenu = menu;
+    }
+    QVERIFY(devToolsMenu);
+
     QAction *inspector = nullptr;
-    const QList<QAction *> actions = window->findChildren<QAction *>();
-    for (QAction *action : actions) {
-        if (action->text().contains(QLatin1String("Inspector")))
+    for (QAction *action : devToolsMenu->actions()) {
+        if (action->text() == QLatin1String("Chromium Dev Tool"))
             inspector = action;
     }
     QVERIFY(inspector);
+    QVERIFY(inspector->isEnabled());
 
     inspector->trigger();
     DevToolsWindow *host = DevToolsWindow::instance();
