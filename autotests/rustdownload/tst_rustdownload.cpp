@@ -225,13 +225,15 @@ void tst_RustDownload::canHandleGate()
     QVERIFY(!RustDownloadEngine::canHandle(https));
     settings.remove(QLatin1String("downloadmanager/engine"));
 
-    // HARD GATE: any real application proxy — in tor mode that is the
-    // managed daemon's SOCKS listener — keeps the transfer on the
-    // built-in path; the crate must never fetch direct.
+    // Outside tor a configured application proxy does NOT gate the
+    // claim — the crate rides it itself: proxySpecForDownload() wires
+    // it into options.proxy as a reqwest-style URL (socks5h below).
+    // The de-anonymization wall is tor-only, where canHandle()
+    // requires the managed SOCKS listener (canHandleTorProxy).
     const QNetworkProxy saved = QNetworkProxy::applicationProxy();
     QNetworkProxy::setApplicationProxy(QNetworkProxy(
         QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 39237));
-    QVERIFY(!RustDownloadEngine::canHandle(https));
+    QVERIFY(RustDownloadEngine::canHandle(https));
     QNetworkProxy::setApplicationProxy(saved);
     QVERIFY(RustDownloadEngine::canHandle(https));
 }

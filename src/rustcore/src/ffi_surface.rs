@@ -306,6 +306,24 @@ fn cred_and_autofill_surface() {
     let listed = take_str(unsafe { crate::rc_autofill_forms() }).unwrap();
     assert!(listed.contains("https://f/"));
 
+    // Addresses: the ADDR01/02 tail shares the sealed payload.
+    let addrs = take_str(unsafe { crate::rc_autofill_addresses() });
+    assert_eq!(addrs.as_deref(), Some("[]"));
+    let arecs = br#"[{"name":"Ada","country":"US","street":"1 Main St","last_used":7}]"#;
+    assert_eq!(
+        unsafe { crate::rc_autofill_set_addresses(arecs.as_ptr(), arecs.len()) },
+        RcStatus::Ok
+    );
+    let listed = take_str(unsafe { crate::rc_autofill_addresses() }).unwrap();
+    assert!(listed.contains("Ada") && listed.contains("last_used\":7"));
+    // Forms are untouched by the address replace.
+    let listed = take_str(unsafe { crate::rc_autofill_forms() }).unwrap();
+    assert!(listed.contains("https://f/"));
+    assert_eq!(
+        unsafe { crate::rc_autofill_set_addresses(b"[42]".as_ptr(), 4) },
+        RcStatus::InvalidArgument
+    );
+
     // Reseal under a wrong from-key fails closed — AEAD reject.
     let (k1, k2) = ([1u8; 32], [2u8; 32]);
     assert_eq!(

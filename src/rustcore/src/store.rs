@@ -63,7 +63,7 @@ pub struct Store {
     /// Lazily decrypted rc_cred_* map; dropped again by lock().
     pub creds: Option<CredMap>,
     /// Lazily decrypted rc_autofill_* records; dropped with the keys.
-    pub autofill: Option<Vec<crate::autofill::FormRecord>>,
+    pub autofill: Option<crate::autofill::AutofillData>,
 }
 
 static STORE: Mutex<Store> = Mutex::new(Store {

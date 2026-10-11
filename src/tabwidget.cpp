@@ -122,7 +122,6 @@
 #include <qstyle.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
-#include <qurlquery.h>
 
 #include <qdebug.h>
 
@@ -3010,32 +3009,19 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
         // raw input through the ordinary search fallback.
         query = trimmed;
     }
-    if (searchFallback) {
-        // SRCH07 parity with guessUrlFromStringCpp's fallbackUrl: a
-        // stale saved engine name (no context engine) degrades to the
-        // compiled-in default engine, and an engine whose template
-        // produces no usable url degrades to its endpoint directly —
-        // a bare http://<term> could only DNS-fail.
-        OpenSearchEngine *engine = manager->engineForContext(
-            privateContext);
-        if (!engine)
-            engine = manager->engine(QLatin1String("DuckDuckGo"));
-        if (engine) {
-            const QUrl searchUrl = engine->searchUrl(query);
-            if (!searchUrl.isEmpty() && searchUrl.isValid())
-                return searchUrl;
-        }
-        QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
-        QUrlQuery queryItems;
-        queryItems.addQueryItem(QLatin1String("q"), query);
-        lastResort.setQuery(queryItems);
-        qWarning() << "guessUrlFromString: no usable search engine —"
-                      "falling back to" << lastResort;
-        return lastResort;
-    }
-    return QUrl::fromEncoded(
+    if (searchFallback)
+        return manager->searchUrlForEngine(
+            manager->engineForContext(privateContext), query);
+    // SRCH09: the bare-http opt-out only has meaning where the guess
+    // produces a usable url — a guess that cannot parse resolves to
+    // search instead of an invalid url loadUrl() would silently drop.
+    const QUrl guessed = QUrl::fromEncoded(
         (QLatin1String("http://") + trimmed).toUtf8(),
         QUrl::TolerantMode);
+    if (guessed.isValid() && !guessed.host().isEmpty())
+        return guessed;
+    return manager->searchUrlForEngine(
+        manager->engineForContext(privateContext), trimmed);
 }
 #endif // ARORA_RUSTCORE
 
@@ -3080,34 +3066,27 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
     // and per-tab private browsing) search through the configured
     // private engine.
     const auto fallbackUrl = [search, &trimmed, privateContext, manager]() -> QUrl {
-        if (search) {
-            OpenSearchEngine *engine =
-                manager->engineForContext(privateContext);
-            // SRCH07: a stale saved engine name or a descriptor that
-            // failed to load leaves engineForContext() with nothing —
-            // degrade to the compiled-in default engine before giving
-            // up on search entirely.
-            if (!engine)
-                engine = manager->engine(QLatin1String("DuckDuckGo"));
-            if (engine) {
-                const QUrl searchUrl = engine->searchUrl(trimmed);
-                if (!searchUrl.isEmpty() && searchUrl.isValid())
-                    return searchUrl;
-            }
-            // Last resort: emit the default engine's endpoint
-            // directly.  A bare http://<term> could only DNS-fail —
-            // after the HTTPS-first upgrade the user saw the exact
-            // https://<term> error page this guards against.
-            QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
-            QUrlQuery query;
-            query.addQueryItem(QLatin1String("q"), trimmed);
-            lastResort.setQuery(query);
-            qWarning() << "guessUrlFromString: no usable search engine —"
-                          "falling back to" << lastResort;
-            return lastResort;
-        }
+        const auto engineSearch = [&trimmed, privateContext, manager]() -> QUrl {
+            // SRCH07/SRCH09: stale or broken engine state resolves
+            // through the shared rescue — a missing context engine
+            // degrades to the bundled DuckDuckGo descriptor, an
+            // unusable template to its endpoint directly.
+            return manager->searchUrlForEngine(
+                manager->engineForContext(privateContext), trimmed);
+        };
+        if (search)
+            return engineSearch();
         const QString urlString = QLatin1String("http://") + trimmed;
-        return QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);
+        const QUrl guessed =
+            QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);
+        // SRCH09: the bare-http opt-out only has meaning where the
+        // guess yields a usable url — a guess that cannot parse
+        // (multi-word input, host-less or otherwise malformed text)
+        // resolves to search instead of an invalid url loadUrl()
+        // would silently drop.
+        return guessed.isValid() && !guessed.host().isEmpty()
+                   ? guessed
+                   : engineSearch();
     };
 
     // Input with whitespace or no resolvable address at all ("browser
@@ -3274,8 +3253,15 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
         loadUrlFromUser(url, title);
         return;
     }
-    if (!url.isValid())
+    // SRCH09: an invalid url used to vanish here without a trace —
+    // exactly the "nothing happens on Enter" the opt-out's
+    // "http://two words" guess produced.  Complain so a dead url is
+    // never mistaken for a dead key.
+    if (!url.isValid()) {
+        qWarning() << "TabWidget::loadUrl: refusing to load invalid"
+                      "url" << url;
         return;
+    }
     WebView *webView = getView(tab, currentWebView());
     if (webView) {
         int index = webViewIndex(webView);

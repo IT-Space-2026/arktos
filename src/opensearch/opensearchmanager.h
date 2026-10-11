@@ -87,6 +87,13 @@ public:
     // when capable, else nullptr.
     OpenSearchEngine *imageSearchEngine() const;
 
+    // SRCH09: builds the search url for an engine — but never
+    // dead-ends the caller.  A null engine or a template that
+    // produces no usable url degrades to the bundled DuckDuckGo
+    // descriptor, then to its hardcoded endpoint, so a search action
+    // always emits an address it can actually load.
+    QUrl searchUrlForEngine(OpenSearchEngine *engine, const QString &terms);
+
     OpenSearchEngine *engine(const QString &name);
 
     bool engineExists(const QString &name);

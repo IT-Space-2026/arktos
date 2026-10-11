@@ -3480,6 +3480,16 @@ int main(int argc, char **argv)
               optedOut == QUrl(QLatin1String("http://hup/"))
                   || optedOut == QUrl(QLatin1String("http://hup")),
               optedOut);
+        // SRCH09: the opt-out cannot emit a guess that fails to
+        // parse — multi-word input resolves to search instead of the
+        // invalid "http://two words" url loadUrl() used to drop
+        // silently.
+        const QUrl optedOutMulti =
+            TabWidget::guessUrlFromString(QLatin1String("two words"));
+        check(QLatin1String("opt-out 'two words' -> search, not dead url"),
+              optedOutMulti.isValid() && !optedOutMulti.isEmpty()
+                  && optedOutMulti.host() != QLatin1String("two"),
+              optedOutMulti);
         settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
         settings.sync();
         QSettings verify;

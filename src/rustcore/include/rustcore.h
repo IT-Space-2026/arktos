@@ -145,6 +145,9 @@ RcStatus rc_cred_reseal(const uint8_t *from32, const uint8_t *to32);
  *
  * Form JSON (both directions):
  *   [{"url","name","has_password":bool,"elements":[["k","v"],...]}]
+ * Address JSON (ADDR01/02 — an appended tail in the same payload):
+ *   [{"country","name","organization","street","city","state","zip",
+ *     "phone","email","last_used":int}]
  * Mutations emit the "autofill" change topic. */
 /* Whether the Rust store file exists — gates the legacy import. */
 int rc_autofill_store_present(void);
@@ -153,6 +156,9 @@ int rc_autofill_store_present(void);
 char *rc_autofill_forms(void);
 /* Atomic whole-set replace; RC_INVALID_ARGUMENT keeps the old set. */
 RcStatus rc_autofill_set_forms(const uint8_t *jsonUtf8, size_t len);
+/* Same pair for the saved-address list. */
+char *rc_autofill_addresses(void);
+RcStatus rc_autofill_set_addresses(const uint8_t *jsonUtf8, size_t len);
 /* Re-seal the autofill file between explicit keys mid-transition. */
 RcStatus rc_autofill_reseal(const uint8_t *from32, const uint8_t *to32);
 

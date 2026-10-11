@@ -777,6 +777,62 @@ pub unsafe extern "C" fn rc_autofill_set_forms(
     st
 }
 
+/// JSON array of every stored address (ADDR01/02):
+/// [{"country","name","organization","street","city","state","zip",
+///   "phone","email","last_used":int}]
+/// Free with rc_string_free(); NULL on error (locked store, corrupt
+/// file — rc_last_error_message says which).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_addresses() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match store::lock().autofill_addresses_json() {
+            Ok(j) => util::to_c_string(j),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Replaces the whole address set from the JSON array and persists it
+/// atomically; emits the "autofill" change topic when the set
+/// actually changed.  RC_INVALID_ARGUMENT on malformed JSON — the
+/// store keeps its previous contents then.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_set_addresses(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let records = autofill::addresses_from_json(data)?;
+        changed = store::lock().autofill_set_addresses(records)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("autofill");
+    }
+    st
+}
+
 /// Re-seals autofill-store.dat between explicit keys during a custody
 /// transition; no-op when the file does not exist.
 ///

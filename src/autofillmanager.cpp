@@ -304,11 +304,74 @@ static QList<AutoFillManager::Form> formsFromJson(const QByteArray &json)
     return forms;
 }
 
+// ADDR01/02: the saved-address list shares the sealed store as an
+// appended payload section — the same record set the legacy
+// autofill.dat tail carries.
+static QByteArray addressesToJson(
+    const QList<AutoFillManager::Address> &addresses)
+{
+    QJsonArray all;
+    for (const AutoFillManager::Address &address : addresses) {
+        QJsonObject addressJson;
+        addressJson[QLatin1String("country")] = address.country;
+        addressJson[QLatin1String("name")] = address.name;
+        addressJson[QLatin1String("organization")] =
+            address.organization;
+        addressJson[QLatin1String("street")] = address.street;
+        addressJson[QLatin1String("city")] = address.city;
+        addressJson[QLatin1String("state")] = address.state;
+        addressJson[QLatin1String("zip")] = address.zip;
+        addressJson[QLatin1String("phone")] = address.phone;
+        addressJson[QLatin1String("email")] = address.email;
+        addressJson[QLatin1String("last_used")] =
+            double(address.lastUsed);
+        all.append(addressJson);
+    }
+    return QJsonDocument(all).toJson(QJsonDocument::Compact);
+}
+
+static QList<AutoFillManager::Address> addressesFromJson(
+    const QByteArray &json)
+{
+    QList<AutoFillManager::Address> addresses;
+    const QJsonArray all = QJsonDocument::fromJson(json).array();
+    for (const QJsonValue &value : all) {
+        const QJsonObject addressJson = value.toObject();
+        AutoFillManager::Address address;
+        address.country =
+            addressJson.value(QLatin1String("country")).toString();
+        address.name =
+            addressJson.value(QLatin1String("name")).toString();
+        address.organization =
+            addressJson.value(QLatin1String("organization")).toString();
+        address.street =
+            addressJson.value(QLatin1String("street")).toString();
+        address.city =
+            addressJson.value(QLatin1String("city")).toString();
+        address.state =
+            addressJson.value(QLatin1String("state")).toString();
+        address.zip =
+            addressJson.value(QLatin1String("zip")).toString();
+        address.phone =
+            addressJson.value(QLatin1String("phone")).toString();
+        address.email =
+            addressJson.value(QLatin1String("email")).toString();
+        address.lastUsed = qint64(
+            addressJson.value(QLatin1String("last_used")).toDouble());
+        if (address.isValid())
+            addresses.append(address);
+    }
+    return addresses;
+}
+
 // Decodes raw autofill.dat contents — a sealed ARSEC1 blob or the
 // Qt4-era plaintext QDataStream — through the original bounded
-// reader.  Returns false on an unopenable/corrupt blob.
-static bool decodeLegacyForms(const QByteArray &raw,
-                              QList<AutoFillManager::Form> *out)
+// reader.  The payload is [forms] then the optional ADDR01/02
+// [addresses][lastUsed] tails; a forms-only file imports with an
+// empty address list.  Returns false on an unopenable/corrupt blob.
+static bool decodeLegacyPayload(const QByteArray &raw,
+                                QList<AutoFillManager::Form> *formsOut,
+                                QList<AutoFillManager::Address> *addrsOut)
 {
     QByteArray payload = raw;
     if (SecureStore::isSealed(raw)) {
@@ -322,7 +385,22 @@ static bool decodeLegacyForms(const QByteArray &raw,
     StreamingUtils::readBoundedList(stream, forms);
     if (stream.status() != QDataStream::Ok)
         return false;
-    *out = forms;
+    QList<AutoFillManager::Address> addresses;
+    if (!stream.atEnd())
+        StreamingUtils::readBoundedList(stream, addresses);
+    if (stream.status() != QDataStream::Ok)
+        return false;
+    if (!stream.atEnd()) {
+        QList<qint64> lastUsed;
+        StreamingUtils::readBoundedList(stream, lastUsed);
+        for (int i = 0; i < lastUsed.count()
+                && i < addresses.count(); ++i)
+            addresses[i].lastUsed = lastUsed.at(i);
+    }
+    if (stream.status() != QDataStream::Ok)
+        return false;
+    *formsOut = forms;
+    *addrsOut = addresses;
     return true;
 }
 
@@ -359,7 +437,14 @@ void AutoFillManager::saveFormData() const
     const RcStatus status = rc_autofill_set_forms(
         reinterpret_cast<const uint8_t *>(json.constData()),
         size_t(json.size()));
-    if (status == RC_OK) {
+    // ADDR01/02: the saved-address list rides the same sealed payload
+    // — a store that only persisted forms would silently drop the
+    // addresses the prefs page edits.
+    const QByteArray addrJson = addressesToJson(m_addresses);
+    const RcStatus addrStatus = rc_autofill_set_addresses(
+        reinterpret_cast<const uint8_t *>(addrJson.constData()),
+        size_t(addrJson.size()));
+    if (status == RC_OK && addrStatus == RC_OK) {
         // Retire a straggler legacy file too (e.g. one written while
         // the store was locked and never re-imported).
         retireLegacyFile(fileName);
@@ -449,15 +534,23 @@ void AutoFillManager::loadFormData()
     // empty list plus a warning).
     if (rc_autofill_store_present() == 0 && QFile::exists(fileName)) {
         QList<Form> legacy;
+        QList<Address> legacyAddresses;
         QFile file(fileName);
         const bool decoded = file.open(QFile::ReadOnly)
-            && decodeLegacyForms(file.readAll(), &legacy);
+            && decodeLegacyPayload(file.readAll(), &legacy,
+                                   &legacyAddresses);
         if (decoded) {
             const QByteArray json = formsToJson(legacy);
             const RcStatus status = rc_autofill_set_forms(
                 reinterpret_cast<const uint8_t *>(json.constData()),
                 size_t(json.size()));
-            if (status == RC_OK) {
+            // ADDR01/02: the legacy file's address tail imports with
+            // the forms — the sealed store holds both from now on.
+            const QByteArray addrJson = addressesToJson(legacyAddresses);
+            const RcStatus addrStatus = rc_autofill_set_addresses(
+                reinterpret_cast<const uint8_t *>(addrJson.constData()),
+                size_t(addrJson.size()));
+            if (status == RC_OK && addrStatus == RC_OK) {
                 retireLegacyFile(fileName);
             } else {
                 char *error = rc_last_error_message();
@@ -468,6 +561,7 @@ void AutoFillManager::loadFormData()
                 rc_string_free(error);
             }
             m_forms = legacy;
+            m_addresses = legacyAddresses;
             return;
         }
         qWarning() << "AutoFillManager: cannot decode" << fileName
@@ -484,6 +578,20 @@ void AutoFillManager::loadFormData()
     }
     m_forms = formsFromJson(QByteArray(json));
     rc_string_free(json);
+
+    // ADDR01/02: the address list shares the sealed payload — read it
+    // under the same unlock.
+    char *addrJson = rc_autofill_addresses();
+    if (!addrJson) {
+        char *error = rc_last_error_message();
+        qWarning() << "AutoFillManager: cannot read the autofill"
+                      " address store:"
+                   << QString::fromUtf8(error ? error : "");
+        rc_string_free(error);
+        return;
+    }
+    m_addresses = addressesFromJson(QByteArray(addrJson));
+    rc_string_free(addrJson);
     return;
 #else
     QFile file(fileName);

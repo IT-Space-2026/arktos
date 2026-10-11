@@ -290,6 +290,12 @@ Search & location bar:
 - Fixed: a bare term like "hup" could navigate to https://hup/ instead
   of searching; a missing or broken search engine now falls back to
   the built-in default instead of a bogus address (SRCH07).
+- Fixed: pressing Enter in the search field or location bar could
+  silently do nothing — a missing or broken engine produced no URL,
+  and a malformed bare term could build an invalid http:// guess that
+  was dropped without feedback. Search now always rescues to a working
+  engine, invalid guesses search instead of dead-ending, and dropped
+  loads log a warning (SRCH09).
 - Search suggestions off by default, opt-in per engine (SEC11).
 - Bundled search engines now show their own icons in the Engine
   dropdown even on a fresh profile — the real favicons ship with the

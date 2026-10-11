@@ -918,6 +918,11 @@ void tst_TabWidget::verticalTabStripWidth()
 void tst_TabWidget::omnibox()
 {
     QSettings settings;
+    // SRCH09: this key used to leak — the test disabled it below and
+    // never restored it, which broke search for the real profile when
+    // the test ran against the live config.
+    const QVariant savedSearchFallback =
+        settings.value(QLatin1String("urlloading/searchEngineFallback"));
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
 
     // PRIV01/SAFE01: the profile interceptor upgrades http:
@@ -1000,6 +1005,26 @@ void tst_TabWidget::omnibox()
     // Opt-out restores the old bare-http guess for non-address input.
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
     check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));
+
+    // SRCH09: under the opt-out multi-word input still resolves to
+    // search — the bare-http guess ("http://two words") cannot parse
+    // and the invalid url used to be dropped silently by loadUrl(),
+    // a dead Enter.  The emptied template above means this lands on
+    // the built-in last-resort endpoint.
+    {
+        QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
+        QUrlQuery query;
+        query.addQueryItem(QLatin1String("q"), QLatin1String("two words"));
+        lastResort.setQuery(query);
+        check(QLatin1String("two words"), lastResort);
+    }
+
+    if (savedSearchFallback.isValid())
+        settings.setValue(
+            QLatin1String("urlloading/searchEngineFallback"),
+            savedSearchFallback);
+    else
+        settings.remove(QLatin1String("urlloading/searchEngineFallback"));
 
     manager->setEngineForKeyword(QLatin1String("ot"), nullptr);
     manager->setCurrentEngineName(previousEngine);

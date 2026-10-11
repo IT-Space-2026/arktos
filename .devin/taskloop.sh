@@ -164,7 +164,7 @@ while :; do
 		"$DEVIN" --permission-mode dangerous \
 			--respect-workspace-trust false \
 			${DEVIN_MODEL:+--model "$DEVIN_MODEL"} \
-			-p "$(cat "$PROMPT")" &
+			-p "$(cat "$PROMPT"; printf "\n\nThe task loop selected task %s for this run — work THAT row (id %s) and no other. Do not re-scan the table for a different first row.\n" "$tid" "$tid")" &
 		child=$!
 		elapsed=0
 		# watchdog: kill the whole tree on total RSS over limit or timeout

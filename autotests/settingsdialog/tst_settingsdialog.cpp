@@ -78,6 +78,7 @@ class tst_SettingsDialog : public QObject
 
 private slots:
     void initTestCase();
+    void cleanup();
 
     void constructDefaults();
     void saveAndReload();
@@ -117,12 +118,23 @@ private slots:
     void energySaver();
 };
 
+// Every re-arming modal driver below stamps itself with this counter
+// at schedule time and self-terminates once it changes — cleanup()
+// bumps it after each test so a chain whose prompt never appeared can
+// never accept or reject a later test's dialogs (an accept() that is
+// not a button click maps QMessageBox::question to "not Yes", and a
+// reject() is an outright cancel).
+static int s_janitorGeneration = 0;
+
 // CONT03: fills the container editor's Name field and accepts — the
 // editor exec()s synchronously inside the button click, so the driver
 // keeps re-arming until the modal appears.
-static void fillContainerEditor(const QString &name, int attempts = 150)
+static void fillContainerEditor(const QString &name, int attempts = 150,
+                                int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(20, qApp, [name, attempts]() {
+    QTimer::singleShot(20, qApp, [name, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QDialog *dialog = qobject_cast<QDialog *>(
             QApplication::activeModalWidget());
         if (dialog) {
@@ -130,7 +142,7 @@ static void fillContainerEditor(const QString &name, int attempts = 150)
                 edit->setText(name);
             dialog->accept();
         } else if (attempts > 0) {
-            fillContainerEditor(name, attempts - 1);
+            fillContainerEditor(name, attempts - 1, generation);
         }
     });
 }
@@ -139,9 +151,12 @@ static void fillContainerEditor(const QString &name, int attempts = 150)
 // accepts — same re-arming shape as fillContainerEditor.
 static void fillAddressEditor(const QString &name,
                               const QString &zip = QString(),
-                              int attempts = 150)
+                              int attempts = 150,
+                              int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(20, qApp, [name, zip, attempts]() {
+    QTimer::singleShot(20, qApp, [name, zip, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         AddressDialog *dialog = qobject_cast<AddressDialog *>(
             QApplication::activeModalWidget());
         if (dialog) {
@@ -150,36 +165,42 @@ static void fillAddressEditor(const QString &name,
                 dialog->zipEdit->setText(zip);
             dialog->accept();
         } else if (attempts > 0) {
-            fillAddressEditor(name, zip, attempts - 1);
+            fillAddressEditor(name, zip, attempts - 1, generation);
         }
     });
 }
 
 // Same re-arming driver for the delete confirmation QMessageBox.
 static void answerNextBox(QMessageBox::StandardButton button,
-                          int attempts = 150)
+                          int attempts = 150,
+                          int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(20, qApp, [button, attempts]() {
+    QTimer::singleShot(20, qApp, [button, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QMessageBox *box = qobject_cast<QMessageBox *>(
             QApplication::activeModalWidget());
         if (box && box->button(button)) {
             box->button(button)->click();
         } else if (attempts > 0) {
-            answerNextBox(button, attempts - 1);
+            answerNextBox(button, attempts - 1, generation);
         }
     });
 }
 
 // Clicks the button whose text matches inside the next QMessageBox —
 // needed for custom addButton() choices standard-button lookups miss.
-static void clickModalButtonText(const QString &text, int attempts = 150)
+static void clickModalButtonText(const QString &text, int attempts = 150,
+                                 int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [text, attempts]() {
+    QTimer::singleShot(30, qApp, [text, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QMessageBox *box = qobject_cast<QMessageBox *>(
             QApplication::activeModalWidget());
         if (!box) {
             if (attempts > 0)
-                clickModalButtonText(text, attempts - 1);
+                clickModalButtonText(text, attempts - 1, generation);
             return;
         }
         for (QAbstractButton *button : box->buttons()) {
@@ -191,11 +212,6 @@ static void clickModalButtonText(const QString &text, int attempts = 150)
         box->reject();
     });
 }
-
-// The janitor chains below re-arm for ~6s covering an async window —
-// the generation stamp lets the owning test disarm them
-// deterministically so they never reject a later test's dialogs.
-static int s_janitorGeneration = 0;
 
 // Accepts whatever QMessageBox is active, then re-arms — a modal
 // janitor for paths that raise a box asynchronously (the extension
@@ -234,14 +250,17 @@ static void rejectModalDialogs(int generation, int attempts = 200)
 // each call answers one round — schedule one call per round and the
 // shared list doles out that round's pair.
 static void fillPassphraseDialog(std::shared_ptr<QStringList> fills,
-                                 int attempts = 150)
+                                 int attempts = 150,
+                                 int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [fills, attempts]() {
+    QTimer::singleShot(30, qApp, [fills, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QDialog *dialog = qobject_cast<QDialog *>(
             QApplication::activeModalWidget());
         if (!dialog) {
             if (attempts > 0)
-                fillPassphraseDialog(fills, attempts - 1);
+                fillPassphraseDialog(fills, attempts - 1, generation);
             return;
         }
         const QList<QLineEdit *> edits =
@@ -257,13 +276,16 @@ static void fillPassphraseDialog(std::shared_ptr<QStringList> fills,
 }
 
 // Types into the single QLineEdit of the unlock prompt and accepts.
-static void answerModalPassphrase(const QString &text, int attempts = 150)
+static void answerModalPassphrase(const QString &text, int attempts = 150,
+                                  int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [text, attempts]() {
+    QTimer::singleShot(30, qApp, [text, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QWidget *widget = QApplication::activeModalWidget();
         if (!widget) {
             if (attempts > 0)
-                answerModalPassphrase(text, attempts - 1);
+                answerModalPassphrase(text, attempts - 1, generation);
             return;
         }
         if (QLineEdit *edit = widget->findChild<QLineEdit *>())
@@ -282,6 +304,17 @@ void tst_SettingsDialog::initTestCase()
     // Site decisions outlive QSettings cleanup — clear them too.
     SiteDecisionStore::reset();
 #endif
+}
+
+// Disarm any modal driver chain still armed when the test function
+// returns — without this, an unanswered fillPassphraseDialog /
+// answerNextBox / rejectModalDialogs tick keeps polling for ~5s and
+// accepts or rejects the NEXT test's modal (performancePage's reset
+// confirmation was eaten this way: accept() maps to "not Yes", the
+// reset bailed, and hardwareAccel stayed unchecked).
+void tst_SettingsDialog::cleanup()
+{
+    ++s_janitorGeneration;
 }
 
 void tst_SettingsDialog::constructDefaults()

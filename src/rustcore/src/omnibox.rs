@@ -25,7 +25,8 @@
 //!   3. Input with whitespace, or no usable guess at all, falls back:
 //!      search-engine verdict when `search_fallback` is set, else the
 //!      historic bare-"http://" guess (the searchEngineFallback opt-out
-//!      semantics).
+//!      semantics) — but only when that guess is itself a usable url;
+//!      an unparsable guess still resolves to search (SRCH09).
 //!   4. A guessed http(s) url — one whose scheme the user did not
 //!      literally type — only navigates when the text is address-shaped
 //!      (localhost / *.localhost / host:port / a dotted host).  Bare
@@ -379,10 +380,19 @@ fn search_verdict(engine: Option<&str>, query: &str) -> Value {
 
 fn fallback_verdict(trimmed: &str, search_fallback: bool) -> Value {
     if search_fallback {
-        search_verdict(None, trimmed)
-    } else {
-        // The searchEngineFallback opt-out: the historic bare-http guess.
+        return search_verdict(None, trimmed);
+    }
+    // SRCH09: the searchEngineFallback opt-out restores the historic
+    // bare-http guess — but only where the guess produces a usable
+    // url.  A guess that cannot parse (multi-word input, host-less or
+    // otherwise malformed text) has no address reading, so it
+    // resolves to search instead of emitting an invalid url the Qt
+    // shell would silently drop in loadUrl().
+    let guess = parse_prepended(trimmed);
+    if guess.valid && guess.host_nonempty {
         json!({"kind":"navigate","url":format!("http://{trimmed}")})
+    } else {
+        search_verdict(None, trimmed)
     }
 }
 
@@ -695,6 +705,16 @@ mod tests {
         // And a real address still navigates.
         let v = classify("a.b", &kw(&[]), false);
         assert_eq!(v["url"], "http://a.b");
+        // SRCH09: the opt-out cannot emit a guess that fails to parse —
+        // multi-word input searches rather than producing the dead
+        // "http://two words" url loadUrl() used to silently drop.
+        let v = classify("two words", &kw(&[]), false);
+        assert_eq!(
+            v,
+            json!({"kind":"search","engine":null,"query":"two words"})
+        );
+        let v = classify("a%20b", &kw(&[]), false);
+        assert_eq!(v["kind"], "search", "{v}");
     }
 
     #[test]

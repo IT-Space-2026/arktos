@@ -61,6 +61,7 @@
 #include "opensearchengineaction.h"
 #include "opensearchmanager.h"
 #include "opensearchengine.h"
+#include "securestore.h"
 #include "settings.h"
 #include "toolbarsearch.h"
 #include "edittableview.h"
@@ -506,6 +507,13 @@ void tst_Dialogs::autoFillAddresses()
     // must decode as an empty list, not a corrupt read.  (The
     // plaintext shape exercises the unsealed branch; the sealed
     // branch shares decodePayload.)
+#ifdef ARORA_RUSTCORE
+    // The rustcore store is canonical once it exists — clear it so
+    // the legacy file below is exercised as the import source.
+    QFile::remove(BrowserPaths::dataFilePath(
+        QLatin1String("autofill-store.dat")));
+    SecureStore::lock();
+#endif
     const QString path = BrowserPaths::dataFilePath(
         QLatin1String("autofill.dat"));
     QByteArray legacy;

@@ -59,6 +59,7 @@ private slots:
     void initTestCase();
 
     void searchEmitsUrl();
+    void brokenEngineRescue();
     void recentSearches();
     void completerPaths();
     void enginesMenu();
@@ -90,6 +91,38 @@ void tst_ToolbarSearch::searchEmitsUrl()
     QVERIFY(url.toString().contains(QLatin1String("cov04")));
     QCOMPARE(spy.first().at(1).value<TabWidget::OpenUrlIn>(),
              TabWidget::CurrentTab);
+}
+
+// SRCH09: Enter must never be a dead key — a resolved engine whose
+// descriptor produces no usable search url (or a null engine) used to
+// emit an empty url loadUrl() silently dropped, or not emit at all.
+// searchNow() rescues through the shared fallback to the bundled
+// endpoint.
+void tst_ToolbarSearch::brokenEngineRescue()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("broken-test"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://broken-test.invalid/q={searchTerms}"));
+    QVERIFY(manager->addEngine(engine));
+    // A descriptor that loses its template after registration —
+    // searchUrl() comes back empty.
+    engine->setSearchUrlTemplate(QString());
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("rescue me"));
+        QSignalSpy spy(&search, &ToolbarSearch::search);
+        search.searchNow();
+        QCOMPARE(spy.count(), 1);
+        const QUrl url = spy.first().at(0).toUrl();
+        QVERIFY(url.isValid() && !url.isEmpty());
+        QVERIFY(url.toString().contains(QLatin1String("duckduckgo")));
+    }
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
 }
 
 // Successful searches are remembered; clear() empties the list and
