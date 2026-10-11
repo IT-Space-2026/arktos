@@ -1168,6 +1168,13 @@ void SettingsDialog::loadFromSettings()
                        int(PrivacyRequestInterceptor::Standard)).toInt(),
         int(PrivacyRequestInterceptor::Safest)));
     settings.endGroup();
+
+    // TRUST06: site-trust master switch — the toolbar badge and the
+    // per-signal lookups gate on this key; default on.
+    settings.beginGroup(QLatin1String("trust"));
+    siteTrustEnabled->setChecked(
+        settings.value(QLatin1String("enabled"), true).toBool());
+    settings.endGroup();
     updateSecurityLevelHint();
 
     // ADB06: the raw stored pick (rust stays rust on a build without
@@ -1523,6 +1530,13 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());
     settings.setValue(QLatin1String("fingerprintProtection"), fingerprintProtection->isChecked());
     settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
+    settings.endGroup();
+
+    // TRUST06: consumers read the key live (BrowserApplication::
+    // siteTrustEnabled) — a flip applies to the badge and the
+    // per-signal lookups without a restart.
+    settings.beginGroup(QLatin1String("trust"));
+    settings.setValue(QLatin1String("enabled"), siteTrustEnabled->isChecked());
     settings.endGroup();
 
     // ADB06: write through the manager so the matcher snapshot is

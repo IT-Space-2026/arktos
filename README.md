@@ -50,6 +50,10 @@ browsing profile:
   group on the Privacy page: referrer levels, prefetch blocking,
   remote-font blocking, tracking ping/beacon blocking, third-party
   WebSocket blocking (opt-in) and per-origin storage grants.
+- **Site trust (opt-out)** — a "Site Trust" group on the Privacy page
+  holds the master switch for the toolbar trust indicator
+  (lookalike-domain and threat-list checks); disabling it hides the
+  badge and skips the lookups without a restart.
 - **Per-site JavaScript control** — allow/block rules by host with a
   shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
   allow", and three Mullvad-style security tiers (Standard / Safer /

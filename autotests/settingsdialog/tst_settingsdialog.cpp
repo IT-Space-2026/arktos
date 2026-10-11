@@ -121,6 +121,7 @@ private slots:
     void tabHoverPreviews();
     void appearanceLeftAnchored();
     void fieldWidthCaps();
+    void siteTrustToggle();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -3272,6 +3273,50 @@ void tst_SettingsDialog::fieldWidthCaps()
     QVERIFY(area);
     QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
     dialog.close();
+}
+
+// TRUST06: the Privacy page's 'Site trust' group holds the master
+// toggle — trust/enabled, on by default.  The persisted key and the
+// live accessor BrowserApplication::siteTrustEnabled() (what the
+// badge and the per-signal lookups gate on) round-trip a restart.
+void tst_SettingsDialog::siteTrustToggle()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("trust/enabled"));
+
+    // The group box lives on the Privacy page.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.siteTrustGroupBox);
+        QWidget *host = dialog.siteTrustEnabled;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::PrivacyPage));
+
+        QVERIFY(dialog.siteTrustEnabled->isChecked());
+        QVERIFY(BrowserApplication::siteTrustEnabled());
+        dialog.siteTrustEnabled->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/enabled")).toBool(),
+             false);
+    QVERIFY(!BrowserApplication::siteTrustEnabled());
+
+    // A reopened dialog reads the stored state back; re-enabling
+    // restores the default-on profile.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.siteTrustEnabled->isChecked());
+        dialog.siteTrustEnabled->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/enabled")).toBool(),
+             true);
+    QVERIFY(BrowserApplication::siteTrustEnabled());
+
+    settings.remove(QLatin1String("trust/enabled"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)
