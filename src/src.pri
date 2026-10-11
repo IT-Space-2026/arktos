@@ -113,6 +113,7 @@ HEADERS += \
     $$PWD/securestore.h \
     $$PWD/settings.h \
     $$PWD/sidebarpanel.h \
+    $$PWD/sidebarpositionpicker.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
@@ -177,6 +178,7 @@ SOURCES += \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
     $$PWD/sidebarpanel.cpp \
+    $$PWD/sidebarpositionpicker.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \

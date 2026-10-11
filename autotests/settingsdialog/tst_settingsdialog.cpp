@@ -56,6 +56,7 @@
 #include "popupblocker.h"
 #include "scopeshortcuts.h"
 #include "sidebarpanel.h"
+#include "sidebarpositionpicker.h"
 #include "tabpositionpicker.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
@@ -81,6 +82,7 @@ private slots:
     void resetSearchSettings();
     void sidebarNavigation();
     void sidebarSettings();
+    void sidebarPositionPicker();
     void settingsFilter();
     void iconThemeSelector();
     void themeSelector();
@@ -909,6 +911,91 @@ void tst_SettingsDialog::sidebarSettings()
              int(Qt::LeftDockWidgetArea));
     QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
              true);
+}
+
+// SIDE03: the Sidebar group docks its position choice in a two-tile
+// visual picker (miniature window + panel edge sketch) — same
+// currentIndex semantics as the old combo (0 Left, 1 Right), click +
+// keyboard commits, and the pick still persists through
+// MainWindow/sidebarDockArea so applySidebarSettings moves the dock.
+void tst_SettingsDialog::sidebarPositionPicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+
+    SettingsDialog dialog;
+    // The tiles can only take focus while their page is current —
+    // navigate there instead of relying on a persisted currentTab.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AppearancePage));
+    QCOMPARE(dialog.sidebarDockArea->count(), 2);
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
+
+    // Two tile children, one per dock side.
+    const QList<QWidget *> tiles =
+        dialog.sidebarDockArea->findChildren<QWidget *>();
+    QCOMPARE(tiles.count(), 2);
+    QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Left"));
+    QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Right"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // Focus asserts need the window ACTIVE, not just exposed — the
+    // offscreen platform can lag activation past the expose event.
+    dialog.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&dialog));
+
+    QSignalSpy spy(dialog.sidebarDockArea,
+                   &SidebarPositionPicker::positionChanged);
+
+    // Clicking the Right tile commits index 1.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 1);
+    // Re-clicking the selected tile is a no-op.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(spy.count(), 0);
+
+    // Keyboard: arrows move focus between the two tiles (wrapping);
+    // Enter commits the focused tile's index.
+    tiles.at(0)->setFocus();
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Left);   // wraps to Right
+    QVERIFY(tiles.at(1)->hasFocus());
+    QTest::keyClick(tiles.at(1), Qt::Key_Right);  // wraps to Left
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Return); // commits 0
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().at(0).toInt(), 0);
+    dialog.close();
+
+    // Persisted round-trip through accept(): index 1 keeps writing
+    // RightDockWidgetArea, index 0 LeftDockWidgetArea — the values
+    // applySidebarSettings consumes, unchanged from the combo.
+    {
+        SettingsDialog persist;
+        persist.sidebarDockArea->setCurrentIndex(1);
+        persist.accept();
+        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+                     .toInt(), int(Qt::RightDockWidgetArea));
+    }
+    {
+        SettingsDialog reload;
+        QCOMPARE(reload.sidebarDockArea->currentIndex(), 1);
+        reload.sidebarDockArea->setCurrentIndex(0);
+        reload.accept();
+        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+                     .toInt(), int(Qt::LeftDockWidgetArea));
+    }
+
+    // An out-of-range stored area maps to the Left tile.
+    settings.setValue(QLatin1String("MainWindow/sidebarDockArea"), 99);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.sidebarDockArea->currentIndex(), 0);
+    }
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
 }
 
 // PREFUI03: the nav filter field narrows the sidebar by page title
@@ -1802,6 +1889,10 @@ void tst_SettingsDialog::tabPositionPicker()
 
     dialog.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // Focus asserts need the window ACTIVE, not just exposed — the
+    // offscreen platform can lag activation past the expose event.
+    dialog.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&dialog));
 
     QSignalSpy spy(dialog.tabBarPosition,
                    &TabPositionPicker::positionChanged);

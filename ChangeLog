@@ -241,6 +241,11 @@ UI:
   and URL/path fields (home page, style sheet, download locations,
   search engine URLs, DNS-over-HTTPS template) at a generous one;
   Browse/Choose buttons stay right beside their fields (PREFUI07).
+- Sidebar position in Preferences is now a pair of clickable preview
+  tiles like the tab-bar picker — each sketches a miniature window
+  with the side panel docked on its Left/Right edge, with highlight
+  frame and check badge on the selection, and mouse or keyboard
+  operation (SIDE03).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
