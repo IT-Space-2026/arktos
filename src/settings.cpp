@@ -455,8 +455,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     // ADB06: the content-blocker engine picker persists AdBlock/engine
     // (cpp|rust) — the key AdBlockManager::engine() consults.  Item
-    // data carries the persisted id.  Without an adblock_rust build
-    // the Brave row stays listed but disabled so a persisted pick
+    // data carries the persisted id.  ADBLK01: the unset default is
+    // Brave adblock-rust; without an adblock_rust build the Brave row
+    // stays listed but disabled so a persisted (or defaulted) pick
     // round-trips instead of being silently rewritten to Built-in.
     adblockEngineCombo->setItemData(0, QLatin1String("cpp"));
     adblockEngineCombo->setItemData(1, QLatin1String("rust"));
@@ -465,7 +466,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
             rust->setEnabled(false);
-            rust->setText(tr("Brave adblock-rust — rebuild with CONFIG+=adblock_rust"));
+            rust->setText(tr("Brave adblock-rust (default) — rebuild with CONFIG+=adblock_rust"));
         }
     }
 #endif

@@ -129,10 +129,12 @@ public:
     // RustEngine is Brave's adblock-rust — reachable only in
     // CONFIG+=adblock_rust builds, where it still constructs lazily on
     // first selection; every other configuration is NativeEngine.
-    // storedEngine() returns the raw persisted pick so a non-rust
-    // build can round-trip a "rust" choice instead of silently
-    // rewriting it; engine() is the effective pick and clamps to
-    // NativeEngine when the Rust engine is not compiled in.
+    // ADBLK01: an absent/empty key means RustEngine — the Rust engine
+    // is the default and only an explicit "cpp" opt-out keeps the
+    // native matcher.  storedEngine() returns the raw persisted pick
+    // so a non-rust build can round-trip a "rust" choice instead of
+    // silently rewriting it; engine() is the effective pick and
+    // clamps to NativeEngine when the Rust engine is not compiled in.
     enum Engine {
         NativeEngine = 0,
         RustEngine = 1

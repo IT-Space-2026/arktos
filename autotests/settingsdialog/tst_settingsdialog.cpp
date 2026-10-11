@@ -1857,13 +1857,19 @@ void tst_SettingsDialog::tabPositionPicker()
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 }
 
-// ADB06: the Content Blocking group on the Privacy page carries the
-// runtime adblock-engine picker — persisted as AdBlock/engine through
-// AdBlockManager::setEngine, so the switch answers the next request.
-// Without a CONFIG+=adblock_rust build the Brave row is listed but
-// disabled (a persisted pick round-trips), never a dead option.
+// ADB06/ADBLK01: the Content Blocking group on the Privacy page
+// carries the runtime adblock-engine picker — persisted as
+// AdBlock/engine through AdBlockManager::setEngine, so the switch
+// answers the next request.  Brave adblock-rust is the default (an
+// absent key selects it and materializes no key on accept); without a
+// CONFIG+=adblock_rust build the Brave row is listed but disabled (a
+// persisted pick round-trips), never a dead option.
 void tst_SettingsDialog::contentBlockerEngine()
 {
+    // ADBLK01: start from a genuinely unset key — earlier legs'
+    // accept()s may already have persisted a pick — so the dialog
+    // shows the new Brave default, not leftovers.
+    QSettings().remove(QLatin1String("AdBlock/engine"));
     {
         SettingsDialog dialog;
         dialog.openAtPage(SettingsDialog::PrivacyPage);
@@ -1881,8 +1887,6 @@ void tst_SettingsDialog::contentBlockerEngine()
         QCOMPARE(dialog.adblockEngineLabel->buddy(),
                  static_cast<QWidget *>(dialog.adblockEngineCombo));
         QVERIFY(!dialog.adblockEngineStatus->text().isEmpty());
-        QVERIFY(dialog.adblockEngineStatus->text().contains(
-            QStringLiteral("Built-in")));
 
         QCOMPARE(dialog.adblockEngineCombo->count(), 2);
         QCOMPARE(dialog.adblockEngineCombo->itemData(0).toString(),
@@ -1892,35 +1896,66 @@ void tst_SettingsDialog::contentBlockerEngine()
         QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
             dialog.adblockEngineCombo->model());
         QVERIFY(model);
+        // The unset default selects the Brave row on either build —
+        // enabled where the engine ships, disabled with the rebuild
+        // hint where it does not.
+        QCOMPARE(dialog.adblockEngineCombo->currentIndex(), 1);
 #ifdef ARORA_ADBLOCK_RUST
         QVERIFY(model->item(1)->isEnabled());
-        // Picking Brave applies on accept() — the manager's engine
-        // pick flips live, no restart.
-        dialog.adblockEngineCombo->setCurrentIndex(1);
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("adblock-rust")));
+        // Accepting the default writes nothing — the absent key IS
+        // the Brave pick.
         dialog.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
-                     .toString(), QLatin1String("rust"));
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
         QCOMPARE(AdBlockManager::instance()->engine(),
                  AdBlockManager::RustEngine);
+
+        // Opting out to Built-in persists "cpp" and flips live.
         SettingsDialog reloaded;
-        QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
-        QVERIFY(reloaded.adblockEngineStatus->text().contains(
-            QStringLiteral("adblock-rust")));
         reloaded.adblockEngineCombo->setCurrentIndex(0);
         reloaded.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("cpp"));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        SettingsDialog reloaded2;
+        QCOMPARE(reloaded2.adblockEngineCombo->currentIndex(), 0);
+        QVERIFY(reloaded2.adblockEngineStatus->text().contains(
+            QStringLiteral("Built-in")));
+        // Picking Brave again writes the explicit id back.
+        reloaded2.adblockEngineCombo->setCurrentIndex(1);
+        reloaded2.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("rust"));
+        // Restore the opt-out so the shared config ends native.
+        SettingsDialog reloaded3;
+        reloaded3.adblockEngineCombo->setCurrentIndex(0);
+        reloaded3.accept();
 #else
         QVERIFY(!model->item(1)->isEnabled());
-        // A persisted rust pick still selects the (disabled) row and
-        // re-saving writes the same id back — no silent rewrite.
+        // The defaulted rust pick selects the (disabled) row and the
+        // status line explains the native fallback — no silent
+        // rewrite, no half-selected engine.
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("not compiled")));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        // Accepting keeps the default absent — nothing materializes
+        // a key the user never picked.
+        dialog.accept();
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QCOMPARE(AdBlockManager::storedEngine(),
+                 AdBlockManager::RustEngine);
+
+        // A persisted rust pick round-trips through the disabled row
+        // the same way the default does.
         QSettings().setValue(QLatin1String("AdBlock/engine"),
                              QLatin1String("rust"));
         SettingsDialog reloaded;
         QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
         QVERIFY(reloaded.adblockEngineStatus->text().contains(
             QStringLiteral("not compiled")));
-        // The effective engine stays native on this build.
-        QCOMPARE(AdBlockManager::instance()->engine(),
-                 AdBlockManager::NativeEngine);
         reloaded.accept();
         QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("rust"));
@@ -1929,7 +1964,6 @@ void tst_SettingsDialog::contentBlockerEngine()
         reloaded.accept();
         QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("cpp"));
-        dialog.reject();
 #endif
     }
     QCOMPARE(AdBlockManager::storedEngine(), AdBlockManager::NativeEngine);

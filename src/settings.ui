@@ -1561,12 +1561,12 @@
             </property>
             <item>
              <property name="text">
-              <string>Built-in (default)</string>
+              <string>Built-in</string>
              </property>
             </item>
             <item>
              <property name="text">
-              <string>Brave adblock-rust</string>
+              <string>Brave adblock-rust (default)</string>
              </property>
             </item>
            </widget>

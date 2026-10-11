@@ -128,12 +128,13 @@ browsing profile:
   third-party/domain restrictions, $important/$badfilter/$removeparam,
   $redirect to bundled stubs, cosmetic extended selectors and a
   scriptlet subset.
-- **Optional Brave adblock-rust engine** — `qmake
+- **Brave adblock-rust engine** — `qmake
   CONFIG+=adblock_rust` after `cargo build --release` in
-  src/adblock/rust; the built-in matcher stays the default. With the
-  engine compiled in, Preferences → Privacy → Content Blocking lets
-  you switch between the built-in matcher and Brave adblock-rust at
-  runtime (no restart).
+  src/adblock/rust; with the engine compiled in it is the default
+  matcher. Preferences → Privacy → Content Blocking lets
+  you switch between Brave adblock-rust and the built-in matcher at
+  runtime (no restart); builds without the engine behave exactly like
+  the built-in matcher.
 - **Subscription-centric UI** — preset filter-list catalog, per-list
   enable/update, custom rules editor, toolbar blocker button with
   per-page counts and per-site toggle.

@@ -5734,11 +5734,17 @@ int main(int argc, char **argv)
         for (const char *rule : corpus)
             custom->addRule(AdBlockRule(QLatin1String(rule)));
 
-        // ADB06: matching is runtime-selected now (AdBlock/engine,
-        // default Built-in) — the smoke exists to diff the Rust
-        // engine, so pick it explicitly.  rulesChanged rebuilds the
-        // snapshot synchronously, which is also the lazy-construction
-        // path the Preferences switch takes.
+        // ADB06/ADBLK01: matching is runtime-selected (AdBlock/engine)
+        // and the unset default is now the Rust engine — print both
+        // the stored and effective pick before touching it so a
+        // fresh-config run proves the default path reaches the
+        // matcher.  The explicit selection below is a no-op then;
+        // rulesChanged rebuilds the snapshot synchronously, which is
+        // also the lazy-construction path the Preferences switch
+        // takes.
+        qInfo() << "adblock-rust-smoke: stored-engine"
+                << int(manager->storedEngine())
+                << "effective" << int(manager->engine());
         manager->setEngine(AdBlockManager::RustEngine);
 
         AdBlockNetwork *network = manager->network();
