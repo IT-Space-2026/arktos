@@ -2578,6 +2578,82 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="addressesGroupBox">
+         <property name="title">
+          <string>Saved Addresses</string>
+         </property>
+         <layout class="QVBoxLayout" name="addressesLayout">
+          <item>
+           <widget class="QListWidget" name="addressesList">
+            <property name="accessibleName">
+             <string>Saved addresses</string>
+            </property>
+            <property name="selectionMode">
+             <enum>QAbstractItemView::SingleSelection</enum>
+            </property>
+            <property name="uniformItemSizes">
+             <bool>true</bool>
+            </property>
+            <property name="alternatingRowColors">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="addressesButtonLayout">
+            <item>
+             <widget class="QPushButton" name="addAddressButton">
+              <property name="text">
+               <string>Add...</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="editAddressButton">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>Edit...</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="removeAddressButton">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>Remove</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="removeAllAddressesButton">
+              <property name="text">
+               <string>Remove All</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="addressesButtonSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer_5">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -3685,6 +3761,11 @@
   <tabstop>containerRemoveButton</tabstop>
   <tabstop>containerSitesList</tabstop>
   <tabstop>containerSiteRemoveButton</tabstop>
+  <tabstop>addressesList</tabstop>
+  <tabstop>addAddressButton</tabstop>
+  <tabstop>editAddressButton</tabstop>
+  <tabstop>removeAddressButton</tabstop>
+  <tabstop>removeAllAddressesButton</tabstop>
   <tabstop>hardwareAccel</tabstop>
   <tabstop>memorySaverNever</tabstop>
   <tabstop>lazyRestoreTabs</tabstop>

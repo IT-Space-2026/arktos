@@ -19,6 +19,7 @@
 
 #include "clearprivatedata.h"
 
+#include "autofillmanager.h"
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
@@ -70,6 +71,13 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     m_searchHistory->setChecked(settings.value(QLatin1String("searchHistory"), true).toBool());
     itemLayout->addWidget(m_searchHistory);
 
+    // ADDR01: saved form data + saved addresses — the store had no
+    // wipe path at all before this checkbox.
+    m_autoFill = new QCheckBox(tr("AutoFill &Form Data"));
+    m_autoFill->setToolTip(tr("Saved form fields, passwords and addresses"));
+    m_autoFill->setChecked(settings.value(QLatin1String("autofill"), true).toBool());
+    itemLayout->addWidget(m_autoFill);
+
     m_cookies = new QCheckBox(tr("&Cookies"));
     m_cookies->setChecked(settings.value(QLatin1String("cookies"), true).toBool());
     itemLayout->addWidget(m_cookies);
@@ -118,6 +126,7 @@ void ClearPrivateData::accept()
     settings.setValue(QLatin1String("browsingHistory"), m_browsingHistory->isChecked());
     settings.setValue(QLatin1String("downloadHistory"), m_downloadHistory->isChecked());
     settings.setValue(QLatin1String("searchHistory"), m_searchHistory->isChecked());
+    settings.setValue(QLatin1String("autofill"), m_autoFill->isChecked());
     settings.setValue(QLatin1String("cookies"), m_cookies->isChecked());
     settings.setValue(QLatin1String("siteData"), m_siteData->isChecked());
     settings.setValue(QLatin1String("cache"), m_cache->isChecked());
@@ -163,6 +172,10 @@ void ClearPrivateData::accept()
             if (ToolbarSearch *search = qobject_cast<ToolbarSearch*>(widget))
                 search->clear();
         }
+    }
+
+    if (m_autoFill->isChecked()) {
+        AutoFillManager::instance()->clearData();
     }
 
     if (m_cookies->isChecked()) {

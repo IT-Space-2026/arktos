@@ -134,6 +134,40 @@ QList<AutoFillManager::Form> AutoFillManager::forms() const
     return m_forms;
 }
 
+void AutoFillManager::setAddresses(const QList<Address> &addresses)
+{
+    m_addresses = addresses;
+    emit autoFillChanged();
+}
+
+QList<AutoFillManager::Address> AutoFillManager::addresses() const
+{
+    return m_addresses;
+}
+
+void AutoFillManager::addAddress(const Address &address)
+{
+    m_addresses.append(address);
+    emit autoFillChanged();
+}
+
+void AutoFillManager::removeAddress(int index)
+{
+    if (index < 0 || index >= m_addresses.count())
+        return;
+    m_addresses.removeAt(index);
+    emit autoFillChanged();
+}
+
+void AutoFillManager::clearData()
+{
+    m_forms.clear();
+    m_addresses.clear();
+    m_never.clear();
+    emit autoFillChanged();
+    saveFormData();
+}
+
 void AutoFillManager::loadSettings()
 {
     QSettings settings;
@@ -158,7 +192,11 @@ void AutoFillManager::saveFormData() const
     QByteArray payload;
     {
         QDataStream stream(&payload, QIODevice::WriteOnly);
+        // ADDR01: [forms][addresses] — the address list is appended
+        // after the forms so a pre-ADDR01 build still reads its Form
+        // list untouched and simply ignores the trailing bytes.
         stream << m_forms;
+        stream << m_addresses;
     }
 
     const QByteArray sealed = SecureStore::seal(payload);
@@ -205,6 +243,18 @@ void AutoFillManager::loadFormData()
         return;
 
     const QByteArray raw = file.readAll();
+
+    // Reads [forms] then the optional [addresses] tail — a payload
+    // written before ADDR01 ends after the forms, which yields an
+    // empty address list (the bounded read clears the list on any
+    // truncation too, so a corrupt tail can't leave a partial one).
+    auto decodePayload = [this](QDataStream &stream) {
+        StreamingUtils::readBoundedList(stream, m_forms);
+        m_addresses.clear();
+        if (stream.status() == QDataStream::Ok && !stream.atEnd())
+            StreamingUtils::readBoundedList(stream, m_addresses);
+    };
+
     if (SecureStore::isSealed(raw)) {
         bool ok = false;
         const QByteArray payload = SecureStore::open(raw, &ok);
@@ -214,7 +264,7 @@ void AutoFillManager::loadFormData()
             return;
         }
         QDataStream stream(payload);
-        StreamingUtils::readBoundedList(stream, m_forms);
+        decodePayload(stream);
         return;
     }
 
@@ -222,7 +272,7 @@ void AutoFillManager::loadFormData()
     // sealed format on the next save.  The bounded read guards against
     // a corrupt count prefix in the unauthenticated legacy file.
     QDataStream stream(raw);
-    StreamingUtils::readBoundedList(stream, m_forms);
+    decodePayload(stream);
 }
 
 // Builds the injected bundle for a document at url and re-arms the
@@ -484,4 +534,42 @@ void AutoFillManager::Form::save(QDataStream &out, const AutoFillManager::Form &
     out << form.url;
     out << form.name;
     out << form.hasAPassword;
+}
+
+QDataStream &operator>>(QDataStream &in, AutoFillManager::Address &address)
+{
+    AutoFillManager::Address::load(in, address);
+    return in;
+}
+
+QDataStream &operator<<(QDataStream &out, const AutoFillManager::Address &address)
+{
+    AutoFillManager::Address::save(out, address);
+    return out;
+}
+
+void AutoFillManager::Address::load(QDataStream &in, AutoFillManager::Address &address)
+{
+    in >> address.country;
+    in >> address.name;
+    in >> address.organization;
+    in >> address.street;
+    in >> address.city;
+    in >> address.state;
+    in >> address.zip;
+    in >> address.phone;
+    in >> address.email;
+}
+
+void AutoFillManager::Address::save(QDataStream &out, const AutoFillManager::Address &address)
+{
+    out << address.country;
+    out << address.name;
+    out << address.organization;
+    out << address.street;
+    out << address.city;
+    out << address.state;
+    out << address.zip;
+    out << address.phone;
+    out << address.email;
 }

@@ -65,6 +65,7 @@
 #include "acceptlanguagedialog.h"
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "addressdialog.h"
 #include "autofilldialog.h"
 #include "autofillmanager.h"
 #include "browserapplication.h"
@@ -356,6 +357,22 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(styleSheetBrowseButton, &QPushButton::clicked, this, &SettingsDialog::chooseStyleSheet);
 
     connect(editAutoFillUserButton, &QPushButton::clicked, this, &SettingsDialog::editAutoFillUser);
+
+    // ADDR01: the Saved Addresses section mirrors the shared
+    // AutoFillManager store — add/edit/remove take effect immediately
+    // (same model as the form-password editor's Remove buttons) and
+    // autoFillChanged keeps the list in sync with outside writes.
+    connect(addAddressButton, &QPushButton::clicked, this, &SettingsDialog::addAddress);
+    connect(editAddressButton, &QPushButton::clicked, this, &SettingsDialog::editAddress);
+    connect(removeAddressButton, &QPushButton::clicked, this, &SettingsDialog::removeAddress);
+    connect(removeAllAddressesButton, &QPushButton::clicked, this, &SettingsDialog::removeAllAddresses);
+    connect(addressesList, &QListWidget::itemSelectionChanged,
+            this, &SettingsDialog::addressSelectionChanged);
+    connect(addressesList, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem *) { editAddress(); });
+    connect(AutoFillManager::instance(), &AutoFillManager::autoFillChanged,
+            this, &SettingsDialog::refreshAddresses);
+    refreshAddresses();
 
     connect(extensionLoadButton, &QPushButton::clicked, this, &SettingsDialog::loadExtension);
     connect(extensionInstallButton, &QPushButton::clicked, this, &SettingsDialog::installExtension);
@@ -1778,6 +1795,72 @@ void SettingsDialog::editAutoFillUser()
 {
     AutoFillDialog dialog(this);
     dialog.exec();
+}
+
+void SettingsDialog::refreshAddresses()
+{
+    const QList<AutoFillManager::Address> addresses =
+        AutoFillManager::instance()->addresses();
+    const int selected = addressesList->currentRow();
+    addressesList->clear();
+    for (const AutoFillManager::Address &address : addresses) {
+        QListWidgetItem *item =
+            new QListWidgetItem(AddressDialog::summaryText(address));
+        item->setToolTip(item->text());
+        addressesList->addItem(item);
+    }
+    if (selected >= 0 && selected < addressesList->count())
+        addressesList->setCurrentRow(selected);
+    addressSelectionChanged();
+}
+
+void SettingsDialog::addAddress()
+{
+    AddressDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    AutoFillManager *manager = AutoFillManager::instance();
+    manager->addAddress(dialog.address());
+    // autoFillChanged refreshed the list — select the new last row.
+    addressesList->setCurrentRow(addressesList->count() - 1);
+}
+
+void SettingsDialog::editAddress()
+{
+    const int row = addressesList->currentRow();
+    if (row < 0)
+        return;
+    AutoFillManager *manager = AutoFillManager::instance();
+    QList<AutoFillManager::Address> addresses = manager->addresses();
+    if (row >= addresses.count())
+        return;
+    AddressDialog dialog(this);
+    dialog.setWindowTitle(tr("Edit Address"));
+    dialog.setAddress(addresses.at(row));
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    addresses[row] = dialog.address();
+    manager->setAddresses(addresses);
+}
+
+void SettingsDialog::removeAddress()
+{
+    const int row = addressesList->currentRow();
+    if (row >= 0)
+        AutoFillManager::instance()->removeAddress(row);
+}
+
+void SettingsDialog::removeAllAddresses()
+{
+    AutoFillManager::instance()->setAddresses(
+        QList<AutoFillManager::Address>());
+}
+
+void SettingsDialog::addressSelectionChanged()
+{
+    const bool selected = addressesList->currentItem() != nullptr;
+    editAddressButton->setEnabled(selected);
+    removeAddressButton->setEnabled(selected);
 }
 
 // Serializes an OpenSearchEngine::Parameters list into the editor's
