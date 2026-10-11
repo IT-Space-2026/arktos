@@ -187,6 +187,11 @@ UI:
   Light / Dark applies live without a restart, and Arora's own error
   pages, directory listings and start page follow the app palette in
   dark mode (THEME01).
+- The window theme selector (now labeled "Window theme (Day/Night)")
+  previews instantly: picking Light or Dark flips the application
+  theme as you select it, changing the combo back or closing
+  Preferences without OK restores the previous theme, and OK commits
+  it (THEME02).
 - Reader Mode toggle in the navigation toolbar, right after the
   reload/stop button — it appears only on article-like pages, shows
   a filled icon while the reader overlay is up, and stays in sync

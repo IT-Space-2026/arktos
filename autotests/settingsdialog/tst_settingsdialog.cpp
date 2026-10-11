@@ -93,6 +93,7 @@ private slots:
     void settingsFilter();
     void iconThemeSelector();
     void themeSelector();
+    void themePreview();
     void uniformSidebarIcons();
     void scrollablePages();
     void densityAndFooter();
@@ -1210,6 +1211,88 @@ void tst_SettingsDialog::themeSelector()
              QLatin1String("system"));
     QVERIFY(!BrowserTheme::paletteIsForced());
     QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+}
+
+// THEME02: the combo previews instantly — the palette flips on index
+// change with no accept() and no key write; reverting the combo,
+// pressing Cancel, or closing the page all undo the preview by
+// re-resolving the persisted pick.
+void tst_SettingsDialog::themePreview()
+{
+    // themeSelector (previous leg) leaves "system" persisted and the
+    // platform palette restored.
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("system"));
+    const QColor platformWindow =
+        QApplication::palette().color(QPalette::Window);
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Instant preview: the palette flips on index change alone and
+    // nothing is persisted yet.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        QVERIFY(BrowserTheme::paletteIsForced());
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        QCOMPARE(QSettings().value(
+                     QLatin1String("browser/colorScheme")).toString(),
+                 QLatin1String("system"));
+        // Reverting the combo before Apply restores the prior scheme.
+        dialog.themeCombo->setCurrentIndex(0);   // System default
+        QVERIFY(!BrowserTheme::paletteIsForced());
+        QCOMPARE(QApplication::palette().color(QPalette::Window),
+                 platformWindow);
+    }
+
+    // Cancel discards the preview, not just the widget state.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        dialog.reject();
+    }
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+
+    // Closing the page outright (tab close — no reject()) reverts too.
+    {
+        SettingsDialog *dialog = new SettingsDialog;
+        dialog->themeCombo->setCurrentIndex(2);
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        delete dialog;
+    }
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+
+    // Committed dark + Light preview + discard -> the committed dark
+    // scheme comes back, not the platform palette.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        dialog.accept();
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    {
+        SettingsDialog *dialog = new SettingsDialog;
+        QCOMPARE(dialog->themeCombo->currentIndex(), 2);
+        dialog->themeCombo->setCurrentIndex(1);   // Light
+        QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+        delete dialog;
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Restore "system" + the platform palette for the following legs.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(0);
+        dialog.accept();
+    }
+    QVERIFY(!BrowserTheme::paletteIsForced());
     QCOMPARE(QApplication::palette().color(QPalette::Window),
              platformWindow);
 }

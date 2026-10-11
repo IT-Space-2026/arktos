@@ -49,6 +49,12 @@ namespace BrowserTheme {
 // Unknown — treat as "leave theme alone").
 Qt::ColorScheme preferredColorScheme();
 
+// What "System default" resolves to right now — the env override if
+// set, else the platform's reported scheme (may be Unknown).  The
+// Preferences page previews the combo's System row with this since
+// preferredColorScheme() would consult the not-yet-committed pick.
+Qt::ColorScheme systemColorScheme();
+
 bool isDarkPalette(const QPalette &palette);
 
 // Palette for forced dark mode (Fusion-style dark chrome).
@@ -60,6 +66,13 @@ QPalette darkPalette();
 // palette/style captured before we forced anything when it flips back.
 // Idempotent; safe to call repeatedly.
 void applyColorScheme();
+
+// THEME02: apply an explicit scheme without consulting the persisted
+// pick — the Preferences page uses it to preview the combo's value
+// before the choice is committed.  Same palette mechanics as
+// applyColorScheme(); undo by calling applyColorScheme() (the
+// persisted pick never changed).
+void previewColorScheme(Qt::ColorScheme scheme);
 
 // True when the current palette was installed by applyColorScheme()
 // rather than the platform theme.

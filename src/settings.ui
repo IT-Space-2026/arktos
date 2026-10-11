@@ -1188,7 +1188,7 @@
        <item row="5" column="0">
         <widget class="QLabel" name="themeLabel">
          <property name="text">
-          <string>Theme:</string>
+          <string>Window theme (Day/Night):</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -1210,7 +1210,7 @@
           <string>Color scheme for Arora's own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</string>
          </property>
          <property name="accessibleName">
-          <string>Theme</string>
+          <string>Window theme (Day/Night)</string>
          </property>
          <item>
           <property name="text">
