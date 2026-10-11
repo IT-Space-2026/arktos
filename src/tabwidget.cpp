@@ -2236,10 +2236,11 @@ static bool blankThumbnailFrame(const QImage &image)
     return true;
 }
 
-// Grab the tab's view into the thumbnail cache.  Only the current
-// tab's view is actually visible inside the stack, so the scheduled
-// captures below only ever fire there — request-time grabbing for
-// background tabs lives in tabThumbnail().
+// Grab the tab's view into the thumbnail cache, tagged with the url
+// the frame belongs to.  Only the current tab's view is actually
+// visible inside the stack, so the scheduled captures below only
+// ever fire there — background tabs are served exclusively from this
+// cache by tabThumbnail().
 void TabWidget::captureTabThumbnail(int index)
 {
     WebView *view = webView(index);
@@ -2248,8 +2249,11 @@ void TabWidget::captureTabThumbnail(int index)
     const QImage frame = webViewThumbnailFrame(view);
     if (blankThumbnailFrame(frame))
         return;
-    m_tabThumbnails.insert(view, QPixmap::fromImage(
-        frame.scaledToWidth(384, Qt::SmoothTransformation)));
+    CachedThumbnail thumb;
+    thumb.pixmap = QPixmap::fromImage(
+        frame.scaledToWidth(384, Qt::SmoothTransformation));
+    thumb.url = view->url();
+    m_tabThumbnails.insert(view, thumb);
 }
 
 void TabWidget::scheduleThumbnailCapture(WebView *webView)
@@ -2270,18 +2274,33 @@ QPixmap TabWidget::tabThumbnail(int index)
     WebView *view = webView(index);
     if (!view)
         return QPixmap();
-    // A hidden WebEngine view usually still paints its last compositor
-    // frame on grab(), so preview-time grabbing works for background
-    // tabs too — the blank check catches the platforms where it
-    // doesn't and keeps the cached snapshot instead.
-    const QImage frame = webViewThumbnailFrame(view);
-    if (!frame.isNull() && !blankThumbnailFrame(frame)) {
-        const QPixmap thumb = QPixmap::fromImage(
-            frame.scaledToWidth(384, Qt::SmoothTransformation));
-        m_tabThumbnails.insert(view, thumb);
-        return thumb;
+    // TPREV02: only the current tab's view is grab-verified — it is
+    // the one actually painting, so the frame it offers is this tab's
+    // live page.  A hidden view's grabFramebuffer() can hand back a
+    // stale pre-navigation remnant, an evicted compositor's leftover,
+    // or another context's pixels, and the blank check cannot tell a
+    // stale painted frame from a current one — background tabs are
+    // therefore served only the snapshot cached while they last
+    // painted, and only while its recorded url still matches (a
+    // same-document pushState/hash navigation changes the url without
+    // a loadStarted, so it is rejected here too).  On a miss the
+    // caller falls back to the title+url card — a wrong-page image
+    // is never shown.
+    if (index == currentIndex()) {
+        const QImage frame = webViewThumbnailFrame(view);
+        if (!frame.isNull() && !blankThumbnailFrame(frame)) {
+            CachedThumbnail thumb;
+            thumb.pixmap = QPixmap::fromImage(
+                frame.scaledToWidth(384, Qt::SmoothTransformation));
+            thumb.url = view->url();
+            m_tabThumbnails.insert(view, thumb);
+            return thumb.pixmap;
+        }
     }
-    return m_tabThumbnails.value(view);
+    const auto it = m_tabThumbnails.constFind(view);
+    if (it != m_tabThumbnails.constEnd() && it->url == view->url())
+        return it->pixmap;
+    return QPixmap();
 }
 
 void TabWidget::reloadAllTabs()
@@ -2550,6 +2569,11 @@ void TabWidget::webViewLoadStarted()
     auto sleepIt = m_sleepStates.find(webView);
     if (sleepIt != m_sleepStates.end())
         sleepIt->formDirty = false;
+    // TPREV02: the page the cached thumbnail showed is being replaced
+    // — drop it now so a pre-navigation frame can never surface as a
+    // hover preview of the new page (covers same-url reloads, which
+    // keep the url the entry is keyed against).
+    m_tabThumbnails.remove(webView);
     if (-1 != index) {
         QLabel *label = animationLabel(index, true);
         if (label->movie())
@@ -3152,6 +3176,8 @@ void TabWidget::loadSettings()
     // TABS02: re-read the persisted vertical strip width so the same
     // live-apply path that carries the position lands it everywhere.
     m_tabBar->reloadVerticalTabWidth();
+    // TPREV01: the hover-preview opt-out rides the same fan-out.
+    m_tabBar->reloadTabHoverPreviews();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS

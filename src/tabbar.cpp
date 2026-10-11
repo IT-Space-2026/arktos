@@ -122,6 +122,7 @@ TabBar::TabBar(QWidget *parent)
     , m_hoveredTab(-1)
     , m_preview(nullptr)
     , m_previewTimer(nullptr)
+    , m_tabPreviewsEnabled(true)
     , m_verticalTabWidth(180)
     , m_resizing(false)
     , m_resizeStartX(0)
@@ -204,6 +205,8 @@ TabBar::TabBar(QWidget *parent)
 
     // TABS02: persisted Left/Right strip width.
     reloadVerticalTabWidth();
+    // TPREV01: the persisted hover-preview opt-out.
+    reloadTabHoverPreviews();
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -1072,7 +1075,9 @@ void TabBar::wheelEvent(QWheelEvent *event)
 void TabBar::updatePreviewDwell()
 {
     // PREFUI05: no hover card while Energy Saver is on.
-    if (m_hoveredTab < 0 || EnergySaver::instance()->active()) {
+    // TPREV01: or when the user opted the card out in Preferences.
+    if (!m_tabPreviewsEnabled || m_hoveredTab < 0
+        || EnergySaver::instance()->active()) {
         m_previewTimer->stop();
         hideTabPreview();
         return;
@@ -1091,6 +1096,7 @@ void TabBar::showTabPreview(int index)
     TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
     if (!tabWidget || index < 0 || index >= count() || !isVisible()
         || (QApplication::mouseButtons() & Qt::LeftButton)
+        || !m_tabPreviewsEnabled
         || EnergySaver::instance()->active()) {
         hideTabPreview();
         return;
@@ -2009,6 +2015,32 @@ void TabBar::reloadVerticalTabWidth()
     settings.beginGroup(QLatin1String("tabs"));
     setVerticalTabWidth(
         settings.value(QLatin1String("verticalTabWidth"), 180).toInt());
+}
+
+bool TabBar::tabPreviewsEnabled() const
+{
+    return m_tabPreviewsEnabled;
+}
+
+void TabBar::setTabPreviewsEnabled(bool enabled)
+{
+    if (m_tabPreviewsEnabled == enabled)
+        return;
+    m_tabPreviewsEnabled = enabled;
+    // Opting out takes down a live card and disarms the dwell clock
+    // immediately — no trailing popup after the pref flips.
+    if (!enabled) {
+        m_previewTimer->stop();
+        hideTabPreview();
+    }
+}
+
+void TabBar::reloadTabHoverPreviews()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    setTabPreviewsEnabled(
+        settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
 }
 
 void TabBar::reloadTab()

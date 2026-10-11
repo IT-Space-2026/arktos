@@ -154,7 +154,7 @@
           <string>On startup:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>startupBehavior</cstring>
@@ -192,7 +192,7 @@
           <string>Home Page:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>homeLineEdit</cstring>
@@ -201,6 +201,12 @@
        </item>
        <item row="1" column="1" colspan="2">
         <widget class="QLineEdit" name="homeLineEdit">
+         <property name="maximumSize">
+          <size>
+           <width>480</width>
+           <height>16777215</height>
+          </size>
+         </property>
          <property name="layoutDirection">
           <enum>Qt::LeftToRight</enum>
          </property>
@@ -238,7 +244,7 @@
           <string>Remove history items:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>expireHistory</cstring>
@@ -571,6 +577,12 @@
                </item>
                <item row="0" column="1">
                 <widget class="QLineEdit" name="engineNameEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>240</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Engine name</string>
                  </property>
@@ -588,6 +600,12 @@
                </item>
                <item row="1" column="1">
                 <widget class="QLineEdit" name="engineNicknameEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>240</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="toolTip">
                   <string>Keyword(s) for the location bar, e.g. &quot;ddg cats&quot; searches with the engine whose nickname is ddg. Separate multiple nicknames with commas.</string>
                  </property>
@@ -608,6 +626,12 @@
                </item>
                <item row="2" column="1">
                 <widget class="QLineEdit" name="engineUrlEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>480</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Engine search URL</string>
                  </property>
@@ -625,6 +649,12 @@
                </item>
                <item row="3" column="1">
                 <widget class="QLineEdit" name="engineSuggestUrlEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>480</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Suggestions URL</string>
                  </property>
@@ -642,6 +672,12 @@
                </item>
                <item row="4" column="1">
                 <widget class="QLineEdit" name="engineImageUrlEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>480</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Image search URL</string>
                  </property>
@@ -659,6 +695,12 @@
                </item>
                <item row="5" column="1">
                 <widget class="QLineEdit" name="enginePostParamsEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>480</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Search POST parameters</string>
                  </property>
@@ -676,6 +718,12 @@
                </item>
                <item row="6" column="1">
                 <widget class="QLineEdit" name="engineImagePostParamsEdit">
+                 <property name="maximumSize">
+                  <size>
+                   <width>480</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
                  <property name="accessibleName">
                   <string>Image search POST parameters</string>
                  </property>
@@ -914,6 +962,12 @@
           </item>
           <item row="0" column="1">
            <widget class="QLineEdit" name="shortcutBookmarksToken">
+            <property name="maximumSize">
+             <size>
+              <width>240</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="toolTip">
              <string>Type this nickname followed by a space in the address field to complete only matching bookmarks.</string>
             </property>
@@ -937,6 +991,12 @@
           </item>
           <item row="1" column="1">
            <widget class="QLineEdit" name="shortcutHistoryToken">
+            <property name="maximumSize">
+             <size>
+              <width>240</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="toolTip">
              <string>Type this nickname followed by a space in the address field to complete only matching history entries.</string>
             </property>
@@ -960,6 +1020,12 @@
           </item>
           <item row="2" column="1">
            <widget class="QLineEdit" name="shortcutTabsToken">
+            <property name="maximumSize">
+             <size>
+              <width>240</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="toolTip">
              <string>Type this nickname followed by a space in the address field to complete only matching open tabs. Picking a tab switches to it.</string>
             </property>
@@ -1031,7 +1097,7 @@
           <string>Icons:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>iconThemeCombo</cstring>
@@ -1060,7 +1126,7 @@
           <string>Standard font:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>standardFontButton</cstring>
@@ -1082,7 +1148,7 @@
           <string notr="true">Times 16</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
         </widget>
        </item>
@@ -1105,7 +1171,7 @@
           <string>Fixed-width font:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>fixedFontButton</cstring>
@@ -1121,7 +1187,7 @@
           <string notr="true">Courier 13</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
         </widget>
        </item>
@@ -1178,12 +1244,51 @@
          </item>
         </layout>
        </item>
-       <item row="4" column="0">
-        <widget class="QCheckBox" name="minimFontSizeCheckBox">
-         <property name="text">
-          <string>Minimum Font size:</string>
-         </property>
-        </widget>
+       <item row="4" column="0" colspan="5">
+        <layout class="QHBoxLayout" name="minFontRowLayout">
+         <item>
+          <widget class="QCheckBox" name="minimFontSizeCheckBox">
+           <property name="text">
+            <string>Minimum Font size:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="minimumFontSizeSpinBox">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="accessibleName">
+            <string>Minimum font size</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="value">
+            <number>9</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="minFontRowSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
        <item row="5" column="0">
         <widget class="QLabel" name="themeLabel">
@@ -1191,7 +1296,7 @@
           <string>Window theme (Day/Night):</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>themeCombo</cstring>
@@ -1229,7 +1334,7 @@
          </item>
         </widget>
        </item>
-       <item row="6" column="1" colspan="4">
+       <item row="6" column="0" colspan="5">
         <widget class="QLabel" name="themeNoteLabel">
          <property name="text">
           <string>Applies to app chrome; page-content dark mode is the separate &quot;Render pages in dark mode&quot; setting below.</string>
@@ -1259,7 +1364,17 @@
          </property>
         </widget>
        </item>
-       <item row="9" column="0" colspan="5">
+       <item row="9" column="0" colspan="3">
+        <widget class="QCheckBox" name="tabHoverPreviews">
+         <property name="toolTip">
+          <string>Show a preview card of a tab's page when the mouse pointer rests on the tab.</string>
+         </property>
+         <property name="text">
+          <string>Show tab previews on hover</string>
+         </property>
+        </widget>
+       </item>
+       <item row="10" column="0" colspan="5">
         <widget class="QGroupBox" name="sidebarGroupBox">
          <property name="title">
           <string>Sidebar</string>
@@ -1281,7 +1396,7 @@
              <string>Sidebar position:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             <set>Qt::AlignLeft|Qt::AlignVCenter</set>
             </property>
             <property name="buddy">
              <cstring>sidebarDockArea</cstring>
@@ -1317,7 +1432,7 @@
              <string>Panels:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignTop</set>
+             <set>Qt::AlignLeft|Qt::AlignTop</set>
             </property>
             <property name="buddy">
              <cstring>sidebarPanelsList</cstring>
@@ -1349,7 +1464,7 @@
          </layout>
         </widget>
        </item>
-       <item row="10" column="3">
+       <item row="11" column="3">
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -1361,28 +1476,6 @@
           </size>
          </property>
         </spacer>
-       </item>
-       <item row="4" column="1">
-        <widget class="QSpinBox" name="minimumFontSizeSpinBox">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="enabled">
-          <bool>false</bool>
-         </property>
-         <property name="accessibleName">
-          <string>Minimum font size</string>
-         </property>
-         <property name="minimum">
-          <number>1</number>
-         </property>
-         <property name="value">
-          <number>9</number>
-         </property>
-        </widget>
        </item>
       </layout>
      </widget>
@@ -1478,12 +1571,12 @@
             </property>
             <item>
              <property name="text">
-              <string>Built-in (default)</string>
+              <string>Built-in</string>
              </property>
             </item>
             <item>
              <property name="text">
-              <string>Brave adblock-rust</string>
+              <string>Brave adblock-rust (default)</string>
              </property>
             </item>
            </widget>
@@ -1924,6 +2017,12 @@
           </item>
           <item>
            <widget class="QLineEdit" name="secureDnsServer">
+            <property name="maximumSize">
+             <size>
+              <width>480</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="enabled">
              <bool>false</bool>
             </property>
@@ -2540,6 +2639,12 @@
           </item>
           <item row="1" column="1" colspan="2">
            <widget class="QLineEdit" name="proxyHostName">
+            <property name="maximumSize">
+             <size>
+              <width>300</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="layoutDirection">
              <enum>Qt::LeftToRight</enum>
             </property>
@@ -2602,6 +2707,12 @@
           </item>
           <item row="3" column="1" colspan="2">
            <widget class="QLineEdit" name="proxyUserName">
+            <property name="maximumSize">
+             <size>
+              <width>240</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="layoutDirection">
              <enum>Qt::LeftToRight</enum>
             </property>
@@ -2622,6 +2733,12 @@
           </item>
           <item row="4" column="1" colspan="2">
            <widget class="QLineEdit" name="proxyPassword">
+            <property name="maximumSize">
+             <size>
+              <width>240</width>
+              <height>16777215</height>
+             </size>
+            </property>
             <property name="layoutDirection">
              <enum>Qt::LeftToRight</enum>
             </property>
@@ -2799,25 +2916,48 @@
          </property>
         </widget>
        </item>
-       <item row="0" column="2">
-        <widget class="QLineEdit" name="userStyleSheet">
-         <property name="layoutDirection">
-          <enum>Qt::LeftToRight</enum>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="3">
-        <widget class="QPushButton" name="styleSheetBrowseButton">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="text">
-          <string>Browse...</string>
-         </property>
-        </widget>
+       <item row="0" column="1" colspan="3">
+        <layout class="QHBoxLayout" name="userStyleSheetLayout">
+         <item>
+          <widget class="QLineEdit" name="userStyleSheet">
+           <property name="maximumSize">
+            <size>
+             <width>480</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="layoutDirection">
+            <enum>Qt::LeftToRight</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="styleSheetBrowseButton">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="text">
+            <string>Browse...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="userStyleSheetSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
        <item row="1" column="0" colspan="4">
         <widget class="QGroupBox" name="networkCache">
@@ -3354,6 +3494,12 @@
             </item>
             <item>
              <widget class="QLineEdit" name="downloadsLocation">
+              <property name="maximumSize">
+               <size>
+                <width>480</width>
+                <height>16777215</height>
+               </size>
+              </property>
               <property name="layoutDirection">
                <enum>Qt::LeftToRight</enum>
               </property>
@@ -3375,6 +3521,19 @@
               </property>
              </widget>
             </item>
+            <item>
+             <spacer name="downloadsLocationSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
            </layout>
           </item>
           <item>
@@ -3388,6 +3547,12 @@
             </item>
             <item>
              <widget class="QLineEdit" name="externalDownloadPath">
+              <property name="maximumSize">
+               <size>
+                <width>480</width>
+                <height>16777215</height>
+               </size>
+              </property>
               <property name="accessibleName">
                <string>External download program</string>
               </property>
@@ -3405,6 +3570,19 @@
                <string>Choose Program...</string>
               </property>
              </widget>
+            </item>
+            <item>
+             <spacer name="externalDownloadSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
             </item>
            </layout>
           </item>

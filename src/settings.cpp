@@ -470,8 +470,9 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     // ADB06: the content-blocker engine picker persists AdBlock/engine
     // (cpp|rust) — the key AdBlockManager::engine() consults.  Item
-    // data carries the persisted id.  Without an adblock_rust build
-    // the Brave row stays listed but disabled so a persisted pick
+    // data carries the persisted id.  ADBLK01: the unset default is
+    // Brave adblock-rust; without an adblock_rust build the Brave row
+    // stays listed but disabled so a persisted (or defaulted) pick
     // round-trips instead of being silently rewritten to Built-in.
     adblockEngineCombo->setItemData(0, QLatin1String("cpp"));
     adblockEngineCombo->setItemData(1, QLatin1String("rust"));
@@ -480,7 +481,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
         if (QStandardItem *rust = engineModel->item(1)) {
             rust->setEnabled(false);
-            rust->setText(tr("Brave adblock-rust — rebuild with CONFIG+=adblock_rust"));
+            rust->setText(tr("Brave adblock-rust (default) — rebuild with CONFIG+=adblock_rust"));
         }
     }
 #endif
@@ -1216,6 +1217,9 @@ void SettingsDialog::loadFromSettings()
     // CONT06: 0 = inline chips, 1 = two-level strip (the default).
     containerDisplayCombo->setCurrentIndex(qBound(0,
         settings.value(QLatin1String("containerDisplay"), 1).toInt(), 1));
+    // TPREV01: hover previews are on unless the user opted out.
+    tabHoverPreviews->setChecked(
+        settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
     // PREFUI04: the Performance page.  The memory-saver radios are
     // presets over the SLEEP01 suspend keys — the stored minute value
     // picks the closest tier (a hand-tuned value an older build wrote
@@ -1616,6 +1620,10 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
+    // TPREV01: applies live through the per-TabWidget loadSettings()
+    // fan-out below -> TabBar::reloadTabHoverPreviews().
+    settings.setValue(QLatin1String("tabHoverPreviews"),
+                      tabHoverPreviews->isChecked());
     settings.endGroup();
 
     // PREFUI04: the Performance page's own group (the migrated

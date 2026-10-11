@@ -26,6 +26,7 @@
 #include <enginetab.h>
 #include <tabwidget.h>
 #include <tabbar.h>
+#include <tabpreview.h>
 #include <webview.h>
 
 #include "fakeengine.h"
@@ -40,6 +41,8 @@
 #include <historymanager.h>
 
 #include <qcompleter.h>
+#include <qdir.h>
+#include <qfile.h>
 #include <qlineedit.h>
 #include <qmenu.h>
 #include <qwebenginehistory.h>
@@ -94,6 +97,8 @@ private slots:
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
     void verticalTabStripWidth();
+    void tabHoverPreviews();
+    void tabThumbnailStaleness();
     void omnibox();
     void omniboxTabScope();
     void tabGroups();
@@ -908,6 +913,155 @@ void tst_TabWidget::verticalTabStripWidth()
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.remove(QLatin1String("tabBarPosition"));
     settings.endGroup();
+}
+
+// TPREV01: tabs/tabHoverPreviews (default on) gates the hover
+// preview card — read on construction, re-applied live through
+// loadSettings() (the path SettingsDialog::saveToSettings fans out
+// to every window), and opting out while a card is up drops it.
+void tst_TabWidget::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QVERIFY(!bar->tabPreviewsEnabled());
+
+    // Synthetic QTest::mouseMove does not reach widgets under the
+    // offscreen QPA — post the move through sendEvent like the
+    // tst_tabbar legs drive their handlers.
+    const auto hoverTab = [&bar](int index) {
+        const QPoint pos = bar->tabRect(index).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(pos),
+                         QPointF(bar->mapToGlobal(pos)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &move);
+    };
+
+    // Opted out: dwelling on a tab never arms the card.
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview());
+
+    // Opted back in through the live-apply path the settings dialog
+    // uses -> the dwell pops the card on the hovered tab.
+    settings.setValue(QLatin1String("tabHoverPreviews"), true);
+    widget.loadSettings();
+    QVERIFY(bar->tabPreviewsEnabled());
+    hoverTab(0);
+    QTest::qWait(700);
+    QVERIFY(bar->tabPreview());
+    QVERIFY(bar->tabPreview()->isVisible());
+    QCOMPARE(bar->tabPreview()->previewedIndex(), 0);
+
+    // Opting out while a card is up drops it immediately, and a
+    // fresh dwell on another tab never re-arms it.
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+    widget.loadSettings();
+    QVERIFY(!bar->tabPreviewsEnabled());
+    QVERIFY(!bar->tabPreview()->isVisible());
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview()->isVisible());
+
+    settings.remove(QLatin1String("tabHoverPreviews"));
+    settings.endGroup();
+}
+
+// TPREV02: the hover thumbnail must show the tab's OWN current page.
+// The current tab re-grabs live; background tabs are served only the
+// identity-checked snapshot cached while they last painted (a hidden
+// view's compositor frame can be stale or a recycled context's
+// pixels — a request-time grab is never trusted); a full navigation
+// drops the entry at loadStarted, and a same-document hash change
+// disqualifies it on the recorded url.  A miss yields null so the
+// preview falls back to the title+url card — never another page's
+// pixels.
+void tst_TabWidget::tabThumbnailStaleness()
+{
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-tprev02-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>tprev02</title></head>"
+                      "<body style='margin:0;background:#c33'>zero</body>"
+                      "</html>");
+    }
+    const QUrl page0 = QUrl::fromLocalFile(fixturePath);
+    // Named colours only — a '#'-style colour inside a data: url is a
+    // fragment delimiter and would truncate the document.
+    const QUrl page1(QStringLiteral(
+        "data:text/html,<body style='background:blue;margin:0'>one</body>"));
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    widget.webView(0)->loadUrl(page0);
+    widget.webView(1)->loadUrl(page1);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), page0, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), page1, 15000);
+
+    // The current tab paints and caches its live frame.
+    widget.setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.tabThumbnail(0).isNull(), 15000);
+
+    // Hidden tab: the identity-matching snapshot is served — this is
+    // the only path a background tab may take.
+    widget.setCurrentIndex(1);
+    QApplication::processEvents();
+    QVERIFY(!widget.tabThumbnail(0).isNull());
+
+    // A same-document hash navigation changes the url without any
+    // loadStarted — the stored frame can no longer be proven current
+    // and must be rejected on identity.
+    widget.webView(0)->enginePage()->runJavaScript(
+        QStringLiteral("location.hash = '#moved'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        widget.webView(0)->url().fragment()
+            == QLatin1String("moved"),
+        15000);
+    QVERIFY(widget.tabThumbnail(0).isNull());
+
+    // A full background navigation likewise leaves nothing servable:
+    // no request-time grab fills in, and loadFinished does not
+    // re-cache a tab that never painted (negative control on the
+    // stale-frame path — under the old grab-on-request code a
+    // painted background frame would have surfaced here).
+    const QUrl page0b(QStringLiteral(
+        "data:text/html,<body style='background:green;margin:0'>zero-b</body>"));
+    QSignalSpy loadedSpy(widget.webView(0)->page(),
+                         &QWebEnginePage::loadFinished);
+    widget.webView(0)->loadUrl(page0b);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), page0b, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(loadedSpy.count() >= 1, 15000);
+    QTest::qWait(400);   // past the 300ms deferred-capture window
+    QVERIFY(widget.tabThumbnail(0).isNull());
+
+    // Back on top, the same tab re-grabs live again.
+    widget.setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.tabThumbnail(0).isNull(), 15000);
+
+    // A closed tab's snapshot dies with it — closing the cached tab
+    // mid-test must not leave anything servable behind (the entries
+    // are removed on both view-death paths, closeTab here).
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 1);
+    QTest::qWait(50);   // the dying view's deferred deleteLater lands
+    widget.closeTab();
+    QFile::remove(fixturePath);
 }
 
 // SRCH01: the location bar is an omnibox — guessUrlFromString (driven

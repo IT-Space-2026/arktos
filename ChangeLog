@@ -277,6 +277,28 @@ UI:
   offers to save it through the address editor, pre-filled with
   what was entered. Private browsing pages are never filled and
   never offered the save prompt (ADDR02).
+- Preferences → Appearance gains "Show tab previews on hover" —
+  unchecking it turns the tab-strip preview card off entirely,
+  applies live to every window, and drops a card that is already
+  up (TPREV01).
+- Fixed: the tab-strip hover preview could show a stale or
+  wrong-page image for background tabs. Previews now serve the
+  snapshot the tab last painted while it was current — verified
+  against the tab's current page — instead of grabbing whatever
+  frame the hidden view happens to offer; the image is dropped the
+  moment the tab navigates, and suspended tabs keep their
+  pre-sleep snapshot (TPREV02).
+- Preferences layout polish: on the Appearance and General pages the
+  setting labels now anchor at the left page edge instead of
+  right-aligning inside a wide column that read as center-floating,
+  and the font-name fields and theme note left-align their text
+  (PREFUI06).
+- Preferences text fields stop at sensible widths instead of
+  stretching to the window: credentials, engine names and shortcut
+  nicknames cap at a short measure, the proxy host slightly wider,
+  and URL/path fields (home page, style sheet, download locations,
+  search engine URLs, DNS-over-HTTPS template) at a generous one;
+  Browse/Choose buttons stay right beside their fields (PREFUI07).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -449,6 +471,9 @@ AdBlock:
 - Toolbar blocker button with per-page counts (ADB05).
 - Content-blocker engine picker in Preferences → Privacy (Built-in /
   Brave adblock-rust, live switch, rust builds only) (ADB06).
+- Brave adblock-rust is now the default content blocker in builds
+  that ship the engine; Built-in stays selectable, and builds without
+  it behave exactly as before (ADBLK01).
 - Indexed request matcher (PERF02).
 
 Extensions:
@@ -1024,7 +1049,7 @@ Memory-safe parsers for untrusted input (SEC19):
     When built with `CONFIG+=rustcore`, the XML and JSON Arora accepts from remote servers is now parsed in the Rust core instead of Qt's C++ parsers: OpenSearch descriptors fetched from arbitrary sites, extension update manifests, and OpenSearch suggestion replies all cross the FFI as size-capped, schema-checked structures — malformed, oversized, DTD-bearing or truncated documents are rejected in memory-safe Rust before they can exercise any C++ parsing path. Bookmark files are guarded by a Rust structural check before Qt builds the bookmark tree. The C++ interfaces and all behavior on valid documents are unchanged, and no-Rust builds keep the existing Qt parsers.
 
 Accelerated downloads in Rust (DLACC03/DLACC06):
-    Configuring with `qmake CONFIG+=rustdl` adds an optional accelerated download engine (src/rustdl, reqwest + std::thread behind a C ABI): HTTP/HTTPS downloads can run as parallel ranged GETs (4–16 connections, default 8) that merge atomically on completion, falling back to a single stream when the server does not accept ranges. Progress, speed, cancel and retry appear on the existing download card UI unchanged, and the built-in Chromium engine remains the default — the Rust engine is only used when selected in the download settings.
+    Configuring with `qmake CONFIG+=rustdl` adds an optional accelerated download engine (src/rustdl, reqwest + std::thread behind a C ABI): HTTP/HTTPS downloads can run as parallel ranged GETs (4–16 connections, default 8) that merge atomically on completion, falling back to a single stream when the server does not accept ranges. Progress, speed, cancel and retry appear on the existing download card UI unchanged. The Rust engine is the default download engine where the crate is built in; the built-in Chromium engine remains selectable (and is the only path on no-Rust builds).
     Untrusted server input is handled in memory-safe Rust: Content-Disposition and suggested file names are sanitized against path traversal, control characters and overwrite (existing files dedup with a -N suffix), part files stage under a private app-data directory, and the finished file lands via an atomic rename with executable bits stripped. No-Rust builds behave exactly as before.
     Privacy and proxy parity on the accelerated path (DLACC04): the Rust engine asks the same interceptor pipeline the built-in engine gets for free to vet every request before it reaches the wire — HTTPS-first upgrades and the HTTPS-Only veto apply (localhost/LAN/.onion exemptions included), tracking-parameter stripping and the domain blocklist run, adblock rules refuse tracker-domain downloads, and a redirect that crosses from a public host into a private address is refused. Redirects are followed manually so the whole gate re-runs on every hop, cookies never ride a cross-domain hop, and no Authorization header is ever forwarded. Downloads send the profile's User-Agent and the configured Referer policy, ride the application proxy through reqwest, and in a tor window leave only via the managed SOCKS listener — a download falls back to the built-in engine rather than ever opening a direct connection.
     Authenticated downloads and filesystem hygiene on the accelerated path (DLACC05): the Rust engine now receives a scoped Netscape cookie export containing only rows that match the target URL, written to a private 0600 file inside the randomized per-download temp dir (root forced 0700), fsynced before the engine starts, and zeroed and deleted when the download finishes, fails, is cancelled, retried, or destroyed. In-flight part and staging files are created 0600 and committed output relaxes to 0644; stale dl-*/cookies-* debris left by a crash is swept the next time the engine arms. Debug download output redacts URL query strings, fragments, and userinfo so signed-URL tokens never reach the logs.

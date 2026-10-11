@@ -116,6 +116,9 @@ private slots:
     void containerSiteRows();
     void performancePage();
     void energySaver();
+    void tabHoverPreviews();
+    void appearanceLeftAnchored();
+    void fieldWidthCaps();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -1509,10 +1512,17 @@ void tst_SettingsDialog::densityAndFooter()
 
     // Offscreen page grabs for visual review — set
     // ARORA_SETTINGS_GRAB_DIR to a directory and each page lands
-    // there as settings-page-<n>.png.
+    // there as settings-page-<n>.png; ARORA_SETTINGS_GRAB_SIZE=WxH
+    // resizes the dialog before grabbing.
     const QByteArray grabDir = qgetenv("ARORA_SETTINGS_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        const QStringList grabSizeParts = QString::fromLocal8Bit(
+            qgetenv("ARORA_SETTINGS_GRAB_SIZE")).split(QLatin1Char('x'));
+        if (grabSizeParts.size() == 2) {
+            dialog.resize(grabSizeParts[0].toInt(), grabSizeParts[1].toInt());
+            qApp->processEvents();
+        }
         for (int i = 0; i < dialog.tabWidget->count(); ++i) {
             dialog.tabWidget->setCurrentIndex(i);
             dialog.pagesList->setCurrentRow(i);
@@ -2001,13 +2011,19 @@ void tst_SettingsDialog::tabPositionPicker()
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 }
 
-// ADB06: the Content Blocking group on the Privacy page carries the
-// runtime adblock-engine picker — persisted as AdBlock/engine through
-// AdBlockManager::setEngine, so the switch answers the next request.
-// Without a CONFIG+=adblock_rust build the Brave row is listed but
-// disabled (a persisted pick round-trips), never a dead option.
+// ADB06/ADBLK01: the Content Blocking group on the Privacy page
+// carries the runtime adblock-engine picker — persisted as
+// AdBlock/engine through AdBlockManager::setEngine, so the switch
+// answers the next request.  Brave adblock-rust is the default (an
+// absent key selects it and materializes no key on accept); without a
+// CONFIG+=adblock_rust build the Brave row is listed but disabled (a
+// persisted pick round-trips), never a dead option.
 void tst_SettingsDialog::contentBlockerEngine()
 {
+    // ADBLK01: start from a genuinely unset key — earlier legs'
+    // accept()s may already have persisted a pick — so the dialog
+    // shows the new Brave default, not leftovers.
+    QSettings().remove(QLatin1String("AdBlock/engine"));
     {
         SettingsDialog dialog;
         dialog.openAtPage(SettingsDialog::PrivacyPage);
@@ -2025,8 +2041,6 @@ void tst_SettingsDialog::contentBlockerEngine()
         QCOMPARE(dialog.adblockEngineLabel->buddy(),
                  static_cast<QWidget *>(dialog.adblockEngineCombo));
         QVERIFY(!dialog.adblockEngineStatus->text().isEmpty());
-        QVERIFY(dialog.adblockEngineStatus->text().contains(
-            QStringLiteral("Built-in")));
 
         QCOMPARE(dialog.adblockEngineCombo->count(), 2);
         QCOMPARE(dialog.adblockEngineCombo->itemData(0).toString(),
@@ -2036,35 +2050,66 @@ void tst_SettingsDialog::contentBlockerEngine()
         QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
             dialog.adblockEngineCombo->model());
         QVERIFY(model);
+        // The unset default selects the Brave row on either build —
+        // enabled where the engine ships, disabled with the rebuild
+        // hint where it does not.
+        QCOMPARE(dialog.adblockEngineCombo->currentIndex(), 1);
 #ifdef ARORA_ADBLOCK_RUST
         QVERIFY(model->item(1)->isEnabled());
-        // Picking Brave applies on accept() — the manager's engine
-        // pick flips live, no restart.
-        dialog.adblockEngineCombo->setCurrentIndex(1);
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("adblock-rust")));
+        // Accepting the default writes nothing — the absent key IS
+        // the Brave pick.
         dialog.accept();
-        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
-                     .toString(), QLatin1String("rust"));
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
         QCOMPARE(AdBlockManager::instance()->engine(),
                  AdBlockManager::RustEngine);
+
+        // Opting out to Built-in persists "cpp" and flips live.
         SettingsDialog reloaded;
-        QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
-        QVERIFY(reloaded.adblockEngineStatus->text().contains(
-            QStringLiteral("adblock-rust")));
         reloaded.adblockEngineCombo->setCurrentIndex(0);
         reloaded.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("cpp"));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        SettingsDialog reloaded2;
+        QCOMPARE(reloaded2.adblockEngineCombo->currentIndex(), 0);
+        QVERIFY(reloaded2.adblockEngineStatus->text().contains(
+            QStringLiteral("Built-in")));
+        // Picking Brave again writes the explicit id back.
+        reloaded2.adblockEngineCombo->setCurrentIndex(1);
+        reloaded2.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("rust"));
+        // Restore the opt-out so the shared config ends native.
+        SettingsDialog reloaded3;
+        reloaded3.adblockEngineCombo->setCurrentIndex(0);
+        reloaded3.accept();
 #else
         QVERIFY(!model->item(1)->isEnabled());
-        // A persisted rust pick still selects the (disabled) row and
-        // re-saving writes the same id back — no silent rewrite.
+        // The defaulted rust pick selects the (disabled) row and the
+        // status line explains the native fallback — no silent
+        // rewrite, no half-selected engine.
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("not compiled")));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        // Accepting keeps the default absent — nothing materializes
+        // a key the user never picked.
+        dialog.accept();
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QCOMPARE(AdBlockManager::storedEngine(),
+                 AdBlockManager::RustEngine);
+
+        // A persisted rust pick round-trips through the disabled row
+        // the same way the default does.
         QSettings().setValue(QLatin1String("AdBlock/engine"),
                              QLatin1String("rust"));
         SettingsDialog reloaded;
         QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
         QVERIFY(reloaded.adblockEngineStatus->text().contains(
             QStringLiteral("not compiled")));
-        // The effective engine stays native on this build.
-        QCOMPARE(AdBlockManager::instance()->engine(),
-                 AdBlockManager::NativeEngine);
         reloaded.accept();
         QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("rust"));
@@ -2073,7 +2118,6 @@ void tst_SettingsDialog::contentBlockerEngine()
         reloaded.accept();
         QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
                      .toString(), QLatin1String("cpp"));
-        dialog.reject();
 #endif
     }
     QCOMPARE(AdBlockManager::storedEngine(), AdBlockManager::NativeEngine);
@@ -2910,6 +2954,233 @@ void tst_SettingsDialog::energySaver()
     settings.remove(QLatin1String("tabs/suspendTabs"));
     settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
     saver->loadSettings();
+}
+
+// TPREV01: the Appearance page's 'Show tab previews on hover'
+// checkbox persists tabs/tabHoverPreviews — on by default for a
+// fresh profile, and the state round-trips through save/reload.
+void tst_SettingsDialog::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+
+    // The control lives on the Appearance page (sidebar row 2).
+    {
+        SettingsDialog dialog;
+        QWidget *host = dialog.tabHoverPreviews;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+
+        QVERIFY(dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), false);
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), true);
+
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+}
+
+// PREFUI06: the Appearance page rendered its label column mid-page —
+// a column shared by the 'Minimum Font size:' checkbox and the long
+// 'Window theme' label pushed every label's text right while the
+// checkbox/group rows anchored at the inset. Labels must paint their
+// text at the page inset, the label column must be sized by the
+// labels alone, and the font-name/note fields must not center text.
+void tst_SettingsDialog::appearanceLeftAnchored()
+{
+    SettingsDialog dialog;
+    dialog.resize(1400, 800);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.pagesList->setCurrentRow(2);
+    dialog.tabWidget->setCurrentIndex(2);
+    qApp->processEvents();
+
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->widget(2));
+    QVERIFY(area);
+    QWidget *page = area->widget();
+    QVERIFY(page);
+
+    auto textX = [&page](QLabel *l) {
+        const int x = l->mapTo(page, QPoint(0, 0)).x();
+        const int tw = l->fontMetrics().horizontalAdvance(l->text());
+        const Qt::Alignment a = l->alignment();
+        if (a & Qt::AlignHCenter)
+            return x + (l->width() - tw) / 2;
+        if (a & Qt::AlignRight)
+            return x + l->width() - tw;
+        return x;
+    };
+
+    const QList<QLabel *> pageLabels = {
+        dialog.iconThemeLabel, dialog.label_5,
+        dialog.label_6, dialog.themeLabel
+    };
+    for (QLabel *l : pageLabels) {
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2 — label column drifts")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // The label column is sized by the labels alone — no checkbox or
+    // other non-label row may inflate it past the widest label hint.
+    int maxLabelHint = 0;
+    for (QLabel *l : pageLabels)
+        maxLabelHint = qMax(maxLabelHint, l->sizeHint().width());
+    QVERIFY2(dialog.iconThemeLabel->width() <= maxLabelHint,
+             qPrintable(QStringLiteral(
+                 "label column %1 wider than widest label hint %2")
+                 .arg(dialog.iconThemeLabel->width())
+                 .arg(maxLabelHint)));
+
+    // Sidebar group's inner labels anchor inside the group too.
+    for (QLabel *l : {dialog.sidebarDockAreaLabel,
+                      dialog.sidebarPanelsLabel}) {
+        QVERIFY2(!(l->alignment() & Qt::AlignRight),
+                 qPrintable(l->objectName()));
+        QVERIFY2(textX(l) <= 30,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // Field text reads like a line edit — no centered painting.
+    QVERIFY(!(dialog.standardLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.fixedLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.themeNoteLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(dialog.themeNoteLabel->mapTo(page, QPoint(0, 0)).x() <= 20);
+
+    // Widening the dialog must not drift the anchored block.
+    dialog.resize(1600, 800);
+    qApp->processEvents();
+    for (QLabel *l : pageLabels)
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(l->objectName()));
+    dialog.close();
+}
+
+// PREFUI07: every settings text field caps at a content-class width
+// so a wide dialog can't stretch a proxy credential or a home-page
+// URL across the page. Classes: 240 short names/credentials/tokens,
+// 300 hostnames, 480 URLs and paths. Measured at a 1500px dialog
+// where the uncapped fields ran to ~85% of the page width.
+void tst_SettingsDialog::fieldWidthCaps()
+{
+    struct Capped { QLineEdit *edit; int cap; };
+    SettingsDialog dialog;
+    const QList<Capped> fields = {
+        {dialog.homeLineEdit, 480},
+        {dialog.engineNameEdit, 240},
+        {dialog.engineNicknameEdit, 240},
+        {dialog.engineUrlEdit, 480},
+        {dialog.engineSuggestUrlEdit, 480},
+        {dialog.engineImageUrlEdit, 480},
+        {dialog.enginePostParamsEdit, 480},
+        {dialog.engineImagePostParamsEdit, 480},
+        {dialog.shortcutBookmarksToken, 240},
+        {dialog.shortcutHistoryToken, 240},
+        {dialog.shortcutTabsToken, 240},
+        {dialog.secureDnsServer, 480},
+        {dialog.proxyHostName, 300},
+        {dialog.proxyUserName, 240},
+        {dialog.proxyPassword, 240},
+        {dialog.userStyleSheet, 480},
+        {dialog.downloadsLocation, 480},
+        {dialog.externalDownloadPath, 480}
+    };
+    for (const Capped &f : fields) {
+        QCOMPARE(f.edit->maximumWidth(), f.cap);
+        // Capped, not fixed — fields still shrink with a narrow window.
+        QVERIFY(f.edit->sizePolicy().horizontalPolicy()
+                != QSizePolicy::Fixed);
+    }
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.resize(1500, 900);
+    qApp->processEvents();
+
+    // A field's geometry is only real while its page is current —
+    // walk up to the scroll area to find which stack index hosts it.
+    auto showPageOf = [&dialog](QWidget *w) {
+        while (w->parentWidget()
+               && w->parentWidget() != dialog.tabWidget)
+            w = w->parentWidget();
+        const int page = dialog.tabWidget->indexOf(w);
+        if (page >= 0) {
+            dialog.tabWidget->setCurrentIndex(page);
+            qApp->processEvents();
+        }
+        return page;
+    };
+
+    for (const Capped &f : fields) {
+        QVERIFY2(showPageOf(f.edit) >= 0,
+                 qPrintable(f.edit->objectName()));
+        QVERIFY2(f.edit->width() <= f.cap,
+                 qPrintable(QStringLiteral(
+                     "%1 width %2 exceeds cap %3")
+                     .arg(f.edit->objectName())
+                     .arg(f.edit->width()).arg(f.cap)));
+        QVERIFY(f.edit->width() > 0);
+    }
+
+    // The browse buttons sit directly beside their capped fields —
+    // no dead band where the old stretch used to be.
+    const QList<QPair<QLineEdit *, QPushButton *>> rows = {
+        {dialog.userStyleSheet, dialog.styleSheetBrowseButton},
+        {dialog.downloadsLocation, dialog.downloadDirectoryButton},
+        {dialog.externalDownloadPath, dialog.externalDownloadBrowse}
+    };
+    for (const auto &row : rows) {
+        QVERIFY2(showPageOf(row.first) >= 0,
+                 qPrintable(row.first->objectName()));
+        const int gap = row.second->x()
+                - (row.first->x() + row.first->width());
+        QVERIFY2(gap <= 40,
+                 qPrintable(QStringLiteral(
+                     "%1..%2 gap %3 — button floated off the field")
+                     .arg(row.first->objectName(),
+                          row.second->objectName())
+                     .arg(gap)));
+    }
+
+    // Already-capped combos on the swept pages still render capped.
+    for (QComboBox *combo : {dialog.proxyType, dialog.secureDnsMode}) {
+        QVERIFY2(showPageOf(combo) >= 0,
+                 qPrintable(combo->objectName()));
+        QCOMPARE(combo->sizePolicy().horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
+                 qPrintable(combo->objectName()));
+    }
+
+    // Narrow case: at 700px the Proxy page fields stay inside their
+    // caps and nothing forces a horizontal scrollbar.
+    dialog.resize(700, 900);
+    qApp->processEvents();
+    QVERIFY(showPageOf(dialog.proxyPassword) >= 0);
+    QVERIFY2(dialog.proxyPassword->width() <= 240,
+             qPrintable(QString::number(dialog.proxyPassword->width())));
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->currentWidget());
+    QVERIFY(area);
+    QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
+    dialog.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

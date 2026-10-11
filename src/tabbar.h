@@ -121,6 +121,13 @@ public:
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();
 
+    // TPREV01: tabs/tabHoverPreviews (default on) gates the hover
+    // card.  reloadTabHoverPreviews() re-reads the key so the
+    // settings-save live-apply reaches every window's bar.
+    bool tabPreviewsEnabled() const;
+    void setTabPreviewsEnabled(bool enabled);
+    void reloadTabHoverPreviews();
+
     // CONT06: the level-1 container-header band painted along the
     // strip's top edge when the TabWidget's two-level mode has more
     // than one container owning tabs.  The band is real height on the
@@ -222,6 +229,9 @@ private:
     // POL02: lazily-created hover card + its dwell timer.
     TabPreview *m_preview;
     QTimer *m_previewTimer;
+    // TPREV01: the Appearance-page opt-out — off means the dwell
+    // timer never arms and an up card drops immediately.
+    bool m_tabPreviewsEnabled;
     // TABS02: vertical-strip state — the persisted strip width, the
     // active edge-drag resize, and the tracked press/move-drag used
     // to float the dragged row horizontally in paintEvent.

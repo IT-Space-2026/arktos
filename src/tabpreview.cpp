@@ -110,8 +110,10 @@ void TabPreview::previewTab(int index)
     if (title.isEmpty())
         title = url.isEmpty() ? tr("New Tab") : url;
 
-    // Sleeping tabs take the favicon+title fallback — their page is
-    // discarded so no live frame exists to grab (SLEEP01).
+    // Sleeping tabs keep their "Sleeping" detail and serve the
+    // snapshot cached before the discard — tabThumbnail() never
+    // grabs a hidden view, so a discarded page can only ever show
+    // its own last-painted frame or the icon fallback (SLEEP01).
     const bool sleeping = tabWidget->isTabSleeping(index);
     QString detail = url;
     if (sleeping)
@@ -125,9 +127,7 @@ void TabPreview::previewTab(int index)
         detail, Qt::ElideMiddle, textWidth));
     m_detail->setVisible(!detail.isEmpty());
 
-    QPixmap thumb;
-    if (!sleeping)
-        thumb = tabWidget->tabThumbnail(index);
+    const QPixmap thumb = tabWidget->tabThumbnail(index);
     m_hasThumbnail = !thumb.isNull();
     if (m_hasThumbnail) {
         m_thumbnail->setPixmap(thumb.scaled(ThumbWidth, ThumbMaxHeight,

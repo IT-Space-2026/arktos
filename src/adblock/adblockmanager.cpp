@@ -121,8 +121,13 @@ bool AdBlockManager::rustEngineAvailable()
 AdBlockManager::Engine AdBlockManager::storedEngine()
 {
     const QString value = QSettings().value(
-        QLatin1String("AdBlock/engine"), QLatin1String("cpp")).toString();
-    return value == QLatin1String("rust") ? RustEngine : NativeEngine;
+        QLatin1String("AdBlock/engine")).toString();
+    // ADBLK01: Brave adblock-rust is the default — an absent or empty
+    // key selects it.  Only an explicit opt-out (a persisted "cpp" or
+    // any other value) keeps the native matcher.
+    if (value.isEmpty() || value == QLatin1String("rust"))
+        return RustEngine;
+    return NativeEngine;
 }
 
 AdBlockManager::Engine AdBlockManager::engine() const
