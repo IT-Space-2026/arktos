@@ -102,6 +102,7 @@ public:
     };
 
     SettingsDialog(QWidget *parent = nullptr);
+    ~SettingsDialog() override;
     void openAtPage(Page page);
     // Opens the settings page in the ancestor window's Preferences
     // tab; with no BrowserMainWindow ancestor (autotests, detached
@@ -217,11 +218,19 @@ private slots:
     // title or control labels match the typed terms.
     void filterPages(const QString &text);
 
+    // THEME02: the Appearance Theme combo previews instantly — the
+    // palette flips on index change without touching the persisted
+    // key; closing the page un-committed undoes the preview.
+    void previewTheme(int index);
+
 private:
     // ADB06: the Content Blocking status line mirrors the engine that
     // is actually answering requests (effective pick, not the combo's
     // unsaved position).
     void updateContentBlockerStatus();
+    // Re-applies the persisted color scheme if a combo preview flipped
+    // the palette but the pick was never committed (Cancel/tab close).
+    void revertThemePreview();
     void buildPageSearchIndex();
     void stashSearchSuggestions();
     void populateEngineForm();
@@ -247,6 +256,9 @@ private:
     // PREFUI03: per-page lowercase search text, built lazily on the
     // first keystroke (after loadFromSettings populated the combos).
     QStringList m_pageSearchTexts;
+    // THEME02: a combo-driven preview flipped the palette and has not
+    // been committed or reverted yet.
+    bool m_themePreviewed = false;
 };
 
 #endif // SETTINGS_H

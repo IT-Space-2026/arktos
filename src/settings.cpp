@@ -622,6 +622,45 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     loadDefaults();
     loadFromSettings();
+
+    // THEME02: instant theme preview — flipping the combo applies the
+    // picked scheme to the running chrome right away (the key is only
+    // written by saveToSettings()).  Connected after the initial load
+    // so populating the combo does not re-apply the committed scheme;
+    // a later loadFromSettings() (reset buttons) previews the
+    // reloaded value, which is exactly the palette it should show.
+    connect(themeCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsDialog::previewTheme);
+}
+
+SettingsDialog::~SettingsDialog()
+{
+    // A preview never committed (Cancel, or the tab closed without
+    // OK) must not leave the chrome in the previewed scheme.
+    revertThemePreview();
+}
+
+void SettingsDialog::previewTheme(int index)
+{
+    // Combo order: System default / Light / Dark.  Preview only —
+    // the persisted key is untouched, so reverting is just
+    // applyColorScheme() re-resolving the committed pick.
+    m_themePreviewed = true;
+    if (index == 2)
+        BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    else if (index == 1)
+        BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
+    else
+        BrowserTheme::previewColorScheme(BrowserTheme::systemColorScheme());
+}
+
+void SettingsDialog::revertThemePreview()
+{
+    if (!m_themePreviewed || !qApp)
+        return;
+    m_themePreviewed = false;
+    BrowserTheme::applyColorScheme();
 }
 
 void SettingsDialog::openAtPage(Page page)
@@ -1590,6 +1629,9 @@ void SettingsDialog::accept()
     // SRCH05: flush a still-focused engine field before persisting.
     commitEngineEdits();
     saveToSettings();
+    // THEME02: the preview became the committed state — nothing to
+    // revert when the host closes the page.
+    m_themePreviewed = false;
     emit closeRequested();
 }
 
@@ -1597,6 +1639,8 @@ void SettingsDialog::reject()
 {
     // Discard: pending widget state dies when the host closes the tab
     // (or standalone window) in response — same as the dialog's Cancel.
+    // THEME02: a theme preview is discarded too, not just the widgets.
+    revertThemePreview();
     emit closeRequested();
 }
 
