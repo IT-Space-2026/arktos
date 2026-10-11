@@ -323,7 +323,13 @@ Search & location bar:
   was dropped without feedback. Search now always rescues to a working
   engine, invalid guesses search instead of dead-ending, and dropped
   loads log a warning (SRCH09).
-- Search suggestions off by default, opt-in per engine (SEC11).
+- Fixed: Backspace in the URL or search bar could dead-stop or fight
+  the completion popup. A field still showing its baseline text (just
+  navigated or just focused) now clears with a single Backspace —
+  matching Chrome/Firefox — and once you edit mid-text it deletes
+  character-wise to empty; history completion, live search
+  suggestions and a re-highlighted completer row can no longer
+  re-extend the field during a delete burst (SRCH10).
 - Bundled search engines now show their own icons in the Engine
   dropdown even on a fresh profile — the real favicons ship with the
   browser instead of depending on a favicon-cache hit from prior

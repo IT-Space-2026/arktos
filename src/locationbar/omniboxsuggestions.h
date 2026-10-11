@@ -83,6 +83,10 @@ private:
     // keyword engine.
     QPointer<OpenSearchEngine> m_engine;
     QPointer<OpenSearchEngine> m_boundEngine;
+    // SRCH10: the latest scheduled edit shrank the text — a delete
+    // burst; a late reply still updates the model but does not repop
+    // the dropdown.
+    bool m_deleting = false;
 };
 
 #endif // OMNIBOXSUGGESTIONS_H

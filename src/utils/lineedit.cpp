@@ -52,6 +52,9 @@ LineEdit::LineEdit(QWidget *parent)
     : QLineEdit(parent)
     , m_leftLayout(nullptr)
     , m_rightLayout(nullptr)
+    , m_pristine(true)
+    , m_pendingUserEdit(false)
+    , m_deleteBurst(false)
 {
     init();
 }
@@ -62,6 +65,10 @@ LineEdit::LineEdit(const QString &contents, QWidget *parent)
     , m_rightWidget(nullptr)
     , m_leftLayout(nullptr)
     , m_rightLayout(nullptr)
+    , m_lastText(contents)
+    , m_pristine(true)
+    , m_pendingUserEdit(false)
+    , m_deleteBurst(false)
 {
     init();
 }
@@ -95,6 +102,25 @@ void LineEdit::init()
             this, &LineEdit::updateTextMargins);
     connect(m_rightWidget, &SideWidget::sizeHintChanged,
             this, &LineEdit::updateTextMargins);
+
+    // SRCH10: keep the baseline bookkeeping.  A user edit emits
+    // textEdited immediately before its textChanged; a bare
+    // textChanged is a programmatic write (setText, clear, url
+    // display, completer highlight) and re-baselines the field.
+    connect(this, &QLineEdit::textEdited, this, [this](const QString &text) {
+        m_pendingUserEdit = true;
+        m_pristine = false;
+        m_deleteBurst = text.size() < m_lastText.size();
+    });
+    connect(this, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (m_pendingUserEdit) {
+            m_pendingUserEdit = false;
+            m_pristine = false;
+        } else {
+            m_pristine = true;
+        }
+        m_lastText = text;
+    });
 }
 
 bool LineEdit::event(QEvent *event)
@@ -200,6 +226,44 @@ void LineEdit::resizeEvent(QResizeEvent *event)
 {
     updateSideWidgetLocations();
     QLineEdit::resizeEvent(event);
+}
+
+void LineEdit::focusInEvent(QFocusEvent *event)
+{
+    // SRCH10: whatever the field holds at focus time is the new
+    // baseline — and a refocus ends any interrupted delete burst.
+    // Exception: Qt::PopupFocusReason only means the completer popup
+    // closed and bounced focus back mid-edit — that is not a real
+    // refocus, so neither the baseline nor a live delete burst may
+    // be reset.
+    if (event->reason() != Qt::PopupFocusReason) {
+        m_pristine = true;
+        m_deleteBurst = false;
+    }
+    QLineEdit::focusInEvent(event);
+}
+
+void LineEdit::keyPressEvent(QKeyEvent *event)
+{
+    // SRCH10: one-key clear.  Backspace on baseline text empties the
+    // whole field (Chrome/Firefox-style) — without it the key
+    // dead-stops, because the location bar homes its cursor to
+    // position 0 on navigation where a character-wise Backspace
+    // deletes nothing.  The rule only holds until the first real user
+    // edit; afterwards Backspace stays character-wise.  Plain
+    // Backspace (and Shift, which still maps to it) — Ctrl keeps its
+    // delete-word meaning as an ordinary edit.  QLineEdit::clear()
+    // deliberately: a virtual dispatch would land in
+    // ToolbarSearch::clear(), which also drops recent searches and
+    // focus.
+    const Qt::KeyboardModifiers mods = event->modifiers();
+    if (event->key() == Qt::Key_Backspace
+        && (mods == Qt::NoModifier || mods == Qt::ShiftModifier)
+        && m_pristine && !text().isEmpty() && !isReadOnly()) {
+        QLineEdit::clear();
+        return;
+    }
+    QLineEdit::keyPressEvent(event);
 }
 
 QString LineEdit::inactiveText() const

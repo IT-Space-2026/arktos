@@ -131,6 +131,7 @@ private slots:
     void shortcuts_data();
     void shortcuts();
     void escapeRestoresUrl();
+    void backspaceClearsField();
     void focusOutRestoresUrl();
     void doubleClickSelects();
     void dropUrl();
@@ -248,6 +249,64 @@ void tst_LocationBar::escapeRestoresUrl()
     QTest::keyClick(&bar, Qt::Key_Escape);
     QCOMPARE(bar.text(), QString::fromUtf8(view.url().toEncoded()));
     QCOMPARE(bar.selectedText(), bar.text());
+}
+
+// SRCH10: the user's report — with the url bar showing its baseline
+// text (the just-navigated display, cursor homed at 0) one Backspace
+// clears the whole line; once the user has edited, Backspace stays
+// character-wise to empty even with a live HistoryCompleter — the
+// dropdown must not re-extend the field mid-delete.
+void tst_LocationBar::backspaceClearsField()
+{
+    HistoryManager *historyManager = BrowserApplication::historyManager();
+    historyManager->clear();
+    historyManager->addHistoryEntry(
+        QLatin1String("http://backspace-test.example/alpha"));
+
+    TestLocationBar bar;
+    WebView view(BrowserApplication::webEngineProfile());
+    bar.setWebView(&view);
+
+    const QUrl url(QStringLiteral("http://backspace-test.example/nav"));
+    QVERIFY(QMetaObject::invokeMethod(&bar, "webViewUrlChanged",
+                                    Q_ARG(QUrl, url)));
+    QCOMPARE(bar.text(), QLatin1String("http://backspace-test.example/nav"));
+
+    // Baseline text: focus into the bar and one Backspace clears it.
+    bar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+    bar.setFocus();
+    QVERIFY(bar.hasFocus());
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QVERIFY(bar.text().isEmpty());
+
+    // Live completer — repeated backspace deletes single characters
+    // all the way to empty; model churn cannot pin or re-extend text.
+    HistoryCompletionModel *historyModel =
+        new HistoryCompletionModel(&bar);
+    historyModel->setSourceModel(historyManager->historyFilterModel());
+    OmniboxCompletionModel *omnibox =
+        new OmniboxCompletionModel(historyModel, &bar);
+    bar.setCompleter(new HistoryCompleter(omnibox, &bar));
+
+    QTest::keyClicks(&bar, QLatin1String("back"));
+    QTest::qWait(200); // past the completer's 150ms filter debounce
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QCOMPARE(bar.text(), QLatin1String("bac"));
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QCOMPARE(bar.text(), QLatin1String("ba"));
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QVERIFY(bar.text().isEmpty());
+
+    // Mid-text deletion after a real edit is still one character.
+    QTest::keyClicks(&bar, QLatin1String("mid"));
+    bar.setCursorPosition(1);
+    QTest::keyClick(&bar, Qt::Key_Backspace);
+    QCOMPARE(bar.text(), QLatin1String("id"));
+
+    historyManager->removeHistoryEntry(
+        QUrl(QLatin1String("http://backspace-test.example/alpha")));
 }
 
 // Clearing the bar and defocusing it restores the page url.

@@ -702,7 +702,16 @@ QStringList HistoryCompleter::splitPath(const QString &path) const
     // we don't try to complete until they pause.
     if (m_filterTimer.isActive())
         m_filterTimer.stop();
-    m_filterTimer.start(150);
+
+    // SRCH10: a shrinking path in the focused bar is the user
+    // deleting — kill the inline suggestion and stay silent until a
+    // forward edit, so held/repeated Backspace can't fight a fresh
+    // completion popup.  setValid(false) below hides the dropdown for
+    // the burst; the timer only re-arms on growth.
+    const bool deleting = widget() && widget()->hasFocus()
+        && path.size() < m_searchString.size();
+    if (!deleting)
+        m_filterTimer.start(150);
 
     // if the previous search results are not a superset of
     // the current search results, tell the model that it is not valid yet

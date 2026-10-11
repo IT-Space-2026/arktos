@@ -110,9 +110,15 @@ void OmniboxSuggestions::updateSuggestionsEnabled()
 
 void OmniboxSuggestions::scheduleSuggestions(const QString &text)
 {
+    // SRCH10: a shrinking edit is a delete burst — kill the pending
+    // fetch and stay quiet until typing moves forward again, so the
+    // completer can't re-pop mid-delete.
+    m_deleting = text.size() < m_pendingText.size();
     m_pendingText = text;
-    if (!enabled())
+    if (!enabled() || m_deleting) {
+        m_timer->stop();
         return;
+    }
     m_timer->start();
 }
 
@@ -186,6 +192,12 @@ void OmniboxSuggestions::newSuggestions(const QStringList &suggestions)
         return;
 
     m_model->setSuggestions(suggestions);
+
+    // SRCH10: a reply landing mid-delete updates the rows but must
+    // not repop the dropdown — the burst stays silent until the user
+    // types forward again.
+    if (m_deleting)
+        return;
 
     // The history block may have produced no rows for this prefix, so
     // the popup may not be open yet — nudge the completer like
