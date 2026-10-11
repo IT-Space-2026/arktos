@@ -210,6 +210,15 @@ UI:
   is entered. Addresses persist in the sealed autofill store, and
   Clear Private Data gains an "AutoFill Form Data" item that wipes
   them along with saved form fields (ADDR01).
+- Saved addresses now fill web forms: fields are recognized by
+  their HTML autocomplete tokens first (name, street-address,
+  address-line1-3, city, state, postal-code, phone, email,
+  country…) with common name/id heuristics as fallback, and the
+  most recently used address fills text fields and country
+  dropdowns. Submitting a filled or hand-typed address-shaped form
+  offers to save it through the address editor, pre-filled with
+  what was entered. Private browsing pages are never filled and
+  never offered the save prompt (ADDR02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

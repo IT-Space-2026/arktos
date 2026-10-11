@@ -31,6 +31,7 @@
 
 #include <qobject.h>
 
+#include <qset.h>
 #include <qurl.h>
 #include <qvariantmap.h>
 
@@ -119,6 +120,11 @@ public:
         QString zip;
         QString phone;
         QString email;
+        // ADDR02: UTC seconds the address last filled a submitted
+        // form — the most-recently-used ordering the page fill picks
+        // by.  Metadata, not identity, so operator== excludes it; it
+        // rides a parallel tail in the store (see saveFormData).
+        qint64 lastUsed = 0;
     };
 
     // Lazy qApp-owned singleton (same pattern as HistoryManager /
@@ -148,10 +154,21 @@ public:
 
     // Saved addresses — mutated from the AutoFill prefs page; every
     // write emits autoFillChanged() so the autosave picks it up.
+    // setAddresses preserves lastUsed by content match (callers keep
+    // any nonzero stamp they set themselves) so prefs round trips
+    // don't lose the MRU order.
     void setAddresses(const QList<Address> &addresses);
     QList<Address> addresses() const;
     void addAddress(const Address &address);
     void removeAddress(int index);
+    // The address a page fill should offer: the most recently used,
+    // ties broken toward the most recently added.
+    const Address *preferredAddress() const;
+    // Content fingerprint identifying one stored entry — the injected
+    // script echoes it back on submit so the use mark lands on the
+    // address the page actually filled, not a shifted index.
+    static QString addressId(const Address &address);
+    void markAddressUsed(const QString &addressId);
     // Clear Private Data wipe: drops forms, addresses and the
     // session's "never save" sites, then writes the store immediately
     // instead of leaving the purge pending on the autosave timer.
@@ -173,9 +190,16 @@ private:
     QList<AutoFillManager::Form> fetchForms(const QUrl &url) const;
     QString scriptForPage(Engine::Page *page, const QUrl &url);
     bool captureEnabledForPage(Engine::Page *page) const;
-    QString autoFillScript(const QList<Form> &forms, bool capture,
+    QString autoFillScript(const QList<Form> &forms,
+                           const Address *address, bool capture,
                            const QString &reportToken) const;
     bool promptToSave(const QUrl &url);
+    // ADDR02: submit-time address handling — turns the report's
+    // detected address fields into a candidate and, when it is
+    // address-shaped and new, opens the pre-filled editor as the
+    // "save this address?" prompt.
+    void maybeSaveAddress(const QUrl &url, const QVariantMap &formData);
+    void promptToSaveAddress(const Address &candidate);
 
     void saveFormData() const;
     void loadFormData();
@@ -186,6 +210,10 @@ private:
     QList<Form> m_forms;
     QList<Address> m_addresses;
     QList<QUrl> m_never;
+    // Stripped urls already shown the address-save prompt this
+    // session — the editor has no "never for this site" button, so
+    // declining must not re-ask on every checkout submit.
+    QSet<QString> m_addressPrompted;
     AutoSaver *m_saveTimer;
 };
 
