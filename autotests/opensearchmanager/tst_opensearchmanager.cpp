@@ -73,7 +73,12 @@ public:
 
     static int defaultCount()
     {
-        return QDir(":/searchengines/").count();
+        // SENG01: icons/ now lives under :/searchengines — count only
+        // descriptors, like the *.xml seeding filter does.
+        return QDir(":/searchengines/")
+            .entryList(QStringList() << QLatin1String("*.xml"),
+                       QDir::Files)
+            .count();
     }
 };
 

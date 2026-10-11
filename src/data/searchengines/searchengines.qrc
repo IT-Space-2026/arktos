@@ -7,5 +7,12 @@
     <file>Wikipedia_en.xml</file>
     <file>YouTube.xml</file>
     <file>Reddit.xml</file>
+    <file>icons/DuckDuckGo.png</file>
+    <file>icons/Google.png</file>
+    <file>icons/Google_Im_Feeling_Lucky.png</file>
+    <file>icons/Yahoo.png</file>
+    <file>icons/Wikipedia_en.png</file>
+    <file>icons/YouTube.png</file>
+    <file>icons/Reddit.png</file>
 </qresource>
 </RCC>

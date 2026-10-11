@@ -467,8 +467,62 @@ void OpenSearchEngine::setImageUrl(QString imageUrl)
     m_imageUrl = std::move(imageUrl);
 }
 
+// Engine icons are small; drop oversized payloads instead of
+// letting a hostile server pump unlimited data into the image
+// decoder.
+static const qint64 MaximumImageSize = 1024 * 1024;
+
+// Bundled descriptor file names follow the same rule as
+// OpenSearchManager::generateEngineFileName — spaces become
+// underscores and non-letter/digits are dropped — and the bundled
+// icon set in the qrc is keyed on them.
+static QString bundledIconFileName(const QString &engineName)
+{
+    QString fileName;
+    for (const QChar &ch : engineName) {
+        if (ch.isSpace())
+            fileName.append(QLatin1Char('_'));
+        else if (ch.isLetterOrNumber())
+            fileName.append(ch);
+    }
+    return fileName;
+}
+
 void OpenSearchEngine::loadImage() const
 {
+    // SENG01: bundled engines carry a qrc favicon keyed on the
+    // descriptor file name — the engine pickers show the real mark
+    // on a fresh profile with neither a favicon-cache hit nor a
+    // network request.  The bundled name match wins over the stored
+    // remote imageUrl because it resolves offline in every case.
+    const QString iconFile = bundledIconFileName(m_name);
+    if (!iconFile.isEmpty()) {
+        const QImage bundled(QLatin1String(":/searchengines/icons/")
+                             + iconFile + QLatin1String(".png"));
+        if (!bundled.isNull()) {
+            m_image = bundled;
+            return;
+        }
+    }
+
+    // Inline icons — engines persisted via setImage() or descriptors
+    // carrying a data: imageUrl — decode locally; the fetch below
+    // would only resolve them asynchronously anyway.
+    if (m_imageUrl.startsWith(QLatin1String("data:"))) {
+        const int comma = m_imageUrl.indexOf(QLatin1Char(','));
+        if (comma > 0) {
+            const QByteArray payload =
+                m_imageUrl.mid(comma + 1).toUtf8();
+            const QByteArray bytes =
+                m_imageUrl.left(comma).endsWith(QLatin1String(";base64"))
+                    ? QByteArray::fromBase64(payload)
+                    : QByteArray::fromPercentEncoding(payload);
+            if (bytes.size() <= MaximumImageSize)
+                m_image.loadFromData(bytes);
+        }
+        return;
+    }
+
     if (!m_networkAccessManager || m_imageUrl.isEmpty())
         return;
 
@@ -483,10 +537,6 @@ void OpenSearchEngine::imageObtained()
     if (!reply)
         return;
 
-    // Engine icons are small; drop oversized responses instead of
-    // letting a hostile server pump unlimited data into the image
-    // decoder.
-    static const qint64 MaximumImageSize = 1024 * 1024;
     QByteArray response;
     if (reply->size() <= MaximumImageSize)
         response = reply->readAll();

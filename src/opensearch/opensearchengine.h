@@ -140,7 +140,7 @@ private:
     QString m_description;
 
     QString m_imageUrl;
-    QImage m_image;
+    mutable QImage m_image;
 
     QString m_searchUrlTemplate;
     QString m_suggestionsUrlTemplate;

@@ -240,6 +240,11 @@ Search & location bar:
   of searching; a missing or broken search engine now falls back to
   the built-in default instead of a bogus address (SRCH07).
 - Search suggestions off by default, opt-in per engine (SEC11).
+- Bundled search engines now show their own icons in the Engine
+  dropdown even on a fresh profile — the real favicons ship with the
+  browser instead of depending on a favicon-cache hit from prior
+  browsing; custom engines still resolve their icons remotely
+  (SENG01).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure

@@ -6007,6 +6007,22 @@ int main(int argc, char **argv)
                         .contains(QLatin1String("hello%20world"));
         }
 
+        // SENG01: every bundled engine resolves its favicon locally —
+        // a fresh profile shows the real marks in the picker with no
+        // favicon-cache hit and no network fetch.
+        static const char *bundledEngineNames[] = {
+            "DuckDuckGo", "Google", "Google (I'm Feeling Lucky)",
+            "Yahoo!", "Wikipedia (en)", "YouTube", "Reddit"
+        };
+        for (const char *rawName : bundledEngineNames) {
+            const OpenSearchEngine *bundled =
+                manager->engine(QLatin1String(rawName));
+            if (!bundled || bundled->image().isNull()) {
+                qInfo() << "search-smoke: FAIL (no icon for" << rawName << ")";
+                return 1;
+            }
+        }
+
         // Writer + reader round-trip of a bundled engine.
         QByteArray xml;
         QBuffer writeBuffer(&xml);
