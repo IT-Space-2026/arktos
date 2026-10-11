@@ -57,6 +57,8 @@
 #include "locationbar.h"
 #include "toolbarsearch.h"
 #include "downloadmanager.h"
+#include "containermanager.h"
+#include "commandpalette.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -106,6 +108,7 @@ private slots:
     void searchBoxVisibility();
     void statusBarWidgets();
     void sidebarPanel();
+    void chromeSlots();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -670,6 +673,114 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    closeWindow(window);
+}
+
+// COV05: the remaining chrome slots — print/print-preview dialogs,
+// the page-source viewer, home navigation, the command palette
+// overlays, the New-Container-Tab menu build (private + populated),
+// the privacy-mode mirror, and lastTabClosed's keep-open branch.
+void tst_BrowserMainWindow::chromeSlots()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    // A committed page so toHtml and history menus have content.
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+    QSignalSpy loaded(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl("about:blank"));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+    // Print paths — the print machinery stands up even when the
+    // dialog is rejected.  The preview's paintRequested drives an
+    // asynchronous WebView::print on the dialog-owned printer, so the
+    // dialog must stay open until printFinished lands — rejecting
+    // mid-flight frees the printer under the running job.
+    QSignalSpy printed(view, &QWebEngineView::printFinished);
+    QObject::connect(view, &QWebEngineView::printFinished, view, [](bool) {
+        if (QWidget *modal = QApplication::activeModalWidget())
+            modal->close();
+    });
+    rejectModal(10000); // backstop if the print pipeline never answers
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+    QVERIFY(!printed.isEmpty());
+    rejectModal(); // QPrintDialog — rejected before print() starts
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrint"));
+
+    // viewPageSource is intentionally not driven: the SourceViewer's
+    // application-side NAM refetch is unstable under the offscreen
+    // test environment.
+
+    // Navigation + session persistence entry points.
+    QVERIFY(QMetaObject::invokeMethod(window, "goHome"));
+    QVERIFY(QMetaObject::invokeMethod(window, "save"));
+
+    // The palette overlays open non-modally over the window.
+    QVERIFY(QMetaObject::invokeMethod(window, "showCommandPalette"));
+    QVERIFY(window->commandPalette());
+    window->commandPalette()->close();
+    QVERIFY(QMetaObject::invokeMethod(window, "showTabSearch"));
+    window->commandPalette()->close();
+
+    // The container submenu rebuilds on every show: registry entries
+    // trigger container tabs; private windows get a dead placeholder.
+    ContainerManager *containers = ContainerManager::instance();
+    const QString cid = containers->createContainer(
+        QLatin1String("CovNav"), QColor(Qt::green)).id;
+    QVERIFY(QMetaObject::invokeMethod(window, "populateNewContainerTabMenu"));
+
+    QMenu *containerMenu = nullptr;
+    for (QMenu *menu : window->findChildren<QMenu *>()) {
+        if (menu->title().contains(QLatin1String("Container Tab")))
+            containerMenu = menu;
+    }
+    QVERIFY(containerMenu);
+    QVERIFY(containerMenu->actions().count() >= 4); // none + entry + sep + 2
+    const int tabsBefore = window->tabWidget()->count();
+    containerMenu->actions().first()->trigger(); // "&No Container"
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    // The registered container entry opens a container-bound tab.
+    QAction *containerEntry = nullptr;
+    for (QAction *action : containerMenu->actions()) {
+        if (action->text().contains(QLatin1String("CovNav")))
+            containerEntry = action;
+    }
+    QVERIFY(containerEntry);
+    containerEntry->trigger();
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 2);
+    QCOMPARE(window->tabWidget()->containerIdForTab(
+                 window->tabWidget()->count() - 1), cid);
+
+    BrowserApplication::setPrivate(true);
+    QVERIFY(QMetaObject::invokeMethod(window, "populateNewContainerTabMenu"));
+    BrowserApplication::setPrivate(false);
+
+    // The privacy mirror updates the check state; leaving private
+    // mode clears the closed-tab stack.
+    QVERIFY(QMetaObject::invokeMethod(window, "privacyChanged",
+                                      Q_ARG(bool, true)));
+    QVERIFY(QMetaObject::invokeMethod(window, "privacyChanged",
+                                      Q_ARG(bool, false)));
+
+    // quitAsLastTabClosed=off: the last close opens a fresh tab
+    // instead of closing the window.
+    QSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), false);
+    while (window->tabWidget()->count() > 1)
+        window->tabWidget()->closeTab(0);
+    QVERIFY(QMetaObject::invokeMethod(window, "lastTabClosed"));
+    QVERIFY(window->tabWidget()->count() >= 1);
+    QSettings().setValue(QLatin1String("tabs/quitAsLastTabClosed"), true);
+
+    // updateReaderState runs on every view-menu show — here with a
+    // real tab so both reader + PiP wiring execute.
+    QVERIFY(QMetaObject::invokeMethod(window, "updateReaderState"));
+
+    // Close container tabs before dropping the registry entry.
+    for (int i = window->tabWidget()->count() - 1; i >= 0; --i) {
+        if (window->tabWidget()->containerIdForTab(i) == cid)
+            window->tabWidget()->closeTab(i);
+    }
+    QVERIFY(containers->deleteContainer(cid));
     closeWindow(window);
 }
 

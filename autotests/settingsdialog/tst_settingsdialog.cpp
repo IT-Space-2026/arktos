@@ -31,6 +31,7 @@
 
 #include "settings.h"
 #include "browserapplication.h"
+#include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "browserprofile.h"
 #include "containermanager.h"
@@ -39,6 +40,7 @@
 #include "opensearchmanager.h"
 #include "popupblocker.h"
 #include "scriptcontrolmanager.h"
+#include "securestore.h"
 #include "webpermissionmanager.h"
 
 #if defined(ARORA_RUSTCORE)
@@ -76,6 +78,9 @@ private slots:
     void extensionReview();
     void permissionsPage();
     void securityLevelHint();
+    void extensionPage();
+    void credentialsPage();
+    void containerSiteRows();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -108,6 +113,86 @@ static void answerNextBox(QMessageBox::StandardButton button,
         } else if (attempts > 0) {
             answerNextBox(button, attempts - 1);
         }
+    });
+}
+
+// Clicks the button whose text matches inside the next QMessageBox —
+// needed for custom addButton() choices standard-button lookups miss.
+static void clickModalButtonText(const QString &text, int attempts = 150)
+{
+    QTimer::singleShot(30, qApp, [text, attempts]() {
+        QMessageBox *box = qobject_cast<QMessageBox *>(
+            QApplication::activeModalWidget());
+        if (!box) {
+            if (attempts > 0)
+                clickModalButtonText(text, attempts - 1);
+            return;
+        }
+        for (QAbstractButton *button : box->buttons()) {
+            if (button->text().contains(text)) {
+                button->click();
+                return;
+            }
+        }
+        box->reject();
+    });
+}
+
+// Accepts whatever QMessageBox is active, then re-arms — a modal
+// janitor for paths that raise a box asynchronously (the extension
+// update check finishes whenever the fetch settles).
+static void dismissModalBoxes(int attempts = 200)
+{
+    QTimer::singleShot(30, qApp, [attempts]() {
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(
+                QApplication::activeModalWidget()))
+            box->accept();
+        if (attempts > 0)
+            dismissModalBoxes(attempts - 1);
+    });
+}
+
+// Fills the two password QLineEdits of the master-passphrase prompt
+// and accepts.  The prompt exec()s once per validation failure, so
+// each call answers one round — schedule one call per round and the
+// shared list doles out that round's pair.
+static void fillPassphraseDialog(std::shared_ptr<QStringList> fills,
+                                 int attempts = 150)
+{
+    QTimer::singleShot(30, qApp, [fills, attempts]() {
+        QDialog *dialog = qobject_cast<QDialog *>(
+            QApplication::activeModalWidget());
+        if (!dialog) {
+            if (attempts > 0)
+                fillPassphraseDialog(fills, attempts - 1);
+            return;
+        }
+        const QList<QLineEdit *> edits =
+            dialog->findChildren<QLineEdit *>();
+        if (edits.size() >= 2) {
+            if (!fills->isEmpty())
+                edits.at(0)->setText(fills->takeFirst());
+            if (!fills->isEmpty())
+                edits.at(1)->setText(fills->takeFirst());
+        }
+        dialog->accept();
+    });
+}
+
+// Types into the single QLineEdit of the unlock prompt and accepts.
+static void answerModalPassphrase(const QString &text, int attempts = 150)
+{
+    QTimer::singleShot(30, qApp, [text, attempts]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (!widget) {
+            if (attempts > 0)
+                answerModalPassphrase(text, attempts - 1);
+            return;
+        }
+        if (QLineEdit *edit = widget->findChild<QLineEdit *>())
+            edit->setText(text);
+        if (QDialog *dialog = qobject_cast<QDialog *>(widget))
+            dialog->accept();
     });
 }
 
@@ -1368,6 +1453,250 @@ void tst_SettingsDialog::securityLevelHint()
     // The widget returns to a non-Safest state usable by later tests.
     dialog.securityLevelCombo->setCurrentIndex(0);
     Q_UNUSED(javascriptEnabledAtStart);
+}
+
+// EXT01/EXT03: the Extensions page over a real session-loaded
+// extension — the details pane renders manifest fields, the checkbox
+// routes enable toggles, the update check funnels results into the
+// summary box, and Remove unloads with confirmation.
+void tst_SettingsDialog::extensionPage()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine extensions unavailable in this build");
+
+    ExtensionManager *manager = ExtensionManager::instance();
+
+    // A minimal MV3 extension with a dead update source — the fetch
+    // fails fast and the manifest exercises the details-pane branches.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(R"({
+            "manifest_version": 3,
+            "name": "CovExt",
+            "version": "1.0.0",
+            "description": "coverage extension",
+            "permissions": ["tabs"],
+            "update_url": "https://127.0.0.1:9/updates.xml"
+        })");
+    }
+    manager->loadExtension(dir.path());
+
+    QString extId;
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list) {
+            if (info.path == dir.path()) {
+                extId = info.id;
+                return true;
+            }
+        }
+        return false;
+    }(), 10000);
+
+    SettingsDialog dialog;
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ExtensionsPage));
+
+    QTreeWidgetItem *row = nullptr;
+    for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.extensionsTree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == extId)
+            row = item;
+    }
+    QVERIFY(row);
+    dialog.extensionsTree->setCurrentItem(row);
+    const QString details = dialog.extensionDetailsLabel->text();
+    QVERIFY(details.contains(QLatin1String("coverage extension")));
+    QVERIFY(details.contains(QLatin1String("Version 1.0.0")));
+    QVERIFY(details.contains(QLatin1String("Update source:")));
+    QVERIFY(details.contains(QLatin1String("Permissions: tabs")));
+    QVERIFY(dialog.extensionRemoveButton->isEnabled());
+
+    // The checkbox routes through extensionItemChanged.
+    row->setCheckState(0, Qt::Unchecked);
+    row->setCheckState(0, Qt::Checked);
+
+    // Wrong-column and id-less item changes are ignored.
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "extensionItemChanged",
+        Q_ARG(QTreeWidgetItem*, row), Q_ARG(int, 1)));
+    // Heap like every tree item — the tree clears own and delete its
+    // rows; a stack item would be freed twice.
+    QTreeWidgetItem *bogus = new QTreeWidgetItem(dialog.extensionsTree);
+    bogus->setData(0, Qt::UserRole, QString());
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "extensionItemChanged",
+        Q_ARG(QTreeWidgetItem*, bogus), Q_ARG(int, 0)));
+    delete bogus;
+
+    // installExtension's chooser: Cancel bails; Folder hands off to
+    // the directory picker (rejected → no path → early return).
+    clickModalButtonText(QLatin1String("Cancel"));
+    dialog.extensionInstallButton->click();
+    clickModalButtonText(QLatin1String("Folder"));
+    rejectModal(); // QFileDialog::getExistingDirectory
+    dialog.extensionInstallButton->click();
+    clickModalButtonText(QLatin1String("ZIP"));
+    rejectModal(); // QFileDialog::getOpenFileName
+    dialog.extensionInstallButton->click();
+
+    // Load bails on an empty directory pick too.
+    rejectModal(); // QFileDialog::getExistingDirectory
+    dialog.extensionLoadButton->click();
+
+    // The update button kicks a real check; the dead https source
+    // fails asynchronously, so the manual flag is still set when the
+    // crafted results land through the signal — the summary box shows
+    // the installed/downloaded/failed join.
+    dismissModalBoxes();
+    dialog.extensionUpdateButton->click();
+    {
+        QList<ExtensionManager::UpdateResult> results;
+        ExtensionManager::UpdateResult installed;
+        installed.name = QLatin1String("Installed");
+        installed.availableVersion = QLatin1String("2.0");
+        installed.installTriggered = true;
+        results << installed;
+        ExtensionManager::UpdateResult downloaded;
+        downloaded.name = QLatin1String("Downloaded");
+        downloaded.availableVersion = QLatin1String("3.0");
+        downloaded.savedTo = QLatin1String("/tmp/covext.zip");
+        results << downloaded;
+        ExtensionManager::UpdateResult failed;
+        failed.name = QLatin1String("Failed");
+        failed.error = QLatin1String("boom");
+        results << failed;
+        emit manager->updateCheckFinished(results);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!manager->updateCheckInProgress(), 10000);
+
+    // The user-scripts list shows its placeholder when the folder is
+    // empty.
+    QVERIFY(dialog.userScriptsList->count() >= 1);
+
+    // Remove asks once and unloads on Yes.
+    answerNextBox(QMessageBox::Yes);
+    dialog.extensionRemoveButton->click();
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<ExtensionManager::ExtensionInfo> list =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : list) {
+            if (info.id == extId)
+                return false;
+        }
+        return true;
+    }(), 10000);
+}
+
+// SEC13: the saved-credentials group reflects SecureStore state —
+// the copy flips between file-key / unlocked / locked modes, the
+// passphrase prompt retries on bad input, and Remove confirms first.
+void tst_SettingsDialog::credentialsPage()
+{
+    if (!SecureStore::isAvailable())
+        QSKIP("crypto backend unavailable");
+    SecureStore::resetForTests();
+    SecureStore::setInteractiveUnlockEnabled(true);
+
+    SettingsDialog dialog;
+    QVERIFY(dialog.credentialStatusLabel->text()
+            .contains(QLatin1String("Set a master passphrase")));
+    QVERIFY(dialog.credentialPassphraseButton->isEnabled());
+    QVERIFY(!dialog.credentialRemoveButton->isEnabled());
+    QVERIFY(!dialog.credentialLockButton->isEnabled());
+
+    // Cancelling the prompt leaves file-key mode in place.
+    rejectModal();
+    dialog.credentialPassphraseButton->click();
+    QVERIFY(!SecureStore::passphraseProtectionEnabled());
+
+    // The prompt retries on a short entry and a mismatch before
+    // accepting — one exec() round per failure.
+    auto fills = std::make_shared<QStringList>(QStringList()
+        << QLatin1String("short") << QLatin1String("short")
+        << QLatin1String("cov-pass-1") << QLatin1String("other")
+        << QLatin1String("cov-pass-1") << QLatin1String("cov-pass-1"));
+    fillPassphraseDialog(fills);
+    fillPassphraseDialog(fills);
+    fillPassphraseDialog(fills);
+    dialog.credentialPassphraseButton->click();
+    QVERIFY(SecureStore::passphraseProtectionEnabled());
+    QVERIFY(SecureStore::isUnlocked());
+    QVERIFY(dialog.credentialStatusLabel->text()
+            .contains(QLatin1String("currently unlocked")));
+    QVERIFY(dialog.credentialRemoveButton->isEnabled());
+    QVERIFY(dialog.credentialLockButton->isEnabled());
+
+    // Lock drops to the locked copy; Remove still needs the passphrase.
+    dialog.credentialLockButton->click();
+    QVERIFY(!SecureStore::isUnlocked());
+    QVERIFY(dialog.credentialStatusLabel->text()
+            .contains(QLatin1String("store is locked")));
+    QVERIFY(!dialog.credentialLockButton->isEnabled());
+
+    // Denying the unlock prompt cancels the removal.
+    rejectModal();
+    dialog.credentialRemoveButton->click();
+    QVERIFY(SecureStore::passphraseProtectionEnabled());
+
+    // Unlocking then declining the confirmation keeps it too.
+    answerModalPassphrase(QLatin1String("cov-pass-1"));
+    answerNextBox(QMessageBox::No);
+    dialog.credentialRemoveButton->click();
+    QVERIFY(SecureStore::passphraseProtectionEnabled());
+
+    // Unlock + Yes removes the passphrase custody.
+    answerModalPassphrase(QLatin1String("cov-pass-1"));
+    answerNextBox(QMessageBox::Yes);
+    dialog.credentialRemoveButton->click();
+    QVERIFY(!SecureStore::passphraseProtectionEnabled());
+    QVERIFY(dialog.credentialStatusLabel->text()
+            .contains(QLatin1String("key stored next")));
+
+    SecureStore::resetForTests();
+}
+
+// CONT04: the Containers page's site-rules list follows the selected
+// container — rows come from siteRules(), selection arms Remove, and
+// removeSiteRule repopulates through siteRulesChanged.
+void tst_SettingsDialog::containerSiteRows()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const QString id = manager->createContainer(
+        QLatin1String("Sites"), QColor(Qt::red)).id;
+    QVERIFY(manager->setSiteRule(QLatin1String("Example.COM."), id));
+    QCOMPARE(manager->siteRules(id),
+             QStringList() << QLatin1String("example.com"));
+
+    SettingsDialog dialog;
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::ContainersPage));
+    dialog.containersList->setCurrentRow(0);
+    QCOMPARE(dialog.containerSitesList->count(), 1);
+    QCOMPARE(dialog.containerSitesList->item(0)->text(),
+             QLatin1String("example.com"));
+    QVERIFY(dialog.containerSitesLabel->text()
+            .contains(QLatin1String("always open in this container")));
+
+    // No selected rule → Remove is a no-op.
+    dialog.containerSitesList->setCurrentItem(nullptr);
+    dialog.containerSiteRemoveButton->click();
+    QCOMPARE(manager->siteRules(id).count(), 1);
+
+    // A selected rule deletes through the shared manager; the changed
+    // signal rebuilds the list empty.
+    dialog.containerSitesList->setCurrentRow(0);
+    QVERIFY(dialog.containerSiteRemoveButton->isEnabled());
+    dialog.containerSiteRemoveButton->click();
+    QVERIFY(manager->siteRules(id).isEmpty());
+    QCOMPARE(dialog.containerSitesList->count(), 0);
+
+    // No container selected → the explanatory label returns.
+    dialog.containersList->setCurrentItem(nullptr);
+    QVERIFY(dialog.containerSitesLabel->text()
+            .contains(QLatin1String("always open in the selected container")));
+
+    QVERIFY(manager->deleteContainer(id));
 }
 
 QTEST_MAIN(tst_SettingsDialog)
