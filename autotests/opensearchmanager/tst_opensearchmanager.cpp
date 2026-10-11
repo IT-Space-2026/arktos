@@ -675,6 +675,10 @@ void tst_OpenSearchManager::legacyMigration()
         BrowserPaths::dataFilePath(QLatin1String("searchengines"));
     const QString migratedDir = dirName + QLatin1String(".migrated");
     QDir(migratedDir).removeRecursively();
+    // A stale descriptor dir from an earlier interrupted run would
+    // migrate its leftover engines alongside the fixture — start
+    // from a clean slate like migratedDir does.
+    QDir(dirName).removeRecursively();
     QVERIFY(QDir().mkpath(dirName));
     QFile file(dirName + QLatin1String("/FooSearch.xml"));
     QVERIFY(file.open(QFile::WriteOnly));

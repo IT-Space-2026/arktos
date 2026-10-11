@@ -87,6 +87,11 @@ browsing profile:
   with a consent-gated URLhaus/OpenPhish feed; listed main-frame
   navigations stop at a warning interstitial with a session-only
   proceed.
+- **Tranco site-rank table** — a vendored top-100k seed merged with a
+  consent-gated top-1M download; the merge is poison-safe (an update
+  can only add entries, never un-rank or re-rank a seed domain).
+  `rc_tranco_rank` backs the site-trust signals; lookups never leave
+  the machine.
 - **Rust parsers for untrusted input** — OpenSearch descriptors,
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.
@@ -540,6 +545,7 @@ versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`)
 |---|---|---|
 | URLhaus domain blocklist | abuse.ch usage terms | https://urlhaus.abuse.ch |
 | OpenPhish feed | OpenPhish community feed terms | https://openphish.com |
+| Tranco top-site list (top-1M) | Tranco list terms | https://tranco-list.eu |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
 **Planned** (queued tasks, not shipped): PDFium +

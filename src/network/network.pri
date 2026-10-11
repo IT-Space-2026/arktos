@@ -13,7 +13,8 @@ HEADERS += \
     $$PWD/networkproxyfactory.h \
     $$PWD/privacyrequestinterceptor.h \
     $$PWD/schemeaccesshandler.h \
-    $$PWD/tlsverifier.h
+    $$PWD/tlsverifier.h \
+    $$PWD/trancolist.h
 
 SOURCES += \
     $$PWD/domainblocklist.cpp \
@@ -23,7 +24,8 @@ SOURCES += \
     $$PWD/networkproxyfactory.cpp \
     $$PWD/privacyrequestinterceptor.cpp \
     $$PWD/schemeaccesshandler.cpp \
-    $$PWD/tlsverifier.cpp
+    $$PWD/tlsverifier.cpp \
+    $$PWD/trancolist.cpp
 
 # cookiejar/cookiejar.pri is included directly by src.pri (MIG03); the
 # networkcookiejar is the volatile jar for the app-side QNAM (MIG04).

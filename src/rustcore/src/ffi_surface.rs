@@ -371,6 +371,37 @@ fn urlstrip_and_blocklist_surface() {
         RcStatus::InvalidArgument
     );
     assert_eq!(unsafe { crate::rc_blocklist_reload() }, RcStatus::Ok);
+
+    // Tranco rank table over the FFI: load -> rank -> count -> reload.
+    assert_eq!(unsafe { crate::rc_tranco_rank(ptr::null()) }, 0);
+    let rows = b"3,ranked.example\n17,sub.deep.example\n";
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(rows.as_ptr(), rows.len()) },
+        RcStatus::Ok
+    );
+    let host = cs("www.ranked.example");
+    assert_eq!(unsafe { crate::rc_tranco_rank(host.as_ptr()) }, 3);
+    let deep = cs("a.b.sub.deep.example");
+    assert_eq!(unsafe { crate::rc_tranco_rank(deep.as_ptr()) }, 17);
+    let unlisted = cs("unlisted.invalid");
+    assert_eq!(unsafe { crate::rc_tranco_rank(unlisted.as_ptr()) }, 0);
+    assert!(unsafe { crate::rc_tranco_count() } >= 2);
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(b"# none\n".as_ptr(), 7) },
+        RcStatus::Corrupt
+    );
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(b"\xff\xfe".as_ptr(), 2) },
+        RcStatus::Corrupt
+    );
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(ptr::null(), 1) },
+        RcStatus::InvalidArgument
+    );
+    // Reload restores the vendored-seed coverage on top of the load.
+    assert_eq!(unsafe { crate::rc_tranco_reload() }, RcStatus::Ok);
+    let google = cs("google.com");
+    assert_eq!(unsafe { crate::rc_tranco_rank(google.as_ptr()) }, 1);
 }
 
 #[test]

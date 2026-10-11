@@ -246,6 +246,32 @@ char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
 int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
 char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
 
+/* --- Tranco rank table (TRUST04) ------------------------------------
+ * The Tranco top-site rank table the site-trust signals consult —
+ * a lookup never leaves the machine.  The active table is the
+ * vendored top-100k seed (compiled in) unioned with
+ * "<data dir>/tranco-list.dat", which the Qt-side TrancoList updater
+ * writes from the remote top-1M download (the top-1m.csv.zip body —
+ * the crate unzips it) before calling rc_tranco_reload().  The merge
+ * is poison-safe: an update can only add entries, never un-rank or
+ * re-rank a seeded domain.
+ *
+ * rc_tranco_rank returns the host's rank — the exact host first,
+ * then the most specific listed ancestor (the registrable-domain
+ * probe).  0 means unlisted; bad pointers and malformed hosts read
+ * as unlisted too — the check never breaks on an FFI hiccup. */
+uint32_t rc_tranco_rank(const char *hostUtf8);
+
+/* Swap in a caller-supplied "rank,domain" table body (update/test
+ * seam).  RC_CORRUPT when the body yields no usable entries; the
+ * previous table stays active. */
+RcStatus rc_tranco_load(const uint8_t *textUtf8, size_t len);
+
+/* Re-run the seed-union-override merge.  RC_CORRUPT when an override
+ * exists but yields no usable entries — previous table stays active. */
+RcStatus rc_tranco_reload(void);
+size_t rc_tranco_count(void);
+
 /* --- untrusted-document parsers (SEC19) ------------------------------
  * The Qt side passes the raw attacker-controlled bytes and receives
  * a JSON document it maps onto its existing types — Qt's XML/JSON
