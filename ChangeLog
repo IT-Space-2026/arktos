@@ -235,6 +235,12 @@ UI:
   right-aligning inside a wide column that read as center-floating,
   and the font-name fields and theme note left-align their text
   (PREFUI06).
+- Preferences text fields stop at sensible widths instead of
+  stretching to the window: credentials, engine names and shortcut
+  nicknames cap at a short measure, the proxy host slightly wider,
+  and URL/path fields (home page, style sheet, download locations,
+  search engine URLs, DNS-over-HTTPS template) at a generous one;
+  Browse/Choose buttons stay right beside their fields (PREFUI07).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

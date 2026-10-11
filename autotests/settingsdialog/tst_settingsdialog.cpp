@@ -103,6 +103,7 @@ private slots:
     void energySaver();
     void tabHoverPreviews();
     void appearanceLeftAnchored();
+    void fieldWidthCaps();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -1357,10 +1358,17 @@ void tst_SettingsDialog::densityAndFooter()
 
     // Offscreen page grabs for visual review — set
     // ARORA_SETTINGS_GRAB_DIR to a directory and each page lands
-    // there as settings-page-<n>.png.
+    // there as settings-page-<n>.png; ARORA_SETTINGS_GRAB_SIZE=WxH
+    // resizes the dialog before grabbing.
     const QByteArray grabDir = qgetenv("ARORA_SETTINGS_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        const QStringList grabSizeParts = QString::fromLocal8Bit(
+            qgetenv("ARORA_SETTINGS_GRAB_SIZE")).split(QLatin1Char('x'));
+        if (grabSizeParts.size() == 2) {
+            dialog.resize(grabSizeParts[0].toInt(), grabSizeParts[1].toInt());
+            qApp->processEvents();
+        }
         for (int i = 0; i < dialog.tabWidget->count(); ++i) {
             dialog.tabWidget->setCurrentIndex(i);
             dialog.pagesList->setCurrentRow(i);
@@ -2496,6 +2504,116 @@ void tst_SettingsDialog::appearanceLeftAnchored()
     for (QLabel *l : pageLabels)
         QVERIFY2(textX(l) <= 20,
                  qPrintable(l->objectName()));
+    dialog.close();
+}
+
+// PREFUI07: every settings text field caps at a content-class width
+// so a wide dialog can't stretch a proxy credential or a home-page
+// URL across the page. Classes: 240 short names/credentials/tokens,
+// 300 hostnames, 480 URLs and paths. Measured at a 1500px dialog
+// where the uncapped fields ran to ~85% of the page width.
+void tst_SettingsDialog::fieldWidthCaps()
+{
+    struct Capped { QLineEdit *edit; int cap; };
+    SettingsDialog dialog;
+    const QList<Capped> fields = {
+        {dialog.homeLineEdit, 480},
+        {dialog.engineNameEdit, 240},
+        {dialog.engineNicknameEdit, 240},
+        {dialog.engineUrlEdit, 480},
+        {dialog.engineSuggestUrlEdit, 480},
+        {dialog.engineImageUrlEdit, 480},
+        {dialog.enginePostParamsEdit, 480},
+        {dialog.engineImagePostParamsEdit, 480},
+        {dialog.shortcutBookmarksToken, 240},
+        {dialog.shortcutHistoryToken, 240},
+        {dialog.shortcutTabsToken, 240},
+        {dialog.secureDnsServer, 480},
+        {dialog.proxyHostName, 300},
+        {dialog.proxyUserName, 240},
+        {dialog.proxyPassword, 240},
+        {dialog.userStyleSheet, 480},
+        {dialog.downloadsLocation, 480},
+        {dialog.externalDownloadPath, 480}
+    };
+    for (const Capped &f : fields) {
+        QCOMPARE(f.edit->maximumWidth(), f.cap);
+        // Capped, not fixed — fields still shrink with a narrow window.
+        QVERIFY(f.edit->sizePolicy().horizontalPolicy()
+                != QSizePolicy::Fixed);
+    }
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.resize(1500, 900);
+    qApp->processEvents();
+
+    // A field's geometry is only real while its page is current —
+    // walk up to the scroll area to find which stack index hosts it.
+    auto showPageOf = [&dialog](QWidget *w) {
+        while (w->parentWidget()
+               && w->parentWidget() != dialog.tabWidget)
+            w = w->parentWidget();
+        const int page = dialog.tabWidget->indexOf(w);
+        if (page >= 0) {
+            dialog.tabWidget->setCurrentIndex(page);
+            qApp->processEvents();
+        }
+        return page;
+    };
+
+    for (const Capped &f : fields) {
+        QVERIFY2(showPageOf(f.edit) >= 0,
+                 qPrintable(f.edit->objectName()));
+        QVERIFY2(f.edit->width() <= f.cap,
+                 qPrintable(QStringLiteral(
+                     "%1 width %2 exceeds cap %3")
+                     .arg(f.edit->objectName())
+                     .arg(f.edit->width()).arg(f.cap)));
+        QVERIFY(f.edit->width() > 0);
+    }
+
+    // The browse buttons sit directly beside their capped fields —
+    // no dead band where the old stretch used to be.
+    const QList<QPair<QLineEdit *, QPushButton *>> rows = {
+        {dialog.userStyleSheet, dialog.styleSheetBrowseButton},
+        {dialog.downloadsLocation, dialog.downloadDirectoryButton},
+        {dialog.externalDownloadPath, dialog.externalDownloadBrowse}
+    };
+    for (const auto &row : rows) {
+        QVERIFY2(showPageOf(row.first) >= 0,
+                 qPrintable(row.first->objectName()));
+        const int gap = row.second->x()
+                - (row.first->x() + row.first->width());
+        QVERIFY2(gap <= 40,
+                 qPrintable(QStringLiteral(
+                     "%1..%2 gap %3 — button floated off the field")
+                     .arg(row.first->objectName(),
+                          row.second->objectName())
+                     .arg(gap)));
+    }
+
+    // Already-capped combos on the swept pages still render capped.
+    for (QComboBox *combo : {dialog.proxyType, dialog.secureDnsMode}) {
+        QVERIFY2(showPageOf(combo) >= 0,
+                 qPrintable(combo->objectName()));
+        QCOMPARE(combo->sizePolicy().horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
+                 qPrintable(combo->objectName()));
+    }
+
+    // Narrow case: at 700px the Proxy page fields stay inside their
+    // caps and nothing forces a horizontal scrollbar.
+    dialog.resize(700, 900);
+    qApp->processEvents();
+    QVERIFY(showPageOf(dialog.proxyPassword) >= 0);
+    QVERIFY2(dialog.proxyPassword->width() <= 240,
+             qPrintable(QString::number(dialog.proxyPassword->width())));
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->currentWidget());
+    QVERIFY(area);
+    QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
     dialog.close();
 }
 
