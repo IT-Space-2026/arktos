@@ -28,6 +28,7 @@
 
 #include "autofillmanager.h"
 
+#include "addressdialog.h"
 #include "autosaver.h"
 #include "browserpaths.h"
 #include "engineinterface.h"
@@ -42,7 +43,9 @@
 #include <rustcore.h>
 #endif
 
+#include <qcryptographichash.h>
 #include <qdatastream.h>
+#include <qdatetime.h>
 #include <qfile.h>
 #include <qsavefile.h>
 #include <qjsonarray.h>
@@ -142,13 +145,71 @@ QList<AutoFillManager::Form> AutoFillManager::forms() const
 
 void AutoFillManager::setAddresses(const QList<Address> &addresses)
 {
+    // Carry lastUsed across prefs-page round trips: entries match by
+    // content (operator== ignores the use stamp), so editing the list
+    // keeps the MRU order.  A nonzero stamp the caller set itself is
+    // kept as-is.
+    const QList<Address> old = m_addresses;
     m_addresses = addresses;
+    QSet<int> consumed;
+    for (Address &address : m_addresses) {
+        if (address.lastUsed)
+            continue;
+        for (int i = 0; i < old.count(); ++i) {
+            if (!consumed.contains(i) && old.at(i) == address) {
+                address.lastUsed = old.at(i).lastUsed;
+                consumed.insert(i);
+                break;
+            }
+        }
+    }
     emit autoFillChanged();
 }
 
 QList<AutoFillManager::Address> AutoFillManager::addresses() const
 {
     return m_addresses;
+}
+
+const AutoFillManager::Address *AutoFillManager::preferredAddress() const
+{
+    // One saved address fills directly; with several, the most
+    // recently used wins — lastUsed ties (e.g. all fresh entries)
+    // fall to the most recently added, the one the user just typed.
+    const Address *best = nullptr;
+    for (const Address &address : m_addresses) {
+        if (!address.isValid())
+            continue;
+        if (!best || address.lastUsed >= best->lastUsed)
+            best = &address;
+    }
+    return best;
+}
+
+QString AutoFillManager::addressId(const Address &address)
+{
+    QByteArray key;
+    for (const QString &field : { address.country, address.name,
+            address.organization, address.street, address.city,
+            address.state, address.zip, address.phone, address.email }) {
+        key += field.toUtf8();
+        key += '\x1f';
+    }
+    return QString::fromLatin1(QCryptographicHash::hash(
+        key, QCryptographicHash::Sha1).toHex());
+}
+
+void AutoFillManager::markAddressUsed(const QString &addressId)
+{
+    if (addressId.isEmpty())
+        return;
+    for (Address &address : m_addresses) {
+        if (AutoFillManager::addressId(address) == addressId) {
+            address.lastUsed = QDateTime::currentSecsSinceEpoch();
+            emit autoFillChanged();
+            return;
+        }
+    }
 }
 
 void AutoFillManager::addAddress(const Address &address)
@@ -323,6 +384,16 @@ void AutoFillManager::saveFormData() const
         // list untouched and simply ignores the trailing bytes.
         stream << m_forms;
         stream << m_addresses;
+        // ADDR02: per-address MRU stamps ride a third tail — a
+        // parallel QList<qint64> rather than a field inside
+        // Address::save, which would misalign every pre-ADDR02
+        // build's reads mid-list.  Older builds stop after the
+        // addresses and ignore it.
+        QList<qint64> lastUsed;
+        lastUsed.reserve(m_addresses.count());
+        for (const Address &address : m_addresses)
+            lastUsed.append(address.lastUsed);
+        stream << lastUsed;
     }
 
     const QByteArray sealed = SecureStore::seal(payload);
@@ -430,6 +501,15 @@ void AutoFillManager::loadFormData()
         m_addresses.clear();
         if (stream.status() == QDataStream::Ok && !stream.atEnd())
             StreamingUtils::readBoundedList(stream, m_addresses);
+        // ADDR02: optional MRU tail — absent on ADDR01-era files,
+        // which decode with all-zero stamps.
+        if (stream.status() == QDataStream::Ok && !stream.atEnd()) {
+            QList<qint64> lastUsed;
+            StreamingUtils::readBoundedList(stream, lastUsed);
+            for (int i = 0; i < lastUsed.count()
+                    && i < m_addresses.count(); ++i)
+                m_addresses[i].lastUsed = lastUsed.at(i);
+        }
     };
 
     if (SecureStore::isSealed(raw)) {
@@ -490,7 +570,14 @@ QString AutoFillManager::scriptForPage(Engine::Page *page,
     if (bridge)
         bridge->setPageInfo(url, capture, token);
 
-    return autoFillScript(fetchForms(stripUrl(url)), capture, token);
+    // ADDR02: address fill is gated exactly like the stored-form fill
+    // — armed on every named-profile page, never on off-the-record
+    // ones (ADDR02's privacy gate is stricter than the form fill's:
+    // no address data leaves the store for a private page at all).
+    const Address *address = page->isOffTheRecord()
+            ? nullptr : preferredAddress();
+
+    return autoFillScript(fetchForms(stripUrl(url)), address, capture, token);
 }
 
 static void replacePageScript(Engine::Page *page, const QString &name,
@@ -526,7 +613,8 @@ void AutoFillManager::scheduleOnPage(Engine::Page *page,
 }
 
 QString AutoFillManager::autoFillScript(const QList<Form> &forms,
-        bool capture, const QString &reportToken) const
+        const Address *address, bool capture,
+        const QString &reportToken) const
 {
     static const QString script = [] {
         QString source;
@@ -560,9 +648,31 @@ QString AutoFillManager::autoFillScript(const QList<Form> &forms,
         formsJson.append(formJson);
     }
 
+    // ADDR02: at most ONE address is handed to the page — the MRU
+    // pick, tagged with the content id the report echoes back.  The
+    // whole list never enters the page world (same closure discipline
+    // as FORMS_JSON, but minimal disclosure keeps it to the pick).
+    QString addressJson = QStringLiteral("null");
+    if (address) {
+        QJsonObject addressObject;
+        addressObject[QLatin1String("id")] = addressId(*address);
+        addressObject[QLatin1String("country")] = address->country;
+        addressObject[QLatin1String("name")] = address->name;
+        addressObject[QLatin1String("organization")] = address->organization;
+        addressObject[QLatin1String("street")] = address->street;
+        addressObject[QLatin1String("city")] = address->city;
+        addressObject[QLatin1String("state")] = address->state;
+        addressObject[QLatin1String("zip")] = address->zip;
+        addressObject[QLatin1String("phone")] = address->phone;
+        addressObject[QLatin1String("email")] = address->email;
+        addressJson = QString::fromUtf8(
+            QJsonDocument(addressObject).toJson(QJsonDocument::Compact));
+    }
+
     QString injected = script;
     injected.replace(QLatin1String("FORMS_JSON"),
                      QString::fromUtf8(QJsonDocument(formsJson).toJson(QJsonDocument::Compact)));
+    injected.replace(QLatin1String("ADDRESS_JSON"), addressJson);
     injected.replace(QLatin1String("CAPTURE_FLAG"),
                      capture ? QLatin1String("true") : QLatin1String("false"));
     injected.replace(QLatin1String("REPORT_TOKEN"), reportToken);
@@ -585,6 +695,12 @@ void AutoFillManager::formSubmitted(const QUrl &pageUrl,
     // Check that the url isn't in m_never
     if (m_never.contains(url))
         return;
+
+    // ADDR02: the same report carries the used-address mark and a
+    // detected address candidate — handled before the password-form
+    // pipeline, which early-returns on anything it cannot store.
+    markAddressUsed(formData[QLatin1String("usedAddressId")].toString());
+    maybeSaveAddress(url, formData);
 
     Form form;
     form.url = url;
@@ -635,6 +751,105 @@ void AutoFillManager::formSubmitted(const QUrl &pageUrl,
         m_forms.removeAt(alreadyAccepted);
     m_forms.append(form);
     emit autoFillChanged();
+}
+
+void AutoFillManager::maybeSaveAddress(const QUrl &url,
+        const QVariantMap &formData)
+{
+    // Same gate as password capture: the "User names and passwords"
+    // autofill switch is the only master toggle, and it governs the
+    // save-address prompt too (fill itself is ungated, like forms).
+    if (!m_savePasswordForms)
+        return;
+    // The AddressDialog has no "never for this site" button — decline
+    // once per site per session instead of re-asking every submit.
+    const QString key = url.toString();
+    if (m_addressPrompted.contains(key))
+        return;
+
+    Address candidate;
+    int filled = 0;
+    const QVariantList fields =
+        formData[QLatin1String("addressFields")].toList();
+    for (const QVariant &entry : fields) {
+        const QVariantMap map = entry.toMap();
+        // Same autocomplete="off" rule as the Form path: when
+        // ignoreAutoCompleteOff is set the opted-out fields are
+        // dropped from what gets stored.
+        if (m_allowAutoCompleteOff
+            && map[QLatin1String("off")].toBool())
+            continue;
+        const QString member = map[QLatin1String("member")].toString();
+        const QString value =
+            map[QLatin1String("value")].toString().trimmed();
+        if (value.isEmpty())
+            continue;
+        ++filled;
+        // autofill.js reports canonical member names; split-name and
+        // multi-line street fields merge back into one member here.
+        if (member == QLatin1String("nameFirst")) {
+            candidate.name = candidate.name.isEmpty()
+                ? value : value + QLatin1Char(' ') + candidate.name;
+        } else if (member == QLatin1String("nameLast")) {
+            candidate.name = candidate.name.isEmpty()
+                ? value : candidate.name + QLatin1Char(' ') + value;
+        } else if (member.startsWith(QLatin1String("street"))
+                   && member != QLatin1String("street")) {
+            if (!candidate.street.isEmpty())
+                candidate.street += QLatin1Char('\n');
+            candidate.street += value;
+        } else if (member == QLatin1String("name")) {
+            candidate.name = value;
+        } else if (member == QLatin1String("organization")) {
+            candidate.organization = value;
+        } else if (member == QLatin1String("street")) {
+            candidate.street = value;
+        } else if (member == QLatin1String("city")) {
+            candidate.city = value;
+        } else if (member == QLatin1String("state")) {
+            candidate.state = value;
+        } else if (member == QLatin1String("zip")) {
+            candidate.zip = value;
+        } else if (member == QLatin1String("phone")) {
+            candidate.phone = value;
+        } else if (member == QLatin1String("email")) {
+            candidate.email = value;
+        } else if (member == QLatin1String("country")) {
+            candidate.country = value;
+        }
+    }
+    // "Address-shaped" means at least two usable fields where at
+    // least one is real postal evidence (street/city/zip) — a bare
+    // name+email contact form doesn't earn the prompt.
+    const bool postal = !candidate.street.isEmpty()
+        || !candidate.city.isEmpty() || !candidate.zip.isEmpty();
+    if (filled < 2 || !postal)
+        return;
+
+    // Don't re-save what is already stored — near-dup on the
+    // identity triple name+street+zip (case-insensitive).
+    for (const Address &address : m_addresses) {
+        if (!address.name.compare(candidate.name, Qt::CaseInsensitive)
+            && !address.street.compare(candidate.street,
+                                       Qt::CaseInsensitive)
+            && !address.zip.compare(candidate.zip, Qt::CaseInsensitive))
+            return;
+    }
+
+    m_addressPrompted.insert(key);
+    promptToSaveAddress(candidate);
+}
+
+void AutoFillManager::promptToSaveAddress(const Address &candidate)
+{
+    // The pre-filled editor IS the "save this address?" prompt: the
+    // user lands in the same dialog the prefs page's Add button
+    // opens and can fix anything before Save.
+    AddressDialog dialog;
+    dialog.setAddress(candidate);
+    if (dialog.exec() == QDialog::Accepted
+        && dialog.address().isValid())
+        addAddress(dialog.address());
 }
 
 bool AutoFillManager::promptToSave(const QUrl &url)
