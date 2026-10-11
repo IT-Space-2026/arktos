@@ -28,6 +28,7 @@ SUBDIRS  = \
     historyfiltermodel \
     historymanager \
     historyui \
+    htmlbookmarks \
     httponly \
     locationbar \
     modelmenu \

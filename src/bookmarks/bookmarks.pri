@@ -12,7 +12,8 @@ HEADERS += \
     $$PWD/bookmarksmenu.h \
     $$PWD/bookmarksmodel.h \
     $$PWD/bookmarkstoolbar.h \
-    $$PWD/bookmarknode.h
+    $$PWD/bookmarknode.h \
+    $$PWD/htmlbookmarkswriter.h
 
 SOURCES += \
     $$PWD/addbookmarkdialog.cpp \
@@ -21,7 +22,8 @@ SOURCES += \
     $$PWD/bookmarksmenu.cpp \
     $$PWD/bookmarksmodel.cpp \
     $$PWD/bookmarkstoolbar.cpp \
-    $$PWD/bookmarknode.cpp
+    $$PWD/bookmarknode.cpp \
+    $$PWD/htmlbookmarkswriter.cpp
 
 FORMS += \
     $$PWD/addbookmarkdialog.ui \

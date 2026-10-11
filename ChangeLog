@@ -304,6 +304,12 @@ UI:
   with the side panel docked on its Left/Right edge, with highlight
   frame and check badge on the selection, and mouse or keyboard
   operation (SIDE03).
+- Bookmarks export gains a Netscape HTML format: the export dialog
+  offers "Netscape bookmarks (*.html)" alongside XBEL and writes the
+  standard bookmark file every browser imports — folders,
+  separators, descriptions and the bookmarks-bar marker included —
+  and the file re-imports cleanly through Arora's own HTML importer
+  (BKEX01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

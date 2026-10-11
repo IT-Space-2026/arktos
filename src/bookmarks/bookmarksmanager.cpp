@@ -67,6 +67,7 @@
 #include "bookmarksmodel.h"
 #include "browserpaths.h"
 #include "converter.h"
+#include "htmlbookmarkswriter.h"
 #include "startupprofile.h"
 #include "xbelreader.h"
 #include "xbelwriter.h"
@@ -77,6 +78,7 @@
 #include <qevent.h>
 #include <qfile.h>
 #include <qfiledialog.h>
+#include <qfileinfo.h>
 #include <qheaderview.h>
 #include <qicon.h>
 #include <qlocale.h>
@@ -494,14 +496,38 @@ void BookmarksManager::exportBookmarks()
     if (!exportBookmarksTo(fileName))
         QMessageBox::critical(nullptr, tr("Export error"), tr("error saving bookmarks"));
 #else
+    const QString xbelFilter = tr("XBEL bookmarks").append(QLatin1String("(*.xbel *.xml)"));
+    const QString htmlFilter = tr("Netscape bookmarks").append(QLatin1String("(*.html)"));
+    QString selectedFilter = xbelFilter;
     QString fileName = QFileDialog::getSaveFileName(nullptr, tr("Save File"),
                                 tr("%1 Bookmarks.xbel").arg(QCoreApplication::applicationName()),
-                                tr("XBEL bookmarks").append(QLatin1String("(*.xbel *.xml)")));
+                                xbelFilter + QLatin1String(";;") + htmlFilter,
+                                &selectedFilter);
     if (fileName.isEmpty())
         return;
 
-    XbelWriter writer;
-    if (!writer.write(fileName, m_bookmarkRootNode.get()))
+    // A typed known extension wins over the selected filter; otherwise
+    // the filter decides and the matching suffix is appended.
+    const QString suffix = QFileInfo(fileName).suffix().toLower();
+    bool html;
+    if (suffix == QLatin1String("html") || suffix == QLatin1String("htm"))
+        html = true;
+    else if (suffix == QLatin1String("xbel") || suffix == QLatin1String("xml"))
+        html = false;
+    else {
+        html = (selectedFilter == htmlFilter);
+        fileName += html ? QLatin1String(".html") : QLatin1String(".xbel");
+    }
+
+    bool saved;
+    if (html) {
+        HtmlBookmarksWriter writer;
+        saved = writer.write(fileName, bookmarks(), toolbar());
+    } else {
+        XbelWriter writer;
+        saved = writer.write(fileName, bookmarks());
+    }
+    if (!saved)
         QMessageBox::critical(nullptr, tr("Export error"), tr("error saving bookmarks"));
 #endif
 }
