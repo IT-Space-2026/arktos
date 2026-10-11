@@ -77,6 +77,7 @@
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "downloadmanager.h"
+#include "energysaver.h"
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "languagemanager.h"
@@ -666,6 +667,9 @@ void BrowserApplication::torStartup(const QString &url)
 
 void BrowserApplication::loadSettings()
 {
+    // PREFUI05: the Energy Saver mode is profile-independent — it must
+    // be re-read in tor mode too, so it sits above the early return.
+    EnergySaver::instance()->loadSettings();
     // MIG11: the QSettings->QWebEngineSettings mapping moved to
     // BrowserProfile so the settings dialog can share it while this
     // file is uncompiled.  Dropped keys with no WebEngine equivalent:

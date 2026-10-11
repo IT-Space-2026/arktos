@@ -27,12 +27,15 @@
 #include <QtGui/QtGui>
 #include <qcheckbox.h>
 #include <qdir.h>
+#include <qfile.h>
+#include <qfileinfo.h>
 #include <qframe.h>
 #include <qgroupbox.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
 #include <qstyle.h>
+#include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 
 #include "settings.h"
@@ -47,6 +50,7 @@
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "energysaver.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -60,6 +64,7 @@
 #include "scopeshortcuts.h"
 #include "sidebarpanel.h"
 #include "tabpositionpicker.h"
+#include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -105,6 +110,7 @@ private slots:
     void credentialsPage();
     void containerSiteRows();
     void performancePage();
+    void energySaver();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -2556,6 +2562,150 @@ void tst_SettingsDialog::performancePage()
     settings.remove(QLatin1String("tabs/suspendTabs"));
     settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
     settings.remove(QLatin1String("privacy/blockPrefetch"));
+}
+
+// PREFUI05: Energy Saver — radio persistence, the sysfs battery seam
+// driving live activation, the forced suspend clock, and the honest
+// no-battery degrade.
+void tst_SettingsDialog::energySaver()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("performance"));
+
+    // Fake sysfs tree: one battery on AC power.
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    auto writeAttr = [&root](const QString &rel, const QByteArray &data) {
+        const QString path = root.filePath(rel);
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(data);
+        file.close();
+    };
+    writeAttr(QLatin1String("BAT0/type"), "Battery\n");
+    writeAttr(QLatin1String("BAT0/status"), "Charging\n");
+    writeAttr(QLatin1String("BAT0/capacity"), "64\n");
+    writeAttr(QLatin1String("AC/type"), "Mains\n");
+    writeAttr(QLatin1String("AC/online"), "1\n");
+
+    EnergySaver *saver = EnergySaver::instance();
+    EnergySaver::setPowerSupplyRootForTesting(root.path());
+    QVERIFY(saver->hasBattery());
+    QVERIFY(!saver->onBattery());
+    QCOMPARE(saver->batteryPercent(), 64);
+
+    // Default is Never; the radios persist a round trip.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverNever->isChecked());
+        QVERIFY(!dialog.energySaverStatus->text().isEmpty());
+        dialog.energySaverOnBattery->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("performance/energySaver"))
+                 .toInt(), int(EnergySaver::OnBattery));
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverOnBattery->isChecked());
+        dialog.reject();
+    }
+
+    // The suspend clock: Memory Saver's own pick applies while the
+    // saver is off.
+    TabWidget tabs;
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(0));
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabsMinutes"), 60);
+    tabs.loadSettings();
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(60 * 60 * 1000));
+
+    // AC -> battery flips the saver live and pins the clock to the
+    // 10-minute cap, overriding the 60-minute pick.
+    QSignalSpy spy(saver, &EnergySaver::activeChanged);
+    QVERIFY(!saver->active());
+    writeAttr(QLatin1String("AC/online"), "0\n");
+    writeAttr(QLatin1String("BAT0/status"), "Discharging\n");
+    saver->refreshBatteryState();
+    QVERIFY(saver->onBattery());
+    QVERIFY(saver->active());
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(10 * 60 * 1000));
+
+    // Back on AC it releases and the configured pick returns.
+    writeAttr(QLatin1String("AC/online"), "1\n");
+    writeAttr(QLatin1String("BAT0/status"), "Charging\n");
+    saver->refreshBatteryState();
+    QVERIFY(!saver->active());
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(60 * 60 * 1000));
+
+    // The 20% mode is level-driven.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::BelowThreshold));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+    writeAttr(QLatin1String("BAT0/capacity"), "19\n");
+    saver->refreshBatteryState();
+    QVERIFY(saver->active());
+    writeAttr(QLatin1String("BAT0/capacity"), "21\n");
+    saver->refreshBatteryState();
+    QVERIFY(!saver->active());
+
+    // Always and Never need no battery state at all.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Always));
+    saver->loadSettings();
+    QVERIFY(saver->active());
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(10 * 60 * 1000));
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Never));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+
+    // No-battery degrade: conditioned modes behave like Never and the
+    // page says so.
+    QTemporaryDir empty;
+    QVERIFY(empty.isValid());
+    EnergySaver::setPowerSupplyRootForTesting(empty.path());
+    QVERIFY(!saver->hasBattery());
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::OnBattery));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverStatus->text().contains(
+            QLatin1String("No battery")));
+    }
+
+    // With a battery the status line names the charge level.
+    EnergySaver::setPowerSupplyRootForTesting(root.path());
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverStatus->text().contains(
+            QLatin1String("21%")));
+    }
+
+    // Reset covers energySaver via the performance group.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Always));
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverAlways->isChecked());
+        answerNextBox(QMessageBox::Yes);
+        dialog.resetPerformanceButton->click();
+        QVERIFY(dialog.energySaverNever->isChecked());
+        dialog.reject();
+    }
+    QCOMPARE(settings.value(QLatin1String("performance/energySaver"))
+                 .toInt(), int(EnergySaver::Never));
+
+    EnergySaver::setPowerSupplyRootForTesting(QString());
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    saver->loadSettings();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

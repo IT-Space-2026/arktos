@@ -76,6 +76,7 @@
 #include "cookieexceptionsdialog.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
+#include "energysaver.h"
 #include "engineinterface.h"
 #include "engineregistry.h"
 #include "extensionmanager.h"
@@ -624,6 +625,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             alwaysLoadPinnedTabs, &QWidget::setEnabled);
     connect(resetPerformanceButton, &QPushButton::clicked,
             this, &SettingsDialog::resetPerformanceSettings);
+
+    // PREFUI05: the battery status line tracks plug/unplug and the
+    // saver's own flips while the page is open.
+    connect(EnergySaver::instance(), &EnergySaver::batteryStateChanged,
+            this, &SettingsDialog::updateEnergySaverStatus);
+    connect(EnergySaver::instance(), &EnergySaver::activeChanged,
+            this, [this](bool) { updateEnergySaverStatus(); });
 
     loadDefaults();
     loadFromSettings();
@@ -1187,6 +1195,25 @@ void SettingsDialog::loadFromSettings()
     alwaysLoadPinnedTabs->setChecked(settings.value(
         QLatin1String("alwaysLoadPinnedTabs"), true).toBool());
     alwaysLoadPinnedTabs->setEnabled(lazyRestoreTabs->isChecked());
+    // PREFUI05: the Energy Saver radios persist the EnergySaver::Mode
+    // value directly; an out-of-range stored value lands back on
+    // Never.
+    switch (settings.value(QLatin1String("energySaver"),
+                           int(EnergySaver::Never)).toInt()) {
+    case int(EnergySaver::BelowThreshold):
+        energySaverLowBattery->setChecked(true);
+        break;
+    case int(EnergySaver::OnBattery):
+        energySaverOnBattery->setChecked(true);
+        break;
+    case int(EnergySaver::Always):
+        energySaverAlways->setChecked(true);
+        break;
+    default:
+        energySaverNever->setChecked(true);
+        break;
+    }
+    updateEnergySaverStatus();
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));
@@ -1544,6 +1571,15 @@ void SettingsDialog::saveToSettings()
                       lazyRestoreTabs->isChecked());
     settings.setValue(QLatin1String("alwaysLoadPinnedTabs"),
                       alwaysLoadPinnedTabs->isChecked());
+    // PREFUI05
+    int energyMode = int(EnergySaver::Never);
+    if (energySaverLowBattery->isChecked())
+        energyMode = int(EnergySaver::BelowThreshold);
+    else if (energySaverOnBattery->isChecked())
+        energyMode = int(EnergySaver::OnBattery);
+    else if (energySaverAlways->isChecked())
+        energyMode = int(EnergySaver::Always);
+    settings.setValue(QLatin1String("energySaver"), energyMode);
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));
@@ -1569,6 +1605,9 @@ void SettingsDialog::saveToSettings()
     CookieJar::instance()->loadSettings();
     HistoryManager::instance()->loadSettings();
     AutoFillManager::instance()->loadSettings();
+    // PREFUI05: the new mode applies live — the saver re-evaluates and
+    // every TabWidget/TabBar hears activeChanged.
+    EnergySaver::instance()->loadSettings();
 
     // Per-page settings (user agent, open-links-in preference) — was a
     // BrowserApplication::mainWindows() loop over each window's
@@ -1669,8 +1708,8 @@ void SettingsDialog::resetPerformanceSettings()
 {
     if (QMessageBox::question(this, tr("Reset Performance Settings"),
             tr("Restore the Performance page's settings — hardware "
-               "acceleration, memory saver, lazy session restore and "
-               "prefetch — to their defaults?"),
+               "acceleration, memory saver, energy saver, lazy session "
+               "restore and prefetch — to their defaults?"),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No) != QMessageBox::Yes)
         return;
@@ -1692,6 +1731,30 @@ void SettingsDialog::resetPerformanceSettings()
 
     loadFromSettings();
     saveToSettings();
+}
+
+// PREFUI05: honesty line under the Energy Saver radios — machines
+// with no battery degrade the conditioned modes to Never, and the
+// label says so rather than pretending the switch does something.
+void SettingsDialog::updateEnergySaverStatus()
+{
+    EnergySaver *saver = EnergySaver::instance();
+    QString text;
+    if (!saver->hasBattery()) {
+        text = tr("No battery detected — the '20% battery' and "
+                  "'on battery' options behave like Never Save "
+                  "Energy on this machine.");
+    } else {
+        text = saver->batteryPercent() >= 0
+            ? (saver->onBattery()
+               ? tr("Battery at %1% — running on battery.")
+               : tr("Battery at %1% — on external power."))
+                .arg(saver->batteryPercent())
+            : tr("Battery detected, charge level unknown.");
+        if (saver->active())
+            text += QLatin1Char(' ') + tr("Energy Saver is on.");
+    }
+    energySaverStatus->setText(text);
 }
 
 void SettingsDialog::showCookies()

@@ -152,6 +152,8 @@ private slots:
     // PREFUI04: Performance-page-owned settings (incl. the migrated
     // suspend/prefetch keys) back to compiled defaults.
     void resetPerformanceSettings();
+    // PREFUI05: live battery status line under the Energy Saver radios.
+    void updateEnergySaverStatus();
 
     // SRCH05: inline search-engine editor (replaces the Manage dialog).
     void refreshEngineList();

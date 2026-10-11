@@ -355,6 +355,10 @@ public slots:
     // least idleMs milliseconds.  The settings-driven timer calls
     // this; the smoke test drives it directly.
     void suspendIdleTabs(qint64 idleMs);
+    // PREFUI05: the effective idle-suspend interval — the Memory
+    // Saver setting, or the forced 10-minute cap while Energy Saver
+    // is active (0 = the sweep is off).
+    qint64 suspendIdleIntervalMs() const;
     // POL02: the tab-strip hover preview's thumbnail — the page's
     // last live render at ~thumbnail scale, or null when the tab
     // never rendered a capturable frame (never shown, evicted,
@@ -414,6 +418,9 @@ private:
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
     void updateSleepTimer();
+    // PREFUI05: re-apply the Energy Saver caps live — suspend clock,
+    // immediate sweep, loading-spinner pause.
+    void applyEnergyCaps();
     // POL02: thumbnail plumbing for the hover preview — the deferred
     // schedule lets the compositor present the freshly shown/loaded
     // page before the snapshot is taken.

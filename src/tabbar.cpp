@@ -65,6 +65,7 @@
 #include "aroraicon.h"
 #include "browserapplication.h"
 #include "containermanager.h"
+#include "energysaver.h"
 #include "safetext.h"
 #include "tabpreview.h"
 #include "tabwidget.h"
@@ -174,6 +175,15 @@ TabBar::TabBar(QWidget *parent)
             this, [this](Qt::ApplicationState state) {
         if (state != Qt::ApplicationActive)
             hideTabPreview();
+    });
+    // PREFUI05: Energy Saver disables the hover card — take down a
+    // live popup and stop the dwell clock the moment it engages.
+    connect(EnergySaver::instance(), &EnergySaver::activeChanged,
+            this, [this](bool saving) {
+        if (saving) {
+            m_previewTimer->stop();
+            hideTabPreview();
+        }
     });
 
     // TABGRP01: while a left-button drag is live, remember where the
@@ -1061,7 +1071,8 @@ void TabBar::wheelEvent(QWheelEvent *event)
 // drags keep it down.
 void TabBar::updatePreviewDwell()
 {
-    if (m_hoveredTab < 0) {
+    // PREFUI05: no hover card while Energy Saver is on.
+    if (m_hoveredTab < 0 || EnergySaver::instance()->active()) {
         m_previewTimer->stop();
         hideTabPreview();
         return;
@@ -1079,7 +1090,8 @@ void TabBar::showTabPreview(int index)
 {
     TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
     if (!tabWidget || index < 0 || index >= count() || !isVisible()
-        || (QApplication::mouseButtons() & Qt::LeftButton)) {
+        || (QApplication::mouseButtons() & Qt::LeftButton)
+        || EnergySaver::instance()->active()) {
         hideTabPreview();
         return;
     }

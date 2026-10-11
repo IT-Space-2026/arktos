@@ -71,6 +71,7 @@
 #include "browsermainwindow.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
+#include "energysaver.h"
 #include "engineindicator.h"
 #include "engineinterface.h"
 #include "engineregistry.h"
@@ -228,6 +229,11 @@ TabWidget::TabWidget(QWidget *parent)
 
     connect(BrowserApplication::historyManager(), &HistoryManager::historyCleared,
         this, &TabWidget::historyCleared);
+
+    // PREFUI05: Energy Saver flips live — re-evaluate the suspend
+    // clock and the loading spinners whenever it toggles.
+    connect(EnergySaver::instance(), &EnergySaver::activeChanged,
+            this, [this](bool) { applyEnergyCaps(); });
 
     // CONT02: a container rename/recolor/delete must repaint the tab
     // strip's chips and recompute the size hints the chip feeds.
@@ -1968,13 +1974,41 @@ void TabWidget::markTabActivity(WebView *webView)
     m_sleepStates[webView].lastActiveMs = QDateTime::currentMSecsSinceEpoch();
 }
 
+// PREFUI05: while Energy Saver is active the suspend clock is pinned
+// to the Memory Saver "Maximum" preset (10 min) — it overrides the
+// page's own pick, including "Never", for as long as the saver is on.
+qint64 TabWidget::suspendIdleIntervalMs() const
+{
+    if (EnergySaver::instance()->active())
+        return 10 * 60 * 1000;
+    return m_suspendIdleMs;
+}
+
+void TabWidget::applyEnergyCaps()
+{
+    updateSleepTimer();
+    // Engaging the saver should bite now, not on the next 15s sweep.
+    if (EnergySaver::instance()->active())
+        suspendIdleTabs(suspendIdleIntervalMs());
+    // Loading spinners are pure per-frame repaint cost — freeze them
+    // on the current frame while the saver is on.
+    const QTabBar::ButtonPosition side = m_tabBar->freeSide();
+    const bool pause = EnergySaver::instance()->active();
+    for (int i = 0; i < count(); ++i) {
+        QLabel *label =
+            qobject_cast<QLabel*>(m_tabBar->tabButton(i, side));
+        if (QMovie *movie = label ? label->movie() : nullptr)
+            movie->setPaused(pause);
+    }
+}
+
 void TabWidget::updateSleepTimer()
 {
-    if (m_suspendIdleMs > 0) {
+    if (suspendIdleIntervalMs() > 0) {
         if (!m_sleepTimer) {
             m_sleepTimer = new QTimer(this);
             connect(m_sleepTimer, &QTimer::timeout, this, [this]() {
-                suspendIdleTabs(m_suspendIdleMs);
+                suspendIdleTabs(suspendIdleIntervalMs());
             });
         }
         m_sleepTimer->start(15000);
@@ -2221,6 +2255,10 @@ void TabWidget::captureTabThumbnail(int index)
 
 void TabWidget::scheduleThumbnailCapture(WebView *webView)
 {
+    // PREFUI05: hover previews are capped while Energy Saver is on —
+    // skip the deferred frame grab entirely.
+    if (EnergySaver::instance()->active())
+        return;
     QPointer<WebView> guard(webView);
     QTimer::singleShot(300, this, [this, guard]() {
         if (guard && currentWebView() == guard.data())
@@ -2481,6 +2519,8 @@ QLabel *TabWidget::animationLabel(int index, bool addMovie)
         movie->setSpeed(50);
         loadingAnimation->setMovie(movie);
         movie->start();
+        // PREFUI05: Energy Saver freezes the spinner on frame one.
+        movie->setPaused(EnergySaver::instance()->active());
     }
     m_tabBar->setTabButton(index, side, nullptr);
     m_tabBar->setTabButton(index, side, loadingAnimation);
