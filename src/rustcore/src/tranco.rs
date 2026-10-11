@@ -27,6 +27,7 @@
 //!   * `<rank>,<domain>`   — the Tranco CSV shape
 //!   * `<domain>`          — bare domain, ranked at its line ordinal
 //!   * `#`, `!`, `;`, `//` lines, blanks — comments/junk
+//!
 //! Domains must pass the same DNS-name gate the blocklist applies
 //! (a dot, sane labels) and IP literals are never entries — Tranco
 //! ranks domains only.
@@ -92,22 +93,11 @@ fn current_dir() -> Option<PathBuf> {
     crate::store::lock().dir().ok().map(|d| d.to_path_buf())
 }
 
-/// Conservative DNS-name gate, same rules the blocklist applies: one
-/// dot minimum, [a-z0-9_-] labels of sane length, no IP literals —
-/// Tranco ranks domains only, so an IP-shaped entry is junk or
-/// poison.
+/// Conservative DNS-name gate: util::valid_dns_shape, same rules the
+/// blocklist applies, plus no IP literals — Tranco ranks domains
+/// only, so an IP-shaped entry is junk or poison.
 fn validate_domain(host: &str) -> bool {
-    if host.len() > 253 || !host.contains('.') || host.parse::<IpAddr>().is_ok()
-    {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    })
+    crate::util::valid_dns_shape(host) && host.parse::<IpAddr>().is_err()
 }
 
 /// One (domain, rank) entry out of one line, or None for
@@ -142,7 +132,7 @@ fn entry_from_line(line: &str, ordinal: u32) -> Option<(String, u32)> {
         return None;
     }
     let host = domain_tok.trim_end_matches('.').to_lowercase();
-    validate_domain(&host).then(|| (host, rank))
+    validate_domain(&host).then_some((host, rank))
 }
 
 /// Both indexes out of one ordered pass — (ranks, skeletons).  The
@@ -217,39 +207,25 @@ impl TrancoList {
     /// entry anyway — the parse gate refuses rank-less shapes only
     /// Tranco's own rows can produce).
     ///
-    /// Hot-path discipline: the host normalizes into a fixed stack
-    /// buffer and every probe is a `&str` borrow into the map —
-    /// zero heap allocation per lookup.
+    /// Hot-path discipline: the host normalizes into util::HostNorm's
+    /// fixed stack buffer and every probe is a `&str` borrow into
+    /// the map — zero heap allocation per lookup.  (RAUDIT01: shared
+    /// with blocklist::contains; longer-than-DNS input probes its
+    /// rightmost 253 bytes — every entry is shorter, so a matchable
+    /// suffix always lives in the tail.)
     pub fn rank_of(&self, host: &str) -> Option<u32> {
-        let h = host.trim();
-        let mut buf = [0u8; 253];
-        let mut n = 0usize;
-        for &b in h.as_bytes() {
-            if n >= buf.len() {
-                return None;
-            }
-            buf[n] = b.to_ascii_lowercase();
-            n += 1;
-        }
-        while n > 0 && buf[n - 1] == b'.' {
-            n -= 1;
-        }
-        if n == 0 {
-            return None;
-        }
-        let mut end = n;
-        // QUrl::host() reports IPv6 literals bracketed.
-        if buf[0] == b'[' && buf[end - 1] == b']' {
-            buf.copy_within(1..end, 0);
-            end -= 2;
-        }
-        let host = std::str::from_utf8(&buf[..end]).ok()?;
+        let h = crate::util::HostNorm::new(host)?;
+        let host = h.as_str();
         // IP literals and dot-less names are never ranked.
         if host.parse::<IpAddr>().is_ok() || !host.contains('.') {
             return None;
         }
-        let mut candidate = host;
-        loop {
+        for candidate in h.suffixes() {
+            // Tranco entries all contain a dot — the TLD alone is
+            // never an answer.
+            if !candidate.contains('.') {
+                return None;
+            }
             // A suffix that re-parses as an IP literal is skipped the
             // same way the blocklist skips it — an IP entry can only
             // ever equal a whole request host (and IPs are never
@@ -259,14 +235,8 @@ impl TrancoList {
                     return Some(rank);
                 }
             }
-            match candidate.find('.') {
-                Some(i) => candidate = &candidate[i + 1..],
-                None => return None,
-            }
-            if !candidate.contains('.') {
-                return None;
-            }
         }
+        None
     }
 
     pub fn len(&self) -> usize {

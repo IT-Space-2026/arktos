@@ -21,6 +21,7 @@
 //! `<data dir>/blocklist-domains.txt`):
 //!   * https://urlhaus.abuse.ch/downloads/hostfile/   (malware)
 //!   * https://openphish.com/feed.txt                  (phishing)
+//!
 //! The vendored data/blocklist-domains.txt is the offline seed —
 //! updates merge INTO the builtin set rather than replacing it, so a
 //! partial or poisoned update can only add entries, never quietly
@@ -33,6 +34,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::error::{fail, Fail, RcResult, RcStatus};
+use crate::util;
 
 /// Updated-list drop point inside the data dir — the Qt-side
 /// DomainBlocklist updater writes this file and calls
@@ -139,25 +141,16 @@ fn domain_from_token(token: &str) -> Option<String> {
         t = t.split(':').next().unwrap_or("");
     }
     let host = t.trim_end_matches('.').to_lowercase();
-    validate_domain(&host).then(|| host)
+    validate_domain(&host).then_some(host)
 }
 
-/// Conservative DNS-name gate: one dot minimum (no TLD or localhost
-/// entries), labels of [a-z0-9_-] only, sane lengths.  IP literals
-/// pass the shape test and are stored — they only ever exact-match an
-/// IP-literal request host, so a listed "1.2.3.4" cannot catch
-/// "x.1.2.3.4" (see contains()).
+/// Conservative DNS-name gate: util::valid_dns_shape (one dot
+/// minimum, [a-z0-9_-] labels, sane lengths — shared with tranco).
+/// IP literals pass the shape test and are stored — they only ever
+/// exact-match an IP-literal request host, so a listed "1.2.3.4"
+/// cannot catch "x.1.2.3.4" (see contains()).
 fn validate_domain(host: &str) -> bool {
-    if host.len() > 253 || !host.contains('.') {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    })
+    util::valid_dns_shape(host)
 }
 
 fn parse_entries(text: &str) -> HashSet<String> {
@@ -178,20 +171,19 @@ impl BlockList {
     /// listed entry or sits beneath one.  Probing walks the label
     /// boundary left-to-right, so a listed domain can never match a
     /// merely-overlapping name ("notevil.example" is safe beside
-    /// "evil.example").
+    /// "evil.example").  Zero heap allocation per probe — the host
+    /// normalizes into util::HostNorm's stack buffer (RAUDIT01: same
+    /// discipline as tranco::rank_of).
     pub fn contains(&self, host: &str) -> bool {
-        let mut h = host.trim().trim_end_matches('.').to_lowercase();
-        // QUrl::host() reports IPv6 literals bracketed.
-        if h.starts_with('[') && h.ends_with(']') {
-            h = h[1..h.len() - 1].to_owned();
-        }
+        let Some(h) = util::HostNorm::new(host) else {
+            return false;
+        };
         // An IP-literal query can only exact-match — suffix-walking
         // it would probe junk like "0.113.66".
-        if h.parse::<IpAddr>().is_ok() {
+        if h.as_str().parse::<IpAddr>().is_ok() {
             return self.domains.contains(h.as_str());
         }
-        let mut candidate = h.as_str();
-        loop {
+        for candidate in h.suffixes() {
             // Suffix candidates that parse as IP literals are skipped:
             // an IP entry can only ever equal a full request host,
             // so "www.203.0.113.66" must not trip "203.0.113.66".
@@ -200,11 +192,8 @@ impl BlockList {
             {
                 return true;
             }
-            match candidate.find('.') {
-                Some(i) => candidate = &candidate[i + 1..],
-                None => return false,
-            }
         }
+        false
     }
 
     pub fn len(&self) -> usize {
