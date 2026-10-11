@@ -43,7 +43,11 @@ interstitial with a session-only proceed.  The crate also carries
 the Tranco top-site rank table (vendored top-100k seed merged with a
 consent-gated top-1M download — an update can only add entries,
 never un-rank a seed domain) behind rc_tranco_rank for the
-site-trust signals.  The crate also parses
+site-trust signals, plus the IDN/homograph lookalike probe that
+consults it (rc_lookalike_check: the host is punycode-decoded,
+case-folded and mapped through the UTS #39 confusables table, then
+matched against a skeleton index of the rank table — it flags only
+when the visual twin is a *different* popular domain).  The crate also parses
 untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
 extension update manifests and suggestion replies are schema-checked
 behind the FFI before Qt sees them.  The crate is

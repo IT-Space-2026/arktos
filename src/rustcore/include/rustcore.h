@@ -226,6 +226,22 @@ RcStatus rc_tranco_load(const uint8_t *textUtf8, size_t len);
 RcStatus rc_tranco_reload(void);
 size_t rc_tranco_count(void);
 
+/* --- Homograph lookalike detector (TRUST05) -------------------------
+ * IDN/homograph verdict: the host is punycode-decoded, case-folded
+ * and mapped through the UTS #39 confusable table, then probed
+ * against the Tranco table's skeleton index.  It flags only when the
+ * skeleton coincides with a DIFFERENT popular domain — benign IDNs
+ * resembling nothing popular stay clean.
+ *
+ * Returns a JSON string (free with rc_string_free), or NULL on a bad
+ * pointer:
+ *   {"verdict":"lookalike","lookalike_of":"<ranked domain>",
+ *    "mixed_script":<bool>,"skeleton":"<skeleton>"}
+ *   {"verdict":"clean","mixed_script":<bool>,"skeleton":"..."}
+ * This is a warning signal for the site-trust composite (TRUST01),
+ * never a block decision on its own. */
+char *rc_lookalike_check(const char *hostUtf8);
+
 /* --- untrusted-document parsers (SEC19) ------------------------------
  * The Qt side passes the raw attacker-controlled bytes and receives
  * a JSON document it maps onto its existing types — Qt's XML/JSON

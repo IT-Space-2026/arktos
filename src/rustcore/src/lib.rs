@@ -85,16 +85,23 @@
 //!     (period, categories, scope) -> ordered operation list
 //!     function the Qt shell executes per-store; profile scoping is
 //!     baked in so an OTR clear can never reach persistent stores.
+//!   * lookalike (TRUST05): IDN/homograph detection — a UTS #39
+//!     confusable skeleton of the host probed against a skeleton
+//!     index over the Tranco table, flagging only when the visual
+//!     twin is a DIFFERENT popular domain (warn on popular
+//!     lookalikes, not on every punycode name).
 //!
 mod autofill;
 mod blocklist;
 mod bookmarkhtml;
 mod bookmarks;
 mod clearplan;
+mod confusables_table;
 mod cred;
 mod error;
 mod extverify;
 mod history;
+mod lookalike;
 mod notify;
 mod omnibox;
 mod opensearch;
@@ -838,6 +845,33 @@ pub unsafe extern "C" fn rc_tranco_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_tranco_count() -> usize {
     catch_unwind(AssertUnwindSafe(tranco::count)).unwrap_or(0)
+}
+
+// ---- homograph lookalike detector (TRUST05) -------------------------
+
+/// IDN/homograph verdict as JSON:
+///   {"verdict":"lookalike","lookalike_of":"<ranked domain>",
+///    "mixed_script":<bool>,"skeleton":"<skeleton>"}
+/// or
+///   {"verdict":"clean","mixed_script":<bool>,"skeleton":"..."}
+/// The host is punycode-decoded, case-folded and mapped through the
+/// UTS #39 confusable table, then probed against the Tranco table's
+/// skeleton index — it flags only when the skeleton coincides with a
+/// DIFFERENT popular domain, so benign IDNs resembling nothing
+/// popular stay clean.  Returns null on a bad pointer; the verdict is
+/// a warning signal (TRUST01 composites it), never a block.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_lookalike_check(host: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => util::to_c_string(lookalike::verdict_json(h)),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- untrusted-document parsers (SEC19) ----------------------------
