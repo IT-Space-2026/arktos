@@ -83,6 +83,7 @@
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
+#include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
@@ -104,6 +105,7 @@
 #include <qdesktopservices.h>
 #include <qdialogbuttonbox.h>
 #include <qdir.h>
+#include <qevent.h>
 #include <qfile.h>
 #include <qfontdialog.h>
 #include <qformlayout.h>
@@ -111,11 +113,13 @@
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qlistwidget.h>
+#include <qlocale.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qscreen.h>
 #include <qscrollarea.h>
 #include <qsettings.h>
+#include <QSignalBlocker>
 #include <qstackedwidget.h>
 #include <qstandarditemmodel.h>
 #include <qstandardpaths.h>
@@ -669,6 +673,17 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(EnergySaver::instance(), &EnergySaver::activeChanged,
             this, [this](bool) { updateEnergySaverStatus(); });
 
+    // LANG01: the Language selector lives on the General page.  The
+    // combo mirrors the LanguageManager pick and applies it
+    // immediately — setCurrentLanguage() persists and retranslates on
+    // its own — so the pick is never staged for OK like the other
+    // fields.  Connected after the initial populate so building the
+    // list can't apply anything.
+    populateLanguageCombo();
+    connect(languageCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &SettingsDialog::applyLanguagePick);
+
     loadDefaults();
     loadFromSettings();
 
@@ -710,6 +725,123 @@ void SettingsDialog::revertThemePreview()
         return;
     m_themePreviewed = false;
     BrowserTheme::applyColorScheme();
+}
+
+// LANG01: the raw LanguageManager pick mapped onto a combo userData —
+// an absent key is the "system" follow-the-OS sentinel, "" the
+// explicit English row, anything else an installed locale code.
+static QString storedLanguagePick()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("LanguageManager"));
+    return settings.contains(QLatin1String("language"))
+        ? settings.value(QLatin1String("language")).toString()
+        : QLatin1String("system");
+}
+
+void SettingsDialog::populateLanguageCombo()
+{
+    const QStringList languages = LanguageManager::instance()->languages();
+
+    const QSignalBlocker blocker(languageCombo);
+    languageCombo->clear();
+
+    languageCombo->addItem(tr("System default"), QLatin1String("system"));
+    // Same display shape the old chooseNewLanguage() popup used —
+    // sorted so the combo reads predictably (the popup showed raw
+    // directory order).
+    QStringList sorted = languages;
+    sorted.sort(Qt::CaseInsensitive);
+    for (const QString &name : sorted) {
+        const QLocale locale(name);
+        languageCombo->addItem(
+            QString(QLatin1String("%1, %2 (%3) %4"))
+                .arg(QLocale::languageToString(locale.language()))
+                .arg(QLocale::territoryToString(locale.territory()))
+                .arg(name)
+                // LRM keeps the parenthesized code beside RTL names.
+                .arg(QChar(0x200E)),
+            name);
+    }
+    // The source strings are English — the explicit opt-out stays
+    // available even with no .qm files installed.
+    languageCombo->addItem(QLatin1String("English (en_US)"), QString());
+
+    // No translations installed: the row stays visible but disabled
+    // with the reason on the tooltip (the old popup QMessageBox'd).
+    const bool anyTranslations = !languages.isEmpty();
+    languageCombo->setEnabled(anyTranslations);
+    languageLabel->setEnabled(anyTranslations);
+    const QString tip = anyTranslations
+        ? tr("Display language — applies immediately. \"System default\" "
+             "follows the operating system.")
+        : tr("No translation files are installed.");
+    languageCombo->setToolTip(tip);
+    languageLabel->setToolTip(tip);
+
+    const int row = languageCombo->findData(storedLanguagePick());
+    languageCombo->setCurrentIndex(row < 0 ? 0 : row);
+}
+
+void SettingsDialog::applyLanguagePick(int row)
+{
+    if (row < 0)
+        return;
+    LanguageManager *manager = LanguageManager::instance();
+    if (manager->setCurrentLanguage(languageCombo->itemData(row).toString()))
+        return;
+    // The pick failed (e.g. the .qm vanished since the list was
+    // built) — snap back to the row matching the persisted state.
+    const QSignalBlocker blocker(languageCombo);
+    const int current = languageCombo->findData(storedLanguagePick());
+    languageCombo->setCurrentIndex(current < 0 ? 0 : current);
+}
+
+void SettingsDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        retranslate();
+    QWidget::changeEvent(event);
+}
+
+// LANG01: uic only re-fills the strings the .ui declares — every
+// string the ctor (or a slot) set in code has to be re-run here or it
+// keeps the old language until the page is rebuilt.
+void SettingsDialog::retranslate()
+{
+    retranslateUi(this);
+    updateSecurityLevelHint();
+    updateContentBlockerStatus();
+    updateEnergySaverStatus();
+    if (BrowserApplication::isTorMode()) {
+        extensionsHintLabel->setText(
+            tr("Extensions never run in a Tor window."));
+    } else if (!ExtensionManager::isSupported()) {
+        extensionsHintLabel->setText(
+            tr("This build of Qt WebEngine was compiled without "
+               "extension support."));
+    }
+#ifndef ARORA_RUSTDL
+    if (QStandardItemModel *engineModel =
+            qobject_cast<QStandardItemModel *>(downloadEngineCombo->model())) {
+        if (QStandardItem *accelerated = engineModel->item(1))
+            accelerated->setText(tr("Accelerated (Rust) — not in this build"));
+    }
+#endif
+#ifndef ARORA_ADBLOCK_RUST
+    if (QStandardItemModel *engineModel =
+            qobject_cast<QStandardItemModel *>(adblockEngineCombo->model())) {
+        if (QStandardItem *rust = engineModel->item(1)) {
+            rust->setText(tr("Brave adblock-rust (default) — rebuild "
+                             "with CONFIG+=adblock_rust"));
+        }
+    }
+#endif
+    populateLanguageCombo();
+    // The per-page search haystacks hold the old language's labels.
+    m_pageSearchTexts.clear();
+    if (!pagesFilter->text().isEmpty())
+        filterPages(pagesFilter->text());
 }
 
 void SettingsDialog::openAtPage(Page page)

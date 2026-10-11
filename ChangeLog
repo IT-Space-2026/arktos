@@ -322,6 +322,10 @@ UI:
   themes and centered on the taller row), the column width re-measured
   for the longer labels, and the Appearance page's Panels checklist
   gets the same sizing (PREFUI08).
+- Preferences → General gains an inline Language selector — System
+  default, every installed translation, and an English fallback —
+  applying immediately so the whole window retranslates live, no
+  restart needed (LANG01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

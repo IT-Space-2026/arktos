@@ -73,6 +73,9 @@ private:
     QTranslator *m_sysTranslator;
     QTranslator *m_appTranslator;
     mutable bool m_loaded;
+    // LANG01: whether the pick is the "system" follow-the-OS sentinel
+    // (m_currentLanguage then holds the resolved code, "" for English).
+    bool m_followsSystem;
     mutable QStringList m_languages;
     QStringList m_localeDirectories;
 };
