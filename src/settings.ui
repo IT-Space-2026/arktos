@@ -2252,6 +2252,31 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="siteTrustGroupBox">
+         <property name="title">
+          <string>Site Trust</string>
+         </property>
+         <layout class="QVBoxLayout">
+          <item>
+           <widget class="QCheckBox" name="siteTrustEnabled">
+            <property name="toolTip">
+             <string>Show a trust badge on the toolbar's security indicator — it flags lookalike domains and sites on known threat lists. Uncheck to hide the badge and skip the checks.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Show site trust indicator in the toolbar</string>
+            </property>
+            <property name="text">
+             <string>Show site trust indicator in the toolbar</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer>
          <property name="orientation">
           <enum>Qt::Vertical</enum>

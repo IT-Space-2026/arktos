@@ -166,6 +166,12 @@ public:
     // operand — the same page-link discipline the sender enforced.
     static bool isUrlAllowedOnTorArgv(const QString &operand);
 
+    // TRUST06: master switch for the site-trust surface (Preferences
+    // > Privacy > Site Trust).  The toolbar badge and every
+    // per-signal lookup gate on this — consumers read it live so a
+    // Preferences flip applies without a restart.  Default on.
+    static bool siteTrustEnabled();
+
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);
 #endif

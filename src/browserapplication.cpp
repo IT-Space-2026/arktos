@@ -1106,6 +1106,12 @@ bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)
     return WebView::isUrlAllowedFromPageLink(QUrl(operand));
 }
 
+bool BrowserApplication::siteTrustEnabled()
+{
+    return QSettings().value(QLatin1String("trust/enabled"), true)
+            .toBool();
+}
+
 QStringList BrowserApplication::torWindowArguments(const QUrl &url)
 {
     QStringList arguments{QStringLiteral("--tor")};
