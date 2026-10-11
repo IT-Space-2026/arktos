@@ -247,6 +247,14 @@ UI:
 - Internal cleanup: removed dead code left over from earlier UI
   work — unused accessors and a signal nothing listens to
   (UIAUDIT02).
+- Saved addresses on the Preferences → AutoFill page: a list of
+  stored addresses with Add/Edit/Remove/Remove All — the editor
+  collects country (full territory list, defaults to the system
+  pick), name, organization, a multi-line street address,
+  city/state/ZIP and phone/email, and saves once a name or street
+  is entered. Addresses persist in the sealed autofill store, and
+  Clear Private Data gains an "AutoFill Form Data" item that wipes
+  them along with saved form fields (ADDR01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -88,6 +88,39 @@ public:
         bool hasAPassword;
     };
 
+    // ADDR01: a user-entered postal/contact address (the prefs page's
+    // "Saved addresses" section).  country stores the ISO territory
+    // code (QLocale::territoryToCode); the UI resolves it back to a
+    // display name.  An address is valid when it carries at least a
+    // name or a street — the same gate the editor applies to Save.
+    class Address {
+    public:
+        bool isValid() const
+        { return !name.trimmed().isEmpty() || !street.trimmed().isEmpty(); }
+        bool operator==(const Address &other) const
+        {
+            return country == other.country && name == other.name
+                && organization == other.organization
+                && street == other.street && city == other.city
+                && state == other.state && zip == other.zip
+                && phone == other.phone && email == other.email;
+        }
+        bool operator!=(const Address &other) const
+        { return !(*this == other); }
+        static void load(QDataStream &in, Address &address);
+        static void save(QDataStream &out, const Address &address);
+
+        QString country;
+        QString name;
+        QString organization;
+        QString street;
+        QString city;
+        QString state;
+        QString zip;
+        QString phone;
+        QString email;
+    };
+
     // Lazy qApp-owned singleton (same pattern as HistoryManager /
     // BookmarksManager / AdBlockManager).  BrowserApplication delegates
     // here; the manager reads the profile-independent store itself.
@@ -112,6 +145,17 @@ public:
 
     void setForms(const QList<Form> &forms);
     QList<Form> forms() const;
+
+    // Saved addresses — mutated from the AutoFill prefs page; every
+    // write emits autoFillChanged() so the autosave picks it up.
+    void setAddresses(const QList<Address> &addresses);
+    QList<Address> addresses() const;
+    void addAddress(const Address &address);
+    void removeAddress(int index);
+    // Clear Private Data wipe: drops forms, addresses and the
+    // session's "never save" sites, then writes the store immediately
+    // instead of leaving the purge pending on the autosave timer.
+    void clearData();
 
 public slots:
     // Invoked by the page's AutoFillBridge when the injected script
@@ -140,11 +184,14 @@ private:
     bool m_allowAutoCompleteOff;
 
     QList<Form> m_forms;
+    QList<Address> m_addresses;
     QList<QUrl> m_never;
     AutoSaver *m_saveTimer;
 };
 
 QDataStream &operator<<(QDataStream &, const AutoFillManager::Form &form);
 QDataStream &operator>>(QDataStream &, AutoFillManager::Form &form);
+QDataStream &operator<<(QDataStream &, const AutoFillManager::Address &address);
+QDataStream &operator>>(QDataStream &, AutoFillManager::Address &address);
 
 #endif // AUTOFILLMANAGER_H

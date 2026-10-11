@@ -73,6 +73,7 @@ include(network/cookiejar/cookiejar.pri)
 FORMS += \
     $$PWD/aboutdialog.ui \
     $$PWD/acceptlanguagedialog.ui \
+    $$PWD/addressdialog.ui \
     $$PWD/autofilldialog.ui \
     $$PWD/downloaditem.ui \
     $$PWD/searchbanner.ui \
@@ -80,6 +81,7 @@ FORMS += \
 HEADERS += \
     $$PWD/aboutdialog.h \
     $$PWD/acceptlanguagedialog.h \
+    $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
@@ -150,6 +152,7 @@ HEADERS += \
 SOURCES += \
     $$PWD/aboutdialog.cpp \
     $$PWD/acceptlanguagedialog.cpp \
+    $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \

@@ -39,6 +39,8 @@
 #include <qwebengineprofile.h>
 
 #include "settings.h"
+#include "addressdialog.h"
+#include "autofillmanager.h"
 #include "adblockdialog.h"
 #include "adblockmanager.h"
 #include "aroraicon.h"
@@ -98,6 +100,7 @@ private slots:
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void autoFillAddressesPage();
     void downloadsPage();
     void tabPositionPicker();
     void contentBlockerEngine();
@@ -127,6 +130,26 @@ static void fillContainerEditor(const QString &name, int attempts = 150)
             dialog->accept();
         } else if (attempts > 0) {
             fillContainerEditor(name, attempts - 1);
+        }
+    });
+}
+
+// ADDR01: fills the address editor's Name (+ optional ZIP) field and
+// accepts — same re-arming shape as fillContainerEditor.
+static void fillAddressEditor(const QString &name,
+                              const QString &zip = QString(),
+                              int attempts = 150)
+{
+    QTimer::singleShot(20, qApp, [name, zip, attempts]() {
+        AddressDialog *dialog = qobject_cast<AddressDialog *>(
+            QApplication::activeModalWidget());
+        if (dialog) {
+            dialog->nameEdit->setText(name);
+            if (!zip.isNull())
+                dialog->zipEdit->setText(zip);
+            dialog->accept();
+        } else if (attempts > 0) {
+            fillAddressEditor(name, zip, attempts - 1);
         }
     });
 }
@@ -1582,6 +1605,68 @@ void tst_SettingsDialog::containersPage()
     }
 }
 
+// ADDR01: the AutoFill page's Saved Addresses section — Add opens the
+// editor, the row appears on accept, Edit rewrites the stored fields,
+// Remove/Remove All delete, and the manager's change signal re-syncs
+// the open page.
+void tst_SettingsDialog::autoFillAddressesPage()
+{
+    AutoFillManager *manager = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> saved = manager->addresses();
+    manager->setAddresses(QList<AutoFillManager::Address>());
+
+    {
+        SettingsDialog dialog;
+        dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AutoFillPage));
+
+        // Empty state: Edit/Remove are gated on a selection.
+        QCOMPARE(dialog.addressesList->count(), 0);
+        QVERIFY(!dialog.editAddressButton->isEnabled());
+        QVERIFY(!dialog.removeAddressButton->isEnabled());
+
+        // Cancelling the editor adds nothing.
+        rejectModal();
+        dialog.addAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+
+        // Accepting with a name stores + selects the new row.
+        fillAddressEditor(QLatin1String("Ada"));
+        dialog.addAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 1);
+        QCOMPARE(manager->addresses().first().name, QLatin1String("Ada"));
+        QCOMPARE(dialog.addressesList->count(), 1);
+        QCOMPARE(dialog.addressesList->currentRow(), 0);
+        QVERIFY(dialog.addressesList->item(0)->text()
+                .contains(QLatin1String("Ada")));
+        QVERIFY(dialog.editAddressButton->isEnabled());
+        QVERIFY(dialog.removeAddressButton->isEnabled());
+
+        // Edit rewrites the persisted fields.
+        fillAddressEditor(QLatin1String("Ada"), QLatin1String("62701"));
+        dialog.editAddressButton->click();
+        QCOMPARE(manager->addresses().first().zip, QLatin1String("62701"));
+
+        // Remove deletes the selected row.
+        dialog.addressesList->setCurrentRow(0);
+        dialog.removeAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+        QCOMPARE(dialog.addressesList->count(), 0);
+        QVERIFY(!dialog.removeAddressButton->isEnabled());
+
+        // A write through the manager re-syncs the open page; Remove
+        // All clears the store.
+        AutoFillManager::Address address;
+        address.name = QLatin1String("Grace");
+        manager->addAddress(address);
+        QCOMPARE(dialog.addressesList->count(), 1);
+        dialog.removeAllAddressesButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+        QCOMPARE(dialog.addressesList->count(), 0);
+    }
+
+    manager->setAddresses(saved);
+}
+
 // POL03: Appearance's dark-mode checkbox (off by default) and
 // General's middle-click autoscroll (on by default everywhere but
 // macOS) round-trip through the websettings group.
@@ -1725,6 +1810,9 @@ void tst_SettingsDialog::tabPositionPicker()
     settings.remove(QLatin1String("tabs/tabBarPosition"));
 
     SettingsDialog dialog;
+    // The tiles can only take focus while their page is current —
+    // navigate there instead of relying on a persisted currentTab.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::TabSettingsPage));
     QVERIFY(dialog.tabBarPositionGroup);
     QCOMPARE(dialog.tabBarPositionGroup->title(),
              QLatin1String("Tab Bar Position"));

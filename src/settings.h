@@ -145,6 +145,15 @@ private slots:
     void chooseStyleSheet();
     void editAutoFillUser();
 
+    // ADDR01: the AutoFill page's Saved Addresses section — mutates
+    // the shared manager directly, like the containers editor.
+    void refreshAddresses();
+    void addAddress();
+    void editAddress();
+    void removeAddress();
+    void removeAllAddresses();
+    void addressSelectionChanged();
+
     void refreshSearchEngines();
     void refreshSearchSuggestions();
     // SRCH06: Search-page-owned settings back to compiled defaults.
