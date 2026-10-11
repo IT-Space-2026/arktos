@@ -124,14 +124,26 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     destinationLabel->setTextFormat(Qt::PlainText);
     // UIP01: secondary text — a hardcoded darkGray is unreadable under
     // a dark palette; PlaceholderText adapts to the active scheme.
+    // DLUX02: only the field captions read muted — the values keep
+    // the normal text role so the data stands out from its labels.
     QPalette p = downloadInfoLabel->palette();
     p.setColor(QPalette::Text, p.color(QPalette::PlaceholderText));
     downloadInfoLabel->setPalette(p);
-    for (QLabel *label : {static_cast<QLabel*>(sourceLabel),
-                          static_cast<QLabel*>(destinationLabel),
-                          startedLabel, finishedLabel,
-                          sizeLabel, speedLabel})
+    for (QLabel *label : {sourceCaption, destinationCaption,
+                          startedCaption, finishedCaption,
+                          sizeCaption, speedCaption})
         label->setPalette(p);
+    // The card's action row is secondary to the row header — one font
+    // step down keeps it quieter without a hardcoded size.
+    for (QPushButton *button : {openButton, stopButton, tryAgainButton,
+                                restartButton, showInFolderButton}) {
+        QFont small = button->font();
+        if (small.pointSizeF() > 0)
+            small.setPointSizeF(small.pointSizeF() * 0.9);
+        else if (small.pixelSize() > 0)
+            small.setPixelSize(qRound(small.pixelSize() * 0.9));
+        button->setFont(small);
+    }
     progressBar->setMaximum(0);
     // UIP02: this row packs three compact buttons — exempt it from the
     // dialog-wide minimum button width/height polish.
@@ -889,20 +901,20 @@ void DownloadItem::updateDetails()
     // Source and destination are untrusted text (the sourceLabel and
     // destinationLabel paint them as plain text and elide the middle).
     const QString source = m_url.isEmpty() ? tr("unknown") : m_url.toString();
-    sourceLabel->setText(tr("Source: %1").arg(source));
+    sourceLabel->setText(source);
     sourceLabel->setToolTip(source);
     const QString destination = m_outputFileName.isEmpty()
         ? tr("not saved yet") : m_outputFileName;
-    destinationLabel->setText(tr("Destination: %1").arg(destination));
+    destinationLabel->setText(destination);
     destinationLabel->setToolTip(destination);
 
     const QLocale locale;
     startedLabel->setText(m_startedTime.isValid()
-        ? tr("Started: %1").arg(locale.toString(m_startedTime, QLocale::ShortFormat))
-        : tr("Started: -"));
+        ? locale.toString(m_startedTime, QLocale::ShortFormat)
+        : QLatin1String("-"));
     finishedLabel->setText(m_finishedTime.isValid()
-        ? tr("Finished: %1").arg(locale.toString(m_finishedTime, QLocale::ShortFormat))
-        : tr("Finished: -"));
+        ? locale.toString(m_finishedTime, QLocale::ShortFormat)
+        : QLatin1String("-"));
 
     qint64 total = bytesTotal();
     if (total <= 0)
@@ -910,21 +922,21 @@ void DownloadItem::updateDetails()
     if (total <= 0)
         total = m_bytesReceived;
     sizeLabel->setText(total > 0
-        ? tr("Size: %1").arg(DownloadManager::dataString(total))
-        : tr("Size: unknown"));
+        ? DownloadManager::dataString(total)
+        : tr("unknown"));
 
     if (downloading()) {
         // The freshest ring-buffer reading is the live speed; before
         // the first sample falls back to the cumulative average.
         const double speed = m_speedSamples.isEmpty()
             ? currentSpeed() : m_speedSamples.constLast();
-        speedLabel->setText(tr("Speed: %1/s")
+        speedLabel->setText(tr("%1/s")
             .arg(DownloadManager::dataString(static_cast<qint64>(speed))));
     } else if (m_finalSpeed >= 0.0) {
-        speedLabel->setText(tr("Average speed: %1/s")
+        speedLabel->setText(tr("avg %1/s")
             .arg(DownloadManager::dataString(static_cast<qint64>(m_finalSpeed))));
     } else {
-        speedLabel->setText(tr("Speed: -"));
+        speedLabel->setText(QLatin1String("-"));
     }
 
     restartButton->setEnabled(!m_url.isEmpty() && !downloading());

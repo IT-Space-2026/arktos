@@ -10,10 +10,22 @@
    </rect>
   </property>
   <layout class="QHBoxLayout" name="horizontalLayout" >
-   <property name="margin" >
-    <number>0</number>
+   <property name="leftMargin" >
+    <number>6</number>
    </property>
-   <item>
+   <property name="topMargin" >
+    <number>4</number>
+   </property>
+   <property name="rightMargin" >
+    <number>4</number>
+   </property>
+   <property name="bottomMargin" >
+    <number>4</number>
+   </property>
+   <property name="spacing" >
+    <number>8</number>
+   </property>
+   <item alignment="Qt::AlignTop" >
     <widget class="QLabel" name="fileIcon" >
      <property name="sizePolicy" >
       <sizepolicy vsizetype="Minimum" hsizetype="Minimum" >
@@ -28,18 +40,49 @@
    </item>
    <item>
     <layout class="QVBoxLayout" name="verticalLayout_2" >
+     <property name="spacing" >
+      <number>4</number>
+     </property>
      <item>
-      <widget class="SqueezeLabel" native="1" name="fileNameLabel" >
-       <property name="sizePolicy" >
-        <sizepolicy vsizetype="Preferred" hsizetype="Expanding" >
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
+      <layout class="QHBoxLayout" name="nameRowLayout" >
+       <property name="spacing" >
+        <number>4</number>
        </property>
-       <property name="text" stdset="0" >
-        <string>Filename</string>
-       </property>
-      </widget>
+       <item>
+        <widget class="SqueezeLabel" native="1" name="fileNameLabel" >
+         <property name="sizePolicy" >
+          <sizepolicy vsizetype="Preferred" hsizetype="Expanding" >
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="font" >
+          <font>
+           <bold>true</bold>
+          </font>
+         </property>
+         <property name="text" stdset="0" >
+          <string>Filename</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QToolButton" name="expandButton" >
+         <property name="toolTip" >
+          <string>Show download details</string>
+         </property>
+         <property name="checkable" >
+          <bool>true</bool>
+         </property>
+         <property name="autoRaise" >
+          <bool>true</bool>
+         </property>
+         <property name="arrowType" >
+          <enum>Qt::RightArrow</enum>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
      <item>
       <widget class="QProgressBar" name="progressBar" >
@@ -66,35 +109,91 @@
        <property name="visible" >
         <bool>false</bool>
        </property>
+       <property name="styleSheet" >
+        <string notr="true" >#detailsWidget {
+ background-color: palette(alternate-base);
+ border: 1px solid palette(midlight);
+ border-radius: 6px;
+}</string>
+       </property>
        <layout class="QVBoxLayout" name="verticalLayout_4" >
+        <property name="leftMargin" >
+         <number>8</number>
+        </property>
+        <property name="topMargin" >
+         <number>8</number>
+        </property>
+        <property name="rightMargin" >
+         <number>8</number>
+        </property>
+        <property name="bottomMargin" >
+         <number>8</number>
+        </property>
+        <property name="spacing" >
+         <number>6</number>
+        </property>
         <item>
-         <widget class="SqueezeLabel" native="1" name="sourceLabel" >
-          <property name="sizePolicy" >
-           <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <layout class="QGridLayout" name="fieldsGrid" columnstretch="0,1" >
+          <property name="horizontalSpacing" >
+           <number>8</number>
           </property>
-          <property name="text" stdset="0" >
-           <string/>
+          <property name="verticalSpacing" >
+           <number>4</number>
           </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="SqueezeLabel" native="1" name="destinationLabel" >
-          <property name="sizePolicy" >
-           <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="text" stdset="0" >
-           <string/>
-          </property>
-         </widget>
+          <item row="0" column="0" >
+           <widget class="QLabel" name="sourceCaption" >
+            <property name="text" >
+             <string>Source:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1" >
+           <widget class="SqueezeLabel" native="1" name="sourceLabel" >
+            <property name="sizePolicy" >
+             <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text" stdset="0" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0" >
+           <widget class="QLabel" name="destinationCaption" >
+            <property name="text" >
+             <string>Destination:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1" >
+           <widget class="SqueezeLabel" native="1" name="destinationLabel" >
+            <property name="sizePolicy" >
+             <sizepolicy vsizetype="Preferred" hsizetype="Minimum" >
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="text" stdset="0" >
+             <string/>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </item>
         <item>
          <layout class="QHBoxLayout" name="timestampsLayout" >
+          <property name="spacing" >
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="startedCaption" >
+            <property name="text" >
+             <string>Started:</string>
+            </property>
+           </widget>
+          </item>
           <item>
            <widget class="QLabel" name="startedLabel" >
             <property name="text" >
@@ -116,6 +215,13 @@
            </spacer>
           </item>
           <item>
+           <widget class="QLabel" name="finishedCaption" >
+            <property name="text" >
+             <string>Finished:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="QLabel" name="finishedLabel" >
             <property name="text" >
              <string/>
@@ -126,6 +232,16 @@
         </item>
         <item>
          <layout class="QHBoxLayout" name="statsLayout" >
+          <property name="spacing" >
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="sizeCaption" >
+            <property name="text" >
+             <string>Size:</string>
+            </property>
+           </widget>
+          </item>
           <item>
            <widget class="QLabel" name="sizeLabel" >
             <property name="text" >
@@ -145,6 +261,13 @@
              </size>
             </property>
            </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="speedCaption" >
+            <property name="text" >
+             <string>Speed:</string>
+            </property>
+           </widget>
           </item>
           <item>
            <widget class="QLabel" name="speedLabel" >
@@ -167,6 +290,53 @@
         </item>
         <item>
          <layout class="QHBoxLayout" name="cardButtonsLayout" >
+          <property name="spacing" >
+           <number>6</number>
+          </property>
+          <item>
+           <widget class="QPushButton" name="openButton" >
+            <property name="text" >
+             <string>Open</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="stopButton" >
+            <property name="text" >
+             <string>Stop</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="tryAgainButton" >
+            <property name="enabled" >
+             <bool>false</bool>
+            </property>
+            <property name="text" >
+             <string>Try Again</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="cardButtonsSpacer" >
+            <property name="orientation" >
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0" >
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="cardSecondaryButtonsLayout" >
+          <property name="spacing" >
+           <number>6</number>
+          </property>
           <item>
            <widget class="QPushButton" name="restartButton" >
             <property name="enabled" >
@@ -188,7 +358,7 @@
            </widget>
           </item>
           <item>
-           <spacer name="cardButtonsSpacer" >
+           <spacer name="cardSecondaryButtonsSpacer" >
             <property name="orientation" >
              <enum>Qt::Horizontal</enum>
             </property>
@@ -204,76 +374,6 @@
         </item>
        </layout>
       </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QVBoxLayout" name="verticalLayout" >
-     <item>
-      <spacer name="verticalSpacer" >
-       <property name="orientation" >
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0" >
-        <size>
-         <width>17</width>
-         <height>1</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QToolButton" name="expandButton" >
-       <property name="toolTip" >
-        <string>Show download details</string>
-       </property>
-       <property name="checkable" >
-        <bool>true</bool>
-       </property>
-       <property name="autoRaise" >
-        <bool>true</bool>
-       </property>
-       <property name="arrowType" >
-        <enum>Qt::RightArrow</enum>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="tryAgainButton" >
-       <property name="enabled" >
-        <bool>false</bool>
-       </property>
-       <property name="text" >
-        <string>Try Again</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="stopButton" >
-       <property name="text" >
-        <string>Stop</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="openButton" >
-       <property name="text" >
-        <string>Open</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <spacer name="verticalSpacer_2" >
-       <property name="orientation" >
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0" >
-        <size>
-         <width>17</width>
-         <height>5</height>
-        </size>
-       </property>
-      </spacer>
      </item>
     </layout>
    </item>
