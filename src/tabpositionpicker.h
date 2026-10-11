@@ -19,10 +19,7 @@
 #ifndef TABPOSITIONPICKER_H
 #define TABPOSITIONPICKER_H
 
-#include <qvector.h>
-#include <qwidget.h>
-
-class TabPositionTile;
+#include "positionpicker.h"
 
 // TABS03: Vivaldi-style visual picker for the Tab Settings page's
 // tab-bar position option — four clickable tiles that each sketch a
@@ -31,31 +28,13 @@ class TabPositionTile;
 // Top/Left/Right/Bottom, but the index semantics stay identical to the
 // persisted tabs/tabBarPosition value and the old combo (0=Top,
 // 1=Bottom, 2=Left, 3=Right) so existing settings keep their meaning.
-class TabPositionPicker : public QWidget
+// Tile chrome + interaction come from PositionPicker (UIAUDIT03).
+class TabPositionPicker : public PositionPicker
 {
     Q_OBJECT
 
 public:
     explicit TabPositionPicker(QWidget *parent = nullptr);
-
-    // QComboBox-shaped surface so the settings load/save lines stay
-    // unchanged: index 0..3 == Top/Bottom/Left/Right.
-    int currentIndex() const { return m_currentIndex; }
-    int count() const { return 4; }
-
-public slots:
-    void setCurrentIndex(int index);
-
-signals:
-    void positionChanged(int index);
-
-private:
-    friend class TabPositionTile;
-    void tileActivated(int positionIndex);
-    void stepTileFocus(TabPositionTile *tile, int delta);
-
-    int m_currentIndex;
-    QVector<TabPositionTile *> m_tiles;
 };
 
 #endif // TABPOSITIONPICKER_H

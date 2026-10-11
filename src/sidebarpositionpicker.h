@@ -19,10 +19,7 @@
 #ifndef SIDEBARPOSITIONPICKER_H
 #define SIDEBARPOSITIONPICKER_H
 
-#include <qvector.h>
-#include <qwidget.h>
-
-class SidebarPositionTile;
+#include "positionpicker.h"
 
 // SIDE03: Vivaldi-style visual picker for the Appearance page's
 // Sidebar group — two clickable tiles that each sketch a miniature
@@ -31,31 +28,13 @@ class SidebarPositionTile;
 // semantics stay identical to the persisted
 // MainWindow/sidebarDockArea mapping the old combo used (0 = Left,
 // 1 = Right) so existing settings keep their meaning.
-class SidebarPositionPicker : public QWidget
+// Tile chrome + interaction come from PositionPicker (UIAUDIT03).
+class SidebarPositionPicker : public PositionPicker
 {
     Q_OBJECT
 
 public:
     explicit SidebarPositionPicker(QWidget *parent = nullptr);
-
-    // QComboBox-shaped surface so the settings load/save lines stay
-    // unchanged: index 0 == Left dock area, 1 == Right dock area.
-    int currentIndex() const { return m_currentIndex; }
-    int count() const { return 2; }
-
-public slots:
-    void setCurrentIndex(int index);
-
-signals:
-    void positionChanged(int index);
-
-private:
-    friend class SidebarPositionTile;
-    void tileActivated(int positionIndex);
-    void stepTileFocus(SidebarPositionTile *tile, int delta);
-
-    int m_currentIndex;
-    QVector<SidebarPositionTile *> m_tiles;
 };
 
 #endif // SIDEBARPOSITIONPICKER_H

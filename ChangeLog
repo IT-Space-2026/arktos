@@ -202,6 +202,9 @@ UI:
 - Internal cleanup: removed dead code left over from earlier UI
   work — unused accessors and a signal nothing listens to
   (UIAUDIT02).
+- Internal cleanup: the Tab-bar-position and Sidebar-position
+  preview pickers now share one implementation, and the tab strip
+  does slightly less work per repaint (UIAUDIT03).
 - Saved addresses on the Preferences → AutoFill page: a list of
   stored addresses with Add/Edit/Remove/Remove All — the editor
   collects country (full territory list, defaults to the system
