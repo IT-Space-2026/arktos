@@ -109,6 +109,11 @@ public:
     // False while the Rust children sit unmaterialized — the save
     // path's expanded-flag sync only walks loaded subtrees.
     bool childrenLoaded() const { return m_childrenLoaded; }
+    // Re-pull the store's child list on the next children() call —
+    // the rust-side bulk import (rc_bm_import_html, BKIMP01) inserts
+    // store children this proxy has never seen.  Only valid while
+    // m_children is empty (a freshly created node).
+    void invalidateChildren() { if (m_children.isEmpty()) m_childrenLoaded = false; }
 #endif
 
 private:

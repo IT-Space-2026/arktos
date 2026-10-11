@@ -29,6 +29,7 @@
 class AutoSaver;
 class BookmarkNode;
 class BookmarksModel;
+class QJsonObject;
 class BookmarksManager : public QObject
 {
     Q_OBJECT
@@ -63,6 +64,26 @@ public:
         return &m_commands;
     }
 
+#ifdef ARORA_RUSTCORE
+    // BKIMP01: the dialog-free import/export cores — public so
+    // autotests and smokes can drive them; the slots below wrap them
+    // in QFileDialog + summary prompts.
+    //
+    // importHtmlBookmarks fills a new undoable "Imported <date>"
+    // folder under `parent` through rc_bm_import_html (the store's
+    // url-scheme gate applies; importBookmarklets is the caller's
+    // consent for javascript: urls).  Returns the folder — its
+    // store-side children materialize lazily — or nullptr when
+    // nothing landed; *summaryOut receives the import counts.
+    BookmarkNode *importHtmlBookmarks(const QByteArray &html,
+                                    BookmarkNode *parent,
+                                    bool importBookmarklets,
+                                    QJsonObject *summaryOut);
+    // .html -> rc_bm_export_html; anything else is the canonical
+    // XBEL writer (rc_bm_save).  False on write failure.
+    bool exportBookmarksTo(const QString &fileName);
+#endif
+
 public slots:
     void importBookmarks();
     void exportBookmarks();
@@ -72,6 +93,9 @@ private slots:
 
 private:
     void load();
+#ifdef ARORA_RUSTCORE
+    void importHtmlDocument(const QByteArray &html);
+#endif
 
     bool m_loaded;
     AutoSaver *m_saveTimer;

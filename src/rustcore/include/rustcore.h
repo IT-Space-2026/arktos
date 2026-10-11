@@ -399,6 +399,34 @@ RcStatus rc_bm_set_tags(uint64_t node, const char *jsonUtf8);
 /* Exact-url dedup lookup: first matching bookmark handle, or 0. */
 uint64_t rc_bm_find(const char *urlUtf8);
 
+/* --- bookmark HTML import/export (BKIMP01) ----------------------------
+ * rc_bm_import_html parses a Netscape bookmark document in-memory —
+ * the DL/DT/H3/A/HR grammar of tools/htmlToXBel, bounded scans, no
+ * XML detour — and inserts the tree under `parent` (a root or folder
+ * handle).  Every inserted bookmark passes the store's url-scheme
+ * policy: http/https/ftp/mailto and relative urls pass; javascript:
+ * passes only with RC_BM_IMPORT_BOOKMARKLETS (the caller's bookmarklet
+ * consent — the same gate Bookmarks::create applies to every insert);
+ * every other scheme is refused and counted.  Folders merge by title
+ * under the same parent and same-url bookmarks dedup, so re-running
+ * the same document is idempotent.
+ *
+ * Returns a JSON summary {"imported","folders","separators",
+ * "duplicates","skipped","skipped_by_scheme":{scheme:count},
+ * "truncated"} — free with rc_string_free(); NULL on error
+ * (rc_last_error_message).  RC_BM_IMPORT_DRY_RUN runs the full scan +
+ * accounting without inserting — the consent-probe pass a caller runs
+ * before creating anything. */
+#define RC_BM_IMPORT_BOOKMARKLETS 0x1
+#define RC_BM_IMPORT_DRY_RUN      0x2
+char *rc_bm_import_html(uint64_t parent, const uint8_t *html, size_t len,
+                        int flags);          /* JSON; rc_string_free */
+
+/* Writes the tree in the standard NETSCAPE-Bookmark-file-1 shape to
+ * `path` — atomic temp + fsync + rename, mode 0600 on unix (exports
+ * can carry token-bearing urls). */
+RcStatus rc_bm_export_html(const char *pathUtf8);
+
 /* --- history store (RCORE02b) -----------------------------------------
  * rusqlite-backed visit log + per-host icon table; every mutation
  * writes through, so the database is always current.  Default path

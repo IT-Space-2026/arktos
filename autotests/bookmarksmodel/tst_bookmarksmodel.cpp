@@ -18,6 +18,9 @@
 #include <bookmarksmanager.h>
 #include <bookmarksmodel.h>
 #include <bookmarknode.h>
+#ifdef ARORA_RUSTCORE
+#include <qjsonobject.h>
+#endif
 
 class tst_BookmarksModel : public QObject
 {
@@ -40,6 +43,7 @@ private slots:
     void indexForNode();
 #ifdef ARORA_RUSTCORE
     void rustPersistence();
+    void rustHtmlImportExport();
 #endif
 };
 
@@ -331,6 +335,108 @@ void tst_BookmarksModel::rustPersistence()
         QVERIFY(found);
         // Leave the persisted file clean for the next manager.
         clearFolder(manager, manager.menu());
+    }
+}
+
+// BKIMP01: Netscape-HTML import/export through the manager — the
+// store's url-scheme gate refuses unsafe schemes, the import folder
+// materializes lazily, and export->import round-trips.
+void tst_BookmarksModel::rustHtmlImportExport()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        BookmarksManager manager;
+        BookmarkNode *menu = manager.menu();
+        clearFolder(manager, menu);
+        const int base = menu->children().count();
+
+        const QByteArray html =
+            "<DL><p>"
+            "<DT><H3>Docs</H3><DL><p>"
+            "<DT><A HREF=\"https://a.example/\">A</A>"
+            "<DT><A HREF=\"javascript:alert(1)\">J</A>"
+            "<DT><A HREF=\"data:,x\">D</A>"
+            "<DT><A HREF=\"http://b.example/\">B</A>"
+            "<HR>"
+            "</DL><p>"
+            "<DT><A HREF=\"https://c.example/\">C &lt;3</A>"
+            "</DL><p>";
+        QJsonObject summary;
+        BookmarkNode *folder =
+            manager.importHtmlBookmarks(html, menu, false, &summary);
+        QVERIFY(folder);
+        QCOMPARE(folder->parent(), menu);
+        // Imported + skipped land in the summary; the gate refused
+        // javascript and data by default.
+        QCOMPARE(summary.value(QLatin1String("imported")).toInt(), 3);
+        QCOMPARE(summary.value(QLatin1String("skipped")).toInt(), 2);
+        QCOMPARE(summary.value(QLatin1String("skipped_by_scheme"))
+                    .toObject().value(QLatin1String("javascript")).toInt(), 1);
+
+        // Store-side children materialize on first children() pull.
+        // The document's outer <DL> becomes the same unnamed wrapper
+        // folder the old converter.cpp XBEL path produced.
+        QList<BookmarkNode *> top = folder->children();
+        QCOMPARE(top.count(), 1);
+        BookmarkNode *wrapper = top.at(0);
+        QCOMPARE(wrapper->type(), BookmarkNode::Folder);
+        QList<BookmarkNode *> wrapped = wrapper->children();
+        QCOMPARE(wrapped.count(), 2);
+        BookmarkNode *docs = wrapped.at(0);
+        QCOMPARE(docs->type(), BookmarkNode::Folder);
+        QCOMPARE(docs->title, QLatin1String("Docs"));
+        QList<BookmarkNode *> docsKids = docs->children();
+        QCOMPARE(docsKids.count(), 3);   // A, B, separator
+        QCOMPARE(docsKids.at(0)->url, QLatin1String("https://a.example/"));
+        QCOMPARE(docsKids.at(1)->url, QLatin1String("http://b.example/"));
+        QCOMPARE(docsKids.at(2)->type(), BookmarkNode::Separator);
+        QCOMPARE(wrapped.at(1)->url, QLatin1String("https://c.example/"));
+
+        // Consent flag admits the bookmarklet; the document merges
+        // into the already-imported folders.
+        QJsonObject summary2;
+        BookmarkNode *folder2 =
+            manager.importHtmlBookmarks(html, folder, true, &summary2);
+        QVERIFY(folder2);
+        BookmarkNode *docs2 = nullptr;
+        const QList<BookmarkNode *> kids2 = folder2->children();
+        QCOMPARE(kids2.count(), 1);   // unnamed <DL> wrapper
+        const QList<BookmarkNode *> wrapped2 = kids2.at(0)->children();
+        for (BookmarkNode *n : wrapped2) {
+            if (n->title == QLatin1String("Docs"))
+                docs2 = n;
+        }
+        QVERIFY(docs2);
+        bool hasJs = false;
+        const QList<BookmarkNode *> dk = docs2->children();
+        for (BookmarkNode *n : dk) {
+            if (n->url.startsWith(QLatin1String("javascript:")))
+                hasJs = true;
+        }
+        QVERIFY(hasJs);
+
+        // Export -> NETSCAPE doctype, strict escaping, and the file
+        // re-imports.
+        const QString out = dir.filePath(QLatin1String("export.html"));
+        QVERIFY(manager.exportBookmarksTo(out));
+        const QByteArray exported = [&] {
+            QFile f(out);
+            if (!f.open(QIODevice::ReadOnly))
+                return QByteArray();
+            return f.readAll();
+        }();
+        QVERIFY(exported.contains("NETSCAPE-Bookmark-file-1"));
+        QVERIFY(exported.contains("HREF=\"https://a.example/\""));
+        // The hostile title/entity chars are escaped, never raw.
+        QVERIFY(!exported.contains("<script"));
+        const QString xbel = dir.filePath(QLatin1String("export.xbel"));
+        QVERIFY(manager.exportBookmarksTo(xbel));
+        QVERIFY(QFileInfo::exists(xbel));
+
+        // folder2 nested under folder, so menu gained one folder.
+        QCOMPARE(menu->children().count(), base + 1);
+        clearFolder(manager, menu);
     }
 }
 #endif // ARORA_RUSTCORE

@@ -72,6 +72,11 @@
 //!     brand version, the useragents.xml preset parse and the
 //!     per-site UA spoof table (a "uaspoof" kind inside the
 //!     sitedecisions store).
+//!   * bookmarkhtml (BKIMP01): Netscape bookmark-file import/export
+//!     at the store boundary — the converter.cpp forgiving-tag parse
+//!     redone memory-safe, the url-scheme insert gate behind a
+//!     caller-passed bookmarklet flag, merge/dedup for idempotent
+//!     re-imports, and the atomic 0600 NETSCAPE-file writer.
 //!   * clearplan (CLR01): the clear-private-data decision — a pure
 //!     (period, categories, scope) -> ordered operation list
 //!     function the Qt shell executes per-store; profile scoping is
@@ -80,6 +85,7 @@
 mod autofill;
 mod bidi;
 mod blocklist;
+mod bookmarkhtml;
 mod bookmarks;
 mod clearplan;
 mod cred;
@@ -1420,6 +1426,82 @@ pub unsafe extern "C" fn rc_bm_find(url: *const c_char) -> u64 {
         }
     }))
     .unwrap_or(0)
+}
+
+/// BKIMP01: parses a Netscape bookmark HTML document and inserts the
+/// tree under `parent` (a root or folder handle), applying the
+/// store's url-scheme policy at the boundary — http/https/ftp/mailto
+/// pass, javascript: passes only with RC_BM_IMPORT_BOOKMARKLETS, every
+/// other scheme is refused and counted.  RC_BM_IMPORT_DRY_RUN runs
+/// the full scan + accounting without inserting (the Qt adapter's
+/// consent probe).
+///
+/// Returns a JSON summary
+/// {"imported","folders","separators","duplicates","skipped",
+///  "skipped_by_scheme":{scheme:count},"truncated"} — free with
+/// rc_string_free(); NULL on error (rc_last_error_message).
+///
+/// # Safety
+/// `html` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_import_html(
+    parent: u64,
+    html: *const u8,
+    len: usize,
+    flags: i32,
+) -> *mut c_char {
+    match catch_unwind(AssertUnwindSafe(|| {
+        let data = match unsafe { util::bytes(html, len) } {
+            Some(d) => d,
+            None => {
+                error::set_error("bad html pointer");
+                return (ptr::null_mut(), false);
+            }
+        };
+        match bookmarks::with(|b| {
+            bookmarkhtml::import_html(
+                b,
+                parent,
+                data,
+                flags & bookmarkhtml::IMPORT_BOOKMARKLETS != 0,
+                flags & bookmarkhtml::IMPORT_DRY_RUN != 0,
+            )
+        }) {
+            Ok((json, created)) => (util::to_c_string(json), created),
+            Err(e) => {
+                error::set_error(&e.msg);
+                (ptr::null_mut(), false)
+            }
+        }
+    })) {
+        Ok((p, created)) => {
+            if created {
+                notify::emit("bookmarks");
+            }
+            p
+        }
+        Err(_) => {
+            error::set_error("panic inside rustcore");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Serializes the tree as a NETSCAPE-Bookmark-file-1 document and
+/// installs it at `path` atomically (temp + fsync + rename, mode
+/// 0600 on unix — exports can carry token-bearing urls).
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_bm_export_html(path: *const c_char) -> RcStatus {
+    status_of(|| {
+        let p = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        bookmarks::with(|b| bookmarkhtml::save_html_path(b, std::path::Path::new(p)))
+    })
 }
 
 // ---- history store (RCORE02b) ----------------------------------------

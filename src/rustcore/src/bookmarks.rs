@@ -64,7 +64,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn new(kind: u8) -> Node {
+    pub(crate) fn new(kind: u8) -> Node {
         Node {
             parent: None,
             children: Vec::new(),
@@ -108,7 +108,7 @@ pub fn with<R>(f: impl FnOnce(&mut Bookmarks) -> R) -> R {
 }
 
 impl Bookmarks {
-    fn new() -> Bookmarks {
+    pub(crate) fn new() -> Bookmarks {
         let mut nodes = HashMap::new();
         nodes.insert(1, Node::new(TYPE_ROOT));
         Bookmarks {
@@ -179,6 +179,49 @@ impl Bookmarks {
             .map(|n| serde_json::to_string(&n.to_json()).unwrap_or_default())
     }
 
+    /// Read-only node access for sibling modules (the HTML importer
+    /// walks children to merge/dedup, the exporter reads the tree).
+    pub(crate) fn node_ref(&self, h: u64) -> Option<&Node> {
+        self.nodes.get(&h)
+    }
+
+    /// Raw allocation for the bulk importer — pair with attach().
+    pub(crate) fn alloc_node(&mut self, node: Node) -> u64 {
+        self.alloc(node)
+    }
+
+    pub(crate) fn children_of(&self, h: u64) -> Option<Vec<u64>> {
+        self.nodes.get(&h).map(|n| n.children.clone())
+    }
+
+    /// First direct folder child of `parent` titled `title` — the
+    /// HTML importer's merge rule (re-imports fold, not duplicate).
+    pub(crate) fn child_folder_named(&self, parent: u64, title: &str) -> Option<u64> {
+        let n = self.nodes.get(&parent)?;
+        n.children.iter().copied().find(|&c| {
+            self.nodes
+                .get(&c)
+                .map(|m| m.kind == TYPE_FOLDER && m.title == title)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Whether a direct bookmark child of `parent` already carries
+    /// `url` — the HTML importer's dedup rule.
+    pub(crate) fn child_has_bookmark_url(&self, parent: u64, url: &str) -> bool {
+        self.nodes
+            .get(&parent)
+            .map(|n| {
+                n.children.iter().any(|&c| {
+                    self.nodes
+                        .get(&c)
+                        .map(|m| m.kind == TYPE_BOOKMARK && m.url == url)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Depth-first first bookmark node whose url matches — the
     /// "is this page bookmarked" dedup query.
     pub fn find_url(&self, url: &str) -> Option<u64> {
@@ -220,6 +263,18 @@ impl Bookmarks {
                 .iter()
                 .filter_map(|t| t.as_str().map(str::to_owned))
                 .collect();
+        }
+        if kind == TYPE_BOOKMARK {
+            // BKIMP01: the url-scheme gate runs at EVERY insert — a
+            // hostile XBEL import, a dropped link or a pasted url hits
+            // the same wall as the HTML importer.  "allow_javascript"
+            // in the spec is the caller's import_bookmarklets consent
+            // (default refuse), so the store can never accept a url
+            // WebView::loadUrl would execute or expose.
+            crate::bookmarkhtml::check_bookmark_url(
+                &node.url,
+                json["allow_javascript"].as_bool().unwrap_or(false),
+            )?;
         }
         let h = self.alloc(node);
         self.attach(parent, row, h)?;
@@ -304,7 +359,14 @@ impl Bookmarks {
         let n = self.node_mut(h)?;
         match field {
             "title" => n.title = value.into(),
-            "url" => n.url = value.into(),
+            "url" => {
+                // BKIMP01: same insert gate — a single deliberate url
+                // edit is the human equivalent of the import flag, so
+                // javascript: passes here; every other non-allowlist
+                // scheme (data:, file:, arora-*) still refuses.
+                crate::bookmarkhtml::check_bookmark_url(value, true)?;
+                n.url = value.into();
+            }
             "desc" => n.desc = value.into(),
             _ => return Self::invalid("unknown string field"),
         }

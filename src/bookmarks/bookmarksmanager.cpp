@@ -92,6 +92,9 @@
 
 #include <rustcore.h>
 
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
 // Direct field writes bypass the undo commands (and BookmarkNode's
 // attach-time resync), so wherever the manager rewrites a field
 // itself the store copy has to be pushed explicitly.
@@ -429,9 +432,22 @@ void BookmarksManager::importBookmarks()
                 tr("Bookmarks file %1 is too large to import.").arg(fileName));
             return;
         }
+        const QByteArray html = file.readAll();
+#ifdef ARORA_RUSTCORE
+        // BKIMP01: parse + insert in rustcore — bounded scan, merge/
+        // dedup, and the url-scheme gate at the store boundary.
+        importHtmlDocument(html);
+        return;
+#else
+        // Convert in-process: the Netscape-HTML parser is shared with
+        // tools/htmlToXBel and is internally bounded (256 KiB
+        // closing-tag scan windows), so it is safe on the GUI thread.
+        // The Qt4 flow spawned the tool and blocked the event loop in
+        // waitForFinished(-1) — and the binary is never installed, so
+        // the feature was dead in packaged builds anyway.
         QBuffer buffer;
         buffer.open(QIODevice::ReadWrite);
-        if (convertHtmlToXbel(QString::fromUtf8(file.readAll()), &buffer) != 0) {
+        if (convertHtmlToXbel(QString::fromUtf8(html), &buffer) != 0) {
             QMessageBox::warning(nullptr, tr("Loading Bookmark"),
                 tr("Error when loading HTML bookmarks: no bookmarks "
                    "found in %1.").arg(fileName));
@@ -439,6 +455,7 @@ void BookmarksManager::importBookmarks()
         }
         buffer.seek(0);
         importRootNode = reader.read(&buffer);
+#endif
     } else {
         importRootNode = reader.read(fileName);
     }
@@ -457,6 +474,26 @@ void BookmarksManager::importBookmarks()
 
 void BookmarksManager::exportBookmarks()
 {
+#ifdef ARORA_RUSTCORE
+    QStringList supportedFormats;
+    supportedFormats << tr("XBEL bookmarks").append(QLatin1String("(*.xbel *.xml)"));
+    supportedFormats << tr("HTML Netscape bookmarks").append(QLatin1String("(*.html)"));
+    QString selectedFilter = supportedFormats.first();
+    QString fileName = QFileDialog::getSaveFileName(nullptr, tr("Save File"),
+                                tr("%1 Bookmarks.xbel").arg(QCoreApplication::applicationName()),
+                                supportedFormats.join(QLatin1String(";;")),
+                                &selectedFilter);
+    if (fileName.isEmpty())
+        return;
+    // The file dialog doesn't add the selected-format suffix on its
+    // own — a "Netscape" choice without .html writes XBEL otherwise.
+    if (selectedFilter.contains(QLatin1String("HTML"))
+            && !fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive))
+        fileName.append(QLatin1String(".html"));
+
+    if (!exportBookmarksTo(fileName))
+        QMessageBox::critical(nullptr, tr("Export error"), tr("error saving bookmarks"));
+#else
     QString fileName = QFileDialog::getSaveFileName(nullptr, tr("Save File"),
                                 tr("%1 Bookmarks.xbel").arg(QCoreApplication::applicationName()),
                                 tr("XBEL bookmarks").append(QLatin1String("(*.xbel *.xml)")));
@@ -466,7 +503,123 @@ void BookmarksManager::exportBookmarks()
     XbelWriter writer;
     if (!writer.write(fileName, m_bookmarkRootNode.get()))
         QMessageBox::critical(nullptr, tr("Export error"), tr("error saving bookmarks"));
+#endif
 }
+
+#ifdef ARORA_RUSTCORE
+// BKIMP01: the rust-side import driver.  A dry run first counts what
+// the document would insert (and what the url-scheme gate would
+// refuse) without touching the store, so the bookmarklet question is
+// settled before the first insert.
+void BookmarksManager::importHtmlDocument(const QByteArray &html)
+{
+    if (!m_loaded)
+        load();
+    const uint64_t rootHandle = menu()->handle();
+    char *probeJson = rc_bm_import_html(rootHandle,
+            reinterpret_cast<const uint8_t *>(html.constData()),
+            size_t(html.size()), RC_BM_IMPORT_DRY_RUN);
+    if (!probeJson) {
+        char *err = rc_last_error_message();
+        QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+            tr("Error when loading HTML bookmarks: %1")
+                .arg(QString::fromUtf8(err ? err : "")));
+        rc_string_free(err);
+        return;
+    }
+    const QJsonObject probe =
+        QJsonDocument::fromJson(QByteArray(probeJson)).object();
+    rc_string_free(probeJson);
+    int items = 0;
+    for (const char *key : {"imported", "folders", "separators",
+                            "duplicates", "skipped"})
+        items += probe.value(QLatin1String(key)).toInt();
+    if (items == 0) {
+        QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+            tr("Error when loading HTML bookmarks: no bookmarks "
+               "found."));
+        return;
+    }
+    const int bookmarklets =
+        probe.value(QLatin1String("skipped_by_scheme")).toObject()
+            .value(QLatin1String("javascript")).toInt();
+    bool importBookmarklets = false;
+    if (bookmarklets > 0) {
+        importBookmarklets = QMessageBox::question(nullptr,
+            tr("Import bookmarklets?"),
+            tr("The file contains %1 bookmarklet(s) — javascript: links "
+               "that run script in the current page when opened.\n"
+               "Import them anyway?").arg(bookmarklets),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+            == QMessageBox::Yes;
+    }
+    QJsonObject summary;
+    if (!importHtmlBookmarks(html, menu(), importBookmarklets, &summary)) {
+        QMessageBox::warning(nullptr, tr("Loading Bookmark"),
+            tr("Error when loading HTML bookmarks: no importable "
+               "bookmarks found."));
+        return;
+    }
+    const int imported = summary.value(QLatin1String("imported")).toInt();
+    const int skipped = summary.value(QLatin1String("skipped")).toInt();
+    QMessageBox::information(nullptr, tr("Bookmarks imported"),
+        skipped > 0
+            ? tr("%1 bookmark item(s) imported; %2 item(s) were skipped "
+                 "as unsafe or unsupported URLs.")
+                  .arg(imported).arg(skipped)
+            : tr("%1 bookmark item(s) imported.").arg(imported));
+}
+
+BookmarkNode *BookmarksManager::importHtmlBookmarks(const QByteArray &html,
+        BookmarkNode *parent, bool importBookmarklets, QJsonObject *summaryOut)
+{
+    if (!m_loaded)
+        load();
+    if (!parent)
+        parent = menu();
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder);
+    folder->title = (tr("Imported %1")
+            .arg(QLocale().toString(QDate::currentDate(), QLocale::ShortFormat)));
+    addBookmark(parent, folder);
+    char *json = nullptr;
+    if (folder->handle()) {
+        json = rc_bm_import_html(folder->handle(),
+                reinterpret_cast<const uint8_t *>(html.constData()),
+                size_t(html.size()),
+                importBookmarklets ? RC_BM_IMPORT_BOOKMARKLETS : 0);
+    }
+    QJsonObject summary;
+    if (json) {
+        summary = QJsonDocument::fromJson(QByteArray(json)).object();
+        rc_string_free(json);
+    }
+    const int items = summary.value(QLatin1String("imported")).toInt()
+                    + summary.value(QLatin1String("folders")).toInt()
+                    + summary.value(QLatin1String("separators")).toInt();
+    if (items == 0) {
+        // Nothing landed (parse failure or a fully-skipped document):
+        // drop the empty folder so the user sees no trace.
+        removeBookmark(folder);
+        return nullptr;
+    }
+    // The store-side children were inserted behind this proxy's back.
+    folder->invalidateChildren();
+    if (summaryOut)
+        *summaryOut = summary;
+    return folder;
+}
+
+bool BookmarksManager::exportBookmarksTo(const QString &fileName)
+{
+    if (!m_loaded)
+        load();
+    // .html is the BKIMP01 Netscape writer; anything else is the
+    // canonical XBEL — both atomic on the rust side.
+    if (fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive))
+        return rc_bm_export_html(fileName.toUtf8().constData()) == RC_OK;
+    return rc_bm_save(fileName.toUtf8().constData()) == RC_OK;
+}
+#endif // ARORA_RUSTCORE
 
 RemoveBookmarksCommand::RemoveBookmarksCommand(BookmarksManager *m_bookmarkManagaer, BookmarkNode *parent, int row)
     : QUndoCommand(BookmarksManager::tr("Remove Bookmark"))
