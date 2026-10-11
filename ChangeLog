@@ -583,6 +583,9 @@ Rust core quality sweep (RAUDIT01):
     A full audit pass over the shared Rust core (.devin/RAUDIT01-report.md) fixed a real denial-of-service bound in Netscape bookmark import — a file of unclosed <A> tags could spend a 256 KiB rescan per tag, so total closing-tag work is now budgeted at 4x the document — and unified the domain blocklist's per-request probe with the Tranco table's zero-allocation host normalization, so blocklist lookups no longer allocate on every request.
     The sweep also brought the crate to a zero-warning clippy baseline: every exported entry point now documents its C-call safety contract, and ~20 smaller lint fixes landed across the modules. The public C ABI is unchanged.
 
+Rust core lazy-list dedup (RAUDIT02):
+    The "seed list plus data-dir override" machinery the blocklist, Tranco table and url-strip ruleset each carried as a private copy now lives in one shared helper (store::DirCache): a poison-tolerant RwLock slot holding an Arc'd value stamped with the data dir it was resolved against, rebuilt once when the dir arrives late. Each module keeps its own load/merge logic as the injected closure, and the url-strip ruleset picks up the same reload-on-dir-change behavior the other two lists already had — an override file dropped in after first use is no longer ignored. No behavior or ABI change otherwise.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

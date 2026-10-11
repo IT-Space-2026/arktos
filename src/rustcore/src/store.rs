@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use aes_gcm::aead::{consts::U12, generic_array::GenericArray, Aead, KeyInit};
 use aes_gcm::Aes256Gcm;
@@ -88,6 +88,68 @@ pub fn lock() -> MutexGuard<'static, Store> {
 pub(crate) fn test_lock() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The resolved data dir, or None before rc_set_data_dir — the stamp
+/// every DirCache compares its cached value against.
+pub(crate) fn data_dir() -> Option<PathBuf> {
+    lock().dir().ok().map(|d| d.to_path_buf())
+}
+
+/// A process-global lazily-populated list slot — the machinery
+/// blocklist.rs, tranco.rs and urlstrip.rs used to triplicate
+/// (RAUDIT02): `RwLock<Option<Arc<T>>>` behind poison-tolerant
+/// guards, stamped with the data dir the value was resolved against
+/// so a store that appears after first use (rc_set_data_dir arriving
+/// late) triggers exactly one rebuild.  The Arc keeps a probe in
+/// flight on the IO thread alive across a reload swapping the value
+/// under it.  Per-module load logic stays with the module — the
+/// closure gets the resolved dir (or None) and returns the value.
+pub struct DirCache<T> {
+    slot: RwLock<Option<(Option<PathBuf>, Arc<T>)>>,
+}
+
+impl<T> DirCache<T> {
+    pub const fn new() -> Self {
+        DirCache {
+            slot: RwLock::new(None),
+        }
+    }
+
+    /// The cached value, rebuilt through `load` when the resolved
+    /// data dir changed since the cached value was stamped.  A
+    /// concurrent rebuild can race — last writer wins, both readers
+    /// keep their own Arc (same semantics the hand-rolled slots had).
+    pub fn get_or_load(&self, load: impl FnOnce(Option<&Path>) -> T) -> Arc<T> {
+        let dir = data_dir();
+        {
+            let slot = self.slot.read().unwrap_or_else(|e| e.into_inner());
+            if let Some((stamp, value)) = slot.as_ref() {
+                if stamp == &dir {
+                    return value.clone();
+                }
+            }
+        }
+        let value = Arc::new(load(dir.as_deref()));
+        *self.slot.write().unwrap_or_else(|e| e.into_inner()) =
+            Some((dir, value.clone()));
+        value
+    }
+
+    /// Swap in a caller-supplied value stamped with the current data
+    /// dir — the `rc_*_load`/`rc_*_reload` seam each module exposes.
+    pub fn replace(&self, value: T) -> Arc<T> {
+        let value = Arc::new(value);
+        *self.slot.write().unwrap_or_else(|e| e.into_inner()) =
+            Some((data_dir(), value.clone()));
+        value
+    }
+}
+
+impl<T> Default for DirCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Store {

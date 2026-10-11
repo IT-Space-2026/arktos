@@ -30,10 +30,11 @@
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::net::IpAddr;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::error::{fail, Fail, RcResult, RcStatus};
+use crate::store::{data_dir, DirCache};
 use crate::util;
 
 /// Updated-list drop point inside the data dir — the Qt-side
@@ -51,31 +52,18 @@ const BUILTIN_LIST: &str = include_str!("../data/blocklist-domains.txt");
 const MAX_ENTRIES: usize = 1_000_000;
 const MAX_LINE: usize = 8192;
 
-/// The loaded list.  `dir` is the data dir the entries were resolved
-/// against — the lazy loader rebuilds when the effective dir changes,
-/// which is how a store that appears after first use (rc_set_data_dir
-/// arriving late) still picks up its override file.
+/// The loaded list.  The DirCache slot stamps the data dir the
+/// entries were resolved against — a store that appears after first
+/// use (rc_set_data_dir arriving late) still picks up its override
+/// file on the next probe.
 #[derive(Debug)]
 pub struct BlockList {
     domains: HashSet<String>,
-    dir: Option<PathBuf>,
 }
 
 /// The active list — Arc'd so a check in flight on the IO thread
 /// survives a reload swapping the set under it.
-static LIST: RwLock<Option<Arc<BlockList>>> = RwLock::new(None);
-
-fn list_slot() -> std::sync::RwLockReadGuard<'static, Option<Arc<BlockList>>> {
-    LIST.read().unwrap_or_else(|e| e.into_inner())
-}
-
-fn list_slot_mut() -> std::sync::RwLockWriteGuard<'static, Option<Arc<BlockList>>> {
-    LIST.write().unwrap_or_else(|e| e.into_inner())
-}
-
-fn current_dir() -> Option<PathBuf> {
-    crate::store::lock().dir().ok().map(|d| d.to_path_buf())
-}
+static LIST: DirCache<BlockList> = DirCache::new();
 
 /// One domain entry out of one line, or None for comments/junk.
 /// Handles every upstream row shape listed in the module docs.
@@ -204,36 +192,22 @@ impl BlockList {
 /// Builtin ∪ override-if-present.  The union is deliberate: an update
 /// adds coverage on top of the seed, so a truncated or malicious
 /// update can only ever block MORE, never unblock.
-fn load_from_disk() -> BlockList {
-    let dir = current_dir();
+fn load_from_disk(dir: Option<&Path>) -> BlockList {
     let mut domains = parse_entries(BUILTIN_LIST);
-    if let Some(dir) = &dir {
+    if let Some(dir) = dir {
         match std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
             Ok(text) => domains.extend(parse_entries(&text)),
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(_) => {} // unreadable override — the seed still blocks
         }
     }
-    BlockList { domains, dir }
+    BlockList { domains }
 }
 
-/// The loaded list, lazily populated.  A cached set resolved before
-/// the data dir existed is rebuilt once the dir appears — the store
-/// can arrive after first use (rc_set_data_dir runs whenever the
-/// SecureStore shim or the updater first touches the core).
+/// The loaded list, lazily populated — the DirCache rebuilds it once
+/// when the data dir arrives late (rc_set_data_dir after first use).
 fn active_list() -> Arc<BlockList> {
-    let dir = current_dir();
-    {
-        let slot = list_slot();
-        if let Some(list) = slot.as_ref() {
-            if list.dir == dir {
-                return list.clone();
-            }
-        }
-    }
-    let list = Arc::new(load_from_disk());
-    *list_slot_mut() = Some(list.clone());
-    list
+    LIST.get_or_load(load_from_disk)
 }
 
 /// rc_blocklist_load: swap in a caller-supplied list body
@@ -247,10 +221,7 @@ pub fn load(text: &str) -> RcResult<()> {
             "blocklist: no usable domain entries",
         );
     }
-    *list_slot_mut() = Some(Arc::new(BlockList {
-        domains,
-        dir: current_dir(),
-    }));
+    LIST.replace(BlockList { domains });
     Ok(())
 }
 
@@ -259,7 +230,8 @@ pub fn load(text: &str) -> RcResult<()> {
 /// file exists but yields zero entries — the previous list stays
 /// active.
 pub fn reload() -> RcResult<()> {
-    if let Some(dir) = current_dir() {
+    let dir = data_dir();
+    if let Some(dir) = &dir {
         if let Ok(text) = std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
             if parse_entries(&text).is_empty() {
                 return Err(Fail {
@@ -269,7 +241,7 @@ pub fn reload() -> RcResult<()> {
             }
         }
     }
-    *list_slot_mut() = Some(Arc::new(load_from_disk()));
+    LIST.replace(load_from_disk(dir.as_deref()));
     Ok(())
 }
 
@@ -299,7 +271,6 @@ mod tests {
     fn list(text: &str) -> BlockList {
         BlockList {
             domains: parse_entries(text),
-            dir: None,
         }
     }
 
