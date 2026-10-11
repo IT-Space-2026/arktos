@@ -51,6 +51,15 @@ const MAX_HTML: usize = 64 * 1024 * 1024;
 /// are titles, so a hostile file of unclosed tags cannot turn the
 /// scan quadratic.
 const CLOSE_SCAN_WINDOW: usize = 256 * 1024;
+/// RAUDIT01: the per-tag window alone is NOT a quadratic bound — a
+/// file of N unclosed <A> tags spends N windows rescanning the same
+/// region.  Total closing-tag scan work is therefore budgeted at
+/// 4x the document (a real title sits bytes past its tag, so the
+/// whole corpus fits in a tiny fraction of that) plus one full
+/// window of slack for small inputs.  Exhaustion degrades to
+/// "no closing tag found" — an empty title — and flags truncated,
+/// never to more work.
+const SCAN_BUDGET_FACTOR: usize = 4;
 /// Mirrors XBEL_MAX_DEPTH — deeper <DL> nesting is skipped, not
 /// trusted (converter.cpp had no bound at all).
 const MAX_FOLDER_DEPTH: usize = 256;
@@ -246,13 +255,34 @@ fn find_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Offset of the next "</name" sequence terminated by '>', whitespace
 /// or '/'.  Matches converter.cpp: the index itself may sit anywhere,
 /// but only matches fully inside the bounded scan window count.
-fn find_closing_tag(bytes: &[u8], pos: usize, name: &str) -> Option<usize> {
+/// `budget` is the document-wide scan allowance — every byte scanned
+/// is charged against it, and an exhausted budget reads as
+/// "not found" so total work stays linear in the input size.
+fn find_closing_tag(
+    bytes: &[u8],
+    pos: usize,
+    name: &str,
+    budget: &mut usize,
+) -> Option<usize> {
     let end = bytes.len().min(pos + CLOSE_SCAN_WINDOW);
     let needle = format!("</{name}");
     let nb = needle.as_bytes();
     let mut p = pos;
     loop {
-        let idx = find_case_insensitive(&bytes[p..], nb).map(|o| p + o)?;
+        if p >= end {
+            return None;
+        }
+        // The haystack never extends past the window end — a match
+        // crossing it is rejected below anyway — and past the budget.
+        let scan_end = end.min(p.saturating_add(*budget));
+        let idx = match find_case_insensitive(&bytes[p..scan_end], nb) {
+            Some(o) => p + o,
+            None => {
+                *budget -= scan_end - p;
+                return None;
+            }
+        };
+        *budget -= idx - p;
         if idx + nb.len() > end {
             return None;
         }
@@ -500,6 +530,11 @@ pub fn import_html(
         handle: Some(parent),
     }];
     let mut overflow_depth = 0usize; // <DL>s skipped beyond the cap
+    // Document-wide closing-tag scan budget — see SCAN_BUDGET_FACTOR.
+    let mut scan_budget = bytes
+        .len()
+        .saturating_mul(SCAN_BUDGET_FACTOR)
+        .saturating_add(CLOSE_SCAN_WINDOW);
 
     let mut pos = 0usize;
     while pos < bytes.len() {
@@ -575,7 +610,8 @@ pub fn import_html(
                 }
             }
             "h3" => {
-                let end = find_closing_tag(bytes, pos, "h3");
+                let end = find_closing_tag(bytes, pos, "h3", &mut scan_budget);
+                sum.truncated |= end.is_none() && scan_budget == 0;
                 let title = end
                     .map(|e| html_to_text(&bytes[pos..e]))
                     .unwrap_or_default();
@@ -590,7 +626,8 @@ pub fn import_html(
                 let Some(href) = attr(&tag, "href") else {
                     continue;
                 };
-                let end = find_closing_tag(bytes, pos, "a");
+                let end = find_closing_tag(bytes, pos, "a", &mut scan_budget);
+                sum.truncated |= end.is_none() && scan_budget == 0;
                 let title = end
                     .map(|e| html_to_text(&bytes[pos..e]))
                     .unwrap_or_default();
@@ -818,9 +855,9 @@ mod tests {
         // produced inside the "Imported <date>" folder.
         assert_eq!(bm.node_ref(outer).unwrap().kind, TYPE_FOLDER);
         let f1 = bm.child_folder_named(outer, "Folder & One").unwrap();
-        assert_eq!(bm.node_ref(f1).unwrap().expanded, true); // no FOLDED
+        assert!(bm.node_ref(f1).unwrap().expanded); // no FOLDED
         let sub = bm.child_folder_named(f1, "Sub é").unwrap();
-        assert_eq!(bm.node_ref(sub).unwrap().expanded, false); // FOLDED
+        assert!(!bm.node_ref(sub).unwrap().expanded); // FOLDED
         let a = bm.child_at(f1, 0).unwrap();
         assert_eq!(bm.node_ref(a).unwrap().url, "https://a.example/");
         assert_eq!(bm.node_ref(a).unwrap().title, "Alpha");
