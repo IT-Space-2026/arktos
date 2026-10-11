@@ -7547,8 +7547,14 @@ int main(int argc, char **argv)
         for (int i = 0; i < 200 && (!loaded || !loaded2); ++i)
             waitMs(50);
         check(loaded && loaded2, "fixtures loaded");
-        // Let the deferred thumbnail captures land (300ms timers).
-        waitMs(800);
+        // Let each loaded tab paint + cache its thumbnail while it is
+        // current — the deferred captures (300ms timers) only fire
+        // for the visible view, so tab 2 needs its own dwell before
+        // the hover assertions below rely on the cache.
+        tabWidget->setCurrentIndex(2);
+        waitMs(500);
+        tabWidget->setCurrentIndex(0);
+        waitMs(500);
 
         QWidget *focusBefore = QApplication::focusWidget();
         hoverTab(0);
@@ -7588,8 +7594,9 @@ int main(int argc, char **argv)
         check(preview && !preview->isVisible(),
               "preview hides on leave");
 
-        // Sleeping tab: page discarded -> the card takes the
-        // favicon+title fallback and flags the sleeping state.
+        // Sleeping tab: the page is discarded so no live frame can
+        // exist — the card serves the snapshot cached before the
+        // discard and still flags the sleeping state (TPREV02).
         tabWidget->sleepTab(2);
         for (int i = 0; i < 60 && !tabWidget->isTabSleeping(2); ++i)
             waitMs(100);
@@ -7598,10 +7605,10 @@ int main(int argc, char **argv)
         waitMs(700);
         check(preview && preview->isVisible()
                   && preview->previewedIndex() == 2
-                  && !preview->hasThumbnail()
+                  && preview->hasThumbnail()
                   && preview->detailText()
                          .contains(QLatin1String("Sleeping")),
-              "sleeping tab gets icon fallback card");
+              "sleeping tab shows its pre-sleep snapshot");
         {
             QEvent leaveEvent(QEvent::Leave);
             QCoreApplication::sendEvent(tabBar, &leaveEvent);

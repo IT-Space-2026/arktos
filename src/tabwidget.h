@@ -325,12 +325,13 @@ public slots:
     // Saver setting, or the forced 10-minute cap while Energy Saver
     // is active (0 = the sweep is off).
     qint64 suspendIdleIntervalMs() const;
-    // POL02: the tab-strip hover preview's thumbnail — the page's
-    // last live render at ~thumbnail scale, or null when the tab
-    // never rendered a capturable frame (never shown, evicted,
-    // blank).  Background tabs re-grab on request where the engine
-    // still holds the last compositor frame; otherwise the frame
-    // cached while the tab was last current is returned.
+    // POL02/TPREV02: the tab-strip hover preview's thumbnail — the
+    // page's last live render at ~thumbnail scale, or null when the
+    // tab never rendered a capturable frame (never shown, evicted,
+    // blank).  Only the current tab's view re-grabs on request: a
+    // hidden view's compositor frame can be stale or a recycled
+    // context's pixels, so background tabs serve the identity-checked
+    // snapshot cached while they last painted — never another frame.
     QPixmap tabThumbnail(int index);
     void newTab();
     void newPrivateTab();
@@ -549,9 +550,17 @@ private:
     bool m_lazyRestoreTabs = false;
     bool m_lazyRestorePinnedTabs = true;
     void restorePendingTab(int index);
-    // POL02: per-view thumbnail cache for the hover preview — keyed
-    // on the view like the sleep bookkeeping so drags never lose it.
-    QHash<WebView *, QPixmap> m_tabThumbnails;
+    // POL02/TPREV02: per-view thumbnail cache for the hover preview —
+    // keyed on the view like the sleep bookkeeping so drags never
+    // lose it.  The stored url is the frame's page identity: an entry
+    // is served only while it still matches the view's url, and
+    // webViewLoadStarted() drops it outright so a pre-navigation
+    // frame can never be passed off as the new page.
+    struct CachedThumbnail {
+        QPixmap pixmap;
+        QUrl url;
+    };
+    QHash<WebView *, CachedThumbnail> m_tabThumbnails;
 };
 
 #endif // TABWIDGET_H
