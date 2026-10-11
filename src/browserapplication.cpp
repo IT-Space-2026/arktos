@@ -88,6 +88,7 @@
 #include "tabwidget.h"
 #include "tormanager.h"
 #include "torrequestinterceptor.h"
+#include "trancolist.h"
 #include "webview.h"
 
 #include <qjsonarray.h>
@@ -615,6 +616,9 @@ void BrowserApplication::postLaunch()
         // only a stale copy is refetched.  Without rustcore or
         // consent this is a no-op and the vendored seed alone blocks.
         DomainBlocklist::instance()->updateIfStale();
+        // TRUST04: the Tranco rank table rides the same consent gate
+        // and cadence — a no-op under the same conditions.
+        TrancoList::instance()->updateIfStale();
     });
 }
 

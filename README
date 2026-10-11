@@ -39,7 +39,11 @@ to the stripped URL.  The crate also carries the local
 anti-phishing/malware domain blocklist (vendored seed merged with a
 consent-gated URLhaus+OpenPhish download); rust-enabled builds refuse
 main-frame navigations to listed domains behind a warning
-interstitial with a session-only proceed.  The crate also parses
+interstitial with a session-only proceed.  The crate also carries
+the Tranco top-site rank table (vendored top-100k seed merged with a
+consent-gated top-1M download — an update can only add entries,
+never un-rank a seed domain) behind rc_tranco_rank for the
+site-trust signals.  The crate also parses
 untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
 extension update manifests and suggestion replies are schema-checked
 behind the FFI before Qt sees them.  The crate is

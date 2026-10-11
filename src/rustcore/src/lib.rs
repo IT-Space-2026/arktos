@@ -24,6 +24,10 @@
 //!   * blocklist (SEC18): local anti-phishing/malware domain list —
 //!     vendored seed + merged data-dir override, exact+suffix host
 //!     matching for the request interceptors.  No remote lookups.
+//!   * tranco (TRUST04): the Tranco top-site rank table — vendored
+//!     top-100k seed + merged data-dir top-1M update (poison-safe:
+//!     an update only adds, never un-ranks), exact+registrable host
+//!     probes for the site-trust signals.  No remote lookups.
 //!   * parsers (SEC19): memory-safe parsing of attacker-influenced
 //!     document formats — OpenSearch descriptors, gupdate extension
 //!     manifests, suggestions replies and the XBEL structural gate.
@@ -102,6 +106,7 @@ mod session;
 mod sitedecisions;
 mod store;
 mod tlsprobe;
+mod tranco;
 mod urlstrip;
 mod useragent;
 mod util;
@@ -772,6 +777,67 @@ pub unsafe extern "C" fn rc_blocklist_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_blocklist_count() -> usize {
     catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
+}
+
+// ---- Tranco rank table (TRUST04) -------------------------------------
+
+/// The host's Tranco rank, or 0 when unlisted (Tranco ranks start at
+/// 1).  The probe hits the exact host first, then walks up to the
+/// most specific listed ancestor — the registrable-domain lookup the
+/// site-trust signals need.  Never fails on content — a bad pointer
+/// or malformed host reads as "unlisted", and a no-data-dir core
+/// answers from the vendored top-100k seed.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tranco_rank(host: *const c_char) -> u32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => tranco::rank(h),
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// Swaps in a caller-supplied `rank,domain` table body (update/test
+/// seam).  RC_CORRUPT when the body yields no usable entries; the
+/// previous table stays active.
+///
+/// # Safety
+/// `text` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tranco_load(
+    text: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(text, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad tranco pointer".into(),
+        })?;
+        let body = std::str::from_utf8(data).map_err(|_| error::Fail {
+            status: RcStatus::Corrupt,
+            msg: "tranco: not UTF-8".into(),
+        })?;
+        tranco::load(body)
+    })
+}
+
+/// Re-runs the vendored-seed ∪ `<data dir>/tranco-list.dat` merge —
+/// the updater writes the file (top-1m.csv.zip body or plaintext
+/// CSV) before calling this.  RC_CORRUPT when an override exists but
+/// yields no usable entries; the previous table stays active.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tranco_reload() -> RcStatus {
+    status_of(|| tranco::reload())
+}
+
+/// Entry count of the active table — diagnostics/tests.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tranco_count() -> usize {
+    catch_unwind(AssertUnwindSafe(tranco::count)).unwrap_or(0)
 }
 
 // ---- untrusted-document parsers (SEC19) ----------------------------

@@ -56,6 +56,7 @@ SUBDIRS  = \
     tlsverify \
     toolbarsearch \
     tormanager \
+    trancolist \
     useragent \
     urlcleaner \
     utils \

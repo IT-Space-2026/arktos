@@ -39,6 +39,7 @@
 #include "browserpaths.h"
 #include "domainblocklist.h"
 #include "networkaccessmanager.h"
+#include "trancolist.h"
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
@@ -149,6 +150,8 @@ void AdBlockManager::grantRemoteLists()
     // SEC18: consent freshly granted — the domain blocklist rides
     // the same gate, so kick its (staleness-checked) fetch too.
     DomainBlocklist::instance()->updateIfStale();
+    // TRUST04: the Tranco rank table refreshes on the same gate.
+    TrancoList::instance()->updateIfStale();
 }
 
 void AdBlockManager::maybePromptForListConsent(QWidget *parent)

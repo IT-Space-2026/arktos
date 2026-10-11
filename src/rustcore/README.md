@@ -95,6 +95,32 @@ Rust side never touches the network — fetching is entirely Qt-side and
 consent-gated like remote filter lists.  In a no-rust build the
 whole feature is absent and nothing is ever blocked.
 
+## Tranco rank table (TRUST04)
+
+`rc_tranco_rank(host)` answers the host's Tranco top-site rank (or 0
+when unlisted) — the popularity signal the site-trust verdicts
+(TRUST01) and the homograph detector (TRUST05) consume.  The probe
+hits the exact host first, then walks up the label boundary to the
+most specific listed ancestor — the registrable-domain lookup — with
+the query normalized into a fixed stack buffer so the hot path
+allocates nothing.  Lookups never leave the machine.
+
+The table is the union of the vendored seed
+(`data/tranco-top100k.csv` — ranks 1..100000 of the Tranco daily
+top-1M, embedded via `include_str!`) and
+`<data dir>/tranco-list.dat`, which the Qt-side TrancoList updater
+writes from the remote download (the `top-1m.csv.zip` body verbatim —
+the crate pulls the `*.csv` member out through the same
+central-directory walk extverify uses, and a plaintext
+`rank,domain` body parses as-is) before calling
+`rc_tranco_reload()`.  The merge is poison-safe like the blocklist's:
+an update can only *add* entries — a seeded domain keeps its vendored
+rank and can never be un-ranked or re-ranked by a download — and a
+failed or garbage update falls back to the seed.
+`rc_tranco_load` swaps in a caller-supplied table (update/test seam);
+`rc_tranco_count` reports the merged size.  In a no-rust build the
+updater is inert and nothing is ever ranked.
+
 ## Second-opinion TLS verification (SEC22)
 
 `rc_tls_check(host, port, flags)` performs a real blocking TLS
