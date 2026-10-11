@@ -70,6 +70,7 @@ private slots:
     void cardRestart();
     void speedSeries();
     void restoredCard();
+    void autoExpand();
 };
 
 // Clicks the requested button on any modal QMessageBox that pops while
@@ -1005,6 +1006,115 @@ void tst_DownloadManager::restoredCard()
         QLatin1String("restartButton"));
     QVERIFY(restart);
     QVERIFY(restart->isEnabled());
+}
+
+// DLUX01: a running download surfaces its detail card without any
+// click and collapses back when it reaches a terminal state — unless
+// the user clicked the chevron, whose choice always wins until the
+// next attempt.
+void tst_DownloadManager::autoExpand()
+{
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    QTcpServer stalledServer;
+    QVERIFY(stalledServer.listen(QHostAddress::LocalHost));
+    serveStalledDownload(&stalledServer, "expand-stall.bin");
+    const QUrl stalledUrl(QString::fromLatin1(
+        "http://127.0.0.1:%1/expand-stall.bin")
+            .arg(stalledServer.serverPort()));
+    QTcpServer quickServer;
+    QVERIFY(quickServer.listen(QHostAddress::LocalHost));
+    serveDownload(&quickServer, "text/plain",
+                  "attachment; filename=\"expand-quick.txt\"");
+    const QUrl quickUrl(QString::fromLatin1(
+        "http://127.0.0.1:%1/expand-quick.txt")
+            .arg(quickServer.serverPort()));
+
+    {
+        SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
+        QAbstractItemModel *model = manager.model();
+        QVERIFY(model);
+        Engine::Page *page = manager.retryPage(false);
+        QVERIFY(page);
+
+        manager.download(page, stalledUrl);
+        manager.download(page, stalledUrl);
+        manager.download(page, quickUrl);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), 3, 30000);
+        const QList<DownloadItem*> items =
+            manager.findChildren<DownloadItem*>();
+        QCOMPARE(items.count(), 3);
+        DownloadItem *itemA = nullptr;
+        DownloadItem *itemB = nullptr;
+        DownloadItem *itemC = nullptr;
+        for (DownloadItem *it : items) {
+            QLabel *fn = it->findChild<QLabel*>(
+                QLatin1String("fileNameLabel"));
+            const QString name = fn ? fn->text() : QString();
+            if (name.contains(QLatin1String("expand-quick")))
+                itemC = it;
+            else if (!itemA)
+                itemA = it;
+            else
+                itemB = it;
+        }
+        QVERIFY(itemA && itemB && itemC);
+        QTRY_VERIFY(itemA->downloading());
+        QTRY_VERIFY(itemB->downloading());
+
+        // Both in-flight items expanded on their own — no click.
+        QTRY_VERIFY(itemA->isExpanded());
+        QTRY_VERIFY(itemB->isExpanded());
+        QVERIFY(!itemA->expandUserOverride());
+        QWidget *details = itemA->findChild<QWidget*>(
+            QLatin1String("detailsWidget"));
+        QVERIFY(details);
+        QVERIFY(!details->isHidden());
+        QToolButton *chevron = itemA->findChild<QToolButton*>(
+            QLatin1String("expandButton"));
+        QVERIFY(chevron);
+        QVERIFY(chevron->isChecked());
+
+        // The completed download expanded during its flight and
+        // collapsed again on finish.
+        QTRY_VERIFY_WITH_TIMEOUT(itemC->downloadedSuccessfully(), 30000);
+        QVERIFY(!itemC->isExpanded());
+
+        // A manual collapse mid-download sticks — progress ticks and
+        // the finish collapse cannot reopen or fight it.
+        chevron->click();
+        QVERIFY(!itemA->isExpanded());
+        QVERIFY(itemA->expandUserOverride());
+        QTest::qWait(600);
+        QVERIFY(itemA->downloading());
+        QVERIFY(!itemA->isExpanded());
+        // A manual re-expand survives the finish collapse.
+        chevron->click();
+        QVERIFY(itemA->isExpanded());
+        QMetaObject::invokeMethod(itemA, "stop");
+        QTRY_VERIFY(!itemA->downloading());
+        QVERIFY(itemA->isExpanded());
+
+        // Item B: manual collapse mid-download survives to the end.
+        QToolButton *chevronB = itemB->findChild<QToolButton*>(
+            QLatin1String("expandButton"));
+        QVERIFY(chevronB);
+        chevronB->click();
+        QVERIFY(!itemB->isExpanded());
+        QMetaObject::invokeMethod(itemB, "stop");
+        QTRY_VERIFY(!itemB->downloading());
+        QVERIFY(!itemB->isExpanded());
+
+        // The override releases on a fresh attempt — a retried
+        // download auto-expands again.
+        QVERIFY(QMetaObject::invokeMethod(itemB, "tryAgain"));
+        QTRY_VERIFY(itemB->downloading());
+        QTRY_VERIFY(itemB->isExpanded());
+        QVERIFY(!itemB->expandUserOverride());
+        QMetaObject::invokeMethod(itemB, "stop");
+        QTRY_VERIFY(!itemB->downloading());
+    }
 }
 
 QTEST_MAIN(tst_DownloadManager)

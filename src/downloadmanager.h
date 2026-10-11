@@ -106,6 +106,11 @@ public:
     // sparkline and Restart/Show-in-Folder actions.
     bool isExpanded() const { return m_expanded; }
     void setExpanded(bool expanded);
+    // DLUX01: true once the user has clicked the expand chevron —
+    // automatic expand-on-start / collapse-on-finish must never fight
+    // an explicit choice.  init() clears it so a retried download
+    // auto-expands again.
+    bool expandUserOverride() const { return m_expandUserOverride; }
     QDateTime startedTime() const { return m_startedTime; }
     QDateTime finishedTime() const { return m_finishedTime; }
     int speedSampleCount() const { return m_speedSamples.count(); }
@@ -138,6 +143,7 @@ private slots:
     void finished();
 
 private:
+    void expandButtonClicked();
     void getFileName();
     void init();
     void updateInfoLabel();
@@ -190,6 +196,7 @@ private:
     QDateTime m_finishedTime;
     double m_finalSpeed;
     bool m_expanded;
+    bool m_expandUserOverride;
 
     friend class DownloadManager;
     friend class DownloadModel;
@@ -259,6 +266,9 @@ public:
     // DOWN02: row -> item for secondary views; the sidebar panel hosts
     // the item's detail card for the selected row.
     DownloadItem *itemAt(int row) const;
+    // DLUX01: inverse lookup — surfaces scroll/select to the row a
+    // just-added item landed on.
+    int rowForItem(DownloadItem *item) const;
 
     // SEC09: hands the url to the user-configured external download
     // handler (Settings > downloadmanager/externalPath).  The url

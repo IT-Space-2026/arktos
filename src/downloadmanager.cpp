@@ -113,6 +113,7 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     , m_restoredTotalBytes(-1)
     , m_finalSpeed(-1.0)
     , m_expanded(false)
+    , m_expandUserOverride(false)
 {
     setupUi(this);
     // Server-supplied file names may contain markup-looking text;
@@ -137,7 +138,10 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     setProperty("aroraNoButtonPolish", true);
     tryAgainButton->hide();
     expandButton->setAccessibleName(tr("Show download details"));
-    connect(expandButton, &QToolButton::toggled, this, &DownloadItem::setExpanded);
+    // clicked() fires only on a real user activation — programmatic
+    // setChecked() inside setExpanded() is not an override.
+    connect(expandButton, &QToolButton::clicked,
+            this, &DownloadItem::expandButtonClicked);
     connect(restartButton, &QPushButton::clicked, this, &DownloadItem::restart);
     connect(showInFolderButton, &QPushButton::clicked, this, &DownloadItem::showInFolder);
     connect(stopButton, &QPushButton::clicked, this, &DownloadItem::stop);
@@ -192,7 +196,9 @@ void DownloadItem::init()
     m_bytesReceived = 0;
     m_offTheRecord = page() && page()->isOffTheRecord();
 
-    // Reset the card state for the fresh attempt.
+    // Reset the card state for the fresh attempt — including the
+    // user's expand override, so a retry auto-expands again.
+    m_expandUserOverride = false;
     m_speedSamples.clear();
     m_lastSampleMs = 0;
     m_lastSampleBytes = 0;
@@ -650,6 +656,15 @@ void DownloadItem::showInFolder()
     QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
 }
 
+void DownloadItem::expandButtonClicked()
+{
+    // A real click is an explicit choice — the automatic expand on
+    // download start and collapse on finish must never fight the
+    // user; the latch releases when a fresh attempt starts (init()).
+    m_expandUserOverride = true;
+    setExpanded(expandButton->isChecked());
+}
+
 void DownloadItem::setExpanded(bool expanded)
 {
     if (m_expanded == expanded)
@@ -658,6 +673,8 @@ void DownloadItem::setExpanded(bool expanded)
     // Keep the chevron in sync when the state is set programmatically.
     expandButton->setChecked(expanded);
     expandButton->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    expandButton->setAccessibleName(expanded
+        ? tr("Hide download details") : tr("Show download details"));
     detailsWidget->setVisible(expanded);
     updateGeometry();
 }
@@ -706,6 +723,10 @@ void DownloadItem::downloadStateChanged(Engine::DownloadRequest::State state)
     case Engine::DownloadRequest::State::InProgress:
         m_downloadTime.start();
         m_lastProgressTime.start();
+        // DLUX01: a running download surfaces its detail card on its
+        // own — unless the user has already picked a state.
+        if (!m_expandUserOverride)
+            setExpanded(true);
         break;
     case Engine::DownloadRequest::State::Completed:
         finished();
@@ -718,6 +739,8 @@ void DownloadItem::downloadStateChanged(Engine::DownloadRequest::State state)
 #endif
                 ))
             break;
+        if (!m_expandUserOverride)
+            setExpanded(false);
         m_finishedDownloading = true;
         m_finishedTime = QDateTime::currentDateTime();
         freezeSpeedSeries();
@@ -984,6 +1007,8 @@ void DownloadItem::finished()
 {
     if (m_finishedDownloading)
         return;
+    if (!m_expandUserOverride)
+        setExpanded(false);
     m_finishedDownloading = true;
     m_finishedTime = QDateTime::currentDateTime();
     freezeSpeedSeries();
@@ -1444,6 +1469,11 @@ DownloadItem *DownloadManager::itemAt(int row) const
 {
     return (row >= 0 && row < m_downloads.count())
         ? m_downloads.at(row) : nullptr;
+}
+
+int DownloadManager::rowForItem(DownloadItem *item) const
+{
+    return m_downloads.indexOf(item);
 }
 
 void DownloadManager::cleanupOffTheRecord()

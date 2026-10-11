@@ -556,6 +556,24 @@ QWidget *SidebarPanel::buildDownloadsPage()
     });
     downloadsLayout->addWidget(m_downloadsView);
 
+    // DLUX01: a started download surfaces itself — select its row so
+    // the detail pane below hosts the live card, and keep it scrolled
+    // into view.  No window-raise: the dock stays put (UIAUDIT02).
+    connect(DownloadManager::instance(), &DownloadManager::itemAdded,
+            this, [this](DownloadItem *item) {
+        if (!m_downloadsView || !m_downloadsProxy)
+            return;
+        const int row = DownloadManager::instance()->rowForItem(item);
+        if (row < 0)
+            return;
+        const QModelIndex index = m_downloadsProxy->mapFromSource(
+            m_downloadsProxy->sourceModel()->index(row, 0));
+        if (!index.isValid())
+            return;
+        m_downloadsView->setCurrentIndex(index);
+        m_downloadsView->scrollTo(index, QAbstractItemView::EnsureVisible);
+    });
+
     // Bottom detail pane — the selected item's DownloadItem card is
     // reparented in here, so the pane literally IS the card (live
     // progress, Restart and Show in File Manager included).
