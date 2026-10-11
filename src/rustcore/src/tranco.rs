@@ -27,6 +27,7 @@
 //!   * `<rank>,<domain>`   — the Tranco CSV shape
 //!   * `<domain>`          — bare domain, ranked at its line ordinal
 //!   * `#`, `!`, `;`, `//` lines, blanks — comments/junk
+//!
 //! Domains must pass the same DNS-name gate the blocklist applies
 //! (a dot, sane labels) and IP literals are never entries — Tranco
 //! ranks domains only.
@@ -34,10 +35,11 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::IpAddr;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::error::{fail, Fail, RcResult, RcStatus};
+use crate::store::{data_dir, DirCache};
 
 /// Updated-list drop point inside the data dir — the Qt-side
 /// TrancoList updater writes this file and calls rc_tranco_reload().
@@ -54,10 +56,10 @@ const MAX_ENTRIES: usize = 2_000_000;
 const MAX_LINE: usize = 512;
 const MAX_MEMBER: usize = 64 * 1024 * 1024;
 
-/// The loaded table.  `dir` is the data dir the entries were resolved
-/// against — the lazy loader rebuilds when the effective dir changes,
-/// which is how a store that appears after first use
-/// (rc_set_data_dir arriving late) still picks up its override file.
+/// The loaded table.  The DirCache slot stamps the data dir the
+/// entries were resolved against — a store that appears after first
+/// use (rc_set_data_dir arriving late) still picks up its override
+/// file on the next probe.
 ///
 /// `skeletons` is the TRUST05 homograph index: the UTS #39
 /// confusable skeleton of each entry's *decoded* name -> the raw
@@ -73,41 +75,17 @@ const MAX_MEMBER: usize = 64 * 1024 * 1024;
 pub struct TrancoList {
     ranks: HashMap<String, u32>,
     skeletons: HashMap<String, String>,
-    dir: Option<PathBuf>,
 }
 
 /// The active table — Arc'd so a rank lookup in flight survives a
 /// reload swapping the map under it.
-static LIST: RwLock<Option<Arc<TrancoList>>> = RwLock::new(None);
+static LIST: DirCache<TrancoList> = DirCache::new();
 
-fn list_slot() -> std::sync::RwLockReadGuard<'static, Option<Arc<TrancoList>>> {
-    LIST.read().unwrap_or_else(|e| e.into_inner())
-}
-
-fn list_slot_mut() -> std::sync::RwLockWriteGuard<'static, Option<Arc<TrancoList>>> {
-    LIST.write().unwrap_or_else(|e| e.into_inner())
-}
-
-fn current_dir() -> Option<PathBuf> {
-    crate::store::lock().dir().ok().map(|d| d.to_path_buf())
-}
-
-/// Conservative DNS-name gate, same rules the blocklist applies: one
-/// dot minimum, [a-z0-9_-] labels of sane length, no IP literals —
-/// Tranco ranks domains only, so an IP-shaped entry is junk or
-/// poison.
+/// Conservative DNS-name gate: util::valid_dns_shape, same rules the
+/// blocklist applies, plus no IP literals — Tranco ranks domains
+/// only, so an IP-shaped entry is junk or poison.
 fn validate_domain(host: &str) -> bool {
-    if host.len() > 253 || !host.contains('.') || host.parse::<IpAddr>().is_ok()
-    {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    })
+    crate::util::valid_dns_shape(host) && host.parse::<IpAddr>().is_err()
 }
 
 /// One (domain, rank) entry out of one line, or None for
@@ -142,7 +120,7 @@ fn entry_from_line(line: &str, ordinal: u32) -> Option<(String, u32)> {
         return None;
     }
     let host = domain_tok.trim_end_matches('.').to_lowercase();
-    validate_domain(&host).then(|| (host, rank))
+    validate_domain(&host).then_some((host, rank))
 }
 
 /// Both indexes out of one ordered pass — (ranks, skeletons).  The
@@ -217,39 +195,25 @@ impl TrancoList {
     /// entry anyway — the parse gate refuses rank-less shapes only
     /// Tranco's own rows can produce).
     ///
-    /// Hot-path discipline: the host normalizes into a fixed stack
-    /// buffer and every probe is a `&str` borrow into the map —
-    /// zero heap allocation per lookup.
+    /// Hot-path discipline: the host normalizes into util::HostNorm's
+    /// fixed stack buffer and every probe is a `&str` borrow into
+    /// the map — zero heap allocation per lookup.  (RAUDIT01: shared
+    /// with blocklist::contains; longer-than-DNS input probes its
+    /// rightmost 253 bytes — every entry is shorter, so a matchable
+    /// suffix always lives in the tail.)
     pub fn rank_of(&self, host: &str) -> Option<u32> {
-        let h = host.trim();
-        let mut buf = [0u8; 253];
-        let mut n = 0usize;
-        for &b in h.as_bytes() {
-            if n >= buf.len() {
-                return None;
-            }
-            buf[n] = b.to_ascii_lowercase();
-            n += 1;
-        }
-        while n > 0 && buf[n - 1] == b'.' {
-            n -= 1;
-        }
-        if n == 0 {
-            return None;
-        }
-        let mut end = n;
-        // QUrl::host() reports IPv6 literals bracketed.
-        if buf[0] == b'[' && buf[end - 1] == b']' {
-            buf.copy_within(1..end, 0);
-            end -= 2;
-        }
-        let host = std::str::from_utf8(&buf[..end]).ok()?;
+        let h = crate::util::HostNorm::new(host)?;
+        let host = h.as_str();
         // IP literals and dot-less names are never ranked.
         if host.parse::<IpAddr>().is_ok() || !host.contains('.') {
             return None;
         }
-        let mut candidate = host;
-        loop {
+        for candidate in h.suffixes() {
+            // Tranco entries all contain a dot — the TLD alone is
+            // never an answer.
+            if !candidate.contains('.') {
+                return None;
+            }
             // A suffix that re-parses as an IP literal is skipped the
             // same way the blocklist skips it — an IP entry can only
             // ever equal a whole request host (and IPs are never
@@ -259,14 +223,8 @@ impl TrancoList {
                     return Some(rank);
                 }
             }
-            match candidate.find('.') {
-                Some(i) => candidate = &candidate[i + 1..],
-                None => return None,
-            }
-            if !candidate.contains('.') {
-                return None;
-            }
         }
+        None
     }
 
     pub fn len(&self) -> usize {
@@ -310,10 +268,9 @@ impl TrancoList {
 /// is deliberate: an update adds coverage on top of the seed, so a
 /// truncated or malicious update can only ever rank MORE domains,
 /// never un-rank or re-rank a seeded one.
-fn load_from_disk() -> TrancoList {
-    let dir = current_dir();
+fn load_from_disk(dir: Option<&Path>) -> TrancoList {
     let (mut ranks, mut skeletons) = parse_entries(BUILTIN_LIST);
-    if let Some(dir) = &dir {
+    if let Some(dir) = dir {
         match std::fs::read(dir.join(OVERRIDE_FILE)) {
             Ok(blob) => {
                 let (eranks, eskels) = entries_from_blob(&blob);
@@ -328,30 +285,14 @@ fn load_from_disk() -> TrancoList {
             Err(_) => {} // unreadable override — the seed still ranks
         }
     }
-    TrancoList {
-        ranks,
-        skeletons,
-        dir,
-    }
+    TrancoList { ranks, skeletons }
 }
 
-/// The loaded table, lazily populated.  A cached table resolved
-/// before the data dir existed is rebuilt once the dir appears — the
-/// store can arrive after first use (rc_set_data_dir runs whenever
-/// the SecureStore shim or the updater first touches the core).
+/// The loaded table, lazily populated — the DirCache rebuilds it once
+/// when the data dir arrives late (rc_set_data_dir runs whenever the
+/// SecureStore shim or the updater first touches the core).
 pub(crate) fn active_list() -> Arc<TrancoList> {
-    let dir = current_dir();
-    {
-        let slot = list_slot();
-        if let Some(list) = slot.as_ref() {
-            if list.dir == dir {
-                return list.clone();
-            }
-        }
-    }
-    let list = Arc::new(load_from_disk());
-    *list_slot_mut() = Some(list.clone());
-    list
+    LIST.get_or_load(load_from_disk)
 }
 
 /// rc_tranco_load: swap in a caller-supplied `rank,domain` body
@@ -362,11 +303,7 @@ pub fn load(text: &str) -> RcResult<()> {
     if ranks.is_empty() {
         return fail(RcStatus::Corrupt, "tranco: no usable entries");
     }
-    *list_slot_mut() = Some(Arc::new(TrancoList {
-        ranks,
-        skeletons,
-        dir: current_dir(),
-    }));
+    LIST.replace(TrancoList { ranks, skeletons });
     Ok(())
 }
 
@@ -375,7 +312,8 @@ pub fn load(text: &str) -> RcResult<()> {
 /// RC_CORRUPT when an override exists but yields zero entries — the
 /// previous table stays active.
 pub fn reload() -> RcResult<()> {
-    if let Some(dir) = current_dir() {
+    let dir = data_dir();
+    if let Some(dir) = &dir {
         if let Ok(blob) = std::fs::read(dir.join(OVERRIDE_FILE)) {
             if entries_from_blob(&blob).0.is_empty() {
                 return Err(Fail {
@@ -385,7 +323,7 @@ pub fn reload() -> RcResult<()> {
             }
         }
     }
-    *list_slot_mut() = Some(Arc::new(load_from_disk()));
+    LIST.replace(load_from_disk(dir.as_deref()));
     Ok(())
 }
 
@@ -415,11 +353,7 @@ mod tests {
 
     fn table(text: &str) -> TrancoList {
         let (ranks, skeletons) = parse_entries(text);
-        TrancoList {
-            ranks,
-            skeletons,
-            dir: None,
-        }
+        TrancoList { ranks, skeletons }
     }
 
     /// Minimal zip container holding one stored-or-deflated member —
@@ -588,11 +522,7 @@ mod tests {
         for (skel, raw) in eskels {
             skeletons.entry(skel).or_insert(raw);
         }
-        let t = TrancoList {
-            ranks,
-            skeletons,
-            dir: None,
-        };
+        let t = TrancoList { ranks, skeletons };
         // The update cannot re-rank a seed entry…
         assert_eq!(t.rank_of("seed.example"), Some(5));
         // …nor un-rank one it simply omits…

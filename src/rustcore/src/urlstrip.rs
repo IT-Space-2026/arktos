@@ -24,9 +24,11 @@
 
 use serde_json::Value;
 use std::io::ErrorKind;
-use std::sync::{Arc, RwLock};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::error::{Fail, RcResult, RcStatus};
+use crate::store::{data_dir, DirCache};
 
 /// Updated-rules drop point inside the data dir — a list refresh
 /// writes this file and calls rc_urlstrip_reload().
@@ -82,15 +84,7 @@ pub struct RuleSet {
 
 /// The active ruleset — Arc'd so a strip in flight on the IO thread
 /// survives a reload swapping the set under it.
-static RULES: RwLock<Option<Arc<RuleSet>>> = RwLock::new(None);
-
-fn rules_slot() -> std::sync::RwLockReadGuard<'static, Option<Arc<RuleSet>>> {
-    RULES.read().unwrap_or_else(|e| e.into_inner())
-}
-
-fn rules_slot_mut() -> std::sync::RwLockWriteGuard<'static, Option<Arc<RuleSet>>> {
-    RULES.write().unwrap_or_else(|e| e.into_inner())
-}
+static RULES: DirCache<RuleSet> = DirCache::new();
 
 fn parse_patterns(v: &Value) -> Vec<Pattern> {
     v.as_array()
@@ -139,20 +133,19 @@ fn parse_rules(text: &str) -> RcResult<RuleSet> {
 /// The loaded ruleset, lazily populated: `<data dir>`/OVERRIDE_FILE
 /// wins when present and parses, otherwise the vendored default.  An
 /// unparsable override falls back to the builtin so a bad update can
-/// never disarm the strip.
+/// never disarm the strip.  The DirCache rebuilds it once when the
+/// data dir arrives late (rc_set_data_dir after first use) — the
+/// same staleness rule blocklist/tranco apply.
 fn active_rules() -> Arc<RuleSet> {
-    if let Some(rules) = rules_slot().as_ref() {
-        return rules.clone();
-    }
-    let rules = Arc::new(load_from_disk().unwrap_or_else(|_| {
-        parse_rules(BUILTIN_RULES).expect("vendored urlstrip rules must parse")
-    }));
-    *rules_slot_mut() = Some(rules.clone());
-    rules
+    RULES.get_or_load(|dir| {
+        load_from_disk(dir).unwrap_or_else(|_| {
+            parse_rules(BUILTIN_RULES)
+                .expect("vendored urlstrip rules must parse")
+        })
+    })
 }
 
-fn load_from_disk() -> RcResult<RuleSet> {
-    let dir = crate::store::lock().dir().ok().map(|d| d.to_path_buf());
+fn load_from_disk(dir: Option<&Path>) -> RcResult<RuleSet> {
     if let Some(dir) = dir {
         match std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
             Ok(text) => return parse_rules(&text),
@@ -166,16 +159,14 @@ fn load_from_disk() -> RcResult<RuleSet> {
 /// rc_urlstrip_load_rules: swap in a caller-supplied JSON ruleset.
 /// A malformed document keeps the previous set (RC_CORRUPT).
 pub fn load_rules(json: &str) -> RcResult<()> {
-    let rules = Arc::new(parse_rules(json)?);
-    *rules_slot_mut() = Some(rules);
+    RULES.replace(parse_rules(json)?);
     Ok(())
 }
 
 /// rc_urlstrip_reload: re-run the override-or-builtin selection, e.g.
 /// after a rules update lands in the data dir.
 pub fn reload() -> RcResult<()> {
-    let rules = Arc::new(load_from_disk()?);
-    *rules_slot_mut() = Some(rules);
+    RULES.replace(load_from_disk(data_dir().as_deref())?);
     Ok(())
 }
 

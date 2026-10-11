@@ -45,6 +45,7 @@
 //!     valid %XX triplet is preserved (uppercase-normalized) and a
 //!     bare '%' encodes as %25.  Pair structure is preserved
 //!     verbatim: bare keys stay bare, empty segments stay.
+//!
 //! The Qt adapter wraps the returned string in QUrl::fromEncoded —
 //! the same call the old code made on its intermediate result, so
 //! downstream normalization is unchanged.
@@ -1156,6 +1157,18 @@ pub fn keyword_url(
     }
 }
 
+/// Re-read the disk file into memory (test/repair seam).
+#[cfg(test)]
+pub fn reload() -> RcResult<()> {
+    let lock = registry();
+    let mut state = lock.lock().unwrap();
+    load_from_disk(&mut state)?;
+    state.loaded_dir = file_path()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    Ok(())
+}
+
 // ------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1631,16 +1644,4 @@ mod tests {
         }
         assert_eq!(bundled().len(), 11);
     }
-}
-
-/// Re-read the disk file into memory (test/repair seam).
-#[cfg(test)]
-pub fn reload() -> RcResult<()> {
-    let lock = registry();
-    let mut state = lock.lock().unwrap();
-    load_from_disk(&mut state)?;
-    state.loaded_dir = file_path()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    Ok(())
 }

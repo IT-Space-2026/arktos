@@ -21,6 +21,7 @@
 //! `<data dir>/blocklist-domains.txt`):
 //!   * https://urlhaus.abuse.ch/downloads/hostfile/   (malware)
 //!   * https://openphish.com/feed.txt                  (phishing)
+//!
 //! The vendored data/blocklist-domains.txt is the offline seed —
 //! updates merge INTO the builtin set rather than replacing it, so a
 //! partial or poisoned update can only add entries, never quietly
@@ -29,10 +30,12 @@
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::net::IpAddr;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::error::{fail, Fail, RcResult, RcStatus};
+use crate::store::{data_dir, DirCache};
+use crate::util;
 
 /// Updated-list drop point inside the data dir — the Qt-side
 /// DomainBlocklist updater writes this file and calls
@@ -49,31 +52,18 @@ const BUILTIN_LIST: &str = include_str!("../data/blocklist-domains.txt");
 const MAX_ENTRIES: usize = 1_000_000;
 const MAX_LINE: usize = 8192;
 
-/// The loaded list.  `dir` is the data dir the entries were resolved
-/// against — the lazy loader rebuilds when the effective dir changes,
-/// which is how a store that appears after first use (rc_set_data_dir
-/// arriving late) still picks up its override file.
+/// The loaded list.  The DirCache slot stamps the data dir the
+/// entries were resolved against — a store that appears after first
+/// use (rc_set_data_dir arriving late) still picks up its override
+/// file on the next probe.
 #[derive(Debug)]
 pub struct BlockList {
     domains: HashSet<String>,
-    dir: Option<PathBuf>,
 }
 
 /// The active list — Arc'd so a check in flight on the IO thread
 /// survives a reload swapping the set under it.
-static LIST: RwLock<Option<Arc<BlockList>>> = RwLock::new(None);
-
-fn list_slot() -> std::sync::RwLockReadGuard<'static, Option<Arc<BlockList>>> {
-    LIST.read().unwrap_or_else(|e| e.into_inner())
-}
-
-fn list_slot_mut() -> std::sync::RwLockWriteGuard<'static, Option<Arc<BlockList>>> {
-    LIST.write().unwrap_or_else(|e| e.into_inner())
-}
-
-fn current_dir() -> Option<PathBuf> {
-    crate::store::lock().dir().ok().map(|d| d.to_path_buf())
-}
+static LIST: DirCache<BlockList> = DirCache::new();
 
 /// One domain entry out of one line, or None for comments/junk.
 /// Handles every upstream row shape listed in the module docs.
@@ -139,25 +129,16 @@ fn domain_from_token(token: &str) -> Option<String> {
         t = t.split(':').next().unwrap_or("");
     }
     let host = t.trim_end_matches('.').to_lowercase();
-    validate_domain(&host).then(|| host)
+    validate_domain(&host).then_some(host)
 }
 
-/// Conservative DNS-name gate: one dot minimum (no TLD or localhost
-/// entries), labels of [a-z0-9_-] only, sane lengths.  IP literals
-/// pass the shape test and are stored — they only ever exact-match an
-/// IP-literal request host, so a listed "1.2.3.4" cannot catch
-/// "x.1.2.3.4" (see contains()).
+/// Conservative DNS-name gate: util::valid_dns_shape (one dot
+/// minimum, [a-z0-9_-] labels, sane lengths — shared with tranco).
+/// IP literals pass the shape test and are stored — they only ever
+/// exact-match an IP-literal request host, so a listed "1.2.3.4"
+/// cannot catch "x.1.2.3.4" (see contains()).
 fn validate_domain(host: &str) -> bool {
-    if host.len() > 253 || !host.contains('.') {
-        return false;
-    }
-    host.split('.').all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    })
+    util::valid_dns_shape(host)
 }
 
 fn parse_entries(text: &str) -> HashSet<String> {
@@ -178,20 +159,19 @@ impl BlockList {
     /// listed entry or sits beneath one.  Probing walks the label
     /// boundary left-to-right, so a listed domain can never match a
     /// merely-overlapping name ("notevil.example" is safe beside
-    /// "evil.example").
+    /// "evil.example").  Zero heap allocation per probe — the host
+    /// normalizes into util::HostNorm's stack buffer (RAUDIT01: same
+    /// discipline as tranco::rank_of).
     pub fn contains(&self, host: &str) -> bool {
-        let mut h = host.trim().trim_end_matches('.').to_lowercase();
-        // QUrl::host() reports IPv6 literals bracketed.
-        if h.starts_with('[') && h.ends_with(']') {
-            h = h[1..h.len() - 1].to_owned();
-        }
+        let Some(h) = util::HostNorm::new(host) else {
+            return false;
+        };
         // An IP-literal query can only exact-match — suffix-walking
         // it would probe junk like "0.113.66".
-        if h.parse::<IpAddr>().is_ok() {
+        if h.as_str().parse::<IpAddr>().is_ok() {
             return self.domains.contains(h.as_str());
         }
-        let mut candidate = h.as_str();
-        loop {
+        for candidate in h.suffixes() {
             // Suffix candidates that parse as IP literals are skipped:
             // an IP entry can only ever equal a full request host,
             // so "www.203.0.113.66" must not trip "203.0.113.66".
@@ -200,11 +180,8 @@ impl BlockList {
             {
                 return true;
             }
-            match candidate.find('.') {
-                Some(i) => candidate = &candidate[i + 1..],
-                None => return false,
-            }
         }
+        false
     }
 
     pub fn len(&self) -> usize {
@@ -215,36 +192,22 @@ impl BlockList {
 /// Builtin ∪ override-if-present.  The union is deliberate: an update
 /// adds coverage on top of the seed, so a truncated or malicious
 /// update can only ever block MORE, never unblock.
-fn load_from_disk() -> BlockList {
-    let dir = current_dir();
+fn load_from_disk(dir: Option<&Path>) -> BlockList {
     let mut domains = parse_entries(BUILTIN_LIST);
-    if let Some(dir) = &dir {
+    if let Some(dir) = dir {
         match std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
             Ok(text) => domains.extend(parse_entries(&text)),
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(_) => {} // unreadable override — the seed still blocks
         }
     }
-    BlockList { domains, dir }
+    BlockList { domains }
 }
 
-/// The loaded list, lazily populated.  A cached set resolved before
-/// the data dir existed is rebuilt once the dir appears — the store
-/// can arrive after first use (rc_set_data_dir runs whenever the
-/// SecureStore shim or the updater first touches the core).
+/// The loaded list, lazily populated — the DirCache rebuilds it once
+/// when the data dir arrives late (rc_set_data_dir after first use).
 fn active_list() -> Arc<BlockList> {
-    let dir = current_dir();
-    {
-        let slot = list_slot();
-        if let Some(list) = slot.as_ref() {
-            if list.dir == dir {
-                return list.clone();
-            }
-        }
-    }
-    let list = Arc::new(load_from_disk());
-    *list_slot_mut() = Some(list.clone());
-    list
+    LIST.get_or_load(load_from_disk)
 }
 
 /// rc_blocklist_load: swap in a caller-supplied list body
@@ -258,10 +221,7 @@ pub fn load(text: &str) -> RcResult<()> {
             "blocklist: no usable domain entries",
         );
     }
-    *list_slot_mut() = Some(Arc::new(BlockList {
-        domains,
-        dir: current_dir(),
-    }));
+    LIST.replace(BlockList { domains });
     Ok(())
 }
 
@@ -270,7 +230,8 @@ pub fn load(text: &str) -> RcResult<()> {
 /// file exists but yields zero entries — the previous list stays
 /// active.
 pub fn reload() -> RcResult<()> {
-    if let Some(dir) = current_dir() {
+    let dir = data_dir();
+    if let Some(dir) = &dir {
         if let Ok(text) = std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
             if parse_entries(&text).is_empty() {
                 return Err(Fail {
@@ -280,7 +241,7 @@ pub fn reload() -> RcResult<()> {
             }
         }
     }
-    *list_slot_mut() = Some(Arc::new(load_from_disk()));
+    LIST.replace(load_from_disk(dir.as_deref()));
     Ok(())
 }
 
@@ -310,7 +271,6 @@ mod tests {
     fn list(text: &str) -> BlockList {
         BlockList {
             domains: parse_entries(text),
-            dir: None,
         }
     }
 

@@ -6,8 +6,8 @@
 //!
 //!   * rc_ext_verify_package — whole-package verdict as JSON:
 //!     {"status","error","format","signing","signature_check",
-//!      "pinning","crx_id","sha256","expected_sha256","entries",
-//!      "uncompressed_total","manifest"}
+//!     "pinning","crx_id","sha256","expected_sha256","entries",
+//!     "uncompressed_total","manifest"}
 //!       - "status": "valid" | "rejected" ("error" carries the reason
 //!         on rejection — RC_OK is returned either way; only argument
 //!         errors produce a non-Ok RcStatus).
@@ -48,9 +48,9 @@
 //!     SEC19 "manifest.json stays Qt" gap now that manifests arrive
 //!     inside untrusted packages).  Result JSON:
 //!     {"valid","manifest_version","name","version","description",
-//!      "update_url","key","has_background","has_action",
-//!      "content_script_count","permissions","host_permissions",
-//!      "unsupported","unverified","dangerous","errors"}
+//!     "update_url","key","has_background","has_action",
+//!     "content_script_count","permissions","host_permissions",
+//!     "unsupported","unverified","dangerous","errors"}
 //!     "unsupported"/"unverified" mirror ExtensionManager's chrome.*
 //!     delegate tables (Qt keeps its own copies for no-Rust builds —
 //!     the lists must move in lockstep).  "dangerous" is the
@@ -122,11 +122,11 @@ struct ZipReport {
 }
 
 /// Reads the stored member data behind a central-dir entry.
-fn member_data<'a>(
-    zip: &'a [u8],
+fn member_data(
+    zip: &[u8],
     local_off: u32,
     comp_size: u32,
-) -> Result<&'a [u8], String> {
+) -> Result<&[u8], String> {
     let off = local_off as usize;
     if off + 30 > zip.len() || le32(zip, off) != 0x0403_4b50 {
         return Err("member local header is out of bounds".into());
@@ -566,7 +566,7 @@ pub fn verify_package(
             let crx_id = parsed.crx_id.map(|id| hex(&id));
             ("crx3", &pkg[12 + hlen..], signing, crx_id)
         } else if pkg.starts_with(b"PK\x03\x04") {
-            ("zip", &pkg[..], "unsigned", None)
+            ("zip", pkg, "unsigned", None)
         } else {
             return reject(
                 "unrecognized package format (not a zip or CRX3)",

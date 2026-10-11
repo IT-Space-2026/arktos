@@ -158,7 +158,7 @@ pub fn rank(query: &str, items: &[Item<'_>], mru: &[String]) -> Vec<(usize, i64)
     }
     // Stable sort, descending — ties keep the item order, matching
     // std::stable_sort in the reference path.
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|a| std::cmp::Reverse(a.1));
     scored
 }
 

@@ -16,12 +16,12 @@
 //!      a. a bare IPv6 literal ("::1") -> "http://[::1]"
 //!      b. an absolute filesystem path -> file verdict
 //!      c. raw parses as a scheme-ful URL and the http-prepended parse
-//!         yields no port (i.e. "host:port" where "port" is not a
-//!         number counts as schemed, but "localhost:8080" does not)
-//!         -> navigate verbatim
+//!      yields no port (i.e. "host:port" where "port" is not a
+//!      number counts as schemed, but "localhost:8080" does not)
+//!      -> navigate verbatim
 //!      d. otherwise the http(s)-prepended parse is the guess when it
-//!         is valid and has a host or a path; "ftp.<anything>" flips
-//!         the prepended scheme to ftp like Qt does.
+//!      is valid and has a host or a path; "ftp.<anything>" flips
+//!      the prepended scheme to ftp like Qt does.
 //!   3. Input with whitespace, or no usable guess at all, falls back:
 //!      search-engine verdict when `search_fallback` is set, else the
 //!      historic bare-"http://" guess (the searchEngineFallback opt-out
@@ -143,7 +143,7 @@ fn host_ok(host: &str) -> bool {
 /// "absent", anything else after the last ':' must be digits and
 /// <= 65535.
 fn authority_ok(auth: &str) -> (bool, bool, Option<u16>) {
-    if auth.chars().any(|c| c == ' ' || c < '\u{20}' || c == '\u{7f}') {
+    if auth.chars().any(|c| c <= ' ' || c == '\u{7f}') {
         return (false, false, None);
     }
     let hostport = match auth.rfind('@') {
@@ -178,7 +178,7 @@ fn authority_ok(auth: &str) -> (bool, bool, Option<u16>) {
     }
     match port_s {
         None => (true, !host.is_empty(), None),
-        Some(p) if p.is_empty() => (true, !host.is_empty(), None),
+        Some("") => (true, !host.is_empty(), None),
         Some(p) => match port_value(p) {
             Some(v) => (true, !host.is_empty(), Some(v)),
             None => (false, false, None),
@@ -209,7 +209,7 @@ fn parse_prepended(input: &str) -> Prepended {
     }
     let rest = input;
     let aend = rest
-        .find(|c| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(rest.len());
     let (valid, host_nonempty, port) = authority_ok(&rest[..aend]);
     Prepended {
@@ -232,7 +232,7 @@ fn raw_valid_and_scheme(input: &str) -> (bool, bool) {
         let rest = &input[i + 1..];
         if let Some(auth_rest) = rest.strip_prefix("//") {
             let aend = auth_rest
-                .find(|c| c == '/' || c == '?' || c == '#')
+                .find(['/', '?', '#'])
                 .unwrap_or(auth_rest.len());
             let (ok, _, _) = authority_ok(&auth_rest[..aend]);
             return (ok, true);
@@ -240,7 +240,7 @@ fn raw_valid_and_scheme(input: &str) -> (bool, bool) {
         return (true, true);
     }
     let seg_end = input
-        .find(|c| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(input.len());
     (!input[..seg_end].contains(':'), false)
 }
@@ -253,11 +253,11 @@ fn adjust_ftp(url: String) -> String {
     }
     let rest = &url[6..];
     let aend = rest
-        .find(|c| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(rest.len());
     let path = &rest[aend..];
-    if path.starts_with("//") {
-        return format!("{}/%2F{}", &url[..6 + aend], &path[2..]);
+    if let Some(rest_path) = path.strip_prefix("//") {
+        return format!("{}/%2F{}", &url[..6 + aend], rest_path);
     }
     url
 }
@@ -522,7 +522,7 @@ pub fn url_host(url: &str) -> &str {
         None => return "",
     };
     let aend = rest
-        .find(|c| c == '/' || c == '?' || c == '#')
+        .find(['/', '?', '#'])
         .unwrap_or(rest.len());
     let auth = &rest[..aend];
     let hostport = match auth.rfind('@') {

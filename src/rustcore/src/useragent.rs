@@ -63,7 +63,7 @@ fn remove_qtwebengine_token(ua: &str) -> String {
         // \S+ needs at least one non-whitespace char right after the
         // slash — "QtWebEngine/" ending the string or followed by
         // whitespace fails the whole regex and the text stays.
-        if after.chars().next().map_or(true, |c| c.is_whitespace()) {
+        if after.chars().next().is_none_or(|c| c.is_whitespace()) {
             out.push_str(&rest[..pos + TOKEN.len()]);
             rest = after;
             continue;
@@ -290,7 +290,7 @@ mod tests {
             let after = &rest[pos + "QtWebEngine/".len()..];
             // \S+ must see a non-whitespace char right after the
             // slash or the match fails entirely.
-            if after.chars().next().map_or(true, |c| c.is_whitespace()) {
+            if after.chars().next().is_none_or(|c| c.is_whitespace()) {
                 out.push_str(&rest[..pos + "QtWebEngine/".len()]);
                 rest = after;
                 continue;

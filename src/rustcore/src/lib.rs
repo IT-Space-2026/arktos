@@ -192,6 +192,15 @@ pub unsafe extern "C" fn rc_set_data_dir(utf8_path: *const c_char) -> RcStatus {
 
 /// Last error message on this thread ("" after a successful call).
 /// Free the returned pointer with rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_last_error_message() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(error::last_error_copy))
@@ -210,6 +219,15 @@ pub unsafe extern "C" fn rc_string_free(s: *mut c_char) {
 }
 
 /// Frees a buffer handed out by this library.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_buffer_free(buf: RcBuffer) {
     if !buf.data.is_null() {
@@ -239,6 +257,15 @@ pub unsafe extern "C" fn rc_set_change_callback(
 
 /// Crypto + custody usable.  Mirrors the old isAvailable(): in file
 /// mode it loads or mints securestore.key.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_is_available() -> i32 {
     catch_unwind(AssertUnwindSafe(|| store::lock().is_available() as i32))
@@ -261,6 +288,15 @@ pub unsafe extern "C" fn rc_is_sealed(blob: *const u8, len: usize) -> i32 {
 }
 
 /// True when securestore.kdf exists (passphrase custody armed).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_passphrase_enabled() -> i32 {
     catch_unwind(AssertUnwindSafe(|| store::lock().passphrase_enabled() as i32))
@@ -268,6 +304,15 @@ pub unsafe extern "C" fn rc_passphrase_enabled() -> i32 {
 }
 
 /// False only in passphrase mode while no derived key is cached.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_is_unlocked() -> i32 {
     catch_unwind(AssertUnwindSafe(|| store::lock().is_unlocked() as i32))
@@ -393,6 +438,15 @@ pub unsafe extern "C" fn rc_unlock(pass: *const u8, len: usize) -> RcStatus {
 
 /// Drops every cached key (derived + file) and the decoded credential
 /// map; key material is zeroized.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_lock() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -418,18 +472,45 @@ pub unsafe extern "C" fn rc_kdf_create(pass: *const u8, len: usize) -> RcStatus 
 }
 
 /// Writes a fresh random securestore.key (0600) and caches it.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_key_file_create() -> RcStatus {
     status_of(|| store::lock().key_file_create())
 }
 
 /// Deletes securestore.key and drops the cached copy.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_key_file_delete() -> RcStatus {
     status_of(|| store::lock().key_file_delete())
 }
 
 /// Deletes securestore.kdf and drops the cached derived key.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_kdf_file_delete() -> RcStatus {
     status_of(|| store::lock().kdf_file_delete())
@@ -524,6 +605,15 @@ pub unsafe extern "C" fn rc_cred_put(
 }
 
 /// Removes `name`; NotFound when absent.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_cred_remove(name: *const c_char) -> RcStatus {
     let st = status_of(|| {
@@ -540,6 +630,15 @@ pub unsafe extern "C" fn rc_cred_remove(name: *const c_char) -> RcStatus {
 }
 
 /// JSON array of credential names — free with rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_cred_list() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -606,6 +705,15 @@ pub unsafe extern "C" fn rc_cred_reseal(from: *const u8, to: *const u8) -> RcSta
 
 /// Whether the Rust autofill store exists on disk — the Qt side's
 /// "does the legacy file still need importing" check.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_autofill_store_present() -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -618,6 +726,15 @@ pub unsafe extern "C" fn rc_autofill_store_present() -> i32 {
 /// [{"url","name","has_password":bool,"elements":[["k","v"],...]}]
 /// Free with rc_string_free(); NULL on error (locked store, corrupt
 /// file — rc_last_error_message says which).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_autofill_forms() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -732,9 +849,18 @@ pub unsafe extern "C" fn rc_urlstrip_load_rules(
 /// Re-reads `<data dir>/urlstrip-rules.json` (or the vendored ruleset
 /// when absent).  RC_CORRUPT when an override exists but does not
 /// parse — the previous ruleset stays active.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_urlstrip_reload() -> RcStatus {
-    status_of(|| urlstrip::reload())
+    status_of(urlstrip::reload)
 }
 
 // ---- domain blocklist (SEC18) ----------------------------------------
@@ -784,12 +910,30 @@ pub unsafe extern "C" fn rc_blocklist_load(
 /// Re-runs the vendored-seed ∪ `<data dir>/blocklist-domains.txt`
 /// merge.  RC_CORRUPT when an override exists but yields zero usable
 /// entries — the previous list stays active.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_blocklist_reload() -> RcStatus {
-    status_of(|| blocklist::reload())
+    status_of(blocklist::reload)
 }
 
 /// Entry count of the active list — diagnostics/tests.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_blocklist_count() -> usize {
     catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
@@ -954,12 +1098,30 @@ pub unsafe extern "C" fn rc_tranco_load(
 /// the updater writes the file (top-1m.csv.zip body or plaintext
 /// CSV) before calling this.  RC_CORRUPT when an override exists but
 /// yields no usable entries; the previous table stays active.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_tranco_reload() -> RcStatus {
-    status_of(|| tranco::reload())
+    status_of(tranco::reload)
 }
 
 /// Entry count of the active table — diagnostics/tests.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_tranco_count() -> usize {
     catch_unwind(AssertUnwindSafe(tranco::count)).unwrap_or(0)
@@ -1300,6 +1462,15 @@ pub unsafe extern "C" fn rc_ext_manifest_check(
 
 /// The root node handle — always valid once the store exists.
 /// Handle 0 is the null handle everywhere below.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_root() -> u64 {
     catch_unwind(AssertUnwindSafe(|| bookmarks::with(|b| b.root()))).unwrap_or(0)
@@ -1362,6 +1533,15 @@ pub unsafe extern "C" fn rc_bm_save(path: *const c_char) -> RcStatus {
 }
 
 /// Child count of `node`, or -1 on a bad handle.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_child_count(node: u64) -> i64 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1371,6 +1551,15 @@ pub unsafe extern "C" fn rc_bm_child_count(node: u64) -> i64 {
 }
 
 /// Handle of `node`'s child at `row`, or 0.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_child_at(node: u64, row: i64) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1380,6 +1569,15 @@ pub unsafe extern "C" fn rc_bm_child_at(node: u64, row: i64) -> u64 {
 }
 
 /// Parent handle of `node`, or 0 (root / detached / bad handle).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_parent(node: u64) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1391,6 +1589,15 @@ pub unsafe extern "C" fn rc_bm_parent(node: u64) -> u64 {
 /// JSON description of `node`:
 /// {"type","title","url","desc","expanded","tags":[...]}.
 /// Free with rc_string_free(); NULL on a bad handle.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_get(node: u64) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1451,6 +1658,15 @@ pub unsafe extern "C" fn rc_bm_create(
 }
 
 /// Links a detached node under `parent` at `row`.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_attach(parent: u64, row: i64, node: u64) -> RcStatus {
     let st = status_of(|| bookmarks::with(|b| b.attach(parent, row, node)));
@@ -1462,6 +1678,15 @@ pub unsafe extern "C" fn rc_bm_attach(parent: u64, row: i64, node: u64) -> RcSta
 
 /// Unlinks `node` from its parent; the subtree stays alive until
 /// attach() or destroy() (this is what undo re-links).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_detach(node: u64) -> RcStatus {
     let st = status_of(|| bookmarks::with(|b| b.detach(node)));
@@ -1472,6 +1697,15 @@ pub unsafe extern "C" fn rc_bm_detach(node: u64) -> RcStatus {
 }
 
 /// Frees a detached subtree for good.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_destroy(node: u64) -> RcStatus {
     let st = status_of(|| bookmarks::with(|b| b.destroy(node)));
@@ -1516,6 +1750,15 @@ unsafe fn bm_set_str(node: u64, value: *const c_char, field: &'static str) -> Rc
     st
 }
 
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_bm_set_expanded(node: u64, expanded: i32) -> RcStatus {
     let st = status_of(|| bookmarks::with(|b| b.set_expanded(node, expanded != 0)));
@@ -1682,6 +1925,15 @@ pub unsafe extern "C" fn rc_hist_open(path_or_null: *const c_char) -> RcStatus {
 /// Whether a history database exists on disk at `path_or_null`
 /// (NULL = the default <data dir> path) without opening it — the Qt
 /// side's "does the legacy file still need importing" check.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_exists(path_or_null: *const c_char) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1699,6 +1951,15 @@ pub unsafe extern "C" fn rc_hist_exists(path_or_null: *const c_char) -> i32 {
 }
 
 /// Entry count of the deduped listing, -1 when the store is not open.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_count() -> i64 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1710,6 +1971,15 @@ pub unsafe extern "C" fn rc_hist_count() -> i64 {
 /// JSON {"url","title","ts"} for row `row` of the deduped
 /// newest-first listing.  NULL out of range or on error.
 /// Free with rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_entry_at(row: i64) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -1808,6 +2078,15 @@ pub unsafe extern "C" fn rc_hist_remove(
 
 /// Drops every visit (icons are kept — clearIcons is separate,
 /// matching HistoryManager::clear() vs clearIcons()).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_clear() -> RcStatus {
     let st = status_of(|| history::with(|h| h.clear()));
@@ -1865,6 +2144,15 @@ pub unsafe extern "C" fn rc_hist_icon_get(host: *const c_char, out: *mut RcBuffe
 }
 
 /// Drops every stored favicon.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_icon_clear() -> RcStatus {
     status_of(|| history::with(|s| s.icon_clear()))
@@ -1872,6 +2160,15 @@ pub unsafe extern "C" fn rc_hist_icon_clear() -> RcStatus {
 
 /// Deletes every visit at or after `since_ms` (ms-epoch) — the
 /// ranged leg of a clear-private-data plan (CLR01).  Icons are kept.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_hist_clear_since(since_ms: i64) -> RcStatus {
     let st = status_of(|| history::with(|s| s.clear_since(since_ms)));
@@ -1917,15 +2214,33 @@ pub unsafe extern "C" fn rc_session_load(out: *mut RcBuffer) -> RcStatus {
 }
 
 /// True when a session file exists in the data dir.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_session_exists() -> i32 {
     catch_unwind(AssertUnwindSafe(session::exists)).unwrap_or(false) as i32
 }
 
 /// Deletes the session file; absent is not an error.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_session_clear() -> RcStatus {
-    status_of(|| session::clear())
+    status_of(session::clear)
 }
 
 /// Pure codec: JSON manifest -> canonical binary blob.  Test seam.
@@ -2258,6 +2573,15 @@ pub unsafe extern "C" fn rc_tls_add_root(der: *const u8, len: usize) -> RcStatus
 
 /// Drops every caller-installed anchor (the platform store is loaded
 /// per probe and unaffected).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_tls_clear_roots() -> RcStatus {
     status_of(tlsprobe::clear_roots)
@@ -2364,6 +2688,15 @@ pub unsafe extern "C" fn rc_sitedec_remove(
 }
 
 /// Removes every row of `kind` — the adapters' "clear all" path.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_clear(kind: *const c_char) -> RcStatus {
     let status = status_of(|| {
@@ -2436,6 +2769,15 @@ pub unsafe extern "C" fn rc_sitedec_list(kind: *const c_char) -> *mut c_char {
 /// The whole store — `{"version":1,"generation":N,"kinds":{...}}` —
 /// for read-locked IO-thread policy snapshots.
 /// Caller frees with rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_snapshot() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| match sitedecisions::snapshot_json() {
@@ -2490,6 +2832,15 @@ pub unsafe extern "C" fn rc_sitedec_lookup(
 
 /// 1 when the store file exists — the Qt migration code's
 /// "has anything been stored yet?" gate.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_store_present() -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -2499,6 +2850,15 @@ pub unsafe extern "C" fn rc_sitedec_store_present() -> i32 {
 }
 
 /// Re-reads the disk file into the in-memory store.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
     status_of(sitedecisions::reload)
@@ -2506,6 +2866,15 @@ pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
 
 /// Empties every kind (file removed) — the "clear site data" and
 /// test-suite reset path.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
     status_of(sitedecisions::reset)
@@ -2523,6 +2892,15 @@ pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
 // change topic.
 
 /// 1 when the store file exists — the legacy-import gate.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_store_present() -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
@@ -2532,6 +2910,15 @@ pub unsafe extern "C" fn rc_ose_store_present() -> i32 {
 }
 
 /// Engine names in display order — JSON array; rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_list() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| match opensearch::list_json() {
@@ -2613,6 +3000,15 @@ pub unsafe extern "C" fn rc_ose_import(xml: *const u8, len: usize) -> RcStatus {
 }
 
 /// Drops an engine by name; RC_OK whether or not it existed.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_remove(name: *const c_char) -> RcStatus {
     let mut changed = false;
@@ -2633,6 +3029,15 @@ pub unsafe extern "C" fn rc_ose_remove(name: *const c_char) -> RcStatus {
 /// Re-keys an engine keeping its order slot and keywords —
 /// RC_NOT_FOUND on a missing source, RC_INVALID_ARGUMENT on an
 /// empty/taken target.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_rename(
     old: *const c_char,
@@ -2658,6 +3063,15 @@ pub unsafe extern "C" fn rc_ose_rename(
 }
 
 /// Replaces the display order with a JSON name array.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_reorder(json: *const u8, len: usize) -> RcStatus {
     let mut changed = false;
@@ -2677,6 +3091,15 @@ pub unsafe extern "C" fn rc_ose_reorder(json: *const u8, len: usize) -> RcStatus
 
 /// Replaces an engine's keyword bindings (JSON string array);
 /// RC_NOT_FOUND when the engine does not exist.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_set_keywords(
     name: *const c_char,
@@ -2704,6 +3127,15 @@ pub unsafe extern "C" fn rc_ose_set_keywords(
 
 /// The engine name a keyword resolves to — NULL when unbound;
 /// rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_engine_for_keyword(
     keyword: *const c_char,
@@ -2721,6 +3153,15 @@ pub unsafe extern "C" fn rc_ose_engine_for_keyword(
 }
 
 /// Every bound keyword — JSON array; rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_keywords() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| match opensearch::keywords_json() {
@@ -2734,6 +3175,15 @@ pub unsafe extern "C" fn rc_ose_keywords() -> *mut c_char {
 }
 
 /// The removed-bundled blocklist — JSON array; rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_removed_bundled() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -2749,6 +3199,15 @@ pub unsafe extern "C" fn rc_ose_removed_bundled() -> *mut c_char {
 }
 
 /// Adds `name` to the bundled-removal blocklist.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_block_bundled(name: *const c_char) -> RcStatus {
     let mut changed = false;
@@ -2767,6 +3226,15 @@ pub unsafe extern "C" fn rc_ose_block_bundled(name: *const c_char) -> RcStatus {
 }
 
 /// Drops `name` from the blocklist.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_unblock_bundled(name: *const c_char) -> RcStatus {
     let mut changed = false;
@@ -2785,6 +3253,15 @@ pub unsafe extern "C" fn rc_ose_unblock_bundled(name: *const c_char) -> RcStatus
 }
 
 /// The vendored bundled engine names — JSON array; rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_bundled_names() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
@@ -2794,6 +3271,15 @@ pub unsafe extern "C" fn rc_ose_bundled_names() -> *mut c_char {
 }
 
 /// Inserts every bundled engine that is absent and not blocked.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_seed_bundled() -> RcStatus {
     let mut changed = false;
@@ -2810,6 +3296,15 @@ pub unsafe extern "C" fn rc_ose_seed_bundled() -> RcStatus {
 /// Clears the blocklist and re-adds every bundled engine, replacing
 /// same-named records but keeping their keyword bindings — the
 /// "restore defaults" semantic.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_restore_bundled() -> RcStatus {
     let mut changed = false;
@@ -2825,9 +3320,18 @@ pub unsafe extern "C" fn rc_ose_restore_bundled() -> RcStatus {
 
 /// Wipes the registry and removes searchengines.json — the
 /// test-suite reset seam (re-arms the Qt legacy-migration gate).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ose_reset() -> RcStatus {
-    status_of(|| opensearch::reset())
+    status_of(opensearch::reset)
 }
 
 /// The buildUrl()/parseTemplate() expansion: spec JSON
@@ -3064,6 +3568,15 @@ pub unsafe extern "C" fn rc_ua_spoof_remove(host: *const c_char) -> RcStatus {
 
 /// Every spoof row as `{"host":"ua"}` JSON — caller frees with
 /// rc_string_free().
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
 #[no_mangle]
 pub unsafe extern "C" fn rc_ua_spoof_list() -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| match useragent::spoof_list() {
