@@ -223,6 +223,11 @@ UI:
   unchecking it turns the tab-strip preview card off entirely,
   applies live to every window, and drops a card that is already
   up (TPREV01).
+- Preferences layout polish: on the Appearance and General pages the
+  setting labels now anchor at the left page edge instead of
+  right-aligning inside a wide column that read as center-floating,
+  and the font-name fields and theme note left-align their text
+  (PREFUI06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -154,7 +154,7 @@
           <string>On startup:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>startupBehavior</cstring>
@@ -192,7 +192,7 @@
           <string>Home Page:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>homeLineEdit</cstring>
@@ -238,7 +238,7 @@
           <string>Remove history items:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>expireHistory</cstring>
@@ -1031,7 +1031,7 @@
           <string>Icons:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>iconThemeCombo</cstring>
@@ -1060,7 +1060,7 @@
           <string>Standard font:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>standardFontButton</cstring>
@@ -1082,7 +1082,7 @@
           <string notr="true">Times 16</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
         </widget>
        </item>
@@ -1105,7 +1105,7 @@
           <string>Fixed-width font:</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>fixedFontButton</cstring>
@@ -1121,7 +1121,7 @@
           <string notr="true">Courier 13</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
         </widget>
        </item>
@@ -1178,12 +1178,51 @@
          </item>
         </layout>
        </item>
-       <item row="4" column="0">
-        <widget class="QCheckBox" name="minimFontSizeCheckBox">
-         <property name="text">
-          <string>Minimum Font size:</string>
-         </property>
-        </widget>
+       <item row="4" column="0" colspan="5">
+        <layout class="QHBoxLayout" name="minFontRowLayout">
+         <item>
+          <widget class="QCheckBox" name="minimFontSizeCheckBox">
+           <property name="text">
+            <string>Minimum Font size:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="minimumFontSizeSpinBox">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+           <property name="accessibleName">
+            <string>Minimum font size</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="value">
+            <number>9</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="minFontRowSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
        <item row="5" column="0">
         <widget class="QLabel" name="themeLabel">
@@ -1191,7 +1230,7 @@
           <string>Window theme (Day/Night):</string>
          </property>
          <property name="alignment">
-          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+          <set>Qt::AlignLeft|Qt::AlignVCenter</set>
          </property>
          <property name="buddy">
           <cstring>themeCombo</cstring>
@@ -1229,7 +1268,7 @@
          </item>
         </widget>
        </item>
-       <item row="6" column="1" colspan="4">
+       <item row="6" column="0" colspan="5">
         <widget class="QLabel" name="themeNoteLabel">
          <property name="text">
           <string>Applies to app chrome; page-content dark mode is the separate &quot;Render pages in dark mode&quot; setting below.</string>
@@ -1281,7 +1320,7 @@
              <string>Sidebar position:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             <set>Qt::AlignLeft|Qt::AlignVCenter</set>
             </property>
             <property name="buddy">
              <cstring>sidebarDockArea</cstring>
@@ -1317,7 +1356,7 @@
              <string>Panels:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignTop</set>
+             <set>Qt::AlignLeft|Qt::AlignTop</set>
             </property>
             <property name="buddy">
              <cstring>sidebarPanelsList</cstring>
@@ -1361,28 +1400,6 @@
           </size>
          </property>
         </spacer>
-       </item>
-       <item row="4" column="1">
-        <widget class="QSpinBox" name="minimumFontSizeSpinBox">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="enabled">
-          <bool>false</bool>
-         </property>
-         <property name="accessibleName">
-          <string>Minimum font size</string>
-         </property>
-         <property name="minimum">
-          <number>1</number>
-         </property>
-         <property name="value">
-          <number>9</number>
-         </property>
-        </widget>
        </item>
       </layout>
      </widget>

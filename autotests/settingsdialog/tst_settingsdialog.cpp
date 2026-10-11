@@ -102,6 +102,7 @@ private slots:
     void performancePage();
     void energySaver();
     void tabHoverPreviews();
+    void appearanceLeftAnchored();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -2415,6 +2416,87 @@ void tst_SettingsDialog::tabHoverPreviews()
                  .toBool(), true);
 
     settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+}
+
+// PREFUI06: the Appearance page rendered its label column mid-page —
+// a column shared by the 'Minimum Font size:' checkbox and the long
+// 'Window theme' label pushed every label's text right while the
+// checkbox/group rows anchored at the inset. Labels must paint their
+// text at the page inset, the label column must be sized by the
+// labels alone, and the font-name/note fields must not center text.
+void tst_SettingsDialog::appearanceLeftAnchored()
+{
+    SettingsDialog dialog;
+    dialog.resize(1400, 800);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.pagesList->setCurrentRow(2);
+    dialog.tabWidget->setCurrentIndex(2);
+    qApp->processEvents();
+
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->widget(2));
+    QVERIFY(area);
+    QWidget *page = area->widget();
+    QVERIFY(page);
+
+    auto textX = [&page](QLabel *l) {
+        const int x = l->mapTo(page, QPoint(0, 0)).x();
+        const int tw = l->fontMetrics().horizontalAdvance(l->text());
+        const Qt::Alignment a = l->alignment();
+        if (a & Qt::AlignHCenter)
+            return x + (l->width() - tw) / 2;
+        if (a & Qt::AlignRight)
+            return x + l->width() - tw;
+        return x;
+    };
+
+    const QList<QLabel *> pageLabels = {
+        dialog.iconThemeLabel, dialog.label_5,
+        dialog.label_6, dialog.themeLabel
+    };
+    for (QLabel *l : pageLabels) {
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2 — label column drifts")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // The label column is sized by the labels alone — no checkbox or
+    // other non-label row may inflate it past the widest label hint.
+    int maxLabelHint = 0;
+    for (QLabel *l : pageLabels)
+        maxLabelHint = qMax(maxLabelHint, l->sizeHint().width());
+    QVERIFY2(dialog.iconThemeLabel->width() <= maxLabelHint,
+             qPrintable(QStringLiteral(
+                 "label column %1 wider than widest label hint %2")
+                 .arg(dialog.iconThemeLabel->width())
+                 .arg(maxLabelHint)));
+
+    // Sidebar group's inner labels anchor inside the group too.
+    for (QLabel *l : {dialog.sidebarDockAreaLabel,
+                      dialog.sidebarPanelsLabel}) {
+        QVERIFY2(!(l->alignment() & Qt::AlignRight),
+                 qPrintable(l->objectName()));
+        QVERIFY2(textX(l) <= 30,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // Field text reads like a line edit — no centered painting.
+    QVERIFY(!(dialog.standardLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.fixedLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.themeNoteLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(dialog.themeNoteLabel->mapTo(page, QPoint(0, 0)).x() <= 20);
+
+    // Widening the dialog must not drift the anchored block.
+    dialog.resize(1600, 800);
+    qApp->processEvents();
+    for (QLabel *l : pageLabels)
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(l->objectName()));
+    dialog.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)
