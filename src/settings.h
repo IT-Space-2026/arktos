@@ -95,7 +95,10 @@ public:
         AdvancedPage,
         ExtensionsPage,
         ContainersPage,
-        DownloadsPage
+        DownloadsPage,
+        // PREFUI04: appended — currentTab persists the stack index, so
+        // a mid-enum insert would renumber every stored session.
+        PerformancePage
     };
 
     SettingsDialog(QWidget *parent = nullptr);
@@ -146,6 +149,9 @@ private slots:
     void refreshSearchSuggestions();
     // SRCH06: Search-page-owned settings back to compiled defaults.
     void resetSearchSettings();
+    // PREFUI04: Performance-page-owned settings (incl. the migrated
+    // suspend/prefetch keys) back to compiled defaults.
+    void resetPerformanceSettings();
 
     // SRCH05: inline search-engine editor (replaces the Manage dialog).
     void refreshEngineList();

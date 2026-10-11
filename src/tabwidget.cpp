@@ -378,6 +378,9 @@ void TabWidget::currentChanged(int index)
     // SLEEP01: activating a suspended tab wakes it (the engine
     // reloads the page).
     markTabActivity(webView);
+    // PREFUI04: activating a lazily restored tab performs its
+    // deferred load.
+    restorePendingTab(index);
     if (isTabSleeping(index))
         wakeTab(index);
     emit setCurrentTitle(webView->title());
@@ -1918,6 +1921,7 @@ void TabWidget::closeHiddenTab(WebView *view)
             m_sleepStates.remove(view);
             m_tabThumbnails.remove(view);
             m_pendingScrollRestore.remove(view);
+            m_pendingRestores.remove(view);
             forgetTabGroupIfEmpty(closingGroup);
             emit tabsChanged();
             return;
@@ -2439,6 +2443,7 @@ void TabWidget::closeTab(int index)
     m_sleepStates.remove(tab);
     m_tabThumbnails.remove(tab);
     m_pendingScrollRestore.remove(tab);
+    m_pendingRestores.remove(tab);
     // TABGRP01: drop the view's membership; the group record dies with
     // its last member.
     m_tabGroups.remove(tab);
@@ -2673,19 +2678,27 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
                                       const QString &containerId,
                                       const QString &groupId)
 {
-    if (!view || view->url().isEmpty()
+    // PREFUI04: a lazily restored tab has no live url/history yet —
+    // its stashed pair is what "reopen closed tab" should carry.
+    const auto pending = view ? m_pendingRestores.constFind(view)
+                              : m_pendingRestores.constEnd();
+    const QUrl closedUrl = pending != m_pendingRestores.constEnd()
+        ? pending->url : (view ? view->url() : QUrl());
+    if (!view || closedUrl.isEmpty()
         || (view->enginePage() && view->enginePage()->isOffTheRecord()))
         return;
     RecentlyClosedTab closed;
-    closed.url = view->url();
+    closed.url = closedUrl;
     // The page title outlives the strip text — a pinned tab's label is
     // blank by design.
     closed.title = view->title().isEmpty()
-        ? QString::fromUtf8(view->url().toEncoded()) : view->title();
-    closed.icon = BrowserApplication::icon(view->url());
+        ? QString::fromUtf8(closedUrl.toEncoded()) : view->title();
+    closed.icon = BrowserApplication::icon(closedUrl);
     closed.index = index;
-    closed.historyState = view->enginePage()
-        ? serializePageHistory(view->enginePage()) : QByteArray();
+    closed.historyState = pending != m_pendingRestores.constEnd()
+        ? pending->historyState
+        : (view->enginePage()
+           ? serializePageHistory(view->enginePage()) : QByteArray());
     // CONT02: the container id rides with the entry so "reopen
     // closed tab" returns to the same browsing context.
     closed.containerId = containerId;
@@ -3163,6 +3176,16 @@ void TabWidget::loadSettings()
         settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
     m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
     updateSleepTimer();
+
+    // PREFUI04: lazy session restore — restored tabs defer their
+    // first load until activation; pinned tabs can be exempted.
+    settings.endGroup();
+    settings.beginGroup(QLatin1String("performance"));
+    m_lazyRestoreTabs = settings.value(
+        QLatin1String("lazyRestoreTabs"), false).toBool();
+    m_lazyRestorePinnedTabs = settings.value(
+        QLatin1String("alwaysLoadPinnedTabs"), true).toBool();
+    settings.endGroup();
 }
 
 /*
@@ -3325,6 +3348,60 @@ void TabWidget::previousTab()
     setCurrentIndex(next);
 }
 
+// PREFUI04 — lazy session restore ----------------------------------
+//
+// A restored tab that the user has not activated yet is never
+// loadUrl()ed: the WebView stays blank while m_pendingRestores holds
+// the url + the serialized history blob restoreState() decoded.  The
+// tab keeps its slot, saved title and favicon so the strip reads
+// fully restored; the first activation runs restorePendingTab() and
+// the page loads on demand — same end state the eager path reaches,
+// minus the startup cost of every background tab.
+
+bool TabWidget::isTabPendingRestore(int index) const
+{
+    WebView *view = const_cast<TabWidget*>(this)->webView(index);
+    return view && m_pendingRestores.contains(view);
+}
+
+QUrl TabWidget::pendingRestoreUrl(int index) const
+{
+    WebView *view = const_cast<TabWidget*>(this)->webView(index);
+    return m_pendingRestores.value(view).url;
+}
+
+void TabWidget::restorePendingTab(int index)
+{
+    WebView *webView = this->webView(index);
+    if (!webView)
+        return;
+    const auto it = m_pendingRestores.find(webView);
+    if (it == m_pendingRestores.end())
+        return;
+    const QUrl url = it->url;
+    m_pendingRestores.erase(it);
+    if (index >= 0)
+        locationBar(index)->setText(QString::fromUtf8(url.toEncoded()));
+    webView->loadUrl(url);
+    markTabActivity(webView);
+}
+
+// The title the session blob does not store: a restored tab's last
+// known title comes from the history store, falling back to the url
+// itself (the webViewTitleChanged fallback's behavior).
+static QString restoredTabTitle(const QUrl &url)
+{
+    const QString urlString = QString::fromUtf8(url.toEncoded());
+    if (HistoryManager *history = BrowserApplication::historyManager()) {
+        const QList<HistoryEntry> entries = history->history();
+        for (const HistoryEntry &entry : entries) {
+            if (entry.url == urlString && !entry.title.isEmpty())
+                return entry.title;
+        }
+    }
+    return QString();
+}
+
 static const qint32 TabWidgetMagic = 0xaa;
 
 TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
@@ -3343,11 +3420,20 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
             continue;
         if (tab == currentWebView())
             snap.currentIndex = snap.urls.count();
-        snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
-        if (tab->enginePage()->historyCount() != 0)
-            snap.histories.append(serializePageHistory(tab->enginePage()));
-        else
-            snap.histories.append(QByteArray());
+        // PREFUI04: a lazily restored tab never loaded its page — its
+        // stashed url + history blob stand in for the live state so a
+        // re-saved session loses nothing.
+        const auto pending = m_pendingRestores.constFind(tab);
+        if (pending != m_pendingRestores.constEnd()) {
+            snap.urls.append(QString::fromUtf8(pending->url.toEncoded()));
+            snap.histories.append(pending->historyState);
+        } else {
+            snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
+            if (tab->enginePage()->historyCount() != 0)
+                snap.histories.append(serializePageHistory(tab->enginePage()));
+            else
+                snap.histories.append(QByteArray());
+        }
         snap.containers.append(tab->containerId());
         snap.groupIds.append(m_tabGroups.value(tab));
         // TABS04: the pin flag keys on the page widget — the view's
@@ -3528,7 +3614,38 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 if (index >= 0)
                     setPinFlag(widget(index), true);
             }
-            webView->loadUrl(url);
+            // PREFUI04: under lazy restore a background tab stashes
+            // its url + history blob instead of loading — the page
+            // only loads when the tab is first activated (or saved
+            // out again, which re-serializes the stash).  The
+            // "Always Load Pinned Tabs" opt-out exempts pinned tabs;
+            // the tab that ends up selected is flushed at the end of
+            // restoreState() either way.
+            const bool deferred = m_lazyRestoreTabs
+                && !(savedPinned.value(i) && m_lazyRestorePinnedTabs);
+            const int index = webViewIndex(webView);
+            if (deferred && index >= 0) {
+                m_pendingRestores.insert(webView, {url, historyState});
+                // The strip reads restored before the first load:
+                // saved title (history store lookup, url fallback)
+                // and the persisted favicon.
+                locationBar(index)->setText(
+                    QString::fromUtf8(url.toEncoded()));
+                m_tabBar->setTabData(index, url);
+                const QString title = restoredTabTitle(url);
+                const QString tabTitle = title.isEmpty()
+                    ? QString::fromUtf8(url.toEncoded()) : title;
+                setTabText(index, SafeText::menu(tabTitle));
+                setTabToolTip(index, SafeText::escaped(tabTitle));
+                const QIcon icon = BrowserApplication::icon(url);
+                if (QLabel *label = animationLabel(index, false)) {
+                    label->setPixmap(isTabPrivate(index)
+                        ? privateBadgedPixmap(icon)
+                        : icon.pixmap(16, 16));
+                }
+            } else {
+                webView->loadUrl(url);
+            }
         }
     }
     m_sessionRestore = false;
@@ -3591,6 +3708,12 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         selectIndex = currentTab;
     if (selectIndex >= 0)
         setCurrentIndex(selectIndex);
+    // The selected tab flushes its deferral as soon as it becomes
+    // current — setCurrentIndex() only fires currentChanged() when
+    // the index moves, so cover the already-current case too.  This
+    // must run after the saved index is applied: the pre-restore
+    // current tab is not necessarily the saved-current one.
+    restorePendingTab(currentIndex());
     // CONT06: rebuild the level filter — the saved header wins when
     // it still owns tabs, otherwise the saved current tab's container
     // (a window restored on "Work" lands there, not on "Tabs").

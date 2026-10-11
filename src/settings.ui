@@ -132,6 +132,11 @@
          <string>Downloads</string>
         </property>
        </item>
+       <item>
+        <property name="text">
+         <string>Performance</string>
+        </property>
+       </item>
       </widget>
        </item>
       </layout>
@@ -1960,19 +1965,6 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="blockPrefetch">
-            <property name="toolTip">
-             <string>Drop prefetch and prerender hints (&lt;link rel=prefetch&gt;) — they fetch pages you may never visit, leaking connections and bandwidth to sites a link merely points at.</string>
-            </property>
-            <property name="text">
-             <string>Block prefetch requests</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QCheckBox" name="dnsPrefetch">
             <property name="toolTip">
              <string>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</string>
@@ -2325,53 +2317,6 @@
           <bool>true</bool>
          </property>
         </widget>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="suspendTabsLayout">
-         <item>
-          <widget class="QCheckBox" name="suspendTabs">
-           <property name="text">
-            <string>Suspend inactive tabs after</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QSpinBox" name="suspendTabsMinutes">
-           <property name="enabled">
-            <bool>false</bool>
-           </property>
-           <property name="minimum">
-            <number>1</number>
-           </property>
-           <property name="maximum">
-            <number>1440</number>
-           </property>
-           <property name="value">
-            <number>30</number>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="suspendTabsMinutesLabel">
-           <property name="text">
-            <string>minutes idle to save memory</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="suspendTabsSpacer">
-           <property name="orientation">
-            <enum>Qt::Horizontal</enum>
-           </property>
-           <property name="sizeHint" stdset="0">
-            <size>
-             <width>40</width>
-             <height>20</height>
-            </size>
-           </property>
-          </spacer>
-         </item>
-        </layout>
        </item>
        <item>
         <widget class="QGroupBox" name="openLinksGroupBox">
@@ -3445,6 +3390,233 @@
        </item>
       </layout>
      </widget>
+     <widget class="QWidget" name="tab_performance">
+      <layout class="QVBoxLayout" name="performancePageLayout">
+       <item>
+        <widget class="QGroupBox" name="performanceGroupBox">
+         <property name="title">
+          <string>Performance</string>
+         </property>
+         <layout class="QVBoxLayout" name="performanceGroupLayout">
+          <item>
+           <widget class="QCheckBox" name="hardwareAccel">
+            <property name="toolTip">
+             <string>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</string>
+            </property>
+            <property name="text">
+             <string>Use Hardware Acceleration When Available</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="hardwareAccelNote">
+            <property name="text">
+             <string>Changing this option requires a restart to take effect.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="memorySaverGroupBox">
+         <property name="title">
+          <string>Memory Saver</string>
+         </property>
+         <layout class="QVBoxLayout" name="memorySaverLayout">
+          <item>
+           <widget class="QRadioButton" name="memorySaverNever">
+            <property name="text">
+             <string>Never Save Memory</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="memorySaverMinimum">
+            <property name="toolTip">
+             <string>Unload tabs after 60 minutes idle.</string>
+            </property>
+            <property name="text">
+             <string>Minimum Savings</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="memorySaverBalanced">
+            <property name="toolTip">
+             <string>Unload tabs after 30 minutes idle.</string>
+            </property>
+            <property name="text">
+             <string>Balanced Savings</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="memorySaverMaximum">
+            <property name="toolTip">
+             <string>Unload tabs after 10 minutes idle.</string>
+            </property>
+            <property name="text">
+             <string>Maximum Savings</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="memorySaverNote">
+            <property name="text">
+             <string>Unload inactive tabs to save memory. Suspended tabs keep their place on the tab strip and reload when you return to them.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="energySaverLayout"/>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="startupRestoreGroupBox">
+         <property name="title">
+          <string>Startup with</string>
+         </property>
+         <layout class="QVBoxLayout" name="startupRestoreLayout">
+          <item>
+           <widget class="QCheckBox" name="lazyRestoreTabs">
+            <property name="text">
+             <string>Lazy Load Restored Tabs</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="alwaysLoadPinnedTabsLayout">
+            <item>
+             <spacer name="alwaysLoadPinnedTabsIndent">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="alwaysLoadPinnedTabs">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>Always Load Pinned Tabs</string>
+              </property>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="lazyRestoreNote">
+            <property name="text">
+             <string>Wait to load restored session content until the tab is activated.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="networkPerfGroupBox">
+         <property name="title">
+          <string>Network Performance</string>
+         </property>
+         <layout class="QVBoxLayout" name="networkPerfLayout">
+          <item>
+           <widget class="QCheckBox" name="prefetchResources">
+            <property name="toolTip">
+             <string>Allow prefetch and prerender hints (&lt;link rel=prefetch&gt;). Leaving this off drops connections to sites a link merely points at — pages you may never visit.</string>
+            </property>
+            <property name="text">
+             <string>Prefetch Resources</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="prefetchResourcesNote">
+            <property name="text">
+             <string>Follow webpage suggestions to prefetch DNS, and preload resources and documents early.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="resetPerformanceGroupBox">
+         <property name="title">
+          <string>Reset Settings</string>
+         </property>
+         <layout class="QVBoxLayout" name="resetPerformanceLayout">
+          <item>
+           <layout class="QHBoxLayout" name="resetPerformanceButtonLayout">
+            <item>
+             <widget class="QPushButton" name="resetPerformanceButton">
+              <property name="text">
+               <string>Reset Performance Settings to Default</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="resetPerformanceSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="resetPerformanceNote">
+            <property name="text">
+             <string>Restore every setting on this page — hardware acceleration, memory saver, session restore and prefetch — to its default.</string>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="performancePageSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
      </widget>
      </item>
     </layout>
@@ -3527,7 +3699,6 @@
   <tabstop>strictTlsCiphers</tabstop>
   <tabstop>secureDnsServer</tabstop>
   <tabstop>blockPings</tabstop>
-  <tabstop>blockPrefetch</tabstop>
   <tabstop>dnsPrefetch</tabstop>
   <tabstop>blockRemoteFonts</tabstop>
   <tabstop>blockThirdPartyWebSockets</tabstop>
@@ -3563,6 +3734,12 @@
   <tabstop>containerRemoveButton</tabstop>
   <tabstop>containerSitesList</tabstop>
   <tabstop>containerSiteRemoveButton</tabstop>
+  <tabstop>hardwareAccel</tabstop>
+  <tabstop>memorySaverNever</tabstop>
+  <tabstop>lazyRestoreTabs</tabstop>
+  <tabstop>alwaysLoadPinnedTabs</tabstop>
+  <tabstop>prefetchResources</tabstop>
+  <tabstop>resetPerformanceButton</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>
@@ -3708,22 +3885,6 @@
     <hint type="destinationlabel">
      <x>569</x>
      <y>276</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>suspendTabs</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>suspendTabsMinutes</receiver>
-   <slot>setEnabled(bool)</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>79</x>
-     <y>330</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>230</x>
-     <y>330</y>
     </hint>
    </hints>
   </connection>
