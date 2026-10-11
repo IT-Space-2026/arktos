@@ -311,9 +311,11 @@ Security:
   opens, an argv-only Tor hand-off re-gated on receipt, and zero
   history/session/reopen residue from private opens (CONT08).
 - Preferences > Privacy gains a Site Trust group with a master "Show
-  site trust indicator in the toolbar" switch — on by default;
-  turning it off hides the upcoming trust badge and skips its
-  lookalike/threat-list lookups, applied without a restart (TRUST06).
+  site trust indicator in the toolbar" switch plus per-signal toggles
+  for the lookalike-domain warning and the known-threat-list check —
+  all on by default; turning the master off hides the upcoming trust
+  badge and skips the lookups, and each signal can be disabled
+  individually, applied without a restart (TRUST06, TRUST02).
 
 Containers:
 - Isolated container profiles (CONT01).
