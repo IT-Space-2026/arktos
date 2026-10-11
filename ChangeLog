@@ -317,6 +317,11 @@ UI:
   separators, descriptions and the bookmarks-bar marker included —
   and the file re-imports cleanly through Arora's own HTML importer
   (BKEX01).
+- Preferences section sidebar is easier to read: the page list's text
+  is ~30% larger with icons scaled to match (kept uniform across icon
+  themes and centered on the taller row), the column width re-measured
+  for the longer labels, and the Appearance page's Panels checklist
+  gets the same sizing (PREFUI08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

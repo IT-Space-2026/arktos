@@ -210,11 +210,27 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // the theme files) so every current and future set is uniform;
     // it's widget state, so a runtime AroraIcon::setTheme re-resolve
     // can't regrow it.
+    // PREFUI08: at the stock font beside 16px glyphs the nav read
+    // cramped — bump the list font ~30% relative to the app font
+    // (relative, not a hardcoded pt, so user font settings still
+    // scale it) and size the icons off the enlarged metrics so glyph
+    // and label grow together.  The delegate centers the icon against
+    // the taller row, so the alignment follows the bigger text.
+    QFont navFont = pagesList->font();
+    if (navFont.pointSizeF() > 0)
+        navFont.setPointSizeF(navFont.pointSizeF() * 1.3);
+    else if (navFont.pixelSize() > 0)
+        navFont.setPixelSize(qRound(navFont.pixelSize() * 1.3));
+    pagesList->setFont(navFont);
     const int chromeIconExtent =
         style()->pixelMetric(QStyle::PM_SmallIconSize);
-    pagesList->setIconSize(QSize(chromeIconExtent, chromeIconExtent));
+    const int navIconExtent =
+        qRound(QFontMetricsF(navFont).height() * 1.1);
+    pagesList->setIconSize(QSize(navIconExtent, navIconExtent));
     pagesList->setUniformItemSizes(true);
-    // Fixed-width nav column sized to the longest translated label.
+    // Fixed-width nav column sized to the longest translated label —
+    // measured after the font bump so the width reflects the larger
+    // text.
     pagesList->setFixedWidth(pagesList->sizeHintForColumn(0)
                              + 2 * pagesList->frameWidth() + 8);
 
@@ -329,8 +345,10 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }
-    sidebarPanelsList->setIconSize(
-        QSize(chromeIconExtent, chromeIconExtent));
+    // PREFUI08: same icon+label list family as the nav — match its
+    // enlarged font and extent for visual parity.
+    sidebarPanelsList->setFont(navFont);
+    sidebarPanelsList->setIconSize(QSize(navIconExtent, navIconExtent));
 
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);

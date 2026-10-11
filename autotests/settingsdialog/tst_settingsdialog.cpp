@@ -1432,22 +1432,43 @@ void tst_SettingsDialog::uniformSidebarIcons()
     const QString originalTheme = AroraIcon::theme();
     SettingsDialog dialog;
 
-    const int extent =
+    // PREFUI08: the nav font is bumped ~30% relative to the app font
+    // and the pinned icon extent is derived from the enlarged metrics
+    // — bigger than PM_SmallIconSize but still one uniform size.
+    // (Metrics-based compare: the font may be pixel- or point-based.)
+    QVERIFY(QFontMetricsF(dialog.pagesList->font()).height()
+            > QFontMetricsF(dialog.font()).height() * 1.2);
+    const int extent = qRound(
+        QFontMetricsF(dialog.pagesList->font()).height() * 1.1);
+    const int smallExtent =
         dialog.style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QVERIFY(extent > smallExtent);
     const QSize iconExtent(extent, extent);
 
     QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
     QVERIFY(dialog.pagesList->uniformItemSizes());
+    // The fixed nav column is re-measured under the larger font.
+    QCOMPARE(dialog.pagesList->width(),
+             dialog.pagesList->sizeHintForColumn(0)
+                 + 2 * dialog.pagesList->frameWidth() + 8);
+    // The Panels checklist is the same icon+label list family —
+    // same enlarged font and extent.
+    QCOMPARE(dialog.sidebarPanelsList->iconSize(), iconExtent);
+    QVERIFY(dialog.sidebarPanelsList->font()
+            == dialog.pagesList->font());
     // ICONS03: the combo's pin is the whole preview strip — N glyph
     // cells wide, one small-icon extent tall.
-    QCOMPARE(dialog.iconThemeCombo->iconSize().height(), extent);
-    QCOMPARE(dialog.iconThemeCombo->iconSize().width() % extent, 0);
-    QVERIFY(dialog.iconThemeCombo->iconSize().width() > extent);
-    QCOMPARE(dialog.engineTree->iconSize(), iconExtent);
+    QCOMPARE(dialog.iconThemeCombo->iconSize().height(), smallExtent);
+    QCOMPARE(dialog.iconThemeCombo->iconSize().width() % smallExtent, 0);
+    QVERIFY(dialog.iconThemeCombo->iconSize().width() > smallExtent);
+    QCOMPARE(dialog.engineTree->iconSize(),
+             QSize(smallExtent, smallExtent));
 
-    const auto checkRows = [&dialog]() {
+    const auto checkRows = [&dialog, extent]() {
         const int height = dialog.pagesList->sizeHintForRow(0);
-        QVERIFY(height > 0);
+        // Row grew with the font and still fits the icon — the
+        // delegate centers it, nothing clips.
+        QVERIFY(height >= extent);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             QCOMPARE(dialog.pagesList->sizeHintForRow(row), height);
             QVERIFY(!dialog.pagesList->item(row)->icon().isNull());
