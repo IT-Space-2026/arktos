@@ -59,13 +59,25 @@ public:
     ~RustDownloadEngine() override;
 
     // Reads the downloadmanager/engine setting the DLACC01 selector
-    // page writes.  Lenient on the value's shape ("rust",
-    // "accelerated", "Accelerated (Rust)", 1) so either side can land
-    // first; the selector only shows the option when isAvailable().
+    // page writes.  DLACC06: rust is the DEFAULT — an absent or empty
+    // key means selected; only an explicit opt-out ("builtin", a
+    // legacy 0, or any other value) stays on the built-in path.
+    // Lenient on the value's shape ("rust", "accelerated",
+    // "Accelerated (Rust)", 1) so either side can land first.
     static bool isSelected();
     // Crate linked in.  (Temp dir is armed lazily at accept() — the
     // engine reports available whenever the FFI is present.)
     static bool isAvailable();
+
+    // DLACC06 claim gate — both downloadmanager.cpp takeover sites
+    // funnel through it.  True only when the transfer can run
+    // honestly through the crate: the engine must be selected, the
+    // scheme http(s), and no application proxy may be configured (in
+    // tor mode the application proxy IS the managed daemon's SOCKS
+    // listener — claiming there would send the bytes direct; the
+    // built-in path stays the fallback until DLACC04 wires
+    // options.proxy through).
+    static bool canHandle(const QUrl &url);
 
     // The QWebEngineDownloadRequest-shaped surface DownloadItem uses.
     QUrl url() const { return m_url; }

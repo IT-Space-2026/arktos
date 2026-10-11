@@ -1163,11 +1163,10 @@ void DownloadManager::download(Engine::Page *page, const QUrl &url, bool request
         return;
 
 #ifdef ARORA_RUSTDL
-    // DLACC06: the accelerated engine claims http(s) downloads when
-    // the DLACC01 selector picked it — no Chromium request is issued.
-    if (RustDownloadEngine::isSelected()
-        && (url.scheme() == QLatin1String("http")
-            || url.scheme() == QLatin1String("https"))) {
+    // DLACC06: the accelerated engine is the default — canHandle()
+    // gates the claim on the selector, the http(s) scheme and the
+    // proxy hard-gate; no Chromium request is issued when it claims.
+    if (RustDownloadEngine::canHandle(url)) {
         // The rustdl engine reads the raw page for profile parity —
         // engine-bound plumbing reached through the adapter hatch.
         WebEnginePageAdapter *adapter = WebEnginePageAdapter::of(page);
@@ -1218,15 +1217,14 @@ void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)
     }
 
 #ifdef ARORA_RUSTDL
-    // DLACC06: when the selector picked the accelerated engine, the
-    // rustdl crate takes over the transfer — Chromium's own fetch is
-    // cancelled and only its metadata (page, url, suggested name,
-    // mime) carries into the engine.  The DLACC01 routing stub merges
-    // here; both sides read the same downloadmanager/engine key.
+    // DLACC06: the accelerated engine (default since the selector's
+    // key defaults to rust) takes over the transfer when canHandle()
+    // allows — Chromium's own fetch is cancelled and only its
+    // metadata (page, url, suggested name, mime) carries into the
+    // engine.  The DLACC01 routing stub merges here; both sides read
+    // the same downloadmanager/engine key.
     const QUrl url = download->url();
-    if (RustDownloadEngine::isSelected()
-        && (url.scheme() == QLatin1String("http")
-            || url.scheme() == QLatin1String("https"))) {
+    if (RustDownloadEngine::canHandle(url)) {
         // The rustdl engine takes the raw page for profile parity —
         // engine-bound plumbing reached through the adapter hatch.
         WebEnginePageAdapter *adapter =

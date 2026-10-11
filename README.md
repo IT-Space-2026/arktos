@@ -167,12 +167,16 @@ surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, and each selected row expands into a
 detail card in the panel's bottom pane. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
-enabled in `CONFIG+=rustdl` builds) — a connections-per-download
+enabled in `CONFIG+=rustdl` builds; Accelerated is the default there
+and a saved Built-in pick is honored) — a connections-per-download
 field, a cleanup policy for the finished-downloads list, and a
 "Parallel segments" toggle (default on) that has Chromium fetch
 range-capable downloads over multiple concurrent byte-range requests;
-it takes effect at restart. The Rust reqwest-based multi-connection
-engine itself is in development (DLACC tasks).
+it takes effect at restart. The Accelerated engine is a Rust/reqwest
+multi-connection fetcher behind a C ABI (`src/rustdl`); it claims
+http(s) downloads only, and never runs when an application proxy is
+configured — Tor windows and other proxied transfers always stay on
+the built-in engine (DLACC06).
 
 ### Extensions
 

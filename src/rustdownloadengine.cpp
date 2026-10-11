@@ -23,6 +23,7 @@
 
 #include <qjsonobject.h>
 #include <qjsondocument.h>
+#include <qnetworkproxy.h>
 #include <qsettings.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
@@ -72,9 +73,33 @@ bool RustDownloadEngine::isSelected()
     settings.beginGroup(QLatin1String("downloadmanager"));
     const QVariant v = settings.value(QLatin1String("engine"));
     const QString s = v.toString().toLower();
+    // DLACC06: rust is the default engine — an absent or empty key
+    // means selected.  Only an explicit opt-out (a persisted
+    // "builtin", a legacy 0, or any other value) stays built-in.
+    if (s.isEmpty())
+        return true;
     return s.contains(QLatin1String("rust"))
         || s.contains(QLatin1String("accelerated"))
         || v.toInt() == 1;
+}
+
+bool RustDownloadEngine::canHandle(const QUrl &url)
+{
+    if (!isSelected())
+        return false;
+    if (url.scheme() != QLatin1String("http")
+        && url.scheme() != QLatin1String("https"))
+        return false;
+    // HARD GATE: the crate does not consume the application proxy —
+    // in tor mode that proxy IS the managed daemon's SOCKS listener
+    // (a dead loopback proxy pre-bootstrap), so claiming here would
+    // send the bytes direct.  Any real configured proxy keeps the
+    // transfer on the built-in path until DLACC04 wires options.proxy
+    // through.
+    const QNetworkProxy::ProxyType proxy =
+        QNetworkProxy::applicationProxy().type();
+    return proxy == QNetworkProxy::NoProxy
+        || proxy == QNetworkProxy::DefaultProxy;
 }
 
 void RustDownloadEngine::accept()

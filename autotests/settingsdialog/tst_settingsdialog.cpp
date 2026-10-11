@@ -1505,6 +1505,9 @@ void tst_SettingsDialog::pagePolishSettings()
 // and the finished-downloads cleanup policy, which had no UI before.
 void tst_SettingsDialog::downloadsPage()
 {
+    // DLACC06: the fresh-profile default is only provable with no
+    // persisted pick — drop any engine key an earlier leg wrote.
+    QSettings().remove(QLatin1String("downloadmanager/engine"));
     {
         SettingsDialog dialog;
         dialog.openAtPage(SettingsDialog::DownloadsPage);
@@ -1522,6 +1525,11 @@ void tst_SettingsDialog::downloadsPage()
         QVERIFY(model);
 #ifdef ARORA_RUSTDL
         QVERIFY(model->item(1)->isEnabled());
+        // DLACC06: rust is the default — a fresh profile opens with
+        // Accelerated selected and the segment spin armed.
+        QCOMPARE(dialog.downloadEngineCombo->currentData().toString(),
+                 QLatin1String("rust"));
+        QVERIFY(dialog.downloadConnectionsSpin->isEnabled());
         // Picking Accelerated arms the segment spin; back to built-in
         // greys it out again.
         dialog.downloadEngineCombo->setCurrentIndex(1);

@@ -231,6 +231,11 @@ void tst_PrivateBrowsing::init()
 {
     QSettings settings;
     settings.clear();
+    // DLACC06: download legs drive the built-in Chromium path; pin
+    // the engine or the rust default claims http(s) fixture urls on
+    // rustdl builds (harmless no-op without the flag).
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                      QLatin1String("builtin"));
     m_server->requests.clear();
     m_server->indexHtml.clear();
     m_server->setCookie.clear();

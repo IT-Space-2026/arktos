@@ -145,6 +145,11 @@ UI:
   downloads into ~3 concurrent byte-range requests.  On by default;
   the Preferences → Downloads "Parallel segments" checkbox toggles it
   (applies at restart, works in Tor windows too) (DLACC02).
+- The Accelerated (Rust) download engine is now the default in
+  rustdl builds — fresh profiles route http(s) downloads through the
+  segmented reqwest fetcher.  A saved "Built-in" pick is honored,
+  and transfers behind an application proxy (including every Tor
+  window) always stay on the built-in engine (DLACC06).
 - Sidebar reworked Vivaldi-style: the panel picker is now a slim
   icon-only vertical rail instead of horizontal tabs eating the
   dock's height, and a new Preferences → Appearance → Sidebar

@@ -186,6 +186,11 @@ void tst_DownloadManager::init()
 {
     QSettings settings;
     settings.clear();
+    // DLACC06: these legs drive the built-in Chromium path; pin the
+    // engine or the rust default claims every http(s) fixture url on
+    // rustdl builds (harmless no-op without the flag).
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                      QLatin1String("builtin"));
 }
 
 // This will be called after every test function.
