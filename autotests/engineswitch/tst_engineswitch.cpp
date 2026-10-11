@@ -42,6 +42,9 @@
 #include <webview.h>
 
 #include <qsplitter.h>
+#include <qstackedwidget.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qwebenginepage.h>
 
 #include "fakeengine.h"
@@ -79,6 +82,23 @@ static void closeWindow(QWidget *window)
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
+// closeTab()/the swap deleteLater() the retired widget AND its echo
+// bar — pump them before asserting on guards or the bar stack.
+static void pumpDeletes()
+{
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// The QStackedWidget's own count is the parallel-stack contract:
+// insert/remove update it synchronously, while findChildren still
+// sees bars whose deleteLater has not been delivered yet.
+static int barStackCount(TabWidget *widget)
+{
+    auto *stack =
+        qobject_cast<QStackedWidget*>(widget->locationBarStack());
+    return stack ? stack->count() : -1;
+}
+
 // --- test ---------------------------------------------------------------
 
 class tst_EngineSwitch : public QObject
@@ -107,6 +127,8 @@ private slots:
     void swapCollapsedGroupChip();
     void swapOnContainerLevel();
     void swapProbe();
+    void swapMidLoad();
+    void closeForeignTab();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -652,6 +674,127 @@ void tst_EngineSwitch::swapProbe()
         }
     }
     QCOMPARE(failures, 0);
+}
+
+// ENG06(c) — the swap lands while the SOURCE load is still in
+// flight: the dying page's pending signals must not corrupt the
+// replacement, the strip keeps its shape, and the fake receives the
+// in-flight url.
+void tst_EngineSwitch::swapMidLoad()
+{
+    // A server that accepts and never answers keeps the WebEngine
+    // load committed-but-unfinished for the whole leg.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+    });
+    const QUrl url(QStringLiteral("http://127.0.0.1:%1/never")
+        .arg(server.serverPort()));
+
+    TabWidget widget;
+    widget.newTab();
+    WebView *view = widget.webView(0);
+    QPointer<WebView> viewGuard(view);
+    QSignalSpy startedSpy(view->page(), &QWebEnginePage::loadStarted);
+    view->load(url);
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() >= 1, 15000);
+
+    // Swap while the source page is mid-load — the swap is
+    // synchronous, so any late signal from the torn-down page lands
+    // on dead slots, not on the new EngineTab.
+    const int pagesBefore = m_fake->pages.count();
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    pumpDeletes();
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(!viewGuard);
+    QVERIFY(m_fake->pages.count() > pagesBefore);
+    FakeEnginePage *fakePage =
+        qobject_cast<FakeEnginePage*>(widget.engineTab(0)->page());
+    QVERIFY(fakePage);
+    QCOMPARE(fakePage->loads, 1);
+    QCOMPARE(fakePage->url(), url);
+    QCOMPARE(widget.tabEngineId(0), QStringLiteral("fake"));
+    // The parallel bar stack stayed aligned through the swap.
+    QCOMPARE(barStackCount(&widget),
+             widget.count());
+
+    // And back mid-flight again — the fake tab's synchronous load
+    // finished, but the swap-back still re-loads the same url on a
+    // fresh WebView while the original connection is still pending.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("webengine")));
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(widget.webView(0));
+    QCOMPARE(widget.tabEngineId(0), QStringLiteral("webengine"));
+    QCOMPARE(barStackCount(&widget),
+             widget.count());
+}
+
+// ENG06(c) — closed-tab edges around the swap: a foreign EngineTab
+// tears down through the same closeTab path, by identity rather than
+// a stale index, and the parallel bar stack stays aligned.
+void tst_EngineSwitch::closeForeignTab()
+{
+    TabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    WebView *v0 = widget.webView(0);
+    WebView *v2 = widget.webView(2);
+
+    // Swap the middle tab out, then close IT — the surviving tabs
+    // shift down by identity, not by a stale captured index.
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+    EngineTab *foreign = widget.engineTab(1);
+    QVERIFY(foreign);
+    QPointer<EngineTab> foreignGuard(foreign);
+    const int fakePagesBefore = m_fake->pages.count();
+
+    QSignalSpy changedSpy(&widget, &TabWidget::tabsChanged);
+    widget.closeTab(1);
+    pumpDeletes();
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(changedSpy.count() >= 1);
+    QVERIFY(!foreignGuard);          // really deleted, not reparented
+    QCOMPARE(widget.webView(0), v0);
+    QCOMPARE(widget.webView(1), v2); // v2 shifted, same identity
+    QCOMPARE(widget.tabEngineId(0), QStringLiteral("webengine"));
+    QCOMPARE(widget.tabEngineId(1), QStringLiteral("webengine"));
+    QCOMPARE(barStackCount(&widget),
+             widget.count());
+
+    // Stale-index edges: closing/swapping past the end refuses
+    // cleanly and leaves the strip untouched.
+    widget.closeTab(7);
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(!widget.reloadTabInEngine(7, QStringLiteral("fake")));
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.webView(1), v2);
+
+    // Swap the CURRENT tab to fake and close it — the hasFocus path
+    // sees a null WebView and skips the focus handoff, and the last
+    // teardown still reports a clean strip.
+    QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+    widget.setCurrentIndex(1);
+    widget.closeTab();               // current -> the foreign tab
+    pumpDeletes();
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.webView(0), v0);
+    QCOMPARE(barStackCount(&widget),
+             widget.count());
+    QCOMPARE(m_fake->pages.count(), fakePagesBefore + 1);
+
+    // The remaining tab's swap still works after all the churn —
+    // state followed widget identity, never the shifting index.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(widget.tabEngineId(0), QStringLiteral("fake"));
+    QSignalSpy lastSpy(&widget, &TabWidget::lastTabClosed);
+    widget.closeTab(0);
+    pumpDeletes();
+    QCOMPARE(widget.count(), 0);
+    QCOMPARE(lastSpy.count(), 1);
+    QCOMPARE(barStackCount(&widget), 0);
 }
 
 QTEST_MAIN(tst_EngineSwitch)

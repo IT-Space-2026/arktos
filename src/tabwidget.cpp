@@ -1043,7 +1043,12 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
 
     WebView *view = webView(index);
     EngineTab *foreign = engineTab(index);
-    const QUrl url = view ? view->url()
+    // url() names the last COMMITTED navigation — a mid-load swap
+    // carries the in-flight target instead, or the replacement
+    // silently re-loads the page the user already left.
+    const QUrl url = view ? (view->page()->isLoading()
+                                 ? view->page()->requestedUrl()
+                                 : view->url())
                           : (foreign ? foreign->url() : QUrl());
     const bool wasCurrent = (index == currentIndex());
     // TABGRP01: membership keys on WebView — a webengine target keeps

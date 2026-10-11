@@ -25,301 +25,19 @@
 #include <QtGui/QtGui>
 #include <QtTest/QtTest>
 #include <QtWebEngineWidgets>
+#include <qlabel.h>
 
 #include <engineinterface.h>
+#include <statusbarwidgets.h>
 #include <webenginebackend.h>
 #include <webview.h>
 
 #include "qtest_arora.h"
+#include "fakeengine.h"
 
-// --- fake backend ----------------------------------------------------
-
-class FakePage : public Engine::Page
-{
-    Q_OBJECT
-
-public:
-    explicit FakePage(QObject *parent = nullptr) : Engine::Page(parent) {}
-
-    void load(const QUrl &newUrl) override
-    {
-        m_url = newUrl;
-        emit loadStarted();
-        emit loadProgress(100);
-        emit loadFinished(true);
-    }
-    void stop() override { ++stops; }
-    void reload() override { ++reloads; }
-    QUrl url() const override { return m_url; }
-
-    bool canGoBack() const override { return m_canBack; }
-    bool canGoForward() const override { return m_canForward; }
-    void back() override { m_canForward = true; m_canBack = false; }
-    void forward() override { m_canBack = true; m_canForward = false; }
-
-    int historyCount() const override { return m_entries.count(); }
-    int currentHistoryIndex() const override { return m_current; }
-    QList<Engine::HistoryEntry> historyItems() const override
-    {
-        return m_entries;
-    }
-    QList<Engine::HistoryEntry> backItems(int maxItems) const override
-    {
-        return m_entries.mid(qMax(0, m_current - maxItems),
-                             qMin(maxItems, m_current));
-    }
-    QList<Engine::HistoryEntry> forwardItems(int maxItems) const override
-    {
-        return m_entries.mid(m_current + 1, maxItems);
-    }
-    void goToHistoryEntry(const Engine::HistoryEntry &entry) override
-    {
-        lastGoTo = entry.index;
-    }
-
-    void setZoomFactor(qreal factor) override { m_zoom = factor; }
-    qreal zoomFactor() const override { return m_zoom; }
-
-    void findText(const QString &subString, Engine::FindFlags options) override
-    {
-        lastFind = subString;
-        lastFindFlags = options;
-        Engine::FindResult result;
-        result.numberOfMatches = subString.isEmpty() ? 0 : 2;
-        result.activeMatch = 1;
-        emit findTextFinished(result);
-    }
-
-    void runJavaScript(const QString &source,
-                       const std::function<void(const QVariant &)> &resultCallback
-                           = std::function<void(const QVariant &)>()) override
-    {
-        lastScript = source;
-        if (resultCallback)
-            resultCallback(QVariant(QStringLiteral("fake-result")));
-    }
-
-    void runJavaScriptLifted(const QString &source,
-                       const std::function<void(const QVariant &)> &resultCallback
-                           = std::function<void(const QVariant &)>()) override
-    {
-        ++liftedCalls;
-        lastScript = source;
-        if (resultCallback)
-            resultCallback(QVariant(QStringLiteral("fake-lifted")));
-    }
-
-    void toHtml(const std::function<void(const QString &)> &resultCallback) override
-    {
-        if (resultCallback)
-            resultCallback(m_markup);
-    }
-
-    QAction *action(Engine::StandardAction which) override
-    {
-        return actions.value(which);
-    }
-
-    bool isLoading() const override { return m_loading; }
-    bool recentlyAudible() const override { return m_audible; }
-    bool isOffTheRecord() const override { return m_otr; }
-
-    void setPageAttribute(const QString &name, bool on) override
-    {
-        attributes.insert(name, on);
-    }
-
-    void setLifecycleState(LifecycleState state) override { m_lifecycle = state; }
-    LifecycleState lifecycleState() const override { return m_lifecycle; }
-
-    qint64 renderProcessId() const override { return m_pid; }
-    void setRenderProcessId(qint64 pid) { m_pid = pid; }
-
-    Engine::Page *createWindow(Engine::WebWindowType type) override
-    {
-        lastWindowType = type;
-        return windowResult;
-    }
-
-    void insertScript(const Engine::Script &script) override
-    {
-        m_scripts.insert(script.name, script);
-    }
-    void removeScript(const QString &name) override { m_scripts.remove(name); }
-    QList<Engine::Script> scripts() const override { return m_scripts.values(); }
-
-    void download(const QUrl &url) override { lastDownload = url; }
-    QWidget *view() const override { return m_view; }
-
-    QUrl m_url;
-    qreal m_zoom = 1.0;
-    bool m_canBack = false;
-    bool m_canForward = false;
-    bool m_loading = false;
-    bool m_audible = false;
-    bool m_otr = false;
-    QHash<Engine::StandardAction, QAction*> actions;
-    QList<Engine::HistoryEntry> m_entries;
-    int m_current = -1;
-    int lastGoTo = -1;
-    LifecycleState m_lifecycle = LifecycleState::Active;
-    qint64 m_pid = -1;
-    QString lastFind;
-    Engine::FindFlags lastFindFlags;
-    QString lastScript;
-    int liftedCalls = 0;
-    QString m_markup;
-    QHash<QString, bool> attributes;
-    Engine::WebWindowType lastWindowType = Engine::WebWindowType::BrowserWindow;
-    Engine::Page *windowResult = nullptr;
-    int stops = 0;
-    int reloads = 0;
-    QHash<QString, Engine::Script> m_scripts;
-    QUrl lastDownload;
-    QWidget *m_view = nullptr;
-};
-
-class FakeDownloadRequest : public Engine::DownloadRequest
-{
-    Q_OBJECT
-
-public:
-    explicit FakeDownloadRequest(QObject *parent = nullptr)
-        : Engine::DownloadRequest(parent) {}
-
-    QUrl url() const override { return m_url; }
-    QString suggestedFileName() const override { return m_name; }
-    QString mimeType() const override { return m_mime; }
-    void accept(const QString &filePath) override
-    {
-        acceptedPath = filePath;
-        setState(State::InProgress);
-    }
-    void cancel() override { setState(State::Cancelled); }
-    void pause() override { ++pauses; }
-    void resume() override { ++resumes; }
-    qint64 receivedBytes() const override { return m_received; }
-    qint64 totalBytes() const override { return m_total; }
-    State state() const override { return m_state; }
-    bool isFinished() const override
-    {
-        return m_state == State::Completed || m_state == State::Cancelled;
-    }
-    QString interruptReasonString() const override { return m_interrupt; }
-    void setDownloadDirectory(const QString &directory) override
-    {
-        m_dir = directory;
-    }
-    void setDownloadFileName(const QString &fileName) override
-    {
-        m_fileName = fileName;
-    }
-    QString downloadDirectory() const override { return m_dir; }
-    QString downloadFileName() const override { return m_fileName; }
-    Engine::Page *page() const override { return m_page; }
-
-    void setState(State state)
-    {
-        m_state = state;
-        emit stateChanged(state);
-    }
-    void bump(qint64 received, qint64 total)
-    {
-        m_received = received;
-        emit receivedBytesChanged();
-        if (total != m_total) {
-            m_total = total;
-            emit totalBytesChanged();
-        }
-    }
-
-    QUrl m_url;
-    QString m_name;
-    QString m_mime;
-    State m_state = State::Requested;
-    qint64 m_received = 0;
-    qint64 m_total = -1;
-    QString m_interrupt;
-    QString m_dir;
-    QString m_fileName;
-    QString acceptedPath;
-    int pauses = 0;
-    int resumes = 0;
-    Engine::Page *m_page = nullptr;
-};
-
-class FakeProfile : public Engine::Profile
-{
-    Q_OBJECT
-
-public:
-    explicit FakeProfile(QObject *parent = nullptr) : Engine::Profile(parent) {}
-
-    bool isOffTheRecord() const override { return m_otr; }
-    QString storageName() const override { return m_name; }
-    void setUserAgent(const QString &userAgent) override { m_ua = userAgent; }
-    void setRequestPolicy(Engine::RequestPolicy *policy) override { m_policy = policy; }
-    Engine::RequestPolicy *requestPolicy() const override { return m_policy; }
-    void setCookieFilter(
-            const std::function<bool(const Engine::CookieAttempt &)> &filter) override
-    {
-        m_filter = filter;
-    }
-    void insertScript(const Engine::Script &script) override
-    {
-        m_scripts.insert(script.name, script);
-    }
-    void removeScript(const QString &name) override { m_scripts.remove(name); }
-    QList<Engine::Script> scripts() const override { return m_scripts.values(); }
-    void clear(Engine::StorageAreas areas) override { m_cleared |= areas; }
-    void setProfileAttribute(const QString &name, const QVariant &value) override
-    {
-        m_attributes.insert(name, value);
-    }
-
-    bool m_otr = false;
-    QString m_name;
-    QString m_ua;
-    Engine::RequestPolicy *m_policy = nullptr;
-    std::function<bool(const Engine::CookieAttempt &)> m_filter;
-    QHash<QString, Engine::Script> m_scripts;
-    Engine::StorageAreas m_cleared;
-    QHash<QString, QVariant> m_attributes;
-};
-
-class FakeBackend : public Engine::Backend
-{
-    Q_OBJECT
-
-public:
-    explicit FakeBackend(QObject *parent = nullptr) : Engine::Backend(parent) {}
-
-    QString id() const override { return QStringLiteral("fake"); }
-    QString displayName() const override { return QStringLiteral("Fake Engine"); }
-    Engine::Capabilities capabilities() const override
-    {
-        Engine::Capabilities caps;
-        caps.scriptEvaluation = true;
-        return caps;
-    }
-    bool initialize() override { return true; }
-    Engine::Profile *createProfile(const Engine::ProfileOptions &options,
-                                   QObject *parent = nullptr) override
-    {
-        auto *profile = new FakeProfile(parent);
-        profile->m_otr = options.offTheRecord;
-        profile->m_name = options.storageName;
-        return profile;
-    }
-    Engine::Page *createPage(Engine::Profile *, QObject *parent = nullptr) override
-    {
-        return new FakePage(parent);
-    }
-    QWidget *createView(Engine::Page *, QWidget *parent = nullptr) override
-    {
-        return new QWidget(parent);
-    }
-};
+// The reference fake backend lives in autotests/fakeengine.h — shared
+// with tst_engineswitch and tst_tabwidget's swap legs (ENG06: one
+// reference backend for the whole engine surface).
 
 // --- test ------------------------------------------------------------
 
@@ -334,6 +52,7 @@ private slots:
     void fakePageLifecycleAndPid();
     void fakeProfileSurface();
     void fakeDownloadSurface();
+    void memIndicatorContract();
     void webEngineBackendShape();
     void webEnginePageForwarding();
     void webEngineLiftedScript();
@@ -342,7 +61,7 @@ private slots:
 
 void tst_EngineAdapter::fakeBackendShape()
 {
-    FakeBackend backend;
+    FakeEngineBackend backend;
     QCOMPARE(backend.id(), QStringLiteral("fake"));
     QVERIFY(backend.initialize());
     QVERIFY(backend.capabilities().scriptEvaluation);
@@ -358,7 +77,7 @@ void tst_EngineAdapter::fakeBackendShape()
 
 void tst_EngineAdapter::fakePageNavigation()
 {
-    FakePage page;
+    FakeEnginePage page;
     QSignalSpy started(&page, &Engine::Page::loadStarted);
     QSignalSpy progress(&page, &Engine::Page::loadProgress);
     QSignalSpy finished(&page, &Engine::Page::loadFinished);
@@ -412,7 +131,7 @@ void tst_EngineAdapter::fakePageNavigation()
 
 void tst_EngineAdapter::fakePageZoomFindScript()
 {
-    FakePage page;
+    FakeEnginePage page;
 
     page.setZoomFactor(1.5);
     QCOMPARE(page.zoomFactor(), 1.5);
@@ -468,7 +187,7 @@ void tst_EngineAdapter::fakePageZoomFindScript()
 
 void tst_EngineAdapter::fakePageLifecycleAndPid()
 {
-    FakePage page;
+    FakeEnginePage page;
     QCOMPARE(page.lifecycleState(), Engine::Page::LifecycleState::Active);
     page.setLifecycleState(Engine::Page::LifecycleState::Discarded);
     QCOMPARE(page.lifecycleState(), Engine::Page::LifecycleState::Discarded);
@@ -478,7 +197,7 @@ void tst_EngineAdapter::fakePageLifecycleAndPid()
     page.setRenderProcessId(4242);
     QCOMPARE(page.renderProcessId(), qint64(4242));
 
-    FakePage child;
+    FakeEnginePage child;
     page.windowResult = &child;
     QCOMPARE(page.createWindow(Engine::WebWindowType::BrowserTab),
              static_cast<Engine::Page*>(&child));
@@ -487,7 +206,7 @@ void tst_EngineAdapter::fakePageLifecycleAndPid()
 
 void tst_EngineAdapter::fakeProfileSurface()
 {
-    FakeProfile profile;
+    FakeEngineProfile profile;
     profile.insertScript(Engine::Script{
         QStringLiteral("s"), QStringLiteral("code"),
         Engine::InjectionPoint::DocumentReady, 0, true });
@@ -499,14 +218,31 @@ void tst_EngineAdapter::fakeProfileSurface()
     QVERIFY(profile.m_cleared & Engine::HttpCacheArea);
     QVERIFY(profile.m_cleared & Engine::CookiesArea);
     QVERIFY(!(profile.m_cleared & Engine::VisitedLinksArea));
+
+    // The NavigationPolicy handoff: chrome installs an
+    // Engine::RequestPolicy through the profile and the interface
+    // hands the same pointer back (tst_navigationpolicy exercises
+    // the policy object itself engine-neutrally).
+    QCOMPARE(profile.requestPolicy(), nullptr);
+    Engine::RequestPolicy *policy =
+        reinterpret_cast<Engine::RequestPolicy*>(quintptr(0xdead));
+    profile.setRequestPolicy(policy);
+    QCOMPARE(profile.requestPolicy(), policy);
+
+    // And the cookie gate installs the same way — the lambda is
+    // stashed, not eaten.
+    QVERIFY(!profile.m_filter);
+    profile.setCookieFilter(
+        [](const Engine::CookieAttempt &) { return false; });
+    QVERIFY(profile.m_filter);
 }
 
 void tst_EngineAdapter::fakeDownloadSurface()
 {
     // The download handoff: a profile emits the request, chrome
     // drives accept/cancel/pause and watches the translated signals.
-    FakeProfile profile;
-    auto *request = new FakeDownloadRequest(&profile);
+    FakeEngineProfile profile;
+    auto *request = new FakeEngineDownloadRequest(&profile);
     request->m_url = QUrl(QStringLiteral("https://example.org/f.zip"));
     request->m_name = QStringLiteral("f.zip");
     request->m_mime = QStringLiteral("application/zip");
@@ -543,11 +279,78 @@ void tst_EngineAdapter::fakeDownloadSurface()
     seen->resume();
     QCOMPARE(request->pauses, 1);
     QCOMPARE(request->resumes, 1);
-    request->setState(FakeDownloadRequest::State::Completed);
+    request->setState(FakeEngineDownloadRequest::State::Completed);
     QCOMPARE(stateSpy.count(), 2); // InProgress on accept, Completed here
     QVERIFY(seen->isFinished());
-    request->setState(FakeDownloadRequest::State::Cancelled);
+    request->setState(FakeEngineDownloadRequest::State::Cancelled);
     QCOMPARE(stateSpy.count(), 3);
+}
+
+// ENG06(d) — the SBAR01 memory widget against the interface's
+// process-identity contract, on both backend shapes:
+//  * a page reporting -1 ("engine has no per-page process") must
+//    yield the '—' placeholder, not a bogus reading;
+//  * a real WebEngine page reports a live renderer pid and the
+//    label shows an actual "MEM <size>" reading.
+void tst_EngineAdapter::memIndicatorContract()
+{
+    // Static helpers: dead/bogus pids read as -1, self reads a real
+    // VmRSS; the formatter's unit ladder is pinned.
+    QCOMPARE(MemIndicator::residentMemoryKb(-1), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(0), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(999999999), qint64(-1));
+#if defined(Q_OS_LINUX)
+    QVERIFY(MemIndicator::residentMemoryKb(
+                QCoreApplication::applicationPid()) > 0);
+#endif
+    QCOMPARE(MemIndicator::formatRss(87 * 1024 + 400),
+             QStringLiteral("87.4 MB"));
+    QCOMPARE(MemIndicator::formatRss(238 * 1024),
+             QStringLiteral("238 MB"));
+    QCOMPARE(MemIndicator::formatRss(1536 * 1024),
+             QStringLiteral("1.5 GB"));
+
+    // Fake backend: renderProcessId() == -1 is the documented
+    // "no per-page process" answer — MemIndicator::refresh() turns it
+    // into the placeholder.  The widget only binds WebView* (foreign
+    // EngineTab pages carry no WebView), so the contract leg is the
+    // pid -> label mapping itself.
+    FakeEnginePage fakePage;
+    QCOMPARE(fakePage.renderProcessId(), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(fakePage.renderProcessId()),
+             qint64(-1));
+    fakePage.setRenderProcessId(4242);
+    QCOMPARE(fakePage.renderProcessId(), qint64(4242));
+    // A staged pid that no longer exists still reads '—', never
+    // a fabricated figure.
+    QCOMPARE(MemIndicator::residentMemoryKb(4242), qint64(-1));
+
+    MemIndicator indicator;
+    QLabel *label = indicator.findChild<QLabel *>(
+        QStringLiteral("memLabel"));
+    QVERIFY(label);
+    QCOMPARE(label->text(), QStringLiteral("MEM —"));
+    QCOMPARE(indicator.webView(), static_cast<WebView*>(nullptr));
+
+    // Real backend: a loaded WebEngine page reports a live renderer
+    // pid through enginePage(), and the widget shows the reading.
+    WebView view;
+    Engine::Page *enginePage = view.enginePage();
+    QVERIFY(enginePage);
+    QSignalSpy loadSpy(enginePage, &Engine::Page::loadFinished);
+    enginePage->load(
+        QUrl(QStringLiteral("data:text/html,<title>mem</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 15000);
+#if defined(Q_OS_LINUX)
+    QVERIFY(enginePage->renderProcessId() > 0);
+    indicator.setWebView(&view);
+    QCOMPARE(indicator.webView(), &view);
+    QVERIFY(label->text() != QStringLiteral("MEM —"));
+    QVERIFY(label->text().startsWith(QLatin1String("MEM ")));
+#else
+    Q_UNUSED(indicator);
+    QSKIP("/proc-based widget is Linux-only");
+#endif
 }
 
 void tst_EngineAdapter::webEngineBackendShape()

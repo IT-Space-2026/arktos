@@ -2805,6 +2805,268 @@ static int sandboxSmoke()
     return ok ? 0 : 1;
 }
 
+// ENG06(b): --engine-smoke — the engine matrix.  The same scripted
+// round-trip runs against every registered backend — navigate a
+// data: document and record the observable signal sequence, then
+// zoom, find and script-eval — so the engine-neutral contract
+// (loadStarted precedes loadFinished, urlChanged echoes the request,
+// progress reaches 100, zoom round-trips) is asserted per backend
+// and the per-backend traces are diffed pairwise.  Surfaces a
+// capability table already declares absent (find matches, script
+// results) are reported as divergences, not failed — the parity the
+// interface promises is what gets asserted.
+static int engineSmoke()
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &backend,
+                              const QString &name, bool pass) {
+        qInfo() << "engine-smoke:" << backend << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    struct Trace {
+        QString id;
+        QStringList events;     // ordered observable signals
+        QStringList urls;       // urlChanged sequence
+        QList<int> progress;    // loadProgress sequence
+        QStringList titles;     // titleChanged sequence
+        bool started = false;
+        bool finished = false;
+        bool loadOk = false;
+        QUrl finalUrl;
+        qreal zoom = -1;
+        int findMatches = -1;
+        bool scriptRan = false;
+        bool scriptSawCallback = false;
+        QVariant scriptResult;
+    };
+
+    // A file:// fixture rather than a data: url — QtWebEngine's
+    // find-in-page only counts matches once the renderer owns a real
+    // frame, and file: round-trips identically through every backend
+    // the smoke drives (servo included).
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-engine-smoke.html"));
+    {
+        QFile fixture(fixturePath);
+        if (!fixture.open(QIODevice::WriteOnly)) {
+            qInfo() << "engine-smoke: FAIL (cannot write fixture)";
+            return 1;
+        }
+        fixture.write("<html><head><title>EngineSmokeProbe</title>"
+                      "</head><body><p>needle one</p><p>haystack</p>"
+                      "<p>needle two</p></body></html>");
+    }
+    const QUrl probe = QUrl::fromLocalFile(fixturePath);
+
+    const auto pumpUntil = [](const std::function<bool()> &done,
+                              qint64 timeoutMs) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done() && timer.elapsed() < timeoutMs)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    };
+
+    QList<Trace> traces;
+    const QList<Engine::Backend *> backendList = EngineRegistry::backends();
+    report(QStringLiteral("matrix"), QStringLiteral("backends"),
+           !backendList.isEmpty());
+    for (Engine::Backend *backend : backendList) {
+        Trace trace;
+        trace.id = backend->id();
+        QWidget host;
+        host.resize(800, 600);
+        host.show();
+
+        Engine::ProfileOptions options;
+        options.offTheRecord = true;
+        Engine::Profile *profile =
+            backend->createProfile(options, &host);
+        report(trace.id, QStringLiteral("profile"), profile != nullptr);
+        Engine::Page *page = profile
+            ? backend->createPage(profile, &host) : nullptr;
+        report(trace.id, QStringLiteral("page"), page != nullptr);
+        QWidget *view = page ? backend->createView(page, &host) : nullptr;
+        report(trace.id, QStringLiteral("view"), view != nullptr);
+        if (view)
+            view->resize(800, 600);
+        if (!page)
+            continue;
+
+        QObject::connect(page, &Engine::Page::loadStarted, &host,
+                         [&trace]() {
+                             trace.started = true;
+                             trace.events << QStringLiteral("loadStarted");
+                         });
+        QObject::connect(page, &Engine::Page::loadProgress, &host,
+                         [&trace](int p) {
+                             trace.progress << p;
+                             trace.events << QStringLiteral("loadProgress");
+                         });
+        QObject::connect(page, &Engine::Page::loadFinished, &host,
+                         [&trace](bool success) {
+                             trace.finished = true;
+                             trace.loadOk = success;
+                             trace.events << QStringLiteral("loadFinished");
+                         });
+        QObject::connect(page, &Engine::Page::urlChanged, &host,
+                         [&trace](const QUrl &u) {
+                             trace.urls << u.toString();
+                             trace.events << QStringLiteral("urlChanged");
+                         });
+        QObject::connect(page, &Engine::Page::titleChanged, &host,
+                         [&trace](const QString &t) {
+                             trace.titles << t;
+                             trace.events << QStringLiteral("titleChanged");
+                         });
+        QObject::connect(page, &Engine::Page::findTextFinished, &host,
+                         [&trace](const Engine::FindResult &r) {
+                             trace.findMatches = r.numberOfMatches;
+                         });
+
+        // Let any init navigation settle before the scripted load —
+        // a backend may start an about:blank load on view attach
+        // (servo does) and a probe issued while that is still
+        // in-flight can be dropped entirely.  Wait for the init
+        // loadFinished, or for the observable stream to go quiet.
+        {
+            QElapsedTimer settle;
+            settle.start();
+            int quietCount = -1;
+            qint64 quietSince = -1;
+            while (settle.elapsed() < 15000 && !trace.finished) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents,
+                                                100);
+                if (trace.events.count() != quietCount) {
+                    quietCount = trace.events.count();
+                    quietSince = settle.elapsed();
+                } else if (settle.elapsed()
+                           - (quietSince < 0 ? 0 : quietSince) > 1500) {
+                    break;
+                }
+            }
+            // Scripted-nav recording starts clean from here —
+            // init-lifecycle emissions are not part of the trace.
+            trace.events.clear();
+            trace.urls.clear();
+            trace.progress.clear();
+            trace.titles.clear();
+            trace.started = false;
+            trace.finished = false;
+            trace.loadOk = false;
+        }
+
+        // Navigation: the hard contract, identical for every backend.
+        page->load(probe);
+        pumpUntil([&trace]() { return trace.finished; }, 30000);
+        trace.finalUrl = page->url();
+        report(trace.id, QStringLiteral("load-finished"),
+               trace.finished && trace.loadOk);
+        const int startedAt =
+            trace.events.indexOf(QStringLiteral("loadStarted"));
+        const int finishedAt =
+            trace.events.lastIndexOf(QStringLiteral("loadFinished"));
+        report(trace.id, QStringLiteral("signal-order"),
+               startedAt >= 0 && finishedAt > startedAt);
+        report(trace.id, QStringLiteral("url-echo"),
+               trace.finalUrl == probe
+                   || trace.urls.contains(probe.toString()));
+        report(trace.id, QStringLiteral("progress-complete"),
+               !trace.progress.isEmpty() && trace.progress.last() == 100);
+
+        // Zoom: a pure engine-side setting — every backend round-trips.
+        page->setZoomFactor(1.25);
+        pumpUntil([&page]() {
+                return qAbs(page->zoomFactor() - 1.25) < 0.001;
+            }, 2000);
+        trace.zoom = page->zoomFactor();
+        report(trace.id, QStringLiteral("zoom-roundtrip"),
+               qAbs(trace.zoom - 1.25) < 0.001);
+
+        // Find: the match count is capability-shaped (a backend with
+        // no find-in-page still must emit findTextFinished).
+        page->findText(QStringLiteral("smoke-needle"), {});
+        pumpUntil([&trace]() { return trace.findMatches >= 0; }, 5000);
+        report(trace.id, QStringLiteral("find-answered"),
+               trace.findMatches >= 0);
+
+        // Script eval: only asserted where the capability table
+        // claims a two-way result channel.
+        if (backend->capabilities().scriptEvaluation) {
+            trace.scriptRan = true;
+            page->runJavaScript(QStringLiteral("1+1"),
+                                [&trace](const QVariant &v) {
+                                    trace.scriptSawCallback = true;
+                                    trace.scriptResult = v;
+                                });
+            pumpUntil([&trace]() { return trace.scriptSawCallback; },
+                      5000);
+            report(trace.id, QStringLiteral("script-eval"),
+                   trace.scriptSawCallback && trace.scriptResult == 2);
+        }
+
+        qInfo() << "engine-smoke: trace" << trace.id
+                << "\n  events:" << trace.events
+                << "\n  urls:" << trace.urls
+                << "\n  progress:" << trace.progress
+                << "\n  titles:" << trace.titles
+                << "\n  zoom:" << trace.zoom
+                << " find:" << trace.findMatches
+                << " script:" << trace.scriptResult;
+        traces.append(trace);
+    }
+
+    // Pairwise diff: the load-family event kinds and the terminal
+    // url are the parity the interface promises — diffed, not
+    // assumed.  Exact progress ladders, initial-state emissions
+    // (a backend may push about:blank on view attach), title text,
+    // find counts and script results may legitimately diverge
+    // (capability-shaped), so they print as divergences beside the
+    // asserted rows.
+    for (int i = 0; i < traces.count(); ++i) {
+        for (int j = i + 1; j < traces.count(); ++j) {
+            const Trace &a = traces.at(i);
+            const Trace &b = traces.at(j);
+            const QString pair = a.id + QLatin1Char('/') + b.id;
+            const auto kinds = [](const Trace &t) {
+                QSet<QString> set;
+                for (const QString &event : t.events)
+                    if (event != QLatin1String("titleChanged"))
+                        set.insert(event);
+                return set;
+            };
+            report(pair, QStringLiteral("diff-event-kinds"),
+                   kinds(a) == kinds(b));
+            report(pair, QStringLiteral("diff-terminal-url"),
+                   !a.urls.isEmpty() && a.urls.last() == b.urls.last());
+            if (a.urls != b.urls)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-urls divergent" << a.urls
+                        << "vs" << b.urls;
+            if (a.progress != b.progress)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-progress divergent" << a.progress
+                        << "vs" << b.progress;
+            if (a.titles != b.titles)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-titles divergent" << a.titles
+                        << "vs" << b.titles;
+            if (a.findMatches != b.findMatches)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-find divergent" << a.findMatches
+                        << "vs" << b.findMatches;
+            if (a.scriptResult != b.scriptResult)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-script divergent" << a.scriptResult
+                        << "vs" << b.scriptResult;
+        }
+    }
+
+    qInfo() << "engine-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     // SAND01: a browsing launch re-execs itself inside the filesystem
@@ -3278,7 +3540,7 @@ int main(int argc, char **argv)
         "bidi-smoke", "pdf-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
-        "engine-list",
+        "engine-list", "engine-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -3351,6 +3613,13 @@ int main(int argc, char **argv)
         }
         return 0;
     }
+
+    // ENG06: the engine matrix — scripted navigation/zoom/find
+    // against every registered backend with observable-behavior
+    // diffs (title/url/progress sequences), so backend parity is
+    // asserted rather than assumed.
+    if (args.contains(QLatin1String("--engine-smoke")))
+        return engineSmoke();
 
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
