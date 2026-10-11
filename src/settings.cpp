@@ -898,11 +898,17 @@ void SettingsDialog::loadFromSettings()
     downloadsLocation->setText(downloadDirectory);
     externalDownloadButton->setChecked(settings.value(QLatin1String("external"), false).toBool());
     externalDownloadPath->setText(settings.value(QLatin1String("externalPath")).toString());
-    // DLACC01: engine id lives in the combo's itemData; an unknown or
-    // absent value falls back to built-in.
+    // DLACC01: engine id lives in the combo's itemData; an unknown
+    // value falls back to built-in.  DLACC06: rust is the default on
+    // builds shipping the crate — without it a fresh profile must not
+    // land on the disabled Accelerated row.
+#ifdef ARORA_RUSTDL
+    const QLatin1String defaultEngine("rust");
+#else
+    const QLatin1String defaultEngine("builtin");
+#endif
     const int engineRow = downloadEngineCombo->findData(
-        settings.value(QLatin1String("engine"),
-                       QLatin1String("builtin")).toString());
+        settings.value(QLatin1String("engine"), defaultEngine).toString());
     downloadEngineCombo->setCurrentIndex(engineRow < 0 ? 0 : engineRow);
     downloadConnectionsSpin->setValue(
         settings.value(QLatin1String("connections"), 0).toInt());

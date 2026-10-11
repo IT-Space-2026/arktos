@@ -67,6 +67,8 @@ private slots:
     void selectionSetting();
 
 #ifdef ARORA_RUSTDL
+    void canHandleGate();
+    void managerRouting();
     void engineCompletes();
     void engineSingleStream();
     void engineCancel();
@@ -176,13 +178,21 @@ void tst_RustDownload::selectionSetting()
     QSettings settings;
     settings.beginGroup(QLatin1String("downloadmanager"));
 
+    // DLACC06: rust is the default — an absent key selects it.
     settings.remove(QLatin1String("engine"));
-    QVERIFY(!RustDownloadEngine::isSelected());
+    QVERIFY(RustDownloadEngine::isSelected());
 
     settings.setValue(QLatin1String("engine"), QLatin1String("rust"));
     QVERIFY(RustDownloadEngine::isSelected());
 
+    // An explicit built-in pick is the opt-out and survives the flip.
     settings.setValue(QLatin1String("engine"), QLatin1String("builtin"));
+    QVERIFY(!RustDownloadEngine::isSelected());
+
+    // Legacy int encoding: 1 = accelerated, 0 = explicit built-in.
+    settings.setValue(QLatin1String("engine"), 1);
+    QVERIFY(RustDownloadEngine::isSelected());
+    settings.setValue(QLatin1String("engine"), 0);
     QVERIFY(!RustDownloadEngine::isSelected());
 #else
     QVERIFY(true);
@@ -190,6 +200,41 @@ void tst_RustDownload::selectionSetting()
 }
 
 #ifdef ARORA_RUSTDL
+void tst_RustDownload::canHandleGate()
+{
+    // Rust selected by default: http(s) is claimed, every other
+    // scheme stays on the built-in path.
+    const QUrl http(QStringLiteral("http://example.com/f"));
+    const QUrl https(QStringLiteral("https://example.com/f"));
+    QVERIFY(RustDownloadEngine::isSelected());
+    QVERIFY(RustDownloadEngine::canHandle(http));
+    QVERIFY(RustDownloadEngine::canHandle(https));
+    QVERIFY(!RustDownloadEngine::canHandle(
+        QUrl(QStringLiteral("ftp://example.com/f"))));
+    QVERIFY(!RustDownloadEngine::canHandle(
+        QUrl(QStringLiteral("file:///tmp/f"))));
+    QVERIFY(!RustDownloadEngine::canHandle(
+        QUrl(QStringLiteral("data:text/plain,hi"))));
+    QVERIFY(!RustDownloadEngine::canHandle(
+        QUrl(QStringLiteral("javascript:void(0)"))));
+
+    // An explicit built-in pick refuses even http(s).
+    QSettings settings;
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                    QLatin1String("builtin"));
+    QVERIFY(!RustDownloadEngine::canHandle(https));
+    settings.remove(QLatin1String("downloadmanager/engine"));
+
+    // HARD GATE: any real application proxy — in tor mode that is the
+    // managed daemon's SOCKS listener — keeps the transfer on the
+    // built-in path; the crate must never fetch direct.
+    const QNetworkProxy saved = QNetworkProxy::applicationProxy();
+    QNetworkProxy::setApplicationProxy(QNetworkProxy(
+        QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 39237));
+    QVERIFY(!RustDownloadEngine::canHandle(https));
+    QNetworkProxy::setApplicationProxy(saved);
+    QVERIFY(RustDownloadEngine::canHandle(https));
+}
 
 // Writes the response body in throttle-sized chunks on a timer so a
 // download stays in flight long enough to observe/cancel.
@@ -270,6 +315,9 @@ public:
     }
 
     int hits() const { return m_hits; }
+    // The rust engine probes with HEAD before fetching; the built-in
+    // Chromium path never does — the routing discriminator.
+    bool sawHead() const { return m_sawHead; }
 
     // First captured request header for `path` ("" when absent) —
     // DLACC05 asserts which cookies actually rode the wire.
@@ -299,6 +347,8 @@ private:
         const QByteArray method = parts.value(0);
         const QByteArray path = parts.value(1);
         m_requests.append({path, request});
+        if (method == "HEAD")
+            m_sawHead = true;
 
         QByteArray range;
         const int rpos = request.toLower().indexOf("\r\nrange:");
@@ -373,6 +423,7 @@ private:
     int m_throttle;
     int m_hits = 0;
     QList<QPair<QByteArray, QByteArray>> m_requests;
+    bool m_sawHead = false;
 };
 
 static QByteArray pattern(int size)
@@ -397,6 +448,44 @@ static RustDownloadEngine *startEngine(const QUrl &url,
     engine->setDownloadFileName(fileName);
     engine->accept();
     return engine;
+}
+
+void tst_RustDownload::managerRouting()
+{
+    // Fresh profile => rust is the default: a plain http download is
+    // claimed by the engine.  Its HEAD probe is the tell — the
+    // built-in Chromium path never issues one.
+    FixtureServer server(pattern(64 * 1024), true, 0);
+    QVERIFY(server.listen());
+    QTemporaryDir dest;
+    QVERIFY(dest.isValid());
+    {
+        DownloadManager manager;
+        manager.setDownloadDirectory(dest.path() + QLatin1Char('/'));
+        Engine::Page *page = manager.retryPage(false);
+        QVERIFY(page);
+        manager.download(page, server.url("/file"));
+        QTRY_VERIFY(QFile::exists(dest.filePath("file")));
+    }
+    QVERIFY(server.sawHead());
+
+    // An explicit built-in pick keeps the Chromium path — the file
+    // lands without a HEAD probe.
+    QSettings settings;
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                    QLatin1String("builtin"));
+    FixtureServer server2(pattern(64 * 1024), true, 0);
+    QVERIFY(server2.listen());
+    {
+        DownloadManager manager;
+        manager.setDownloadDirectory(dest.path() + QLatin1Char('/'));
+        Engine::Page *page = manager.retryPage(false);
+        QVERIFY(page);
+        manager.download(page, server2.url("/builtin.bin"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            QFile::exists(dest.filePath("builtin.bin")), 30000);
+    }
+    QVERIFY(!server2.sawHead());
 }
 
 void tst_RustDownload::engineCompletes()

@@ -254,7 +254,8 @@ surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, and each selected row expands into a
 detail card in the panel's bottom pane. Preferences → Downloads hosts
 a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
-compiled in by default) — a connections-per-download
+compiled in by default and the default engine — a saved Built-in
+pick is honored) — a connections-per-download
 field, a cleanup policy for the finished-downloads list, and a
 "Parallel segments" toggle (default on) that has the built-in
 Chromium engine fetch range-capable downloads over multiple

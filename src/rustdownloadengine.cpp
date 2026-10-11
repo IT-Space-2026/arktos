@@ -371,6 +371,11 @@ bool RustDownloadEngine::isSelected()
     settings.beginGroup(QLatin1String("downloadmanager"));
     const QVariant v = settings.value(QLatin1String("engine"));
     const QString s = v.toString().toLower();
+    // DLACC06: rust is the default engine — an absent or empty key
+    // means selected.  Only an explicit opt-out (a persisted
+    // "builtin", a legacy 0, or any other value) stays built-in.
+    if (s.isEmpty())
+        return true;
     return s.contains(QLatin1String("rust"))
         || s.contains(QLatin1String("accelerated"))
         || v.toInt() == 1;
@@ -378,6 +383,10 @@ bool RustDownloadEngine::isSelected()
 
 bool RustDownloadEngine::canHandle(const QUrl &url)
 {
+    // DLACC06: the single claim gate — the engine must be selected
+    // (rust is the default; an explicit "builtin" pick opts out).
+    if (!isSelected())
+        return false;
     const QString scheme = url.scheme();
     if (scheme != QLatin1String("http") && scheme != QLatin1String("https"))
         return false;
@@ -388,6 +397,8 @@ bool RustDownloadEngine::canHandle(const QUrl &url)
         return QNetworkProxy::applicationProxy().type()
             == QNetworkProxy::Socks5Proxy;
     }
+    // Outside tor the crate rides the configured application proxy
+    // itself — proxySpecForDownload() wires it into options.proxy.
     return true;
 }
 

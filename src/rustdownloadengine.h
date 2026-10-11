@@ -62,20 +62,23 @@ public:
     ~RustDownloadEngine() override;
 
     // Reads the downloadmanager/engine setting the DLACC01 selector
-    // page writes.  Lenient on the value's shape ("rust",
-    // "accelerated", "Accelerated (Rust)", 1) so either side can land
-    // first; the selector only shows the option when isAvailable().
+    // page writes.  DLACC06: rust is the DEFAULT — an absent or empty
+    // key means selected; only an explicit opt-out ("builtin", a
+    // legacy 0, or any other value) stays on the built-in path.
+    // Lenient on the value's shape ("rust", "accelerated",
+    // "Accelerated (Rust)", 1) so either side can land first.
     static bool isSelected();
     // Crate linked in.  (Temp dir is armed lazily at accept() — the
     // engine reports available whenever the FFI is present.)
     static bool isAvailable();
 
-    // Whether this engine may fetch `url` at all (DLACC04).  Scheme
-    // must be http(s) — anything else stays with the normal engine.
-    // In a tor process the hard rule applies: the download exits via
-    // the managed SOCKS proxy or it does not run on this engine —
-    // callers fall back to the engine-mediated path rather than let a
-    // download ride a direct connection.
+    // DLACC06 claim gate — both downloadmanager.cpp takeover sites
+    // funnel through it: the engine must be selected and the scheme
+    // http(s).  In a tor process the hard rule applies: the download
+    // exits via the managed SOCKS proxy or it does not run on this
+    // engine — callers fall back to the engine-mediated path rather
+    // than let a download ride a direct connection.  Elsewhere the
+    // crate rides the configured application proxy itself.
     static bool canHandle(const QUrl &url);
 
     // The DLACC04 policy gate, exposed as a public static so the

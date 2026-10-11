@@ -1168,13 +1168,12 @@ void DownloadManager::download(Engine::Page *page, const QUrl &url, bool request
         return;
 
 #ifdef ARORA_RUSTDL
-    // DLACC06: the accelerated engine claims http(s) downloads when
-    // the DLACC01 selector picked it — no Chromium request is issued.
-    // DLACC04: canHandle() applies the tor rule — without a managed
-    // SOCKS proxy a download stays on the engine-mediated path rather
-    // than ever going direct.
-    if (RustDownloadEngine::isSelected()
-        && RustDownloadEngine::canHandle(url)) {
+    // DLACC06: the accelerated engine is the default — canHandle()
+    // is the single claim gate (selector, http(s) scheme, and the
+    // DLACC04 proxy rules: in tor the download exits via the managed
+    // SOCKS proxy or stays on the engine-mediated path).  No Chromium
+    // request is issued when it claims.
+    if (RustDownloadEngine::canHandle(url)) {
         // The rustdl engine reads the raw page for profile parity —
         // engine-bound plumbing reached through the adapter hatch.
         WebEnginePageAdapter *adapter = WebEnginePageAdapter::of(page);
@@ -1242,14 +1241,14 @@ void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)
     }
 
 #ifdef ARORA_RUSTDL
-    // DLACC06: when the selector picked the accelerated engine, the
-    // rustdl crate takes over the transfer — Chromium's own fetch is
-    // cancelled and only its metadata (page, url, suggested name,
-    // mime) carries into the engine.  The DLACC01 routing stub merges
-    // here; both sides read the same downloadmanager/engine key.
+    // DLACC06: the accelerated engine (default since the selector's
+    // key defaults to rust) takes over the transfer when canHandle()
+    // allows — Chromium's own fetch is cancelled and only its
+    // metadata (page, url, suggested name, mime) carries into the
+    // engine.  The DLACC01 routing stub merges here; both sides read
+    // the same downloadmanager/engine key.
     const QUrl url = download->url();
-    if (RustDownloadEngine::isSelected()
-        && RustDownloadEngine::canHandle(url)) {
+    if (RustDownloadEngine::canHandle(url)) {
         // The rustdl engine takes the raw page for profile parity —
         // engine-bound plumbing reached through the adapter hatch.
         WebEnginePageAdapter *adapter =
