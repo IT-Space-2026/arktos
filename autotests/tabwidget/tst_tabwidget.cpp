@@ -100,6 +100,9 @@ private slots:
     void pinnedTabs();
     void reopenClosedTab();
     void engineSwapStripState();
+    void sleepingTabs();
+    void containerTabs();
+    void tabSlotDrive();
 };
 
 // Subclass that exposes the protected functions.
@@ -1645,6 +1648,259 @@ void tst_TabWidget::engineSwapStripState()
     }
 
     EngineRegistry::unregisterBackend(&fake);
+}
+
+// SLEEP01: the suspend cycle end to end — eligibility reasons, the
+// async capture/discard, wake-on-activate, the dirty-form latch and
+// the idle sweep all observable from the public API.
+void tst_TabWidget::sleepingTabs()
+{
+    SubTabWidget widget;
+    widget.newTab();                       // index 0, current
+    widget.newTab();                       // index 1, background target
+    QCOMPARE(widget.count(), 2);
+    widget.setCurrentIndex(0);
+
+    QCOMPARE(widget.sleepBlockReason(-1), QLatin1String("invalid"));
+    QCOMPARE(widget.sleepBlockReason(99), QLatin1String("invalid"));
+    QCOMPARE(widget.sleepBlockReason(0), QLatin1String("current"));
+    QCOMPARE(widget.sleepBlockReason(1), QLatin1String("empty"));
+
+    // Once the page finishes loading the background tab is eligible.
+    WebView *view1 = widget.webView(1);
+    QSignalSpy loaded(view1->page(), &QWebEnginePage::loadFinished);
+    view1->load(QUrl("data:text/html,<title>t</title>body"));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+    QTRY_COMPARE(widget.sleepBlockReason(1), QString());
+
+    // Manual sleep discards the page; the strip slot stays.
+    widget.sleepTab(1);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QCOMPARE(widget.sleepBlockReason(1), QLatin1String("sleeping"));
+    QCOMPARE(widget.sleepingTabCount(), 1);
+    QVERIFY(!widget.isTabSleeping(0));
+
+    // Selecting a slept tab wakes it.
+    widget.setCurrentIndex(1);
+    QVERIFY(!widget.isTabSleeping(1));
+    QCOMPARE(widget.sleepingTabCount(), 0);
+
+    // Waking an awake tab and sleeping the current tab are no-ops.
+    widget.wakeTab(1);
+    widget.setCurrentIndex(0);
+    widget.sleepTab();                     // -1 -> current — refused
+    QVERIFY(!widget.isTabSleeping(0));
+
+    // Unsaved form input latches the refusal and posts a status text.
+    view1->page()->runJavaScript(QLatin1String(
+        "document.body.innerHTML='<input id=i>';"
+        "document.getElementById('i').value='x';"));
+    QSignalSpy statusSpy(&widget, &TabWidget::showStatusBarMessage);
+    widget.sleepTab(1);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.sleepBlockReason(1),
+                              QLatin1String("form"), 10000);
+    QVERIFY(!widget.isTabSleeping(1));
+    QTRY_VERIFY(statusSpy.count() > 0);
+
+    // A navigation clears the latch — the tab is eligible again.
+    QSignalSpy reloaded(view1->page(), &QWebEnginePage::loadFinished);
+    view1->load(QUrl("data:text/html,<p>clean</p>"));
+    QTRY_VERIFY_WITH_TIMEOUT(!reloaded.isEmpty(), 15000);
+    QTRY_COMPARE(widget.sleepBlockReason(1), QString());
+
+    // The idle sweep sleeps only eligible background tabs — the
+    // current tab and an unloaded tab are skipped.
+    widget.newTab();                       // index 2, never loaded
+    widget.setCurrentIndex(0);
+    widget.suspendIdleTabs(0);
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 10000);
+    QVERIFY(!widget.isTabSleeping(0));
+    QVERIFY(!widget.isTabSleeping(2));
+    QCOMPARE(widget.sleepingTabCount(), 1);
+    widget.wakeTab(1);
+
+    while (widget.count())
+        widget.closeTab(0);
+}
+
+// CONT02/CONT04: tabs bind to container profiles, children inherit
+// the current tab's container, reopen swaps the profile in place, and
+// the diversion entry point lands the url on the right profile.
+void tst_TabWidget::containerTabs()
+{
+    ContainerManager *manager = ContainerManager::instance();
+    const ContainerManager::Container container =
+        manager->createContainer(QLatin1String("CovCtx"), QColor(Qt::blue));
+    QVERIFY(!container.id.isEmpty());
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.webView(0)->load(QUrl("data:text/plain,ctx-base"));
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(),
+        QUrl("data:text/plain,ctx-base"), 15000);
+    QCOMPARE(widget.containerIdForTab(0),
+             ContainerManager::defaultContainerId());
+
+    WebView *ctxView = widget.makeNewTabInContainer(container.id, true);
+    QVERIFY(ctxView);
+    QCOMPARE(widget.containerIdForTab(1), container.id);
+
+    // A plain new tab opened from a container tab stays inside it.
+    widget.makeNewTab(false);
+    QCOMPARE(widget.containerIdForTab(2), container.id);
+
+    // Unknown ids degrade to the default container.
+    WebView *unknown = widget.makeNewTabInContainer(
+        QLatin1String("cov-no-such"), false);
+    QVERIFY(unknown);
+    QCOMPARE(widget.containerIdForTab(widget.webViewIndex(unknown)),
+             ContainerManager::defaultContainerId());
+
+    // Reopen swaps the profile in place — slot and url survive.
+    widget.setCurrentIndex(0);
+    widget.reopenTabInContainer(0, container.id);
+    QCOMPARE(widget.containerIdForTab(0), container.id);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(),
+        QUrl("data:text/plain,ctx-base"), 15000);
+
+    // A bogus id is refused; out-of-range indices are ignored; an
+    // empty id returns the tab to the default container.
+    widget.reopenTabInContainer(0, QLatin1String("cov-no-such"));
+    QCOMPARE(widget.containerIdForTab(0), container.id);
+    widget.reopenTabInContainer(-1, container.id);
+    widget.reopenTabInContainer(0, QString());
+    QCOMPARE(widget.containerIdForTab(0),
+             ContainerManager::defaultContainerId());
+
+    // The diversion entry point lands the url on the container.
+    const int before = widget.count();
+    widget.loadUrlInContainer(QUrl("data:text/plain,diverted"),
+                              container.id);
+    QCOMPARE(widget.count(), before + 1);
+    QCOMPARE(widget.containerIdForTab(widget.currentIndex()), container.id);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.currentWebView()->url(),
+        QUrl("data:text/plain,diverted"), 15000);
+    widget.loadUrlInContainer(QUrl(), container.id);   // invalid — no-op
+    QCOMPARE(widget.count(), before + 1);
+
+    // The management entry point opens the settings dialog.
+    acceptModal();
+    widget.manageContainers();
+
+    // Live container tabs block deletion — close them first.
+    while (widget.count())
+        widget.closeTab(0);
+    QVERIFY(manager->deleteContainer(container.id));
+}
+
+// The tab-strip slots that drive whole actions: clone/reload/close-
+// others/bookmark, the recently-closed stack + menu rebuild, the
+// location bar's return-press navigation, page-initiated window
+// close, the hover thumbnail, clear() and the modifier mapper.
+void tst_TabWidget::tabSlotDrive()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    widget.webView(0)->load(QUrl("data:text/plain,one"));
+
+    // cloneTab: a valid index duplicates, -1 takes current, a bad
+    // index is ignored.
+    widget.cloneTab(0);
+    QCOMPARE(widget.count(), 2);
+    widget.cloneTab(-1);
+    QCOMPARE(widget.count(), 3);
+    widget.cloneTab(99);
+    QCOMPARE(widget.count(), 3);
+
+    // reloadTab / reloadAllTabs run the views' reload paths.
+    widget.reloadTab(0);
+    widget.reloadTab(-1);
+    widget.reloadTab(99);
+    widget.reloadAllTabs();
+
+    // closeOtherTabs keeps only the requested index.
+    widget.closeOtherTabs(-1);               // early return
+    QCOMPARE(widget.count(), 3);
+    widget.closeOtherTabs(1);
+    QCOMPARE(widget.count(), 1);
+
+    // Closing a loaded tab pushes it onto the recently-closed stack;
+    // the menu rebuilds from it on aboutToShow, and triggering an
+    // entry reopens the tab.  (data: urls never enter WebEngine
+    // history — the serialized entry would be empty — so a real
+    // file: page stands in.)
+    WebView *closing = widget.webView(0);
+    QSignalSpy loaded(closing->page(), &QWebEnginePage::loadFinished);
+    closing->load(QUrl("file:///etc/hostname"));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 0);
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+
+    QMenu *menu = widget.recentlyClosedTabsAction()->menu();
+    QVERIFY(menu);
+    emit menu->aboutToShow();
+    QVERIFY(!menu->actions().isEmpty());
+    menu->actions().first()->trigger();
+    QCOMPARE(widget.count(), 1);
+    // url() reports the requested url before the commit lands; the
+    // history entry is what the next closeTab needs to serialize.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        widget.webView(0)->history()->count() >= 1, 15000);
+
+    // openLastTab consumes the (still-queued) entry via the shortcut
+    // path — it's a private slot, driven the way the QShortcut does.
+    widget.closeTab(0);
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(&widget, "openLastTab"));
+    QCOMPARE(widget.count(), 1);
+
+    // historyCleared empties the stack and disarms the action.
+    QMetaObject::invokeMethod(&widget, "historyCleared");
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+
+    // Enter in the per-tab location bar routes through loadString on
+    // the sender.  The signal is what wires sender(), so emit it.
+    QLineEdit *edit = widget.locationBar(0);
+    QVERIFY(edit);
+    edit->setText(QLatin1String("data:text/plain,typed"));
+    emit edit->returnPressed();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(),
+        QUrl("data:text/plain,typed"), 15000);
+
+    // window.close() from a page in a multi-tab strip closes that tab.
+    widget.newTab();
+    QCOMPARE(widget.count(), 2);
+    emit widget.webView(1)->page()->windowCloseRequested();
+    QCOMPARE(widget.count(), 1);
+
+    // bookmarkTabs drives the save-all dialog then bails cleanly.
+    rejectModal();
+    widget.bookmarkTabs();
+
+    // The hover thumbnail grabs (or fails to grab) the compositor
+    // frame — offscreen it may legitimately come back blank.
+    widget.tabThumbnail(0);
+    widget.tabThumbnail(99);
+
+    // clear() empties the closed-tab stack and refreshes the bars.
+    widget.clear();
+
+    // The modifier mapper: no keys leaves the request alone, Ctrl
+    // asks for a new (unselected) tab and resets the latched keys.
+    BrowserApplication *app = BrowserApplication::instance();
+    QCOMPARE(TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab),
+             TabWidget::CurrentTab);
+    app->setEventKeyboardModifiers(Qt::ControlModifier);
+    QCOMPARE(TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab),
+             TabWidget::NewNotSelectedTab);
+    QCOMPARE(app->eventKeyboardModifiers(), Qt::NoModifier);
+    app->setEventKeyboardModifiers(Qt::ControlModifier | Qt::AltModifier);
+    QCOMPARE(TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab),
+             TabWidget::NewWindow);
+
+    while (widget.count())
+        widget.closeTab(0);
 }
 
 QTEST_MAIN(tst_TabWidget)
