@@ -47,7 +47,12 @@ site-trust signals, plus the IDN/homograph lookalike probe that
 consults it (rc_lookalike_check: the host is punycode-decoded,
 case-folded and mapped through the UTS #39 confusables table, then
 matched against a skeleton index of the rank table — it flags only
-when the visual twin is a *different* popular domain).  The crate also parses
+when the visual twin is a *different* popular domain).  Those feed
+the site-trust composite (rc_sitetrust_lookup): blocklist
+membership, Tranco rank, the lookalike verdict, https state and a
+first-seen signal from the history store fold into one advisory
+green/amber/red verdict with per-signal reporting — a lock-icon
+badge input that never blocks a page.  The crate also parses
 untrusted remote formats in memory-safe Rust: OpenSearch descriptors,
 extension update manifests and suggestion replies are schema-checked
 behind the FFI before Qt sees them.  The crate is

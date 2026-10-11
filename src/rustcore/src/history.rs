@@ -14,6 +14,11 @@
 //!   icons(host PK, png blob, updated_at)
 //!     — per-host favicons, the HIST01 icon persistence: keyed by
 //!     host (favicons are per-origin in practice), stored as PNG.
+//!   hosts(host PK, first_seen ms-epoch, visits)
+//!     — per-host rollup the TRUST01 first-seen signal probes.
+//!     Derived from visits: add() upserts on every insert and a
+//!     one-shot lazy backfill covers databases written before the
+//!     table existed (and rebuilds after a bulk delete wipes it).
 //!
 //! The legacy "history" file is a READ-ONLY import source: the Qt
 //! side parses it once (bounded HistoryParser) when the .db does not
@@ -30,6 +35,12 @@ use crate::omnibox;
 use crate::store;
 
 const DB_FILE: &str = "history.db";
+
+/// TRUST01: a host's earliest visit counts as "prior knowledge" only
+/// once it's this old — the just-committed visit of the page being
+/// viewed must not flip the verdict (the popover probes after
+/// loadFinished), and a lone fresh visit is still a first sight.
+const FIRST_SEEN_GRACE_MS: i64 = 120_000;
 
 fn sql_fail(ctx: &str, e: rusqlite::Error) -> Fail {
     Fail {
@@ -100,7 +111,11 @@ impl HistoryStore {
              CREATE TABLE IF NOT EXISTS icons(
                  host TEXT PRIMARY KEY,
                  png BLOB NOT NULL,
-                 updated_at INTEGER NOT NULL);",
+                 updated_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS hosts(
+                 host TEXT PRIMARY KEY,
+                 first_seen INTEGER NOT NULL,
+                 visits INTEGER NOT NULL DEFAULT 1);",
         )
         .map_err(|e| Fail {
             status: RcStatus::Io,
@@ -135,12 +150,28 @@ impl HistoryStore {
     // ---- visits ------------------------------------------------------
 
     pub fn add(&mut self, url: &str, title: &str, visited_at: i64) -> RcResult<()> {
-        self.conn()?
-            .execute(
+        {
+            let conn = self.conn()?;
+            conn.execute(
                 "INSERT INTO visits(url, title, visited_at) VALUES(?1, ?2, ?3)",
                 params![url, title, visited_at],
             )
             .map_err(|e| sql_fail("history insert", e))?;
+            // Keep the TRUST01 host rollup in step — min() because the
+            // legacy-file replay can land visits out of order.
+            let host = omnibox::url_host(url).to_lowercase();
+            if !host.is_empty() {
+                conn.execute(
+                    "INSERT INTO hosts(host, first_seen, visits)
+                     VALUES(?1, ?2, 1)
+                     ON CONFLICT(host) DO UPDATE SET
+                         first_seen = MIN(first_seen, ?2),
+                         visits = visits + 1",
+                    params![host, visited_at],
+                )
+                .map_err(|e| sql_fail("hosts upsert", e))?;
+            }
+        }
         self.entries = None;
         Ok(())
     }
@@ -174,31 +205,164 @@ impl HistoryStore {
             )
             .map_err(|e| sql_fail("history remove", e))?;
         if changed > 0 {
+            // The removed visit may have been its host's only row —
+            // hosts can't be filtered by url host in SQL, so the
+            // rollup is wiped and lazily rebuilt on the next probe.
+            self.conn()?
+                .execute("DELETE FROM hosts", [])
+                .map_err(|e| sql_fail("hosts reset", e))?;
             self.entries = None;
         }
         Ok(())
     }
 
     pub fn clear(&mut self) -> RcResult<()> {
-        self.conn()?
-            .execute("DELETE FROM visits", [])
-            .map_err(|e| sql_fail("history clear", e))?;
+        {
+            let conn = self.conn()?;
+            conn.execute("DELETE FROM visits", [])
+                .map_err(|e| sql_fail("history clear", e))?;
+            conn.execute("DELETE FROM hosts", [])
+                .map_err(|e| sql_fail("hosts clear", e))?;
+        }
         self.entries = None;
         Ok(())
     }
 
     /// Deletes every visit at or after `since_ms` — the ranged leg
     /// of a clear-private-data plan (CLR01).  Icons are per-host and
-    /// stay, matching icon_clear() being a separate category.
+    /// stay, matching icon_clear() being a separate category.  The
+    /// hosts rollup is wiped and lazily rebuilt from what remains.
     pub fn clear_since(&mut self, since_ms: i64) -> RcResult<()> {
-        self.conn()?
-            .execute(
+        {
+            let conn = self.conn()?;
+            conn.execute(
                 "DELETE FROM visits WHERE visited_at >= ?1",
                 params![since_ms],
             )
             .map_err(|e| sql_fail("history clear_since", e))?;
+            conn.execute("DELETE FROM hosts", [])
+                .map_err(|e| sql_fail("hosts reset", e))?;
+        }
         self.entries = None;
         Ok(())
+    }
+
+    // ---- first-seen rollup (TRUST01) --------------------------------
+
+    /// The one-shot backfill: pre-TRUST01 databases have visits but
+    /// no hosts rows, and the bulk-delete paths above wipe the table
+    /// for a rebuild.  One bounded pass over the visit log — a hosts
+    /// row can't be derived in SQL, so url_host() runs per row.
+    fn ensure_hosts(&mut self) -> RcResult<()> {
+        let needs: bool = self
+            .conn()?
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM hosts LIMIT 1)
+                     AND EXISTS(SELECT 1 FROM visits LIMIT 1)",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| sql_fail("hosts check", e))?;
+        if !needs {
+            return Ok(());
+        }
+        let mut map: std::collections::HashMap<String, (i64, i64)> =
+            std::collections::HashMap::new();
+        {
+            let conn = self.conn()?;
+            let mut stmt = conn
+                .prepare("SELECT url, visited_at FROM visits")
+                .map_err(|e| sql_fail("hosts backfill", e))?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                })
+                .map_err(|e| sql_fail("hosts backfill", e))?;
+            for row in rows {
+                let (url, ts) =
+                    row.map_err(|e| sql_fail("hosts backfill", e))?;
+                let host = omnibox::url_host(&url).to_lowercase();
+                if host.is_empty() {
+                    continue;
+                }
+                map.entry(host)
+                    .and_modify(|e| {
+                        e.0 = e.0.min(ts);
+                        e.1 += 1;
+                    })
+                    .or_insert((ts, 1));
+            }
+        }
+        let conn = self.conn()?;
+        // The sentinel row matters when every visit had an opaque
+        // url — without it hosts stays empty and the backfill would
+        // re-run on every probe.
+        conn.execute(
+            "INSERT OR REPLACE INTO hosts(host, first_seen, visits)
+             VALUES('', 0, 0)",
+            [],
+        )
+        .map_err(|e| sql_fail("hosts backfill", e))?;
+        for (host, (first_seen, visits)) in map {
+            conn.execute(
+                "INSERT OR REPLACE INTO hosts(host, first_seen, visits)
+                 VALUES(?1, ?2, ?3)",
+                params![host, first_seen, visits],
+            )
+            .map_err(|e| sql_fail("hosts backfill", e))?;
+        }
+        Ok(())
+    }
+
+    /// TRUST01's "seen before" probe: true when the host — or a
+    /// listed ancestor, the same registrable walk rank_of performs —
+    /// has a visit older than FIRST_SEEN_GRACE_MS or more than one
+    /// recorded visit.  An unopened store reads as "seen" and an
+    /// empty host too: a signal the store cannot evaluate must
+    /// never be claimed.
+    pub fn host_seen(&mut self, host: &str, now_ms: i64) -> RcResult<bool> {
+        let h = host.trim().trim_end_matches('.').to_lowercase();
+        if self.conn.is_none() || h.is_empty() {
+            return Ok(true);
+        }
+        self.ensure_hosts()?;
+        let mut candidate: &str = &h;
+        loop {
+            if !candidate.is_empty() && self.seen_row(candidate, now_ms)? {
+                return Ok(true);
+            }
+            match candidate.find('.') {
+                Some(i) => candidate = &candidate[i + 1..],
+                None => return Ok(false),
+            }
+            if !candidate.contains('.') {
+                return Ok(false);
+            }
+        }
+    }
+
+    /// One hosts-table probe: "seen" means a visit older than the
+    /// grace window or more than one recorded visit.
+    fn seen_row(&self, host: &str, now_ms: i64) -> RcResult<bool> {
+        match self.conn()?.query_row(
+            "SELECT first_seen, visits FROM hosts WHERE host = ?1",
+            params![host],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        ) {
+            Ok((first_seen, visits)) => {
+                Ok(visits >= 2 || first_seen <= now_ms - FIRST_SEEN_GRACE_MS)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(sql_fail("host_seen", e)),
+        }
+    }
+
+    /// Drops the open connection — sitetrust tests use it to stand
+    /// the shared store in the "never opened" state.
+    #[cfg(test)]
+    pub(crate) fn close_for_test(&mut self) {
+        self.conn = None;
+        self.path = None;
     }
 
     /// The deduped, newest-first listing: consecutive rows identical

@@ -242,6 +242,31 @@ size_t rc_tranco_count(void);
  * never a block decision on its own. */
 char *rc_lookalike_check(const char *hostUtf8);
 
+/* --- site-trust composite (TRUST01) ----------------------------------
+ * The WOT-style trust verdict the lock-icon badge and its popover
+ * consume — advisory only, it NEVER blocks.  Inputs: the domain
+ * blocklist, the Tranco rank table, the homograph lookalike probe,
+ * the caller-passed https state and the history store's first-seen
+ * rollup.
+ *
+ * rc_sitetrust_lookup returns a JSON string (free with
+ * rc_string_free), or NULL on a bad pointer:
+ *   {"level":"green"|"amber"|"red","signals":[...],"rank":N,
+ *    "lookalike_of":"..."}
+ * Level mapping: a threat-list hit or a confusable∩popular twin is
+ * "red"; plaintext http or an unknown Tranco rank is "amber";
+ * Tranco-known + https is "green".  signals[] reports each input
+ * that evaluated true — "threat", "lookalike", "rank", "first_seen"
+ * (no prior visit in history) — and "lookalike_of" appears only
+ * when the lookalike probe fired.  first_seen is informational: it
+ * never decides the level alone. */
+char *rc_sitetrust_lookup(const char *hostUtf8, int isHttps);
+
+/* Re-run both input-table merges (blocklist + Tranco) — the list
+ * updaters call this after dropping a new file.  Both reloads run
+ * even when the first fails; the first error is reported. */
+RcStatus rc_sitetrust_reload(void);
+
 /* --- untrusted-document parsers (SEC19) ------------------------------
  * The Qt side passes the raw attacker-controlled bytes and receives
  * a JSON document it maps onto its existing types — Qt's XML/JSON
