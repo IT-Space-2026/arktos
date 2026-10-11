@@ -697,6 +697,101 @@ fn bookmark_ffi_roundtrip() {
 }
 
 #[test]
+fn bookmark_html_ffi() {
+    let _g = guard();
+    let root = unsafe { crate::rc_bm_root() };
+    assert_ne!(root, 0);
+
+    // Dry run counts without inserting; real run inserts under the
+    // parent and reports the summary; the scheme gate counts the
+    // refused urls by scheme.
+    const HTML: &[u8] = br#"<DL><p>
+<DT><H3>F</H3><DL><p>
+<DT><A HREF="https://a/">A</A>
+<DT><A HREF="javascript:x">J</A>
+<DT><A HREF="data:,d">D</A>
+<HR>
+</DL><p></DL><p>"#;
+    let probe = take_str(unsafe {
+        crate::rc_bm_import_html(root, HTML.as_ptr(), HTML.len(), crate::bookmarkhtml::IMPORT_DRY_RUN)
+    })
+    .unwrap();
+    let pj: serde_json::Value = serde_json::from_str(&probe).unwrap();
+    assert_eq!(pj["imported"], 1);
+    assert_eq!(pj["skipped"], 2);
+    assert_eq!(pj["skipped_by_scheme"]["javascript"], 1);
+    // nothing inserted by the probe
+    assert_eq!(unsafe { crate::rc_bm_find(cs("https://a/").as_ptr()) }, 0);
+
+    let bad_parent = unsafe {
+        crate::rc_bm_import_html(0xDEAD, HTML.as_ptr(), HTML.len(), 0)
+    };
+    assert!(bad_parent.is_null());
+    assert!(unsafe {
+        crate::rc_bm_import_html(root, ptr::null(), 3, 0)
+    }
+    .is_null());
+
+    let json = take_str(unsafe {
+        crate::rc_bm_import_html(root, HTML.as_ptr(), HTML.len(), 0)
+    })
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["imported"], 1);
+    assert_eq!(v["separators"], 1);
+    assert!(v["folders"].as_u64().unwrap() >= 2);
+    assert_ne!(unsafe { crate::rc_bm_find(cs("https://a/").as_ptr()) }, 0);
+    assert_eq!(
+        unsafe { crate::rc_bm_find(cs("javascript:x").as_ptr()) },
+        0
+    );
+    // consent flag admits the bookmarklet
+    let json2 = take_str(unsafe {
+        crate::rc_bm_import_html(
+            root,
+            HTML.as_ptr(),
+            HTML.len(),
+            crate::bookmarkhtml::IMPORT_BOOKMARKLETS,
+        )
+    })
+    .unwrap();
+    let v2: serde_json::Value = serde_json::from_str(&json2).unwrap();
+    assert_eq!(v2["imported"], 1); // only the javascript url is new
+    assert_ne!(
+        unsafe { crate::rc_bm_find(cs("javascript:x").as_ptr()) },
+        0
+    );
+
+    // export writes a parseable NETSCAPE file atomically.
+    let dir = tmpdir("bmhtml");
+    let path = format!("{dir}/out.html");
+    let cp = cs(&path);
+    assert_eq!(
+        unsafe { crate::rc_bm_export_html(cp.as_ptr()) },
+        RcStatus::Ok
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("NETSCAPE-Bookmark-file-1"));
+    assert!(text.contains("HREF=\"https://a/\""));
+    assert_eq!(
+        unsafe { crate::rc_bm_export_html(ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    // and the exported file re-imports cleanly.
+    let round = take_str(unsafe {
+        crate::rc_bm_import_html(
+            root,
+            text.as_bytes().as_ptr(),
+            text.len(),
+            crate::bookmarkhtml::IMPORT_DRY_RUN,
+        )
+    })
+    .unwrap();
+    let rv: serde_json::Value = serde_json::from_str(&round).unwrap();
+    assert!(rv["imported"].as_u64().unwrap() >= 1);
+}
+
+#[test]
 fn history_ffi_roundtrip() {
     let _g = guard();
     let dir = tmpdir("hist");
