@@ -120,6 +120,7 @@ HEADERS += \
     $$PWD/sidebarpanel.h \
     $$PWD/bidiclient.h \
     $$PWD/bidipanel.h \
+    $$PWD/sidebarpositionpicker.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
@@ -190,6 +191,7 @@ SOURCES += \
     $$PWD/sidebarpanel.cpp \
     $$PWD/bidiclient.cpp \
     $$PWD/bidipanel.cpp \
+    $$PWD/sidebarpositionpicker.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \
