@@ -97,6 +97,11 @@ browsing profile:
   through the UTS #39 confusables table, then matched against a
   skeleton index of the rank table — it flags only when the visual
   twin is a *different* popular domain.
+- **Site-trust composite verdict** — `rc_sitetrust_lookup` folds
+  blocklist membership, Tranco rank, the lookalike verdict, https
+  state and a first-seen signal from the history store into one
+  advisory green/amber/red verdict with per-signal reporting — a
+  lock-icon badge input that never blocks a page.
 - **Rust parsers for untrusted input** — OpenSearch descriptors,
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.

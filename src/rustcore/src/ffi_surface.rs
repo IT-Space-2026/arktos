@@ -423,6 +423,38 @@ fn urlstrip_and_blocklist_surface() {
     assert!(j.contains("\"verdict\":\"clean\""), "{}", j);
     // Restore the seed so later tests see the stock table again.
     assert_eq!(unsafe { crate::rc_tranco_reload() }, RcStatus::Ok);
+
+    // Site-trust composite over the FFI: threat -> red, ranked+https
+    // -> green, ranked+http / unknown -> amber, reload re-merges.
+    assert!(unsafe { crate::rc_sitetrust_lookup(ptr::null(), 1) }.is_null());
+    let body = b"threat.example\n";
+    assert_eq!(
+        unsafe { crate::rc_blocklist_load(body.as_ptr(), body.len()) },
+        RcStatus::Ok
+    );
+    let threat = cs("threat.example");
+    let j = take_str(unsafe { crate::rc_sitetrust_lookup(threat.as_ptr(), 1) })
+        .unwrap();
+    assert!(j.contains("\"level\":\"red\""), "{}", j);
+    assert!(j.contains("\"threat\""), "{}", j);
+    let rows = b"2,ranked.example\n";
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(rows.as_ptr(), rows.len()) },
+        RcStatus::Ok
+    );
+    let ranked = cs("ranked.example");
+    let j = take_str(unsafe { crate::rc_sitetrust_lookup(ranked.as_ptr(), 1) })
+        .unwrap();
+    assert!(j.contains("\"level\":\"green\""), "{}", j);
+    let j = take_str(unsafe { crate::rc_sitetrust_lookup(ranked.as_ptr(), 0) })
+        .unwrap();
+    assert!(j.contains("\"level\":\"amber\""), "{}", j);
+    let j = take_str(unsafe { crate::rc_sitetrust_lookup(plain.as_ptr(), 1) })
+        .unwrap();
+    assert!(j.contains("\"level\":\"amber\""), "{}", j);
+    // The composite reload re-merges both seeds over the fixtures.
+    assert_eq!(unsafe { crate::rc_sitetrust_reload() }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_tranco_rank(google.as_ptr()) }, 1);
 }
 
 #[test]

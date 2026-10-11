@@ -37,6 +37,24 @@ pub fn to_c_string(s: String) -> *mut c_char {
     CString::new(s).map_or(ptr::null_mut(), |c| c.into_raw())
 }
 
+/// Appends `s` to `out` as a JSON string literal, quotes included —
+/// the crate's hand-rolled emitters share the one escaping rule
+/// (control bytes are dropped, like the lookalike emitter does).
+pub fn json_push_str(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 => {}
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 /// Moves `v` into a boxed slice the caller frees with rc_buffer_free().
 /// Empty vectors still return a non-null dangling pointer — legal for
 /// the matching free, and keeps "empty result" distinct from null.

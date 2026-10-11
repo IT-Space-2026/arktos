@@ -90,6 +90,11 @@
 //!     index over the Tranco table, flagging only when the visual
 //!     twin is a DIFFERENT popular domain (warn on popular
 //!     lookalikes, not on every punycode name).
+//!   * sitetrust (TRUST01): the composite site-trust verdict —
+//!     blocklist membership, Tranco rank, homograph lookalike, https
+//!     state and history first-seen folded into one advisory
+//!     green/amber/red JSON verdict for the lock-icon badge.  A
+//!     warning signal only; it never blocks.
 //!
 mod autofill;
 mod bidi;
@@ -114,6 +119,7 @@ mod qrcode;
 mod readability;
 mod session;
 mod sitedecisions;
+mod sitetrust;
 mod store;
 mod tlsprobe;
 mod tranco;
@@ -984,6 +990,48 @@ pub unsafe extern "C" fn rc_lookalike_check(host: *const c_char) -> *mut c_char 
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- site-trust composite (TRUST01) --------------------------------
+
+/// Composite site-trust verdict as JSON (free with rc_string_free),
+/// or NULL on a bad pointer:
+///   {"level":"green"|"amber"|"red","signals":[...],"rank":N,
+///    "lookalike_of":"..."}
+/// Inputs: blocklist membership, Tranco rank, the homograph
+/// lookalike probe, the caller-passed https state and the history
+/// store's first-seen rollup.  signals[] reports each input that
+/// evaluated true — "threat", "lookalike", "rank", "first_seen" —
+/// and "lookalike_of" appears only when the lookalike probe fired.
+/// The verdict is advisory (a badge state), never a block; an
+/// un-evaluable host reads as amber with no signals.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitetrust_lookup(
+    host: *const c_char,
+    is_https: i32,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => util::to_c_string(sitetrust::lookup(h, is_https != 0)),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Re-runs both input-table merges the composite reads (blocklist +
+/// Tranco) — the list updaters call this after dropping a new file.
+/// Both reloads run even when the first fails; the first error is
+/// reported.
+///
+/// # Safety
+/// Takes no pointers; safe to call from C.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitetrust_reload() -> RcStatus {
+    status_of(sitetrust::reload)
 }
 
 // ---- untrusted-document parsers (SEC19) ----------------------------
