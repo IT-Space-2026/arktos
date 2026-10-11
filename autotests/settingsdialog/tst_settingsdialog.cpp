@@ -101,6 +101,7 @@ private slots:
     void extensionReview();
     void performancePage();
     void energySaver();
+    void tabHoverPreviews();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -2378,6 +2379,42 @@ void tst_SettingsDialog::energySaver()
     settings.remove(QLatin1String("tabs/suspendTabs"));
     settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
     saver->loadSettings();
+}
+
+// TPREV01: the Appearance page's 'Show tab previews on hover'
+// checkbox persists tabs/tabHoverPreviews — on by default for a
+// fresh profile, and the state round-trips through save/reload.
+void tst_SettingsDialog::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+
+    // The control lives on the Appearance page (sidebar row 2).
+    {
+        SettingsDialog dialog;
+        QWidget *host = dialog.tabHoverPreviews;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+
+        QVERIFY(dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), false);
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), true);
+
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)

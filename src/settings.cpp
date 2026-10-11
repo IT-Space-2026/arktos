@@ -1168,6 +1168,9 @@ void SettingsDialog::loadFromSettings()
     // CONT06: 0 = inline chips, 1 = two-level strip (the default).
     containerDisplayCombo->setCurrentIndex(qBound(0,
         settings.value(QLatin1String("containerDisplay"), 1).toInt(), 1));
+    // TPREV01: hover previews are on unless the user opted out.
+    tabHoverPreviews->setChecked(
+        settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
     // PREFUI04: the Performance page.  The memory-saver radios are
     // presets over the SLEEP01 suspend keys — the stored minute value
     // picks the closest tier (a hand-tuned value an older build wrote
@@ -1556,6 +1559,10 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
+    // TPREV01: applies live through the per-TabWidget loadSettings()
+    // fan-out below -> TabBar::reloadTabHoverPreviews().
+    settings.setValue(QLatin1String("tabHoverPreviews"),
+                      tabHoverPreviews->isChecked());
     settings.endGroup();
 
     // PREFUI04: the Performance page's own group (the migrated

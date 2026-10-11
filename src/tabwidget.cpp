@@ -2822,6 +2822,8 @@ void TabWidget::loadSettings()
     // TABS02: re-read the persisted vertical strip width so the same
     // live-apply path that carries the position lands it everywhere.
     m_tabBar->reloadVerticalTabWidth();
+    // TPREV01: the hover-preview opt-out rides the same fan-out.
+    m_tabBar->reloadTabHoverPreviews();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS

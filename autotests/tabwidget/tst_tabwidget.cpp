@@ -24,6 +24,7 @@
 #include <engineinterface.h>
 #include <tabwidget.h>
 #include <tabbar.h>
+#include <tabpreview.h>
 #include <webview.h>
 
 #include <historycompleter.h>
@@ -90,6 +91,7 @@ private slots:
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
     void verticalTabStripWidth();
+    void tabHoverPreviews();
     void omnibox();
     void omniboxTabScope();
     void tabGroups();
@@ -899,6 +901,67 @@ void tst_TabWidget::verticalTabStripWidth()
 
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
+}
+
+// TPREV01: tabs/tabHoverPreviews (default on) gates the hover
+// preview card — read on construction, re-applied live through
+// loadSettings() (the path SettingsDialog::saveToSettings fans out
+// to every window), and opting out while a card is up drops it.
+void tst_TabWidget::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QVERIFY(!bar->tabPreviewsEnabled());
+
+    // Synthetic QTest::mouseMove does not reach widgets under the
+    // offscreen QPA — post the move through sendEvent like the
+    // tst_tabbar legs drive their handlers.
+    const auto hoverTab = [&bar](int index) {
+        const QPoint pos = bar->tabRect(index).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(pos),
+                         QPointF(bar->mapToGlobal(pos)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &move);
+    };
+
+    // Opted out: dwelling on a tab never arms the card.
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview());
+
+    // Opted back in through the live-apply path the settings dialog
+    // uses -> the dwell pops the card on the hovered tab.
+    settings.setValue(QLatin1String("tabHoverPreviews"), true);
+    widget.loadSettings();
+    QVERIFY(bar->tabPreviewsEnabled());
+    hoverTab(0);
+    QTest::qWait(700);
+    QVERIFY(bar->tabPreview());
+    QVERIFY(bar->tabPreview()->isVisible());
+    QCOMPARE(bar->tabPreview()->previewedIndex(), 0);
+
+    // Opting out while a card is up drops it immediately, and a
+    // fresh dwell on another tab never re-arms it.
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+    widget.loadSettings();
+    QVERIFY(!bar->tabPreviewsEnabled());
+    QVERIFY(!bar->tabPreview()->isVisible());
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview()->isVisible());
+
+    settings.remove(QLatin1String("tabHoverPreviews"));
     settings.endGroup();
 }
 
