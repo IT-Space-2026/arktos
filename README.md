@@ -51,9 +51,10 @@ browsing profile:
   remote-font blocking, tracking ping/beacon blocking, third-party
   WebSocket blocking (opt-in) and per-origin storage grants.
 - **Site trust (opt-out)** — a "Site Trust" group on the Privacy page
-  holds the master switch for the toolbar trust indicator
-  (lookalike-domain and threat-list checks); disabling it hides the
-  badge and skips the lookups without a restart.
+  holds the master switch for the toolbar trust indicator plus
+  per-signal toggles for the lookalike-domain warning and the
+  threat-list check; disabling the master hides the badge and each
+  signal can be skipped individually, all without a restart.
 - **Per-site JavaScript control** — allow/block rules by host with a
   shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
   allow", and three Mullvad-style security tiers (Standard / Safer /

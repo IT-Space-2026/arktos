@@ -1223,6 +1223,18 @@ bool BrowserApplication::siteTrustEnabled()
             .toBool();
 }
 
+bool BrowserApplication::siteTrustLookalikeEnabled()
+{
+    return QSettings().value(QLatin1String("trust/lookalike"), true)
+            .toBool();
+}
+
+bool BrowserApplication::siteTrustThreatlistEnabled()
+{
+    return QSettings().value(QLatin1String("trust/threatlist"), true)
+            .toBool();
+}
+
 QStringList BrowserApplication::torWindowArguments(const QUrl &url)
 {
     QStringList arguments{QStringLiteral("--tor")};

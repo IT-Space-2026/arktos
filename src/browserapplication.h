@@ -177,6 +177,13 @@ public:
     // Preferences flip applies without a restart.  Default on.
     static bool siteTrustEnabled();
 
+    // TRUST02: per-signal gates inside the same group — the
+    // lookalike check and the threat-list probe each read their key
+    // live so a Preferences flip applies on the next navigation.
+    // Both default on.
+    static bool siteTrustLookalikeEnabled();
+    static bool siteTrustThreatlistEnabled();
+
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);
 #endif

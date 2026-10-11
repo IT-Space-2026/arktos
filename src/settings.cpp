@@ -1169,11 +1169,15 @@ void SettingsDialog::loadFromSettings()
         int(PrivacyRequestInterceptor::Safest)));
     settings.endGroup();
 
-    // TRUST06: site-trust master switch — the toolbar badge and the
-    // per-signal lookups gate on this key; default on.
+    // TRUST06/TRUST02: site-trust switches — the toolbar badge and the
+    // per-signal lookups gate on these keys; all default on.
     settings.beginGroup(QLatin1String("trust"));
     siteTrustEnabled->setChecked(
         settings.value(QLatin1String("enabled"), true).toBool());
+    siteTrustLookalike->setChecked(
+        settings.value(QLatin1String("lookalike"), true).toBool());
+    siteTrustThreatlist->setChecked(
+        settings.value(QLatin1String("threatlist"), true).toBool());
     settings.endGroup();
     updateSecurityLevelHint();
 
@@ -1532,11 +1536,14 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("securityLevel"), securityLevelCombo->currentIndex());
     settings.endGroup();
 
-    // TRUST06: consumers read the key live (BrowserApplication::
-    // siteTrustEnabled) — a flip applies to the badge and the
-    // per-signal lookups without a restart.
+    // TRUST06/TRUST02: consumers read the keys live
+    // (BrowserApplication::siteTrustEnabled / siteTrustLookalikeEnabled
+    // / siteTrustThreatlistEnabled) — a flip applies to the badge and
+    // the per-signal lookups without a restart.
     settings.beginGroup(QLatin1String("trust"));
     settings.setValue(QLatin1String("enabled"), siteTrustEnabled->isChecked());
+    settings.setValue(QLatin1String("lookalike"), siteTrustLookalike->isChecked());
+    settings.setValue(QLatin1String("threatlist"), siteTrustThreatlist->isChecked());
     settings.endGroup();
 
     // ADB06: write through the manager so the matcher snapshot is

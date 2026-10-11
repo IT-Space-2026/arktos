@@ -122,6 +122,7 @@ private slots:
     void appearanceLeftAnchored();
     void fieldWidthCaps();
     void siteTrustToggle();
+    void siteTrustSignalToggles();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -3317,6 +3318,60 @@ void tst_SettingsDialog::siteTrustToggle()
     QVERIFY(BrowserApplication::siteTrustEnabled());
 
     settings.remove(QLatin1String("trust/enabled"));
+}
+
+// TRUST02: the 'Site trust' group's per-signal toggles —
+// trust/lookalike and trust/threatlist, both on by default.  Each
+// persisted key and its live accessor (what the per-signal lookups
+// gate on) round-trips a restart.
+void tst_SettingsDialog::siteTrustSignalToggles()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
+
+    // Both toggles live inside the Site Trust group box.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.siteTrustLookalike->parentWidget(),
+                 dialog.siteTrustGroupBox);
+        QCOMPARE(dialog.siteTrustThreatlist->parentWidget(),
+                 dialog.siteTrustGroupBox);
+
+        QVERIFY(dialog.siteTrustLookalike->isChecked());
+        QVERIFY(dialog.siteTrustThreatlist->isChecked());
+        QVERIFY(BrowserApplication::siteTrustLookalikeEnabled());
+        QVERIFY(BrowserApplication::siteTrustThreatlistEnabled());
+        dialog.siteTrustLookalike->setChecked(false);
+        dialog.siteTrustThreatlist->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/lookalike")).toBool(),
+             false);
+    QCOMPARE(settings.value(QLatin1String("trust/threatlist")).toBool(),
+             false);
+    QVERIFY(!BrowserApplication::siteTrustLookalikeEnabled());
+    QVERIFY(!BrowserApplication::siteTrustThreatlistEnabled());
+
+    // A reopened dialog reads the stored state back; re-enabling
+    // restores the default-on profile.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.siteTrustLookalike->isChecked());
+        QVERIFY(!dialog.siteTrustThreatlist->isChecked());
+        dialog.siteTrustLookalike->setChecked(true);
+        dialog.siteTrustThreatlist->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/lookalike")).toBool(),
+             true);
+    QCOMPARE(settings.value(QLatin1String("trust/threatlist")).toBool(),
+             true);
+    QVERIFY(BrowserApplication::siteTrustLookalikeEnabled());
+    QVERIFY(BrowserApplication::siteTrustThreatlistEnabled());
+
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)
