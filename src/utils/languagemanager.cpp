@@ -51,6 +51,7 @@ LanguageManager::LanguageManager(QObject *parent)
     , m_sysTranslator(nullptr)
     , m_appTranslator(nullptr)
     , m_loaded(false)
+    , m_followsSystem(false)
 {
 #ifdef LANGUAGEMANAGER_DEBUG
     qDebug() << "LanguageManager::" << __FUNCTION__;
@@ -81,6 +82,9 @@ LanguageManager *LanguageManager::instance()
 void LanguageManager::addLocaleDirectory(const QString &directory)
 {
     m_localeDirectories.append(directory);
+    // A dir registered after the first scan may carry .qm files the
+    // earlier pass never saw — let the next languages() look again.
+    m_loaded = false;
 }
 
 QStringList LanguageManager::localeDirectories() const
@@ -159,15 +163,28 @@ bool LanguageManager::setCurrentLanguage(const QString &language)
 #ifdef LANGUAGEMANAGER_DEBUG
     qDebug() << "LanguageManager::" << __FUNCTION__ << language;
 #endif
-    if (m_currentLanguage == language
-        || !isLanguageAvailable(language))
+    // "system" is the reserved follow-the-OS pick (LANG01): the
+    // sentinel itself is persisted rather than the resolved code, so
+    // a later OS-language change still takes effect on the next
+    // launch.  The resolved code (or "" when the OS locale has no
+    // translation, i.e. English) is what actually gets installed now.
+    const bool followsSystem = (language == QLatin1String("system"));
+    QString effective = language;
+    if (followsSystem) {
+        const QString system = QLocale::system().name();
+        effective = isLanguageAvailable(system) ? system : QString();
+    }
+    if ((m_currentLanguage == effective && m_followsSystem == followsSystem)
+        || !isLanguageAvailable(effective))
         return false;
 
-    m_currentLanguage = language;
+    m_currentLanguage = effective;
+    m_followsSystem = followsSystem;
 
     QSettings settings;
     settings.beginGroup(QLatin1String("LanguageManager"));
-    settings.setValue(QLatin1String("language"), m_currentLanguage);
+    settings.setValue(QLatin1String("language"),
+                      followsSystem ? language : m_currentLanguage);
 
     if (m_currentLanguage.isEmpty()) {
         delete m_appTranslator;
@@ -308,6 +325,8 @@ void LanguageManager::loadAvailableLanguages() const
     if (m_loaded)
         return;
     m_loaded = true;
+    // A rescan after addLocaleDirectory() must not duplicate entries.
+    m_languages.clear();
 #ifdef LANGUAGEMANAGER_DEBUG
     qDebug() << "LanguageManager::" << __FUNCTION__;
 #endif

@@ -51,6 +51,7 @@
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
+#include "languagemanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -108,6 +109,7 @@ private slots:
     void fieldWidthCaps();
     void siteTrustToggle();
     void siteTrustSignalToggles();
+    void languageSelector();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -168,6 +170,19 @@ void tst_SettingsDialog::initTestCase()
     QCoreApplication::setApplicationName("tst_settingsdialog");
     QSettings settings;
     settings.clear();
+
+    // LANG01: the LanguageManager singleton was already built by
+    // BrowserApplication's ctor (custom QTEST_MAIN) with the app's
+    // real locale dirs — none of which carry .qm files here.  Adding
+    // the languagemanager test assets rescans and stands in for
+    // "installed" translations.
+    const QString assets = QDir(qApp->applicationDirPath()).absoluteFilePath(
+        QLatin1String("../utils/languagemanager/.qm/locale"));
+    QVERIFY2(QFileInfo(assets + QLatin1String("/hu_HU.qm")).exists(),
+             qPrintable(assets));
+    QVERIFY2(QFileInfo(assets + QLatin1String("/de_DE.qm")).exists(),
+             qPrintable(assets));
+    LanguageManager::instance()->addLocaleDirectory(assets);
 }
 
 void tst_SettingsDialog::constructDefaults()
@@ -2861,6 +2876,85 @@ void tst_SettingsDialog::siteTrustSignalToggles()
 
     settings.remove(QLatin1String("trust/lookalike"));
     settings.remove(QLatin1String("trust/threatlist"));
+}
+
+// LANG01: the General page's Language combo mirrors the
+// LanguageManager pick — "System default", one row per installed
+// translation (chooseNewLanguage's display shape), then an explicit
+// English row — and applies a selection immediately through the
+// manager (persisted there, not staged for OK).
+void tst_SettingsDialog::languageSelector()
+{
+    LanguageManager *manager = LanguageManager::instance();
+    const QStringList languages = manager->languages();
+    QVERIFY(languages.contains(QLatin1String("hu_HU")));
+    QVERIFY(languages.contains(QLatin1String("de_DE")));
+
+    SettingsDialog dialog;
+    QVERIFY(dialog.languageCombo);
+    QVERIFY(dialog.languageCombo->isEnabled());
+    QVERIFY(dialog.languageLabel->isEnabled());
+    QCOMPARE(dialog.languageCombo->count(), languages.count() + 2);
+    QCOMPARE(dialog.languageCombo->itemData(0).toString(),
+             QLatin1String("system"));
+    QVERIFY(dialog.languageCombo->itemText(0).contains(
+        QLatin1String("System default")));
+    QCOMPARE(dialog.languageCombo->itemData(
+                 dialog.languageCombo->count() - 1).toString(),
+             QString());
+    // Every installed translation gets a row carrying its locale code
+    // in the popup's display shape.
+    for (const QString &name : languages) {
+        const int row = dialog.languageCombo->findData(name);
+        QVERIFY(row > 0);
+        QVERIFY(dialog.languageCombo->itemText(row).contains(
+            QLatin1Char('(') + name + QLatin1Char(')')));
+    }
+
+    // Fresh profile with no override -> the System default row.
+    QCOMPARE(dialog.languageCombo->currentIndex(), 0);
+
+    // Picking Hungarian applies + persists immediately, and the page
+    // itself retranslates live (LanguageChange -> retranslate()).
+    const int huRow = dialog.languageCombo->findData(
+        QLatin1String("hu_HU"));
+    QVERIFY(huRow > 0);
+    dialog.languageCombo->setCurrentIndex(huRow);
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QLatin1String("hu_HU"));
+    qApp->processEvents();
+    QCOMPARE(dialog.label_3->text(), QString::fromUtf8("Kezdőlap:"));
+
+    // The trailing English row writes the explicit no-translation pick.
+    dialog.languageCombo->setCurrentIndex(
+        dialog.languageCombo->count() - 1);
+    QVERIFY(QSettings().contains(QLatin1String("LanguageManager/language")));
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QString());
+    qApp->processEvents();
+    QCOMPARE(dialog.label_3->text(), QLatin1String("Home Page:"));
+
+    // System default persists the "system" sentinel — never a resolved
+    // code — so an OS-language change still wins on the next launch.
+    dialog.languageCombo->setCurrentIndex(0);
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QLatin1String("system"));
+
+    // A reopened dialog selects whatever the manager persisted.
+    {
+        SettingsDialog reopened;
+        QCOMPARE(reopened.languageCombo->currentIndex(), 0);
+        QCOMPARE(reopened.languageCombo->currentData().toString(),
+                 QLatin1String("system"));
+    }
+
+    // Leave the process in English so later legs don't run under a
+    // translation.
+    manager->setCurrentLanguage(QString());
+    qApp->processEvents();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

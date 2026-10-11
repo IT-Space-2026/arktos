@@ -127,6 +127,7 @@ public slots:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void loadDefaults();
@@ -223,6 +224,11 @@ private slots:
     // key; closing the page un-committed undoes the preview.
     void previewTheme(int index);
 
+    // LANG01: the General page's Language combo applies its pick to
+    // the shared LanguageManager immediately (persisted there, not
+    // staged for OK like the other fields).
+    void applyLanguagePick(int row);
+
 private:
     // ADB06: the Content Blocking status line mirrors the engine that
     // is actually answering requests (effective pick, not the combo's
@@ -231,6 +237,10 @@ private:
     // Re-applies the persisted color scheme if a combo preview flipped
     // the palette but the pick was never committed (Cancel/tab close).
     void revertThemePreview();
+    // LANG01: fills languageCombo from the LanguageManager and re-runs
+    // it (plus every code-owned string) on QEvent::LanguageChange.
+    void populateLanguageCombo();
+    void retranslate();
     void buildPageSearchIndex();
     void stashSearchSuggestions();
     void populateEngineForm();

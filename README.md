@@ -107,6 +107,8 @@ browsing profile:
   vertical sidebar navigation with a filter field that finds settings
   by page title and control labels, scrollable pages capped to the
   screen so buttons never clip, dedicated Search and Containers pages.
+  General page has an inline Language selector (System default /
+  installed translations / English) that applies immediately.
 - **History manager** — "Show All History" (Ctrl+H) opens in a tab
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
