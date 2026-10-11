@@ -627,13 +627,11 @@ mod tests {
         s.add("http://a/", "", 200).unwrap();
         s.update_title("http://a/", "new").unwrap();
         // Only the newest row changes.
-        assert_eq!(
-            s.entry_at(0).unwrap().unwrap().contains("\"new\""),
-            true
+        assert!(
+            s.entry_at(0).unwrap().unwrap().contains("\"new\"")
         );
-        assert_eq!(
-            s.entry_at(1).unwrap().unwrap().contains("\"\""),
-            true
+        assert!(
+            s.entry_at(1).unwrap().unwrap().contains("\"\"")
         );
         s.remove("http://a/", "new", 200).unwrap();
         assert_eq!(s.count().unwrap(), 1);
@@ -652,9 +650,8 @@ mod tests {
         // Rows at the cutoff boundary are inside the window.
         s.clear_since(200).unwrap();
         assert_eq!(s.count().unwrap(), 1);
-        assert_eq!(
-            s.entry_at(0).unwrap().unwrap().contains("http://old/"),
-            true
+        assert!(
+            s.entry_at(0).unwrap().unwrap().contains("http://old/")
         );
         // A future cutoff is a no-op; everything is still cleared.
         s.clear_since(500).unwrap();

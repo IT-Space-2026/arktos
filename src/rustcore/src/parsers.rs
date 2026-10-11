@@ -13,8 +13,8 @@
 //!     semantics (DTD rejection, namespace check, first-wins Url
 //!     slots, flat Param/Parameter capture, early exit).  Result JSON:
 //!     {"name","description","imageUrl",
-//!      "search"|"suggestions"|"image":
-//!          {"template","method","params":[["name","value"],...]}}
+//!     "search"|"suggestions"|"image":
+//!     {"template","method","params":[["name","value"],...]}}
 //!     A slot key is absent when no matching <Url> was accepted.
 //!
 //!   * rc_updatemanifest_parse — extension self-update "gupdate"
@@ -135,7 +135,7 @@ pub(crate) fn bom_transcode(data: &[u8]) -> RcResult<std::borrow::Cow<'_, [u8]>>
         return corrupt("truncated UTF-16 document");
     }
     let u16s: Vec<u16> = units
-        .chunks_exact(2)
+        .as_chunks::<2>().0.iter()
         .map(|c| {
             if big_endian {
                 u16::from_be_bytes([c[0], c[1]])
@@ -557,11 +557,10 @@ pub fn update_manifest(data: &[u8]) -> RcResult<Vec<u8>> {
                     _ => {}
                 }
             }
-            Ev::End { name } => {
-                if local(&name) == "app" {
+            Ev::End { name }
+                if local(&name) == "app" => {
                     current_app = None;
                 }
-            }
             _ => {}
         }
     }

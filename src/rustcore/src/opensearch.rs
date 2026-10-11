@@ -45,6 +45,7 @@
 //!     valid %XX triplet is preserved (uppercase-normalized) and a
 //!     bare '%' encodes as %25.  Pair structure is preserved
 //!     verbatim: bare keys stay bare, empty segments stay.
+//!
 //! The Qt adapter wraps the returned string in QUrl::fromEncoded —
 //! the same call the old code made on its intermediate result, so
 //! downstream normalization is unchanged.
@@ -817,14 +818,11 @@ pub fn restore_bundled() -> RcResult<bool> {
         s.removed_bundled.clear();
         for bundled in bundled() {
             let mut record = bundled.clone();
-            match s.engines.get(&record.name) {
-                Some(old) => {
-                    record.keywords = old.keywords.clone();
-                    if *old == record {
-                        continue;
-                    }
+            if let Some(old) = s.engines.get(&record.name) {
+                record.keywords = old.keywords.clone();
+                if *old == record {
+                    continue;
                 }
-                None => {}
             }
             if !s.order.iter().any(|n| n == &record.name) {
                 s.order.push(record.name.clone());
@@ -1097,6 +1095,18 @@ pub fn keyword_url(
         Some(name) => engine_url(&name, "search", term, language, source),
         None => Ok(None),
     }
+}
+
+/// Re-read the disk file into memory (test/repair seam).
+#[cfg(test)]
+pub fn reload() -> RcResult<()> {
+    let lock = registry();
+    let mut state = lock.lock().unwrap();
+    load_from_disk(&mut state)?;
+    state.loaded_dir = file_path()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    Ok(())
 }
 
 // ------------------------------------------------------------------
@@ -1475,16 +1485,4 @@ mod tests {
         }
         assert_eq!(bundled().len(), 7);
     }
-}
-
-/// Re-read the disk file into memory (test/repair seam).
-#[cfg(test)]
-pub fn reload() -> RcResult<()> {
-    let lock = registry();
-    let mut state = lock.lock().unwrap();
-    load_from_disk(&mut state)?;
-    state.loaded_dir = file_path()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    Ok(())
 }

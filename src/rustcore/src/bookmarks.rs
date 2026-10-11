@@ -771,7 +771,7 @@ mod tests {
         s.detach(b).unwrap();
         s.destroy(b).unwrap();
         assert!(s.child_at(f, 0).is_none());
-        assert!(s.nodes.get(&b).is_none());
+        assert!(!s.nodes.contains_key(&b));
     }
 
     #[test]
