@@ -58,9 +58,21 @@ const MAX_MEMBER: usize = 64 * 1024 * 1024;
 /// against — the lazy loader rebuilds when the effective dir changes,
 /// which is how a store that appears after first use
 /// (rc_set_data_dir arriving late) still picks up its override file.
+///
+/// `skeletons` is the TRUST05 homograph index: the UTS #39
+/// confusable skeleton of each entry's *decoded* name -> the raw
+/// listed name.  Only entries whose skeleton differs from their
+/// listed spelling live here — an identity-skeleton entry is already
+/// answered by `ranks` directly, which keeps the index roughly the
+/// size of the confusable+xn-- subset instead of a second full copy
+/// of the table.  It is built in the same parse pass and under the
+/// same poison-safe merge as `ranks`: line order decides collisions
+/// (best rank first), and an update can only add skeleton keys, never
+/// re-point a seeded one at a different name.
 #[derive(Debug)]
 pub struct TrancoList {
     ranks: HashMap<String, u32>,
+    skeletons: HashMap<String, String>,
     dir: Option<PathBuf>,
 }
 
@@ -133,25 +145,43 @@ fn entry_from_line(line: &str, ordinal: u32) -> Option<(String, u32)> {
     validate_domain(&host).then(|| (host, rank))
 }
 
-fn parse_entries(text: &str) -> HashMap<String, u32> {
+/// Both indexes out of one ordered pass — (ranks, skeletons).  The
+/// skeleton of each entry's decoded name is computed once, here, so
+/// the lookalike probe itself stays allocation-free; entries whose
+/// skeleton equals their listed name skip the map entirely (rank_of
+/// already answers those).
+fn parse_entries(text: &str) -> (HashMap<String, u32>, HashMap<String, String>) {
     let mut ranks = HashMap::new();
+    let mut skeletons = HashMap::new();
     for (i, line) in text.lines().enumerate() {
         if ranks.len() >= MAX_ENTRIES {
             break;
         }
         // First occurrence wins — Tranco files are rank-ordered, so
-        // a duplicated domain keeps its best (earliest) rank.
+        // a duplicated domain keeps its best (earliest) rank.  The
+        // same rule feeds the skeleton index: the most popular entry
+        // a skeleton can resolve to wins the key.
         if let Some((host, rank)) = entry_from_line(line, i as u32 + 1) {
-            ranks.entry(host).or_insert(rank);
+            if ranks.contains_key(&host) {
+                continue;
+            }
+            if let Some(skel) = crate::lookalike::entry_skeleton(&host) {
+                if skel != host {
+                    skeletons.entry(skel).or_insert_with(|| host.clone());
+                }
+            }
+            ranks.insert(host, rank);
         }
     }
-    ranks
+    (ranks, skeletons)
 }
 
 /// The updatable body out of an override blob: the Tranco download is
 /// a zip container (`top-1m.csv.zip`); a plaintext `rank,domain`
 /// body is accepted as-is.
-fn entries_from_blob(blob: &[u8]) -> HashMap<String, u32> {
+fn entries_from_blob(
+    blob: &[u8],
+) -> (HashMap<String, u32>, HashMap<String, String>) {
     let text;
     let body = if blob.starts_with(b"PK\x03\x04") {
         match crate::extverify::zip_member_by_suffix(blob, ".csv", MAX_MEMBER)
@@ -160,7 +190,7 @@ fn entries_from_blob(blob: &[u8]) -> HashMap<String, u32> {
                 text = String::from_utf8_lossy(&member).into_owned();
                 text.as_str()
             }
-            Err(_) => return HashMap::new(),
+            Err(_) => return (HashMap::new(), HashMap::new()),
         }
     } else {
         match std::str::from_utf8(blob) {
@@ -242,6 +272,38 @@ impl TrancoList {
     pub fn len(&self) -> usize {
         self.ranks.len()
     }
+
+    /// TRUST05 skeleton probe: the query side passes a confusable
+    /// skeleton suffix and gets back the raw listed name that
+    /// skeleton resolves to.  Two maps can answer a probe — an
+    /// entry listed under its own name (identity skeleton, answered
+    /// by `ranks`) and an entry whose skeleton differs from its
+    /// spelling (confusable twins and xn-- A-labels, answered by
+    /// `skeletons`).  When both answer, the better-ranked raw wins —
+    /// a domain listed under its own name outranks a lookalike twin
+    /// that happens to be listed too.
+    pub(crate) fn skeleton_match<'a>(
+        &'a self,
+        skel_suffix: &'a str,
+    ) -> Option<&'a str> {
+        match (
+            self.skeletons.get(skel_suffix),
+            self.ranks.get(skel_suffix),
+        ) {
+            (Some(twin), Some(&own)) => {
+                let twin_rank =
+                    self.ranks.get(twin.as_str()).copied().unwrap_or(u32::MAX);
+                Some(if own <= twin_rank {
+                    skel_suffix
+                } else {
+                    twin.as_str()
+                })
+            }
+            (Some(twin), None) => Some(twin.as_str()),
+            (None, Some(_)) => Some(skel_suffix),
+            (None, None) => None,
+        }
+    }
 }
 
 /// Seed ∪ override, seed rank winning every shared key.  The union
@@ -250,26 +312,34 @@ impl TrancoList {
 /// never un-rank or re-rank a seeded one.
 fn load_from_disk() -> TrancoList {
     let dir = current_dir();
-    let mut ranks = parse_entries(BUILTIN_LIST);
+    let (mut ranks, mut skeletons) = parse_entries(BUILTIN_LIST);
     if let Some(dir) = &dir {
         match std::fs::read(dir.join(OVERRIDE_FILE)) {
             Ok(blob) => {
-                for (host, rank) in entries_from_blob(&blob) {
+                let (eranks, eskels) = entries_from_blob(&blob);
+                for (host, rank) in eranks {
                     ranks.entry(host).or_insert(rank);
+                }
+                for (skel, raw) in eskels {
+                    skeletons.entry(skel).or_insert(raw);
                 }
             }
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(_) => {} // unreadable override — the seed still ranks
         }
     }
-    TrancoList { ranks, dir }
+    TrancoList {
+        ranks,
+        skeletons,
+        dir,
+    }
 }
 
 /// The loaded table, lazily populated.  A cached table resolved
 /// before the data dir existed is rebuilt once the dir appears — the
 /// store can arrive after first use (rc_set_data_dir runs whenever
 /// the SecureStore shim or the updater first touches the core).
-fn active_list() -> Arc<TrancoList> {
+pub(crate) fn active_list() -> Arc<TrancoList> {
     let dir = current_dir();
     {
         let slot = list_slot();
@@ -288,12 +358,13 @@ fn active_list() -> Arc<TrancoList> {
 /// (update/test seam).  A body yielding no usable entries is
 /// RC_CORRUPT and the previous table stays active.
 pub fn load(text: &str) -> RcResult<()> {
-    let ranks = parse_entries(text);
+    let (ranks, skeletons) = parse_entries(text);
     if ranks.is_empty() {
         return fail(RcStatus::Corrupt, "tranco: no usable entries");
     }
     *list_slot_mut() = Some(Arc::new(TrancoList {
         ranks,
+        skeletons,
         dir: current_dir(),
     }));
     Ok(())
@@ -306,7 +377,7 @@ pub fn load(text: &str) -> RcResult<()> {
 pub fn reload() -> RcResult<()> {
     if let Some(dir) = current_dir() {
         if let Ok(blob) = std::fs::read(dir.join(OVERRIDE_FILE)) {
-            if entries_from_blob(&blob).is_empty() {
+            if entries_from_blob(&blob).0.is_empty() {
                 return Err(Fail {
                     status: RcStatus::Corrupt,
                     msg: "tranco: override yields no entries".into(),
@@ -343,8 +414,10 @@ mod tests {
     }
 
     fn table(text: &str) -> TrancoList {
+        let (ranks, skeletons) = parse_entries(text);
         TrancoList {
-            ranks: parse_entries(text),
+            ranks,
+            skeletons,
             dir: None,
         }
     }
@@ -482,35 +555,44 @@ mod tests {
     #[test]
     fn update_blob_accepts_plaintext_and_zip() {
         let csv = b"7,updated.example\n";
-        assert_eq!(entries_from_blob(csv).len(), 1);
+        assert_eq!(entries_from_blob(csv).0.len(), 1);
         // Stored member.
         let zip_store = test_zip("top-1m.csv", csv, false);
         let e = entries_from_blob(&zip_store);
-        assert_eq!(e.get("updated.example"), Some(&7));
+        assert_eq!(e.0.get("updated.example"), Some(&7));
         // Deflated member — the real top-1m.csv.zip shape.
         let zip_defl = test_zip("top-1m.csv", csv, true);
         let e = entries_from_blob(&zip_defl);
-        assert_eq!(e.get("updated.example"), Some(&7));
+        assert_eq!(e.0.get("updated.example"), Some(&7));
         // A zip with no .csv member and a garbage blob both parse
         // empty — the caller treats that as "no usable update".
         let zip_other = test_zip("readme.txt", csv, false);
-        assert!(entries_from_blob(&zip_other).is_empty());
-        assert!(entries_from_blob(b"\x00\x01\x02garbage").is_empty());
-        assert!(entries_from_blob(b"PK\x03\x04truncated").is_empty());
+        assert!(entries_from_blob(&zip_other).0.is_empty());
+        assert!(entries_from_blob(b"\x00\x01\x02garbage").0.is_empty());
+        assert!(entries_from_blob(b"PK\x03\x04truncated").0.is_empty());
     }
 
     #[test]
     fn merge_is_poison_safe() {
         // Build the merge the way load_from_disk does: seed first,
         // update rows only fill gaps.
-        let mut ranks = parse_entries("5,seed.example\n9,also-seed.example\n");
+        let (mut ranks, mut skeletons) =
+            parse_entries("5,seed.example\n9,also-seed.example\n");
         let seed_len = ranks.len();
-        for (host, rank) in entries_from_blob(
+        let (eranks, eskels) = entries_from_blob(
             b"1,seed.example\n2,new.example\n", // re-rank + drop attempts + add
-        ) {
+        );
+        for (host, rank) in eranks {
             ranks.entry(host).or_insert(rank);
         }
-        let t = TrancoList { ranks, dir: None };
+        for (skel, raw) in eskels {
+            skeletons.entry(skel).or_insert(raw);
+        }
+        let t = TrancoList {
+            ranks,
+            skeletons,
+            dir: None,
+        };
         // The update cannot re-rank a seed entry…
         assert_eq!(t.rank_of("seed.example"), Some(5));
         // …nor un-rank one it simply omits…

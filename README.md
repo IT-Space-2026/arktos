@@ -92,6 +92,11 @@ browsing profile:
   can only add entries, never un-rank or re-rank a seed domain).
   `rc_tranco_rank` backs the site-trust signals; lookups never leave
   the machine.
+- **IDN/homograph lookalike probe** — `rc_lookalike_check` consults
+  the rank table: the host is punycode-decoded, case-folded and mapped
+  through the UTS #39 confusables table, then matched against a
+  skeleton index of the rank table — it flags only when the visual
+  twin is a *different* popular domain.
 - **Rust parsers for untrusted input** — OpenSearch descriptors,
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.

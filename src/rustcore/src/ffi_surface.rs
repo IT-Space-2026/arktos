@@ -402,6 +402,27 @@ fn urlstrip_and_blocklist_surface() {
     assert_eq!(unsafe { crate::rc_tranco_reload() }, RcStatus::Ok);
     let google = cs("google.com");
     assert_eq!(unsafe { crate::rc_tranco_rank(google.as_ptr()) }, 1);
+
+    // Lookalike probe over the FFI: a confusable twin of a ranked
+    // domain flags; the real domain and unranked names stay clean.
+    assert!(unsafe { crate::rc_lookalike_check(ptr::null()) }.is_null());
+    let rows = b"3,paypal.example\n";
+    assert_eq!(
+        unsafe { crate::rc_tranco_load(rows.as_ptr(), rows.len()) },
+        RcStatus::Ok
+    );
+    let twin = cs("paypa1.example");
+    let j = take_str(unsafe { crate::rc_lookalike_check(twin.as_ptr()) }).unwrap();
+    assert!(j.contains("\"verdict\":\"lookalike\""), "{}", j);
+    assert!(j.contains("\"lookalike_of\":\"paypal.example\""), "{}", j);
+    let real = cs("paypal.example");
+    let j = take_str(unsafe { crate::rc_lookalike_check(real.as_ptr()) }).unwrap();
+    assert!(j.contains("\"verdict\":\"clean\""), "{}", j);
+    let plain = cs("unranked.example");
+    let j = take_str(unsafe { crate::rc_lookalike_check(plain.as_ptr()) }).unwrap();
+    assert!(j.contains("\"verdict\":\"clean\""), "{}", j);
+    // Restore the seed so later tests see the stock table again.
+    assert_eq!(unsafe { crate::rc_tranco_reload() }, RcStatus::Ok);
 }
 
 #[test]
