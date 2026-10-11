@@ -800,6 +800,14 @@ void applyChromiumFlags()
             == QLatin1String("offscreen"))
         addFlag(QLatin1String("--disable-gpu"));
 
+    // PREFUI04: Preferences > Performance can opt GPU compositing out
+    // entirely — the flag latches at startup, so the page's restart
+    // note is honest (same lifecycle as parallelSegments below).
+    if (!settings.value(
+            QLatin1String("performance/hardwareAcceleration"),
+            true).toBool())
+        addFlag(QLatin1String("--disable-gpu"));
+
     if (webrtcProtection) {
         // Strongest WebRTC IP policy Chromium exposes: every ICE
         // transport goes through the configured proxy (SOCKS5 cannot

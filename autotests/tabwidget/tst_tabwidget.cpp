@@ -95,6 +95,7 @@ private slots:
     void tabGroups();
     void pinnedTabs();
     void reopenClosedTab();
+    void lazySessionRestore();
 };
 
 // Subclass that exposes the protected functions.
@@ -141,6 +142,12 @@ void tst_TabWidget::init()
 // This will be called after every test function.
 void tst_TabWidget::cleanup()
 {
+    // A mid-test QVERIFY exit would otherwise leak the lazy-restore
+    // keys into the shared store and turn every later restoreState()
+    // lazy (saveState's restored urls then never load).
+    QSettings settings;
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
 }
 
 void tst_TabWidget::tabwidget_data()
@@ -1567,6 +1574,113 @@ void tst_TabWidget::reopenClosedTab()
                           savedDisplay);
     else
         settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// PREFUI04: performance/lazyRestoreTabs defers a restored tab's first
+// load until activation — the strip already shows the saved url — the
+// selected tab flushes immediately, "Always Load Pinned Tabs" exempts
+// pinned tabs, and a still-deferred tab re-serializes its stashed
+// url + history blob so saveState() loses nothing.
+void tst_TabWidget::lazySessionRestore()
+{
+    QSettings settings;
+    const QUrl url1(QLatin1String("data:text/html,one"));
+    const QUrl url2(QLatin1String("data:text/html,two"));
+    const QUrl url3(QLatin1String("data:text/html,three"));
+
+    // Saved strip: [url1 pinned] [url2 current] [url3 background].
+    QByteArray state;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(url1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        widget.loadUrl(url2, TabWidget::NewSelectedTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), url2, 15000);
+        widget.loadUrl(url3, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), url3, 15000);
+        widget.setTabPinned(0, true);
+        QVERIFY(widget.isTabPinned(0));
+        QCOMPARE(widget.currentIndex(), 1);
+        state = widget.saveState();
+    }
+
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"), true);
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.count(), 3);
+
+        // The pinned exemption loads eagerly; the saved-current tab
+        // flushes its deferral as soon as restore settles.
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        QVERIFY(!widget.isTabPendingRestore(0));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), url2, 15000);
+        QVERIFY(!widget.isTabPendingRestore(1));
+
+        // The background tab holds only its stashed session entry —
+        // no load, but the strip + omnibox already read restored.
+        QVERIFY(widget.isTabPendingRestore(2));
+        QCOMPARE(widget.pendingRestoreUrl(2), url3);
+        QVERIFY(widget.webView(2)->url().isEmpty());
+        QCOMPARE(widget.locationBar(2)->text(),
+                 QString::fromUtf8(url3.toEncoded()));
+        QVERIFY(widget.tabText(2).contains(QLatin1String("three")));
+
+        // First activation performs the deferred load.
+        widget.setCurrentIndex(2);
+        QVERIFY(!widget.isTabPendingRestore(2));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), url3, 15000);
+
+        while (widget.count() > 0)
+            widget.closeTab(widget.count() - 1);
+    }
+
+    // A deferred tab re-serializes its stash — restoring the re-saved
+    // session eagerly yields every url again.
+    {
+        SubTabWidget lazy;
+        lazy.newTab();
+        QVERIFY(lazy.restoreState(state));
+        QCOMPARE(lazy.count(), 3);
+        QVERIFY(lazy.isTabPendingRestore(2));
+        const QByteArray resaved = lazy.saveState();
+
+        settings.setValue(QLatin1String("performance/lazyRestoreTabs"), false);
+        SubTabWidget eager;
+        eager.newTab();
+        QVERIFY(eager.restoreState(resaved));
+        QCOMPARE(eager.count(), 3);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(0)->url(), url1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(1)->url(), url2, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(2)->url(), url3, 15000);
+        while (eager.count() > 0)
+            eager.closeTab(eager.count() - 1);
+        while (lazy.count() > 0)
+            lazy.closeTab(lazy.count() - 1);
+        settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    }
+
+    // Opting out of the pinned exemption defers pinned tabs too.
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"), false);
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.isTabPendingRestore(0));
+        QCOMPARE(widget.pendingRestoreUrl(0), url1);
+        widget.setCurrentIndex(0);
+        QVERIFY(!widget.isTabPendingRestore(0));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        while (widget.count() > 0)
+            widget.closeTab(widget.count() - 1);
+    }
+
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
 }
 
 QTEST_MAIN(tst_TabWidget)

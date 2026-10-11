@@ -249,6 +249,13 @@ public:
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
 
+    // PREFUI04: lazy session restore (performance/lazyRestoreTabs) —
+    // a restored tab that has not been activated yet holds only its
+    // stashed url + history blob; activating it performs the load
+    // restoreState() would have done eagerly.
+    bool isTabPendingRestore(int index) const;
+    QUrl pendingRestoreUrl(int index) const;
+
     static OpenUrlIn modifyWithUserBehavior(OpenUrlIn tab);
     WebView *getView(OpenUrlIn tab, WebView *currentView);
 
@@ -522,6 +529,19 @@ private:
     QHash<WebView *, TabSleepState> m_sleepStates;
     QTimer *m_sleepTimer = nullptr;
     qint64 m_suspendIdleMs = 0;
+
+    // PREFUI04: session-restore deferral — the tab keeps its slot,
+    // saved title and favicon while its page is never loaded; the
+    // stashed url + serialized history survive saveState() round
+    // trips and the undo-close snapshot.
+    struct PendingRestore {
+        QUrl url;
+        QByteArray historyState;
+    };
+    QHash<WebView *, PendingRestore> m_pendingRestores;
+    bool m_lazyRestoreTabs = false;
+    bool m_lazyRestorePinnedTabs = true;
+    void restorePendingTab(int index);
     // POL02: per-view thumbnail cache for the hover preview — keyed
     // on the view like the sleep bookkeeping so drags never lose it.
     QHash<WebView *, QPixmap> m_tabThumbnails;

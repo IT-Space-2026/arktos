@@ -191,6 +191,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         "list-add",         // Extensions
         "folder-new",       // Containers
         "emblem-downloads", // Downloads
+        "view-refresh",     // Performance
     };
     for (int i = 0;
          i < pagesList->count()
@@ -587,6 +588,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(resetSearchButton, &QPushButton::clicked,
             this, &SettingsDialog::resetSearchSettings);
 
+    // PREFUI04: the pinned-tab opt-out only means something while lazy
+    // session restore is on (the .ui starts it greyed).
+    connect(lazyRestoreTabs, &QCheckBox::toggled,
+            alwaysLoadPinnedTabs, &QWidget::setEnabled);
+    connect(resetPerformanceButton, &QPushButton::clicked,
+            this, &SettingsDialog::resetPerformanceSettings);
+
     loadDefaults();
     loadFromSettings();
 }
@@ -601,7 +609,7 @@ void SettingsDialog::openAtPage(Page page)
 
 int SettingsDialog::pageCount()
 {
-    return int(DownloadsPage) + 1;
+    return int(PerformancePage) + 1;
 }
 
 QString SettingsDialog::pageTitle(Page page)
@@ -618,6 +626,7 @@ QString SettingsDialog::pageTitle(Page page)
         QT_TR_NOOP("Extensions"),
         QT_TR_NOOP("Containers"),
         QT_TR_NOOP("Downloads"),
+        QT_TR_NOOP("Performance"),
     };
     const int index = int(page);
     if (index < 0 || index >= int(sizeof(titles) / sizeof(titles[0])))
@@ -1029,7 +1038,11 @@ void SettingsDialog::loadFromSettings()
     secureDnsServer->setEnabled(secureDnsMode->currentIndex() >= 2);
     strictTlsCiphers->setChecked(settings.value(QLatin1String("tlsStrictCiphers"), true).toBool());
     blockPings->setChecked(settings.value(QLatin1String("blockPings"), true).toBool());
-    blockPrefetch->setChecked(settings.value(QLatin1String("blockPrefetch"), true).toBool());
+    // PREFUI04: the toggle moved to the Performance page in its
+    // positive form — the persisted privacy/blockPrefetch key (and
+    // its default-on semantics) is unchanged.
+    prefetchResources->setChecked(
+        !settings.value(QLatin1String("blockPrefetch"), true).toBool());
     blockRemoteFonts->setChecked(settings.value(QLatin1String("blockRemoteFonts"), false).toBool());
     blockThirdPartyWebSockets->setChecked(settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
@@ -1086,14 +1099,46 @@ void SettingsDialog::loadFromSettings()
     confirmClosingMultipleTabs->setChecked(settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool());
     oneCloseButton->setChecked(settings.value(QLatin1String("oneCloseButton"),false).toBool());
     quitAsLastTabClosed->setChecked(settings.value(QLatin1String("quitAsLastTabClosed"), true).toBool());
-    suspendTabs->setChecked(settings.value(QLatin1String("suspendTabs"), false).toBool());
-    suspendTabsMinutes->setValue(settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt());
-    suspendTabsMinutes->setEnabled(suspendTabs->isChecked());
     openTargetBlankLinksIn->setCurrentIndex(settings.value(QLatin1String("openTargetBlankLinksIn"), TabWidget::NewSelectedTab).toInt());
     openLinksFromAppsIn->setCurrentIndex(settings.value(QLatin1String("openLinksFromAppsIn"), TabWidget::NewSelectedTab).toInt());
     // CONT06: 0 = inline chips, 1 = two-level strip (the default).
     containerDisplayCombo->setCurrentIndex(qBound(0,
         settings.value(QLatin1String("containerDisplay"), 1).toInt(), 1));
+    // PREFUI04: the Performance page.  The memory-saver radios are
+    // presets over the SLEEP01 suspend keys — the stored minute value
+    // picks the closest tier (a hand-tuned value an older build wrote
+    // rounds to the nearest preset rather than dropping the opt-in).
+    settings.endGroup();
+    {
+        const bool suspend = settings.value(
+            QLatin1String("tabs/suspendTabs"), false).toBool();
+        const int suspendMinutes = settings.value(
+            QLatin1String("tabs/suspendTabsMinutes"), 30).toInt();
+        QRadioButton *saverPick = memorySaverNever;
+        if (suspend) {
+            // Idle minutes per preset: Minimum 60 / Balanced 30 /
+            // Maximum 10 — the same values the tooltips document.
+            static const int presetMinutes[] = { 60, 30, 10 };
+            int best = 0;
+            for (int i = 1; i < 3; ++i) {
+                if (qAbs(suspendMinutes - presetMinutes[i])
+                    <= qAbs(suspendMinutes - presetMinutes[best]))
+                    best = i;
+            }
+            saverPick = best == 0 ? memorySaverMinimum
+                        : best == 1 ? memorySaverBalanced
+                                    : memorySaverMaximum;
+        }
+        saverPick->setChecked(true);
+    }
+    settings.beginGroup(QLatin1String("performance"));
+    hardwareAccel->setChecked(settings.value(
+        QLatin1String("hardwareAcceleration"), true).toBool());
+    lazyRestoreTabs->setChecked(settings.value(
+        QLatin1String("lazyRestoreTabs"), false).toBool());
+    alwaysLoadPinnedTabs->setChecked(settings.value(
+        QLatin1String("alwaysLoadPinnedTabs"), true).toBool());
+    alwaysLoadPinnedTabs->setEnabled(lazyRestoreTabs->isChecked());
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));
@@ -1321,7 +1366,10 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("secureDns"), secureDnsMode->currentIndex() != 0);
     settings.setValue(QLatin1String("tlsStrictCiphers"), strictTlsCiphers->isChecked());
     settings.setValue(QLatin1String("blockPings"), blockPings->isChecked());
-    settings.setValue(QLatin1String("blockPrefetch"), blockPrefetch->isChecked());
+    // PREFUI04: same key, written by the positive-form checkbox that
+    // now lives on the Performance page.
+    settings.setValue(QLatin1String("blockPrefetch"),
+                      !prefetchResources->isChecked());
     settings.setValue(QLatin1String("blockRemoteFonts"), blockRemoteFonts->isChecked());
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), blockThirdPartyWebSockets->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
@@ -1409,11 +1457,33 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("confirmClosingMultipleTabs"), confirmClosingMultipleTabs->isChecked());
     settings.setValue(QLatin1String("oneCloseButton"), oneCloseButton->isChecked());
     settings.setValue(QLatin1String("quitAsLastTabClosed"), quitAsLastTabClosed->isChecked());
-    settings.setValue(QLatin1String("suspendTabs"), suspendTabs->isChecked());
-    settings.setValue(QLatin1String("suspendTabsMinutes"), suspendTabsMinutes->value());
+    // PREFUI04: the memory-saver radios write the same SLEEP01 keys
+    // the old Tab Settings row did, so existing users keep their
+    // schedule.  "Never" only turns the sweep off — the stored
+    // minutes stay put, so re-enabling lands on the last preset
+    // rather than a reset.
+    settings.setValue(QLatin1String("suspendTabs"),
+                      !memorySaverNever->isChecked());
+    if (memorySaverMinimum->isChecked())
+        settings.setValue(QLatin1String("suspendTabsMinutes"), 60);
+    else if (memorySaverBalanced->isChecked())
+        settings.setValue(QLatin1String("suspendTabsMinutes"), 30);
+    else if (memorySaverMaximum->isChecked())
+        settings.setValue(QLatin1String("suspendTabsMinutes"), 10);
     settings.setValue(QLatin1String("openTargetBlankLinksIn"), openTargetBlankLinksIn->currentIndex());
     settings.setValue(QLatin1String("openLinksFromAppsIn"), openLinksFromAppsIn->currentIndex());
     settings.setValue(QLatin1String("containerDisplay"), containerDisplayCombo->currentIndex());
+    settings.endGroup();
+
+    // PREFUI04: the Performance page's own group (the migrated
+    // suspend/prefetch keys keep their original paths above).
+    settings.beginGroup(QLatin1String("performance"));
+    settings.setValue(QLatin1String("hardwareAcceleration"),
+                      hardwareAccel->isChecked());
+    settings.setValue(QLatin1String("lazyRestoreTabs"),
+                      lazyRestoreTabs->isChecked());
+    settings.setValue(QLatin1String("alwaysLoadPinnedTabs"),
+                      alwaysLoadPinnedTabs->isChecked());
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("autofill"));
@@ -1531,6 +1601,35 @@ void SettingsDialog::resetSearchSettings()
     // Widgets re-read the (now absent) keys as their compiled
     // defaults; saving immediately makes the reset take effect, like
     // the engine editor's own Restore Defaults.
+    loadFromSettings();
+    saveToSettings();
+}
+
+void SettingsDialog::resetPerformanceSettings()
+{
+    if (QMessageBox::question(this, tr("Reset Performance Settings"),
+            tr("Restore the Performance page's settings — hardware "
+               "acceleration, memory saver, lazy session restore and "
+               "prefetch — to their defaults?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes)
+        return;
+
+    // PREFUI04: every key this page owns — the migrated
+    // SLEEP01/prefetch keys included; nothing on other pages is
+    // touched (same pattern as resetSearchSettings).
+    QSettings settings;
+    settings.beginGroup(QLatin1String("performance"));
+    settings.remove(QLatin1String(""));
+    settings.endGroup();
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("suspendTabs"));
+    settings.remove(QLatin1String("suspendTabsMinutes"));
+    settings.endGroup();
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.remove(QLatin1String("blockPrefetch"));
+    settings.endGroup();
+
     loadFromSettings();
     saveToSettings();
 }

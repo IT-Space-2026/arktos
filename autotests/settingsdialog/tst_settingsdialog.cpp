@@ -90,6 +90,7 @@ private slots:
     void adblockManageButton();
     void pagePolishSettings();
     void extensionReview();
+    void performancePage();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -758,7 +759,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 11);
+        QCOMPARE(dialog.pagesList->count(), 12);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -778,6 +779,8 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("Containers"));
         QCOMPARE(dialog.pagesList->item(10)->text(),
                  QStringLiteral("Downloads"));
+        QCOMPARE(dialog.pagesList->item(11)->text(),
+                 QStringLiteral("Performance"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -1116,7 +1119,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 11);
+    QCOMPARE(dialog.tabWidget->count(), 12);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));
@@ -1922,6 +1925,138 @@ void tst_SettingsDialog::extensionReview()
     QVERIFY(ExtensionReviewDialog::describeHostPermission(
                 QLatin1String("*://*.example.com/*"))
             .contains(QLatin1String("example.com")));
+}
+
+// PREFUI04: the Performance page — every control persists under its
+// consumer's key, the migrated suspend/prefetch keys keep their
+// original paths, each setting has exactly one home (the old Privacy
+// prefetch checkbox and the Tab Settings suspend row are gone), and
+// the page's reset restores compiled defaults only.
+void tst_SettingsDialog::performancePage()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    settings.remove(QLatin1String("privacy/blockPrefetch"));
+
+    // Defaults and the single-home invariant.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->text(),
+                 QStringLiteral("Performance"));
+        QVERIFY(dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        QVERIFY(!dialog.lazyRestoreTabs->isChecked());
+        // The pinned opt-out only enables while lazy restore is on.
+        QVERIFY(!dialog.alwaysLoadPinnedTabs->isEnabled());
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isChecked());
+        // Positive form of the default-on privacy/blockPrefetch key.
+        QVERIFY(!dialog.prefetchResources->isChecked());
+        QVERIFY(!dialog.findChild<QCheckBox *>(
+                    QLatin1String("blockPrefetch")));
+        QVERIFY(!dialog.findChild<QCheckBox *>(
+                    QLatin1String("suspendTabs")));
+        QVERIFY(!dialog.findChild<QSpinBox *>(
+                    QLatin1String("suspendTabsMinutes")));
+
+        dialog.hardwareAccel->setChecked(false);
+        dialog.memorySaverMaximum->setChecked(true);
+        dialog.lazyRestoreTabs->setChecked(true);
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
+        dialog.alwaysLoadPinnedTabs->setChecked(false);
+        dialog.prefetchResources->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/hardwareAcceleration"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/lazyRestoreTabs"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/alwaysLoadPinnedTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabsMinutes"))
+                 .toInt(), 10);
+    QCOMPARE(settings.value(QLatin1String("privacy/blockPrefetch"))
+                 .toBool(), false);
+
+    // Round-trip back into a fresh dialog.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverMaximum->isChecked());
+        QVERIFY(dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
+        QVERIFY(!dialog.alwaysLoadPinnedTabs->isChecked());
+        QVERIFY(dialog.prefetchResources->isChecked());
+        dialog.accept();
+    }
+
+    // Migration mapping: a stored non-preset minute value lands on
+    // the nearest tier, and "Never" keeps it for later.
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabsMinutes"), 45);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.memorySaverBalanced->isChecked());
+        dialog.memorySaverNever->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabsMinutes"))
+                 .toInt(), 45);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        dialog.reject();
+    }
+
+    // The page's filter haystack: "performance" and "saver" list it.
+    {
+        SettingsDialog dialog;
+        dialog.pagesFilter->setText(QStringLiteral("saver"));
+        QVERIFY(!dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->isHidden());
+    }
+
+    // Reset restores only this page's keys (the migrated ones
+    // included) — a foreign setting survives.
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("privacy/blockPrefetch"), false);
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(dialog.prefetchResources->isChecked());
+        answerNextBox(QMessageBox::Yes);
+        dialog.resetPerformanceButton->click();
+        QVERIFY(dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        QVERIFY(!dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(!dialog.prefetchResources->isChecked());
+        dialog.reject();
+    }
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/lazyRestoreTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("privacy/blockPrefetch"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
+                 .toBool(), true);
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    settings.remove(QLatin1String("privacy/blockPrefetch"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)
