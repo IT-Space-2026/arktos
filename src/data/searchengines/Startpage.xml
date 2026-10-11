@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Startpage</ShortName>
+    <Description>Startpage Web Search</Description>
+    <Alias>sp</Alias>
+    <Url method="get" type="text/html" template="https://www.startpage.com/do/search?q={searchTerms}" />
+    <Url method="get" type="text/html" purpose="image" template="https://www.startpage.com/sp/search?query={searchTerms}&amp;cat=images" />
+    <Image width="16" height="16">https://www.startpage.com/favicon.ico</Image>
+</OpenSearchDescription>

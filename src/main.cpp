@@ -6011,8 +6011,9 @@ int main(int argc, char **argv)
         // a fresh profile shows the real marks in the picker with no
         // favicon-cache hit and no network fetch.
         static const char *bundledEngineNames[] = {
-            "DuckDuckGo", "Google", "Google (I'm Feeling Lucky)",
-            "Yahoo!", "Wikipedia (en)", "YouTube", "Reddit"
+            "Bing", "DuckDuckGo", "Ecosia", "Google",
+            "Google (I'm Feeling Lucky)", "Qwant", "Yahoo!",
+            "Wikipedia (en)", "YouTube", "Reddit", "Startpage"
         };
         for (const char *rawName : bundledEngineNames) {
             const OpenSearchEngine *bundled =
@@ -6021,6 +6022,34 @@ int main(int argc, char **argv)
                 qInfo() << "search-smoke: FAIL (no icon for" << rawName << ")";
                 return 1;
             }
+        }
+
+        // SENG02: the bundled descriptors' <Alias> keywords seed on
+        // first use — "b arora" routes to Bing's search template.
+        const struct {
+            const char *keyword;
+            const char *engineName;
+        } bundledKeywords[] = {
+            { "b", "Bing" }, { "q", "Qwant" },
+            { "sp", "Startpage" }, { "e", "Ecosia" },
+        };
+        for (const auto &binding : bundledKeywords) {
+            OpenSearchEngine *expected =
+                manager->engine(QLatin1String(binding.engineName));
+            if (manager->engineForKeyword(
+                    QLatin1String(binding.keyword)) != expected) {
+                qInfo() << "search-smoke: FAIL (keyword"
+                        << binding.keyword << "not bound to"
+                        << binding.engineName << ")";
+                return 1;
+            }
+        }
+        const QUrl keywordUrl = manager->convertKeywordSearchToUrl(
+            QLatin1String("b arora"));
+        if (!keywordUrl.isValid()
+                || !keywordUrl.host().endsWith(QLatin1String("bing.com"))) {
+            qInfo() << "search-smoke: FAIL (keyword url" << keywordUrl << ")";
+            return 1;
         }
 
         // Writer + reader round-trip of a bundled engine.

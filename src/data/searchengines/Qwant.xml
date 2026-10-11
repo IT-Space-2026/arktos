@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Qwant</ShortName>
+    <Description>Qwant Web Search</Description>
+    <Alias>q</Alias>
+    <Url method="get" type="text/html" template="https://www.qwant.com/?q={searchTerms}&amp;t=web" />
+    <Url method="get" type="application/x-suggestions+json" template="https://api.qwant.com/api/suggest/?q={searchTerms}&amp;count=10&amp;client=opensearch&amp;t=web" />
+    <Url method="get" type="text/html" purpose="image" template="https://www.qwant.com/?q={searchTerms}&amp;t=images" />
+    <Image width="16" height="16">https://www.qwant.com/favicon.ico</Image>
+</OpenSearchDescription>

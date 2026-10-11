@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Bing</ShortName>
+    <Description>Bing Web Search</Description>
+    <Alias>b</Alias>
+    <Url method="get" type="text/html" template="https://www.bing.com/search?q={searchTerms}" />
+    <Url method="get" type="application/x-suggestions+json" template="https://www.bing.com/osjson.aspx?query={searchTerms}" />
+    <Url method="get" type="text/html" purpose="image" template="https://www.bing.com/images/search?q={searchTerms}" />
+    <Image width="16" height="16">https://www.bing.com/favicon.ico</Image>
+</OpenSearchDescription>

@@ -161,31 +161,40 @@ static void clickModalButtonText(const QString &text, int attempts = 150)
     });
 }
 
+// The janitor chains below re-arm for ~6s covering an async window —
+// the generation stamp lets the owning test disarm them
+// deterministically so they never reject a later test's dialogs.
+static int s_janitorGeneration = 0;
+
 // Accepts whatever QMessageBox is active, then re-arms — a modal
 // janitor for paths that raise a box asynchronously (the extension
 // update check finishes whenever the fetch settles).
-static void dismissModalBoxes(int attempts = 200)
+static void dismissModalBoxes(int generation, int attempts = 200)
 {
-    QTimer::singleShot(30, qApp, [attempts]() {
+    QTimer::singleShot(30, qApp, [generation, attempts]() {
+        if (generation != s_janitorGeneration)
+            return;
         if (QMessageBox *box = qobject_cast<QMessageBox *>(
                 QApplication::activeModalWidget()))
             box->accept();
         if (attempts > 0)
-            dismissModalBoxes(attempts - 1);
+            dismissModalBoxes(generation, attempts - 1);
     });
 }
 
 // Rejects whatever QDialog is active, then re-arms — the EXT05
 // extension consent review exec()s synchronously inside
 // updateCheckFinished and is not a QMessageBox.
-static void rejectModalDialogs(int attempts = 200)
+static void rejectModalDialogs(int generation, int attempts = 200)
 {
-    QTimer::singleShot(30, qApp, [attempts]() {
+    QTimer::singleShot(30, qApp, [generation, attempts]() {
+        if (generation != s_janitorGeneration)
+            return;
         if (QDialog *dialog = qobject_cast<QDialog *>(
                 QApplication::activeModalWidget()))
             dialog->reject();
         if (attempts > 0)
-            rejectModalDialogs(attempts - 1);
+            rejectModalDialogs(generation, attempts - 1);
     });
 }
 
@@ -2178,6 +2187,9 @@ void tst_SettingsDialog::extensionPage()
             "update_url": "https://127.0.0.1:9/updates.xml"
         })");
     }
+    // EXT05: simulate the approved review — loadExtension refuses
+    // paths that never passed the consent gate.
+    manager->grantConsent(dir.path());
     manager->loadExtension(dir.path());
 
     QString extId;
@@ -2246,8 +2258,9 @@ void tst_SettingsDialog::extensionPage()
     // crafted results land through the signal — the summary box shows
     // the offered/downloaded/failed join, and the installable package
     // falls through to the EXT05 consent review (rejected here).
-    dismissModalBoxes();
-    rejectModalDialogs();
+    const int janitorGeneration = ++s_janitorGeneration;
+    dismissModalBoxes(janitorGeneration);
+    rejectModalDialogs(janitorGeneration);
     dialog.extensionUpdateButton->click();
     {
         QList<ExtensionManager::UpdateResult> results;
@@ -2286,6 +2299,10 @@ void tst_SettingsDialog::extensionPage()
         }
         return true;
     }(), 10000);
+
+    // Disarm the modal janitors — the async update check has
+    // settled, and armed rejects would eat the next test's dialogs.
+    ++s_janitorGeneration;
 }
 
 // SEC13: the saved-credentials group reflects SecureStore state —

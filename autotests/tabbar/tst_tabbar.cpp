@@ -721,6 +721,14 @@ void tst_TabBar::contextMenuGroupEntries()
 // the always-open site rules, and the dialog-launching actions.
 void tst_TabBar::contextMenuContainerEntries()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level — pin inline mode so the strip indices the
+    // context-menu drives below stay stable.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     TabWidget widget;
     widget.resize(640, 240);
     widget.show();
@@ -783,6 +791,12 @@ void tst_TabBar::contextMenuContainerEntries()
                         QLatin1String("Reopen in Container"));
 
     manager->deleteContainer(container.id);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // paintEvent's container chips, group rails/pills/collapsed chip and

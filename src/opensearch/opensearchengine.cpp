@@ -467,6 +467,28 @@ void OpenSearchEngine::setImageUrl(QString imageUrl)
     m_imageUrl = std::move(imageUrl);
 }
 
+/*!
+    \property defaultKeywords
+    \brief the keyword bindings this descriptor declares as defaults
+
+    Populated from <Alias> elements (an Arora extension — OpenSearch
+    1.1 has no keyword element).  These are INITIAL bindings applied
+    when the engine is seeded or installed; the manager owns the live
+    bindings and never re-reads this list, so a user removing or
+    re-pointing a keyword sticks.
+
+    \sa OpenSearchManager::setKeywordsForEngine()
+*/
+QStringList OpenSearchEngine::defaultKeywords() const
+{
+    return m_defaultKeywords;
+}
+
+void OpenSearchEngine::setDefaultKeywords(const QStringList &keywords)
+{
+    m_defaultKeywords = keywords;
+}
+
 // Engine icons are small; drop oversized payloads instead of
 // letting a hostile server pump unlimited data into the image
 // decoder.
@@ -848,6 +870,17 @@ void openSearchEngineApplyJson(OpenSearchEngine *engine,
         engine->setImageSearchMethod(
             image.value(QLatin1String("method")).toString());
     }
+
+    // SENG02: on a descriptor parse this member carries the <Alias>
+    // defaults; on a store record it carries the live bindings.
+    // Either way it lands on defaultKeywords — consumed only by
+    // OpenSearchManager::addEngine()'s insert-time seed.
+    QStringList keywords;
+    const QJsonArray keywordArray =
+        root.value(QLatin1String("keywords")).toArray();
+    for (const QJsonValue &value : keywordArray)
+        keywords.append(value.toString());
+    engine->setDefaultKeywords(keywords);
 }
 
 QJsonObject openSearchEngineToJson(const OpenSearchEngine *engine)

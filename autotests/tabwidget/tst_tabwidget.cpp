@@ -1728,6 +1728,14 @@ void tst_TabWidget::sleepingTabs()
 // the diversion entry point lands the url on the right profile.
 void tst_TabWidget::containerTabs()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level once a second container owns tabs — pin inline
+    // mode so the index assertions below see every tab.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     ContainerManager *manager = ContainerManager::instance();
     const ContainerManager::Container container =
         manager->createContainer(QLatin1String("CovCtx"), QColor(Qt::blue));
@@ -1791,6 +1799,12 @@ void tst_TabWidget::containerTabs()
     while (widget.count())
         widget.closeTab(0);
     QVERIFY(manager->deleteContainer(container.id));
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // The tab-strip slots that drive whole actions: clone/reload/close-

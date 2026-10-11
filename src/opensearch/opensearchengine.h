@@ -59,6 +59,11 @@ public:
     Q_PROPERTY(QString imageSearchMethod READ imageSearchMethod WRITE setImageSearchMethod)
     Q_PROPERTY(bool providesImageSearch READ providesImageSearch)
     Q_PROPERTY(QString imageUrl READ imageUrl WRITE setImageUrl)
+    // SENG02: descriptor-declared default keyword bindings
+    // (<Alias> elements — an Arora extension like purpose="image");
+    // the manager binds only slots nobody claimed, so a user binding
+    // always wins.
+    Q_PROPERTY(QStringList defaultKeywords READ defaultKeywords WRITE setDefaultKeywords)
     Q_PROPERTY(bool valid READ isValid)
     Q_PROPERTY(QNetworkAccessManager *networkAccessManager READ networkAccessManager WRITE setNetworkAccessManager)
 
@@ -107,6 +112,9 @@ public:
     QString imageUrl() const;
     void setImageUrl(QString url);
 
+    QStringList defaultKeywords() const;
+    void setDefaultKeywords(const QStringList &keywords);
+
     QImage image() const;
     void setImage(const QImage &image);
 
@@ -151,6 +159,8 @@ private:
     QString m_searchMethod;
     QString m_suggestionsMethod;
     QString m_imageSearchMethod;
+
+    QStringList m_defaultKeywords;
 
     QMap<QString, QNetworkAccessManager::Operation> m_requestMethods;
 

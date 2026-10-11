@@ -57,7 +57,7 @@ use crate::error::{fail, Fail, RcResult, RcStatus};
 use crate::parsers;
 use crate::store;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
@@ -427,6 +427,35 @@ pub fn get_json(name: &str) -> RcResult<Option<String>> {
         .map(|e| engine_json(e).to_string()))
 }
 
+/// Keywords every engine except `exclude` currently holds — the Qt
+/// side's "bind only free slots" rule: descriptor-carried defaults
+/// landing via an INSERT never steal a live binding.
+fn drop_claimed(s: &Registry, exclude: &str, keywords: &mut Vec<String>) {
+    let claimed: HashSet<String> = s
+        .engines
+        .iter()
+        .filter(|(n, _)| n.as_str() != exclude)
+        .flat_map(|(_, e)| e.keywords.iter().cloned())
+        .collect();
+    keywords.retain(|k| !claimed.contains(k));
+}
+
+/// Remove `name`'s keyword set from every OTHER engine — the
+/// exclusivity sweep set_keywords performs; used when an explicit
+/// keyword list lands on an existing record (a binding write, not a
+/// descriptor default).
+fn strip_keywords_from_others(s: &mut Registry, name: &str) {
+    let Some(mine) = s.engines.get(name).map(|e| e.keywords.clone())
+    else {
+        return;
+    };
+    for (n, e) in s.engines.iter_mut() {
+        if n != name {
+            e.keywords.retain(|k| !mine.contains(k));
+        }
+    }
+}
+
 /// Upsert an engine record from its JSON form (the rc_ose_put
 /// payload).  A "keywords" member replaces the engine's keyword list;
 /// its absence preserves the existing list (save-sync pushes carry no
@@ -455,11 +484,17 @@ pub fn put_json(payload: &[u8]) -> RcResult<bool> {
         {
             return false;
         }
+        let is_new = !s.engines.contains_key(&engine.name);
         let mut record = engine.clone();
         if !has_keywords {
             if let Some(old) = s.engines.get(&engine.name) {
                 record.keywords = old.keywords.clone();
             }
+        }
+        if is_new {
+            // Descriptor/seed keywords are defaults — a live binding
+            // on another engine always wins the slot.
+            drop_claimed(s, &record.name, &mut record.keywords);
         }
         if s.engines.get(&engine.name) == Some(&record) {
             return false;
@@ -468,6 +503,11 @@ pub fn put_json(payload: &[u8]) -> RcResult<bool> {
             s.order.push(record.name.clone());
         }
         s.engines.insert(record.name.clone(), record);
+        if has_keywords && !is_new {
+            // An explicit keyword list on a replace is a binding
+            // write — the same exclusivity sweep set_keywords does.
+            strip_keywords_from_others(s, &engine.name);
+        }
         true
     })
 }
@@ -508,6 +548,10 @@ pub fn import_descriptor(xml: &[u8]) -> RcResult<bool> {
             if *old == record {
                 return false;
             }
+        } else {
+            // A fresh import's <Alias> keywords are defaults —
+            // never steal a live binding.
+            drop_claimed(s, &record.name, &mut record.keywords);
         }
         if !s.order.iter().any(|n| n == &record.name) {
             s.order.push(record.name.clone());
@@ -751,10 +795,14 @@ pub fn reset() -> RcResult<()> {
 // ------------------------------------------------------------------
 
 static BUNDLED_XMLS: &[&[u8]] = &[
+    include_bytes!("../../data/searchengines/Bing.xml"),
     include_bytes!("../../data/searchengines/DuckDuckGo.xml"),
+    include_bytes!("../../data/searchengines/Ecosia.xml"),
     include_bytes!("../../data/searchengines/Google.xml"),
     include_bytes!("../../data/searchengines/Google_Im_Feeling_Lucky.xml"),
+    include_bytes!("../../data/searchengines/Qwant.xml"),
     include_bytes!("../../data/searchengines/Reddit.xml"),
+    include_bytes!("../../data/searchengines/Startpage.xml"),
     include_bytes!("../../data/searchengines/Wikipedia_en.xml"),
     include_bytes!("../../data/searchengines/Yahoo.xml"),
     include_bytes!("../../data/searchengines/YouTube.xml"),
@@ -796,8 +844,12 @@ pub fn seed_bundled() -> RcResult<bool> {
             {
                 continue;
             }
-            s.order.push(engine.name.clone());
-            s.engines.insert(engine.name.clone(), engine.clone());
+            let mut record = engine.clone();
+            // Bundled <Alias> keywords are defaults — a live binding
+            // the user already made always wins the slot.
+            drop_claimed(s, &record.name, &mut record.keywords);
+            s.order.push(record.name.clone());
+            s.engines.insert(record.name.clone(), record);
             changed = true;
         }
         changed
@@ -824,7 +876,12 @@ pub fn restore_bundled() -> RcResult<bool> {
                         continue;
                     }
                 }
-                None => {}
+                None => {
+                    // A re-added bundled engine keeps its <Alias>
+                    // defaults minus whatever the user already bound
+                    // elsewhere.
+                    drop_claimed(s, &record.name, &mut record.keywords);
+                }
             }
             if !s.order.iter().any(|n| n == &record.name) {
                 s.order.push(record.name.clone());
@@ -1237,9 +1294,21 @@ mod tests {
             assert!(seed_bundled().unwrap());
             let names: Vec<String> =
                 serde_json::from_str(&list_json().unwrap()).unwrap();
-            assert_eq!(names.len(), 7);
+            assert_eq!(names.len(), 11);
             assert!(names.contains(&"DuckDuckGo".to_string()));
             assert!(names.contains(&"YouTube".to_string()));
+            // SENG02: the new bundled set lands with its <Alias>
+            // keyword defaults bound.
+            assert_eq!(engine_for_keyword("b").unwrap().unwrap(), "Bing");
+            assert_eq!(engine_for_keyword("q").unwrap().unwrap(), "Qwant");
+            assert_eq!(
+                engine_for_keyword("sp").unwrap().unwrap(),
+                "Startpage"
+            );
+            assert_eq!(
+                engine_for_keyword("e").unwrap().unwrap(),
+                "Ecosia"
+            );
             // Idempotent — second seed changes nothing.
             assert!(!seed_bundled().unwrap());
             // Block + remove DuckDuckGo: a reseed must not resurrect it.
@@ -1251,7 +1320,7 @@ mod tests {
             assert!(restore_bundled().unwrap());
             let names: Vec<String> =
                 serde_json::from_str(&list_json().unwrap()).unwrap();
-            assert_eq!(names.len(), 7);
+            assert_eq!(names.len(), 11);
             // And it preserves keywords bound to a still-present record
             // (a second restore over identical records is a no-op).
             set_keywords("Google", br#"["g"]"#).unwrap();
@@ -1267,6 +1336,93 @@ mod tests {
             ));
             assert!(rec["suggestions"].is_object());
             assert!(rec["image"].is_object());
+        });
+    }
+
+    #[test]
+    fn seeded_keywords_never_steal() {
+        with_store(|| {
+            // A user binding made before the bundled engine arrives
+            // keeps the slot — the seed's <Alias> default drops.
+            put_json(
+                br#"{"name":"Mine","search":{"template":"http://m/?q={searchTerms}","method":"get","params":[]},"keywords":["b"]}"#,
+            )
+            .unwrap();
+            seed_bundled().unwrap();
+            assert_eq!(engine_for_keyword("b").unwrap().unwrap(), "Mine");
+            let rec: Value = serde_json::from_str(
+                &get_json("Bing").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(rec["keywords"], json!([]));
+            // Same for a descriptor import and a restore re-add.
+            set_keywords("Mine", br#"["b","i"]"#).unwrap();
+            import_descriptor(
+                br#"<?xml version="1.0"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>ImpKw</ShortName>
+  <Alias>i</Alias><Alias>imp</Alias>
+  <Url method="get" type="text/html" template="http://imp/?q={searchTerms}"/>
+</OpenSearchDescription>"#,
+            )
+            .unwrap();
+            let rec: Value = serde_json::from_str(
+                &get_json("ImpKw").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(rec["keywords"], json!(["imp"]));
+            assert_eq!(engine_for_keyword("i").unwrap().unwrap(), "Mine");
+            assert_eq!(
+                engine_for_keyword("imp").unwrap().unwrap(),
+                "ImpKw"
+            );
+            // Re-import preserves the live bindings, never restores
+            // the descriptor's.
+            import_descriptor(
+                br#"<?xml version="1.0"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>ImpKw</ShortName>
+  <Alias>i</Alias><Alias>imp</Alias>
+  <Url method="get" type="text/html" template="http://imp/?q={searchTerms}"/>
+</OpenSearchDescription>"#,
+            )
+            .unwrap();
+            let rec: Value = serde_json::from_str(
+                &get_json("ImpKw").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(rec["keywords"], json!(["imp"]));
+        });
+    }
+
+    #[test]
+    fn put_keyword_writes() {
+        with_store(|| {
+            // Insert-with-keywords never steals; replace-with-keywords
+            // is a binding write and sweeps the slot off other engines.
+            put_json(
+                br#"{"name":"A","search":{"template":"http://a/?q={searchTerms}","method":"get","params":[]},"keywords":["x"]}"#,
+            )
+            .unwrap();
+            put_json(
+                br#"{"name":"B","search":{"template":"http://b/?q={searchTerms}","method":"get","params":[]},"keywords":["x","b2"]}"#,
+            )
+            .unwrap();
+            assert_eq!(engine_for_keyword("x").unwrap().unwrap(), "A");
+            assert_eq!(
+                engine_for_keyword("b2").unwrap().unwrap(),
+                "B"
+            );
+            put_json(
+                br#"{"name":"B","search":{"template":"http://b/?q={searchTerms}","method":"get","params":[]},"keywords":["x"]}"#,
+            )
+            .unwrap();
+            assert_eq!(engine_for_keyword("x").unwrap().unwrap(), "B");
+            let rec: Value = serde_json::from_str(
+                &get_json("A").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(rec["keywords"], json!([]));
         });
     }
 
@@ -1473,7 +1629,7 @@ mod tests {
             assert!(engine.valid(), "bundled engine {} invalid", engine.name);
             assert!(!engine.name.is_empty());
         }
-        assert_eq!(bundled().len(), 7);
+        assert_eq!(bundled().len(), 11);
     }
 }
 

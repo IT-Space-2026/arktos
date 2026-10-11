@@ -245,6 +245,13 @@ Search & location bar:
   browser instead of depending on a favicon-cache hit from prior
   browsing; custom engines still resolve their icons remotely
   (SENG01).
+- Four more bundled search engines: Bing, Qwant, Startpage and Ecosia
+  (with icons, and search suggestions for Bing/Qwant/Ecosia).
+  Descriptors can now carry default keyword nicknames via an <Alias>
+  element — type "b arora" for Bing, "q arora" for Qwant, "sp arora"
+  for Startpage or "e arora" for Ecosia. The defaults only claim free
+  keyword slots: a nickname you bound or unbound yourself always
+  wins (SENG02).
 
 Security:
 - HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure

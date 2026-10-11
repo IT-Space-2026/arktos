@@ -36,6 +36,7 @@ private slots:
     void read_data();
     void read();
     void imageSearch();
+    void defaultKeywords();
     void hostileInput();
 };
 
@@ -192,6 +193,70 @@ void tst_OpenSearchReader::imageSearch()
     engine = new OpenSearchEngine;
     QVERIFY(!engine->providesImageSearch());
     QVERIFY(!engine->imageSearchUrl(QStringLiteral("x")).isValid());
+    delete engine;
+}
+
+// SENG02: <Alias> elements (an Arora extension) declare default
+// keyword bindings.  Duplicates, blanks and over-long entries drop
+// without hurting the rest of the descriptor.  A single <Alias>
+// trailing the favicon is still captured — the early-exit check
+// only fires once a keyword is on board.
+void tst_OpenSearchReader::defaultKeywords()
+{
+    QByteArray doc =
+        "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+        "<ShortName>Kw</ShortName>"
+        "<Description>keyword carrying</Description>"
+        "<Alias>g</Alias>"
+        "<Alias> kw2 </Alias>"
+        "<Alias>g</Alias>"
+        "<Alias></Alias>"
+        "<Url type='text/html' method='get' template='http://kw.test/search?q={searchTerms}'/>"
+        "</OpenSearchDescription>";
+    QBuffer buffer(&doc);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    OpenSearchReader reader;
+    OpenSearchEngine *engine = reader.read(&buffer);
+    QVERIFY(engine);
+    QVERIFY(engine->isValid());
+    QVERIFY(!reader.hasError());
+    QCOMPARE(engine->defaultKeywords(),
+             QStringList() << QStringLiteral("g")
+                           << QStringLiteral("kw2"));
+    delete engine;
+
+    // An <Alias> following the last required field is still read:
+    // with no earlier keyword the early-exit check cannot fire yet.
+    doc =
+        "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+        "<ShortName>KwT</ShortName>"
+        "<Description>trailing alias</Description>"
+        "<Url type='text/html' method='get' template='http://kw.test/search?q={searchTerms}'/>"
+        "<Url type='application/x-suggestions+json' method='get' template='http://kw.test/suggest?q={searchTerms}'/>"
+        "<Url type='text/html' purpose='image' method='get' template='http://kw.test/images'/>"
+        "<Image width='16' height='16'>http://kw.test/favicon.ico</Image>"
+        "<Alias>tail</Alias>"
+        "</OpenSearchDescription>";
+    QBuffer tailBuffer(&doc);
+    QVERIFY(tailBuffer.open(QIODevice::ReadOnly));
+    engine = reader.read(&tailBuffer);
+    QVERIFY(engine);
+    QCOMPARE(engine->defaultKeywords(), QStringList() << QStringLiteral("tail"));
+    delete engine;
+
+    // A keyword past the length bound is skipped, not fatal.
+    doc =
+        "<OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+        "<ShortName>Kw2</ShortName>"
+        "<Url type='text/html' method='get' template='http://kw.test/search?q={searchTerms}'/>"
+        "<Alias>" + QByteArray(200, 'x') + "</Alias>"
+        "<Alias>ok</Alias>"
+        "</OpenSearchDescription>";
+    QBuffer buffer2(&doc);
+    QVERIFY(buffer2.open(QIODevice::ReadOnly));
+    engine = reader.read(&buffer2);
+    QVERIFY(engine);
+    QCOMPARE(engine->defaultKeywords(), QStringList() << QStringLiteral("ok"));
     delete engine;
 }
 

@@ -1533,6 +1533,14 @@ void tst_BrowserMainWindow::downloadsSidebarPanel()
 // the privacy-mode mirror, and lastTabClosed's keep-open branch.
 void tst_BrowserMainWindow::chromeSlots()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level — pin inline mode so the count assertions
+    // below see every tab.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     SubWindow *window = new SubWindow;
     window->show();
 
@@ -1633,6 +1641,12 @@ void tst_BrowserMainWindow::chromeSlots()
     }
     QVERIFY(containers->deleteContainer(cid));
     closeWindow(window);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)
