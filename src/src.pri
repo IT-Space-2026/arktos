@@ -93,6 +93,7 @@ HEADERS += \
     $$PWD/devtoolswindow.h \
     $$PWD/downloadgraph.h \
     $$PWD/downloadmanager.h \
+    $$PWD/energysaver.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
     $$PWD/pictureinpicture.h \
@@ -155,6 +156,7 @@ SOURCES += \
     $$PWD/devtoolswindow.cpp \
     $$PWD/downloadgraph.cpp \
     $$PWD/downloadmanager.cpp \
+    $$PWD/energysaver.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
     $$PWD/pictureinpicture.cpp \

@@ -3365,7 +3365,78 @@
         </widget>
        </item>
        <item>
-        <layout class="QVBoxLayout" name="energySaverLayout"/>
+        <layout class="QVBoxLayout" name="energySaverLayout">
+         <item>
+          <widget class="QGroupBox" name="energySaverGroupBox">
+           <property name="title">
+            <string>Energy Saver</string>
+           </property>
+           <layout class="QVBoxLayout" name="energySaverGroupLayout">
+            <item>
+             <widget class="QLabel" name="energySaverIntro">
+              <property name="text">
+               <string>Conserve energy by capping background activity, visual effects, and video frame rates. Extends battery life.</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QRadioButton" name="energySaverNever">
+              <property name="text">
+               <string>Never Save Energy</string>
+              </property>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QRadioButton" name="energySaverLowBattery">
+              <property name="text">
+               <string>Turn On at 20% Battery or Lower</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QRadioButton" name="energySaverOnBattery">
+              <property name="text">
+               <string>Turn On When Running on Battery</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QRadioButton" name="energySaverAlways">
+              <property name="text">
+               <string>Always Save Energy</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="energySaverBehavior">
+              <property name="text">
+               <string>While saving energy: inactive tabs sleep after 10 minutes, tab hover previews are disabled, and tab loading animations pause.</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="energySaverStatus">
+              <property name="text">
+               <string/>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <widget class="QGroupBox" name="startupRestoreGroupBox">

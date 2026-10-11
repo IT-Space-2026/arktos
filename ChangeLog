@@ -86,6 +86,14 @@ UI:
   with an "Always Load Pinned Tabs" opt-out — a positive "Prefetch
   Resources" checkbox (replaces the Privacy page's negative one), and
   a page-scoped Reset to defaults (PREFUI04).
+- Energy Saver on the Preferences Performance page: Never / Turn On at
+  20% Battery or Lower / Turn On When Running on Battery / Always Save
+  Energy. While saving, inactive tabs sleep after 10 minutes
+  (overriding the Memory Saver pick, including Never), tab hover
+  previews are disabled, and tab loading animations freeze. Battery
+  state is read from sysfs with live AC/battery transitions; the page
+  shows the charge level and on machines with no battery the
+  battery-based options honestly degrade to "Never" (PREFUI05).
 - Preferences opens as a tab instead of a modal dialog, one per
   window — re-opening focuses the existing tab, OK applies + closes,
   Cancel or closing the tab discards, and settings deep links (Search
