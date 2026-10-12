@@ -1,0 +1,415 @@
+/*
+ * Copyright 2026 The Arora Authors
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301  USA
+ */
+
+#include "tortitlebar.h"
+
+#include "squeezelabel.h"
+
+#include <qboxlayout.h>
+#include <qevent.h>
+#include <qlabel.h>
+#include <qmenu.h>
+#include <qmenubar.h>
+#include <qpainter.h>
+#include <qtoolbutton.h>
+#include <qwindow.h>
+
+namespace {
+
+enum TitleGlyph { GlyphMinimize, GlyphMaximize, GlyphRestore, GlyphClose };
+
+// The window controls are painted, not themed — the bundled icon sets
+// ship no window-* art and a themed pixmap cannot be relied on to
+// read correctly on the violet bar.  Light glyphs in the same #eee as
+// the rest of the tor chrome text.
+QIcon titleGlyphIcon(TitleGlyph glyph, const QWidget *widget)
+{
+    const int extent = 16;
+    const qreal dpr = widget->devicePixelRatioF();
+    QPixmap pixmap(QSize(extent, extent) * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor(0xee, 0xee, 0xee));
+    pen.setWidthF(1.3);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    switch (glyph) {
+    case GlyphMinimize:
+        painter.drawLine(QPointF(4.0, 12.0), QPointF(12.0, 12.0));
+        break;
+    case GlyphMaximize:
+        painter.drawRect(QRectF(4.25, 4.25, 7.5, 7.5));
+        break;
+    case GlyphRestore:
+        painter.drawLine(QPointF(6.0, 3.5), QPointF(12.5, 3.5));
+        painter.drawLine(QPointF(12.5, 3.5), QPointF(12.5, 10.0));
+        painter.fillRect(QRectF(3.5, 6.0, 7.5, 7.5),
+                         QColor(0x4a, 0x33, 0x72));
+        painter.drawRect(QRectF(3.5, 6.0, 7.5, 7.5));
+        break;
+    case GlyphClose:
+        painter.drawLine(QPointF(4.25, 4.25), QPointF(11.75, 11.75));
+        painter.drawLine(QPointF(11.75, 4.25), QPointF(4.25, 11.75));
+        break;
+    }
+    return QIcon(pixmap);
+}
+
+} // namespace
+
+TorTitleBar::TorTitleBar(QWidget *window)
+    : QWidget(window)
+    , m_window(window)
+    , m_menuBar(window->findChild<QMenuBar *>())
+    , m_controls(new QWidget(window))
+    , m_titleLabel(new SqueezeLabel(this))
+    , m_minimizeButton(new QToolButton(m_controls))
+    , m_maximizeButton(new QToolButton(m_controls))
+    , m_closeButton(new QToolButton(m_controls))
+{
+    // This widget is the menubar's left corner: Tor badge + live
+    // window title, and a drag surface.
+    setObjectName(QLatin1String("torTitleBar"));
+    setFixedHeight(30);
+
+    QLabel *badge = new QLabel(tr("Tor"), this);
+    badge->setObjectName(QLatin1String("torTitleBadge"));
+    badge->setToolTip(tr("This window browses through the Tor network"));
+
+    m_titleLabel->setObjectName(QLatin1String("torTitleText"));
+    m_titleLabel->setText(m_window->windowTitle());
+    m_titleLabel->setMaximumWidth(360);
+
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(8, 0, 6, 0);
+    layout->setSpacing(6);
+    layout->addWidget(badge);
+    layout->addWidget(m_titleLabel);
+
+    setStyleSheet(QLatin1String(
+        "TorTitleBar { background: transparent; }"
+        "QLabel { color: #eee; background: transparent; }"
+        "QLabel#torTitleBadge { color: white; background: #6b4fa3;"
+        " border-radius: 5px; padding: 0px 6px; font-weight: bold; }"));
+
+    // The right corner carries the window controls — painted glyphs in
+    // the same violet hover family as the rest of the tor chrome.
+    m_controls->setObjectName(QLatin1String("torTitleControls"));
+    m_controls->setFixedHeight(30);
+    struct ButtonSpec {
+        QToolButton *button;
+        TitleGlyph glyph;
+        const char *name;
+    };
+    const ButtonSpec specs[] = {
+        { m_minimizeButton, GlyphMinimize, "torTitleMinimize" },
+        { m_maximizeButton, GlyphMaximize, "torTitleMaximize" },
+        { m_closeButton, GlyphClose, "torTitleClose" },
+    };
+    for (const ButtonSpec &spec : specs) {
+        spec.button->setObjectName(QLatin1String(spec.name));
+        spec.button->setAutoRaise(true);
+        spec.button->setFixedSize(30, 26);
+        spec.button->setIconSize(QSize(16, 16));
+        spec.button->setIcon(titleGlyphIcon(spec.glyph, this));
+        spec.button->setCursor(Qt::ArrowCursor);
+    }
+    m_minimizeButton->setToolTip(tr("Minimize"));
+    m_minimizeButton->setAccessibleName(tr("Minimize window"));
+    m_closeButton->setToolTip(tr("Close"));
+    m_closeButton->setAccessibleName(tr("Close window"));
+
+    connect(m_minimizeButton, &QToolButton::clicked,
+            m_window, &QWidget::showMinimized);
+    connect(m_maximizeButton, &QToolButton::clicked,
+            this, &TorTitleBar::toggleMaximized);
+    connect(m_closeButton, &QToolButton::clicked,
+            m_window, &QWidget::close);
+
+    QHBoxLayout *controlsLayout = new QHBoxLayout(m_controls);
+    controlsLayout->setContentsMargins(0, 0, 6, 0);
+    controlsLayout->setSpacing(2);
+    controlsLayout->addWidget(m_minimizeButton);
+    controlsLayout->addWidget(m_maximizeButton);
+    controlsLayout->addWidget(m_closeButton);
+    m_controls->setStyleSheet(QLatin1String(
+        "QWidget#torTitleControls { background: transparent; }"
+        "QToolButton { background: transparent; border-radius: 4px; }"
+        "QToolButton:hover { background: #5d4491; }"
+        "QToolButton:pressed { background: #3a2a5c; }"));
+
+    if (m_menuBar) {
+        m_menuBar->setCornerWidget(this, Qt::TopLeftCorner);
+        m_menuBar->setCornerWidget(m_controls, Qt::TopRightCorner);
+        m_menuBar->installEventFilter(this);
+    }
+
+    // The frame ring around the content is the window's own
+    // background — a violet border that doubles as the edge-resize
+    // grab zone.  Scoped by objectName so nothing else picks the rule
+    // up.
+    m_window->setObjectName(QLatin1String("torMainWindow"));
+    m_window->setStyleSheet(QLatin1String(
+        "#torMainWindow { background: #4a3372; }"));
+    m_window->setMouseTracking(true);
+    m_window->installEventFilter(this);
+    syncFrameMargins();
+    syncWindowButtons();
+}
+
+Qt::Edges TorTitleBar::frameEdges(const QRect &windowRect,
+                                  const QPoint &pos)
+{
+    Qt::Edges edges;
+    if (pos.x() < windowRect.left() + FrameMargin)
+        edges |= Qt::LeftEdge;
+    if (pos.x() > windowRect.right() - FrameMargin)
+        edges |= Qt::RightEdge;
+    if (pos.y() < windowRect.top() + FrameMargin)
+        edges |= Qt::TopEdge;
+    if (pos.y() > windowRect.bottom() - FrameMargin)
+        edges |= Qt::BottomEdge;
+    return edges;
+}
+
+bool TorTitleBar::eventFilter(QObject *object, QEvent *event)
+{
+    if (object == m_menuBar) {
+        // Empty menubar space is the title-bar drag surface; menu
+        // items keep their normal behavior.
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton
+                    && !m_menuBar->actionAt(mouseEvent->pos())) {
+                beginDrag(mouseEvent->globalPosition().toPoint());
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseButtonDblClick: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton
+                    && !m_menuBar->actionAt(mouseEvent->pos())) {
+                toggleMaximized();
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if ((mouseEvent->buttons() & Qt::LeftButton)
+                    && !m_dragOffset.isNull()) {
+                m_window->move(mouseEvent->globalPosition().toPoint()
+                               - m_dragOffset);
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton
+                    && !m_dragOffset.isNull()) {
+                endDrag();
+                return true;
+            }
+            break;
+        }
+        case QEvent::ContextMenu:
+            showWindowMenu(static_cast<QContextMenuEvent *>(event)
+                               ->globalPos());
+            return true;
+        default:
+            break;
+        }
+        return QWidget::eventFilter(object, event);
+    }
+
+    if (object == m_window) {
+        switch (event->type()) {
+        case QEvent::WindowTitleChange:
+            m_titleLabel->setText(m_window->windowTitle());
+            break;
+        case QEvent::WindowStateChange:
+            syncWindowButtons();
+            syncFrameMargins();
+            break;
+        case QEvent::Leave:
+            m_window->unsetCursor();
+            break;
+        case QEvent::MouseMove: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            syncFrameCursor(mouseEvent->position().toPoint());
+            break;
+        }
+        case QEvent::MouseButtonPress: {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton && resizable()) {
+                const Qt::Edges edges = frameEdges(m_window->rect(),
+                        mouseEvent->position().toPoint());
+                if (edges && m_window->windowHandle()
+                        && m_window->windowHandle()
+                               ->startSystemResize(edges))
+                    return true;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return QWidget::eventFilter(object, event);
+}
+
+void TorTitleBar::beginDrag(const QPoint &globalPos)
+{
+    if (QWindow *handle = m_window->windowHandle()) {
+        if (handle->startSystemMove())
+            return;
+    }
+    // No system move on this platform (e.g. offscreen) — drag the
+    // window ourselves like PipWindow does.
+    if (!m_window->isMaximized())
+        m_dragOffset = globalPos - m_window->frameGeometry().topLeft();
+}
+
+void TorTitleBar::endDrag()
+{
+    m_dragOffset = QPoint();
+}
+
+void TorTitleBar::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        beginDrag(event->globalPosition().toPoint());
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void TorTitleBar::mouseMoveEvent(QMouseEvent *event)
+{
+    if ((event->buttons() & Qt::LeftButton) && !m_dragOffset.isNull())
+        m_window->move(event->globalPosition().toPoint() - m_dragOffset);
+    QWidget::mouseMoveEvent(event);
+}
+
+void TorTitleBar::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        endDrag();
+    QWidget::mouseReleaseEvent(event);
+}
+
+void TorTitleBar::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        toggleMaximized();
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void TorTitleBar::contextMenuEvent(QContextMenuEvent *event)
+{
+    showWindowMenu(event->globalPos());
+}
+
+void TorTitleBar::showWindowMenu(const QPoint &globalPos)
+{
+    QMenu menu(this);
+    if (m_window->isMaximized())
+        menu.addAction(tr("Restore"), m_window, &QWidget::showNormal);
+    else
+        menu.addAction(tr("Maximize"), m_window, &QWidget::showMaximized);
+    menu.addAction(tr("Minimize"), m_window, &QWidget::showMinimized);
+    menu.addSeparator();
+    menu.addAction(tr("Close"), m_window, &QWidget::close);
+    menu.exec(globalPos);
+}
+
+void TorTitleBar::toggleMaximized()
+{
+    if (m_window->isMaximized())
+        m_window->showNormal();
+    else
+        m_window->showMaximized();
+}
+
+bool TorTitleBar::resizable() const
+{
+    return m_window->windowHandle()
+        && !m_window->isMaximized()
+        && !m_window->isFullScreen()
+        && !m_window->isMinimized();
+}
+
+void TorTitleBar::syncWindowButtons()
+{
+    const bool maximized = m_window->isMaximized();
+    m_maximizeButton->setIcon(titleGlyphIcon(
+            maximized ? GlyphRestore : GlyphMaximize, this));
+    m_maximizeButton->setToolTip(
+            maximized ? tr("Restore") : tr("Maximize"));
+    m_maximizeButton->setAccessibleName(
+            maximized ? tr("Restore window") : tr("Maximize window"));
+}
+
+void TorTitleBar::syncFrameMargins()
+{
+    const int margin = (m_window->isMaximized() || m_window->isFullScreen())
+        ? 0 : FrameMargin;
+    m_window->setContentsMargins(margin, margin, margin, margin);
+}
+
+void TorTitleBar::syncFrameCursor(const QPoint &pos)
+{
+    if (!resizable()) {
+        m_window->unsetCursor();
+        return;
+    }
+    const Qt::Edges edges = frameEdges(m_window->rect(), pos);
+    if (!edges) {
+        m_window->unsetCursor();
+        return;
+    }
+    const bool horizontal =
+        edges.testFlag(Qt::LeftEdge) || edges.testFlag(Qt::RightEdge);
+    const bool vertical =
+        edges.testFlag(Qt::TopEdge) || edges.testFlag(Qt::BottomEdge);
+    Qt::CursorShape shape = Qt::ArrowCursor;
+    if (horizontal && vertical) {
+        const bool falling =
+            (edges.testFlag(Qt::TopEdge) && edges.testFlag(Qt::LeftEdge))
+            || (edges.testFlag(Qt::BottomEdge)
+                && edges.testFlag(Qt::RightEdge));
+        shape = falling ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor;
+    } else if (horizontal) {
+        shape = Qt::SizeHorCursor;
+    } else {
+        shape = Qt::SizeVerCursor;
+    }
+    m_window->setCursor(shape);
+}
