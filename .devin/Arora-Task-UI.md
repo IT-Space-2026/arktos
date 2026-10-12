@@ -71,6 +71,7 @@ This file is the task queue for the Devin CLI task loop
 | DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
 | SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
 | TABS07 | Default tab height still too tall — details below | pending | 0 | |
+| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |
 
 
 ## Task details
@@ -376,3 +377,13 @@ Diagnosis hints: check tabbar.cpp/tabwidget.cpp tabSizeHint + initStyleOption �
 Spec: (a) default tab height reduced to a normal browser-tab height (~style-default, icon+text sized — target roughly 30-34px unless the style says otherwise); (b) pinned/group/container variants still render correctly at the new height (icons only on pinned, chips still legible); (c) tab close button + favicon stay vertically centered; (d) vertical tab mode unaffected or adjusted consistently.
 
 Verify: new-window default tab strip measures noticeably shorter and matches platform/browser norms; pinned+container+grouped tabs still look right; make check PASS.
+
+### SRCH11
+
+URL-bar search still does not work — user report after SRCH09's fix: 'URL search bar still not works, the default is that I can search from the URL bar.' Expected behavior: typing a non-URL string into the location bar and pressing Enter performs a web search with the configured default search engine — the standard browser omnibox contract.
+
+SRCH09 is marked done but the regression persists — start by reproducing exactly: type 'test query' + Enter in the location bar and observe what happens (loads garbage URL, does nothing, error page?). Then trace the routing: locationbar returnPressed -> the omni classifier (OMNI01 verdict table / rc_classify_omni in rustcore when ARORA_RUSTCORE, else the C++ fallback in locationbar) -> search-engine URL construction via opensearchmanager/default engine. Suspects: (a) the classifier returns 'url' for bare words (SRCH09 fixed a related path — check what it actually changed and whether the rust classifier path now disagrees); (b) the search URL is built but the engine query template is empty/misconfigured (DENG01 switched default to DuckDuckGo — check the template); (c) Enter is swallowed by the completer/suggestions popup accepting an item instead of searching; (d) the rust FFI verdict path silently fails and no fallback fires.
+
+Also verify suggestion path: picking 'Search for X' from the dropdown should search too.
+
+Verify: 'foo bar' + Enter -> default engine results page loads; 'singleterm' + Enter -> search (not a bogus http://singleterm navigation); real URLs still navigate directly; search-engine change in Preferences is honored; make check PASS.
