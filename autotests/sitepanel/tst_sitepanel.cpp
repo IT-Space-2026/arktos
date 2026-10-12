@@ -28,6 +28,7 @@
 #include <qcheckbox.h>
 #include <qcombobox.h>
 #include <qlabel.h>
+#include <qlayout.h>
 #include <qnetworkcookie.h>
 #include <qpushbutton.h>
 #include <qsettings.h>
@@ -46,6 +47,7 @@
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "aroraicon.h"
+#include "browsertheme.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
 #include "sitepanel.h"
@@ -116,6 +118,7 @@ private slots:
     void trustBadgeLevels();
     void trustBadgeCache();
     void trustBadgeNavigation();
+    void trustHeaderStyling();
     void trustGating();
 };
 
@@ -716,6 +719,118 @@ void tst_SitePanel::trustBadgeNavigation()
     // shield again.
     view.load(QUrl(QLatin1String("about:blank")));
     QTRY_VERIFY(shield.trustBadge().isEmpty());
+}
+
+// TRUST10: the Trust section header — a divider rule that shows and
+// hides with the section and a bold "Trust" label whose text color
+// follows the verdict (amber on an unranked page, red on a threat
+// hit, re-derived on every refresh).  The level->color mapping seam
+// splits tone by theme so it reads on day and night palettes alike.
+void tst_SitePanel::trustHeaderStyling()
+{
+    // The mapping seam: red rides the palette's alert role (same one
+    // the alert signal rows use), green and amber pick a darker tone
+    // on light themes and a brighter one on dark, and anything else —
+    // including an un-evaluable verdict — keeps normal text color.
+    const QPalette light;
+    const QPalette dark = BrowserTheme::darkPalette();
+    QVERIFY(!BrowserTheme::isDarkPalette(light));
+    QVERIFY(BrowserTheme::isDarkPalette(dark));
+
+    QCOMPARE(SitePanel::trustHeaderColor(QLatin1String("red"), light),
+             light.color(QPalette::BrightText));
+    QCOMPARE(SitePanel::trustHeaderColor(QLatin1String("red"), dark),
+             dark.color(QPalette::BrightText));
+    QCOMPARE(SitePanel::trustHeaderColor(QString(), light),
+             light.color(QPalette::WindowText));
+    QCOMPARE(SitePanel::trustHeaderColor(QLatin1String("bogus"), light),
+             light.color(QPalette::WindowText));
+
+    const QColor greenLight = SitePanel::trustHeaderColor(
+        QLatin1String("green"), light);
+    const QColor greenDark = SitePanel::trustHeaderColor(
+        QLatin1String("green"), dark);
+    QVERIFY(greenLight != greenDark);
+    QVERIFY(greenLight.lightness() < greenDark.lightness());
+    const QColor amberLight = SitePanel::trustHeaderColor(
+        QLatin1String("amber"), light);
+    const QColor amberDark = SitePanel::trustHeaderColor(
+        QLatin1String("amber"), dark);
+    QVERIFY(amberLight != amberDark);
+    QVERIFY(amberLight.lightness() < amberDark.lightness());
+
+    // No page: the section hides — and the divider rule with it.
+    // The header itself is always present and bold.
+    {
+        SitePanel panel;
+        panel.refresh();
+        QFrame *separator = panel.findChild<QFrame*>(
+            QLatin1String("siteTrustSeparator"));
+        QVERIFY(separator);
+        QVERIFY(separator->isHidden());
+        QLabel *header = panel.findChild<QLabel*>(
+            QLatin1String("siteTrustHeader"));
+        QVERIFY(header);
+        QCOMPARE(header->text(), QLatin1String("Trust"));
+        QVERIFY(header->font().bold());
+    }
+
+#if defined(ARORA_RUSTCORE)
+    QSettings settings;
+    settings.remove(QLatin1String("trust/enabled"));
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
+    SiteShieldButton::clearTrustCache();
+
+    LocalHttpServer server;
+    QVERIFY(server.start());
+
+    WebView view;
+    SitePanel panel;
+    panel.setWebView(&view);
+    QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+    view.load(server.url());
+    QTRY_COMPARE(loadSpy.count(), 1);
+    panel.refresh();
+
+    QWidget *trust = panel.findChild<QWidget*>(
+        QLatin1String("siteTrust"));
+    QFrame *separator = panel.findChild<QFrame*>(
+        QLatin1String("siteTrustSeparator"));
+    QLabel *header = panel.findChild<QLabel*>(
+        QLatin1String("siteTrustHeader"));
+    QVERIFY(trust);
+    QVERIFY(separator);
+    QVERIFY(header);
+    QVERIFY(!trust->isHidden());
+    QVERIFY(!separator->isHidden());
+    // The rule sits directly above the section it heads.
+    QCOMPARE(panel.layout()->indexOf(separator) + 1,
+             panel.layout()->indexOf(trust));
+
+    // 127.0.0.1 is unranked and the page is plaintext http -> amber.
+    QCOMPARE(header->palette().color(QPalette::WindowText),
+             SitePanel::trustHeaderColor(QLatin1String("amber"),
+                                         panel.palette()));
+
+    // Threat-listing the host flips the verdict to red — the header
+    // recolors on the next refresh while the panel is already built.
+    // No event-loop pump between the fixture load and refresh, so an
+    // in-flight list update cannot swap the table mid-assert.
+    const QByteArray block = "127.0.0.1\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+    panel.refresh();
+    QCOMPARE(header->palette().color(QPalette::WindowText),
+             SitePanel::trustHeaderColor(QLatin1String("red"),
+                                         panel.palette()));
+
+    // Restore the vendored seed ∪ override tables for later tests.
+    rc_sitetrust_reload();
+    SiteShieldButton::clearTrustCache();
+#endif
 }
 
 // TRUST03: the trust/* switches gate the lookup itself.  The master

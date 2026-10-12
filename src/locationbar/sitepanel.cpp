@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "cookiejar.h"
 #include "engineinterface.h"
 #include "fingerprintprotector.h"
@@ -96,13 +97,30 @@ SitePanel::SitePanel(QWidget *parent)
     // TRUST08: the composite site-trust section — one line per real
     // signal from rustcore's verdict (threat-list hit, lookalike
     // resemblance, Tranco rank, first visit).  The box stays hidden
-    // whenever the verdict has nothing informative to say.
+    // whenever the verdict has nothing informative to say.  TRUST10:
+    // the section is set off from the security lines above by the
+    // panel's usual divider rule and headed by a bold "Trust" label
+    // whose color follows the verdict (rebuildTrustRows) — both show
+    // and hide with the section itself.
+    m_trustSeparator = new QFrame(this);
+    m_trustSeparator->setObjectName(
+        QLatin1String("siteTrustSeparator"));
+    m_trustSeparator->setFrameShape(QFrame::HLine);
+    m_trustSeparator->setFrameShadow(QFrame::Sunken);
+    m_trustSeparator->setVisible(false);
+    layout->addWidget(m_trustSeparator);
+
     m_trustBox = new QWidget(this);
     m_trustBox->setObjectName(QLatin1String("siteTrust"));
     m_trustLayout = new QVBoxLayout(m_trustBox);
     m_trustLayout->setContentsMargins(0, 0, 0, 0);
     m_trustLayout->setSpacing(2);
-    m_trustLayout->addWidget(plainLabel(tr("Trust"), m_trustBox));
+    m_trustHeader = plainLabel(tr("Trust"), m_trustBox);
+    m_trustHeader->setObjectName(QLatin1String("siteTrustHeader"));
+    QFont trustHeaderFont = m_trustHeader->font();
+    trustHeaderFont.setBold(true);
+    m_trustHeader->setFont(trustHeaderFont);
+    m_trustLayout->addWidget(m_trustHeader);
     m_trustBox->setVisible(false);
     layout->addWidget(m_trustBox);
 
@@ -767,6 +785,27 @@ QString SitePanel::trustLevel(const QString &host, bool isHttps)
 #endif
 }
 
+// TRUST10: text tones for the Trust header's verdict color.  Qt's
+// palette has no success/amber roles, so green and amber are picked
+// against the window's lightness — a single hex cannot read on both
+// day and night themes.  Red rides BrightText, the palette alert
+// role the section's alert rows already use, so the header and its
+// warning lines always agree.
+QColor SitePanel::trustHeaderColor(const QString &level,
+                                   const QPalette &palette)
+{
+    if (level == QLatin1String("red"))
+        return palette.color(QPalette::BrightText);
+    const bool dark = BrowserTheme::isDarkPalette(palette);
+    if (level == QLatin1String("green"))
+        return dark ? QColor(0x4a, 0xde, 0x80)
+                    : QColor(0x15, 0x80, 0x3d);
+    if (level == QLatin1String("amber"))
+        return dark ? QColor(0xfb, 0xbf, 0x24)
+                    : QColor(0xb4, 0x53, 0x09);
+    return palette.color(QPalette::WindowText);
+}
+
 void SitePanel::rebuildTrustRows()
 {
     // Row 0 is the "Trust" header — only the signal lines are rebuilt.
@@ -778,12 +817,25 @@ void SitePanel::rebuildTrustRows()
     const QString site = host();
     const QString scheme = m_webView ? m_webView->url().scheme()
                                      : QString();
+    const bool isHttps = scheme == QLatin1String("https");
     const bool webSite = !site.isEmpty()
-        && (scheme == QLatin1String("http")
-            || scheme == QLatin1String("https"));
+        && (scheme == QLatin1String("http") || isHttps);
     const QList<TrustLine> lines = webSite
-        ? trustSignals(site, scheme == QLatin1String("https"))
+        ? trustSignals(site, isHttps)
         : QList<TrustLine>();
+
+    // TRUST10: the header borrows the badge's verdict color — the
+    // same level word the shield tints by, re-derived on every
+    // rebuild so a verdict flip recolors the section while the
+    // popup is already open.  An un-evaluable verdict keeps the
+    // normal text color.
+    QPalette headerPalette = m_trustHeader->palette();
+    headerPalette.setColor(
+        QPalette::WindowText,
+        trustHeaderColor(webSite ? trustLevel(site, isHttps)
+                                 : QString(),
+                         palette()));
+    m_trustHeader->setPalette(headerPalette);
 
     const QPalette warning = [this]() {
         QPalette p = palette();
@@ -796,6 +848,7 @@ void SitePanel::rebuildTrustRows()
             label->setPalette(warning);
         m_trustLayout->addWidget(label);
     }
+    m_trustSeparator->setVisible(!lines.isEmpty());
     m_trustBox->setVisible(!lines.isEmpty());
 }
 

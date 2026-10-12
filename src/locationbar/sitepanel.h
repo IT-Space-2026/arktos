@@ -46,7 +46,10 @@ class WebView;
 //     informative get a line; the whole section hides on pages with
 //     nothing to say, and TRUST03's trust/* switches gate the lookup
 //     itself (master off -> no FFI call, the per-signal switches
-//     ride the request as a probe mask),
+//     ride the request as a probe mask).  TRUST10 heads the section
+//     with a divider rule and a bold "Trust" label colored by the
+//     verdict level — green on trusted, amber on unknown, red on
+//     not-trustable — re-derived on every refresh,
 //   - cookie tri-state writing into CookieJar's per-site exception
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an
@@ -93,6 +96,13 @@ public:
     // evaluate.
     static QString trustLevel(const QString &host, bool isHttps);
 
+    // TRUST10: the Trust header's text color for a verdict level —
+    // theme-safe tones so it reads on day and night palettes alike;
+    // anything but a known level gets the normal text color.  Test
+    // seam.
+    static QColor trustHeaderColor(const QString &level,
+                                   const QPalette &palette);
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
@@ -128,6 +138,8 @@ private:
     QLabel *m_tlsLabel;
     QWidget *m_trustBox;
     QVBoxLayout *m_trustLayout;
+    QLabel *m_trustHeader;
+    QFrame *m_trustSeparator;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
     QCheckBox *m_contentBlocking;
