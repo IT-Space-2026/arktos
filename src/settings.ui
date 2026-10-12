@@ -1460,17 +1460,7 @@
          </property>
         </widget>
        </item>
-       <item row="8" column="0" colspan="3">
-        <widget class="QCheckBox" name="tabHoverPreviews">
-         <property name="toolTip">
-          <string>Show a preview card of a tab's page when the mouse pointer rests on the tab.</string>
-         </property>
-         <property name="text">
-          <string>Show tab previews on hover</string>
-         </property>
-        </widget>
-       </item>
-       <item row="9" column="0" colspan="5">
+       <item row="8" column="0" colspan="5">
         <widget class="QGroupBox" name="sidebarGroupBox">
          <property name="title">
           <string>Sidebar</string>
@@ -1544,7 +1534,7 @@
          </layout>
         </widget>
        </item>
-       <item row="10" column="3">
+       <item row="9" column="3">
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -2524,6 +2514,16 @@
          </property>
          <property name="checked">
           <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="tabHoverPreviews">
+         <property name="toolTip">
+          <string>Show a preview card of a tab's page when the mouse pointer rests on the tab.</string>
+         </property>
+         <property name="text">
+          <string>Show tab previews on hover</string>
          </property>
         </widget>
        </item>
@@ -4101,6 +4101,7 @@
   <tabstop>confirmClosingMultipleTabs</tabstop>
   <tabstop>oneCloseButton</tabstop>
   <tabstop>quitAsLastTabClosed</tabstop>
+  <tabstop>tabHoverPreviews</tabstop>
   <tabstop>openLinksFromAppsIn</tabstop>
   <tabstop>openTargetBlankLinksIn</tabstop>
   <tabstop>proxySupport</tabstop>

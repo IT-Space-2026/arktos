@@ -2557,22 +2557,23 @@ void tst_SettingsDialog::energySaver()
     saver->loadSettings();
 }
 
-// TPREV01: the Appearance page's 'Show tab previews on hover'
-// checkbox persists tabs/tabHoverPreviews — on by default for a
-// fresh profile, and the state round-trips through save/reload.
+// TPREV01: the 'Show tab previews on hover' checkbox (PREFUI11: on
+// the Tab Settings page) persists tabs/tabHoverPreviews — on by
+// default for a fresh profile, and the state round-trips through
+// save/reload.
 void tst_SettingsDialog::tabHoverPreviews()
 {
     QSettings settings;
     settings.remove(QLatin1String("tabs/tabHoverPreviews"));
 
-    // The control lives on the Appearance page (sidebar row 2).
+    // The control lives on the Tab Settings page (sidebar row 4).
     {
         SettingsDialog dialog;
         QWidget *host = dialog.tabHoverPreviews;
         while (host && host->parentWidget() != dialog.tabWidget)
             host = host->parentWidget();
         QVERIFY(host);
-        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 4);
 
         QVERIFY(dialog.tabHoverPreviews->isChecked());
         dialog.tabHoverPreviews->setChecked(false);
