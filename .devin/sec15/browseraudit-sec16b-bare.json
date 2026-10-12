@@ -1,0 +1,5185 @@
+{
+    "chromiumVersion": "140.0.7339.225",
+    "profile": "bare",
+    "results": [
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 215,
+            "id": 1,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.com accessing parent https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 202,
+            "id": 2,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.com accessing child https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 212,
+            "id": 3,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.org accessing parent https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 228,
+            "id": 4,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.org accessing child https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 217,
+            "id": 5,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.com accessing parent https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 214,
+            "id": 6,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.com accessing child https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 220,
+            "id": 7,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.com accessing parent https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 227,
+            "id": 8,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.com accessing child https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 224,
+            "id": 9,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.com accessing parent https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 211,
+            "id": 10,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.com accessing child https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 235,
+            "id": 11,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.org accessing parent https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 241,
+            "id": 12,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.org accessing child https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 224,
+            "id": 13,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.org accessing parent https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 213,
+            "id": 14,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.org accessing child https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 224,
+            "id": 15,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.com accessing parent https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 221,
+            "id": 16,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.com accessing child https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 230,
+            "id": 17,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://browseraudit.org accessing parent https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 216,
+            "id": 18,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://browseraudit.org accessing child https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 219,
+            "id": 19,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.org accessing parent https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 196,
+            "id": 20,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.org accessing child https://browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 223,
+            "id": 21,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.com accessing parent https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 229,
+            "id": 22,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.com accessing child https://test.browseraudit.org"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 224,
+            "id": 23,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "child https://test.browseraudit.org accessing parent https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "2|DOM access"
+            ],
+            "duration": 229,
+            "id": 24,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent https://test.browseraudit.org accessing child https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 222,
+            "id": 25,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 225,
+            "id": 26,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain = \"browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 230,
+            "id": 27,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 224,
+            "id": 28,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 215,
+            "id": 29,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"test.browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "3|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - child accessing parent"
+            ],
+            "duration": 215,
+            "id": 32,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"audit.com\", child: document.domain = \"audit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 221,
+            "id": 33,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 228,
+            "id": 34,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain = \"browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 209,
+            "id": 35,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 211,
+            "id": 36,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 216,
+            "id": 37,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"test.browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "4|DOM access - parent https://browseraudit.com, child https://test.browseraudit.com - parent accessing child"
+            ],
+            "duration": 229,
+            "id": 40,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"audit.com\", child: document.domain = \"audit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 209,
+            "id": 41,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 224,
+            "id": 42,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain = \"browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 229,
+            "id": 43,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 220,
+            "id": 44,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 225,
+            "id": 45,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"test.browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "5|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - child accessing parent"
+            ],
+            "duration": 231,
+            "id": 48,
+            "outcome": "pass",
+            "reason": "The child iframe was unable to access the parent iframe's DOM.",
+            "title": "parent: document.domain = \"audit.com\", child: document.domain = \"audit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 216,
+            "id": 49,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 221,
+            "id": 50,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain not set, child: document.domain = \"browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 230,
+            "id": 51,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain not set"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 216,
+            "id": 52,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 224,
+            "id": 53,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"test.browseraudit.com\", child: document.domain = \"test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "6|DOM access - parent https://test.browseraudit.com, child https://browseraudit.com - parent accessing child"
+            ],
+            "duration": 223,
+            "id": 56,
+            "outcome": "pass",
+            "reason": "The parent iframe was unable to access the child iframe's DOM.",
+            "title": "parent: document.domain = \"audit.com\", child: document.domain = \"audit.com\""
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 207,
+            "id": 57,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was received by the server.",
+            "title": "https://browseraudit.com to https://browseraudit.com (allowed)"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 225,
+            "id": 58,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was received by the server.",
+            "title": "https://test.browseraudit.com to https://test.browseraudit.com (allowed)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 160,
+            "id": 59,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to http://browseraudit.com (scheme mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 169,
+            "id": 60,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to http://test.browseraudit.com (scheme mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 304,
+            "id": 61,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to https://test.browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 306,
+            "id": 62,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to https://browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 314,
+            "id": 63,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to https://browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 396,
+            "id": 64,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to https://browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 307,
+            "id": 65,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to https://test.browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 367,
+            "id": 66,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to https://browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 223,
+            "id": 67,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to https://browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 227,
+            "id": 68,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to https://test.browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 218,
+            "id": 69,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to https://test.browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 229,
+            "id": 70,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to https://test.browseraudit.com (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 219,
+            "id": 71,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to https://test.browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 228,
+            "id": 411,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to https://browseraudit.org (host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 171,
+            "id": 73,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to http://test.browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 172,
+            "id": 74,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to http://browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 164,
+            "id": 75,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to http://browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 167,
+            "id": 76,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to http://browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 158,
+            "id": 77,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.com to http://test.browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 170,
+            "id": 78,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to http://browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 159,
+            "id": 79,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to http://browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 159,
+            "id": 80,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to http://test.browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 153,
+            "id": 81,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.com to http://test.browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 171,
+            "id": 82,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to http://test.browseraudit.com (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 160,
+            "id": 83,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://browseraudit.org to http://test.browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "7|XMLHttpRequest"
+            ],
+            "duration": 175,
+            "id": 84,
+            "outcome": "pass",
+            "reason": "The XMLHttpRequest request was not received by the server.",
+            "title": "https://test.browseraudit.org to http://test.browseraudit.org (scheme and host mismatch)"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 156,
+            "id": 85,
+            "outcome": "pass",
+            "reason": "The cookie was sent with the request.",
+            "title": "cookie for .browseraudit.com set by browseraudit.com is sent to browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 145,
+            "id": 86,
+            "outcome": "pass",
+            "reason": "The cookie was sent with the request.",
+            "title": "cookie for .browseraudit.com set by browseraudit.com is sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 152,
+            "id": 87,
+            "outcome": "pass",
+            "reason": "The cookie was sent with the request.",
+            "title": "cookie for .browseraudit.com set by test.browseraudit.com is sent to browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 151,
+            "id": 88,
+            "outcome": "pass",
+            "reason": "The cookie was sent with the request.",
+            "title": "cookie for .browseraudit.com set by test.browseraudit.com is sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 148,
+            "id": 89,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .test.browseraudit.com is sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 151,
+            "id": 90,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .test.browseraudit.com is not sent to browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 147,
+            "id": 91,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .browseraudit.org set by browseraudit.org is not sent to browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 138,
+            "id": 92,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .browseraudit.org set by browseraudit.org is not sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 152,
+            "id": 93,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .browseraudit.org set by test.browseraudit.org is not sent to browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 149,
+            "id": 94,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .browseraudit.org set by test.browseraudit.org is not sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 150,
+            "id": 95,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .test.browseraudit.org set by test.browseraudit.org is not sent to browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "8|Cookies - domain scope"
+            ],
+            "duration": 149,
+            "id": 96,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .test.browseraudit.org set by test.browseraudit.org is not sent to test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "9|Cookies - illegal domain values"
+            ],
+            "duration": 144,
+            "id": 97,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .test.browseraudit.com set by browseraudit.com is not sent to test.browseraudit.com (illegal parameter)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "9|Cookies - illegal domain values"
+            ],
+            "duration": 147,
+            "id": 98,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .com set by browseraudit.com is not sent to test.browseraudit.com (illegal parameter)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "9|Cookies - illegal domain values"
+            ],
+            "duration": 147,
+            "id": 99,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .com set by test.browseraudit.com is not sent to test.browseraudit.com (illegal parameter)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "9|Cookies - illegal domain values"
+            ],
+            "duration": 151,
+            "id": 100,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .com set by browseraudit.com is not sent to browseraudit.com (illegal parameter)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "9|Cookies - illegal domain values"
+            ],
+            "duration": 149,
+            "id": 101,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie for .com set by test.browseraudit.com is not sent to browseraudit.com (illegal parameter)"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "1|Same-Origin Policy",
+                "10|Cookies - path scope"
+            ],
+            "duration": 150,
+            "id": 102,
+            "outcome": "pass",
+            "reason": "The cookie was sent with the request.",
+            "title": "cookie with path /sop/path/ should be sent to /sop/path/save_cookie/*"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "1|Same-Origin Policy",
+                "10|Cookies - path scope"
+            ],
+            "duration": 144,
+            "id": 103,
+            "outcome": "pass",
+            "reason": "The cookie was not sent with the request.",
+            "title": "cookie with path /sop/path/ should not be sent to /sop/save_cookie/*"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 150,
+            "id": 185,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 115,
+            "id": 186,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 162,
+            "id": 187,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet from https://browseraudit.com with style-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 119,
+            "id": 188,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://browseraudit.com with style-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 164,
+            "id": 189,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 113,
+            "id": 190,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 160,
+            "id": 191,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from https://browseraudit.com with style-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 119,
+            "id": 192,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://browseraudit.com with style-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 208,
+            "id": 193,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from file from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 204,
+            "id": 194,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from file from https://browseraudit.com with style-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 159,
+            "id": 195,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 117,
+            "id": 196,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 119,
+            "id": 197,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with default-src 'self"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 162,
+            "id": 198,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with style-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 116,
+            "id": 199,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with style-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 118,
+            "id": 200,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet from https://test.browseraudit.com with style-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 147,
+            "id": 201,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 97,
+            "id": 202,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 117,
+            "id": 203,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 162,
+            "id": 204,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with style-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 120,
+            "id": 205,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with style-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "12|stylesheets"
+            ],
+            "duration": 119,
+            "id": 206,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "stylesheet @import from https://test.browseraudit.com with style-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 165,
+            "id": 207,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "script from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 118,
+            "id": 208,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 163,
+            "id": 209,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "script from https://browseraudit.com with script-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 116,
+            "id": 210,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://browseraudit.com with script-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 165,
+            "id": 211,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "script from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 114,
+            "id": 212,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 95,
+            "id": 213,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 162,
+            "id": 214,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "script from https://test.browseraudit.com with script-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 116,
+            "id": 215,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://test.browseraudit.com with script-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 116,
+            "id": 216,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "script from https://test.browseraudit.com with script-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 420,
+            "id": 217,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "Worker from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 414,
+            "id": 218,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 413,
+            "id": 219,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "Worker from https://browseraudit.com with script-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 416,
+            "id": 220,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://browseraudit.com with script-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 414,
+            "id": 221,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 404,
+            "id": 222,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 408,
+            "id": 223,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with script-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "13|scripts"
+            ],
+            "duration": 416,
+            "id": 224,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with script-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 177,
+            "id": 225,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline <script> with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 117,
+            "id": 226,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline <script> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 421,
+            "id": 227,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline event handler with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 400,
+            "id": 228,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline event handler with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 160,
+            "id": 229,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline <style> with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 111,
+            "id": 230,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline <style> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 157,
+            "id": 231,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "inline style attribute with default-src 'unsafe-inline'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "14|'unsafe-inline'"
+            ],
+            "duration": 111,
+            "id": 232,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "inline style attribute with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 174,
+            "id": 233,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "Function constructor with default-src 'unsafe-eval'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 106,
+            "id": 234,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Function constructor without 'unsafe-eval'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 171,
+            "id": 235,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "eval() with default-src 'unsafe-eval'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 111,
+            "id": 236,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "eval()  without 'unsafe-eval'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 412,
+            "id": 237,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "setTimeout() with default-src 'unsafe-eval'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 414,
+            "id": 238,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "setTimeout() without 'unsafe-eval'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 1113,
+            "id": 239,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "setInterval() with default-src 'unsafe-eval'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "15|'unsafe-eval'"
+            ],
+            "duration": 1114,
+            "id": 240,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "setInterval() without 'unsafe-eval'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 140,
+            "id": 261,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "image from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 113,
+            "id": 262,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 155,
+            "id": 263,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "image from https://browseraudit.com with img-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 104,
+            "id": 264,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://browseraudit.com with img-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 155,
+            "id": 265,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "image from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 111,
+            "id": 266,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 112,
+            "id": 267,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 151,
+            "id": 268,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "image from https://test.browseraudit.com with img-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 110,
+            "id": 269,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://test.browseraudit.com with img-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "17|images"
+            ],
+            "duration": 98,
+            "id": 270,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "image from https://test.browseraudit.com with img-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 228,
+            "id": 271,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "audio from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 114,
+            "id": 272,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 246,
+            "id": 273,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "audio from https://browseraudit.com with media-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 101,
+            "id": 274,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://browseraudit.com with media-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 239,
+            "id": 275,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "audio from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 110,
+            "id": 276,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 112,
+            "id": 277,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 235,
+            "id": 278,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "audio from https://test.browseraudit.com with media-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 112,
+            "id": 279,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://test.browseraudit.com with media-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 116,
+            "id": 280,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "audio from https://test.browseraudit.com with media-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 329,
+            "id": 281,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "video from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 117,
+            "id": 282,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 332,
+            "id": 283,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "video from https://browseraudit.com with media-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 98,
+            "id": 284,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://browseraudit.com with media-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 498,
+            "id": 285,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "video from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 101,
+            "id": 286,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 101,
+            "id": 287,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 372,
+            "id": 288,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "video from https://test.browseraudit.com with media-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 114,
+            "id": 289,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://test.browseraudit.com with media-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "18|media"
+            ],
+            "duration": 107,
+            "id": 290,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "video from https://test.browseraudit.com with media-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 175,
+            "id": 291,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 138,
+            "id": 292,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 165,
+            "id": 293,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://browseraudit.com with frame-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 101,
+            "id": 294,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://browseraudit.com with frame-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 254,
+            "id": 295,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 125,
+            "id": 296,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 133,
+            "id": 297,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 167,
+            "id": 298,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://test.browseraudit.com with frame-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 121,
+            "id": 299,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with frame-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 121,
+            "id": 300,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with frame-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 163,
+            "id": 301,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 118,
+            "id": 302,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 172,
+            "id": 303,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://browseraudit.com with frame-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 123,
+            "id": 304,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://browseraudit.com with frame-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 168,
+            "id": 305,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 117,
+            "id": 306,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 115,
+            "id": 307,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 157,
+            "id": 308,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://test.browseraudit.com with frame-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 121,
+            "id": 309,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with frame-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 126,
+            "id": 310,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with frame-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 170,
+            "id": 420,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://browseraudit.com with child-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 124,
+            "id": 421,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://browseraudit.com with child-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 173,
+            "id": 422,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "iframe from https://test.browseraudit.com with child-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 110,
+            "id": 423,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with child-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 110,
+            "id": 424,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "iframe from https://test.browseraudit.com with child-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 172,
+            "id": 425,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://browseraudit.com with child-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 108,
+            "id": 426,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://browseraudit.com with child-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 166,
+            "id": 427,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "frame from https://test.browseraudit.com with child-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 113,
+            "id": 428,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with child-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "19|frames"
+            ],
+            "duration": 127,
+            "id": 429,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "frame from https://test.browseraudit.com with child-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 311,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 401,
+            "id": 312,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 461,
+            "id": 313,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 417,
+            "id": 314,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 456,
+            "id": 315,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 447,
+            "id": 316,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 449,
+            "id": 317,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 318,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 510,
+            "id": 319,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 320,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 458,
+            "id": 321,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 443,
+            "id": 322,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 546,
+            "id": 323,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 500,
+            "id": 324,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 498,
+            "id": 325,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 500,
+            "id": 326,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://browseraudit.com in @import in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 487,
+            "id": 327,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 414,
+            "id": 328,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 409,
+            "id": 329,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 508,
+            "id": 330,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 415,
+            "id": 331,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 407,
+            "id": 332,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 441,
+            "id": 333,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 334,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 335,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 455,
+            "id": 336,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 453,
+            "id": 337,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 457,
+            "id": 338,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in inline stylesheet with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 446,
+            "id": 339,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 460,
+            "id": 340,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 459,
+            "id": 341,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 459,
+            "id": 342,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 454,
+            "id": 343,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 447,
+            "id": 344,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 503,
+            "id": 345,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 504,
+            "id": 346,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 498,
+            "id": 347,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 484,
+            "id": 348,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 500,
+            "id": 349,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "33|fonts"
+            ],
+            "duration": 503,
+            "id": 350,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "@font-face from https://test.browseraudit.com in @import in stylesheet included via <link> with font-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 162,
+            "id": 351,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "XMLHttpRequest.open() to https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 109,
+            "id": 352,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 157,
+            "id": 353,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "XMLHttpRequest.open() to https://browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 112,
+            "id": 354,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 154,
+            "id": 355,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 110,
+            "id": 356,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 108,
+            "id": 357,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 157,
+            "id": 358,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with connect-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 111,
+            "id": 359,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 113,
+            "id": 360,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest.open() to https://test.browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 411,
+            "id": 361,
+            "outcome": "warning",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 417,
+            "id": 362,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 404,
+            "id": 363,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with default-src wss://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 409,
+            "id": 364,
+            "outcome": "warning",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 413,
+            "id": 365,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 411,
+            "id": 366,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://browseraudit.com with connect-src wss://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 402,
+            "id": 367,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 413,
+            "id": 368,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 414,
+            "id": 369,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with default-src wss://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 413,
+            "id": 370,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 415,
+            "id": 371,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 407,
+            "id": 372,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "WebSocket connecting to wss://test.browseraudit.com with connect-src wss://test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 414,
+            "id": 373,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "EventSource connecting to https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 412,
+            "id": 374,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 416,
+            "id": 375,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "EventSource connecting to https://browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 411,
+            "id": 376,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 400,
+            "id": 377,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 410,
+            "id": 378,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 413,
+            "id": 379,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 411,
+            "id": 380,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with connect-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 406,
+            "id": 381,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with connect-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "35|connect-src"
+            ],
+            "duration": 401,
+            "id": 382,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "EventSource connecting to https://test.browseraudit.com with connect-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 210,
+            "id": 383,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "DOM access from child iframe on https://browseraudit.com to parent iframe on https://browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 173,
+            "id": 384,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "DOM access from child iframe on https://browseraudit.com to parent iframe on https://browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 174,
+            "id": 385,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "DOM access from child iframe on https://test.browseraudit.com to parent iframe on https://browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 168,
+            "id": 386,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "DOM access from child iframe on https://test.browseraudit.com to parent iframe on https://browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 262,
+            "id": 387,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "XMLHttpRequest from child iframe on https://browseraudit.com to https://browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 217,
+            "id": 388,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest from child iframe on https://browseraudit.com to https://browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 220,
+            "id": 389,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest from child iframe on https://browseraudit.com to https://test.browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 215,
+            "id": 390,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "XMLHttpRequest from child iframe on https://browseraudit.com to https://test.browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 182,
+            "id": 391,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Access from child iframe on https://browseraudit.com to cookie on .browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 164,
+            "id": 392,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Access from child iframe on https://browseraudit.com to cookie on .browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 226,
+            "id": 393,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Access from child iframe on https://test.browseraudit.com to cookie on .browseraudit.com with sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 151,
+            "id": 394,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Access from child iframe on https://test.browseraudit.com to cookie on .browseraudit.com without sandbox allow-same-origin"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 215,
+            "id": 395,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Script execution via <script> element with sandbox allow-scripts"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 139,
+            "id": 396,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Script execution via <script> element without sandbox allow-scripts"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 516,
+            "id": 397,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Script execution via onload event with sandbox allow-scripts"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 449,
+            "id": 398,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Script execution via onload event without sandbox allow-scripts"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 527,
+            "id": 399,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Submission of form via GET with sandbox allow-forms"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 463,
+            "id": 400,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Submission of form via GET without sandbox allow-forms"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 522,
+            "id": 401,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Submission of form via POST with sandbox allow-forms"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "36|sandbox"
+            ],
+            "duration": 465,
+            "id": 402,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Submission of form via POST without sandbox allow-forms"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "34|report-uri"
+            ],
+            "duration": 407,
+            "id": 405,
+            "outcome": "pass",
+            "reason": "The resource request was received by the server.",
+            "title": "report received with report-uri"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "34|report-uri"
+            ],
+            "duration": 413,
+            "id": 406,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "report not received when report-uri is a redirect"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "34|report-uri"
+            ],
+            "duration": 412,
+            "id": 464,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "report received with report-to"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 401,
+            "id": 430,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://browseraudit.com with worker-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 396,
+            "id": 431,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://browseraudit.com with worker-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 411,
+            "id": 432,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://test.browseraudit.com with worker-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 414,
+            "id": 433,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://test.browseraudit.com with worker-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 413,
+            "id": 434,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Worker from https://test.browseraudit.com with worker-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 413,
+            "id": 435,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with worker-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 411,
+            "id": 436,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://browseraudit.com with worker-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 401,
+            "id": 437,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://test.browseraudit.com with worker-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 410,
+            "id": 438,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://test.browseraudit.com with worker-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "38|worker-src"
+            ],
+            "duration": 410,
+            "id": 439,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "SharedWorker from https://test.browseraudit.com with worker-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 104,
+            "id": 440,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 94,
+            "id": 441,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 110,
+            "id": 442,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://browseraudit.com with manifest-src 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 106,
+            "id": 443,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://browseraudit.com with manifest-src 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 106,
+            "id": 444,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with default-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 96,
+            "id": 445,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with default-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 93,
+            "id": 446,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with default-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 93,
+            "id": 447,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with manifest-src https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 92,
+            "id": 448,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with manifest-src 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "39|manifest-src"
+            ],
+            "duration": 97,
+            "id": 449,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Manifest from https://test.browseraudit.com with manifest-src 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "41|form-action"
+            ],
+            "duration": 97,
+            "id": 459,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Form with action from https://browseraudit.com and form-action 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "41|form-action"
+            ],
+            "duration": 125,
+            "id": 460,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Form from https://browseraudit.com and form-action 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "41|form-action"
+            ],
+            "duration": 116,
+            "id": 461,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Form with action from https://test.browseraudit.com and form-action https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "41|form-action"
+            ],
+            "duration": 115,
+            "id": 462,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Form with action from https://test.browseraudit.com and form-action 'none'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "41|form-action"
+            ],
+            "duration": 119,
+            "id": 463,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Form with action from https://test.browseraudit.com and form-action 'self'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 137,
+            "id": 465,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing with frame-ancestors 'none'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 154,
+            "id": 466,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing https://browseraudit.com with frame-ancestors 'self'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 156,
+            "id": 467,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing https://browseraudit.com with frame-ancestors 'https://browseraudit.com'"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 179,
+            "id": 468,
+            "outcome": "warning",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing https://browseraudit.com with frame-ancestors scheme source 'https:'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 120,
+            "id": 469,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing https://browseraudit.com with frame-ancestors wildcard 'https://*.browseraudit.com'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "11|Content Security Policy",
+                "42|frame-ancestors"
+            ],
+            "duration": 114,
+            "id": 470,
+            "outcome": "pass",
+            "reason": "The resource request was not received by the server.",
+            "title": "Framing https://browseraudit.com with frame-ancestors 'https://test.browseraudit.com'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "21|Access-Control-Allow-Origin"
+            ],
+            "duration": 45,
+            "id": 104,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "request to https://test.browseraudit.com with no Access-Control-Allow-Origin header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "21|Access-Control-Allow-Origin"
+            ],
+            "duration": 46,
+            "id": 105,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "request to https://test.browseraudit.com with Access-Control-Allow-Origin: https://browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "21|Access-Control-Allow-Origin"
+            ],
+            "duration": 47,
+            "id": 106,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "request to https://test.browseraudit.com with Access-Control-Allow-Origin: *"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "21|Access-Control-Allow-Origin"
+            ],
+            "duration": 47,
+            "id": 107,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "request to https://test.browseraudit.com with Access-Control-Allow-Origin: https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "21|Access-Control-Allow-Origin"
+            ],
+            "duration": 48,
+            "id": 108,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "request to https://test.browseraudit.com with Access-Control-Allow-Origin: https://browseraudit.org"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 91,
+            "id": 109,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method PUT with Access-Control-Allow-Methods: PUT"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 88,
+            "id": 110,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method PUT with Access-Control-Allow-Methods: DELETE, PUT"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 46,
+            "id": 111,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method PUT with Access-Control-Allow-Methods: DELETE"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 46,
+            "id": 112,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method PUT with Access-Control-Allow-Methods: DELETE, TRACE"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 46,
+            "id": 113,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method PUT with no Access-Control-Allow-Methods header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 91,
+            "id": 114,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method DELETE with Access-Control-Allow-Methods: DELETE"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 93,
+            "id": 115,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method DELETE with Access-Control-Allow-Methods: TRACE, DELETE"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 45,
+            "id": 116,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method DELETE with Access-Control-Allow-Methods: TRACE"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 45,
+            "id": 117,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method DELETE with Access-Control-Allow-Methods: TRACE, OPTIONS"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 44,
+            "id": 118,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method DELETE with no Access-Control-Allow-Methods header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 91,
+            "id": 119,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method OPTIONS with Access-Control-Allow-Methods: OPTIONS"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 87,
+            "id": 120,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Method OPTIONS with Access-Control-Allow-Methods: CONNECT, OPTIONS"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 46,
+            "id": 121,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method OPTIONS with Access-Control-Allow-Methods: CONNECT"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 46,
+            "id": 122,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method OPTIONS with Access-Control-Allow-Methods: CONNECT, PATCH"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "22|Access-Control-Allow-Methods"
+            ],
+            "duration": 45,
+            "id": 123,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Method OPTIONS with no Access-Control-Allow-Methods header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 124,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom header X-My-Header with no Access-Control-Allow-Headers header present"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 91,
+            "id": 125,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Request with custom header X-My-Header with Access-Control-Allow-Headers: X-My-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 46,
+            "id": 126,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom header X-My-Header with Access-Control-Allow-Headers: X-Another-Header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 92,
+            "id": 127,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Request with custom header X-My-Header with Access-Control-Allow-Headers: X-Another-Header, X-My-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 128,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom header X-My-Header with Access-Control-Allow-Headers: X-Another-Header, X-Yet-Another-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 129,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with no Access-Control-Allow-Headers header present"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 130,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-My-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 47,
+            "id": 131,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-Another-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 132,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-Yet-Another-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 48,
+            "id": 133,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-My-Header, X-Yet-Another-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 44,
+            "id": 134,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-Yet-Another-Header, X-Another-Header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 46,
+            "id": 135,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-Yet-Another-Header, X-Custom-Header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 86,
+            "id": 136,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-My-Header, X-Another-Header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "23|Access-Control-Allow-Headers"
+            ],
+            "duration": 85,
+            "id": 137,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Request with custom headers X-My-Header and X-Another-Header with Access-Control-Allow-Headers: X-Yet-Another-Header, X-My-Header, X-Another-Header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 138,
+            "outcome": "pass",
+            "reason": "The Cache-Control header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Cache-Control with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 47,
+            "id": 139,
+            "outcome": "pass",
+            "reason": "The Content-Language header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Content-Language with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 140,
+            "outcome": "warning",
+            "reason": "The Content-Type header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Content-Type with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 47,
+            "id": 141,
+            "outcome": "pass",
+            "reason": "The Expires header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Expires with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 47,
+            "id": 142,
+            "outcome": "pass",
+            "reason": "The Last-Modified header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Last-Modified with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 47,
+            "id": 143,
+            "outcome": "pass",
+            "reason": "The Pragma header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Pragma with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 144,
+            "outcome": "pass",
+            "reason": "The Server header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Server with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 145,
+            "outcome": "pass",
+            "reason": "The Server header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Server with Access-Control-Expose-Headers: Server"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 146,
+            "outcome": "pass",
+            "reason": "The Server header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Server with Access-Control-Expose-Headers: Content-Length, Server"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 147,
+            "outcome": "pass",
+            "reason": "The Server header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Server with Access-Control-Expose-Headers: Content-Length"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 148,
+            "outcome": "pass",
+            "reason": "The Server header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Server with Access-Control-Expose-Headers: Content-Length, Connection"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 149,
+            "outcome": "warning",
+            "reason": "The Content-Length header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Content-Length with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 150,
+            "outcome": "pass",
+            "reason": "The Content-Length header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Content-Length with Access-Control-Expose-Headers: Content-Length"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 151,
+            "outcome": "pass",
+            "reason": "The Content-Length header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Content-Length with Access-Control-Expose-Headers: Connection, Content-Length"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 48,
+            "id": 152,
+            "outcome": "warning",
+            "reason": "The Content-Length header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Content-Length with Access-Control-Expose-Headers: Connection"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 46,
+            "id": 153,
+            "outcome": "warning",
+            "reason": "The Content-Length header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Content-Length with Access-Control-Expose-Headers: Date, Connection"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 50,
+            "id": 154,
+            "outcome": "pass",
+            "reason": "The Connection header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Connection with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 43,
+            "id": 155,
+            "outcome": "pass",
+            "reason": "The Connection header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Connection with Access-Control-Expose-Headers: Connection"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 42,
+            "id": 156,
+            "outcome": "pass",
+            "reason": "The Connection header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Connection with Access-Control-Expose-Headers: Date, Connection"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 42,
+            "id": 157,
+            "outcome": "pass",
+            "reason": "The Connection header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Connection with Access-Control-Expose-Headers: Date"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 43,
+            "id": 158,
+            "outcome": "pass",
+            "reason": "The Connection header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Connection with Access-Control-Expose-Headers: Server, Date"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 42,
+            "id": 159,
+            "outcome": "pass",
+            "reason": "The Date header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Date with no Access-Control-Expose-Headers header"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 43,
+            "id": 160,
+            "outcome": "pass",
+            "reason": "The Date header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Date with Access-Control-Expose-Headers: Date"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 43,
+            "id": 161,
+            "outcome": "pass",
+            "reason": "The Date header was exposed in the XMLHttpRequest response.",
+            "title": "Caller can access Date with Access-Control-Expose-Headers: Server, Date"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 43,
+            "id": 162,
+            "outcome": "pass",
+            "reason": "The Date header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Date with Access-Control-Expose-Headers: Server"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "24|Access-Control-Expose-Headers"
+            ],
+            "duration": 42,
+            "id": 163,
+            "outcome": "pass",
+            "reason": "The Date header was not exposed in the XMLHttpRequest response.",
+            "title": "Caller can't access Date with Access-Control-Expose-Headers: Content-Length, Server"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "43|Access-Control-Allow-Credentials"
+            ],
+            "duration": 46,
+            "id": 471,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was allowed.",
+            "title": "Access-Control-Allow-Credentials true with Allow-Origin \"https://browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "43|Access-Control-Allow-Credentials"
+            ],
+            "duration": 45,
+            "id": 472,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Access-Control-Allow-Credentials true with Allow-Origin \"https://test.browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "43|Access-Control-Allow-Credentials"
+            ],
+            "duration": 45,
+            "id": 473,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Access-Control-Allow-Credentials true with Allow-Origin \"*\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "20|Cross-Origin Resource Sharing",
+                "43|Access-Control-Allow-Credentials"
+            ],
+            "duration": 46,
+            "id": 474,
+            "outcome": "pass",
+            "reason": "The cross-origin resource request was blocked.",
+            "title": "Access-Control-Allow-Credentials omitted with Allow-Origin \"https://browseraudit.com\""
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "25|Cookies",
+                "26|HttpOnly flag"
+            ],
+            "duration": 46,
+            "id": 164,
+            "outcome": "pass",
+            "reason": "The cookie could not be successfully accessed via JavaScript.",
+            "title": "HTTP-only cookie set by server and accessed from JavaScript"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "25|Cookies",
+                "26|HttpOnly flag"
+            ],
+            "duration": 1,
+            "id": 165,
+            "outcome": "pass",
+            "reason": "The cookie could not be successfully set via JavaScript.",
+            "title": "HTTP-only cookie set by JavaScript (should be discarded)"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "25|Cookies",
+                "26|HttpOnly flag"
+            ],
+            "duration": 47,
+            "id": 166,
+            "outcome": "pass",
+            "reason": "The cookie was not sent to the server.",
+            "title": "HTTP-only cookie set by JavaScript (should not be sent to server)"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "25|Cookies",
+                "27|Secure flag"
+            ],
+            "duration": 97,
+            "id": 167,
+            "outcome": "pass",
+            "reason": "The cookie was sent to the server.",
+            "title": "cookie set by server should be sent over HTTPS"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "25|Cookies",
+                "27|Secure flag"
+            ],
+            "duration": 151,
+            "id": 168,
+            "outcome": "pass",
+            "reason": "The cookie was not sent to the server.",
+            "title": "cookie set by server should not be sent over HTTP"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "25|Cookies",
+                "27|Secure flag"
+            ],
+            "duration": 50,
+            "id": 169,
+            "outcome": "pass",
+            "reason": "The cookie was sent to the server.",
+            "title": "cookie set by JavaScript should be sent over HTTPS"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "25|Cookies",
+                "27|Secure flag"
+            ],
+            "duration": 100,
+            "id": 170,
+            "outcome": "pass",
+            "reason": "The cookie was not sent to the server.",
+            "title": "cookie set by JavaScript should not be sent over HTTP"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "28|Request Headers",
+                "29|Referer"
+            ],
+            "duration": 94,
+            "id": 184,
+            "outcome": "pass",
+            "reason": "The Referer header was not sent in the request or was sent and autoupgraded to HTTPS.",
+            "title": "should not be sent over non-secure request if the referring page was transferred with a secure protocol"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 96,
+            "id": 450,
+            "outcome": "warning",
+            "reason": "The Referer header was not set correctly by the browser.",
+            "title": "Referrer-Policy 'no-referrer' from https://browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 99,
+            "id": 451,
+            "outcome": "warning",
+            "reason": "The Referer header was not set correctly by the browser.",
+            "title": "Referrer-Policy 'origin' from https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 98,
+            "id": 452,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'no-referrer' from https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 96,
+            "id": 453,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'origin' from https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 100,
+            "id": 454,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'same-origin' from https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 93,
+            "id": 455,
+            "outcome": "warning",
+            "reason": "The Referer header was not set correctly by the browser.",
+            "title": "Referrer-Policy 'same-origin' with cross origin on https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 96,
+            "id": 456,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'origin-when-cross-origin' from https://browseraudit.com"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 102,
+            "id": 457,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'origin-when-cross-origin' from https://test.browseraudit.com"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "28|Request Headers",
+                "40|Referrer-Policy"
+            ],
+            "duration": 101,
+            "id": 458,
+            "outcome": "pass",
+            "reason": "The Referer header was set correctly by the browser.",
+            "title": "Referrer-Policy 'unsafe-url'"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 109,
+            "id": 171,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "iframe from same origin with DENY"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 165,
+            "id": 172,
+            "outcome": "pass",
+            "reason": "The document was rendered.",
+            "title": "iframe from same origin with SAMEORIGIN"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 120,
+            "id": 175,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "iframe from remote origin with DENY"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 108,
+            "id": 176,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "iframe from remote origin with SAMEORIGIN"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 103,
+            "id": 412,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "frame from same origin with DENY"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 160,
+            "id": 413,
+            "outcome": "pass",
+            "reason": "The document was rendered.",
+            "title": "frame from same origin with SAMEORIGIN"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 115,
+            "id": 416,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "frame from remote origin with DENY"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "31|X-Frame-Options"
+            ],
+            "duration": 123,
+            "id": 417,
+            "outcome": "pass",
+            "reason": "The document was not rendered.",
+            "title": "frame from remote origin with SAMEORIGIN"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "32|Strict-Transport-Security"
+            ],
+            "duration": 195,
+            "id": 179,
+            "outcome": "pass",
+            "reason": "The image was served using the https protocol.",
+            "title": "browser should not send further requests over plain (non-secure) HTTP"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "30|Response Headers",
+                "32|Strict-Transport-Security"
+            ],
+            "duration": 198,
+            "id": 180,
+            "outcome": "warning",
+            "reason": "The image was not served using the http protocol.",
+            "title": "HSTS policy should not apply to subdomains when includeSubDomains is omitted"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "32|Strict-Transport-Security"
+            ],
+            "duration": 202,
+            "id": 181,
+            "outcome": "pass",
+            "reason": "The image was served using the https protocol.",
+            "title": "HSTS policy should apply to subdomains when includeSubDomains is included"
+        },
+        {
+            "behaviour": "allow",
+            "categories": [
+                "30|Response Headers",
+                "32|Strict-Transport-Security"
+            ],
+            "duration": 204,
+            "id": 182,
+            "outcome": "warning",
+            "reason": "The image was not served using the http protocol.",
+            "title": "should be ignored if sent over plain HTTP"
+        },
+        {
+            "behaviour": "block",
+            "categories": [
+                "30|Response Headers",
+                "32|Strict-Transport-Security"
+            ],
+            "duration": 3201,
+            "id": 183,
+            "outcome": "warning",
+            "reason": "The image was not served using the http protocol.",
+            "title": "should expire after max-age"
+        }
+    ],
+    "summary": {
+        "critical": 0,
+        "pass": 399,
+        "skip": 0,
+        "warning": 32
+    },
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/6.12.0 Chrome/140.0.0.0 Safari/537.36"
+}

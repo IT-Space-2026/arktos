@@ -28,8 +28,13 @@
 
 #include <QtTest/QtTest>
 
+#include "browserapplication.h"
+#include "browserprofile.h"
 #include "extensionmanager.h"
 #include "qtest_arora.h"
+
+#include <qwebengineprofile.h>
+#include <qwebengineextensionmanager.h>
 
 #if defined(ARORA_RUSTCORE)
 #include <rustcore.h>
@@ -168,6 +173,10 @@ private slots:
     void manifestCheck();
     void inspectManifestPackages();
     void updateManifestHash();
+    void dangerousClassification();
+    void consentGate();
+    void torProfileIsolation();
+    void userScriptPermissions();
 };
 
 void tst_ExtVerify::initTestCase()
@@ -360,7 +369,9 @@ void tst_ExtVerify::inspectManifestPackages()
     }
 #else
     // No-rust builds keep the documented degradation: .zip manifests
-    // stay uninspected and the dangerous list is empty.
+    // stay uninspected.  The dangerous list is populated either way —
+    // EXT05 mirrors the rust classifier in C++ (EXT05's consent gate
+    // must hold on no-Rust builds too).
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     {
@@ -372,7 +383,7 @@ void tst_ExtVerify::inspectManifestPackages()
     const ExtensionManager::Manifest unpacked =
         ExtensionManager::inspectManifest(dir.path());
     QVERIFY(unpacked.valid);
-    QVERIFY(unpacked.dangerous.isEmpty());
+    QVERIFY(unpacked.dangerous.contains(QLatin1String("nativeMessaging")));
     const QString zipPath = dir.path() + QLatin1String("/packed.zip");
     {
         QFile file(zipPath);
@@ -415,6 +426,168 @@ void tst_ExtVerify::updateManifestHash()
     QVERIFY(ExtensionManager::parseUpdateManifest(xmlNoHash, noHash.id,
                                                   &noHash));
     QVERIFY(noHash.packageHash.isEmpty());
+}
+
+void tst_ExtVerify::dangerousClassification()
+{
+    // The C++ lists mirror DANGEROUS_PERMISSIONS /
+    // DANGEROUS_HOST_PATTERNS in rustcore's extverify.rs — pin both
+    // halves so the consent gate classifies identically on every
+    // build flavor.
+    const QStringList dangerous = ExtensionManager::dangerousPermissions();
+    QVERIFY(dangerous.contains(QLatin1String("nativeMessaging")));
+    QVERIFY(dangerous.contains(QLatin1String("debugger")));
+    QVERIFY(dangerous.contains(QLatin1String("webRequestBlocking")));
+    QVERIFY(dangerous.contains(QLatin1String("cookies")));
+    QVERIFY(dangerous.contains(QLatin1String("browsingData")));
+    const QStringList hosts = ExtensionManager::dangerousHostPatterns();
+    QVERIFY(hosts.contains(QLatin1String("<all_urls>")));
+    QVERIFY(hosts.contains(QLatin1String("*://*/*")));
+
+    // A dir manifest lands the dangerous set on the review payload.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"D\","
+                   "\"permissions\":[\"tabs\",\"debugger\"],"
+                   "\"host_permissions\":[\"*://*/*\"]}");
+    }
+    const ExtensionManager::Manifest manifest =
+        ExtensionManager::inspectManifest(dir.path());
+    QVERIFY(manifest.valid);
+    QVERIFY(manifest.dangerous.contains(QLatin1String("debugger")));
+    QVERIFY(manifest.dangerous.contains(QLatin1String("*://*/*")));
+    QVERIFY(!manifest.dangerous.contains(QLatin1String("tabs")));
+}
+
+void tst_ExtVerify::consentGate()
+{
+#if QT_CONFIG(webengine_extensions)
+    ExtensionManager *manager = ExtensionManager::instance();
+    BrowserApplication::setTorMode(false);
+    QWebEngineProfile *profile =
+        new QWebEngineProfile(QLatin1String("ext05-consent"), qApp);
+    manager->installOnProfile(profile);
+    QVERIFY(manager->isInstalledOnProfile(profile));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    {
+        QFile file(dir.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"manifest_version\":3,\"name\":\"consent-ext\","
+                   "\"version\":\"1.0\"}");
+    }
+
+    // No grant: load and install are refused before either reaches
+    // the engine — a silent extension load is a bug.
+    QSignalSpy errors(manager, &ExtensionManager::errorOccurred);
+    manager->loadExtension(dir.path());
+    QCOMPARE(errors.count(), 1);
+    QVERIFY(errors.at(0).at(0).toString()
+            .contains(QLatin1String("consent"), Qt::CaseInsensitive));
+    manager->installExtension(dir.path());
+    QCOMPARE(errors.count(), 2);
+
+    // A grant authorizes exactly one operation on that exact path.
+    manager->grantConsent(dir.path());
+    QVERIFY(manager->hasConsent(dir.path()));
+    QSignalSpy loaded(manager, &ExtensionManager::extensionLoaded);
+    manager->loadExtension(dir.path());
+    QVERIFY(!manager->hasConsent(dir.path()));   // consumed one-shot
+    QTRY_VERIFY_WITH_TIMEOUT(loaded.count() >= 1, 20000);
+
+    // The next call on the same path needs a fresh grant.
+    manager->loadExtension(dir.path());
+    QTRY_VERIFY_WITH_TIMEOUT(errors.count() >= 3, 5000);
+#else
+    QSKIP("Qt built without webengine_extensions");
+#endif
+}
+
+void tst_ExtVerify::torProfileIsolation()
+{
+#if QT_CONFIG(webengine_extensions)
+    ExtensionManager *manager = ExtensionManager::instance();
+    BrowserApplication::setTorMode(false);
+
+    // Even with a normal profile wired, the tor profile's extension
+    // set stays at its built-in components — a beaconing extension
+    // de-anonymizes the window.
+    QWebEngineProfile *normal =
+        new QWebEngineProfile(QLatin1String("ext05-normal"), qApp);
+    manager->installOnProfile(normal);
+    QVERIFY(manager->isInstalledOnProfile(normal));
+
+    QWebEngineProfile *tor = BrowserProfile::torProfile();
+    manager->installOnProfile(tor);
+    QVERIFY(!manager->isInstalledOnProfile(tor));
+    if (QWebEngineExtensionManager *engine = tor->extensionManager()) {
+        const QList<QWebEngineExtensionInfo> entries =
+            engine->extensions();
+        for (const QWebEngineExtensionInfo &info : entries) {
+            bool builtin = info.path().isEmpty();
+            for (const char *id : {
+                    "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+                    "nkeimhogjdpnpccoofpliimaahmaaome"})
+                if (info.id() == QLatin1String(id))
+                    builtin = true;
+            QVERIFY2(builtin, qPrintable(info.id()));
+        }
+    }
+
+    // In tor mode the hard gate refuses every profile, not just the
+    // tor profile itself.
+    BrowserApplication::setTorMode(true);
+    QWebEngineProfile *torModeProfile =
+        new QWebEngineProfile(QLatin1String("ext05-tor-mode"), qApp);
+    manager->installOnProfile(torModeProfile);
+    QVERIFY(!manager->isInstalledOnProfile(torModeProfile));
+    BrowserApplication::setTorMode(false);
+
+    // The normal profile's wiring is untouched.
+    QVERIFY(manager->isInstalledOnProfile(normal));
+#else
+    QSKIP("Qt built without webengine_extensions");
+#endif
+}
+
+void tst_ExtVerify::userScriptPermissions()
+{
+    ExtensionManager *manager = ExtensionManager::instance();
+    BrowserApplication::setTorMode(false);
+    QWebEngineProfile *profile =
+        new QWebEngineProfile(QLatin1String("ext05-scripts"), qApp);
+    manager->installOnProfile(profile);
+
+    // The scripts dir is owner-only (0700) once provisioned.
+    const QString dirPath = ExtensionManager::userScriptsPath();
+    const QFileDevice::Permissions dirLeaked =
+        QFileInfo(dirPath).permissions()
+        & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
+           | QFileDevice::ExeGroup | QFileDevice::ReadOther
+           | QFileDevice::WriteOther | QFileDevice::ExeOther);
+    QCOMPARE(dirLeaked, QFileDevice::Permissions());
+
+    // A group/world-readable script is tightened to 0600 on load.
+    const QString scriptPath = dirPath + QLatin1String("/leaky.js");
+    {
+        QFile file(scriptPath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("//x\n");
+    }
+    QFile::setPermissions(scriptPath,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+        | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    manager->reloadUserScripts();
+    const QFileDevice::Permissions perms =
+        QFileInfo(scriptPath).permissions();
+    QVERIFY(perms & QFileDevice::ReadOwner);
+    QVERIFY(!(perms & QFileDevice::ReadGroup));
+    QVERIFY(!(perms & QFileDevice::ReadOther));
+    QVERIFY(QFile::remove(scriptPath));
 }
 
 QTEST_MAIN(tst_ExtVerify)

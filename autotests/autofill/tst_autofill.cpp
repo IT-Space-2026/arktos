@@ -172,9 +172,18 @@ void tst_AutoFill::cleanupTestCase()
 void tst_AutoFill::roundTrip()
 {
     const QList<AutoFillManager::Form> forms{sampleForm()};
+    AutoFillManager::Address address;
+    address.country = QLatin1String("US");
+    address.name = QLatin1String("Ada");
+    address.street = QLatin1String("1 Main St");
+    address.city = QLatin1String("Springfield");
+    address.zip = QLatin1String("62701");
+    address.lastUsed = 42;
     {
         AutoFillManager manager;
         manager.setForms(forms);
+        manager.setAddresses(QList<AutoFillManager::Address>()
+                             << address);
         flushSave(&manager);
         QVERIFY(QFile::exists(storePath()));
     }
@@ -184,6 +193,14 @@ void tst_AutoFill::roundTrip()
     {
         AutoFillManager manager;
         QVERIFY(sameForms(manager.forms(), forms));
+        // ADDR01/02: the address list rides the same store — a store
+        // that only kept forms used to drop it across the reload.
+        QCOMPARE(manager.addresses().count(), 1);
+        QCOMPARE(manager.addresses().first().name,
+                 QLatin1String("Ada"));
+        QCOMPARE(manager.addresses().first().zip,
+                 QLatin1String("62701"));
+        QCOMPARE(manager.addresses().first().lastUsed, 42);
     }
 }
 

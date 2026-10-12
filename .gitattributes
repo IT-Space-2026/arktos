@@ -1,0 +1,6 @@
+# append-mostly files: union-merge keeps both lanes' lines
+# automatically so cross-lane merges never stall on them.
+# (task tables deliberately excluded — status flips are edits,
+# not appends, and union would produce duplicated rows)
+.devin/WORKLOG.md	merge=union
+ChangeLog		merge=union

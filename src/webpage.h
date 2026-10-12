@@ -24,6 +24,7 @@
 
 #include <qlist.h>
 #include <qset.h>
+#include <qsslcertificate.h>
 #include <qwebenginecertificateerror.h>
 #include <qwebenginepage.h>
 
@@ -63,14 +64,21 @@ class JavaScriptAroraObject : public QObject
     // slot of OpenSearchEngine to the page.
     Q_PROPERTY(QString currentEngineName READ currentEngineName
                NOTIFY currentEngineNameChanged)
+    // THEME01: lets the qrc start page follow the chrome palette —
+    // prefers-color-scheme tracks the OS, not the app's forced
+    // palette, so the page reads this at init and re-reads on
+    // darkChromeChanged.
+    Q_PROPERTY(bool darkChrome READ darkChrome NOTIFY darkChromeChanged)
 
 public:
     JavaScriptAroraObject(QObject *parent = nullptr);
 
     QString currentEngineName() const;
+    bool darkChrome() const;
 
 signals:
     void currentEngineNameChanged();
+    void darkChromeChanged();
 
 public slots:
     QString translate(const QString &string);
@@ -197,6 +205,11 @@ private:
     QString domainBlockWarningHtml(const QUrl &url);
     void resolveDomainBlockLink(const QUrl &url);
     void showRateLimitNoticeIfNeeded();
+    // BADSSL03: answers the QWebEnginePage::selectClientCertificate
+    // signal — prompts when the profile's client-certificate store
+    // holds a candidate, declines otherwise.
+    void handleClientCertificateSelection(
+            QWebEngineClientCertificateSelection selection);
 
 protected:
     static QString s_userAgent;
@@ -243,6 +256,11 @@ protected:
     // submitting page's url so each page asks once per target host.
     QUrl m_insecureFormApprovalsPage;
     QSet<QString> m_insecureFormApprovedHosts;
+    // BADSSL03: per-page client-certificate decisions, keyed by the
+    // requesting authority (host:port).  A null certificate value
+    // records "send nothing" — a negotiation's repeated challenges
+    // reuse the decision instead of re-prompting.
+    QHash<QString, QSslCertificate> m_clientCertChoices;
 };
 
 #endif // WEBPAGE_H

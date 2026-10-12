@@ -98,6 +98,11 @@ public:
                                 int resourceType = -1) const;
     bool shouldBlock(const QUrl &url) const;
 
+    // ADB06: true while the snapshot delegates matching to the Rust
+    // engine — only in CONFIG+=adblock_rust builds with the engine
+    // selected and enabled.  Always false in native-only builds.
+    bool rustEngineActive() const;
+
 #if defined(ARORA_ADBLOCK_RUST)
     // The native C++ matcher, kept compiled in under the Rust flag so
     // the --adblock-rust-smoke comparison harness can diff the two

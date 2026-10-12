@@ -163,8 +163,11 @@ QIcon AroraIcon::iconForTheme(const QString &id, const QString &name)
     init();
     if (id == s_nativeId)
         return QIcon::fromTheme(name);
+    // effectiveThemeName picks the -dark recolor under a dark
+    // palette — previews should show what the set will actually look
+    // like once applied.
     const QString path = s_resourcePrefix + QLatin1Char('/')
-        + QLatin1String("arora-") + id
+        + effectiveThemeName(id)
         + QLatin1String("/icons/") + name + QLatin1String(".svg");
     if (!QFile::exists(path))
         return QIcon();

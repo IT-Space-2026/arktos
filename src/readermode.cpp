@@ -19,6 +19,7 @@
 
 #include "readermode.h"
 
+#include "engineinterface.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -171,6 +172,9 @@ ReaderMode::ReaderMode(WebView *view)
     , m_active(false)
     , m_available(false)
     , m_busy(false)
+    , m_loading(false)
+    , m_probeGeneration(0)
+    , m_probeRetries(0)
 {
     // The bridge rides the page's existing channel (same registration
     // point as "external"/"aroraAutofill").  Tor pages carry no channel
@@ -183,6 +187,8 @@ ReaderMode::ReaderMode(WebView *view)
             this, &ReaderMode::onLoadStarted);
     connect(m_view, &QWebEngineView::loadFinished,
             this, &ReaderMode::onLoadFinished);
+    connect(m_view, &QWebEngineView::urlChanged,
+            this, &ReaderMode::onUrlChanged);
 #ifdef ARORA_RUSTCORE
     // The Rust overlay tracks the view's geometry.
     m_view->installEventFilter(this);
@@ -273,14 +279,39 @@ void ReaderMode::onLoadStarted()
 {
     // A navigation drops the overlay with the old document.
     m_busy = false;
+    m_loading = true;
+    ++m_probeGeneration;
+    m_probeRetries = 0;
     setActive(false);
     setAvailable(false);
 }
 
 void ReaderMode::onLoadFinished(bool ok)
 {
+    m_loading = false;
     if (ok && !m_active)
         probe();
+}
+
+void ReaderMode::onUrlChanged(const QUrl &url)
+{
+    if (url == m_seenUrl)
+        return;
+    m_seenUrl = url;
+    // A real navigation probes at loadFinished; a client-side route
+    // change (SPA pushState — telex.hu and friends) emits urlChanged
+    // alone, so debounce a re-probe once the new document had a beat
+    // to render.  Probing while the overlay is up is pointless —
+    // availability is implied by the active state.
+    if (m_loading || m_active)
+        return;
+    ++m_probeGeneration;
+    m_probeRetries = 0;
+    const int generation = m_probeGeneration;
+    QTimer::singleShot(900, this, [this, generation]() {
+        if (m_probeGeneration == generation && !m_loading && !m_active)
+            probe();
+    });
 }
 
 void ReaderMode::scriptExited()
@@ -307,54 +338,17 @@ void ReaderMode::runDriver(
         const QString &call,
         const std::function<void(const QVariant &)> &callback)
 {
-    QWebEnginePage *page = m_view ? m_view->page() : nullptr;
+    Engine::Page *page = m_view ? m_view->enginePage() : nullptr;
     if (!page) {
         if (callback)
             callback(QVariant());
         return;
     }
     const QString program = scriptBundle() + call;
-    QWebEngineSettings *settings = page->settings();
-    if (settings->testAttribute(QWebEngineSettings::JavascriptEnabled)) {
-        page->runJavaScript(program, [callback](const QVariant &result) {
-            if (callback)
-                callback(result);
-        });
-        return;
-    }
-
-    // JSCTL/SECLVL: WebEngine silently drops runJavaScript while
-    // JavascriptEnabled is off.  Lift the attribute for the injection
-    // window only — the attribute's IPC lands asynchronously, so the
-    // script is queued behind a delay and the attribute is restored a
-    // beat after the callback (with a hard fallback in case it never
-    // arrives).  Page scripts blocked at parse time do not retro-run
-    // while the flag is up, so the page stays scriptless.
-    settings->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
-    QPointer<QWebEnginePage> livePage(page);
-    QTimer::singleShot(700, this,
-            [livePage, program, callback]() {
-        if (!livePage)
-            return;
-        livePage->runJavaScript(program,
-                [callback, livePage](const QVariant &result) {
-            if (callback)
-                callback(result);
-            QTimer::singleShot(400, qApp, [livePage]() {
-                if (livePage) {
-                    livePage->settings()->setAttribute(
-                        QWebEngineSettings::JavascriptEnabled, false);
-                }
-            });
-        });
-    });
-    // Fallback restore: the attribute must not stay lifted if the
-    // injection above is wedged by a dying renderer.
-    QTimer::singleShot(5000, this, [livePage]() {
-        if (livePage)
-            livePage->settings()->setAttribute(
-                QWebEngineSettings::JavascriptEnabled, false);
-    });
+    // JSCTL/SECLVL: the lift keeps the driver reaching pages whose
+    // scripts are blocked — Engine::Page::runJavaScriptLifted owns
+    // the JavascriptEnabled gate juggling.
+    page->runJavaScriptLifted(program, callback);
 }
 
 void ReaderMode::probe()
@@ -369,28 +363,48 @@ void ReaderMode::probe()
         return;
     }
     QPointer<ReaderMode> self(this);
+    // Stale callbacks from an older document must not flip the new
+    // page's verdict — the generation ticks on every navigation.
+    const int generation = m_probeGeneration;
 #ifdef ARORA_RUSTCORE
     // The Rust probe runs isProbablyReaderable's equivalent over the
     // serialized DOM — no script eval in the page world.
-    collectHtml([self](const QString &html) {
-        if (!self)
+    collectHtml([self, generation](const QString &html) {
+        if (!self || self->m_probeGeneration != generation)
             return;
         if (html.isEmpty()) {
-            self->setAvailable(false);
+            self->probeFinished(false);
             return;
         }
         const QByteArray utf8 = html.toUtf8();
-        self->setAvailable(rc_readability_probe(
+        self->probeFinished(rc_readability_probe(
             reinterpret_cast<const uint8_t *>(utf8.constData()),
             static_cast<size_t>(utf8.size())) > 0);
     });
 #else
     runDriver(QLatin1String("window.__aroraReader.probe();"),
-            [self](const QVariant &result) {
-        if (self)
-            self->setAvailable(result.toBool());
+            [self, generation](const QVariant &result) {
+        if (self && self->m_probeGeneration == generation)
+            self->probeFinished(result.toBool());
     });
 #endif
+}
+
+void ReaderMode::probeFinished(bool available)
+{
+    setAvailable(available);
+    if (available || m_probeRetries >= 3)
+        return;
+    // loadFinished can precede the article markup on pages that
+    // hydrate or inject content after the document event — give the
+    // DOM a few more chances before settling on non-article.
+    ++m_probeRetries;
+    const int generation = m_probeGeneration;
+    QPointer<ReaderMode> self(this);
+    QTimer::singleShot(2000, this, [self, generation]() {
+        if (self && self->m_probeGeneration == generation)
+            self->probe();
+    });
 }
 
 #ifdef ARORA_RUSTCORE

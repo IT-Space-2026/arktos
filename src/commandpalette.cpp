@@ -119,14 +119,15 @@ QString commandKeywords(const QString &cleanText)
          QStringLiteral("onion anonymous tor private")},
         {QStringLiteral("Page Source"),
          QStringLiteral("view source html markup")},
-        {QStringLiteral("Web Inspector"),
-         QStringLiteral("devtools developer tools inspect element")},
+        {QStringLiteral("Chromium Dev Tool"),
+         QStringLiteral("devtools developer tools inspect element web inspector")},
         {QStringLiteral("Find"),
          QStringLiteral("search in page text")},
         {QStringLiteral("Show All Bookmarks..."),
          QStringLiteral("library bookmarks manager")},
-        {QStringLiteral("Options..."),
-         QStringLiteral("preferences settings configure")},
+        {QStringLiteral("Preferences..."),
+         QStringLiteral("options settings configure adblock "
+                        "advertisements filters ublock")},
         {QStringLiteral("Downloads"),
          QStringLiteral("download manager files")},
         {QStringLiteral("Reader Mode"),
@@ -137,8 +138,6 @@ QString commandKeywords(const QString &cleanText)
          QStringLiteral("fullscreen f11")},
         {QStringLiteral("Zoom Text Only"),
          QStringLiteral("text zoom fonts")},
-        {QStringLiteral("Ad Block..."),
-         QStringLiteral("adblock advertisements filters ublock")},
     };
     return aliases.value(cleanText);
 }
@@ -593,9 +592,7 @@ void CommandPalette::executeItem(const Item &item)
         } else if (!item.url.isEmpty()) {
             window->tabWidget()->loadUrlFromUser(item.url, item.text);
         } else if (item.settingsPage >= 0) {
-            SettingsDialog dialog(window);
-            dialog.openAtPage(SettingsDialog::Page(item.settingsPage));
-            dialog.exec();
+            window->showSettingsPage(item.settingsPage);
         }
     });
 }

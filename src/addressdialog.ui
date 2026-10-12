@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AddressDialog</class>
+ <widget class="QDialog" name="AddressDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>480</width>
+    <height>360</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Add Address</string>
+  </property>
+  <layout class="QVBoxLayout" name="addressDialogLayout">
+   <item>
+    <layout class="QFormLayout" name="addressFormLayout">
+     <item row="0" column="0">
+      <widget class="QLabel" name="countryLabel">
+       <property name="text">
+        <string>Country:</string>
+       </property>
+       <property name="buddy">
+        <cstring>countryCombo</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="countryCombo">
+       <property name="accessibleName">
+        <string>Country</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="nameLabel">
+       <property name="text">
+        <string>Name:</string>
+       </property>
+       <property name="buddy">
+        <cstring>nameEdit</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="nameEdit">
+       <property name="accessibleName">
+        <string>Name</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="organizationLabel">
+       <property name="text">
+        <string>Organization:</string>
+       </property>
+       <property name="buddy">
+        <cstring>organizationEdit</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="organizationEdit">
+       <property name="accessibleName">
+        <string>Organization</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="streetLabel">
+       <property name="text">
+        <string>Street address:</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+       </property>
+       <property name="buddy">
+        <cstring>streetEdit</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QPlainTextEdit" name="streetEdit">
+       <property name="maximumSize">
+        <size>
+         <width>16777215</width>
+         <height>72</height>
+        </size>
+       </property>
+       <property name="accessibleName">
+        <string>Street address</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="cityStateZipLayout">
+     <item>
+      <layout class="QVBoxLayout" name="cityLayout">
+       <item>
+        <widget class="QLabel" name="cityLabel">
+         <property name="text">
+          <string>City</string>
+         </property>
+         <property name="buddy">
+          <cstring>cityEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="cityEdit">
+         <property name="accessibleName">
+          <string>City</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="stateLayout">
+       <item>
+        <widget class="QLabel" name="stateLabel">
+         <property name="text">
+          <string>State</string>
+         </property>
+         <property name="buddy">
+          <cstring>stateEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="stateEdit">
+         <property name="accessibleName">
+          <string>State</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="zipLayout">
+       <item>
+        <widget class="QLabel" name="zipLabel">
+         <property name="text">
+          <string>ZIP code</string>
+         </property>
+         <property name="buddy">
+          <cstring>zipEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="zipEdit">
+         <property name="accessibleName">
+          <string>ZIP code</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="phoneEmailLayout">
+     <item>
+      <layout class="QVBoxLayout" name="phoneLayout">
+       <item>
+        <widget class="QLabel" name="phoneLabel">
+         <property name="text">
+          <string>Phone</string>
+         </property>
+         <property name="buddy">
+          <cstring>phoneEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="phoneEdit">
+         <property name="accessibleName">
+          <string>Phone</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="emailLayout">
+       <item>
+        <widget class="QLabel" name="emailLabel">
+         <property name="text">
+          <string>Email</string>
+         </property>
+         <property name="buddy">
+          <cstring>emailEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="emailEdit">
+         <property name="accessibleName">
+          <string>Email</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Save|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <tabstops>
+  <tabstop>countryCombo</tabstop>
+  <tabstop>nameEdit</tabstop>
+  <tabstop>organizationEdit</tabstop>
+  <tabstop>streetEdit</tabstop>
+  <tabstop>cityEdit</tabstop>
+  <tabstop>stateEdit</tabstop>
+  <tabstop>zipEdit</tabstop>
+  <tabstop>phoneEdit</tabstop>
+  <tabstop>emailEdit</tabstop>
+  <tabstop>buttonBox</tabstop>
+ </tabstops>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>accepted()</signal>
+   <receiver>AddressDialog</receiver>
+   <slot>accept()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>248</x>
+     <y>254</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>157</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>rejected()</signal>
+   <receiver>AddressDialog</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>316</x>
+     <y>260</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>286</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>

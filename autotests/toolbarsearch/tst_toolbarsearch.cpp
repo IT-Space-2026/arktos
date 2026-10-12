@@ -60,7 +60,9 @@ private slots:
     void initTestCase();
 
     void searchEmitsUrl();
+    void brokenEngineRescue();
     void searchEmitsUrlWithBrokenEngine();
+    void backspaceClearsField();
     void recentSearches();
     void completerPaths();
     void enginesMenu();
@@ -92,6 +94,40 @@ void tst_ToolbarSearch::searchEmitsUrl()
     QVERIFY(url.toString().contains(QLatin1String("cov04")));
     QCOMPARE(spy.first().at(1).value<TabWidget::OpenUrlIn>(),
              TabWidget::CurrentTab);
+}
+
+// SRCH09: Enter must never be a dead key — a resolved engine whose
+// descriptor produces no usable search url (or a null engine) used to
+// emit an empty url loadUrl() silently dropped, or not emit at all.
+// searchNow() rescues through the shared fallback to the bundled
+// endpoint.
+void tst_ToolbarSearch::brokenEngineRescue()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("broken-test"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://broken-test.invalid/q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    // A descriptor that loses its template after registration —
+    // searchUrl() comes back empty.
+    engine->setSearchUrlTemplate(QString());
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    {
+        ToolbarSearch search;
+        search.setText(QLatin1String("rescue me"));
+        QSignalSpy spy(&search, &ToolbarSearch::search);
+        search.searchNow();
+        QCOMPARE(spy.count(), 1);
+        const QUrl url = spy.first().at(0).toUrl();
+        QVERIFY(url.isValid() && !url.isEmpty());
+        QVERIFY(url.toString().contains(QLatin1String("duckduckgo")));
+    }
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
 }
 
 // SRCH11: a broken selected engine (descriptor that yields no usable
@@ -128,6 +164,55 @@ void tst_ToolbarSearch::searchEmitsUrlWithBrokenEngine()
 
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());
+}
+
+// SRCH10: Backspace on baseline text clears the whole field; after a
+// real edit it deletes char-wise to empty; and a completer row that
+// re-highlights mid-delete cannot write text back into the field —
+// the re-extension that stalled deletion.
+void tst_ToolbarSearch::backspaceClearsField()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("toolbarsearch/recentSearches"),
+                      QStringList() << QLatin1String("persisted")
+                                    << QLatin1String("older"));
+
+    ToolbarSearch search;
+    QStandardItemModel *model =
+        qobject_cast<QStandardItemModel *>(search.completer()->model());
+    QVERIFY(model);
+    QVERIFY(model->rowCount() >= 3);
+
+    // Baseline text (setText counts as untouched): one key clears.
+    search.setText(QLatin1String("whole query"));
+    QTest::keyClick(&search, Qt::Key_Backspace);
+    QVERIFY(search.text().isEmpty());
+
+    // After typing, backspace deletes single chars and the completer
+    // cannot write a re-highlighted row back into the field.
+    QTest::keyClicks(&search, QLatin1String("abc"));
+    QTest::keyClick(&search, Qt::Key_Backspace);
+    QCOMPARE(search.text(), QLatin1String("ab"));
+    emit search.completer()->highlighted(model->index(1, 0));
+    QCOMPARE(search.text(), QLatin1String("ab"));
+    QTest::keyClick(&search, Qt::Key_Backspace);
+    QTest::keyClick(&search, Qt::Key_Backspace);
+    QVERIFY(search.text().isEmpty());
+
+    // An explicit activation still commits the row even mid-burst.
+    QTest::keyClicks(&search, QLatin1String("de"));
+    QTest::keyClick(&search, Qt::Key_Backspace);
+    QSignalSpy spy(&search, &ToolbarSearch::search);
+    emit search.completer()->activated(model->index(1, 0));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(search.text(), QLatin1String("persisted"));
+
+    // Forward typing ends the burst — highlights write again.
+    QTest::keyClicks(&search, QLatin1String("x"));
+    emit search.completer()->highlighted(model->index(1, 0));
+    QCOMPARE(search.text(), QLatin1String("persisted"));
+
+    settings.remove(QLatin1String("toolbarsearch/recentSearches"));
 }
 
 // Successful searches are remembered; clear() empties the list and

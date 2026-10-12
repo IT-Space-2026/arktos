@@ -20,7 +20,11 @@
 #include "sitepanel.h"
 
 #include "adblockmanager.h"
+#include "adblockrequestinterceptor.h"
+#include "browserapplication.h"
 #include "cookiejar.h"
+#include "engineinterface.h"
+#include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
@@ -30,12 +34,20 @@
 
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qlabel.h>
 #include <qlayout.h>
 #include <qpalette.h>
 #include <qpushbutton.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+
+#if defined(ARORA_RUSTCORE)
+#include "rustcorebridge.h"
+#include <rustcore.h>
+#endif
 
 static QLabel *plainLabel(const QString &text, QWidget *parent)
 {
@@ -49,6 +61,7 @@ static QLabel *plainLabel(const QString &text, QWidget *parent)
 SitePanel::SitePanel(QWidget *parent)
     : QFrame(parent)
     , m_webView(nullptr)
+    , m_blockedBaseline(0)
     , m_refreshing(false)
 {
     setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
@@ -80,6 +93,19 @@ SitePanel::SitePanel(QWidget *parent)
     connect(TlsVerifier::instance(), &TlsVerifier::statusChanged,
             this, [this](const QString &) { refresh(); });
 
+    // TRUST08: the composite site-trust section — one line per real
+    // signal from rustcore's verdict (threat-list hit, lookalike
+    // resemblance, Tranco rank, first visit).  The box stays hidden
+    // whenever the verdict has nothing informative to say.
+    m_trustBox = new QWidget(this);
+    m_trustBox->setObjectName(QLatin1String("siteTrust"));
+    m_trustLayout = new QVBoxLayout(m_trustBox);
+    m_trustLayout->setContentsMargins(0, 0, 0, 0);
+    m_trustLayout->setSpacing(2);
+    m_trustLayout->addWidget(plainLabel(tr("Trust"), m_trustBox));
+    m_trustBox->setVisible(false);
+    layout->addWidget(m_trustBox);
+
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
     line->setFrameShadow(QFrame::Sunken);
@@ -105,12 +131,29 @@ SitePanel::SitePanel(QWidget *parent)
     m_cookieCount->setObjectName(QLatin1String("siteCookieCount"));
     layout->addWidget(m_cookieCount);
 
+    // SHLD02: the merged content-blocking section — the global switch
+    // sits above the per-site toggle so the two scopes stay distinct,
+    // and the count line reports what the blocker stopped on this
+    // page load.
+    m_contentBlocking = new QCheckBox(tr("Content blocking"), this);
+    m_contentBlocking->setObjectName(QLatin1String("siteContentBlocking"));
+    m_contentBlocking->setToolTip(
+        tr("Blocks ads and trackers on every site — the master switch "
+           "the Ad Block settings also expose."));
+    connect(m_contentBlocking, &QCheckBox::toggled,
+            this, &SitePanel::toggleGlobalBlocking);
+    layout->addWidget(m_contentBlocking);
+
     m_blockContent = new QCheckBox(
         tr("Block ads and trackers on this site"), this);
     m_blockContent->setObjectName(QLatin1String("siteBlockContent"));
     connect(m_blockContent, &QCheckBox::toggled,
             this, &SitePanel::toggleContentBlocking);
     layout->addWidget(m_blockContent);
+
+    m_blockedCount = plainLabel(QString(), this);
+    m_blockedCount->setObjectName(QLatin1String("siteBlockedCount"));
+    layout->addWidget(m_blockedCount);
 
     // JSCTL: per-site JavaScript rule — the explicit grant beats the
     // security tier in both directions (see ScriptControlManager).
@@ -157,6 +200,17 @@ SitePanel::SitePanel(QWidget *parent)
             this, &SitePanel::toggleHttpAllowance);
     layout->addWidget(m_allowHttp);
 
+    // SAFE06: per-site exemption from the injected fingerprint
+    // countermeasures — canvas-heavy pages can break under the
+    // readout noise.  The exception list is baked into the script
+    // source, so toggling re-installs it and reloads the page.
+    m_spoofFingerprint = new QCheckBox(
+        tr("Spoof fingerprints on this site"), this);
+    m_spoofFingerprint->setObjectName(QLatin1String("siteFingerprintSpoof"));
+    connect(m_spoofFingerprint, &QCheckBox::toggled,
+            this, &SitePanel::toggleFingerprintSpoof);
+    layout->addWidget(m_spoofFingerprint);
+
     QFrame *line2 = new QFrame(this);
     line2->setFrameShape(QFrame::HLine);
     line2->setFrameShadow(QFrame::Sunken);
@@ -175,13 +229,22 @@ SitePanel::SitePanel(QWidget *parent)
     line3->setFrameShadow(QFrame::Sunken);
     layout->addWidget(line3);
 
+    QHBoxLayout *buttons = new QHBoxLayout();
+    m_adBlockSettings = new QPushButton(tr("Ad Block Settings..."), this);
+    m_adBlockSettings->setObjectName(QLatin1String("siteAdBlockSettings"));
+    connect(m_adBlockSettings, &QPushButton::clicked,
+            this, []() { AdBlockManager::instance()->showDialog(); });
+    buttons->addWidget(m_adBlockSettings);
+
     m_clearData = new QPushButton(tr("Clear site data"), this);
     m_clearData->setObjectName(QLatin1String("siteClearData"));
     m_clearData->setToolTip(
         tr("Deletes this site's cookies and local storage."));
     connect(m_clearData, &QPushButton::clicked,
             this, &SitePanel::clearSiteData);
-    layout->addWidget(m_clearData, 0, Qt::AlignLeft);
+    buttons->addWidget(m_clearData);
+    buttons->addStretch(1);
+    layout->addLayout(buttons);
 }
 
 void SitePanel::setWebView(WebView *webView)
@@ -192,10 +255,19 @@ void SitePanel::setWebView(WebView *webView)
         disconnect(m_webView, nullptr, this, nullptr);
     m_webView = webView;
     if (webView) {
+        // A new load (or a same-tab navigation to another host) starts
+        // a fresh tally: the interceptor counter is cumulative, so the
+        // baseline is re-captured rather than the shared table cleared.
+        connect(webView, &QWebEngineView::loadStarted,
+                this, [this]() { m_blockedBaseline = blockedTotal(); });
         connect(webView, &QWebEngineView::urlChanged,
-                this, [this](const QUrl &) { refresh(); });
+                this, [this](const QUrl &) {
+            m_blockedBaseline = blockedTotal();
+            refresh();
+        });
         connect(webView, &QWebEngineView::loadFinished,
                 this, [this](bool) { refresh(); });
+        m_blockedBaseline = blockedTotal();
     }
     refresh();
 }
@@ -220,6 +292,19 @@ QUrl SitePanel::origin() const
     origin.setQuery(QString());
     origin.setFragment(QString());
     return origin;
+}
+
+int SitePanel::blockedTotal() const
+{
+    const QString site = host();
+    if (site.isEmpty())
+        return 0;
+    return AdBlockRequestInterceptor::blockedRequestCount(site);
+}
+
+int SitePanel::blockedSinceLoad() const
+{
+    return qMax(0, blockedTotal() - m_blockedBaseline);
 }
 
 CookieJar *SitePanel::siteCookieJar() const
@@ -318,6 +403,8 @@ void SitePanel::refresh()
         break;
     }
 
+    rebuildTrustRows();
+
     CookieJar *jar = siteCookieJar();
     m_cookieRule->setEnabled(hasSite && jar);
     if (jar && hasSite) {
@@ -337,13 +424,25 @@ void SitePanel::refresh()
 
     AdBlockManager *adblock = AdBlockManager::instance();
     const bool blockingOn = adblock->isEnabled();
+    m_contentBlocking->setChecked(blockingOn);
+    if (!blockingOn)
+        m_blockedCount->setText(tr("Content blocking is disabled"));
+    else if (!hasSite)
+        m_blockedCount->setText(tr("No web page to count"));
+    else
+        m_blockedCount->setText(
+            tr("%1 requests blocked on this page")
+                .arg(blockedSinceLoad()));
+
+    // The per-site row greys out while the master switch is off —
+    // whitelisting a site is meaningless when nothing is blocked.
     m_blockContent->setEnabled(hasSite && blockingOn
         && !adblock->siteWhitelistFilter(site).isEmpty());
     m_blockContent->setChecked(
         blockingOn && !adblock->isSiteWhitelisted(site));
     m_blockContent->setToolTip(
         !blockingOn
-            ? tr("Content blocking is disabled in Settings")
+            ? tr("Content blocking is disabled globally")
             : tr("Unchecked, this site's pages are exempted from "
                  "content blocking (an @@||host^$document rule in "
                  "your custom filters)."));
@@ -384,6 +483,25 @@ void SitePanel::refresh()
     m_allowHttp->setChecked(
         webSite && PrivacyRequestInterceptor::isHttpAllowedHost(site));
 
+    // SAFE06: the row is only meaningful while protection is active
+    // on this page's profile — greyed with an explanation otherwise.
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    const bool protectionOn = webSite
+        && m_webView && m_webView->page()
+        && protector->isActiveForProfile(m_webView->page()->profile());
+    m_spoofFingerprint->setEnabled(protectionOn);
+    m_spoofFingerprint->setChecked(protectionOn
+                                   && !protector->isExempt(site));
+    m_spoofFingerprint->setToolTip(
+        !webSite
+            ? tr("Fingerprint spoofing applies to web sites")
+            : !protectionOn
+                ? tr("Fingerprint spoofing is off — enable it in "
+                     "Settings > Privacy")
+                : tr("Unchecked, this host is exempted from the "
+                     "injected fingerprint countermeasures (takes "
+                     "effect on reload)."));
+
     rebuildPermissionRows();
     m_refreshing = false;
 }
@@ -412,6 +530,14 @@ void SitePanel::toggleContentBlocking(bool checked)
     if (site.isEmpty())
         return;
     AdBlockManager::instance()->setSiteWhitelisted(site, !checked);
+    refresh();
+}
+
+void SitePanel::toggleGlobalBlocking(bool checked)
+{
+    if (m_refreshing)
+        return;
+    AdBlockManager::instance()->setEnabled(checked);
     refresh();
 }
 
@@ -472,6 +598,30 @@ void SitePanel::toggleHttpAllowance(bool checked)
     refresh();
 }
 
+void SitePanel::toggleFingerprintSpoof(bool checked)
+{
+    if (m_refreshing)
+        return;
+    const QString site = host();
+    if (site.isEmpty() || !m_webView || !m_webView->page())
+        return;
+    // Off-the-record pages never write the persistent store — the
+    // exemption lives only for the session.
+    const bool persistent =
+        !m_webView->page()->profile()->isOffTheRecord();
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    if (checked)
+        protector->clearException(site);
+    else
+        protector->addException(site, persistent);
+    // The exemption list is baked into the injected script — re-push
+    // it onto the live profiles, then reload so this page's document
+    // runs under the new source.
+    protector->reinstallOnProfiles();
+    m_webView->reload();
+    refresh();
+}
+
 void SitePanel::rebuildPermissionRows()
 {
     while (QLayoutItem *item = m_permissionsLayout->takeAt(0)) {
@@ -511,6 +661,144 @@ void SitePanel::rebuildPermissionRows()
     }
 }
 
+#if defined(ARORA_RUSTCORE)
+// The shared FFI fetch behind the Trust section and the shield
+// badge: the composite verdict document for a host, or an empty
+// object when the lookup cannot evaluate (empty host, FFI hiccup).
+// The whole lookup is local — the blocklist, Tranco table, lookalike
+// skeletons and the history rollup all live inside the crate.
+static QJsonObject siteTrustVerdict(const QString &host, bool isHttps)
+{
+    // TRUST03: the master switch kills the whole surface — off means
+    // no FFI call at all, so the badge and the Trust section simply
+    // see an un-evaluable verdict.  The per-signal switches ride the
+    // request as a probe mask: lookalike/threatlist each gate their
+    // own input inside the crate.  All three keys are read live, so
+    // a Preferences flip applies on the next evaluation.
+    if (host.isEmpty() || !BrowserApplication::siteTrustEnabled())
+        return QJsonObject();
+    unsigned int probes = 0;
+    if (BrowserApplication::siteTrustThreatlistEnabled())
+        probes |= RC_SITETRUST_PROBE_THREATLIST;
+    if (BrowserApplication::siteTrustLookalikeEnabled())
+        probes |= RC_SITETRUST_PROBE_LOOKALIKE;
+    rustCoreEnsureDataDir();
+    const QByteArray hostUtf8 = host.toUtf8();
+    char *json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
+                                          isHttps ? 1 : 0, probes);
+    if (!json)
+        return QJsonObject();
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));
+    rc_string_free(json);
+    return doc.object();
+}
+#endif
+
+// TRUST08: asks rustcore for the composite verdict and maps every
+// signal that fired (or is informative) onto a display line — the
+// absence of a signal is never rendered, so no neutral noise like
+// "not on a threat list" shows up.
+QList<SitePanel::TrustLine> SitePanel::trustSignals(const QString &host,
+                                                  bool isHttps)
+{
+    QList<TrustLine> lines;
+#if defined(ARORA_RUSTCORE)
+    const QJsonObject verdict = siteTrustVerdict(host, isHttps);
+    if (verdict.isEmpty())
+        return lines;
+
+    const QJsonArray firedSignals =
+        verdict.value(QLatin1String("signals")).toArray();
+    const auto fired = [&firedSignals](QLatin1String name) {
+        for (const QJsonValue &value : firedSignals) {
+            if (value.toString() == name)
+                return true;
+        }
+        return false;
+    };
+
+    if (fired(QLatin1String("threat")))
+        lines.append({ tr("Listed on the phishing/malware threat list"),
+                       true });
+    if (fired(QLatin1String("lookalike"))) {
+        const QString twin =
+            verdict.value(QLatin1String("lookalike_of")).toString();
+        lines.append({ twin.isEmpty()
+            ? tr("Resembles a popular site — check the address")
+            : tr("Resembles %1 — check the address").arg(twin),
+            true });
+    }
+    // The rank probe is informative in both directions: listed sites
+    // are known, unlisted ones little-known.
+    const qint64 rank =
+        verdict.value(QLatin1String("rank")).toInteger();
+    lines.append({ rank > 0
+        ? tr("Known site (Tranco rank %1)").arg(rank)
+        : tr("Little-known site"), false });
+    if (fired(QLatin1String("first_seen")))
+        lines.append({ tr("First visit to this site"), false });
+#else
+    Q_UNUSED(host);
+    Q_UNUSED(isHttps);
+#endif
+    return lines;
+}
+
+QStringList SitePanel::trustSignalLines(const QString &host, bool isHttps)
+{
+    QStringList out;
+    const QList<TrustLine> lines = trustSignals(host, isHttps);
+    for (const TrustLine &line : lines)
+        out << line.text;
+    return out;
+}
+
+// TRUST09: the badge only needs the level word — the same verdict
+// document, no second FFI signature.
+QString SitePanel::trustLevel(const QString &host, bool isHttps)
+{
+#if defined(ARORA_RUSTCORE)
+    return siteTrustVerdict(host, isHttps)
+        .value(QLatin1String("level")).toString();
+#else
+    Q_UNUSED(host);
+    Q_UNUSED(isHttps);
+    return QString();
+#endif
+}
+
+void SitePanel::rebuildTrustRows()
+{
+    // Row 0 is the "Trust" header — only the signal lines are rebuilt.
+    while (QLayoutItem *item = m_trustLayout->takeAt(1)) {
+        delete item->widget();
+        delete item;
+    }
+
+    const QString site = host();
+    const QString scheme = m_webView ? m_webView->url().scheme()
+                                     : QString();
+    const bool webSite = !site.isEmpty()
+        && (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"));
+    const QList<TrustLine> lines = webSite
+        ? trustSignals(site, scheme == QLatin1String("https"))
+        : QList<TrustLine>();
+
+    const QPalette warning = [this]() {
+        QPalette p = palette();
+        p.setColor(QPalette::WindowText, p.color(QPalette::BrightText));
+        return p;
+    }();
+    for (const TrustLine &line : lines) {
+        QLabel *label = plainLabel(line.text, m_trustBox);
+        if (line.alert)
+            label->setPalette(warning);
+        m_trustLayout->addWidget(label);
+    }
+    m_trustBox->setVisible(!lines.isEmpty());
+}
+
 void SitePanel::clearSiteData()
 {
     const QString site = host();
@@ -526,8 +814,11 @@ void SitePanel::clearSiteData()
     // the origin, so the sweep empties Chromium's live storage areas.
     // The on-disk leveldb trees are service-coupled — they are not
     // removable under a running browser (see BrowserProfile::
-    // clearSiteStorage); the in-memory wipe keeps them empty.
-    m_webView->page()->runJavaScript(QStringLiteral(
+    // clearSiteStorage); the in-memory wipe keeps them empty.  The
+    // lifted path reaches pages whose scripts are blocked (JSCTL) —
+    // a plain runJavaScript is silently dropped there and the wipe
+    // would not happen.
+    m_webView->enginePage()->runJavaScriptLifted(QStringLiteral(
         "try{localStorage.clear()}catch(e){}"
         "try{sessionStorage.clear()}catch(e){}"
         "try{if(window.indexedDB&&indexedDB.databases)"

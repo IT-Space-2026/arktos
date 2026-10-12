@@ -69,6 +69,7 @@
 #include "tabwidget.h"
 
 class QTimer;
+class QPainter;
 class TabPreview;
 
 /*
@@ -111,6 +112,43 @@ public:
     // dwell — exposed for the smoke test.
     TabPreview *tabPreview() const;
 
+    // TABS02: the drag-resizable width of a Left/Right tab strip
+    // (tabs/verticalTabWidth, clamped 120-400, default 180).
+    // reloadVerticalTabWidth() re-reads the persisted value — the
+    // settings-save path calls it so a drag on one window (or a
+    // later edit of the key) lands on every window.
+    int verticalTabWidth() const;
+    void setVerticalTabWidth(int width);
+    void reloadVerticalTabWidth();
+
+    // RSZ01: horizontal-strip tab width bounds from the Tab Settings
+    // page — tabs/tabMinWidth / tabs/tabMaxWidth in px, 0 = automatic
+    // (Qt's squeeze floor / the built-in 18-em cap).
+    // reloadTabWidths() re-reads both keys on the settings-save
+    // live-apply path.
+    int tabMinWidth() const;
+    int tabMaxWidth() const;
+    void setTabWidths(int minimum, int maximum);
+    void reloadTabWidths();
+
+    // TPREV01: tabs/tabHoverPreviews (default on) gates the hover
+    // card.  reloadTabHoverPreviews() re-reads the key so the
+    // settings-save live-apply reaches every window's bar.
+    bool tabPreviewsEnabled() const;
+    void setTabPreviewsEnabled(bool enabled);
+    void reloadTabHoverPreviews();
+
+    // CONT06: the level-1 container-header band painted along the
+    // strip's top edge when the TabWidget's two-level mode has more
+    // than one container owning tabs.  The band is real height on the
+    // widget (sizeHint grows); tabs stay laid out below it in "strip
+    // coordinates" — every mouse handler maps physical event pos to
+    // stripPos() before tabAt()/tabRect() math.
+    int containerStripHeight() const;
+    int containerHeaderAt(const QPoint &physicalPos) const;
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 protected:
     void leaveEvent(QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
@@ -118,10 +156,16 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dragLeaveEvent(QDragLeaveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void initStyleOption(QStyleOptionTab *option, int tabIndex) const override;
     QSize tabSizeHint(int index) const override;
+    QSize minimumTabSizeHint(int index) const override;
+    void tabLayoutChange() override;
     void tabInserted(int position) override;
     void tabRemoved(int position) override;
 
@@ -141,6 +185,9 @@ private:
     void installCloseButton(int index);
     void updateHoveredTab(const QPoint &pos);
     void updateCloseButtonVisibility();
+    // TABS04: the pin flag lives on the TabWidget — the bar only reads
+    // it for rendering and the close protections.
+    bool isTabPinned(int index) const;
     // POL02: hover-preview plumbing — the dwell timer arms on a fresh
     // hover, retargets instantly once a card is up, and the card drops
     // whenever the pointer leaves, presses, or the strip mutates.
@@ -150,16 +197,40 @@ private:
     // CONT02: the container chip — resolves the registry entry behind
     // the tab at index (empty id when the tab is in the default
     // container), the font the chip text uses, and the extra size the
-    // chip needs in this bar's shape.
+    // chip needs in this bar's shape.  TABS06: the chip lives inside
+    // the strip's thickness — the reserve is width-only (accent edge
+    // + name pill borrowed from the title's trailing width), never
+    // height.
     ContainerManager::Container containerForTab(int index) const;
     QFont containerChipFont() const;
     QSize containerChipSize(int index) const;
+    int containerPillReserve(int index) const;
     // TABGRP01: group chip helpers — the tab's group id, whether the
     // tab opens a contiguous run of its group (the pill anchors there),
     // and the group label shown on a collapsed group's chip.
     QString groupIdForTab(int index) const;
     bool isFirstInGroupRun(int index) const;
     QString groupChipLabel(int index) const;
+    // TABS02: vertical-strip helpers — the resize grip on the
+    // strip's inner edge, the row-anchored side-button layout (Qt
+    // positions them transposed for West/East shapes), and hiding
+    // Qt's private rotated moving-tab pixmap during a move drag.
+    // RSZ01: persistVerticalTabWidth() is the shared write+fan-out
+    // used by the drag release and the grip's double-click reset.
+    bool inResizeGrip(const QPoint &pos) const;
+    void persistVerticalTabWidth();
+    void layoutRowTabButtons();
+    void hideNativeMovingTab();
+    // CONT06: level-1 band helpers — header geometry and painting
+    // live in physical widget space (the top containerStripHeight()
+    // pixels); stripPos() maps a physical event point into the
+    // tabRect() space below the band.
+    QPoint stripPos(const QPoint &physicalPos) const;
+    QRect containerHeaderRect(int headerIndex) const;
+    QString containerHeaderId(int headerIndex) const;
+    void paintContainerStrip(QPainter *painter);
+    void shiftChildrenBelowStrip();
+    void updateAccessibleStrip();
     friend class TabWidget;
 
     QPoint m_dragStartPos;
@@ -175,6 +246,35 @@ private:
     // POL02: lazily-created hover card + its dwell timer.
     TabPreview *m_preview;
     QTimer *m_previewTimer;
+    // TPREV01: the Appearance-page opt-out — off means the dwell
+    // timer never arms and an up card drops immediately.
+    bool m_tabPreviewsEnabled;
+    // TABS02: vertical-strip state — the persisted strip width, the
+    // active edge-drag resize, and the tracked press/move-drag used
+    // to float the dragged row horizontally in paintEvent.
+    int m_verticalTabWidth;
+    bool m_resizing;
+    int m_resizeStartX;
+    int m_resizeStartWidth;
+    int m_pressedTabIndex;
+    bool m_moveDragActive;
+    bool m_moveDragVertical;
+    int m_moveDragMouseY;
+    int m_moveDragGrabOffset;
+    // RSZ01: horizontal-strip width bounds (0 = automatic).
+    int m_tabMinWidth;
+    int m_tabMaxWidth;
+    // CONT06: level-1 band state — the hovered header, the header a
+    // press started on (click selects, drag to another header
+    // reorders), the header a dragged tab is hovering (rebind
+    // target), the keyboard-focused header, and the horizontal
+    // move-drag float used when the band is up.
+    int m_bandHoverHeader = -1;
+    int m_bandPressedHeader = -1;
+    int m_bandDropHeader = -1;
+    int m_bandFocusHeader = -1;
+    int m_moveDragMouseX = 0;
+    int m_moveDragGrabOffsetX = 0;
 };
 
 

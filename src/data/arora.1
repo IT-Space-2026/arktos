@@ -35,6 +35,25 @@ Sets the application's layout direction to right-to-left.
 .TP
 .B url
 The URL address to open in the browser.
+.TP
+.B \-\-tor
+Open a Tor window: a separate process routing all traffic through a
+managed tor daemon's SOCKS5 listener on an off-the-record profile.
+.TP
+.B \-\-no-sandbox
+Run without the filesystem sandbox. Browsing launches normally re-exec
+inside bubblewrap on Linux (credential stores and other browsers'
+profiles masked, /etc /usr /boot read-only); this flag is the escape
+hatch, equivalent to setting \fBARORA_NO_SANDBOX=1\fR or the
+\fBsandbox/enabled=false\fR settings key.
+.TP
+.B \-\-sandbox-status
+Print the sandbox backend, whether this process is wrapped, and the
+resolved policy, then exit.
+.PP
+The packaged \fBarora-sandbox\fR launcher script (installed next to the
+binary) starts Arora inside the same sandbox without relying on the
+self re-exec.
 
 .SH BUGS
 Please report bugs to \fIhttps://github.com/Arora/arora/issues\fR.

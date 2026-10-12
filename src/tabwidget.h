@@ -67,7 +67,9 @@
 
 #include <qcolor.h>
 #include <qhash.h>
-#include <qwebenginepage.h>
+#include <qicon.h>
+#include <qpoint.h>
+#include <qset.h>
 #include <qurl.h>
 
 QT_BEGIN_NAMESPACE
@@ -80,7 +82,10 @@ class QStackedWidget;
 class QTimer;
 QT_END_NAMESPACE
 
+namespace Engine { class Backend; class Profile; enum class StandardAction; }
+
 class BrowserMainWindow;
+class EngineTab;
 class OmniboxSuggestions;
 class TabBar;
 class WebView;
@@ -108,7 +113,7 @@ signals:
     void showStatusBarMessage(const QString &message);
     void linkHovered(const QString &link);
     void loadProgress(int progress);
-    void printRequested(QWebEnginePage *page);
+    void printRequested(WebView *view);
 
 public:
     enum OpenUrlIn {
@@ -125,7 +130,7 @@ public:
     void loadSettings();
     TabBar *tabBar() { return m_tabBar; }
     void clear();
-    void addWebAction(QAction *action, QWebEnginePage::WebAction webAction);
+    void addWebAction(QAction *action, Engine::StandardAction webAction);
 
     QAction *newTabAction() const;
     QAction *closeTabAction() const;
@@ -153,9 +158,77 @@ public:
     // the session — and unknown/deleted ids degrade to the default
     // container.
     WebView *makeNewTabInContainer(const QString &containerId, bool makeCurrent = false);
+    // PTAB01: a private TAB inside a normal window — the page lives on
+    // the shared off-the-record profile while the process stays
+    // non-private.  In tor mode every tab is already off-the-record
+    // on the dedicated tor profile; this just makes a normal new tab
+    // there (the shared private profile is NOT tor-hardened).
+    WebView *makeNewPrivateTab(bool makeCurrent = false);
     // The container the tab at index belongs to — the default
     // container id for normal and off-the-record pages.
     QString containerIdForTab(int index) const;
+    // PTAB01: true when the tab's page browses off-the-record — the
+    // tab marker, the menu gates and the child-tab inheritance all
+    // key on the page profile, not the window-global private flag.
+    bool isTabPrivate(int index) const;
+
+    // TABS04: pinned tabs — a contiguous prefix of the strip rendered
+    // icon-only (favicon + tooltip, no title).  The flag is keyed on
+    // the tab's page widget so it survives drags, group collapse and
+    // container-level filtering; it works on widget tabs too.
+    bool isTabPinned(int index) const;
+    // The leading run of pinned tabs — also the slot new tabs insert
+    // at so the pinned block stays a prefix.
+    int pinnedTabCount() const;
+
+    // CONT06 — two-level container strip.  When enabled (the
+    // tabs/containerDisplay setting) and more than one container has
+    // tabs, the strip shows the ACTIVE header's tabs only; the rest
+    // are detached into m_containerHidden — same mechanics as a
+    // collapsed group's hidden members, the widgets are never
+    // destroyed.  The level-1 header row itself is painted by
+    // TabBar at the strip's top edge.
+    bool twoLevelStrip() const;          // the setting's current value
+    // Non-empty only when the band actually renders — the default
+    // header plus every container that currently owns tabs.
+    bool containerStripActive() const;
+    QString activeContainerHeader() const;
+    QStringList containerHeaders() const;
+    // Tabs bound to a container — visible plus hidden — so the
+    // level-1 badges keep counting while a level is filtered out.
+    int containerTabCount(const QString &containerId) const;
+    // Every live tab in the window — count() only sees the visible
+    // level, so window-close confirmations must use this or filtered
+    // levels would silently close without warning.
+    int totalTabCount() const;
+    void setActiveContainerHeader(const QString &containerId);
+    // Drag-reorder of the level-1 headers (the default header is
+    // pinned first and cannot move).
+    void moveContainerHeader(int from, int to);
+
+    // PREFS01: hosts a plain widget (settings page, later the history
+    // manager) in a tab slot.  The page has no WebView, so
+    // webView()/webViewSearch() return nullptr for it — every
+    // dereference site is null-safe — and its companion in the
+    // location-bar stack is a read-only line edit echoing the title
+    // (keeps the parallel stack index-locked and Ctrl+L working).
+    // Returns the new tab's strip index.
+    int addWidgetTab(QWidget *page, const QString &title,
+                     const QIcon &icon, bool makeCurrent = true);
+
+    // ENG05 — per-tab engine tracking + the engine swap.  A browsing
+    // tab is either a WebView (webengine) or an EngineTab hosting a
+    // foreign backend; tabEngineId() reports which, "" for
+    // non-browsing widget tabs.  reloadTabInEngine() replaces the
+    // tab's page widget with the same url on the target backend —
+    // the same swap shape as reopenTabInContainer (the page's engine
+    // is fixed at creation).  The swap refuses — returns false — in
+    // Tor windows (locked to Chromium: servo has no SOCKS5), on
+    // private tabs (no off-the-record equivalent on other backends)
+    // and for unknown backend ids.
+    QString tabEngineId(int index) const;
+    EngineTab *engineTab(int index) const;
+    bool reloadTabInEngine(int index, const QString &engineId);
 
     // TABGRP01 — named, color-coded tab groups (Chrome/Vivaldi style).
     // Membership is keyed on the tab's WebView so drags never lose it;
@@ -201,8 +274,22 @@ public:
     bool restoreSessionState(const QJsonObject &state);
 #endif
 
+    // PREFUI04: lazy session restore (performance/lazyRestoreTabs) —
+    // a restored tab that has not been activated yet holds only its
+    // stashed url + history blob; activating it performs the load
+    // restoreState() would have done eagerly.
+    bool isTabPendingRestore(int index) const;
+    QUrl pendingRestoreUrl(int index) const;
+
     static OpenUrlIn modifyWithUserBehavior(OpenUrlIn tab);
     WebView *getView(OpenUrlIn tab, WebView *currentView);
+
+    // The omnibox resolver — public so the smoke harness and autotests
+    // can assert the routing decision directly (SRCH07).  The two-arg
+    // form takes the target tab's private context (PTAB01); the one-arg
+    // form resolves it from the process-global private flag.
+    static QUrl guessUrlFromString(const QString &url);
+    static QUrl guessUrlFromString(const QString &url, bool privateContext);
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -211,9 +298,9 @@ protected:
     // guessUrlFromString() resolves the rustcore verdict first and
     // only falls back to the in-tree heuristic on FFI trouble;
     // no-rust builds always take the reference path.
-    static QUrl guessUrlFromStringCpp(const QString &url);
+    static QUrl guessUrlFromStringCpp(const QString &url, bool privateContext);
 #ifdef ARORA_RUSTCORE
-    static QUrl guessUrlFromStringRust(const QString &url);
+    static QUrl guessUrlFromStringRust(const QString &url, bool privateContext);
 #endif
 
 public slots:
@@ -247,23 +334,38 @@ public slots:
     // the page and restores the scroll position.
     void sleepTab(int index = -1);
     void wakeTab(int index = -1);
+    // TABS05: undo closed tab (Ctrl+Shift+T) — pops the newest
+    // memory-only record and rebuilds the tab at its old slot.  The
+    // stack is never written to disk: a persisted undo stack would
+    // be a history leak (SEC07).
+    void openLastTab();
+    bool hasRecentlyClosedTabs() const;
+    // Empties the undo stack — the history-clear signal and the
+    // clear-private-data dialog both land here.
+    void clearRecentlyClosedTabs();
     bool isTabSleeping(int index) const;
     int sleepingTabCount() const;
     // Why a tab cannot be auto-slept right now — "current",
-    // "sleeping", "inflight", "loading", "audible", "download",
-    // "form", "empty" — or an empty string when it is eligible.  Used
-    // by the idle sweep and exposed for the smoke test.
+    // "pinned", "sleeping", "inflight", "loading", "audible",
+    // "download", "form", "empty" — or an empty string when it is
+    // eligible.  Used by the idle sweep and exposed for the smoke
+    // test.
     QString sleepBlockReason(int index) const;
     // Auto-suspend sweep: sleep every background tab idle for at
     // least idleMs milliseconds.  The settings-driven timer calls
     // this; the smoke test drives it directly.
     void suspendIdleTabs(qint64 idleMs);
-    // POL02: the tab-strip hover preview's thumbnail — the page's
-    // last live render at ~thumbnail scale, or null when the tab
-    // never rendered a capturable frame (never shown, evicted,
-    // blank).  Background tabs re-grab on request where the engine
-    // still holds the last compositor frame; otherwise the frame
-    // cached while the tab was last current is returned.
+    // PREFUI05: the effective idle-suspend interval — the Memory
+    // Saver setting, or the forced 10-minute cap while Energy Saver
+    // is active (0 = the sweep is off).
+    qint64 suspendIdleIntervalMs() const;
+    // POL02/TPREV02: the tab-strip hover preview's thumbnail — the
+    // page's last live render at ~thumbnail scale, or null when the
+    // tab never rendered a capturable frame (never shown, evicted,
+    // blank).  Only the current tab's view re-grabs on request: a
+    // hidden view's compositor frame can be stale or a recycled
+    // context's pixels, so background tabs serve the identity-checked
+    // snapshot cached while they last painted — never another frame.
     QPixmap tabThumbnail(int index);
     void newTab();
     // START02: the user-facing New Tab command — the action and the
@@ -276,9 +378,13 @@ public slots:
     // Same command for the container menu — the tab binds to
     // containerId's profile, then opens the start page.
     void newTabPageInContainer(const QString &containerId);
+    void newPrivateTab();
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
     void closeOtherTabs(int index);
+    // TABS04: pin/unpin — the tab slides to the edge of the pinned
+    // block so the strip keeps pinned tabs as a contiguous prefix.
+    void setTabPinned(int index, bool pinned);
     void reloadTab(int index = -1);
     void reloadAllTabs();
     void nextTab();
@@ -287,7 +393,6 @@ public slots:
 
 private slots:
     void currentChanged(int index);
-    void openLastTab();
     void aboutToShowRecentTabsMenu();
     void aboutToShowRecentTriggeredAction(QAction *action);
     void webViewLoadStarted();
@@ -302,13 +407,23 @@ private slots:
     void historyCleared();
 
 private:
-    static QUrl guessUrlFromString(const QString &url);
     // START02: navigate the (already current) fresh tab to the
     // new-tab page — the shared back half of the newTabPage* entry
     // points.
     void loadNewTabPageUrl();
     QLabel *animationLabel(int index, bool addMovie);
     void retranslate();
+    // The shared body of makeNewTabInContainer()/makeNewPrivateTab():
+    // a location bar plus a WebView bound to the resolved profile.
+    WebView *makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent);
+    // ENG05: the engine-tab half of newTab()/reloadTabInEngine() —
+    // an EngineTab on the backend's profile plus a read-only location
+    // bar carrying the engine indicator, inserted like addWidgetTab.
+    EngineTab *addEngineTab(Engine::Backend *backend, bool makeCurrent);
+    // Child-tab inheritance for the container AND the private context
+    // of source (the current tab for Ctrl+T, the opener page for
+    // window.open / open-in-new-tab).
+    WebView *makeNewTabLike(WebView *source, bool makeCurrent);
     // SLEEP01: idle bookkeeping + the async state-capture half of
     // beginTabSleep (scroll position and the dirty-form probe come
     // back together from one runJavaScript round trip).
@@ -318,6 +433,9 @@ private:
                              const QVariant &result);
     void applySleepVisuals(int index, bool sleeping);
     void updateSleepTimer();
+    // PREFUI05: re-apply the Energy Saver caps live — suspend clock,
+    // immediate sweep, loading-spinner pause.
+    void applyEnergyCaps();
     // POL02: thumbnail plumbing for the hover preview — the deferred
     // schedule lets the compositor present the freshly shown/loaded
     // page before the snapshot is taken.
@@ -336,9 +454,54 @@ private:
     // opener's group (and hides itself when that group is collapsed).
     void inheritTabGroup(WebView *webView, WebView *opener);
     // Every tab in strip order — with a collapsed group's hidden
-    // members spliced in right after their chip.  Used by saveState so
+    // members spliced in right after its chip.  Used by saveState so
     // no tab drops out of the serialized session.
     QList<WebView*> orderedWebViews() const;
+
+    // TABS04 internals — the raw flag set (no moving; moveTab's
+    // boundary rule and setTabPinned's slide use it), and the prefix
+    // repair batch re-insertions (group expand, container-level
+    // restore) can disturb.
+    void setPinFlag(QWidget *page, bool pinned);
+    void normalizePinnedBlock();
+
+    // CONT06 internals — see the public accessors above.  The filter
+    // pass detaches every tab not bound to m_activeContainerHeader
+    // into its own container's list and re-inserts the active
+    // container's detached tabs in order.
+    void setTwoLevelStrip(bool enabled);
+    void applyContainerFilter();
+    void syncContainerStrip();
+    void detachTabIntoContainerStore(int index);
+    void restoreHiddenContainerTabs(const QString &containerId);
+    void closeHiddenTab(WebView *view);
+
+    // TABS05: one undo-close record — url + the session-format
+    // history blob (RCORE03) carry the page, title/icon feed the
+    // recently-closed menus, index/container/group/pinned rebuild the
+    // strip slot, and scrollX/Y restore the viewport on the reopened
+    // tab's first finished load.
+    struct RecentlyClosedTab {
+        QUrl url;
+        QString title;
+        QIcon icon;
+        int index = -1;              // strip index when closed, -1 for hidden
+        QByteArray historyState;
+        QString containerId;
+        QString groupId;
+        bool pinned = false;
+        bool scrollValid = false;
+        double scrollX = 0.0;
+        double scrollY = 0.0;
+    };
+    // pushRecentlyClosedTab snapshots the closing tab (closeTab's
+    // strip path and closeHiddenTab's filtered-level path share it);
+    // restoreClosedTab rebuilds the tab and puts back the recorded
+    // slot.
+    void pushRecentlyClosedTab(WebView *view, int index,
+                               const QString &containerId,
+                               const QString &groupId);
+    void restoreClosedTab(const RecentlyClosedTab &closed);
 
     // A detached member of a collapsed group: its page widget, its
     // location bar and the tab-strip visuals re-applied on expand.
@@ -366,7 +529,9 @@ private:
         QList<QByteArray> histories;   // parallel: serializePageHistory or empty
         QStringList containers;        // parallel: container binding
         QStringList groupIds;          // parallel: "" = ungrouped
+        QList<qint32> pinned;          // parallel: TABS04 pin flag, 0/1
         QList<TabGroup> groups;        // group table, first-appearance order
+        QString activeContainerHeader; // CONT06: window's level-1 selection
     };
     TabSessionSnapshot collectSessionSnapshot() const;
     bool restoreSessionSnapshot(const TabSessionSnapshot &snapshot);
@@ -378,6 +543,28 @@ private:
     // back through tabMoved.
     bool m_groupAdjust = false;
 
+    // CONT06: two-level strip state.  m_activeContainerHeader is the
+    // container id whose tabs the strip shows ("" = the default
+    // header); m_containerHeaderOrder is the session ordering of the
+    // non-default headers; m_containerHidden holds each filtered-out
+    // level's detached tabs in strip order; m_lastActiveInHeader
+    // remembers a level's last current tab so switching back lands
+    // on it.
+    bool m_twoLevelStrip = false;
+    QString m_activeContainerHeader;
+    QStringList m_containerHeaderOrder;
+    QHash<QString, QList<HiddenGroupTab>> m_containerHidden;
+    QHash<QString, WebView*> m_lastActiveInHeader;
+    bool m_containerFilterAdjust = false;
+
+    // TABS04: the pinned set, keyed on the tab's page widget (the
+    // WebViewWithSearch or a widget tab's page) — the same identity
+    // HiddenGroupTab detaches keep, so pin state rides along
+    // untouched.  m_sessionRestore switches new-tab insertion back to
+    // append while restoreState() recreates the saved order.
+    QSet<QWidget*> m_pinnedTabs;
+    bool m_sessionRestore = false;
+
     QAction *m_recentlyClosedTabsAction;
     QAction *m_newTabAction;
     QAction *m_closeTabAction;
@@ -386,12 +573,13 @@ private:
     QAction *m_previousTabAction;
 
     QMenu *m_recentlyClosedTabsMenu;
-    static const int m_recentlyClosedTabsSize = 10;
-    QList<QUrl> m_recentlyClosedTabs;
-    QList<QByteArray> m_recentlyClosedTabsHistory;
-    // CONT02: parallel to m_recentlyClosedTabs — reopening a closed
-    // tab returns it to the container it was closed in.
-    QList<QString> m_recentlyClosedTabsContainers;
+    static const int m_recentlyClosedTabsSize = 25;
+    // TABS05: the undo stack — newest first, capped, memory-only,
+    // private pages never enter (SEC07).
+    QList<RecentlyClosedTab> m_recentlyClosedTabs;
+    // A reopened tab's recorded scroll, consumed on its first
+    // loadFinished (the SLEEP01 wake-restore pattern).
+    QHash<WebView *, QPointF> m_pendingScrollRestore;
     QList<WebActionMapper*> m_actions;
 
     QCompleter *m_lineEditCompleter;
@@ -417,9 +605,30 @@ private:
     QHash<WebView *, TabSleepState> m_sleepStates;
     QTimer *m_sleepTimer = nullptr;
     qint64 m_suspendIdleMs = 0;
-    // POL02: per-view thumbnail cache for the hover preview — keyed
-    // on the view like the sleep bookkeeping so drags never lose it.
-    QHash<WebView *, QPixmap> m_tabThumbnails;
+
+    // PREFUI04: session-restore deferral — the tab keeps its slot,
+    // saved title and favicon while its page is never loaded; the
+    // stashed url + serialized history survive saveState() round
+    // trips and the undo-close snapshot.
+    struct PendingRestore {
+        QUrl url;
+        QByteArray historyState;
+    };
+    QHash<WebView *, PendingRestore> m_pendingRestores;
+    bool m_lazyRestoreTabs = false;
+    bool m_lazyRestorePinnedTabs = true;
+    void restorePendingTab(int index);
+    // POL02/TPREV02: per-view thumbnail cache for the hover preview —
+    // keyed on the view like the sleep bookkeeping so drags never
+    // lose it.  The stored url is the frame's page identity: an entry
+    // is served only while it still matches the view's url, and
+    // webViewLoadStarted() drops it outright so a pre-navigation
+    // frame can never be passed off as the new page.
+    struct CachedThumbnail {
+        QPixmap pixmap;
+        QUrl url;
+    };
+    QHash<WebView *, CachedThumbnail> m_tabThumbnails;
 };
 
 #endif // TABWIDGET_H

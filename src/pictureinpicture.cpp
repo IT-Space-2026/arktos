@@ -20,6 +20,7 @@
 #include "pictureinpicture.h"
 
 #include "browsermainwindow.h"
+#include "engineinterface.h"
 #include "pipwindow.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -91,7 +92,7 @@ PictureInPicture::PictureInPicture(WebView *view)
 
     // A real navigation kills the popped-out element's document — the
     // window cannot be returned to anything, so close it outright.
-    connect(m_view->page(), &QWebEnginePage::loadStarted,
+    connect(m_view->enginePage(), &Engine::Page::loadStarted,
             this, [this]() {
         if (m_window)
             m_window->close();
@@ -121,52 +122,16 @@ void PictureInPicture::runPageJs(
         const QString &call,
         const std::function<void(const QVariant &)> &callback)
 {
-    QWebEnginePage *page = m_view ? m_view->page() : nullptr;
+    Engine::Page *page = m_view ? m_view->enginePage() : nullptr;
     if (!page) {
         if (callback)
             callback(QVariant());
         return;
     }
     const QString program = scriptBundle() + QLatin1Char('\n') + call;
-    if (page->settings()->testAttribute(
-            QWebEngineSettings::JavascriptEnabled)) {
-        page->runJavaScript(program, [callback](const QVariant &result) {
-            if (callback)
-                callback(result);
-        });
-        return;
-    }
-
-    // JSCTL/SECLVL: WebEngine silently drops runJavaScript while
-    // JavascriptEnabled is off, but a plain <video> element still
-    // plays with scripts blocked — pop-out must reach it.  Lift the
-    // attribute for the injection window only, like ReaderMode does:
-    // page scripts blocked at parse time do not retro-run while the
-    // flag is up, and a hard fallback restores it if the renderer
-    // wedges mid-injection.
-    page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
-                                   true);
-    QPointer<QWebEnginePage> livePage(page);
-    QTimer::singleShot(700, this, [livePage, program, callback]() {
-        if (!livePage)
-            return;
-        livePage->runJavaScript(program,
-                [callback, livePage](const QVariant &result) {
-            if (callback)
-                callback(result);
-            QTimer::singleShot(400, qApp, [livePage]() {
-                if (livePage) {
-                    livePage->settings()->setAttribute(
-                        QWebEngineSettings::JavascriptEnabled, false);
-                }
-            });
-        });
-    });
-    QTimer::singleShot(5000, this, [livePage]() {
-        if (livePage)
-            livePage->settings()->setAttribute(
-                QWebEngineSettings::JavascriptEnabled, false);
-    });
+    // JSCTL/SECLVL: a plain <video> still plays with scripts blocked
+    // — the lifted path keeps pop-out reaching it.
+    page->runJavaScriptLifted(program, callback);
 }
 
 void PictureInPicture::resolvePageRequest(const QString &nonce, bool ok,

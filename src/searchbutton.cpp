@@ -116,11 +116,6 @@ void SearchButton::setShowMenuTriangle(bool show)
     setMinimumSize(sizeHint());
 }
 
-bool SearchButton::showMenuTriangle() const
-{
-    return m_showMenuTriangle;
-}
-
 void SearchButton::changeEvent(QEvent *event)
 {
     // Palette swaps (light/dark theme change) must regenerate the

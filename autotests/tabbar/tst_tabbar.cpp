@@ -20,6 +20,7 @@
 #include <QtGui/QtGui>
 #include <QtTest/QtTest>
 #include <qabstractbutton.h>
+#include <qlabel.h>
 #include <qinputdialog.h>
 #include <qmenu.h>
 #include <qmimedata.h>
@@ -56,6 +57,11 @@ private slots:
 
     void middleClickPaste();
 
+    void verticalTabRows();
+    void verticalTabResize();
+    void verticalGripReset();
+    void horizontalTabWidths();
+    void verticalTabButtons();
     void contextMenuBaseEntries();
     void contextMenuGroupEntries();
     void contextMenuContainerEntries();
@@ -93,6 +99,9 @@ public:
     void call_mouseReleaseEvent(QMouseEvent *event)
         { return SubTabBar::mouseReleaseEvent(event); }
 
+    void call_mouseDoubleClickEvent(QMouseEvent *event)
+        { return SubTabBar::mouseDoubleClickEvent(event); }
+
     void call_newTab()
         { return SubTabBar::newTab(); }
 
@@ -107,6 +116,9 @@ public:
 
     QSize call_tabSizeHint(int index) const
         { return SubTabBar::tabSizeHint(index); }
+
+    QSize call_minimumTabSizeHint(int index) const
+        { return SubTabBar::minimumTabSizeHint(index); }
 };
 
 // This will be called before the first test function is executed.
@@ -300,6 +312,273 @@ void tst_TabBar::middleClickPaste()
                        QClipboard::Selection);
     bar.call_mouseReleaseEvent(&event);
     QCOMPARE(opened, QList<QUrl>() << QUrl("http://example.com/"));
+}
+
+// TABS02: a Left/Right strip lays its tabs out as horizontal rows —
+// a persisted strip width and a one-line height, with the title
+// painted left-to-right instead of Qt's rotated West/East text.
+void tst_TabBar::verticalTabRows()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("verticalTabWidth"));
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedWest);
+    // Production bars are documentMode -> non-expanding; mirror that
+    // or the rows stretch to fill the test widget's height.
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("This is a fairly long tab title"));
+    bar.addTab(QLatin1String("Second tab"));
+    bar.resize(200, 400);
+    QApplication::processEvents();
+
+    QCOMPARE(bar.verticalTabWidth(), 180);
+    // Rows: full strip width, one text line tall, stacked.
+    const int rowHeight = bar.tabRect(0).height();
+    QVERIFY(rowHeight >= 20 && rowHeight <= 40);
+    QCOMPARE(bar.tabRect(0).width(), bar.verticalTabWidth());
+    QCOMPARE(bar.tabRect(0).width(), bar.tabRect(1).width());
+    QCOMPARE(bar.tabRect(1).top(), bar.tabRect(0).bottom() + 1);
+
+    // The title must paint horizontally — grab the strip and check
+    // the "ink" inside the first row spreads across the row's width
+    // instead of down a narrow rotated column.  Ink = pixels whose
+    // brightness differs strongly from the row's dominant color.
+    const QImage image = bar.grab().toImage();
+    QCOMPARE(image.size(), bar.size());
+    const QRect inside = bar.tabRect(0).adjusted(30, 4, -8, -4);
+    QHash<QRgb, int> frequency;
+    for (int y = 0; y < inside.height(); ++y)
+        for (int x = 0; x < inside.width(); ++x)
+            ++frequency[image.pixel(inside.topLeft() + QPoint(x, y))];
+    QRgb background = 0;
+    int most = 0;
+    for (auto it = frequency.constBegin(); it != frequency.constEnd(); ++it) {
+        if (it.value() > most) {
+            most = it.value();
+            background = it.key();
+        }
+    }
+    const int bgGray = qGray(background);
+    int minX = inside.width(), maxX = -1;
+    for (int y = 0; y < inside.height(); ++y) {
+        for (int x = 0; x < inside.width(); ++x) {
+            const int gray =
+                qGray(image.pixel(inside.topLeft() + QPoint(x, y)));
+            if (qAbs(gray - bgGray) > 60) {
+                minX = qMin(minX, x);
+                maxX = qMax(maxX, x);
+            }
+        }
+    }
+    QVERIFY2(maxX >= 0, "no title text detected inside the tab row");
+    QVERIFY2(maxX - minX > 60,
+             qPrintable(QStringLiteral(
+                 "title ink is %1px wide — a rotated/elided label "
+                 "would stay inside a ~16px column")
+                 .arg(maxX - minX + 1)));
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// TABS02: the strip's inner edge is a drag-resize grip — dragging it
+// resizes live (120-400 clamp), and releasing persists
+// tabs/verticalTabWidth.
+void tst_TabBar::verticalTabResize()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("verticalTabWidth"));
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedWest);
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    bar.resize(200, 300);
+    QApplication::processEvents();
+    QCOMPARE(bar.verticalTabWidth(), 180);
+
+    const auto dragGrip = [&bar](int dx) {
+        const QPoint grip(bar.width() - 3, 100);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(grip),
+                          QPointF(bar.mapToGlobal(grip)),
+                          Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        bar.call_mousePressEvent(&press);
+        const QPoint target = grip + QPoint(dx, 0);
+        QMouseEvent move(QEvent::MouseMove, QPointF(target),
+                         QPointF(bar.mapToGlobal(target)),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        bar.call_mouseMoveEvent(&move);
+        QMouseEvent release(QEvent::MouseButtonRelease,
+                            QPointF(target),
+                            QPointF(bar.mapToGlobal(target)),
+                            Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        bar.call_mouseReleaseEvent(&release);
+    };
+
+    // West strip: dragging right (into the content) widens it.
+    dragGrip(40);
+    QCOMPARE(bar.verticalTabWidth(), 220);
+    QCOMPARE(
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 220);
+    // The new hint flows through to the tab rects once relaid out.
+    bar.resize(300, 300);
+    QApplication::processEvents();
+    QCOMPARE(bar.tabRect(0).width(), 220);
+
+    // Clamps both directions.
+    dragGrip(500);
+    QCOMPARE(bar.verticalTabWidth(), 400);
+    dragGrip(-500);
+    QCOMPARE(bar.verticalTabWidth(), 120);
+
+    // A grip press is not a tab press: no drag tracking / selection
+    // side effects are armed by it.  Dragging along the grip
+    // vertically keeps resizing (horizontal delta wins) — and
+    // crucially must not start a tab move.
+    dragGrip(-20);
+    QCOMPARE(bar.verticalTabWidth(), 120);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// RSZ01: double-clicking the vertical strip's grip snaps the width
+// back to the 180px default and persists it like a drag release.
+void tst_TabBar::verticalGripReset()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("verticalTabWidth"), 300);
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedWest);
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.resize(200, 300);
+    QApplication::processEvents();
+    QCOMPARE(bar.verticalTabWidth(), 300);
+
+    const QPoint grip(bar.width() - 3, 100);
+    QMouseEvent dblClick(QEvent::MouseButtonDblClick, QPointF(grip),
+                         QPointF(bar.mapToGlobal(grip)),
+                         Qt::LeftButton, Qt::LeftButton,
+                         Qt::NoModifier);
+    bar.call_mouseDoubleClickEvent(&dblClick);
+    QCOMPARE(bar.verticalTabWidth(), 180);
+    QCOMPARE(
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// RSZ01: tabs/tabMinWidth / tabs/tabMaxWidth bound the horizontal
+// strip — a cap replaces the built-in extent, a floor overrides the
+// style's squeeze minimum, 0 means Automatic, and both reload live.
+void tst_TabBar::horizontalTabWidths()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("tabMinWidth"));
+    settings.remove(QLatin1String("tabMaxWidth"));
+
+    SubTabBar bar;
+    bar.addTab(QLatin1String("a reasonably long tab title"));
+    const int natural = bar.call_tabSizeHint(0).width();
+    QVERIFY(natural > 140);
+
+    // Automatic (0/0) leaves the stock bounds alone.
+    QCOMPARE(bar.tabMinWidth(), 0);
+    QCOMPARE(bar.tabMaxWidth(), 0);
+
+    // A cap below the natural width clamps the hint.
+    bar.setTabWidths(0, 140);
+    QCOMPARE(bar.tabMaxWidth(), 140);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), 140);
+
+    // A floor raises both the hint and the squeeze minimum.
+    bar.setTabWidths(200, 0);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), qMax(200, natural));
+    QCOMPARE(bar.call_minimumTabSizeHint(0).width(), 200);
+
+    // The floor never exceeds the cap.
+    bar.setTabWidths(300, 250);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), 250);
+
+    // Out-of-range inputs clamp instead of exploding the layout.
+    bar.setTabWidths(-50, 5000);
+    QCOMPARE(bar.tabMinWidth(), 0);
+    QCOMPARE(bar.tabMaxWidth(), 800);
+
+    // Persisted keys flow through reloadTabWidths (the settings
+    // live-apply path).
+    settings.setValue(QLatin1String("tabMinWidth"), 150);
+    settings.setValue(QLatin1String("tabMaxWidth"), 320);
+    bar.reloadTabWidths();
+    QCOMPARE(bar.tabMinWidth(), 150);
+    QCOMPARE(bar.tabMaxWidth(), 320);
+    QCOMPARE(bar.call_tabSizeHint(0).width(),
+             qBound(150, natural, 320));
+
+    settings.remove(QLatin1String("tabMinWidth"));
+    settings.remove(QLatin1String("tabMaxWidth"));
+    settings.endGroup();
+}
+
+// TABS02: the per-tab side widgets (favicon label on freeSide, the
+// close button) anchor to the row ends — not to the transposed
+// top/bottom positions Qt computes for West/East shapes.
+void tst_TabBar::verticalTabButtons()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("verticalTabWidth"));
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedEast);
+    bar.setPerTabCloseButtons(true);
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+
+    QLabel *favicon = new QLabel(&bar);
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::red);
+    favicon->setPixmap(pixmap);
+    bar.setTabButton(0, bar.freeSide(), favicon);
+
+    bar.resize(300, 300);
+    QApplication::processEvents();
+    bar.call_tabLayoutChange();
+
+    const QRect row = bar.tabRect(0);
+    QVERIFY(row.isValid());
+    // The ButtonPosition sides must land at the matching physical
+    // end of the row, vertically centered inside it.
+    QWidget *leftWidget = bar.tabButton(0, QTabBar::LeftSide);
+    QVERIFY(leftWidget);
+    QVERIFY(leftWidget->pos().x() <= row.left() + row.height());
+    QVERIFY(leftWidget->pos().y() >= row.top()
+            && leftWidget->pos().y() < row.bottom());
+    QWidget *rightWidget = bar.tabButton(0, QTabBar::RightSide);
+    QVERIFY(rightWidget);
+    QVERIFY(rightWidget->pos().x() + rightWidget->width()
+            >= row.right() - row.height());
+    QVERIFY(rightWidget->pos().y() >= row.top()
+            && rightWidget->pos().y() < row.bottom());
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
 }
 
 // COV05 — the tab-strip chrome lives on the TabWidget's own TabBar, so
@@ -534,6 +813,14 @@ void tst_TabBar::contextMenuGroupEntries()
 // the always-open site rules, and the dialog-launching actions.
 void tst_TabBar::contextMenuContainerEntries()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level — pin inline mode so the strip indices the
+    // context-menu drives below stay stable.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     TabWidget widget;
     widget.resize(640, 240);
     widget.show();
@@ -596,6 +883,12 @@ void tst_TabBar::contextMenuContainerEntries()
                         QLatin1String("Reopen in Container"));
 
     manager->deleteContainer(container.id);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // paintEvent's container chips, group rails/pills/collapsed chip and
@@ -603,6 +896,14 @@ void tst_TabBar::contextMenuContainerEntries()
 // sends expose events but explicit rendering still runs the painter.
 void tst_TabBar::chipsPaint()
 {
+    // The CONT06 two-level strip (default on) filters the container
+    // tab into its own level — pin inline mode so the chip-bearing
+    // tab is what paintEvent draws.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     TabWidget widget;
     widget.resize(720, 320);
     widget.show();
@@ -643,17 +944,43 @@ void tst_TabBar::chipsPaint()
     QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 15000);
 
     TabBar *bar = widget.tabBar();
+    int containerIndex = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.containerIdForTab(i) == container.id)
+            containerIndex = i;
+    }
+    QVERIFY(containerIndex >= 0);
     // Every shape paints a different chip arm (strip edge, pill and
     // badge placement); grab() forces a real paintEvent each time.
+    // TABS06: the container chip borrows title space INSIDE the row —
+    // a container tab is exactly as tall as a plain tab on every
+    // shape and the strip stays near a native QTabBar's height.
     const QTabWidget::TabPosition positions[] = {
         QTabWidget::North, QTabWidget::South,
         QTabWidget::West, QTabWidget::East
     };
-    for (QTabWidget::TabPosition position : positions) {
-        widget.setTabPosition(position);
+    const QStringList shapeNames = {
+        QLatin1String("north"), QLatin1String("south"),
+        QLatin1String("west"), QLatin1String("east")
+    };
+    int worstHeight = 0;
+    for (int shapeIndex = 0; shapeIndex < 4; ++shapeIndex) {
+        widget.setTabPosition(positions[shapeIndex]);
         QApplication::processEvents();
-        QVERIFY(!bar->grab().isNull());
+        const QPixmap strip = bar->grab();
+        QVERIFY(!strip.isNull());
+        const QByteArray prefix = qgetenv("TABSHOT_PREFIX");
+        if (!prefix.isEmpty())
+            strip.toImage().save(QString::fromLatin1(
+                "/tmp/arora-tabs-%1-%2.png")
+                .arg(QString::fromLatin1(prefix),
+                     shapeNames.at(shapeIndex)));
+        QCOMPARE(bar->tabRect(containerIndex).height(),
+                 bar->tabRect(0).height());
+        worstHeight = qMax(worstHeight,
+                           bar->tabRect(containerIndex).height());
     }
+    QVERIFY(worstHeight <= 36);
     widget.setTabPosition(QTabWidget::North);
     QApplication::processEvents();
 
@@ -665,6 +992,12 @@ void tst_TabBar::chipsPaint()
     widget.setTabGroupCollapsed(collapsed, false);
     widget.ungroupTabs(collapsed);
     manager->deleteContainer(container.id);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // The mouse/drag/wheel/leave handlers on a real strip: drop-stacking,

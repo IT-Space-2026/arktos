@@ -21,18 +21,28 @@
 #include <QtGui/QtGui>
 #include "qtest_arora.h"
 
+#include <engineinterface.h>
+#include <engineregistry.h>
+#include <enginetab.h>
 #include <tabwidget.h>
 #include <tabbar.h>
+#include <tabpreview.h>
 #include <webview.h>
 
-#include <containermanager.h>
+#include "fakeengine.h"
+
 #include <historycompleter.h>
 #include <opensearchmanager.h>
 #include <opensearchengine.h>
 #include <privacyrequestinterceptor.h>
 #include <toolbarsearch.h>
 
+#include <containermanager.h>
+#include <historymanager.h>
+
 #include <qcompleter.h>
+#include <qdir.h>
+#include <qfile.h>
 #include <qlineedit.h>
 #include <qmenu.h>
 #include <qurlquery.h>
@@ -87,14 +97,21 @@ private slots:
     void restoreStateCorrupt();
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
+    void verticalTabStripWidth();
+    void tabHoverPreviews();
+    void tabThumbnailStaleness();
     void omnibox();
     void omniboxEnterDispatch();
     void omniboxTabScope();
     void tabGroups();
+    void pinnedTabs();
+    void reopenClosedTab();
+    void engineSwapStripState();
     void sleepingTabs();
     void containerTabs();
     void tabSlotDrive();
     void newTabStartPage();
+    void lazySessionRestore();
 };
 
 // Subclass that exposes the protected functions.
@@ -141,6 +158,12 @@ void tst_TabWidget::init()
 // This will be called after every test function.
 void tst_TabWidget::cleanup()
 {
+    // A mid-test QVERIFY exit would otherwise leak the lazy-restore
+    // keys into the shared store and turn every later restoreState()
+    // lazy (saveState's restored urls then never load).
+    QSettings settings;
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
 }
 
 void tst_TabWidget::tabwidget_data()
@@ -150,7 +173,7 @@ void tst_TabWidget::tabwidget_data()
 void tst_TabWidget::tabwidget()
 {
     SubTabWidget widget;
-    widget.addWebAction((QAction*)0, QWebEnginePage::Back);
+    widget.addWebAction((QAction*)0, Engine::StandardAction::Back);
     widget.closeTab();
     QVERIFY(widget.closeTabAction());
     widget.currentWebView();
@@ -166,17 +189,16 @@ void tst_TabWidget::tabwidget()
     QVERIFY(widget.currentLocationBar());
 }
 
-Q_DECLARE_METATYPE(QWebEnginePage::WebAction)
 void tst_TabWidget::addWebAction_data()
 {
-    QTest::addColumn<QWebEnginePage::WebAction>("webAction");
-    QTest::newRow("back") << QWebEnginePage::Back;
+    QTest::addColumn<Engine::StandardAction>("webAction");
+    QTest::newRow("back") << Engine::StandardAction::Back;
 }
 
-// public void addWebAction(QAction *action, QWebEnginePage::WebAction webAction)
+// public void addWebAction(QAction *action, Engine::StandardAction webAction)
 void tst_TabWidget::addWebAction()
 {
-    QFETCH(QWebEnginePage::WebAction, webAction);
+    QFETCH(Engine::StandardAction, webAction);
 
     SubTabWidget widget;
 
@@ -212,7 +234,7 @@ void tst_TabWidget::addWebAction()
         QVERIFY(spy0.at(i).at(0).toString().isEmpty());
     QVERIFY(spy3.count() > 0);
     QCOMPARE(spy6.count(), 0);
-    QCOMPARE(widget.webView(0)->history()->count(), 2);
+    QCOMPARE(widget.webView(0)->enginePage()->historyCount(), 2);
 }
 
 void tst_TabWidget::closeTab_data()
@@ -846,6 +868,205 @@ void tst_TabWidget::tabBarPositionSetting()
     settings.endGroup();
 }
 
+// TABS02: tabs/verticalTabWidth drives the Left/Right strip's actual
+// width inside a real QTabWidget — read on construction, re-applied
+// live through loadSettings() (the path SettingsDialog::saveToSettings
+// calls on every window), and reflected in the tab rects.
+void tst_TabWidget::verticalTabStripWidth()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+    settings.setValue(QLatin1String("verticalTabWidth"), 200);
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QCOMPARE(bar->verticalTabWidth(), 200);
+    // The strip's widget width follows the persisted value (the
+    // QTabWidget layout adds a small frame margin around it).
+    QVERIFY(bar->width() >= 200 && bar->width() <= 210);
+    QCOMPARE(bar->tabRect(0).width(), 200);
+
+    // Live resize — what the edge-drag does per move.
+    bar->setVerticalTabWidth(300);
+    QApplication::processEvents();   // LayoutRequest -> setUpLayout
+    QVERIFY(bar->width() >= 300 && bar->width() <= 310);
+    QCOMPARE(bar->tabRect(0).width(), 300);
+
+    // loadSettings() (the settings-save fan-out) re-reads the key.
+    settings.setValue(QLatin1String("verticalTabWidth"), 160);
+    widget.loadSettings();
+    QApplication::processEvents();
+    QCOMPARE(bar->verticalTabWidth(), 160);
+    QVERIFY(bar->width() >= 160 && bar->width() <= 175);
+
+    // The Right strip picks the same persisted width.
+    settings.setValue(QLatin1String("tabBarPosition"), 3);   // Right
+    widget.loadSettings();
+    QApplication::processEvents();
+    QCOMPARE(int(widget.tabPosition()), int(QTabWidget::East));
+    QVERIFY(bar->width() >= 160 && bar->width() <= 175);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
+}
+
+// TPREV01: tabs/tabHoverPreviews (default on) gates the hover
+// preview card — read on construction, re-applied live through
+// loadSettings() (the path SettingsDialog::saveToSettings fans out
+// to every window), and opting out while a card is up drops it.
+void tst_TabWidget::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    TabBar *bar = widget.bar();
+    QVERIFY(!bar->tabPreviewsEnabled());
+
+    // Synthetic QTest::mouseMove does not reach widgets under the
+    // offscreen QPA — post the move through sendEvent like the
+    // tst_tabbar legs drive their handlers.
+    const auto hoverTab = [&bar](int index) {
+        const QPoint pos = bar->tabRect(index).center();
+        QMouseEvent move(QEvent::MouseMove, QPointF(pos),
+                         QPointF(bar->mapToGlobal(pos)),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &move);
+    };
+
+    // Opted out: dwelling on a tab never arms the card.
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview());
+
+    // Opted back in through the live-apply path the settings dialog
+    // uses -> the dwell pops the card on the hovered tab.
+    settings.setValue(QLatin1String("tabHoverPreviews"), true);
+    widget.loadSettings();
+    QVERIFY(bar->tabPreviewsEnabled());
+    hoverTab(0);
+    QTest::qWait(700);
+    QVERIFY(bar->tabPreview());
+    QVERIFY(bar->tabPreview()->isVisible());
+    QCOMPARE(bar->tabPreview()->previewedIndex(), 0);
+
+    // Opting out while a card is up drops it immediately, and a
+    // fresh dwell on another tab never re-arms it.
+    settings.setValue(QLatin1String("tabHoverPreviews"), false);
+    widget.loadSettings();
+    QVERIFY(!bar->tabPreviewsEnabled());
+    QVERIFY(!bar->tabPreview()->isVisible());
+    hoverTab(1);
+    QTest::qWait(700);
+    QVERIFY(!bar->tabPreview()->isVisible());
+
+    settings.remove(QLatin1String("tabHoverPreviews"));
+    settings.endGroup();
+}
+
+// TPREV02: the hover thumbnail must show the tab's OWN current page.
+// The current tab re-grabs live; background tabs are served only the
+// identity-checked snapshot cached while they last painted (a hidden
+// view's compositor frame can be stale or a recycled context's
+// pixels — a request-time grab is never trusted); a full navigation
+// drops the entry at loadStarted, and a same-document hash change
+// disqualifies it on the recorded url.  A miss yields null so the
+// preview falls back to the title+url card — never another page's
+// pixels.
+void tst_TabWidget::tabThumbnailStaleness()
+{
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-tprev02-fixture.html"));
+    {
+        QFile fixture(fixturePath);
+        QVERIFY(fixture.open(QIODevice::WriteOnly));
+        fixture.write("<html><head><title>tprev02</title></head>"
+                      "<body style='margin:0;background:#c33'>zero</body>"
+                      "</html>");
+    }
+    const QUrl page0 = QUrl::fromLocalFile(fixturePath);
+    // Named colours only — a '#'-style colour inside a data: url is a
+    // fragment delimiter and would truncate the document.
+    const QUrl page1(QStringLiteral(
+        "data:text/html,<body style='background:blue;margin:0'>one</body>"));
+
+    SubTabWidget widget;
+    widget.newTab();
+    widget.newTab();
+    widget.resize(640, 480);
+    widget.show();
+    QApplication::processEvents();
+
+    widget.webView(0)->loadUrl(page0);
+    widget.webView(1)->loadUrl(page1);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), page0, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), page1, 15000);
+
+    // The current tab paints and caches its live frame.
+    widget.setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.tabThumbnail(0).isNull(), 15000);
+
+    // Hidden tab: the identity-matching snapshot is served — this is
+    // the only path a background tab may take.
+    widget.setCurrentIndex(1);
+    QApplication::processEvents();
+    QVERIFY(!widget.tabThumbnail(0).isNull());
+
+    // A same-document hash navigation changes the url without any
+    // loadStarted — the stored frame can no longer be proven current
+    // and must be rejected on identity.
+    widget.webView(0)->enginePage()->runJavaScript(
+        QStringLiteral("location.hash = '#moved'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        widget.webView(0)->url().fragment()
+            == QLatin1String("moved"),
+        15000);
+    QVERIFY(widget.tabThumbnail(0).isNull());
+
+    // A full background navigation likewise leaves nothing servable:
+    // no request-time grab fills in, and loadFinished does not
+    // re-cache a tab that never painted (negative control on the
+    // stale-frame path — under the old grab-on-request code a
+    // painted background frame would have surfaced here).
+    const QUrl page0b(QStringLiteral(
+        "data:text/html,<body style='background:green;margin:0'>zero-b</body>"));
+    QSignalSpy loadedSpy(widget.webView(0)->page(),
+                         &QWebEnginePage::loadFinished);
+    widget.webView(0)->loadUrl(page0b);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), page0b, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(loadedSpy.count() >= 1, 15000);
+    QTest::qWait(400);   // past the 300ms deferred-capture window
+    QVERIFY(widget.tabThumbnail(0).isNull());
+
+    // Back on top, the same tab re-grabs live again.
+    widget.setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.tabThumbnail(0).isNull(), 15000);
+
+    // A closed tab's snapshot dies with it — closing the cached tab
+    // mid-test must not leave anything servable behind (the entries
+    // are removed on both view-death paths, closeTab here).
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 1);
+    QTest::qWait(50);   // the dying view's deferred deleteLater lands
+    widget.closeTab();
+    QFile::remove(fixturePath);
+}
+
 // SRCH01: the location bar is an omnibox — guessUrlFromString (driven
 // through loadString) must search for text that is not address-shaped
 // instead of guessing http://, while address-shaped input still
@@ -854,6 +1075,11 @@ void tst_TabWidget::tabBarPositionSetting()
 void tst_TabWidget::omnibox()
 {
     QSettings settings;
+    // SRCH09: this key used to leak — the test disabled it below and
+    // never restored it, which broke search for the real profile when
+    // the test ran against the live config.
+    const QVariant savedSearchFallback =
+        settings.value(QLatin1String("urlloading/searchEngineFallback"));
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
 
     // PRIV01/SAFE01: the profile interceptor upgrades http:
@@ -926,11 +1152,14 @@ void tst_TabWidget::omnibox()
     // 'keyword terms' wins over everything, even address-shaped terms.
     check(QLatin1String("ot hello"), engine->searchUrl(QLatin1String("hello")));
 
-    // SRCH11: an engine whose descriptor produces no usable url must
-    // not dead-end the bar — the shared rescue degrades to the
-    // bundled DuckDuckGo endpoint so the search still loads.
+    // SRCH07/SRCH11: a configured engine that produces no usable
+    // search url must not dead-end the bar — the shared rescue
+    // degrades to the bundled DuckDuckGo endpoint instead of emitting
+    // a bogus http://<term> navigation.
     const QString savedTemplate = engine->searchUrlTemplate();
     engine->setSearchUrlTemplate(QString());
+    check(QLatin1String("word"),
+          QUrl(QLatin1String("https://duckduckgo.com/?q=word")));
     QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
     QUrlQuery rescueQuery;
     rescueQuery.addQueryItem(QLatin1String("q"),
@@ -943,11 +1172,18 @@ void tst_TabWidget::omnibox()
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
     check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));
 
-    // SRCH11: under the opt-out a guess that cannot parse still
-    // searches — "http://two words" used to reach loadUrl() as an
-    // invalid url and die silently (dead Enter).
+    // SRCH09/SRCH11: under the opt-out a guess that cannot parse
+    // still searches — "http://two words" used to reach loadUrl() as
+    // an invalid url and die silently (dead Enter).
     check(QLatin1String("two words"),
           engine->searchUrl(QLatin1String("two words")));
+
+    if (savedSearchFallback.isValid())
+        settings.setValue(
+            QLatin1String("urlloading/searchEngineFallback"),
+            savedSearchFallback);
+    else
+        settings.remove(QLatin1String("urlloading/searchEngineFallback"));
 
     manager->setEngineForKeyword(QLatin1String("ot"), nullptr);
     manager->setCurrentEngineName(previousEngine);
@@ -1253,6 +1489,442 @@ void tst_TabWidget::tabGroups()
     }
 }
 
+// TABS04: pinned tabs — a contiguous icon-only prefix that survives
+// "Close Other Tabs", ignores middle-click, exempts the idle-sleep
+// sweep, converts on a drag across the boundary, seats new tabs right
+// after it, and round-trips through the v5 session tail.
+void tst_TabWidget::pinnedTabs()
+{
+    SubTabWidget widget;
+    for (int i = 0; i < 4; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 4);
+    WebView *v0 = widget.webView(0);
+    WebView *v1 = widget.webView(1);
+    WebView *v2 = widget.webView(2);
+    WebView *v3 = widget.webView(3);
+    QVERIFY(v0 && v1 && v2 && v3);
+
+    // Out-of-range queries are safe no-ops.
+    QVERIFY(!widget.isTabPinned(-1));
+    QVERIFY(!widget.isTabPinned(4));
+    QCOMPARE(widget.pinnedTabCount(), 0);
+
+    // Pinning a middle tab slides it to the front of the block.
+    widget.setTabPinned(2, true);          // strip [v2, v0, v1, v3]
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v0);
+    // A redundant set is a no-op.
+    widget.setTabPinned(0, true);
+    QCOMPARE(widget.webView(0), v2);
+
+    widget.setTabPinned(3, true);          // strip [v2, v3, v0, v1]
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    QCOMPARE(widget.webView(1), v3);
+    QCOMPARE(widget.webView(2), v0);
+
+    // New tabs insert right after the pinned block, not at the end.
+    WebView *fresh = widget.makeNewTab(false);
+    QVERIFY(fresh);
+    QCOMPARE(widget.webViewIndex(fresh), 2);
+    QCOMPARE(widget.count(), 5);
+
+    // Icon-only rendering: the pinned tab's rect collapses to the
+    // favicon width while unpinned tabs keep their title extent.
+    TabBar *bar = widget.bar();
+    widget.resize(720, 480);
+    widget.show();
+    QApplication::processEvents();
+    const int pinnedWidth = bar->tabRect(0).width();
+    QVERIFY(pinnedWidth > 0 && pinnedWidth <= 60);
+    QVERIFY(bar->tabRect(2).width() > pinnedWidth);
+
+    // Pinned tabs hide their per-tab close button entirely.
+    bar->setPerTabCloseButtons(true);
+    QApplication::processEvents();
+    const QTabBar::ButtonPosition side =
+        bar->freeSide() == QTabBar::LeftSide ? QTabBar::RightSide
+                                             : QTabBar::LeftSide;
+    QWidget *pinnedClose = bar->tabButton(0, side);
+    if (pinnedClose)
+        QVERIFY(pinnedClose->isHidden() || !pinnedClose->isVisibleTo(bar));
+
+    // Middle-click on a pinned tab is ignored — Vivaldi semantics.
+    QTest::mouseClick(bar, Qt::MiddleButton, Qt::NoModifier,
+                      bar->tabRect(0).center());
+    QCOMPARE(widget.count(), 5);
+    // ...but still closes an ordinary tab.
+    QTest::mouseClick(bar, Qt::MiddleButton, Qt::NoModifier,
+                      bar->tabRect(2).center());
+    QCOMPARE(widget.count(), 4);
+    QVERIFY(widget.isTabPinned(0));
+    QVERIFY(widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+
+    // A pinned background tab is exempt from the idle-sleep sweep.
+    widget.setCurrentIndex(0);
+    QCOMPARE(widget.sleepBlockReason(1), QLatin1String("pinned"));
+
+    // "Close Other Tabs" skips pinned tabs in both directions.
+    widget.closeOtherTabs(1);              // keep v3, drop the rest unpinned
+    QCOMPARE(widget.count(), 2);
+    QVERIFY(widget.isTabPinned(0));
+    QVERIFY(widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), v3);
+
+    // An explicit close still works on a pinned tab.
+    widget.closeTab(1);
+    QCOMPARE(widget.count(), 1);
+    QVERIFY(widget.isTabPinned(0));
+
+    // Drag conversion: an unpinned tab dropped inside the pinned
+    // block pins, a pinned tab dragged past the boundary unpins.
+    widget.newTab();
+    widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    WebView *u0 = widget.webView(1);
+    WebView *u1 = widget.webView(2);
+    QVERIFY(u0 && u1);
+    bar->moveTab(2, 0);                    // u1 into the pinned block
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.webView(0), u1);
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    bar->moveTab(0, 2);                    // u1 back out past the edge
+    QVERIFY(!widget.isTabPinned(2));
+    QCOMPARE(widget.webView(2), u1);
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QCOMPARE(widget.webView(0), v2);
+    QCOMPARE(widget.webView(1), u0);
+
+    // Unpin slides the tab to just past the remaining pinned block.
+    widget.setTabPinned(1, true);          // [v2, u0] pinned, u1 not
+    QCOMPARE(widget.pinnedTabCount(), 2);
+    widget.setTabPinned(0, false);         // v2 slides to index 1
+    QCOMPARE(widget.pinnedTabCount(), 1);
+    QVERIFY(!widget.isTabPinned(1));
+    QCOMPARE(widget.webView(0), u0);
+    QCOMPARE(widget.webView(1), v2);
+    QCOMPARE(widget.webView(2), u1);
+    widget.setTabPinned(0, false);         // nothing left pinned
+    QCOMPARE(widget.pinnedTabCount(), 0);
+
+    // Session round-trip: the v5 tail carries the per-tab flags and a
+    // v4 blob (no tail) restores unpinned.
+    {
+        SubTabWidget w2;
+        for (int i = 0; i < 3; ++i)
+            w2.newTab();
+        w2.setTabPinned(1, true);          // v[1] leads the strip
+        WebView *pv = w2.webView(0);
+        QVERIFY(w2.isTabPinned(0));
+        const QByteArray state = w2.saveState();
+
+        SubTabWidget w3;
+        QVERIFY(w3.restoreState(state));
+        QCOMPARE(w3.count(), 3);
+        QVERIFY(w3.isTabPinned(0));
+        QVERIFY(!w3.isTabPinned(1));
+        QVERIFY(!w3.isTabPinned(2));
+        QCOMPARE(w3.webView(0)->url(), pv->url());
+    }
+    {
+        QByteArray v4blob;
+        QDataStream out(&v4blob, QIODevice::WriteOnly);
+        out << qint32(0xaa) << qint32(4)
+            << (QStringList() << QStringLiteral("data:text/plain,v4a")
+                              << QStringLiteral("data:text/plain,v4b"))
+            << qint32(0)
+            << (QList<QByteArray>() << QByteArray() << QByteArray())
+            << (QStringList() << QString() << QString())
+            << (QStringList() << QString() << QString())
+            << qint32(0)
+            << QString();
+        SubTabWidget w4;
+        QVERIFY(w4.restoreState(v4blob));
+        QCOMPARE(w4.count(), 2);
+        QVERIFY(!w4.isTabPinned(0));
+        QVERIFY(!w4.isTabPinned(1));
+    }
+
+    // Vertical strip: pinned rows stay on top and new tabs still
+    // seat right behind them.
+    {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("tabs"));
+        settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+        SubTabWidget wv;
+        for (int i = 0; i < 3; ++i)
+            wv.newTab();
+        wv.setTabPinned(2, true);
+        QCOMPARE(wv.pinnedTabCount(), 1);
+        wv.resize(720, 480);
+        wv.show();
+        QApplication::processEvents();
+        TabBar *vbar = wv.bar();
+        QVERIFY(vbar->tabRect(0).top() < vbar->tabRect(1).top());
+        WebView *nv = wv.makeNewTab(false);
+        QCOMPARE(wv.webViewIndex(nv), 1);
+        settings.remove(QLatin1String("tabBarPosition"));
+        settings.endGroup();
+    }
+
+    widget.closeTab();
+    widget.closeTab();
+    widget.closeTab();
+}
+
+// TABS05: undo closed tab — a capped memory-only stack records each
+// closed tab's url, session history blob, strip index, container,
+// group, pin and scroll offset.  Ctrl+Shift+T (openLastTab) rebuilds
+// the tab at its old slot in LIFO order; off-the-record pages never
+// enter and a history wipe or explicit clear empties the stack.
+void tst_TabWidget::reopenClosedTab()
+{
+    // The CONT06 strip (default on) only engages once a second
+    // container owns tabs — pin the inline mode anyway so the index
+    // assertions below are immune to the setting.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
+    SubTabWidget widget;
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+    widget.openLastTab();          // empty-stack no-op
+    QCOMPARE(widget.count(), 0);
+
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    const QUrl u0("data:text/plain,undo-a");
+    const QUrl u1("data:text/plain,undo-b");
+    const QUrl u2("data:text/plain,undo-c");
+    widget.webView(0)->loadUrl(u0);
+    widget.webView(1)->loadUrl(u1);
+    widget.webView(2)->loadUrl(u2);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), u2, 15000);
+
+    // Close all three; the records stack newest-first.
+    widget.closeTab(1);            // u1
+    widget.closeTab(0);            // u0
+    widget.closeTab(0);            // u2 (shifted down)
+    QCOMPARE(widget.count(), 0);
+    QVERIFY(widget.hasRecentlyClosedTabs());
+    QVERIFY(widget.recentlyClosedTabsAction()->isEnabled());
+
+    // Three undos restore most-recent-first, each at its recorded
+    // index — u2@0, then u0@0, then u1@1 -> original order rebuilt.
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u2, 15000);
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u0, 15000);
+    QCOMPARE(widget.webView(1)->url(), u2);
+    widget.openLastTab();
+    QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u1, 15000);
+    QCOMPARE(widget.webView(0)->url(), u0);
+    QCOMPARE(widget.webView(2)->url(), u2);
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+
+    // Pin round-trip — a pinned tab comes back into the block.
+    widget.setTabPinned(1, true);            // u1 leads, pinned
+    QVERIFY(widget.isTabPinned(0));
+    widget.closeTab(0);
+    QCOMPARE(widget.count(), 2);
+    widget.openLastTab();
+    QCOMPARE(widget.count(), 3);
+    int pinnedIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u1)
+            pinnedIdx = i;
+    }
+    QCOMPARE(pinnedIdx, 0);
+    QVERIFY(widget.isTabPinned(0));
+    QCOMPARE(widget.pinnedTabCount(), 1);
+
+    // Group round-trip — close a member, the group lives on, undo
+    // rejoins it.
+    const QString gid = widget.createTabGroup(1);
+    QVERIFY(!gid.isEmpty());
+    widget.addTabToGroup(2, gid);
+    QCOMPARE(widget.tabGroupId(2), gid);
+    widget.closeTab(2);                      // u2 leaves the group
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    widget.openLastTab();
+    QVERIFY(widget.tabGroupSize(gid) >= 2);
+    int groupIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u2)
+            groupIdx = i;
+    }
+    QVERIFY(groupIdx >= 0);
+    QCOMPARE(widget.tabGroupId(groupIdx), gid);
+
+    // A group that died between close and undo restores ungrouped.
+    widget.closeTab(1);                      // u0 leaves the group
+    QCOMPARE(widget.tabGroupSize(gid), 1);
+    widget.ungroupTabs(gid);                 // the group record dies
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    widget.openLastTab();                    // u0, recorded gid gone
+    int ungroupedIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == u0)
+            ungroupedIdx = i;
+    }
+    QVERIFY(ungroupedIdx >= 0);
+    QCOMPARE(widget.tabGroupId(ungroupedIdx), QString());
+
+    // Container round-trip — the reopened tab lands back on its
+    // container's profile.
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        QStringLiteral("UndoTest"), QColor(Qt::blue)).id;
+    QVERIFY(!cid.isEmpty());
+    WebView *containerView = widget.makeNewTabInContainer(cid, true);
+    QVERIFY(containerView);
+    const QUrl cu("data:text/plain,undo-container");
+    containerView->loadUrl(cu);
+    QTRY_COMPARE_WITH_TIMEOUT(containerView->url(), cu, 15000);
+    const int containerIdx = widget.webViewIndex(containerView);
+    QCOMPARE(widget.containerIdForTab(containerIdx), cid);
+    widget.closeTab(containerIdx);
+    widget.openLastTab();
+    int restoredContainerIdx = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.webView(i) && widget.webView(i)->url() == cu)
+            restoredContainerIdx = i;
+    }
+    QVERIFY(restoredContainerIdx >= 0);
+    QCOMPARE(widget.containerIdForTab(restoredContainerIdx), cid);
+    // deleteContainer() is not idempotent (a second call fails on
+    // !isContainerId) and its storage teardown retries internally,
+    // so it must run once — wait for the closed view's deferred
+    // deletion to land, then call it a single time.
+    QSignalSpy containerViewDied(widget.webView(restoredContainerIdx),
+                                 &QObject::destroyed);
+    widget.closeTab(restoredContainerIdx);
+    QTRY_VERIFY_WITH_TIMEOUT(containerViewDied.count() == 1, 5000);
+    QVERIFY(manager->deleteContainer(cid));
+
+    // The recently-closed submenu lists records with their titles —
+    // a data: page has none, so the url stands in.
+    QMenu *closedMenu = widget.recentlyClosedTabsAction()->menu();
+    QVERIFY(closedMenu);
+    emit closedMenu->aboutToShow();
+    const int records = closedMenu->actions().size();
+    QVERIFY(records > 0);
+    for (QAction *entry : closedMenu->actions())
+        QVERIFY(!entry->text().isEmpty());
+
+    // A private tab never enters the stack — closing it queues
+    // nothing (SEC07).
+    WebView *privateView = widget.makeNewPrivateTab(true);
+    QVERIFY(privateView);
+    const QUrl pu("data:text/plain,undo-private");
+    privateView->loadUrl(pu);
+    QTRY_COMPARE_WITH_TIMEOUT(privateView->url(), pu, 15000);
+    const int privateIdx = widget.webViewIndex(privateView);
+    QVERIFY(widget.isTabPrivate(privateIdx));
+    widget.closeTab(privateIdx);
+    emit closedMenu->aboutToShow();
+    QCOMPARE(closedMenu->actions().size(), records);
+
+    // A history wipe empties the stack (the Clear Private Data path
+    // reaches the same slot).
+    emit HistoryManager::instance()->historyCleared();
+    QVERIFY(!widget.hasRecentlyClosedTabs());
+    QVERIFY(!widget.recentlyClosedTabsAction()->isEnabled());
+
+    while (widget.count() > 0)
+        widget.closeTab(widget.count() - 1);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// ENG09 — strip integrity across reloadTabInEngine(): the swap must
+// never lose or reorder the other tabs, the replacement takes the
+// old tab's slot, and strip state survives per the documented
+// contract (pin transfers by position; group membership drops on a
+// foreign EngineTab; a collapsed group re-collapses around its next
+// member when its chip is swapped).
+void tst_TabWidget::engineSwapStripState()
+{
+    FakeEngineBackend fake;
+    EngineRegistry::registerBackend(&fake);
+
+    // Multi-tab strip: the middle tab swaps out and back — every
+    // other tab keeps its slot.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 3; ++i)
+            widget.newTab();
+        WebView *v0 = widget.webView(0);
+        WebView *v2 = widget.webView(2);
+        QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(1));
+        QCOMPARE(widget.webView(0), v0);
+        QCOMPARE(widget.webView(2), v2);
+        QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("webengine")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.webView(1));
+        QCOMPARE(widget.webView(0), v0);
+        QCOMPARE(widget.webView(2), v2);
+    }
+
+    // Pinned strip: swapping a pinned tab keeps the replacement in
+    // the pinned block.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 3; ++i)
+            widget.newTab();
+        widget.setTabPinned(0, true);
+        widget.setTabPinned(1, true);
+        QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(0));
+        QCOMPARE(widget.pinnedTabCount(), 2);
+        QVERIFY(widget.isTabPinned(0));
+    }
+
+    // Collapsed group chip: closing the chip expands the group to
+    // free the hidden members — the swap must re-collapse it around
+    // the next member rather than leaving the strip expanded.
+    {
+        SubTabWidget widget;
+        for (int i = 0; i < 4; ++i)
+            widget.newTab();
+        const QString gid = widget.createTabGroup(0);
+        widget.addTabToGroup(1, gid);
+        widget.addTabToGroup(2, gid);
+        widget.setTabGroupCollapsed(gid, true);
+        QCOMPARE(widget.count(), 2);            // chip + v3
+        const int totalBefore = widget.totalTabCount();
+        QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+        // The foreign tab takes the chip's slot, the next member
+        // becomes the new chip, the rest stay hidden.
+        QCOMPARE(widget.count(), 3);
+        QCOMPARE(widget.totalTabCount(), totalBefore);
+        QVERIFY(widget.engineTab(0));
+        QVERIFY(widget.tabGroupIsCollapsed(gid));
+        QVERIFY(widget.isTabGroupChip(1));
+        QCOMPARE(widget.tabGroupMembers(gid), QList<int>() << 1);
+    }
+
+    EngineRegistry::unregisterBackend(&fake);
+}
+
 // SLEEP01: the suspend cycle end to end — eligibility reasons, the
 // async capture/discard, wake-on-activate, the dirty-form latch and
 // the idle sweep all observable from the public API.
@@ -1331,6 +2003,14 @@ void tst_TabWidget::sleepingTabs()
 // the diversion entry point lands the url on the right profile.
 void tst_TabWidget::containerTabs()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level once a second container owns tabs — pin inline
+    // mode so the index assertions below see every tab.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     ContainerManager *manager = ContainerManager::instance();
     const ContainerManager::Container container =
         manager->createContainer(QLatin1String("CovCtx"), QColor(Qt::blue));
@@ -1394,6 +2074,12 @@ void tst_TabWidget::containerTabs()
     while (widget.count())
         widget.closeTab(0);
     QVERIFY(manager->deleteContainer(container.id));
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // The tab-strip slots that drive whole actions: clone/reload/close-
@@ -1562,6 +2248,113 @@ void tst_TabWidget::newTabStartPage()
     while (widget.count())
         widget.closeTab(0);
     restoreHome();
+}
+
+// PREFUI04: performance/lazyRestoreTabs defers a restored tab's first
+// load until activation — the strip already shows the saved url — the
+// selected tab flushes immediately, "Always Load Pinned Tabs" exempts
+// pinned tabs, and a still-deferred tab re-serializes its stashed
+// url + history blob so saveState() loses nothing.
+void tst_TabWidget::lazySessionRestore()
+{
+    QSettings settings;
+    const QUrl url1(QLatin1String("data:text/html,one"));
+    const QUrl url2(QLatin1String("data:text/html,two"));
+    const QUrl url3(QLatin1String("data:text/html,three"));
+
+    // Saved strip: [url1 pinned] [url2 current] [url3 background].
+    QByteArray state;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(url1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        widget.loadUrl(url2, TabWidget::NewSelectedTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), url2, 15000);
+        widget.loadUrl(url3, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), url3, 15000);
+        widget.setTabPinned(0, true);
+        QVERIFY(widget.isTabPinned(0));
+        QCOMPARE(widget.currentIndex(), 1);
+        state = widget.saveState();
+    }
+
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"), true);
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.count(), 3);
+
+        // The pinned exemption loads eagerly; the saved-current tab
+        // flushes its deferral as soon as restore settles.
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        QVERIFY(!widget.isTabPendingRestore(0));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), url2, 15000);
+        QVERIFY(!widget.isTabPendingRestore(1));
+
+        // The background tab holds only its stashed session entry —
+        // no load, but the strip + omnibox already read restored.
+        QVERIFY(widget.isTabPendingRestore(2));
+        QCOMPARE(widget.pendingRestoreUrl(2), url3);
+        QVERIFY(widget.webView(2)->url().isEmpty());
+        QCOMPARE(widget.locationBar(2)->text(),
+                 QString::fromUtf8(url3.toEncoded()));
+        QVERIFY(widget.tabText(2).contains(QLatin1String("three")));
+
+        // First activation performs the deferred load.
+        widget.setCurrentIndex(2);
+        QVERIFY(!widget.isTabPendingRestore(2));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), url3, 15000);
+
+        while (widget.count() > 0)
+            widget.closeTab(widget.count() - 1);
+    }
+
+    // A deferred tab re-serializes its stash — restoring the re-saved
+    // session eagerly yields every url again.
+    {
+        SubTabWidget lazy;
+        lazy.newTab();
+        QVERIFY(lazy.restoreState(state));
+        QCOMPARE(lazy.count(), 3);
+        QVERIFY(lazy.isTabPendingRestore(2));
+        const QByteArray resaved = lazy.saveState();
+
+        settings.setValue(QLatin1String("performance/lazyRestoreTabs"), false);
+        SubTabWidget eager;
+        eager.newTab();
+        QVERIFY(eager.restoreState(resaved));
+        QCOMPARE(eager.count(), 3);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(0)->url(), url1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(1)->url(), url2, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(eager.webView(2)->url(), url3, 15000);
+        while (eager.count() > 0)
+            eager.closeTab(eager.count() - 1);
+        while (lazy.count() > 0)
+            lazy.closeTab(lazy.count() - 1);
+        settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    }
+
+    // Opting out of the pinned exemption defers pinned tabs too.
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"), false);
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.isTabPendingRestore(0));
+        QCOMPARE(widget.pendingRestoreUrl(0), url1);
+        widget.setCurrentIndex(0);
+        QVERIFY(!widget.isTabPendingRestore(0));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), url1, 15000);
+        while (widget.count() > 0)
+            widget.closeTab(widget.count() - 1);
+    }
+
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
 }
 
 QTEST_MAIN(tst_TabWidget)

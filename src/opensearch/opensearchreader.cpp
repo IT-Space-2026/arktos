@@ -78,6 +78,11 @@ OpenSearchReader::OpenSearchReader()
 // the input so a hostile or corrupt source cannot exhaust memory.
 static const qint64 MaximumDocumentSize = 1024 * 1024;
 
+// SENG02: <Alias> keyword bounds match the rustcore store's
+// (MAX_KEYWORDS / MAX_KEYWORD_LEN) so both parse paths agree.
+static const int MaximumKeywords = 64;
+static const int MaximumKeywordLength = 128;
+
 OpenSearchEngine *OpenSearchReader::read(QIODevice *device)
 {
     clear();
@@ -231,19 +236,32 @@ OpenSearchEngine *OpenSearchReader::read(const QByteArray &data)
                 engine->setSearchMethod(method);
             }
 
+        } else if (name() == QLatin1String("Alias")) {
+            // SENG02: Arora extension — an <Alias> element declares a
+            // default keyword binding ("nickname") for the engine;
+            // the manager binds only slots nobody already claimed.
+            const QString keyword = readElementText().trimmed();
+            if (!keyword.isEmpty()
+                && keyword.size() <= MaximumKeywordLength
+                && engine->defaultKeywords().count() < MaximumKeywords
+                && !engine->defaultKeywords().contains(keyword))
+                engine->setDefaultKeywords(
+                    engine->defaultKeywords() << keyword);
         } else if (name() == QLatin1String("Image")) {
              engine->setImageUrl(readElementText());
         }
 
         // SRCH04: the image-search template joins the early-exit
         // check — a purpose="image" <Url> placed after the favicon
-        // must still be reached.
+        // must still be reached.  SENG02 adds defaultKeywords so an
+        // <Alias> following the last Url/Image is never skipped.
         if (!engine->name().isEmpty()
             && !engine->description().isEmpty()
             && !engine->suggestionsUrlTemplate().isEmpty()
             && !engine->searchUrlTemplate().isEmpty()
             && !engine->imageSearchUrlTemplate().isEmpty()
-            && !engine->imageUrl().isEmpty())
+            && !engine->imageUrl().isEmpty()
+            && !engine->defaultKeywords().isEmpty())
             break;
     }
 

@@ -122,7 +122,7 @@ if [ -z "${ARORA_LEAKS_LSAN_LOGS:-}" ]; then
         timeout 300 "$BUILD/arora" "$flag" >"$LOGDIR/smoke-$name.log" 2>&1 \
             || echo "check-leaks: smoke $flag exit=$? (tolerated)"
     done
-    timeout 300 "$BUILD/arora" --download-smoke "file://$BUILD/README" \
+    timeout 300 "$BUILD/arora" --download-smoke "file://$BUILD/README.md" \
         >"$LOGDIR/smoke-downloadsmoke.log" 2>&1 \
         || echo "check-leaks: smoke --download-smoke exit=$? (tolerated)"
 else

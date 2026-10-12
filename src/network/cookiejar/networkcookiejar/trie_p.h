@@ -69,6 +69,8 @@ class Trie {
 public:
     Trie();
     ~Trie();
+    Trie(const Trie<T> &other) = default;
+    Trie<T> &operator=(const Trie<T> &other) = default;
 
     void clear();
     void insert(const QStringList &key, const T &value);

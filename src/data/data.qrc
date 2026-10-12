@@ -11,6 +11,7 @@
     <file>Readability-readerable.js</file>
     <file>reader.js</file>
     <file>arora-channel.js</file>
+    <file>fingerprint.js</file>
     <file>pip.js</file>
     <file>pip-shim.js</file>
     <file>pip-player.html</file>

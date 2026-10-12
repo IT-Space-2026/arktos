@@ -31,7 +31,9 @@
 
 #include <qlineedit.h>
 
+class QFocusEvent;
 class QHBoxLayout;
+class QKeyEvent;
 
 /*
     LineEdit is a subclass of QLineEdit that provides an easy and simple
@@ -71,6 +73,16 @@ public:
 protected:
     void resizeEvent(QResizeEvent *event) override;
     bool event(QEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+
+    // SRCH10: true while the user's latest edit shrank the text — a
+    // Backspace/Delete burst.  Completion code must not re-extend the
+    // field or re-arm suggestions until the next forward edit
+    // (Chrome's rule: backspace kills the inline suggestion).
+    bool deletingText() const { return m_deleteBurst; }
+    // An explicit completion pick commits forward intent.
+    void endDeleteBurst() { m_deleteBurst = false; }
 
 protected slots:
     void updateTextMargins();
@@ -84,6 +96,18 @@ private:
     QHBoxLayout *m_leftLayout;
     QHBoxLayout *m_rightLayout;
     QString m_inactiveText;
+
+    // SRCH10: one-key clear bookkeeping.  m_pristine holds while the
+    // text is still the field's baseline — what it had at focus-in or
+    // its last programmatic write (url display, completer highlight,
+    // Escape restore); the first real user edit drops it.  A user
+    // edit emits textEdited immediately before textChanged, so the
+    // pending flag tells the paired emissions apart from a bare
+    // programmatic textChanged.
+    QString m_lastText;
+    bool m_pristine;
+    bool m_pendingUserEdit;
+    bool m_deleteBurst;
 };
 
 #endif // LINEEDIT_H

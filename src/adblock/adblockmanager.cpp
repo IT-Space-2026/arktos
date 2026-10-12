@@ -109,6 +109,52 @@ void AdBlockManager::setEnabled(bool enabled)
     emit rulesChanged();
 }
 
+bool AdBlockManager::rustEngineAvailable()
+{
+#if defined(ARORA_ADBLOCK_RUST)
+    return true;
+#else
+    return false;
+#endif
+}
+
+AdBlockManager::Engine AdBlockManager::storedEngine()
+{
+    const QString value = QSettings().value(
+        QLatin1String("AdBlock/engine")).toString();
+    // ADBLK01: Brave adblock-rust is the default — an absent or empty
+    // key selects it.  Only an explicit opt-out (a persisted "cpp" or
+    // any other value) keeps the native matcher.
+    if (value.isEmpty() || value == QLatin1String("rust"))
+        return RustEngine;
+    return NativeEngine;
+}
+
+AdBlockManager::Engine AdBlockManager::engine() const
+{
+    const Engine stored = storedEngine();
+    return stored == RustEngine && rustEngineAvailable()
+            ? RustEngine : NativeEngine;
+}
+
+void AdBlockManager::setEngine(Engine engine)
+{
+    if (storedEngine() == engine)
+        return;
+    QSettings().setValue(QLatin1String("AdBlock/engine"),
+                         engine == RustEngine
+                         ? QLatin1String("rust") : QLatin1String("cpp"));
+    // rulesChanged rebuilds the matcher snapshot; the Rust engine is
+    // constructed (or dropped) inside rebuildRules, so the switch
+    // reaches live requests without a restart.
+    emit rulesChanged();
+}
+
+bool AdBlockManager::rustEngineInUse() const
+{
+    return m_adBlockNetwork && m_adBlockNetwork->rustEngineActive();
+}
+
 AdBlockManager::RemoteListsConsent AdBlockManager::remoteListsConsent()
 {
     const int value = QSettings().value(

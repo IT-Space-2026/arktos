@@ -21,7 +21,9 @@
 #define SITEPANEL_H
 
 #include <qframe.h>
+#include <qlist.h>
 #include <qpointer.h>
+#include <qstringlist.h>
 #include <qurl.h>
 
 class QCheckBox;
@@ -37,10 +39,22 @@ class WebView;
 // Everything is scoped to the page's current host:
 //
 //   - security state line (https / http / cert-error / local),
+//   - a TRUST08 Trust section listing the signals rustcore's
+//     composite site-trust verdict (rc_sitetrust_lookup) evaluated
+//     for the host — threat-list hit, lookalike resemblance, Tranco
+//     rank and first visit — only the signals that fired or are
+//     informative get a line; the whole section hides on pages with
+//     nothing to say, and TRUST03's trust/* switches gate the lookup
+//     itself (master off -> no FFI call, the per-signal switches
+//     ride the request as a probe mask),
 //   - cookie tri-state writing into CookieJar's per-site exception
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an
 //     @@||host^$document whitelist exception in AdBlockManager,
+//     flanked (SHLD02) by the global content-blocking switch, a
+//     live count of requests blocked on this page and the entry
+//     point to the Ad Block settings — the merged successor of the
+//     old right-side AdBlockButton popup,
 //   - a POPUP01 "allow pop-ups on this site" toggle writing the
 //     PopupBlocker per-host exception list,
 //   - a SAFE01 "always allow HTTP" toggle writing the HTTPS-Only
@@ -63,6 +77,22 @@ public:
     void setWebView(WebView *webView);
     WebView *webView() const;
 
+    // SHLD02: requests the blocker stopped on the current page load —
+    // the shield button badges its icon with this.  The cumulative
+    // interceptor tally is diffed against a baseline captured at
+    // load start / url change.
+    int blockedSinceLoad() const;
+
+    // TRUST08: the composite verdict's signal lines for a host — the
+    // test seam for the Trust section.  Empty when the lookup cannot
+    // evaluate (no rustcore, empty host, FFI hiccup).
+    static QStringList trustSignalLines(const QString &host, bool isHttps);
+
+    // TRUST09: the verdict's level word ("green"/"amber"/"red") for a
+    // host — the shield badge's seam.  Empty when the lookup cannot
+    // evaluate.
+    static QString trustLevel(const QString &host, bool isHttps);
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
@@ -74,26 +104,45 @@ private:
     CookieJar *siteCookieJar() const;
     void applyCookieRule(int index);
     void toggleContentBlocking(bool checked);
+    void toggleGlobalBlocking(bool checked);
+    int blockedTotal() const;
     void applyJavaScriptRule(int index);
     void togglePopups(bool checked);
     void toggleHttpAllowance(bool checked);
+    void toggleFingerprintSpoof(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
+    void rebuildTrustRows();
+
+    // One rendered signal row in the Trust section — alert lines get
+    // the palette's warning color.
+    struct TrustLine {
+        QString text;
+        bool alert;
+    };
+    static QList<TrustLine> trustSignals(const QString &host, bool isHttps);
 
     QPointer<WebView> m_webView;
     QLabel *m_hostLabel;
     QLabel *m_securityLabel;
     QLabel *m_tlsLabel;
+    QWidget *m_trustBox;
+    QVBoxLayout *m_trustLayout;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
+    QCheckBox *m_contentBlocking;
     QCheckBox *m_blockContent;
+    QLabel *m_blockedCount;
     QComboBox *m_javaScriptRule;
     QLabel *m_javaScriptState;
     QCheckBox *m_allowPopups;
     QCheckBox *m_allowHttp;
+    QCheckBox *m_spoofFingerprint;
     QWidget *m_permissionsBox;
     QVBoxLayout *m_permissionsLayout;
     QPushButton *m_clearData;
+    QPushButton *m_adBlockSettings;
+    int m_blockedBaseline;
     bool m_refreshing;
 };
 

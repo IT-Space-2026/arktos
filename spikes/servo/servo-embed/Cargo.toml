@@ -1,0 +1,26 @@
+# ENG03 spike: thin C ABI over libservo (git-pinned, servo v0.7.0 —
+# libservo is not published on crates.io). Build with the user-local
+# rustup toolchain, e.g. `cargo build --release` (heavy: ~700 crates,
+# mozjs/webrender included). NOT part of the qmake build.
+[package]
+name = "servo-embed"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[lib]
+# cdylib only — the Qt harness links libservo_embed.so; a staticlib
+# variant would just archive ~6G of dep objects for nothing.
+crate-type = ["cdylib"]
+
+[dependencies]
+servo = { git = "https://github.com/servo/servo.git", tag = "v0.7.0", default-features = false, features = ["bundled", "js_jit"] }
+# versions below mirror servo's own lockfile (v0.7.0) so the FFI shim
+# shares types with the engine.
+url = "=2.5.8"
+dpi = "=0.1.2"
+euclid = "=0.22.14"
+keyboard-types = "=0.8.3"
+rustls = { version = "=0.23.45", features = ["aws_lc_rs"] }
+log = "0.4"

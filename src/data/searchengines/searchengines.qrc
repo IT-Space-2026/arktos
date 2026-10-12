@@ -1,11 +1,26 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/searchengines">
+    <file>Bing.xml</file>
     <file>DuckDuckGo.xml</file>
+    <file>Ecosia.xml</file>
     <file>Google.xml</file>
     <file>Google_Im_Feeling_Lucky.xml</file>
+    <file>Qwant.xml</file>
     <file>Yahoo.xml</file>
     <file>Wikipedia_en.xml</file>
     <file>YouTube.xml</file>
     <file>Reddit.xml</file>
+    <file>Startpage.xml</file>
+    <file>icons/Bing.png</file>
+    <file>icons/DuckDuckGo.png</file>
+    <file>icons/Ecosia.png</file>
+    <file>icons/Google.png</file>
+    <file>icons/Google_Im_Feeling_Lucky.png</file>
+    <file>icons/Qwant.png</file>
+    <file>icons/Yahoo.png</file>
+    <file>icons/Wikipedia_en.png</file>
+    <file>icons/YouTube.png</file>
+    <file>icons/Reddit.png</file>
+    <file>icons/Startpage.png</file>
 </qresource>
 </RCC>

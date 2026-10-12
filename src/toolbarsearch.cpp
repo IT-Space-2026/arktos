@@ -285,12 +285,20 @@ void ToolbarSearch::updateSuggestionsEnabled()
 
 void ToolbarSearch::completerActivated(const QModelIndex &index)
 {
+    // An explicit pick commits forward intent — it ends any delete
+    // burst so the row can be written into the field.
+    endDeleteBurst();
     if (completerHighlighted(index))
         searchNow();
 }
 
 bool ToolbarSearch::completerHighlighted(const QModelIndex &index)
 {
+    // SRCH10: while the user is deleting, a suggestion row getting
+    // re-highlighted by model churn must not write itself back into
+    // the field — that re-extends the very text being deleted.
+    if (deletingText())
+        return false;
     if (m_suggestionsItem && m_suggestionsItem->index().row() == index.row())
         return false;
     if (m_recentSearchesItem && m_recentSearchesItem->index().row() == index.row())
@@ -335,6 +343,12 @@ void ToolbarSearch::textEdited(const QString &text)
         m_suggestTimer->setInterval(200);
         connect(m_suggestTimer, &QTimer::timeout,
                 this, &ToolbarSearch::getSuggestions);
+    }
+    // SRCH10: a delete burst doesn't fetch a suggestion batch for the
+    // shortened term — the next forward edit re-arms the debounce.
+    if (deletingText()) {
+        m_suggestTimer->stop();
+        return;
     }
     m_suggestTimer->start();
 }
@@ -566,10 +580,8 @@ void ToolbarSearch::showEnginesDialog()
     // manager now (SRCH05's inline editor).  The standalone
     // OpenSearchDialog stays as the fallback for a ToolbarSearch with
     // no BrowserMainWindow ancestor.
-    if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
-        SettingsDialog dialog(window);
-        dialog.openAtPage(SettingsDialog::SearchPage);
-        dialog.exec();
+    if (BrowserMainWindow::parentWindow(this)) {
+        SettingsDialog::openPage(this, SettingsDialog::SearchPage);
         return;
     }
     OpenSearchDialog dialog(this);

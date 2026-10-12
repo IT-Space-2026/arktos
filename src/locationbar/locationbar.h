@@ -28,9 +28,7 @@
 class WebView;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
-class ReaderButton;
 class SiteShieldButton;
-class AdBlockButton;
 class PopupBlockerButton;
 class LocationBar : public LineEdit
 {
@@ -77,10 +75,8 @@ private:
 
     LocationBarSiteIcon *m_siteIcon;
     SiteShieldButton *m_shield;
-    AdBlockButton *m_adBlockButton;
     PopupBlockerButton *m_popupBlockerButton;
     PrivacyIndicator *m_privacyIndicator;
-    ReaderButton *m_readerButton;
 };
 
 #endif // LOCATIONBAR_H

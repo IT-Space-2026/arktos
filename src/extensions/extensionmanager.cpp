@@ -19,7 +19,9 @@
 
 #include "extensionmanager.h"
 
+#include "browserapplication.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "networkaccessmanager.h"
 
 #if defined(ARORA_RUSTCORE)
@@ -27,6 +29,7 @@
 #endif
 
 #include <qcoreapplication.h>
+#include <qcryptographichash.h>
 #include <qdatetime.h>
 #include <qdebug.h>
 #include <qdir.h>
@@ -48,6 +51,8 @@
 #include <qwebenginescriptcollection.h>
 
 #include <qwebengineextensionmanager.h>
+
+#include <memory>
 
 #if QT_CONFIG(webengine_extensions)
 
@@ -81,13 +86,31 @@ static ExtensionManager::ExtensionInfo infoFrom(const QWebEngineExtensionInfo &i
 // The canonical UI-facing manager: the first prepared non-off-the-
 // record profile's manager.  prepareProfile() hands out profiles in
 // order, so this is the "arora" browsing profile.
-static QWebEngineExtensionManager *managerFor(const QList<QWebEngineProfile *> &profiles)
+static QWebEngineExtensionManager *managerFor(
+        const QList<QPointer<QWebEngineProfile>> &profiles)
 {
-    for (QWebEngineProfile *profile : profiles) {
+    for (const QPointer<QWebEngineProfile> &profile : profiles) {
         if (profile && !profile->isOffTheRecord() && profile->extensionManager())
             return profile->extensionManager();
     }
     return nullptr;
+}
+
+// The single by-id lookup — removeExtension, setExtensionEnabled and
+// updateUrlFor each had their own copy of this loop (EXT05 cleanup).
+// Returns an invalid info (empty id) when the id is not loaded.
+static QWebEngineExtensionInfo findById(
+        QWebEngineExtensionManager *extensions, const QString &id)
+{
+    if (extensions) {
+        const QList<QWebEngineExtensionInfo> loaded =
+            extensions->extensions();
+        for (const QWebEngineExtensionInfo &info : loaded) {
+            if (info.id() == id)
+                return info;
+        }
+    }
+    return QWebEngineExtensionInfo();
 }
 
 #endif // QT_CONFIG(webengine_extensions)
@@ -100,6 +123,22 @@ constexpr qint64 kUpdateManifestMaxBytes = 1024 * 1024;
 constexpr qint64 kUpdatePackageMaxBytes = 64 * 1024 * 1024;
 constexpr int kUpdateFetchTimeoutMs = 20000;
 constexpr int kUpdateDownloadTimeoutMs = 60000;
+
+// EXT05: update fetches are https-only.  Loopback http stays allowed
+// so local fixtures and dev servers keep working — a remote http URL
+// is refused at fetch time, not just at parse.
+static bool isFetchableUpdateUrl(const QUrl &url)
+{
+    if (url.scheme() == QLatin1String("https"))
+        return true;
+    if (url.scheme() != QLatin1String("http"))
+        return false;
+    const QString host = url.host().toLower();
+    return host == QLatin1String("localhost")
+        || host == QLatin1String("127.0.0.1")
+        || host == QLatin1String("::1")
+        || host == QLatin1String("[::1]");
+}
 }
 
 #if defined(ARORA_RUSTCORE)
@@ -223,6 +262,15 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
 {
     if (!profile || m_profiles.contains(profile))
         return;
+    // EXT05 hard refusal — in a tor-mode process no profile is wired
+    // at all, and the tor profile itself is refused even from a
+    // non-tor caller: extensions and injected scripts are a
+    // deanonymization surface (a beaconing extension unmasks the
+    // user).  prepareProfile() already skips tor mode; this gate
+    // keeps the invariant true for every other caller.
+    if (BrowserApplication::isTorMode()
+            || profile == BrowserProfile::torProfileIfCreated())
+        return;
     m_profiles.append(profile);
 
     // User scripts are the app's own injection — they apply to
@@ -292,8 +340,26 @@ QString ExtensionManager::installPath() const
     return QString();
 }
 
+void ExtensionManager::grantConsent(const QString &path)
+{
+    if (!path.isEmpty())
+        m_consentedPaths.insert(path);
+}
+
+bool ExtensionManager::hasConsent(const QString &path) const
+{
+    return m_consentedPaths.contains(path);
+}
+
 void ExtensionManager::loadExtension(const QString &path)
 {
+    // EXT05: a silent load is a bug — the path must have passed the
+    // consent gate first (ExtensionReviewDialog or an explicit grant).
+    if (!m_consentedPaths.remove(path)) {
+        emit errorOccurred(tr("Refusing to load %1 — extension consent "
+                              "was not granted.").arg(path));
+        return;
+    }
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         extensions->loadExtension(path);
@@ -305,6 +371,13 @@ void ExtensionManager::loadExtension(const QString &path)
 
 void ExtensionManager::installExtension(const QString &path)
 {
+    // Same consent gate as loadExtension() — a package must never
+    // reach the profile without explicit approval (EXT05).
+    if (!m_consentedPaths.remove(path)) {
+        emit errorOccurred(tr("Refusing to install %1 — extension consent "
+                              "was not granted.").arg(path));
+        return;
+    }
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         // Accepts an unpacked directory or a packaged .zip; installed
@@ -320,10 +393,8 @@ void ExtensionManager::removeExtension(const QString &id)
 {
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
-        const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
-        for (const QWebEngineExtensionInfo &info : loaded) {
-            if (info.id() != id)
-                continue;
+        const QWebEngineExtensionInfo info = findById(extensions, id);
+        if (!info.id().isEmpty()) {
             if (info.isInstalled())
                 extensions->uninstallExtension(info);
             else
@@ -341,16 +412,31 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
 {
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
-        const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
-        for (const QWebEngineExtensionInfo &info : loaded) {
-            if (info.id() != id)
-                continue;
+        const QWebEngineExtensionInfo info = findById(extensions, id);
+        if (!info.id().isEmpty()) {
             extensions->setExtensionEnabled(info, enabled);
-            // Qt exposes no enabledChanged signal — refresh the UI
-            // once Chromium has had a moment to apply the toggle.
-            QTimer::singleShot(400, this, [this]() {
+            // Qt exposes no enabledChanged signal — poll briefly until
+            // the engine reports the new state (or the extension
+            // disappears), then refresh.  A settled poll beats the old
+            // blind fixed-delay refresh: the UI updates as soon as the
+            // toggle lands and never waits on a slow one.
+            QPointer<QWebEngineExtensionManager> engine(extensions);
+            QTimer *poll = new QTimer(this);
+            poll->setInterval(50);
+            auto tries = std::make_shared<int>(0);
+            connect(poll, &QTimer::timeout, this,
+                    [this, poll, engine, id, enabled, tries]() {
+                const QWebEngineExtensionInfo current =
+                    findById(engine.data(), id);
+                const bool settled = current.id().isEmpty()
+                    || current.isEnabled() == enabled;
+                if (!settled && ++*tries < 40)
+                    return;
+                poll->stop();
+                poll->deleteLater();
                 emit changed();
             });
+            poll->start();
             return;
         }
         emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
@@ -451,11 +537,19 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
 
     const QStringList unsupported = unsupportedPermissions();
     const QStringList unverified = unverifiedPermissions();
+    const QStringList dangerous = dangerousPermissions();
+    const QStringList dangerousHosts = dangerousHostPatterns();
     for (const QString &permission : manifest.permissions) {
         if (unsupported.contains(permission))
             manifest.unsupported.append(permission);
         else if (unverified.contains(permission))
             manifest.unverified.append(permission);
+        if (dangerous.contains(permission))
+            manifest.dangerous.append(permission);
+    }
+    for (const QString &pattern : manifest.hostPermissions) {
+        if (dangerousHosts.contains(pattern))
+            manifest.dangerous.append(pattern);
     }
 
     if (manifest.manifestVersion != 3)
@@ -550,11 +644,45 @@ QStringList ExtensionManager::unverifiedPermissions()
     return unverified;
 }
 
+QStringList ExtensionManager::dangerousPermissions()
+{
+    // EXT05 deny-by-default consent set — each of these can take over
+    // the browser or the machine if the engine honors it, so the
+    // review dialog requires an explicit per-permission checkbox
+    // instead of a passive warning.  Mirrors DANGEROUS_PERMISSIONS in
+    // rustcore's extverify.rs — keep the lists in sync.
+    static const QStringList dangerous = {
+        QStringLiteral("nativeMessaging"),
+        QStringLiteral("debugger"),
+        QStringLiteral("webRequestBlocking"),
+        QStringLiteral("cookies"),
+        QStringLiteral("browsingData"),
+    };
+    return dangerous;
+}
+
+QStringList ExtensionManager::dangerousHostPatterns()
+{
+    // Host-permission spellings of "every website" — mirrors
+    // DANGEROUS_HOST_PATTERNS in extverify.rs.
+    static const QStringList dangerous = {
+        QStringLiteral("<all_urls>"),
+        QStringLiteral("*://*/*"),
+    };
+    return dangerous;
+}
+
 QString ExtensionManager::userScriptsPath()
 {
     const QString directory =
         BrowserPaths::dataFilePath(QLatin1String("userscripts"));
     QDir().mkpath(directory);
+    // EXT05: every file here executes in each page's ApplicationWorld
+    // — the store must stay owner-only so another account cannot
+    // plant a script or read what the user runs.
+    QFile::setPermissions(directory,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+        | QFileDevice::ExeOwner);
     return directory;
 }
 
@@ -566,7 +694,7 @@ QStringList ExtensionManager::userScriptNames() const
 
 void ExtensionManager::reloadUserScripts()
 {
-    for (QWebEngineProfile *profile : m_profiles) {
+    for (const QPointer<QWebEngineProfile> &profile : m_profiles) {
         if (profile)
             reloadUserScripts(profile);
     }
@@ -588,7 +716,22 @@ void ExtensionManager::reloadUserScripts(QWebEngineProfile *profile)
     const QDir dir(directory, QLatin1String("*.js"), QDir::Name, QDir::Files);
     const QStringList files = dir.entryList();
     for (const QString &fileName : files) {
-        QFile file(dir.absoluteFilePath(fileName));
+        const QString fullPath = dir.absoluteFilePath(fileName);
+        // EXT05: a group/world-accessible userscript means another
+        // account could have planted it — tighten it and say so.
+        const QFileDevice::Permissions leaked =
+            QFileInfo(fullPath).permissions()
+            & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
+               | QFileDevice::ExeGroup | QFileDevice::ReadOther
+               | QFileDevice::WriteOther | QFileDevice::ExeOther);
+        if (leaked) {
+            qWarning() << "userscript" << fileName
+                       << "was group/world accessible — permissions"
+                          " tightened to owner-only";
+            QFile::setPermissions(fullPath,
+                QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        }
+        QFile file(fullPath);
         if (!file.open(QIODevice::ReadOnly))
             continue;
         QWebEngineScript script;
@@ -609,13 +752,15 @@ void ExtensionManager::reloadUserScripts(QWebEngineProfile *profile)
 // a gupdate XML document.  We GET that document (the dynamic Omaha
 // POST request is not attempted — static update manifests are the
 // common self-hosting shape and answer plain GETs), compare the
-// dotted-quad version and download the declared package.  Zip
-// packages install through the Qt extension manager — a package that
-// carries the manifest "key" lands under the same extension id and
-// replaces the old version; a package without it installs as a
-// separate extension, so installs are limited to the user-initiated
-// check.  .crx packages cannot be installed by Qt at all — they are
-// saved under updatesPath() for manual handling.
+// dotted-quad version and download the declared package.  EXT05:
+// downloads are https-only (loopback http allowed for fixtures) and
+// a check never installs — a verified .zip is flagged "installable"
+// and the UI applies it through the same consent review as a manual
+// install, so changed or dangerous permissions are re-acknowledged.
+// A package that carries the manifest "key" lands under the same
+// extension id and replaces the old version.  .crx packages cannot
+// be installed by Qt at all — they are saved under updatesPath()
+// for manual handling.
 //
 // EXT06: under CONFIG+=rustcore the downloaded bytes are verified by
 // rc_ext_verify_package BEFORE they hit disk — the update manifest's
@@ -776,9 +921,10 @@ bool ExtensionManager::parseUpdateManifest(const QByteArray &xml,
         return true;
     }
     const QUrl codebase = QUrl::fromUserInput(offer->codebase);
-    if (codebase.scheme() != QLatin1String("https")
-        && codebase.scheme() != QLatin1String("http")) {
-        result->error = tr("update package URL \"%1\" is not http(s)")
+    if (!isFetchableUpdateUrl(codebase)) {
+        // EXT05: update payloads travel over https — a remote http
+        // URL is refused here and again at fetch time.
+        result->error = tr("update package URL \"%1\" is not https")
             .arg(offer->codebase);
         return false;
     }
@@ -818,10 +964,8 @@ QString ExtensionManager::updateUrlFor(const QString &id) const
         return cached;
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
-        const QList<QWebEngineExtensionInfo> loaded = extensions->extensions();
-        for (const QWebEngineExtensionInfo &info : loaded) {
-            if (info.id() != id || info.path().isEmpty())
-                continue;
+        const QWebEngineExtensionInfo info = findById(extensions, id);
+        if (!info.id().isEmpty() && !info.path().isEmpty()) {
             const Manifest manifest = inspectManifest(info.path());
             return manifest.valid ? manifest.updateUrl : QString();
         }
@@ -837,9 +981,12 @@ void ExtensionManager::checkForUpdates(bool manual)
         return;
     }
     m_updateCheckRunning = true;
-    m_updateCheckManual = manual;
     m_updateResults.clear();
     emit updateCheckStarted();
+    // EXT05: manual and automatic checks behave identically inside
+    // the manager — neither installs — so the manual flag no longer
+    // gates anything here; apply is always the UI's opt-in call.
+    Q_UNUSED(manual);
 
 #if QT_CONFIG(webengine_extensions)
     const QList<ExtensionInfo> list = extensions();
@@ -858,13 +1005,12 @@ void ExtensionManager::checkForUpdates(bool manual)
         const QString updateUrl = manifest.updateUrl;
         m_updateUrls.insert(info.id, updateUrl);
         const QUrl url(updateUrl);
-        const bool fetchable =
-            url.scheme() == QLatin1String("https")
-            || url.scheme() == QLatin1String("http");
-        if (updateUrl.isEmpty() || !fetchable) {
+        // EXT05: refuse non-https update endpoints at fetch time —
+        // loopback http stays allowed for local fixtures.
+        if (updateUrl.isEmpty() || !isFetchableUpdateUrl(url)) {
             result.noSource = true;
             if (!updateUrl.isEmpty())
-                result.error = tr("update_url \"%1\" is not http(s)")
+                result.error = tr("update_url \"%1\" is not https")
                     .arg(updateUrl);
             m_updateResults.append(result);
             m_lastUpdateResults.insert(result.id, result);
@@ -883,6 +1029,17 @@ void ExtensionManager::fetchUpdateManifest(const UpdateResult &result,
     UpdateJob job;
     job.result = result;
     job.updateUrl = updateUrl;
+
+    // EXT05 fetch-time gate — a URL that slipped past the caller's
+    // check is refused here rather than fetched.  No finishUpdateCheck
+    // — the only caller is checkForUpdates' loop, which finishes once.
+    if (!isFetchableUpdateUrl(updateUrl)) {
+        job.result.error = tr("update_url \"%1\" is not https")
+            .arg(updateUrl.toString());
+        m_updateResults.append(job.result);
+        m_lastUpdateResults.insert(job.result.id, job.result);
+        return;
+    }
 
     QNetworkRequest request(updateUrl);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -925,6 +1082,17 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
     job.result = result;
     job.updateUrl = result.codeBase;
 
+    // EXT05 fetch-time gate — the codebase was validated at parse,
+    // but nothing reaches the network without passing it again.
+    if (!isFetchableUpdateUrl(result.codeBase)) {
+        job.result.error = tr("update package URL \"%1\" is not https")
+            .arg(result.codeBase.toString());
+        m_updateResults.append(job.result);
+        m_lastUpdateResults.insert(job.result.id, job.result);
+        finishUpdateCheck();
+        return;
+    }
+
     QNetworkRequest request(result.codeBase);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -940,14 +1108,14 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
 
         if (reply->error() == QNetworkReply::NoError) {
             const QByteArray body = reply->readAll();
+            const QByteArray expected =
+                QByteArray::fromHex(job.result.packageHash.toLatin1());
 #if defined(ARORA_RUSTCORE)
             // EXT06: verify the fetched bytes before they hit disk —
             // the update manifest's declared hash (when it carries
             // one), the zip/CRX3 structure, member names and a
             // readable manifest.json are all required.  A rejected
             // package is never written, let alone installed.
-            const QByteArray expected =
-                QByteArray::fromHex(job.result.packageHash.toLatin1());
             RcBuffer verdictBuf{};
             const RcStatus verified = rc_ext_verify_package(
                 reinterpret_cast<const uint8_t *>(body.constData()),
@@ -988,6 +1156,22 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
                 finishUpdateCheck();
                 return;
             }
+#else
+            // EXT05: no-Rust builds still honor the update manifest's
+            // declared hash_sha256 — a tampered payload is refused
+            // before it hits disk.  (Structure checks are rustcore's;
+            // without it the hash is the only integrity gate.)
+            if (expected.size() == 32
+                && QCryptographicHash::hash(body,
+                        QCryptographicHash::Sha256) != expected) {
+                job.result.error =
+                    tr("update package rejected: sha256 does not match "
+                       "the update manifest's declared hash");
+                m_updateResults.append(job.result);
+                m_lastUpdateResults.insert(job.result.id, job.result);
+                finishUpdateCheck();
+                return;
+            }
 #endif
             QString fileName =
                 QFileInfo(job.result.codeBase.path()).fileName();
@@ -1007,13 +1191,12 @@ void ExtensionManager::fetchUpdatePackage(const UpdateResult &result)
                 job.result.savedTo = saved;
                 // Qt's installer accepts unpacked dirs and .zip — a
                 // .crx (or anything else) is kept for manual install.
-                const bool isZip = body.startsWith("PK\x03\x04")
+                // EXT05: the check NEVER installs — apply is opt-in,
+                // the UI reviews the package like a manual install
+                // and grants consent per path first.
+                job.result.installable = body.startsWith("PK\x03\x04")
                     || fileName.endsWith(QLatin1String(".zip"),
                                          Qt::CaseInsensitive);
-                if (isZip && m_updateCheckManual) {
-                    job.result.installTriggered = true;
-                    installExtension(saved);
-                }
             } else {
                 job.result.error = tr("could not save update package to %1")
                     .arg(saved);

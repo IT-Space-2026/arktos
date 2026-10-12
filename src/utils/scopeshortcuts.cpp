@@ -25,7 +25,7 @@
 #include <qregularexpression.h>
 #include <qsettings.h>
 
-static const char *const scopeKey(ScopeShortcuts::Scope scope)
+static const char *scopeKey(ScopeShortcuts::Scope scope)
 {
     switch (scope) {
     case ScopeShortcuts::BookmarksScope: return "bookmarks";

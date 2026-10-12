@@ -25,11 +25,13 @@
 #include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "browsertheme.h"
 #include "containermanager.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pdfsupport.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
@@ -37,6 +39,7 @@
 #include "tabwidget.h"
 #include "tlsverifier.h"
 #include "toolbarsearch.h"
+#include "webenginebackend.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -49,6 +52,8 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qhash.h>
+#include <qicon.h>
+#include <qinputdialog.h>
 #include <qmessagebox.h>
 #include <qmetaobject.h>
 #include <qpixmap.h>
@@ -63,6 +68,7 @@
 #include <quuid.h>
 #include <qvariant.h>
 #include <qwebchannel.h>
+#include <qwebengineclientcertificateselection.h>
 #include <qwebenginehistory.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebengineprofile.h>
@@ -105,7 +111,8 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
     QWebEnginePage *page = qobject_cast<QWebEnginePage*>(parent());
     const QString source = page
             ? QString::fromUtf8(page->url().toEncoded()) : QString();
-    QPointer<QWidget> view = page ? QWebEngineView::forPage(page) : nullptr;
+    QPointer<QWidget> view = page
+            ? WebEnginePageAdapter::forPage(page)->view() : nullptr;
 
     // Queued: a modal exec() inside the channel dispatch stack is
     // asking for re-entrancy trouble — same pattern as the
@@ -148,6 +155,11 @@ JavaScriptAroraObject::JavaScriptAroraObject(QObject *parent)
     connect(ToolbarSearch::openSearchManager(),
             &OpenSearchManager::currentEngineChanged,
             this, &JavaScriptAroraObject::currentEngineNameChanged);
+    // THEME01: same for darkChrome — a mid-session Theme flip fires
+    // the notifier, which the qrc start page listens to.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, &JavaScriptAroraObject::darkChromeChanged);
 }
 
 QString JavaScriptAroraObject::translate(const QString &string)
@@ -176,6 +188,11 @@ QString JavaScriptAroraObject::currentEngineName() const
 {
     OpenSearchEngine *engine = contextEngine();
     return engine ? engine->name() : QString();
+}
+
+bool JavaScriptAroraObject::darkChrome() const
+{
+    return qApp && BrowserTheme::isDarkPalette(qApp->palette());
 }
 
 QString JavaScriptAroraObject::searchUrl(const QString &string) const
@@ -352,7 +369,7 @@ void WebPage::init()
     connect(this, &QWebEnginePage::permissionRequested,
             this, [this](const QWebEnginePermission &permission) {
         WebPermissionManager::instance()->handleRequest(
-            QWebEngineView::forPage(this), permission,
+            WebEnginePageAdapter::forPage(this)->view(), permission,
             profile()->isOffTheRecord());
     });
 
@@ -366,6 +383,17 @@ void WebPage::init()
         handleCertificateError(error);
     });
 
+    // BADSSL03: TLS client-certificate requests.  Left unanswered,
+    // Chromium continues without a certificate — matching cert-less
+    // Chrome.  The handler lets installed certificates actually flow
+    // (BrowserProfile loads them into the profile's
+    // clientCertificateStore at bring-up) and still declines when the
+    // store is empty.
+    connect(this, &QWebEnginePage::selectClientCertificate,
+            this, [this](QWebEngineClientCertificateSelection selection) {
+        handleClientCertificateSelection(selection);
+    });
+
     // MIG06: feed the app-side history store.  QtWebKit pushed visited
     // urls into QWebHistoryInterface itself; WebEngine keeps Chromium's
     // own internal history, so the application records visits from page
@@ -376,11 +404,13 @@ void WebPage::init()
         connect(this, &QWebEnginePage::loadFinished, this,
                 [this, history](bool ok) {
             // The warning interstitials are chrome, not visited
-            // pages — keep them out of history.
+            // pages — keep them out of history.  PDF01: sanitized
+            // temp-dir copies are viewer staging, not destinations.
             const QString scheme = url().scheme();
             if (ok && scheme != QLatin1String("arora-cert-error")
                 && scheme != QLatin1String("arora-http-warning")
-                && scheme != QLatin1String("arora-site-block"))
+                && scheme != QLatin1String("arora-site-block")
+                && !PdfSupport::isManagedPath(url().toLocalFile()))
                 history->addHistoryEntry(url().toString());
         });
         connect(this, &QWebEnginePage::titleChanged, this,
@@ -543,7 +573,7 @@ void WebPage::confirmAndOpenExternalUrl(const QUrl &url)
     // re-enter Chromium's navigation machinery while it waits for an
     // answer.
     const QString source = this->url().toString();
-    QPointer<QWidget> parent = QWebEngineView::forPage(this);
+    QPointer<QWidget> parent = WebEnginePageAdapter::forPage(this)->view();
     QMetaObject::invokeMethod(qApp, [parent, url, source]() {
         // The percent-encoded form keeps control characters and
         // embedded newlines from spoofing the dialog text.
@@ -589,7 +619,7 @@ bool WebPage::confirmInsecureFormPost(const QUrl &url)
     if (s_formPostPromptActive)
         return false;
     s_formPostPromptActive = true;
-    QWidget *parent = QWebEngineView::forPage(this);
+    QWidget *parent = WebEnginePageAdapter::forPage(this)->view();
     QMessageBox box(QMessageBox::Warning,
         tr("Insecure Form Submission"),
         tr("This form is sending information to %1 over an insecure "
@@ -670,6 +700,17 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         return false;
     }
 
+    // PDF01: the staged viewer document is file://-origin — an
+    // embedded file:///etc/passwd-style link would read as a
+    // local-to-local navigation Chromium has no reason to refuse.
+    // Clamp non-remote targets while a staged copy is displayed;
+    // placed ahead of the directory reroute so a file:///etc/ link
+    // is refused rather than listed.  A web-served pdf viewed raw
+    // keeps http(s) origin, where Chromium's own file-nav block
+    // already applies — no extra rule is needed there.
+    if (isMainFrame && !PdfSupport::managedViewerNavAllowed(this->url(), url))
+        return false;
+
     // file:// is built into Chromium and cannot take a custom scheme
     // handler; directories are rerouted to arora-file:// so the
     // FileAccessHandler can render Arora's own directory listing.
@@ -686,14 +727,16 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // bound to the ruled container and the request refused.  Redirect
     // hops re-enter this hook, so a mid-chain hop onto a ruled host
     // diverts too.  Private and tor windows have no containers and
-    // never divert.  Placement is ahead of the HTTPS-Only and
-    // insecure-form warnings so those decisions are made by the tab
-    // that will actually load the url.
+    // never divert — PTAB01: the gate is the page's profile, so a
+    // private TAB inside a normal window is covered too (diverting it
+    // would record the visit on a persistent container profile).
+    // Placement is ahead of the HTTPS-Only and insecure-form warnings
+    // so those decisions are made by the tab that will actually load
+    // the url.
     if (isMainFrame
         && (scheme == QLatin1String("http")
             || scheme == QLatin1String("https"))
-        && !BrowserApplication::isPrivate()
-        && !BrowserApplication::isTorMode()
+        && !profile()->isOffTheRecord()
         && divertToContainerRule(url)) {
         return false;
     }
@@ -711,6 +754,38 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 
     // Qt WebEngine asks the user about resubmitting POST data itself; the old
     // NavigationTypeFormResubmitted prompt has no equivalent here.
+
+    // SAFE01/BADSSL03: an https->http redirect hop that returns to the
+    // same address with only the scheme changed is the secure endpoint
+    // bouncing the navigation to plaintext (badssl.com's http tests do
+    // exactly this).  Left alone it loops forever — the interceptor
+    // re-upgrades the hop and the server redirects down again until
+    // Chromium aborts the whole navigation with an ERR_FAILED
+    // attributed to the https: source, landing on the generic error
+    // page instead of the HTTPS-Only warning.  m_requestedUrl is the
+    // last accepted main-frame request — its equality with the hop's
+    // https: form identifies the bounce.  Marking the host downgraded
+    // stops the upgrade claiming the hop, and the ordinary decision
+    // below then applies: HTTPS-Only warns, plain https-first lets the
+    // plaintext page load.  Gate on isUpgradeCandidate so a host the
+    // upgrade already skips (private/local, already marked) is
+    // untouched — and a cross-path bounce (https://h/a -> http://h/b)
+    // still converges after one extra round-trip, when the re-upgraded
+    // https://h/b itself bounces.
+    if (isMainFrame
+        && type == QWebEnginePage::NavigationTypeRedirect
+        && scheme == QLatin1String("http")
+        && m_requestedUrl.scheme() == QLatin1String("https")
+        && !BrowserApplication::isTorMode()) {
+        QUrl httpsForm = url;
+        httpsForm.setScheme(QLatin1String("https"));
+        const QString scope =
+            PrivacyRequestInterceptor::downgradeScope(profile());
+        if (httpsForm == m_requestedUrl
+            && PrivacyRequestInterceptor::httpsFirstEnabled()
+            && PrivacyRequestInterceptor::isUpgradeCandidate(url, scope))
+            PrivacyRequestInterceptor::markDowngraded(url.host(), scope);
+    }
 
     // SAFE01: HTTPS-Only mode — an http: main-frame navigation that
     // the https-first upgrade did not claim (upgradeable hosts were
@@ -762,6 +837,24 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         }
     }
 
+    // PDF01: the sanitize-on-view pipeline owns .pdf main-frame
+    // navigations when the viewer and sanitizer are both on — the
+    // navigation is refused here, the bytes are fetched through this
+    // page's own profile (cookies, SOCKS/Tor routing, container
+    // binding all ride along), rewritten by the rustcore policy pass
+    // and displayed from the managed temp dir; the built-in viewer
+    // never sees remote bytes.  consumeBypass lets the pipeline's
+    // one-shot raw-view fallback through so a failed fetch or
+    // sanitizer pass never loops.  Every refusal gate above
+    // (container divert, domain blocklist, HTTPS-Only, insecure
+    // POST) keeps precedence — a refused navigation never reaches
+    // the fetch.
+    if (isMainFrame && PdfSupport::shouldIntercept(url, type)
+        && !PdfSupport::consumeBypass(this, url)) {
+        PdfSanitizeFetch::start(this, url);
+        return false;
+    }
+
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
 
     // Divert main-frame link clicks the user modifier-mapped to a new
@@ -769,7 +862,7 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // modifiers modifyWithUserBehavior reads.
     if (accepted && isMainFrame
         && type == QWebEnginePage::NavigationTypeLinkClicked) {
-        WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+        WebView *webView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
         if (webView) {
             TabWidget::OpenUrlIn target =
                 TabWidget::modifyWithUserBehavior(TabWidget::CurrentTab);
@@ -857,7 +950,7 @@ bool WebPage::divertToContainerRule(const QUrl &url)
         return false;
     }
 
-    WebView *webView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    WebView *webView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (webView) {
         if (TabWidget *tabs = webView->tabWidget()) {
             tabs->loadUrlInContainer(url, target);
@@ -952,7 +1045,7 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
         return new PopupProbePage(profile(), this);
     }
 
-    WebView *sourceView = qobject_cast<WebView*>(QWebEngineView::forPage(this));
+    WebView *sourceView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (sourceView && sourceView->tabWidget()) {
         if (WebView *webView = sourceView->tabWidget()->getView(
                     m_openTargetBlankLinksIn, sourceView))
@@ -1039,8 +1132,27 @@ void WebPage::handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo)
         showHttpWarning(errorUrl);
         return;
     }
-    if (m_httpWarningPending && errorUrl == m_httpWarningUrl)
-        return;
+    // BADSSL03: a vetoed https->http redirect hop reports its failure
+    // under the https: redirect SOURCE, not the refused http: target
+    // the record names — try the downgraded spelling too.
+    if (errorUrl.scheme() == QLatin1String("https")) {
+        QUrl httpForm = errorUrl;
+        httpForm.setScheme(QLatin1String("http"));
+        if (PrivacyRequestInterceptor::takeBlockedHttpNav(httpForm)) {
+            showHttpWarning(httpForm);
+            return;
+        }
+    }
+    // Same attribution gap for a hop the page vetoed itself: the
+    // pending warning's failure can arrive under the https: form of
+    // the refused http: target.  Suppress it either way — the queued
+    // interstitial load must not be stomped by an error page.
+    if (m_httpWarningPending) {
+        QUrl httpsForm = m_httpWarningUrl;
+        httpsForm.setScheme(QLatin1String("https"));
+        if (errorUrl == m_httpWarningUrl || errorUrl == httpsForm)
+            return;
+    }
 
     if (errorUrl != m_requestedUrl) {
         // PRIV01: the HTTPS-first interceptor upgrades http:
@@ -1090,8 +1202,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
         return;
     QString title = tr("Error loading page: %1").arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(notFoundErrorFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1121,6 +1232,7 @@ void WebPage::showErrorPage(const QUrl &errorUrl, const QString &errorString,
                      "the rest of this session."))
             + QLatin1String("</li></ul>"));
     }
+    BrowserTheme::decorateInternalPage(html);
     ++m_pendingErrorPages;   // SAFE07: the setHtml commit reports a
                              // LoadSucceeded for errorUrl — not real
                              // TLS evidence, don't self-heal on it.
@@ -1215,8 +1327,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
     QString title = tr("Certificate error: %1")
             .arg(QString::fromUtf8(errorUrl.toEncoded()));
     QString html = QLatin1String(certErrorFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1265,6 +1376,7 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
                     QLatin1String("<li>") + errorInfo + QLatin1String("</li>"),
                     certInfo,
                     buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 
@@ -1303,6 +1415,73 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
     });
 }
 
+// BADSSL03: TLS client-certificate requests arrive through the
+// QWebEnginePage::selectClientCertificate signal (Qt5's
+// selectClientCertificate() override is gone).  Declining when the
+// profile's clientCertificateStore holds nothing matching is the
+// same continue-without outcome an unanswered signal produces —
+// e.g. client.badssl.com's HTTP 400, which is also what cert-less
+// Chrome shows.  With candidates installed the user picks once per
+// authority per page; the decision is remembered so a negotiation's
+// repeated challenges don't each raise a dialog.
+void WebPage::handleClientCertificateSelection(
+        QWebEngineClientCertificateSelection selection)
+{
+    const QList<QSslCertificate> certs = selection.certificates();
+    if (certs.isEmpty()) {
+        selection.selectNone();
+        return;
+    }
+    const QString authority = selection.host().authority();
+    const auto remembered = m_clientCertChoices.constFind(authority);
+    if (remembered != m_clientCertChoices.constEnd()) {
+        // A null record is a remembered decline; a recorded cert that
+        // the store no longer offers falls back to declining rather
+        // than re-prompting mid-load.
+        if (!remembered->isNull() && certs.contains(*remembered))
+            selection.select(*remembered);
+        else
+            selection.selectNone();
+        return;
+    }
+
+    // Test hook: --clientcert-smoke cannot drive the picker headless.
+    if (qEnvironmentVariableIsSet("ARORA_CLIENTCERT_AUTOSELECT")) {
+        m_clientCertChoices.insert(authority, certs.first());
+        selection.select(certs.first());
+        return;
+    }
+
+    QWidget *view = WebEnginePageAdapter::forPage(this)->view();
+    if (!view) {   // pages with no chrome (autotests, probes) decline
+        selection.selectNone();
+        return;
+    }
+    QStringList items;
+    for (const QSslCertificate &cert : certs) {
+        items << tr("%1 (issued by %2, expires %3)")
+                .arg(cert.subjectDisplayName(),
+                     cert.issuerDisplayName(),
+                     cert.expiryDate().date().toString(Qt::ISODate));
+    }
+    bool ok = false;
+    const QString choice = QInputDialog::getItem(view,
+            tr("Client Certificate Requested"),
+            tr("The site at %1 asks you to identify yourself with a "
+               "certificate.  Pick one to send, or cancel to continue "
+               "without identifying yourself.")
+                .arg(selection.host().host()),
+            items, 0, false, &ok);
+    const int index = items.indexOf(choice);
+    if (ok && index >= 0) {
+        m_clientCertChoices.insert(authority, certs.at(index));
+        selection.select(certs.at(index));
+    } else {
+        m_clientCertChoices.insert(authority, QSslCertificate());
+        selection.selectNone();
+    }
+}
+
 // SAFE01: HTTPS-Only strict mode — the http: target a navigation was
 // stopped for becomes a nonce-bound interstitial on the private
 // arora-http-warning: scheme (same machinery as the certificate-error
@@ -1338,8 +1517,7 @@ QString WebPage::httpWarningHtml(const QUrl &target)
     if (!warningFile.open(QIODevice::ReadOnly))
         return QString();
     QString html = QLatin1String(warningFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
-    QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxWarning, nullptr, view).pixmap(QSize(32, 32));
+    QPixmap pixmap = QIcon(QLatin1String(":/arora.svg")).pixmap(QSize(64, 64));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
     if (pixmap.save(&imageBuffer, "PNG")) {
@@ -1381,6 +1559,7 @@ QString WebPage::httpWarningHtml(const QUrl &target)
                  "by a network attacker.")
             + QLatin1String("</li>"),
         buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 
@@ -1453,7 +1632,7 @@ QString WebPage::domainBlockWarningHtml(const QUrl &target)
     if (!warningFile.open(QIODevice::ReadOnly))
         return QString();
     QString html = QLatin1String(warningFile.readAll());
-    QWidget *view = QWebEngineView::forPage(this);
+    QWidget *view = WebEnginePageAdapter::forPage(this)->view();
     QPixmap pixmap = qApp->style()->standardIcon(QStyle::SP_MessageBoxCritical, nullptr, view).pixmap(QSize(32, 32));
     QBuffer imageBuffer;
     imageBuffer.open(QBuffer::ReadWrite);
@@ -1493,6 +1672,7 @@ QString WebPage::domainBlockWarningHtml(const QUrl &target)
                  "session.")
             + QLatin1String("</li>"),
         buttons);
+    BrowserTheme::decorateInternalPage(html);
     return html;
 }
 
@@ -1664,11 +1844,12 @@ void WebPage::schedulePageScripts(const QUrl &url)
     m_scheduledScriptUrl = url;
     if (!m_injectedScriptsEnabled)
         return;
-    AdBlockManager::instance()->page()->scheduleRulesOnPage(this, url);
+    Engine::Page *enginePage = WebEnginePageAdapter::forPage(this);
+    AdBlockManager::instance()->page()->scheduleRulesOnPage(enginePage, url);
     // TOR02: no autofill fill/capture in a tor window — stored
     // credentials are a cross-context identity leak.
     if (!BrowserApplication::isTorMode())
-        AutoFillManager::instance()->scheduleOnPage(this, url);
+        AutoFillManager::instance()->scheduleOnPage(enginePage, url);
 }
 
 void WebPage::setInjectedScriptsEnabled(bool enabled)

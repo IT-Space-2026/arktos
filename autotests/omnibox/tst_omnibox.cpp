@@ -75,12 +75,12 @@ class SubTabWidget : public TabWidget
 public:
     static QUrl reference(const QString &input)
     {
-        return guessUrlFromStringCpp(input);
+        return guessUrlFromStringCpp(input, false);
     }
 #ifdef ARORA_RUSTCORE
     static QUrl rust(const QString &input)
     {
-        return guessUrlFromStringRust(input);
+        return guessUrlFromStringRust(input, false);
     }
 #endif
 };

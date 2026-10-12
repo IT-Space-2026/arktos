@@ -16,19 +16,24 @@ SUBDIRS  = \
     cookiejar \
     cookiemodel \
     containermanager \
+    crashreporter \
     csp \
     devtools \
     dialogs \
     domainblock \
     downloadmanager \
+    engineadapter \
+    engineswitch \
     extverify \
     historyfiltermodel \
     historymanager \
     historyui \
+    htmlbookmarks \
     httponly \
     locationbar \
     modelmenu \
     modeltoolbar \
+    navigationpolicy \
     networkaccessmanager \
     networkcookiejar \
     omnibox \
@@ -43,6 +48,7 @@ SUBDIRS  = \
     qrcode \
     rustdownload \
     safetext \
+    sandbox \
     schemehandlers \
     scriptcontrol \
     securestore \

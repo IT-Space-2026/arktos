@@ -22,6 +22,7 @@
 
 #include <qobject.h>
 #include <qpointer.h>
+#include <qurl.h>
 #include <qvariant.h>
 
 #include <functional>
@@ -90,6 +91,10 @@ signals:
 private slots:
     void onLoadStarted();
     void onLoadFinished(bool ok);
+    // Client-side (SPA) route changes never reach loadFinished —
+    // urlChanged debounces a re-probe so availability still follows
+    // the new document.
+    void onUrlChanged(const QUrl &url);
     // ReaderBridge relays JS-side exits and in-overlay preference
     // changes through these.
     void scriptExited();
@@ -99,6 +104,10 @@ private:
     void setActive(bool active);
     void setAvailable(bool available);
     void probe();
+    // Applies one probe verdict: a false result is re-tried a bounded
+    // number of times since loadFinished can fire before the article
+    // markup settles (deferred hydration, lazily injected content).
+    void probeFinished(bool available);
     // Runs program (the Readability+driver bundle plus a trailing
     // call) in the page's main world, working around WebEngine's
     // refusal to runJavaScript while JavascriptEnabled is off.
@@ -123,6 +132,14 @@ private:
     bool m_active;
     bool m_available;
     bool m_busy;
+    // Probe bookkeeping: m_loading suppresses urlChanged re-probes
+    // during a real navigation; m_probeGeneration invalidates stale
+    // async callbacks/retries from older documents; m_probeRetries
+    // bounds the false-verdict retry loop.
+    bool m_loading;
+    QUrl m_seenUrl;
+    int m_probeGeneration;
+    int m_probeRetries;
 };
 
 // Channel object registered as "aroraReader" on the page's existing

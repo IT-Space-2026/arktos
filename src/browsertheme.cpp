@@ -23,6 +23,7 @@
 #include <qdialog.h>
 #include <qevent.h>
 #include <qpushbutton.h>
+#include <qsettings.h>
 #include <qstyle.h>
 #include <qstylefactory.h>
 #include <qstylehints.h>
@@ -34,7 +35,18 @@ static bool s_forced = false;
 static QPalette s_savedPalette;
 static QString s_savedStyleName;
 
-Qt::ColorScheme BrowserTheme::preferredColorScheme()
+static void restoreSavedPalette()
+{
+    if (!s_savedStyleName.isEmpty()) {
+        if (QStyle *style = QStyleFactory::create(s_savedStyleName))
+            QApplication::setStyle(style);
+        s_savedStyleName.clear();
+    }
+    QApplication::setPalette(s_savedPalette);
+    s_forced = false;
+}
+
+Qt::ColorScheme BrowserTheme::systemColorScheme()
 {
     const QByteArray override_ = qgetenv("ARORA_COLOR_SCHEME").toLower();
     if (override_ == "dark")
@@ -42,6 +54,22 @@ Qt::ColorScheme BrowserTheme::preferredColorScheme()
     if (override_ == "light")
         return Qt::ColorScheme::Light;
     return QGuiApplication::styleHints()->colorScheme();
+}
+
+Qt::ColorScheme BrowserTheme::preferredColorScheme()
+{
+    // THEME01: the user's Appearance pick is the top input; the
+    // default ("system", or an absent key) falls through to the env
+    // override then the platform — so ARORA_COLOR_SCHEME keeps driving
+    // headless/testing runs exactly as before.
+    const QString choice = QSettings()
+        .value(QLatin1String("browser/colorScheme"),
+               QLatin1String("system")).toString();
+    if (choice == QLatin1String("dark"))
+        return Qt::ColorScheme::Dark;
+    if (choice == QLatin1String("light"))
+        return Qt::ColorScheme::Light;
+    return systemColorScheme();
 }
 
 bool BrowserTheme::isDarkPalette(const QPalette &palette)
@@ -85,14 +113,23 @@ QPalette BrowserTheme::darkPalette()
     return palette;
 }
 
-void BrowserTheme::applyColorScheme()
+static void applyScheme(Qt::ColorScheme scheme)
 {
-    const Qt::ColorScheme scheme = preferredColorScheme();
-    if (scheme == Qt::ColorScheme::Unknown)
+    if (scheme == Qt::ColorScheme::Unknown) {
+        // "Leave the theme alone" — but not when the active palette is
+        // one we forced: reverting the pick to "System default" on a
+        // platform that reports Unknown (the offscreen QPA included)
+        // still has to take our palette back off.
+        if (s_forced) {
+            restoreSavedPalette();
+            emit BrowserTheme::themeNotifier()->chromeSchemeChanged();
+        }
         return;
+    }
 
     const bool darkWanted = scheme == Qt::ColorScheme::Dark;
-    const bool darkActive = isDarkPalette(QApplication::palette());
+    const bool darkActive =
+        BrowserTheme::isDarkPalette(QApplication::palette());
 
     if (darkWanted == darkActive) {
         // Matches already — either the platform theme handled it or we
@@ -117,22 +154,40 @@ void BrowserTheme::applyColorScheme()
             if (QStyle *fusion = QStyleFactory::create(QLatin1String("fusion")))
                 QApplication::setStyle(fusion);
         }
-        QApplication::setPalette(darkPalette());
+        QApplication::setPalette(BrowserTheme::darkPalette());
         s_forced = true;
     } else if (s_forced) {
-        if (!s_savedStyleName.isEmpty()) {
-            if (QStyle *style = QStyleFactory::create(s_savedStyleName))
-                QApplication::setStyle(style);
-            s_savedStyleName.clear();
-        }
-        QApplication::setPalette(s_savedPalette);
-        s_forced = false;
+        restoreSavedPalette();
     }
+    emit BrowserTheme::themeNotifier()->chromeSchemeChanged();
+}
+
+void BrowserTheme::applyColorScheme()
+{
+    applyScheme(preferredColorScheme());
+}
+
+void BrowserTheme::previewColorScheme(Qt::ColorScheme scheme)
+{
+    applyScheme(scheme);
 }
 
 bool BrowserTheme::paletteIsForced()
 {
     return s_forced;
+}
+
+BrowserTheme::BrowserThemeNotifier *BrowserTheme::themeNotifier()
+{
+    static BrowserThemeNotifier *notifier = new BrowserThemeNotifier;
+    return notifier;
+}
+
+void BrowserTheme::decorateInternalPage(QString &html)
+{
+    if (qApp && isDarkPalette(qApp->palette()))
+        html.replace(QLatin1String("<html"),
+                     QLatin1String("<html class=\"arora-dark\""));
 }
 
 void BrowserTheme::polishDialogButtons(QDialog *dialog)

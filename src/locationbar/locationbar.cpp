@@ -19,12 +19,10 @@
 
 #include "locationbar.h"
 
-#include "adblockbutton.h"
 #include "clearbutton.h"
 #include "locationbarsiteicon.h"
 #include "popupblockerbutton.h"
 #include "privacyindicator.h"
-#include "readerbutton.h"
 #include "searchlineedit.h"
 #include "siteshield.h"
 #include "twoleveldomains_p.h"
@@ -46,10 +44,8 @@ LocationBar::LocationBar(QWidget *parent)
     , m_webView(nullptr)
     , m_siteIcon(nullptr)
     , m_shield(nullptr)
-    , m_adBlockButton(nullptr)
     , m_popupBlockerButton(nullptr)
     , m_privacyIndicator(nullptr)
-    , m_readerButton(nullptr)
 {
     // Urls are always LeftToRight
     setLayoutDirection(Qt::LeftToRight);
@@ -69,25 +65,17 @@ LocationBar::LocationBar(QWidget *parent)
     m_siteIcon = new LocationBarSiteIcon(this);
     addWidget(m_siteIcon, LeftSide);
 
-    // ADB05: content-blocker button — rightmost of the right-side
+    // POPUP01: blocked pop-up indicator — rightmost of the right-side
     // cluster (widgets are inserted at index 1, so the first added
-    // lands furthest right).
-    m_adBlockButton = new AdBlockButton(this);
-    addWidget(m_adBlockButton, RightSide);
-
-    // POPUP01: blocked pop-up indicator — appears directly left of the
-    // ad-block button only while the page has refused pop-ups.
+    // lands furthest right); appears only while the page has refused
+    // pop-ups.  SHLD02: the content-blocker button that used to anchor
+    // this cluster was merged into the left shield.
     m_popupBlockerButton = new PopupBlockerButton(this);
     addWidget(m_popupBlockerButton, RightSide);
 
     // privacy indicator at rightmost position
     m_privacyIndicator = new PrivacyIndicator(this);
     addWidget(m_privacyIndicator, RightSide);
-
-    // READ01: reader-mode toggle — appears on article-like pages,
-    // left of the privacy indicator (widgets land at index 1).
-    m_readerButton = new ReaderButton(this);
-    addWidget(m_readerButton, RightSide);
 
     // clear button on the right
     ClearButton *m_clearButton = new ClearButton(this);
@@ -107,10 +95,8 @@ void LocationBar::setWebView(WebView *webView)
     m_webView = webView;
     m_siteIcon->setWebView(webView);
     m_shield->setWebView(webView);
-    m_adBlockButton->setWebView(webView);
     m_popupBlockerButton->setWebView(webView);
     m_privacyIndicator->setWebView(webView);
-    m_readerButton->setWebView(webView);
     connect(webView, &QWebEngineView::urlChanged,
             this, &LocationBar::webViewUrlChanged);
     connect(webView, &QWebEngineView::loadProgress,

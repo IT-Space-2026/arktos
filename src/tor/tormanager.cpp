@@ -26,6 +26,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
+#include <qhash.h>
 #include <qprocess.h>
 #include <qregularexpression.h>
 #include <qstandardpaths.h>
@@ -40,10 +41,16 @@ TorManager::TorManager(QObject *parent)
     , m_state(Stopped)
     , m_bootstrapProgress(-1)
     , m_socksPort(0)
+    , m_streamCircuitId(-1)
+    , m_circuitQueryInFlight(false)
+    , m_circuitRefreshTimer(nullptr)
     , m_process(nullptr)
     , m_control(nullptr)
     , m_portFileTimer(nullptr)
 {
+    // Needed by QSignalSpy/queued consumers of circuitsChanged.
+    qRegisterMetaType<TorCircuit>("TorCircuit");
+    qRegisterMetaType<QList<TorCircuit> >("QList<TorCircuit>");
 }
 
 TorManager::~TorManager()
@@ -98,11 +105,6 @@ QString TorManager::resolveBinary()
         }
     }
     return QString();
-}
-
-QString TorManager::binaryPath() const
-{
-    return m_binaryPath;
 }
 
 void TorManager::setBinaryPath(const QString &path)
@@ -173,12 +175,250 @@ quint16 TorManager::socksPort() const
     return m_socksPort;
 }
 
+QList<TorCircuit> TorManager::circuits() const
+{
+    return m_circuits;
+}
+
+// A circuit line is "<CircID> <Status> [CircPath] KEY=VALUE..." where
+// the path is a single comma-separated ServerID token ("$FP~Nick" /
+// "$FP=Nick" / "$FP" / bare nickname).  Lines that do not start with a
+// numeric id — the "circuit-status=" header and the trailing "OK" the
+// reply collector includes — are skipped.
+QList<TorCircuit> TorManager::parseCircuitStatus(const QStringList &lines)
+{
+    QList<TorCircuit> circuits;
+    for (const QString &line : lines) {
+        const QStringList parts =
+            line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (parts.size() < 2)
+            continue;
+        bool ok = false;
+        const int id = parts.at(0).toInt(&ok);
+        if (!ok)
+            continue;
+        TorCircuit circuit;
+        circuit.id = id;
+        circuit.status = parts.at(1);
+        for (int i = 2; i < parts.size(); ++i) {
+            const QString &field = parts.at(i);
+            // A NAME=value keyword — except "$FP=Nick", which is a
+            // path token (starts with '$'/'~' or carries ',').
+            if (field.indexOf(QLatin1Char('=')) > 0
+                && !field.startsWith(QLatin1Char('$'))
+                && !field.startsWith(QLatin1Char('~'))) {
+                if (field.startsWith(QLatin1String("PURPOSE=")))
+                    circuit.purpose = field.mid(8);
+                continue;
+            }
+            const QStringList servers =
+                field.split(QLatin1Char(','), Qt::SkipEmptyParts);
+            for (const QString &server : servers) {
+                TorCircuitHop hop;
+                int split = server.indexOf(QLatin1Char('~'));
+                const int eq = server.indexOf(QLatin1Char('='));
+                if (split < 0 || (eq >= 0 && eq < split))
+                    split = eq;
+                if (split >= 0) {
+                    hop.fingerprint = server.left(split);
+                    hop.nickname = server.mid(split + 1);
+                } else if (server.startsWith(QLatin1Char('$'))) {
+                    hop.fingerprint = server;
+                } else {
+                    hop.nickname = server;
+                }
+                if (hop.fingerprint.startsWith(QLatin1Char('$')))
+                    hop.fingerprint.remove(0, 1);
+                circuit.hops << hop;
+            }
+        }
+        circuits << circuit;
+    }
+    return circuits;
+}
+
+int TorManager::displayCircuitId() const
+{
+    const TorCircuit *byStreams = nullptr;
+    const TorCircuit *newestBuiltGeneral = nullptr;
+    const TorCircuit *newestBuilt = nullptr;
+    for (const TorCircuit &circuit : m_circuits) {
+        if (circuit.status != QLatin1String("BUILT"))
+            continue;
+        if (circuit.id == m_streamCircuitId)
+            byStreams = &circuit;
+        if (!newestBuilt || circuit.id > newestBuilt->id)
+            newestBuilt = &circuit;
+        if (circuit.purpose == QLatin1String("GENERAL")
+            && (!newestBuiltGeneral
+                || circuit.id > newestBuiltGeneral->id))
+            newestBuiltGeneral = &circuit;
+    }
+    if (byStreams)
+        return byStreams->id;
+    if (newestBuiltGeneral)
+        return newestBuiltGeneral->id;
+    return newestBuilt ? newestBuilt->id : -1;
+}
+
+void TorManager::requestCircuitInfo()
+{
+    if (!m_control || !m_control->isConnected()
+        || m_circuitQueryInFlight)
+        return;
+    m_circuitQueryInFlight = true;
+    m_control->getInfo(QLatin1String("circuit-status"),
+                     [this](int code, const QStringList &lines) {
+        m_circuits = (code == 250) ? parseCircuitStatus(lines)
+                                   : QList<TorCircuit>();
+        // stream-status maps StreamID -> CircID so the display prefers
+        // the circuit the tabs' traffic actually rides; it queues
+        // behind the circuit-status reply on the same connection.
+        m_control->getInfo(QLatin1String("stream-status"),
+                         [this](int code, const QStringList &lines) {
+            m_streamCircuitId = -1;
+            if (code == 250) {
+                QHash<int, int> attached;
+                for (const QString &line : lines) {
+                    const QStringList parts = line.split(
+                        QLatin1Char(' '), Qt::SkipEmptyParts);
+                    // "<StreamID> <Status> <CircID> <Target>"
+                    if (parts.size() < 4)
+                        continue;
+                    bool ok = false;
+                    const int circId = parts.at(2).toInt(&ok);
+                    if (ok && circId > 0)
+                        attached[circId] += 1;
+                }
+                int best = 0;
+                for (auto it = attached.constBegin();
+                     it != attached.constEnd(); ++it) {
+                    if (it.value() > best) {
+                        best = it.value();
+                        m_streamCircuitId = it.key();
+                    }
+                }
+            }
+            m_circuitQueryInFlight = false;
+            fillHopCountries();
+            emit circuitsChanged(m_circuits);
+            // TOR05: look up hop countries for the displayed circuit
+            // — queued on the same control connection, results land
+            // through finishHopCountryQuery -> circuitsChanged.
+            resolveHopCountries();
+        });
+    });
+}
+
+// 'r' line: "r nickname identity digest YYYY-MM-DD HH:MM:SS address
+// orport dirport" — the OR address is field 6.
+QString TorManager::parseNsAddress(const QStringList &lines)
+{
+    for (const QString &line : lines) {
+        if (!line.startsWith(QLatin1String("r ")))
+            continue;
+        const QStringList parts =
+            line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (parts.size() >= 7)
+            return parts.at(6);
+    }
+    return QString();
+}
+
+bool TorManager::fillHopCountries()
+{
+    bool changed = false;
+    for (TorCircuit &circuit : m_circuits) {
+        for (TorCircuitHop &hop : circuit.hops) {
+            const QString cached =
+                m_countryCache.value(hop.fingerprint);
+            if (hop.country != cached) {
+                hop.country = cached;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
+void TorManager::resolveHopCountries()
+{
+    if (!m_control || !m_control->isConnected())
+        return;
+    const int displayId = displayCircuitId();
+    const TorCircuit *circuit = nullptr;
+    for (const TorCircuit &candidate : m_circuits) {
+        if (candidate.id == displayId) {
+            circuit = &candidate;
+            break;
+        }
+    }
+    if (!circuit)
+        return;
+    for (const TorCircuitHop &hop : circuit->hops) {
+        const QString fingerprint = hop.fingerprint;
+        if (fingerprint.isEmpty()
+            || m_countryCache.contains(fingerprint)
+            || m_countryQueriesInFlight.contains(fingerprint))
+            continue;
+        m_countryQueriesInFlight.insert(fingerprint);
+        m_control->getInfo(QLatin1String("ns/id/") + fingerprint,
+            [this, fingerprint](int code, const QStringList &lines) {
+            const QString address =
+                (code == 250) ? parseNsAddress(lines) : QString();
+            if (address.isEmpty()) {
+                finishHopCountryQuery(fingerprint, QString());
+                return;
+            }
+            m_control->getInfo(
+                QLatin1String("ip-to-country/") + address,
+                [this, fingerprint](int code,
+                                    const QStringList &lines) {
+                QString country;
+                if (code == 250) {
+                    // "ip-to-country/<addr>=<cc>" — "??" is tor's
+                    // unmapped / no-geoip sentinel.
+                    for (const QString &line : lines) {
+                        if (!line.startsWith(
+                                QLatin1String("ip-to-country/")))
+                            continue;
+                        const int eq = line.indexOf(QLatin1Char('='));
+                        if (eq >= 0)
+                            country = line.mid(eq + 1).trimmed()
+                                .toUpper();
+                    }
+                    if (country == QLatin1String("??"))
+                        country.clear();
+                }
+                finishHopCountryQuery(fingerprint, country);
+            });
+        });
+    }
+}
+
+void TorManager::finishHopCountryQuery(const QString &fingerprint,
+                                       const QString &country)
+{
+    m_countryQueriesInFlight.remove(fingerprint);
+    if (!m_countryCache.contains(fingerprint)) {
+        m_countryCache.insert(fingerprint, country);
+        m_countryCacheOrder << fingerprint;
+        const int cacheCap = 512;
+        while (m_countryCacheOrder.size() > cacheCap)
+            m_countryCache.remove(m_countryCacheOrder.takeFirst());
+    }
+    if (fillHopCountries())
+        emit circuitsChanged(m_circuits);
+}
+
 void TorManager::setState(State state)
 {
     if (m_state == state)
         return;
     m_state = state;
     emit stateChanged(state);
+    if (state == Ready)
+        requestCircuitInfo();
 }
 
 void TorManager::fail(const QString &reason)
@@ -196,6 +436,13 @@ void TorManager::start()
     m_bootstrapProgress = -1;
     m_bootstrapSummary.clear();
     m_socksPort = 0;
+    m_circuits.clear();
+    m_streamCircuitId = -1;
+    m_circuitQueryInFlight = false;
+    // The fp->country cache survives a daemon restart (relay geography
+    // does not change), but queries orphaned by a dead connection must
+    // not stay marked in flight.
+    m_countryQueriesInFlight.clear();
 
     // tor itself refuses to run as root unless coerced; enforce it here
     // too so the check survives config drift.
@@ -275,16 +522,35 @@ void TorManager::start()
 
     // The expert bundle ships geoip data in data/ next to tor/ — point
     // tor at it when present so it stops warning about missing files.
+    // TOR05: without a GeoIPFile the control port's ip-to-country
+    // lookups all answer "??", so fall back to the system database
+    // (e.g. debian's tor-geoipdb) when the bundle ships none — a
+    // system tor already loads its compiled-in path, passing it
+    // explicitly is a no-op there.
     const QString binaryDir =
         QFileInfo(binary).canonicalPath();
-    const QString geoip = binaryDir + QLatin1String("/../data/geoip");
-    const QString geoip6 = binaryDir + QLatin1String("/../data/geoip6");
-    if (QFile::exists(geoip))
-        args << QLatin1String("--GeoIPFile")
-             << QDir::toNativeSeparators(QFileInfo(geoip).canonicalFilePath());
-    if (QFile::exists(geoip6))
-        args << QLatin1String("--GeoIPv6File")
-             << QDir::toNativeSeparators(QFileInfo(geoip6).canonicalFilePath());
+    const QStringList geoipDirs = {
+        binaryDir + QLatin1String("/../data"),
+        binaryDir,
+#ifdef Q_OS_UNIX
+        QLatin1String("/usr/share/tor"),
+        QLatin1String("/usr/local/share/tor"),
+#endif
+    };
+    for (const char *name : {"geoip", "geoip6"}) {
+        for (const QString &dir : geoipDirs) {
+            const QString candidate =
+                dir + QLatin1Char('/') + QLatin1String(name);
+            if (!QFile::exists(candidate))
+                continue;
+            args << (QLatin1String(name) == QLatin1String("geoip6")
+                         ? QLatin1String("--GeoIPv6File")
+                         : QLatin1String("--GeoIPFile"))
+                 << QDir::toNativeSeparators(
+                        QFileInfo(candidate).canonicalFilePath());
+            break;
+        }
+    }
 
     m_process->setProgram(binary);
     m_process->setArguments(args);
@@ -357,8 +623,10 @@ void TorManager::onControlConnected()
             return;
         }
         m_control->takeOwnership();
+        // CIRC events drive the circuit-chain surface (TOR04).
         m_control->setEvents(QStringList()
-                             << QLatin1String("STATUS_CLIENT"));
+                             << QLatin1String("STATUS_CLIENT")
+                             << QLatin1String("CIRC"));
         m_control->getInfo(QLatin1String("status/bootstrap-phase"),
                            [this](int code, const QStringList &lines) {
             if (code == 250 && !lines.isEmpty())
@@ -378,6 +646,18 @@ void TorManager::onAsyncEvent(const QString &line)
     //        SUMMARY=...""
     if (line.startsWith(QLatin1String("STATUS_CLIENT ")))
         onBootstrapLine(line.mid(14));
+    else if (line.startsWith(QLatin1String("CIRC "))) {
+        // A burst of BUILT/CLOSED lines coalesces into one refresh —
+        // otherwise each event would queue its own GETINFO pair.
+        if (!m_circuitRefreshTimer) {
+            m_circuitRefreshTimer = new QTimer(this);
+            m_circuitRefreshTimer->setSingleShot(true);
+            m_circuitRefreshTimer->setInterval(250);
+            connect(m_circuitRefreshTimer, &QTimer::timeout,
+                    this, &TorManager::requestCircuitInfo);
+        }
+        m_circuitRefreshTimer->start();
+    }
 }
 
 void TorManager::onBootstrapLine(const QString &line)
@@ -432,6 +712,10 @@ void TorManager::stop()
     setState(Stopping);
     if (m_portFileTimer)
         m_portFileTimer->stop();
+    if (m_circuitRefreshTimer)
+        m_circuitRefreshTimer->stop();
+    m_circuits.clear();
+    m_streamCircuitId = -1;
     if (m_control && m_control->isConnected())
         m_control->signalShutdown();
     if (m_process && m_process->state() != QProcess::NotRunning) {

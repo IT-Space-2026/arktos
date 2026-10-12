@@ -1,3 +1,646 @@
+0.12 (unreleased) — Qt 6 port + feature rebuild
+Core / Qt 6 port:
+- Complete port from Qt4/WebKit to Qt 6/WebEngine: WebView, WebPage, tab
+  widget, browser window, application object (MIG02–MIG15).
+- qmake build retargeted to Qt 6 (webenginewidgets, webchannel,
+  uitools, core5compat); WebKit and Qt4 conditionals removed (MIG01).
+- Cookie jar on QWebEngineCookieStore with block/allow exception lists
+  and third-party-cookie policy (MIG03).
+- Slimmed QNetworkAccessManager kept for app fetches only; web traffic
+  belongs to Chromium (MIG04).
+- file:// directory listings via the arora-file URL scheme (MIG04).
+- History store, dialog, menu and completer on a named persistent
+  profile (MIG06).
+- Download manager drives QWebEngineDownloadRequest (MIG05).
+- Bookmarks store/model/dialogs/toolbar on Qt 6 (MIG07).
+- Preferences, accept-language and Clear Private Data dialogs ported
+  (MIG11).
+- Autofill via injected autofill.js + hardened WebChannel reporting
+  (MIG10).
+- Source viewer, syntax highlighter and page search ported (MIG12).
+- NPAPI/Flash machinery removed (MIG13).
+- Translations regenerated; install + freedesktop rules updated (MIG16).
+- Deprecated-API sweep complete (MIG17).
+- Bundled CLI tools rebuilt for Qt 6 (TOOL01).
+- Qt 6.12 toolchain (QTUP01).
+- Session restore end to end (SESS01).
+- Session state now survives an OS kill: SIGTERM, SIGINT and SIGHUP
+  flush the pending session save before the process dies, instead of
+  losing changes still inside the debounce window (SESS02). SIGKILL
+  remains unflushed by design — it cannot be caught.
+- Command-line URL arguments treated as untrusted input (SEC09).
+- GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
+  display-compositor CHECK on some driver stacks, killing the whole
+  browser. Arora now arms Chromium's --disable-gpu-compositing —
+  which keeps WebGL/canvas acceleration while moving page compositing
+  to software — after two consecutive unclean exits, and exposes the
+  same mitigation as a Preferences checkbox and the
+  ARORA_DISABLE_GPU_COMPOSITING env override (CRASH01).
+- Printing can no longer kill the browser: an accepted print dialog
+  describing an unprintable target (no configured printer, a file
+  output path that can't be written) is refused with a readable error
+  instead of being handed to the engine, and closing Print Preview
+  mid-job now waits for the in-flight print instead of painting into
+  a dead printer. Fatal exits are also observable now — a crash
+  reporter writes a marker + backtrace to stderr and
+  crashreport.log on SIGSEGV/SIGABRT and uncaught exceptions
+  (CRASH02).
+
+UI:
+- Light/dark follows the desktop scheme; ARORA_COLOR_SCHEME override
+  (UIP01).
+- Central icon provider + bundled Adwaita/Breeze/Tabler sets, light and
+  dark variants (ICONS01).
+- Vivaldi-style vertical navigation in Preferences (UIP03).
+- Status-bar load indicator and zoom control (UIP04).
+- Shield icon at the left of the location bar (UIP05).
+- Scrollable Preferences pages, capped to the screen (UIP06).
+- Tab bar positions: Top/Bottom/Left/Right (TABS01).
+- Left/Right tab strips show horizontal, readable tab titles and can
+  be resized by dragging their inner edge (TABS02).
+- Pinned tabs: the tab context menu's Pin Tab/Unpin Tab packs the tab
+  into an icon-only block at the start of the strip — no title or
+  close button, middle-click ignored, exempt from Close Other Tabs
+  and idle-tab sleeping; new tabs open right after the block,
+  dragging a tab across the boundary pins or unpins it, and pin state
+  is restored with the session (TABS04).
+- Named, color-coded tab groups (TABGRP01).
+- Compact tab strip: a container tab no longer inflates the whole
+  bar — the container's accent line and name chip now paint inside a
+  standard-height tab row instead of stacking a chip band on top of
+  it, so the strip stays at normal browser-tab height even when
+  container tabs are open (TABS06).
+- Undo closed tab: Ctrl+Shift+T (or the tab context menu's Reopen
+  Closed Tab, plus a titled/icon'd submenu of recent entries) reopens
+  the last closed tab at its original index with history, scroll
+  position, tab group, container and pinned state intact. The
+  memory-only stack keeps 25 entries per window, never records
+  private tabs and is wiped by Clear Private Data (TABS05).
+- Resizable widths everywhere a strip meets content: the sidebar's
+  inner edge is now a visible drag grip (double-click resets, the
+  width is remembered per side and survives restarts, and it follows
+  the dock to the left or right edge), Left/Right tab strips gained a
+  double-click reset on their existing grip, and horizontal tab
+  strips get Minimum/Maximum tab-width controls in Preferences so
+  tabs neither collapse nor balloon (RSZ01).
+- Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
+- Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) now raises the
+  sidebar dock focused on the Bookmarks rail instead of opening a
+  separate manager window, and the rail carries Add/Remove buttons —
+  Add books the current page through the same dialog the toolbar
+  star uses, Remove deletes the selection (also on the rail's
+  context menu as "Remove Entry") (SIDE04).
+- Command palette, Ctrl+Shift+P (CMD01).
+- Tab search dropdown, Ctrl+Shift+A, with hover previews (POL02).
+- Copy Clean Link and QR-code sharing (POL01).
+- Find-bar n/m match counter; page dark mode; middle-click paste
+  (POL03).
+- Complete image context menu (CTX01).
+- Reader Mode, Ctrl+Alt+R (READ01).
+- Sleeping tabs for memory reclaim (SLEEP01).
+- Picture-in-Picture on videos (PIP01).
+- About dialog updated; Tools menu deduplicated (ABOUT01, MENU01).
+- Accessible names on every chrome control (A11Y01).
+- History entries show real site favicons that persist across restarts
+  (host-keyed icon store under the data dir; HIST01).
+- File menu: "New Tor Window" moved up next to New Window/New Tab
+  instead of sitting at the bottom (MENU02).
+- The engine-switch button moved out of the URL bar's right end into
+  the navigation toolbar as a fixed-width button immediately right of
+  the URL bar — one shared control that mirrors the active tab's
+  engine instead of a per-bar embedded glyph (ENG08).
+- Switching a tab's engine no longer breaks the strip: swapping the
+  chip of a collapsed tab group keeps the group collapsed around its
+  next member instead of spilling all hidden tabs onto the strip, and
+  the swapped tab's original slot, pin and neighbours are preserved
+  (a foreign-engine tab still drops group membership — documented)
+  (ENG09).
+- A plain `qmake && make` can no longer silently drop the Servo
+  backend: while the servo-embed artifact exists under
+  `spikes/servo/servo-embed/target/`, the build auto-enables it and
+  qmake announces the resolved engine set; opt out with
+  `qmake CONFIG-=servo`, `noservo=1` or `servo=0` (ENG10).
+- Fixed a whole-process crash on the Servo backend: libservo permits
+  exactly one web view per process lifetime — a second engine tab
+  (re-swapping a tab back to Servo, a second Servo tab, or reload after
+  the swap) tripped an unrecoverable panic inside the engine that
+  aborted the browser. The backend now allows a single Servo view and
+  refuses further engine tabs with a status-bar message instead of
+  crashing; sibling actions on an empty Servo tab are no-ops (ENG12).
+- Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
+  opens an off-the-record tab beside normal ones — mask-badged tab
+  icon, no history/cookies/icons/session/recently-closed writes, and
+  child tabs inherit the private context (PTAB01).
+- Link context menu gains "Open in New Private Tab", "Open in New
+  Private Window" and "Open in New Tor Window" alongside New
+  Tab/Window. All five entries share one strict link gate —
+  javascript:, data: and blob: links are refused everywhere — Referer
+  is sent only for same-profile opens, private targets never inherit
+  the page's container, and inside a Tor window the menu stays
+  Tor-bound so a link can never escape to clearnet (CONT07).
+- New Preferences "Performance" page: a hardware-acceleration toggle
+  (--disable-gpu, restart note included), Memory Saver presets that
+  drive the inactive-tab suspend clock (Never / Minimum / Balanced /
+  Maximum), Lazy Load Restored Tabs — background session tabs now
+  restore their title and icon without loading until first activated,
+  with an "Always Load Pinned Tabs" opt-out — a positive "Prefetch
+  Resources" checkbox (replaces the Privacy page's negative one), and
+  a page-scoped Reset to defaults (PREFUI04).
+- Energy Saver on the Preferences Performance page: Never / Turn On at
+  20% Battery or Lower / Turn On When Running on Battery / Always Save
+  Energy. While saving, inactive tabs sleep after 10 minutes
+  (overriding the Memory Saver pick, including Never), tab hover
+  previews are disabled, and tab loading animations freeze. Battery
+  state is read from sysfs with live AC/battery transitions; the page
+  shows the charge level and on machines with no battery the
+  battery-based options honestly degrade to "Never" (PREFUI05).
+- Preferences opens as a tab instead of a modal dialog, one per
+  window — re-opening focuses the existing tab, OK applies + closes,
+  Cancel or closing the tab discards, and settings deep links (Search
+  engines, pop-up settings, Containers, command palette) open the tab
+  on the right section (PREFS01).
+- Preferences icons are a uniform size: the sidebar sections, the
+  icon-theme picker previews and the engine list are all pinned to
+  the style's small-icon metric, so mixed theme assets no longer
+  render at different heights (ICONS02).
+- Preferences moved from Tools → "Options..." to the bottom of the
+  File menu as "Preferences..." (Ctrl+,), matching the cross-browser
+  layout (MENU03).
+- The "Icons" theme picker moved from the General page to the
+  Appearance page of Preferences, and each option now previews a
+  strip of the set's own icons instead of a single swatch (ICONS03).
+- "Show All History" (Ctrl+H) now opens as a tab inside the window
+  instead of a floating dialog — re-opening focuses the existing tab,
+  double-clicking an entry opens it in a new tab, and the search,
+  Remove and context-menu actions work live against the shared
+  history model (HIST02).
+- Download rows expand into a detail card (chevron on each item):
+  source URL, destination path, started/finished times, total size,
+  live speed and a speed-over-time sparkline, plus "Restart" and
+  "Show in File Manager" actions — Restart works on completed
+  downloads too and re-downloads to a fresh "-N" name (DOWN01).
+- The separate Downloads window is gone — downloads live in the
+  sidebar's Downloads panel (Ctrl+Y / Tools → Downloads focuses it),
+  with a filter field, Date/Name/Size sorting, compact icon+size rows,
+  Open and Open Location item actions, and the selected download's
+  detail card in a bottom pane; download preferences moved to a
+  dedicated Preferences → Downloads page (DOWN02).
+- A running download now opens its detail card on its own — the card
+  (source, destination, times, size, live speed graph, actions) is
+  visible during the transfer without clicking the chevron, and
+  collapses again when the download reaches a terminal state. A
+  manual collapse mid-download or a manual expand after finish still
+  wins over the automatic behavior, and a retried download expands
+  again; starting a download also selects and scrolls to its row in
+  the sidebar so the live card stays in view (DLUX01).
+- The download detail card is restyled to match the compact row's
+  polish: the duplicated filename/size header is gone, the card sits
+  on a rounded theme-palette background with uniform padding, field
+  captions (Source, Destination, Started, Finished, Size, Speed)
+  render muted beside full-contrast values, timestamps and size/speed
+  share single rows, and all actions live on one compact button row
+  — readable in both light and dark themes (DLUX02).
+- Preferences layout normalized across all ten pages: label/field
+  pairs sit on shared grid columns, "Select…"-style buttons and combo
+  boxes are capped at content width instead of stretching, group
+  boxes no longer balloon to fill empty space, and each page's
+  content packs to the top with consistent row spacing (PREFUI01).
+- Preferences density pass: identical padding on every page and inside
+  every group box (no more dead band under group titles), and the
+  OK/Cancel buttons now sit in a slim right-aligned footer strip
+  separated by a rule line instead of stretching across the window
+  (PREFUI02).
+- Preferences search: a filter field at the top of the section sidebar
+  narrows the page list as you type — it matches page titles and the
+  labels inside each page ("font" finds Appearance, "cookie" finds
+  Privacy). Clicking or pressing Enter opens the top hit, and
+  clearing the field restores the full list (PREFUI03).
+- Theme selector on Preferences' Appearance page — System default /
+  Light / Dark applies live without a restart, and Arora's own error
+  pages, directory listings and start page follow the app palette in
+  dark mode (THEME01).
+- The window theme selector (now labeled "Window theme (Day/Night)")
+  previews instantly: picking Light or Dark flips the application
+  theme as you select it, changing the combo back or closing
+  Preferences without OK restores the previous theme, and OK commits
+  it (THEME02).
+- Reader Mode toggle in the navigation toolbar, right after the
+  reload/stop button — it appears only on article-like pages, shows
+  a filled icon while the reader overlay is up, and stays in sync
+  with View → Reader Mode (Ctrl+Alt+R) (READ02).
+- Removed the duplicated reader-mode button embedded at the right end
+  of the URL bar — the navigation toolbar toggle is now the single
+  reader control on the chrome row, still tracking the active tab
+  (READ03).
+- The Reader Mode button is now always present on web tabs instead of
+  disappearing whenever the article heuristic misses — the option to
+  try reader mode is never taken away. Pages judged non-article still
+  allow the toggle and report "Reader view is not available on this
+  page."; article-like pages get an accent-dot "suggested" highlight
+  instead. The control hides only where reader mode can never apply
+  (History/Preferences-style tabs). Article detection also got more
+  forgiving: the probe retries briefly while a page hydrates, re-runs
+  on client-side SPA navigations (e.g. telex.hu), and accepts
+  short-lead paragraphs and article/main containers carrying
+  substantial copy (READ04).
+- Downloads moved from the Window menu to the Tools menu — the
+  Ctrl+Y shortcut and icon are unchanged, and the Window menu now
+  holds only tab/window-switching entries (MENU04).
+- Preferences → Downloads gains a download-engine selector —
+  "Built-in (Chromium)" or "Accelerated (Rust)", greyed out in builds
+  without the rustdl backend — plus a connections-per-download field
+  and a cleanup policy for the finished-downloads list (keep, clear
+  on exit, or remove each entry as it completes) (DLACC01).
+- Downloads on the built-in engine are fetched in parallel segments:
+  Chromium's ParallelDownloading feature splits range-capable
+  downloads into ~3 concurrent byte-range requests.  On by default;
+  the Preferences → Downloads "Parallel segments" checkbox toggles it
+  (applies at restart, works in Tor windows too) (DLACC02).
+- The Accelerated (Rust) download engine is now the default in
+  rustdl builds — fresh profiles route http(s) downloads through the
+  segmented reqwest fetcher.  A saved "Built-in" pick is honored,
+  and transfers behind an application proxy (including every Tor
+  window) always stay on the built-in engine (DLACC06).
+- Sidebar reworked Vivaldi-style: the panel picker is now a slim
+  icon-only vertical rail instead of horizontal tabs eating the
+  dock's height, and a new Preferences → Appearance → Sidebar
+  section holds the enable toggle, Left/Right placement and a
+  checkable per-panel list (Bookmarks/History/Downloads/Notes —
+  hidden panels are never built, toggles apply live) (SIDE02).
+- View menu gained a "Development Tools" submenu holding the engine
+  tools: "Chromium Dev Tool" opens the inspector on the current page
+  (the Tools menu's "Web Inspector" entry moved here) and "BiDi Dev
+  Tool" is a visible placeholder for the upcoming BiDi backend
+  (DEVT01 — relocated under Tools by DEVT04).
+- "Development Tools" moved to the Tools menu (between the
+  credential-store entry and User Agent), and the page context menu
+  no longer offers "Inspect Element" — the inspector is reachable
+  from Tools → Development Tools → Chromium Dev Tool (DEVT04).
+- Tab bar position in Preferences is now a Vivaldi-style row of
+  clickable preview tiles — each sketches a miniature window with
+  the tab strip on its Top/Left/Right/Bottom edge, the selection
+  carries a highlighted frame and check badge, and the picker works
+  by mouse or keyboard (arrows move, Enter/Space commits) (TABS03).
+- Status bar gains per-tab memory and live bandwidth readouts
+  (Linux): "MEM 238 MB" polls the current tab's renderer RSS from
+  /proc every 2s and follows tab switches and renderer crashes,
+  while a network indicator shows down/up rates only while traffic
+  moves (auto-hides when idle; exact download bytes are used while
+  a file downloads) (SBAR01).
+- Tools menu no longer carries "Ad Block..." — filter management
+  moved to Preferences → Privacy → Content Blocking → "Manage
+  content-blocking filters..." (the site shield's Ad Block
+  Settings button is unchanged) (MENU05).
+- Fixed a memory leak when a tab or window was closed while a
+  print job was still running (UIAUDIT01).
+- Internal cleanup: removed dead code left over from earlier UI
+  work — unused accessors and a signal nothing listens to
+  (UIAUDIT02).
+- Internal cleanup: the Tab-bar-position and Sidebar-position
+  preview pickers now share one implementation, and the tab strip
+  does slightly less work per repaint (UIAUDIT03).
+- Saved addresses on the Preferences → AutoFill page: a list of
+  stored addresses with Add/Edit/Remove/Remove All — the editor
+  collects country (full territory list, defaults to the system
+  pick), name, organization, a multi-line street address,
+  city/state/ZIP and phone/email, and saves once a name or street
+  is entered. Addresses persist in the sealed autofill store, and
+  Clear Private Data gains an "AutoFill Form Data" item that wipes
+  them along with saved form fields (ADDR01).
+- Saved addresses now fill web forms: fields are recognized by
+  their HTML autocomplete tokens first (name, street-address,
+  address-line1-3, city, state, postal-code, phone, email,
+  country…) with common name/id heuristics as fallback, and the
+  most recently used address fills text fields and country
+  dropdowns. Submitting a filled or hand-typed address-shaped form
+  offers to save it through the address editor, pre-filled with
+  what was entered. Private browsing pages are never filled and
+  never offered the save prompt (ADDR02).
+- Preferences → Appearance gains "Show tab previews on hover" —
+  unchecking it turns the tab-strip preview card off entirely,
+  applies live to every window, and drops a card that is already
+  up (TPREV01).
+- Fixed: the tab-strip hover preview could show a stale or
+  wrong-page image for background tabs. Previews now serve the
+  snapshot the tab last painted while it was current — verified
+  against the tab's current page — instead of grabbing whatever
+  frame the hidden view happens to offer; the image is dropped the
+  moment the tab navigates, and suspended tabs keep their
+  pre-sleep snapshot (TPREV02).
+- Preferences layout polish: on the Appearance and General pages the
+  setting labels now anchor at the left page edge instead of
+  right-aligning inside a wide column that read as center-floating,
+  and the font-name fields and theme note left-align their text
+  (PREFUI06).
+- Preferences text fields stop at sensible widths instead of
+  stretching to the window: credentials, engine names and shortcut
+  nicknames cap at a short measure, the proxy host slightly wider,
+  and URL/path fields (home page, style sheet, download locations,
+  search engine URLs, DNS-over-HTTPS template) at a generous one;
+  Browse/Choose buttons stay right beside their fields (PREFUI07).
+- Sidebar position in Preferences is now a pair of clickable preview
+  tiles like the tab-bar picker — each sketches a miniature window
+  with the side panel docked on its Left/Right edge, with highlight
+  frame and check badge on the selection, and mouse or keyboard
+  operation (SIDE03).
+- Bookmarks export gains a Netscape HTML format: the export dialog
+  offers "Netscape bookmarks (*.html)" alongside XBEL and writes the
+  standard bookmark file every browser imports — folders,
+  separators, descriptions and the bookmarks-bar marker included —
+  and the file re-imports cleanly through Arora's own HTML importer
+  (BKEX01).
+- Preferences section sidebar is easier to read: the page list's text
+  is ~30% larger with icons scaled to match (kept uniform across icon
+  themes and centered on the taller row), the column width re-measured
+  for the longer labels, and the Appearance page's Panels checklist
+  gets the same sizing (PREFUI08).
+- Preferences → General gains an inline Language selector — System
+  default, every installed translation, and an English fallback —
+  applying immediately so the whole window retranslates live, no
+  restart needed (LANG01).
+- Preferences → Privacy group alignment fixed: the Cookies group's
+  label/combo/button rows anchored to the left like other pages
+  instead of floating right past the flush-left checkboxes, and the
+  Site Permissions and Saved Passwords groups now fill the group
+  width with their buttons packed to the left rather than rendering
+  as a narrow centered band (PREFUI09).
+- Fixed a crash: "Show All Bookmarks" or "Add Bookmark" while a
+  non-page tab (Preferences, History) was current dereferenced the
+  missing web view. "Show All Bookmarks" now raises the sidebar's
+  Bookmarks panel — its context menu gained the dialog's manage
+  actions (New Folder, Edit Name, Edit Address, Delete) — "Add
+  Bookmark" opens with empty fields, and opening a bookmark or
+  history entry from such a tab lands in a new tab (SIDE07).
+- Preferences → Appearance font and language rows are bounded again:
+  the standard and fixed-width font fields cap at a sensible width
+  with their Select… buttons right beside them instead of stretching
+  the page and stranding the buttons at the far edge, and the
+  preferred-languages row now shows the stored list in a matching
+  field (PREFUI10).
+- Sidebar polish: bookmark, folder and history names display in
+  full — the hidden Address column no longer claims the panel's
+  width (names elide only at the true panel edge and the URL moved
+  to a hover tooltip; Edit Address still works), and the icon rail
+  hugs the window's outer edge, flipping sides when the sidebar is
+  docked on the right (SIDE06).
+
+Search & location bar:
+- Omnibox: address-shaped input navigates, the rest searches (SRCH01).
+- Dedicated Search settings page with inline engine editor and
+  per-context engines (SRCH02/04/05).
+- Shortcut nicknames @bookmarks/@history/@tabs (SRCH06).
+- Dedicated search box is opt-in and fully hidden by default — no
+  residual engine button beside the location bar; Ctrl+K falls back
+  to the omnibox while it is off (SRCH03, SRCH08).
+- DuckDuckGo default engine (DENG01).
+- Fixed: a bare term like "hup" could navigate to https://hup/ instead
+  of searching; a missing or broken search engine now falls back to
+  the built-in default instead of a bogus address (SRCH07).
+- Fixed: pressing Enter in the search field or location bar could
+  silently do nothing — a missing or broken engine produced no URL,
+  and a malformed bare term could build an invalid http:// guess that
+  was dropped without feedback. Search now always rescues to a working
+  engine, invalid guesses search instead of dead-ending, and dropped
+  loads log a warning (SRCH09).
+- Fixed: Backspace in the URL or search bar could dead-stop or fight
+  the completion popup. A field still showing its baseline text (just
+  navigated or just focused) now clears with a single Backspace —
+  matching Chrome/Firefox — and once you edit mid-text it deletes
+  character-wise to empty; history completion, live search
+  suggestions and a re-highlighted completer row can no longer
+  re-extend the field during a delete burst (SRCH10).
+- Bundled search engines now show their own icons in the Engine
+  dropdown even on a fresh profile — the real favicons ship with the
+  browser instead of depending on a favicon-cache hit from prior
+  browsing; custom engines still resolve their icons remotely
+  (SENG01).
+- Four more bundled search engines: Bing, Qwant, Startpage and Ecosia
+  (with icons, and search suggestions for Bing/Qwant/Ecosia).
+  Descriptors can now carry default keyword nicknames via an <Alias>
+  element — type "b arora" for Bing, "q arora" for Qwant, "sp arora"
+  for Startpage or "e arora" for Ecosia. The defaults only claim free
+  keyword slots: a nickname you bound or unbound yourself always
+  wins (SENG02).
+
+Security:
+- HTTPS-First upgrades and HTTPS-Only interstitial; real-TLS-failure
+  downgrade marking only (SAFE01, SAFE07).
+- Insecure form-submission warning (SAFE02).
+- Domain-emphasis + IDN punycode address bar (SAFE03).
+- Prefetch and remote-font request blocking (SAFE04).
+- Download file-name sanitization (SEC01).
+- External-protocol launch consent (SEC02).
+- Encrypted credential store + optional master passphrase (SEC03/13).
+- Size-capped, DTD-free untrusted-input parsers (SEC04).
+- Web permission broker for notifications/geolocation/etc. (SEC05).
+- Certificate-error interstitial (SEC06).
+- Private-browsing store audit (SEC07).
+- WebChannel bridge hardening (SEC08).
+- Chrome markup-injection fixes (SEC10).
+- Clear Private Data removes DOM storage too (SEC12); the wipe now
+  also reaches pages where JavaScript is blocked — the injected
+  storage-clear runs through a lifted path instead of being silently
+  dropped (SEC12, ENG04).
+- Weak TLS cipher suites removed (TLS01).
+- Per-site JavaScript control + security-level tiers (JSCTL, SECLVL).
+- Referer level selector (REF01).
+- Tracking ping/beacon/CSP-report blocking (PING01); Reporting-API
+  report-to probe — uploads never happen on this engine, plus a
+  Sec-Fetch-Dest: report tripwire in case they ever do (PING02).
+- Real pop-up blocker for shaped window.open (POPUP01).
+- Fingerprint-resistance countermeasures (PRIV02).
+- Injected fingerprint spoofing (SAFE06) — opt-in per-page script that
+  adds canvas-readout noise, masks WebGL vendor/renderer and normalizes
+  navigator.hardwareConcurrency/deviceMemory/plugins; always on in Tor
+  windows, per-site exemption on the shield panel. Noise, not anonymity.
+- Third-party-cookie and connection/storage privacy group (PRIV01).
+- Zero telemetry verified by capture proxy (TELEM01) — extended to a
+  forwarding capture that drives a real browsing session (navigation,
+  search, download) and asserts every connection is content or
+  essential; DNS prefetch is now off by default and pinned off in Tor
+  windows (TELEM02).
+- DNS-over-HTTPS via Qt DNS mode (DOH01).
+- WebRTC/DNS leak verification (LEAK01); anonymity smoke harness
+  (ANON01).
+- Vanilla-Chrome user agent + matching client hints (UA01–UA03).
+- browseraudit.com CSP/sandbox audits and fixes (SEC14–SEC16C).
+- badssl.com 72-case matrix baseline + fix pass (BADSSL02/03).
+- XS-Leak baseline and third-party WebSocket block (XSLEAK02–04).
+- Adblock page-load stall fix (STALL01); the start-page hang it
+  caused is now pinned by a 50-load hostile-rules regression harness
+  (START01).
+- WebChannel console noise eliminated (CHAN01).
+- Cross-platform sandbox layer (SAND01): browsing launches re-exec
+  inside a permissive bubblewrap filesystem sandbox on Linux —
+  credential stores and other browsers' profile paths are masked
+  (tmpfs over directories, /dev/null over files), /etc /usr /boot are
+  remounted read-only, the rest of the filesystem stays writable.
+  Seatbelt (macOS), AppContainer manifest (Windows) and
+  unveil/pledge (OpenBSD) generators ship from the same declarative
+  policy, marked untested-on-target; `arora-sandbox` is the packaged
+  launcher script, `--no-sandbox`/`ARORA_NO_SANDBOX=1`/the
+  sandbox/enabled setting are the escape hatches, and
+  `--sandbox-status` reports the live backend and policy. The
+  self-contained bundle now also ships `arora-sandbox` (SAND03).
+- Sandboxed download worker (SAND02): accelerated downloads run in a
+  confined `arora --download-worker` subprocess whose bubblewrap
+  mount namespace grants only the download's work dir and the
+  destination directory — `$HOME`, the browser profile, keys and
+  cookie stores are absent entirely, the environment is scrubbed,
+  and pid/ipc/uts/cgroup namespaces are unshared (the network stays
+  shared so the transfer can connect). Policy checks (HTTPS-first,
+  HTTPS-Only, blocklists, redirect rules) still run in the browser
+  process and answer the worker over a stdin/stdout protocol, so the
+  sandboxed path is policy-identical; if the wrap cannot start the
+  download falls back to the in-process engine. Escape hatches:
+  `ARORA_DL_NO_SANDBOX=1` or `downloadmanager/sandboxedWorker=false`.
+  Seatbelt/AppContainer/unveil worker policies generate from the
+  same inputs but are untested off-Linux.
+- In-browser PDF viewer + sanitize-on-view pipeline (PDF01): PDFs open
+  in Chromium's built-in PDFium viewer instead of falling through to
+  the download path (Preferences → Privacy → PDF Documents; the viewer
+  is on by default). In `CONFIG+=rustcore` builds the sanitize pass is
+  also on by default: a .pdf navigation is refused, the bytes are
+  fetched through the page's own profile (cookies, Tor SOCKS routing
+  and container isolation ride along by construction), rewritten by a
+  Rust policy pass that strips JavaScript, /Launch, auto-actions
+  (/OpenAction, /AA), embedded files, XFA/AcroForm remnants and remote
+  submit/import actions, and only then displayed — from a randomized
+  owner-only temp file, not from the remote origin. Outbound http(s)
+  links work; links to local files from the staged viewer document are
+  refused. Saving a PDF still stores the original unsanitized bytes
+  for the external reader — sanitization covers the viewing path only.
+- Shell-owned, engine-neutral PDF document view (PDF02): PDFs now
+  render in a Qt document widget owned by the shell instead of
+  Chromium's embedded PDFium viewer — the same surface every engine
+  backend can host, since libservo ships no viewer. Pages are
+  rasterized by `arora --pdf-worker`, a sandboxed subprocess running
+  the pure-Rust `hayro` renderer under a bubblewrap allowlist (staged
+  PDF read-only, one writable work dir, no network namespace, no
+  $HOME), with page bitmaps marshaled back over a single-purpose
+  JSONL protocol. The view provides continuous scrolling, zoom, page
+  navigation, find-in-document and print handoff; PDF01's sanitize
+  pass still always runs before the renderer sees a byte, and
+  Tor/private profiles get the identical in-browser view — no
+  external handoff. Preferences → Privacy → PDF Documents gains
+  "View PDFs with the sandboxed document view" (on by default);
+  unchecking it keeps the previous PDFium-viewer path as a fallback.
+- External-URL ingress audit (SEC23): every path an untrusted URL can
+  enter a running process — positional argv, the single-instance
+  socket, the QDesktopServices `http` handler and the `--tor` operand —
+  now funnels through the same untrusted-source gate; `openUrl()` was
+  the one bypass and is fixed. The socket control channel
+  (`aroramessage://`) can never be reached by a URL-shaped payload, a
+  `--tor` process provably stays outside single-instance IPC, and a
+  forwarded URL lands on the private profile when private browsing is
+  on. Covered by `--ingress-smoke`.
+- Adversarial regression lock on link context opens: the full
+  source-profile x open-target matrix, refused javascript:/data:/blob:
+  schemes at both menu and slot level, Referer only on same-profile
+  opens, an argv-only Tor hand-off re-gated on receipt, and zero
+  history/session/reopen residue from private opens (CONT08).
+- Preferences > Privacy gains a Site Trust group with a master "Show
+  site trust indicator in the toolbar" switch plus per-signal toggles
+  for the lookalike-domain warning and the known-threat-list check —
+  all on by default; turning the master off hides the trust
+  badge and skips the lookups, and each signal can be disabled
+  individually, applied without a restart (TRUST06, TRUST02).
+
+Containers:
+- Isolated container profiles (CONT01).
+- Per-tab container binding + inheritance (CONT02).
+- Container management page in Settings (CONT03).
+- Site-to-container pinning (CONT04).
+- End-to-end isolation audit (CONT05).
+- Optional two-level container tab strip: when multiple containers own
+  tabs, a level-1 header row (color, name, live tab counts) filters
+  the tab row to the selected container; header click switches, tab
+  drag onto a header rebinds, headers reorder, and the single-row
+  inline-chips mode remains a setting (CONT06).
+
+Tor:
+- Managed tor daemon plumbing (TOR01).
+- New Tor Window / `arora --tor` (TOR02).
+- Tor windows drop the dedicated toolbar search box entirely — the
+  omnibox covers search and Ctrl+K focuses the location bar (TOR03).
+- The status bar of a Tor window shows the live circuit chain
+  (guard -> middle -> exit) with the full fingerprints on hover,
+  refreshed on daemon circuit events and tab switches (TOR04).
+- A configured DNS-over-HTTPS mode is ignored inside a Tor window —
+  names resolve remotely through the SOCKS proxy, so a local resolver
+  would bypass the tunnel with the whole lookup stream (SEC20).
+- Each Tor circuit hop now carries its exit-country code ("(DE)",
+  "--" when unknown), resolved via the tor control port and cached
+  per relay fingerprint (TOR05).
+
+AdBlock:
+- uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset
+  (ADB01).
+- Optional Brave adblock-rust engine (CONFIG+=adblock_rust) (ADB02).
+- Preset filter-list catalog (ADB03).
+- Subscription-centric dialog + custom rules editor (ADB04).
+- Toolbar blocker button with per-page counts (ADB05).
+- Content-blocker engine picker in Preferences → Privacy (Built-in /
+  Brave adblock-rust, live switch, rust builds only) (ADB06).
+- Brave adblock-rust is now the default content blocker in builds
+  that ship the engine; Built-in stays selectable, and builds without
+  it behave exactly as before (ADBLK01).
+- Indexed request matcher (PERF02).
+
+Extensions:
+- Manifest-V3 extension support (EXT01).
+- Permission-review screen on install (EXT02).
+- update_url update checks (EXT03).
+- Verified inert in private/Tor windows (EXT04).
+- Hardened trust surface (EXT05): every load/install path requires a
+  one-shot consent grant recorded by the review dialog — nothing
+  reaches the profile silently. Dangerous permissions
+  (nativeMessaging, debugger, webRequestBlocking, cookies,
+  browsingData, <all_urls> host access) each need their own consent
+  checkbox; install is refused while any is unticked. The Tor
+  profile is never wired for extensions, and no profile is wired at
+  all in a Tor window. Update checks are HTTPS-only (loopback http
+  for fixtures), hash/structure-verify downloads before they hit
+  disk, and applying an update is opt-in through the same review —
+  nothing silently replaces installed code. The userscripts
+  directory is forced to 0700 and world/group-accessible scripts are
+  tightened to 0600 with a warning. CRX3 signatures are
+  structure-checked only; Chrome Web Store verification is out of
+  scope.
+
+Downloads:
+- QtWebEngine download manager: progress, Try Again, safe names
+  (MIG05, SEC01).
+
+Build, tests & tools:
+- qtest suite on Qt 6 (make check) (TST01).
+- Coverage targets; src/ line coverage 80.5% (COV01–COV04).
+- libFuzzer harness (FUZZ01); ASan/UBSan variant (HARD01).
+- Static-analysis sweep (STAT01); leak gate (MEM01).
+- C++ modernization (CPP01); zero-warning gate (WRN01).
+- GUI-thread blocking audit (FRZ01).
+- Startup performance passes (PERF01/03).
+- Self-contained `make bundle` Linux package (PACK01).
+- THIRD-PARTY-NOTICES audit (LIC01); post-migration cleanup (AUD01).
+- Managed task queue + task loops under .devin/.
+- Docs pass: README documents the user-local aqt Qt install path and
+  records the WebKit->WebEngine deltas vs the Qt 4 series; Doxyfile
+  regenerated for doxygen 1.9+ (DOCS01).
+- Engine-portability groundwork (ENG01): `.devin/ENGINE.md` maps every
+  QtWebEngine touchpoint and specifies an engine-neutral interface for a
+  future non-Chromium backend; `src/engine/` compiles the interface
+  sketch, and a `make check` audit gate keeps the map complete.
+- Smoke/test runs (`--*-smoke`, `--quit-after-load`) now write settings,
+  data and cache into a throwaway per-run store instead of the real
+  profile — a test killed mid-run can no longer leave the live config
+  mutated (SMOKE01).
+- Post-migration hardening audit (AUDIT01): full static-analysis pass
+  (gcc -fanalyzer, clang --analyze, clang-tidy over 253 units) plus
+  ASan/UBSan/LSan and valgrind sweeps — fixed a QPrinter leak when a
+  printing tab closes early, two calls that skipped intermediate base
+  overrides (download-model flags, tree-view key handling), and a
+  truncated GIF fixture; the test suite now runs in an isolated HOME so
+  it can no longer read or mutate the live browser profile.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.
@@ -278,10 +921,10 @@ Icon sets (ICONS01):
     `./arora --icons-smoke` verifies coverage, live switching, light/dark glyph contrast and the fallback chain headlessly; the icon set choice is persisted under MainWindow/iconTheme.
 
 Privacy hardening (PRIV01):
-    A new "Connections & Storage" group on the Privacy preferences page collects five toggles, all defaulting to the private choice where that is safe. Plain-http page loads are upgraded to https when a secure endpoint plausibly exists — loopback, LAN/private-IP and .onion/.local hosts are skipped, and a site whose secure connection fails is allowed over plain http again for the rest of the session with the error page explaining the downgrade. Navigations to a different site carry the destination's own origin as Referer so the referring page is never leaked (subresources fall back to Chromium's origin-only policy — the header is composed after request interceptors run, an honest QtWebEngine bound).
+    A new "Connections & Storage" group on the Privacy preferences page collects five toggles, all defaulting to the private choice where that is safe. Plain-http page loads are upgraded to https when a secure endpoint plausibly exists — loopback, LAN/private-IP and .onion/.local hosts are skipped, and a site whose secure connection fails is allowed over plain http again for the rest of the session with the error page explaining the downgrade. Navigations to a different site carry the referring page's bare origin as Referer — the standard strict-origin policy, so the destination learns which site sent the visit but never the page's path or query (see REF01/REFER01 for the full level selector).
     WebRTC leak protection is now configurable and tightened: beyond the existing public-interfaces-only attribute, the Chromium flag --force-webrtc-ip-handling-policy=disable_non_proxied_udp is appended to QTWEBENGINE_CHROMIUM_FLAGS at startup so ICE transports only ever run through the configured proxy. An opt-in secure-DNS toggle enables Chromium's DNS-over-HTTPS auto-upgrade (known-resolver list only — a custom endpoint is not exposed). Third-party cookies are rejected by default in the cookie filter even under the permissive accept policy, while the per-site allow/block/session exceptions keep their precedence.
     An opt-in "Clear browsing data when Arora exits" setting performs the full private-data wipe at quit — history, cookies, site storage, caches and the saved session — and drops a sentinel so Chromium's on-disk storage trees are removed at the next start rather than under a running browser, where deleting them would wedge Chromium's storage services.
-    `./arora --privacy-smoke` verifies the pipeline end to end on loopback (un-upgraded http load, referer spoofed on the cross-site navigation, first-party cookie kept and third-party cookie rejected); autotests/privacy covers the upgrade candidacy rules, downgrade set, cookie policy, deferred-wipe sentinels and flag composition. What an observer can still see — destination IPs, timing, the usual fingerprinting surface — is documented in the README; the Tor window remains the answer for hiding traffic endpoints.
+    `./arora --privacy-smoke` verifies the pipeline end to end on loopback (un-upgraded http load, referer trimmed to the source origin on the cross-site navigation, first-party cookie kept and third-party cookie rejected); autotests/privacy covers the upgrade candidacy rules, downgrade set, cookie policy, deferred-wipe sentinels and flag composition. What an observer can still see — destination IPs, timing, the usual fingerprinting surface — is documented in the README; the Tor window remains the answer for hiding traffic endpoints.
 
 Qt 6.12 toolchain (QTUP01):
     The browser now builds and runs against Qt 6.12.0 (user-local install at ~/Qt/6.12.0/gcc_64 via .devin/qt-env.sh). Qt 6.11.3 stays on disk as the rollback path; the bundle and analysis helpers' QTDIR defaults, the runner prompt and the task-file context follow the new toolchain.
@@ -397,8 +1040,11 @@ Pop-up blocking (POPUP01):
     Exceptions key on the site showing the pop-up (a rule for example.com covers its subdomains), persist under the popupExceptions settings group, and are managed from three places: the indicator menu, the site panel's new "Allow pop-ups on this site" toggle, and the Privacy page's remembered-permissions list where they appear as removable "Pop-ups / Allowed" rows. Off-the-record pages write session-only exceptions — nothing private is persisted. The preference keeps its name and settings key so existing profiles carry over.
 
 Referer hardening (REF01):
-    The old on/off "trim Referer" toggle is now a level selector on the Privacy page — Chromium default / Trimmed / Strict / Never — stored under privacy/refererPolicy with the old boolean migrating automatically. Trimmed (the default) sends cross-site requests the destination's own origin and same-site requests only the origin, never the full path or query; Strict sends nothing to other sites; Never withholds the header everywhere. A document-start script pins Referrer-Policy inside each page so subresources, redirects, meta-refreshes and form posts — paths the request interceptor cannot rewrite — follow the same level; stricter site-declared policies still win. The Tor window enforces at least Trimmed regardless of the normal-profile setting.
+    The old on/off "trim Referer" toggle is now a level selector on the Privacy page — Chromium default / Trimmed / Strict / Never — stored under privacy/refererPolicy with the old boolean migrating automatically. Trimmed (the default) sends every request the referring page's bare origin — never its path or query — matching the standard strict-origin policy (cross-site semantics corrected by REFER01 below); Strict sends nothing to other sites; Never withholds the header everywhere. A document-start script pins Referrer-Policy inside each page so subresources, redirects, meta-refreshes and form posts — paths the request interceptor cannot rewrite — follow the same level; stricter site-declared policies still win. The Tor window enforces at least Trimmed regardless of the normal-profile setting.
     `./arora --referer-smoke` verifies the darklaunch matrix end to end on loopback: images, scripts, iframes and fetch/XHR subresources, direct and noreferrer navigation, cross-site and same-site redirect chains, meta refresh, form POST, and page- or header-declared no-referrer policies; both smokes now suspend the user's live adblock subscriptions while running so real filters cannot eat the fixtures. Known residual: the engine recomputes the referer on cross-site redirect responses itself, so an exit-redirect reveals the source's origin (never the path) — full findings in .devin/REF01-report.md.
+
+Referer strict-origin fix (REFER01):
+    The Trimmed level previously spoofed the *destination's* own origin on cross-site requests — a uBlock-Origin-style trick that hid the referring site entirely. Real sites rely on the honest value: YouTube refuses to play embedded videos whose iframe Referer names youtube.com instead of the page embedding it, so embeds on third-party sites failed while the same video played directly. Trimmed now sends the *source's* bare origin on every request — the strict-origin policy Firefox/Chrome ship by default — so a destination learns which site referred the visit but never the page's path or query. Users who want the source hidden entirely still have Strict (cross-site sends nothing) and Never. The fix was applied identically in the C++ policy fallback, the rustcore policy engine and the rustdl download engine, and the Privacy-page tooltips now describe the real behavior.
 
 Beacon / ping / CSP-report blocking (PING01):
     A new "Block tracking pings and beacons" preference on the Privacy page (privacy/blockPings, default on) drops the invisible upload channels pages use for click and navigation tracking: navigator.sendBeacon beacons, <a ping> hyperlink audits and Content-Security-Policy violation reports all ride Chromium's ping/report request channel and are failed in the request interceptor. Hyperlink auditing is also switched off in the profile settings so <a ping> requests never initiate at all, and the Tor window applies the same drop — a telemetry POST is the last thing that should slip through there.
@@ -514,7 +1160,7 @@ Memory-safe parsers for untrusted input (SEC19):
     When built with `CONFIG+=rustcore`, the XML and JSON Arora accepts from remote servers is now parsed in the Rust core instead of Qt's C++ parsers: OpenSearch descriptors fetched from arbitrary sites, extension update manifests, and OpenSearch suggestion replies all cross the FFI as size-capped, schema-checked structures — malformed, oversized, DTD-bearing or truncated documents are rejected in memory-safe Rust before they can exercise any C++ parsing path. Bookmark files are guarded by a Rust structural check before Qt builds the bookmark tree. The C++ interfaces and all behavior on valid documents are unchanged, and no-Rust builds keep the existing Qt parsers.
 
 Accelerated downloads in Rust (DLACC03/DLACC06):
-    Configuring with `qmake CONFIG+=rustdl` adds an optional accelerated download engine (src/rustdl, reqwest + std::thread behind a C ABI): HTTP/HTTPS downloads can run as parallel ranged GETs (4–16 connections, default 8) that merge atomically on completion, falling back to a single stream when the server does not accept ranges. Progress, speed, cancel and retry appear on the existing download card UI unchanged, and the built-in Chromium engine remains the default — the Rust engine is only used when selected in the download settings.
+    Configuring with `qmake CONFIG+=rustdl` adds an optional accelerated download engine (src/rustdl, reqwest + std::thread behind a C ABI): HTTP/HTTPS downloads can run as parallel ranged GETs (4–16 connections, default 8) that merge atomically on completion, falling back to a single stream when the server does not accept ranges. Progress, speed, cancel and retry appear on the existing download card UI unchanged. The Rust engine is the default download engine where the crate is built in; the built-in Chromium engine remains selectable (and is the only path on no-Rust builds).
     Untrusted server input is handled in memory-safe Rust: Content-Disposition and suggested file names are sanitized against path traversal, control characters and overwrite (existing files dedup with a -N suffix), part files stage under a private app-data directory, and the finished file lands via an atomic rename with executable bits stripped. No-Rust builds behave exactly as before.
     Privacy and proxy parity on the accelerated path (DLACC04): the Rust engine asks the same interceptor pipeline the built-in engine gets for free to vet every request before it reaches the wire — HTTPS-first upgrades and the HTTPS-Only veto apply (localhost/LAN/.onion exemptions included), tracking-parameter stripping and the domain blocklist run, adblock rules refuse tracker-domain downloads, and a redirect that crosses from a public host into a private address is refused. Redirects are followed manually so the whole gate re-runs on every hop, cookies never ride a cross-domain hop, and no Authorization header is ever forwarded. Downloads send the profile's User-Agent and the configured Referer policy, ride the application proxy through reqwest, and in a tor window leave only via the managed SOCKS listener — a download falls back to the built-in engine rather than ever opening a direct connection.
     Authenticated downloads and filesystem hygiene on the accelerated path (DLACC05): the Rust engine now receives a scoped Netscape cookie export containing only rows that match the target URL, written to a private 0600 file inside the randomized per-download temp dir (root forced 0700), fsynced before the engine starts, and zeroed and deleted when the download finishes, fails, is cancelled, retried, or destroyed. In-flight part and staging files are created 0600 and committed output relaxes to 0644; stale dl-*/cookies-* debris left by a crash is swept the next time the engine arms. Debug download output redacts URL query strings, fragments, and userinfo so signed-URL tokens never reach the logs.
@@ -527,9 +1173,24 @@ Session serialization in Rust (RCORE03):
     When built with `qmake CONFIG+=rustcore`, session save/restore moves into the Rust core: the saved session now lives in a versioned binary file (session.dat in the application data directory) written atomically via temp-file + fsync + rename with owner-only permissions, replacing the QSettings blob. The crate owns the schema and bounds-checks every field on decode — a corrupt or truncated session is rejected whole, so it can neither loop the "Arora crashed while restoring" prompt nor silently drop part of the window set.
     The format is engine-proof by construction: each window stores an opaque shell-state blob plus structured per-tab records (url, container binding, tab group and an engine tag) whose page history rides as an opaque engine-state blob — QtWebEngine's serialized history today, and a future engine can carry its own bytes untouched. A session saved by a pre-Rust build still restores once through the legacy reader, private windows and tabs are excluded exactly as before, and no-Rust builds keep the original QSettings format entirely.
 
+Engine-neutral request policy in Rust (ENG02):
+    Every branching decision the request interceptors and the cookie gate used to make in C++ now lives in the Rust core behind the C FFI (src/rustcore/src/policy.rs): a compact JSON manifest carrying the URL, resource type, first-party, method and headers goes in, and a verdict — pass, block, redirect, or a Referer rewrite — comes out. HTTPS-First/HTTPS-Only, the ping/prefetch/font/WebSocket blocks, Safer/Safest script gating, referrer trimming, tracking-parameter stripping and the domain blocklist all evaluate inside the same policy table, and the third-party cookie gate (accept policy plus the block/allow/session exception lists) is answered by the same module.
+    The QtWebEngine request interceptor and the cookie-store filter are now thin adapters that marshal request context across the FFI and apply the verdict — QSettings stays Qt-side as input, per-site script grants arrive as data, and the adblock matcher remains the delegated tail stage on an allow verdict. A Qt fallback compiled into the no-Rust build produces identical verdicts, so behavior is unchanged with or without `CONFIG+=rustcore`.
+
 Rust supply-chain vetting gate (SEC21):
     `make check-supplychain` — now also a `make check` prerequisite — vets every Rust crate in the tree: cargo deny enforces each crate's deny.toml policy (RustSec advisories with yanked releases denied, a GPL-compatible license allow-list, duplicate-version and wildcard-dep bans, crates.io-only sources) and cargo audit scans each committed Cargo.lock. A vulnerability, yanked crate, banned license or disallowed source in a shipped dependency fails the build. Bumping a dependency is a reviewed `cargo update` in the crate directory followed by this gate and a commit of Cargo.toml and Cargo.lock together; machines without the cargo-deny/cargo-audit tools skip the gate cleanly, matching the optional-Rust build rules.
 
+Servo embeddability spike (ENG03):
+    A bounded feasibility probe for a future non-Chromium backend: spikes/servo contains a thin C ABI over libservo v0.7.0 (pinned git tag) plus a standalone Qt harness — neither is part of the qmake build. The verdict report (.devin/SERVO-SPIKE.md) grades every member of the engine-neutral interface from ENGINE.md: event loop, navigation, request interception (a real intercept-or-replace hook), user scripts, scheme handlers, permissions, auth and context-menu delegates all exist; the hard gaps are no SOCKS5 proxy (Tor windows stay Chromium-locked permanently), no certificate-error delegate surface, no per-webview preferences, no find-in-page/lifecycle/renderer-pid APIs, one-way JS evaluation, no download delegate, and no profile objects for containers. Verdict: a partial backend is viable; a full swap is gated on upstream landing SOCKS5, a cert-error surface and per-webview preferences.
+    The harness was exercised headless as its own smoke test: it navigates to loaded pages (http, file, data), paints frames, reports url/title changes, runs page JavaScript, and observes every fetch through Servo's interception hook. One embedder gotcha recorded for the follow-up work: a WebView::load issued before the constellation registers the webview is silently dropped, so the shim queues early loads until the browsing context exists.
+
+Engine-neutral BiDi Dev Tools panel (DEVT02/DEVT03):
+    Tools → BiDi Dev Tools opens a dockable developer panel that speaks WebDriver-BiDi-shaped commands to the engine: a Console tab (log/exception event stream + a JavaScript eval REPL), a lazy-loaded DOM tree, a Network request list (method/status/state/URL — no bodies) and a Storage tab (cookies + localStorage). The client lives in the rustcore crate behind a C ABI — Qt 6.12's bundled Chromium ships no BiDi mapper and no DevToolsPipeHandler, so the crate translates the BiDi surface onto CDP over Chromium's remote-debugging websocket; a future Servo backend can answer the same ABI natively without touching the panel.
+    Channel security: --remote-debugging-pipe is unsupported by QtWebEngine, so the endpoint is a loopback-only TCP listener on a random per-session port gated by --remote-allow-origins with an unguessable per-run Origin token (foreign-Origin handshakes are rejected, and the browser target's ws path carries a GUID). The channel is never armed in Tor windows, honors devtools/bidiBackend=0, and leaves an operator-set QTWEBENGINE_REMOTE_DEBUGGING untouched; builds without CONFIG+=rustcore hide the menu entry entirely. The classic Chromium DevTools window (Tools → Web Inspector) is unchanged.
+
+Engine-adapter groundwork (ENG01/ENG04, in progress):
+    The browser shell is being decoupled from QtWebEngine behind an engine-neutral interface (src/engine): Engine::Page/Profile/Backend carry navigation, signals, zoom, find, script and request-policy calls, and src/engine/webenginebackend.* is the first backend implementing it over QWebEngineView/QWebEnginePage. Find-in-page, the status-bar load/memory indicators, the per-tab load/title/icon/url signal wiring, session-history probes, page source/printing and the script-evaluation paths already go through the adapter — including Engine::Page::runJavaScriptLifted, the chrome-script channel that still reaches pages whose scripts are blocked (reader mode, picture-in-picture, storage wipes) — so a future backend (e.g. Servo) can implement the same boundary without touching chrome code.
+    Running `arora --engine-list` prints the active backend's id, display name and capability flags and exits — the diagnostic the interface tests and future engine selection build on.
 Omnibox routing and history ranking in Rust (OMNI01):
     When built with `qmake CONFIG+=rustcore`, the location bar's url-or-search decision moves into the Rust core: rc_classify_input() ports the QUrl::fromUserInput heuristics and the address-shape check (localhost/IP literals, host:port, dotted hosts, explicit schemes, keyword shortcuts, the searchEngineFallback opt-out) and returns a navigate/internal/file/search verdict the thin Qt adapter resolves against the live engine table — the routing corpus is diffed input-for-input against the previous C++ implementation in the new autotests/omnibox suite. No-Rust builds keep the in-tree heuristic verbatim as the fallback path.
     History completion ranking lives in the core too: rc_history_suggest() serves the completer's rows pre-filtered and frecency-ordered straight from the history.db store (per-visit recency decay summed per url plus the word-boundary host/title bonus), so only the visible slice crosses the FFI, and a live RustCoreBridge "history" notification refreshes a row set mid-typing. Scoring reproduces the old buckets exactly (100/90/70/50/30/10 by local-calendar-day age) with typed-visit and bookmark boosts documented as zero-on-today's-schema extension points; ordering on seeded history is verified identical to the legacy model pipeline.
@@ -586,6 +1247,14 @@ Rust core quality sweep (RAUDIT01):
 Rust core lazy-list dedup (RAUDIT02):
     The "seed list plus data-dir override" machinery the blocklist, Tranco table and url-strip ruleset each carried as a private copy now lives in one shared helper (store::DirCache): a poison-tolerant RwLock slot holding an Arc'd value stamped with the data dir it was resolved against, rebuilt once when the dir arrives late. Each module keeps its own load/merge logic as the injected closure, and the url-strip ruleset picks up the same reload-on-dir-change behavior the other two lists already had — an override file dropped in after first use is no longer ignored. No behavior or ABI change otherwise.
 
+Site trust section in the shield panel (TRUST08):
+    The location-bar shield popover now carries a Trust section under the security state: one line per real signal from the Rust site-trust verdict — "Known site (Tranco rank N)" or "Little-known site", "Resembles <domain>" for homograph lookalikes, "Listed on the phishing/malware threat list" for blocklist hits, and "First visit to this site" when history has no prior record. Only signals that fired or are informative get a line — there is no neutral "all clear" noise — and the section is keyed to the page's host so it refreshes on every navigation; pages with no host (local content, internal pages) hide it entirely. Lookalike and threat lines render in the warning color. Every lookup is local: the verdict reads the vendored blocklist/Tranco tables and the history rollup inside rustcore, and no host name leaves the machine.
+
+Trust verdict badge on the shield icon (TRUST09):
+    The location-bar shield/lock icon itself now carries the site-trust verdict, so the warning is visible without opening the panel: a "red" verdict (a threat-list hit or a homograph lookalike of a popular site) repaints the shield red, and an "amber" verdict — plaintext http or a host with no Tranco reputation — washes it amber; green and un-evaluable pages keep the plain icon. Verdicts are resolved once per host+scheme and cached for the session, so repaints never wait on the lookup; an http/https flip re-evaluates, non-web pages show no badge, and a refreshed blocklist or Tranco download clears the cache so the badge follows the new tables. Every lookup stays local — no host name leaves the machine.
+
+Site trust Preferences switches now govern the surface (TRUST03):
+    The Site Trust group in Preferences > Privacy is wired end to end: turning the master switch off keeps the shield icon plain, hides the panel's Trust section and — most importantly — never runs the site-trust lookup at all; the lookalike and threat-list switches each remove only their own input from the verdict request (a suppressed signal can't flag and can't redden the badge). All three apply live on the next navigation — the badge cache keys on the active switches, so a flip re-evaluates instead of serving a verdict the old settings produced.
 URL-bar search always dispatches (SRCH11):
     Typing a non-URL string in the location bar and pressing Enter now always performs a web search with the configured default engine — a missing or broken engine descriptor no longer turns Enter into a dead key. The omnibox (Rust and C++ paths) and the dedicated search box share a searchUrlForEngine() rescue that degrades a null engine to the bundled DuckDuckGo descriptor and an unusable template to the DuckDuckGo endpoint directly, and the "Search engine fallback" opt-out only restores the bare-http guess when that guess actually parses — multi-word input searches instead of producing an invalid url loadUrl() silently dropped. Invalid navigation targets now log a warning instead of vanishing, and test binaries write their settings under their own application name so test runs no longer leave searchEngineFallback=false behind in the real user configuration — the recurring trigger behind the "search bar does nothing" report.
 
@@ -1131,3 +1800,10 @@ Autotests
  - Rename to Arora and a new application icon
  - Project specific git hooks
  - Branch from the Qt demo browser with new autotests and manualtests
+
+Servo backend + per-tab engine switcher (ENG05):
+    Arora can host a second, degraded rendering engine beside Chromium. An engine registry (src/engine/engineregistry.*) enumerates live backends: QtWebEngine is always present; the Servo backend compiles in only with `qmake servo=1` and registers only when the servo-embed artifact (spikes/servo/servo-embed, pinned libservo v0.7.0) resolves through dlopen at runtime — a missing artifact hides the option instead of offering a dead menu entry, and a default build never links the ~1 GB library. A small engine indicator in the navigation row — a fixed-width toolbar button immediately right of the URL bar (ENG08 moved it out of the field) — shows the current tab's engine as a palette-safe glyph, names it in the tooltip, tracks the active tab, and offers "Reload in Servo"/"Reload in Chromium": the swap replaces the tab's page with the same url on the other backend (history and form state do not carry — the engine is fixed at page creation).
+    Honesty rules per the ENG03 verdict: Tor windows are Chromium-locked (Servo has no SOCKS5), private tabs refuse the swap (no off-the-record equivalent), and Servo's capability table reports request interception, script injection/eval results, cookie filters, downloads, devtools and per-page settings as unsupported rather than faking them — `--engine-list` prints every registered backend's surface. Preferences → Tab Settings gains a default-engine combo labeling Servo experimental; it applies to explicit new tabs only while context-bound spawns (link targets, session restore, containers) stay on WebEngine. The tst_engineswitch suite drives the whole path with a fake backend, so no servo artifact is required for `make check`.
+
+Engine-layer test suite (ENG06):
+    The engine abstraction now carries its own regression net instead of borrowing WebEngine fixtures. autotests/fakeengine.h grew from a do-nothing stub into the shared reference Engine::Backend — a pure-Qt implementation covering navigation/history/zoom/find/script eval/lifecycle/render-process-identity/profile policy+storage/downloads/view ownership, every member a stageable field so a test dials in exactly the behavior it probes; the same header now backs the adapter parity tests, the per-tab swap suite and the tab-strip engine legs. `arora --engine-smoke` scripts navigation, zoom, find and script evaluation against every registered backend and diffs the observable traces: shared-contract failures (load completion, url echo, progress reaching 100, signal ordering, event kinds, terminal url) fail the run while capability-shaped divergences (progress ladders, title phrasing, unsupported script eval) are logged, not failed — the matrix runs green over WebEngine and Servo. New switcher legs drive a mid-load swap and foreign-tab close edges by widget identity; the mid-load leg caught and fixed a real bug where the swap restarted the last committed page instead of the in-flight navigation target. The memory indicator is now verified against the process-identity contract on both the fake (no process) and a live WebEngine renderer pid.

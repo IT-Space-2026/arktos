@@ -68,20 +68,28 @@
 
 class AutoSaver;
 class BookmarksToolBar;
+class BidiPanel;
 class CommandPalette;
+class EngineIndicator;
 class QDockWidget;
-class QWebEnginePage;
+class QHBoxLayout;
+class QLabel;
+class ReaderButton;
+class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
 class WebView;
 class QSplitter;
 class QFrame;
+class QTimer;
 class HistoryMenu;
 class BookmarksMenuBarMenu;
 class UserAgentMenu;
 class LoadingIndicator;
 class ZoomControl;
+class MemIndicator;
+class NetIndicator;
 
 /*!
     The MainWindow of the Browser Application.
@@ -121,6 +129,14 @@ public slots:
     void privacyChanged(bool isPrivate);
     void zoomTextOnlyChanged(bool textOnly);
     void preferences();
+    // PREFS01: opens the window's single Preferences tab, focusing the
+    // existing one on repeat calls.  page is a SettingsDialog::Page
+    // index that deep-links a section; -1 keeps the persisted page.
+    void showSettingsPage(int page = -1);
+    // HIST02: opens the window's single History tab, focusing the
+    // existing one on repeat calls — the same pattern as
+    // showSettingsPage() above.
+    void showHistoryPage();
     void showCommandPalette();
     // POL02: Ctrl+Shift+A tab search — the palette in tabs-only mode.
     void showTabSearch();
@@ -130,6 +146,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
     void save();
@@ -139,12 +156,14 @@ private slots:
     void loadProgress(int);
     void updateStatusbar(const QString &string);
     void updateWindowTitle(const QString &title = QString());
+    // TOR04: re-renders the tor window's status-bar circuit label
+    // from TorManager state + circuit snapshot.  No-op off tor.
+    void updateTorCircuitLabel();
 
     void fileNew();
     void fileOpen();
     void filePrintPreview();
     void filePrint();
-    void privateBrowsing();
     void fileSaveAs();
     void editFind();
     void editFindNext();
@@ -152,6 +171,9 @@ private slots:
     void showBookmarksDialog();
     void addBookmark();
     void addBookmarkFolder();
+    // SIDE04: the sidebar rail's Add button — folder is the source
+    // model index to preselect in the dialog (invalid = menu root).
+    void addSidebarBookmark(const QModelIndex &folder);
     void zoomIn();
     void zoomNormal();
     void zoomOut();
@@ -184,7 +206,7 @@ private slots:
     void showWindow();
     void swapFocus();
 
-    void printRequested(QWebEnginePage *page);
+    void printRequested(WebView *view);
 
 private:
     void retranslate();
@@ -192,7 +214,20 @@ private:
     void setupMenu();
     void setupToolBar();
     void ensureSidebarPanel();
+    void ensureBidiPanel();
+    // RSZ01: sidebar width — the persisted MainWindow/sidebarWidth is
+    // applied before the dock shows (and once more when it first
+    // appears, because a hidden dock ignores resizeDocks); grip
+    // drags, double-click resets and native edge resizes persist it.
+    void applySidebarWidth();
+    void persistSidebarWidth(int width);
+    void updateSidebarGripPlacement();
     void updateStopReloadActionText(bool loading);
+    // ENG08: mirrors the ACTIVE tab's engine onto the shared nav-row
+    // EngineIndicator — engine id, swappability and visibility all
+    // follow the current tab (private tabs refuse swaps, tor windows
+    // are Chromium-locked, widget tabs have no engine).
+    void updateEngineIndicator();
 
 private:
     QMenu *m_fileMenu;
@@ -205,8 +240,9 @@ private:
     QAction *m_fileExportBookmarksAction;
     QAction *m_filePrintPreviewAction;
     QAction *m_filePrintAction;
-    QAction *m_filePrivateBrowsingAction;
+    QAction *m_fileNewPrivateTabAction;
     QAction *m_fileNewTorWindowAction;
+    QAction *m_filePreferencesAction;
     QAction *m_fileCloseWindow;
     QAction *m_fileQuit;
 
@@ -242,6 +278,19 @@ private:
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
     QPointer<SidebarPanel> m_sidebarPanel;
+    // RSZ01: the dock's inner-edge resize grip + its persisted-width
+    // bookkeeping.  The grip lives inside a container wrapping
+    // SidebarPanel; m_sidebarWidthTimer debounces native edge
+    // resizes so one drag lands as one QSettings write.
+    SidebarGrip *m_sidebarGrip;
+    QHBoxLayout *m_sidebarGripLayout;
+    QTimer *m_sidebarWidthTimer;
+    bool m_applyingSidebarWidth;
+    bool m_sidebarWidthApplied;
+    // DEVT03: engine-neutral dev tools dock (BiDi channel); the panel
+    // inside is built lazily on first show like the sidebar's.
+    QDockWidget *m_bidiPanelDock;
+    QPointer<BidiPanel> m_bidiPanel;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;
@@ -260,12 +309,14 @@ private:
     QMenu *m_toolsMenu;
     QAction *m_toolsCommandPaletteAction;
     QAction *m_toolsWebSearchAction;
+    QAction *m_toolsDownloadsAction;
     QAction *m_toolsClearPrivateDataAction;
     QAction *m_toolsLockStoreAction;
-    QAction *m_toolsEnableInspectorAction;
-    QAction *m_toolsPreferencesAction;
+    // DEVT04: engine-facing tools under Tools > Development Tools.
+    QMenu *m_toolsDevToolsMenu;
+    QAction *m_toolsChromiumDevToolAction;
+    QAction *m_toolsBidiDevToolAction;
     UserAgentMenu *m_toolsUserAgentMenu;
-    QAction *m_adBlockDialogAction;
 
     QMenu *m_helpMenu;
     QAction *m_helpChangeLanguageAction;
@@ -280,6 +331,13 @@ private:
     QIcon m_reloadIcon;
     QIcon m_stopIcon;
     QSplitter *m_navigationSplitter;
+    // ENG08: one engine switcher for the whole window — a fixed-width
+    // cell between the url-bar stack and the dedicated search box,
+    // replacing the per-bar embedded indicators.
+    QWidget *m_engineIndicatorHost;
+    EngineIndicator *m_engineIndicator;
+    ReaderButton *m_readerModeButton;
+    QAction *m_navReaderAction;
     ToolbarSearch *m_toolbarSearch;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;
@@ -291,6 +349,11 @@ private:
     // UIP04: permanent status-bar widgets bound to the current tab.
     LoadingIndicator *m_loadingIndicator;
     ZoomControl *m_zoomControl;
+    // SBAR01: per-tab renderer memory + live engine bandwidth.
+    MemIndicator *m_memIndicator;
+    NetIndicator *m_netIndicator;
+    // TOR04: permanent status-bar circuit chain — tor windows only.
+    QLabel *m_torCircuitLabel = nullptr;
 
     AutoSaver *m_autoSaver;
     QPointer<CommandPalette> m_commandPalette;

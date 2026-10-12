@@ -77,11 +77,14 @@
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "downloadmanager.h"
+#include "energysaver.h"
 #include "extensionmanager.h"
 #include "historymanager.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "pdfsupport.h"
 #include "privacyrequestinterceptor.h"
+#include "webenginebackend.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "startupprofile.h"
@@ -172,7 +175,14 @@ void BrowserApplication::prepareProfile(QWebEngineProfile *profile)
             AcceptLanguageDialog::httpString(
                 AcceptLanguageDialog::normalizedAcceptLanguages())));
     }
-    DownloadManager::instance()->installOnProfile(profile);
+    DownloadManager::instance()->installOnProfile(
+        WebEngineProfileAdapter::forProfile(profile));
+    if (!BrowserApplication::isTorMode()) {
+        // BADSSL03: TLS client certificates are strong user identity —
+        // re-register the user's installed certs on every prepared
+        // profile except tor's, where they must never be offered.
+        BrowserProfile::loadClientCertificates(profile);
+    }
     // PERF03: install the interceptor with the matcher's first rules
     // snapshot deferred — parsing every subscribed list here delayed
     // the first window.  postLaunch() queues the rebuild once the
@@ -212,7 +222,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arora-browser.org"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
-    QCoreApplication::setApplicationVersion(QLatin1String("0.2"
+    QCoreApplication::setApplicationVersion(QLatin1String("0.12"
 #ifdef GITVERSION
     " (Git: " GITCHANGENUMBER " " GITVERSION ")"
 #endif
@@ -500,7 +510,8 @@ void BrowserApplication::quitBrowser()
         clean();
         int tabCount = 0;
         for (int i = 0; i < m_mainWindows.count(); ++i) {
-            tabCount += m_mainWindows.at(i)->tabWidget()->count();
+            // CONT06: include tabs hidden in filtered container levels.
+            tabCount += m_mainWindows.at(i)->tabWidget()->totalTabCount();
         }
 
         if (tabCount > 1) {
@@ -527,6 +538,10 @@ void BrowserApplication::quitBrowser()
 void BrowserApplication::postLaunch()
 {
     StartupProfile::mark("postLaunch: begin");
+
+    // PDF01: staging copies from the sanitize-on-view pipeline live
+    // only for the session — sweep leftovers from the previous run.
+    PdfSupport::sweepTempDir();
 
     // The WebKit icon database is gone in Qt WebEngine — icons are
     // delivered per-page via QWebEnginePage::iconChanged and cached by
@@ -631,7 +646,16 @@ void BrowserApplication::torStartup(const QString &url)
         return;
     BrowserMainWindow *window = mainWindow();
     if (!url.isEmpty()) {
-        window->tabWidget()->loadStringFromUntrustedSource(url);
+        // CONT07: the argv operand may be a hand-off from a link
+        // context menu in another process — it gets the stricter
+        // page-link gate, so a javascript:/data:/blob: operand is
+        // refused outright instead of executing in this fresh chrome
+        // context.
+        if (isUrlAllowedOnTorArgv(url)) {
+            window->tabWidget()->loadStringFromUntrustedSource(url);
+        } else {
+            qWarning() << "Ignoring untrusted --tor argv url:" << url;
+        }
         return;
     }
     // startupBehavior: homepage (0) still applies; restore-session (2)
@@ -643,6 +667,9 @@ void BrowserApplication::torStartup(const QString &url)
 
 void BrowserApplication::loadSettings()
 {
+    // PREFUI05: the Energy Saver mode is profile-independent — it must
+    // be re-read in tor mode too, so it sits above the early return.
+    EnergySaver::instance()->loadSettings();
     // MIG11: the QSettings->QWebEngineSettings mapping moved to
     // BrowserProfile so the settings dialog can share it while this
     // file is uncompiled.  Dropped keys with no WebEngine equivalent:
@@ -768,6 +795,26 @@ void BrowserApplication::saveSession()
     settings.setValue(QLatin1String("lastSession"), data);
     settings.endGroup();
     m_lastSession = data;
+}
+
+void BrowserApplication::flushSessionsForTermination()
+{
+    // CRASH01: a signal-driven shutdown is a clean exit — clear the
+    // crash-loop sentinel/counter so logoff/service-stop kills aren't
+    // scored against the next run's GPU safe-mode check.  Done first:
+    // the watchdog may kill the process mid-flush.
+    BrowserProfile::markSessionCleanExit();
+    clean();
+    for (int i = 0; i < m_mainWindows.count(); ++i) {
+        if (BrowserMainWindow *window = m_mainWindows.at(i))
+            window->m_autoSaver->saveIfNeccessary();
+    }
+    // The debounce only covers changes it was notified about — write
+    // the live state unconditionally so anything that bypassed
+    // changeOccurred() still lands in the session blob.  Private
+    // browsing stays excluded: saveSession() writes nothing while
+    // isPrivate().
+    saveSession();
 }
 
 bool BrowserApplication::canRestoreSession() const
@@ -956,6 +1003,16 @@ void BrowserApplication::openUrl(const QUrl &url)
 {
     setEventMouseButtons(mouseButtons());
     setEventKeyboardModifiers(keyboardModifiers());
+    // SEC23: this slot backs the registered QDesktopServices 'http'
+    // handler — any in-app path can invoke it, so the url gets the
+    // same untrusted-source gate as argv and single-instance socket
+    // input (a javascript: url here would execute script in the
+    // current page).
+    if (!WebView::isUrlAllowedOnUntrustedInput(url)) {
+        qWarning() << "BrowserApplication: refusing untrusted url"
+                      " from the QDesktopServices handler:" << url;
+        return;
+    }
     mainWindow()->tabWidget()->loadUrl(url);
 }
 
@@ -1024,6 +1081,13 @@ QWebEngineProfile *BrowserApplication::webEngineProfile()
         : isPrivate()
             ? BrowserProfile::privateProfile()
             : BrowserProfile::normalProfile();
+    prepareProfile(profile);
+    return profile;
+}
+
+QWebEngineProfile *BrowserApplication::privateWebEngineProfile()
+{
+    QWebEngineProfile *profile = BrowserProfile::privateProfile();
     prepareProfile(profile);
     return profile;
 }
@@ -1148,7 +1212,43 @@ TorManager *BrowserApplication::torManager() const
     return m_torManager;
 }
 
-void BrowserApplication::openTorWindow()
+bool BrowserApplication::isUrlAllowedOnTorArgv(const QString &operand)
+{
+    return WebView::isUrlAllowedFromPageLink(QUrl(operand));
+}
+
+bool BrowserApplication::siteTrustEnabled()
+{
+    return QSettings().value(QLatin1String("trust/enabled"), true)
+            .toBool();
+}
+
+bool BrowserApplication::siteTrustLookalikeEnabled()
+{
+    return QSettings().value(QLatin1String("trust/lookalike"), true)
+            .toBool();
+}
+
+bool BrowserApplication::siteTrustThreatlistEnabled()
+{
+    return QSettings().value(QLatin1String("trust/threatlist"), true)
+            .toBool();
+}
+
+QStringList BrowserApplication::torWindowArguments(const QUrl &url)
+{
+    QStringList arguments{QStringLiteral("--tor")};
+    // CONT07: an optional start url travels as its own argv element —
+    // startDetached never involves a shell, so no quoting/escaping
+    // hazard exists — and the receiver re-gates it as untrusted
+    // input.  Refuse the dangerous schemes on this side too.
+    if (url.isValid() && !url.isEmpty()
+        && WebView::isUrlAllowedFromPageLink(url))
+        arguments << QString::fromUtf8(url.toEncoded());
+    return arguments;
+}
+
+void BrowserApplication::openTorWindow(const QUrl &url)
 {
     // TOR02: a separate process — the application proxy is
     // process-global, so tor routing can never share this one.  Each
@@ -1156,7 +1256,7 @@ void BrowserApplication::openTorWindow()
     // lifetime to the process), so several tor windows coexist
     // independently.
     QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                          QStringList() << QStringLiteral("--tor"));
+                          torWindowArguments(url));
 }
 
 Qt::MouseButtons BrowserApplication::eventMouseButtons() const

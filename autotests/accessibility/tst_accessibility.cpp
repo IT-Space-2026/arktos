@@ -44,6 +44,7 @@
 #include "searchbutton.h"
 #include "searchlineedit.h"
 #include "settings.h"
+#include "sidebarpanel.h"
 #include "tabwidget.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -232,13 +233,18 @@ void tst_Accessibility::downloadModelAccessibleText()
     {
         SubDownloadManager manager;
         manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
-        QTableView *view = manager.findChild<QTableView*>();
+
+        // DOWN02: the named "Downloads" list view lives on the sidebar
+        // panel now; the manager is a hidden controller widget.
+        SidebarPanel panel;
+        QListView *view = panel.findChild<QListView*>(
+            QLatin1String("sidebarDownloadsView"));
         QVERIFY(view);
         QCOMPARE(accessibleNameOf(view), QStringLiteral("Downloads"));
 
-        QAbstractItemModel *model = view->model();
+        QAbstractItemModel *model = manager.model();
         QVERIFY(model);
-        QWebEnginePage *page = manager.retryPage(false);
+        Engine::Page *page = manager.retryPage(false);
         QVERIFY(page);
         manager.download(page, QUrl(QStringLiteral(
             "data:text/plain;base64,") +

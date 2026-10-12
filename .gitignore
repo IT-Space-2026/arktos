@@ -24,6 +24,7 @@ doc/
 src/adblock/rust/target/
 src/rustcore/target/
 src/rustdl/target/
+spikes/servo/servo-embed/target/
 
 # check-leaks.sh raw gate output — the curated report is .devin/MEM02-report.md
 .devin/LEAKS.md

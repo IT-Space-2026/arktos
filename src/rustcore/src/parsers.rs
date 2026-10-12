@@ -13,9 +13,12 @@
 //!     semantics (DTD rejection, namespace check, first-wins Url
 //!     slots, flat Param/Parameter capture, early exit).  Result JSON:
 //!     {"name","description","imageUrl",
-//!     "search"|"suggestions"|"image":
-//!     {"template","method","params":[["name","value"],...]}}
-//!     A slot key is absent when no matching <Url> was accepted.
+//!      "search"|"suggestions"|"image":
+//!          {"template","method","params":[["name","value"],...]},
+//!      "keywords":[<Alias> defaults]}
+//!     A slot key is absent when no matching <Url> was accepted;
+//!     "keywords" is absent when no <Alias> element survived the
+//!     bounds check (SENG02's Arora extension).
 //!
 //!   * rc_updatemanifest_parse — extension self-update "gupdate"
 //!     manifests, remote XML fetched from each extension's update_url.
@@ -65,6 +68,11 @@ use crate::error::{Fail, RcResult, RcStatus};
 
 /// Mirrors OpenSearchReader's MaximumDocumentSize.
 const MAX_OPENSEARCH: usize = 1024 * 1024;
+/// Mirrors the ose record keyword bounds (opensearch.rs
+/// MAX_KEYWORDS / MAX_KEYWORD_LEN) so a parsed descriptor can never
+/// carry a keyword list the store would reject wholesale.
+const MAX_ALIASES: usize = 64;
+const MAX_ALIAS_LEN: usize = 128;
 /// Mirrors ExtensionManager's kUpdateManifestMaxBytes.
 const MAX_UPDATE_MANIFEST: usize = 1024 * 1024;
 /// Mirrors XbelReader's MaximumInputSize.
@@ -313,6 +321,9 @@ struct Description {
     search: Option<UrlSlot>,
     suggestions: Option<UrlSlot>,
     image: Option<UrlSlot>,
+    /// <Alias> elements — Arora's descriptor-carried default keyword
+    /// bindings (SENG02).
+    keywords: Vec<String>,
 }
 
 impl Description {
@@ -324,6 +335,7 @@ impl Description {
             && self.search.is_some()
             && self.image.is_some()
             && self.have_image_url
+            && !self.keywords.is_empty()
     }
 }
 
@@ -429,6 +441,20 @@ fn parse_opensearch(data: &[u8]) -> RcResult<Description> {
                         desc.image_url = read_element_text(&mut scan)?;
                         desc.have_image_url = true;
                     }
+                    "Alias" => {
+                        // Arora extension: <Alias> declares a default
+                        // keyword binding; out-of-bounds or duplicate
+                        // aliases drop, never the whole descriptor.
+                        let kw = read_element_text(&mut scan)?;
+                        let kw = kw.trim();
+                        if !kw.is_empty()
+                            && kw.len() <= MAX_ALIAS_LEN
+                            && desc.keywords.len() < MAX_ALIASES
+                            && !desc.keywords.iter().any(|k| k == kw)
+                        {
+                            desc.keywords.push(kw.to_owned());
+                        }
+                    }
                     "Url" => {
                         let typ = attr_or_empty(&attrs, "type").to_owned();
                         let url = attr_or_empty(&attrs, "template").to_owned();
@@ -512,6 +538,9 @@ pub fn opensearch(data: &[u8]) -> RcResult<Vec<u8>> {
     }
     if let Some(slot) = &desc.image {
         root.insert("image".into(), slot_json(slot));
+    }
+    if !desc.keywords.is_empty() {
+        root.insert("keywords".into(), json!(desc.keywords));
     }
     Ok(Value::Object(root).to_string().into_bytes())
 }

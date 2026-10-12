@@ -22,18 +22,20 @@
 
 #include "searchbar.h"
 
-#include <qwebenginepage.h>
+#include "engineinterface.h"
 
-QT_BEGIN_NAMESPACE
-class QWebEngineView;
-QT_END_NAMESPACE
+class WebView;
 
 class WebViewSearch : public SearchBar
 {
     Q_OBJECT
 
 public:
-    WebViewSearch(QWebEngineView *webView, QWidget *parent = nullptr);
+    // Takes the widget type rather than WebView so the bar still
+    // hosts on a bare engine view (main.cpp's smoke harnesses) — the
+    // find paths then no-op (enginePage() only exists on the app's
+    // WebView).
+    WebViewSearch(QWidget *webView, QWidget *parent = nullptr);
 
 public slots:
     void findNext() override;
@@ -41,11 +43,14 @@ public slots:
     void highlightAll();
 
 private:
-    void find(QWebEnginePage::FindFlags flags);
-    QWebEngineView *webView() const;
+    void find(Engine::FindFlags flags);
+    WebView *webView() const;
 };
 
 #include "webview.h"
+
+class PdfView;
+class QStackedWidget;
 
 class WebViewWithSearch : public QWidget
 {
@@ -55,6 +60,20 @@ public:
     WebViewWithSearch(WebView *webView, QWidget *parent = nullptr);
     WebView *m_webView;
     WebViewSearch *m_webViewSearch;
+
+    // PDF02: swap the tab's content surface for the shell-owned
+    // document view — the sanitize pipeline routes staged PDFs here
+    // instead of into the engine's built-in viewer.  The stack keeps
+    // the WebView alive underneath (the pdf navigation was refused,
+    // so the page's state stays intact for history-back), and a
+    // committed navigation away clears the overlay again.
+    void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
+    void clearPdfDocument();
+    PdfView *pdfView() const { return m_pdfView; }
+
+private:
+    QStackedWidget *m_stack;
+    PdfView *m_pdfView = nullptr;
 };
 
 

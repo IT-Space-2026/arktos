@@ -20,7 +20,10 @@
 #ifndef RUSTDOWNLOADENGINE_H
 #define RUSTDOWNLOADENGINE_H
 
+#include <qjsonarray.h>
+#include <qjsonobject.h>
 #include <qpointer.h>
+#include <qprocess.h>
 #include <qtimer.h>
 #include <qurl.h>
 #include <qwebenginedownloadrequest.h>
@@ -59,20 +62,23 @@ public:
     ~RustDownloadEngine() override;
 
     // Reads the downloadmanager/engine setting the DLACC01 selector
-    // page writes.  Lenient on the value's shape ("rust",
-    // "accelerated", "Accelerated (Rust)", 1) so either side can land
-    // first; the selector only shows the option when isAvailable().
+    // page writes.  DLACC06: rust is the DEFAULT — an absent or empty
+    // key means selected; only an explicit opt-out ("builtin", a
+    // legacy 0, or any other value) stays on the built-in path.
+    // Lenient on the value's shape ("rust", "accelerated",
+    // "Accelerated (Rust)", 1) so either side can land first.
     static bool isSelected();
     // Crate linked in.  (Temp dir is armed lazily at accept() — the
     // engine reports available whenever the FFI is present.)
     static bool isAvailable();
 
-    // Whether this engine may fetch `url` at all (DLACC04).  Scheme
-    // must be http(s) — anything else stays with the normal engine.
-    // In a tor process the hard rule applies: the download exits via
-    // the managed SOCKS proxy or it does not run on this engine —
-    // callers fall back to the engine-mediated path rather than let a
-    // download ride a direct connection.
+    // DLACC06 claim gate — both downloadmanager.cpp takeover sites
+    // funnel through it: the engine must be selected and the scheme
+    // http(s).  In a tor process the hard rule applies: the download
+    // exits via the managed SOCKS proxy or it does not run on this
+    // engine — callers fall back to the engine-mediated path rather
+    // than let a download ride a direct connection.  Elsewhere the
+    // crate rides the configured application proxy itself.
     static bool canHandle(const QUrl &url);
 
     // The DLACC04 policy gate, exposed as a public static so the
@@ -118,6 +124,21 @@ public:
     // Final on-disk path once state() is DownloadCompleted.
     QString outputPath() const { return m_output; }
 
+    // SAND02 diagnostics: true while the crate runs inside the
+    // confined worker subprocess rather than in this process.
+    bool subprocessActive() const { return m_process != nullptr; }
+    // Whether this build/host can spawn the confined worker (Linux +
+    // bwrap + a resolvable binary, unless ARORA_DL_NO_SANDBOX or the
+    // downloadmanager/sandboxedWorker setting disables it).
+    static bool sandboxedWorkerEnabled();
+    // The binary the worker re-execs — ARORA_WORKER_BINARY override
+    // else this application ("" when neither is executable).
+    static QString workerProgram();
+    // Test/diag hook: extra paths the worker should probe inside its
+    // sandbox before starting (results land in probeResults()).
+    void setProbePaths(const QStringList &paths) { m_probePaths = paths; }
+    QJsonArray probeResults() const { return m_probeResults; }
+
 signals:
     void stateChanged(QWebEngineDownloadRequest::DownloadState state);
     void receivedBytesChanged();
@@ -136,6 +157,26 @@ private:
     QString exportCookieFile() const;
     void removeCookieFile();
 
+    // ---- SAND02 subprocess backend ----
+    // On Linux the crate can run inside `arora --download-worker`
+    // under a restrictive bwrap wrap (see downloadworker.h for the
+    // JSONL protocol).  accept() picks the subprocess whenever the
+    // setting+env allow it and bwrap resolves; any failure before the
+    // first protocol event falls back to the in-process path so the
+    // download still happens.  macOS/Windows/OpenBSD keep the
+    // in-process path — the platform generators exist (see
+    // platformgenerators.h) but their apply paths are untested there.
+    bool startWorkerProcess();
+    void stopWorkerProcess();
+    void onWorkerReadyRead();
+    void onWorkerFinished(int exitCode, QProcess::ExitStatus status);
+    void writeWorkerLine(const QJsonObject &line);
+    QByteArray buildOptionsJson() const;
+    QString newWorkDir() const;
+    void cleanupWorkDir();
+    QString exportCookieFileTo(const QString &dir) const;
+    void handleWorkerEvent(const QJsonObject &event);
+
     DlHandle m_handle;
     QPointer<QWebEnginePage> m_page;
     QUrl m_url;
@@ -150,6 +191,16 @@ private:
     qint64 m_received;
     qint64 m_total;
     QTimer m_timer;
+
+    // SAND02 subprocess backend state.
+    QProcess *m_process = nullptr;
+    QByteArray m_workerInbox;      // partial stdout line accumulator
+    bool m_workerSawEvent = false; // any protocol line decoded
+    bool m_workerFellBack = false; // already retried in-process once
+    bool m_cancelSent = false;     // cancel cmd written to the worker
+    QString m_workDir;             // per-download work dir in the wrap
+    QStringList m_probePaths;      // test/diag hook into the job
+    QJsonArray m_probeResults;
 };
 
 #endif // RUSTDOWNLOADENGINE_H

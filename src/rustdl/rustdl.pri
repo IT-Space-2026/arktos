@@ -12,7 +12,8 @@
 #
 # Opt out with `qmake CONFIG-=rustdl` (this crate only) or
 # `qmake CONFIG+=no-rust` (all crates) — nothing here is compiled or
-# linked and the built-in download engine stays the only backend.
+# linked, the built-in download engine stays the only backend, and the
+# download-engine selector (DLACC01) shows "Accelerated" disabled.
 #
 # Offline/CI: `cargo vendor` + a .cargo/config.toml source replacement
 # works unchanged; Cargo.lock pins the resolved tree and SEC21's
@@ -33,8 +34,10 @@ rustdl:!no-rust {
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustdl.h \
-        $$PWD/../rustdownloadengine.h
-    SOURCES += $$PWD/../rustdownloadengine.cpp
+        $$PWD/../rustdownloadengine.h \
+        $$PWD/../downloadworker.h
+    SOURCES += $$PWD/../rustdownloadengine.cpp \
+        $$PWD/../downloadworker.cpp
     LIBS += $$RUSTDL_LIB
     unix: LIBS += -ldl -lpthread -lm
 }

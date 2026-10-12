@@ -59,16 +59,19 @@
 #ifndef DOWNLOADMANAGER_H
 #define DOWNLOADMANAGER_H
 
-#include "ui_downloads.h"
 #include "ui_downloaditem.h"
 
+#include "engineinterface.h"
+
+#include <qabstractitemmodel.h>
+#include <qdatetime.h>
 #include <qelapsedtimer.h>
 #include <qpointer.h>
 #include <qscopedpointer.h>
-#include <qwebenginedownloadrequest.h>
+#include <qvector.h>
 
+class DownloadManager;
 class QWebEnginePage;
-class QWebEngineProfile;
 #ifdef ARORA_RUSTDL
 class RustDownloadEngine;
 #endif
@@ -83,7 +86,7 @@ signals:
     void downloadFinished();
 
 public:
-    DownloadItem(QWebEngineDownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
+    DownloadItem(Engine::DownloadRequest *download = nullptr, bool requestFileName = false, QWidget *parent = nullptr);
 #ifdef ARORA_RUSTDL
     // Card backed by the rustdl accelerated engine instead of a
     // Chromium request (DLACC06).  The engine object is re-parented
@@ -98,9 +101,23 @@ public:
     double remainingTime() const;
     double currentSpeed() const;
 
+    // DOWN01 detail card — collapsed shows the classic compact row,
+    // expanded adds source/destination, timestamps, size, a live speed
+    // sparkline and Restart/Show-in-Folder actions.
+    bool isExpanded() const { return m_expanded; }
+    void setExpanded(bool expanded);
+    // DLUX01: true once the user has clicked the expand chevron —
+    // automatic expand-on-start / collapse-on-finish must never fight
+    // an explicit choice.  init() clears it so a retried download
+    // auto-expands again.
+    bool expandUserOverride() const { return m_expandUserOverride; }
+    QDateTime startedTime() const { return m_startedTime; }
+    QDateTime finishedTime() const { return m_finishedTime; }
+    int speedSampleCount() const { return m_speedSamples.count(); }
+
     // Re-attaches the item to a fresh request.  "Try Again" re-issues the
     // download through the page, which produces a new request object.
-    void attach(QWebEngineDownloadRequest *download);
+    void attach(Engine::DownloadRequest *download);
 
     // SEC01 hardening helpers — static so autotests can drive them
     // without a live download.
@@ -116,15 +133,24 @@ private slots:
     void stop();
     void tryAgain();
     void open();
+    // Card actions: Restart re-issues the url for any finished or
+    // failed download; Show in File Manager reveals the folder.
+    void restart();
+    void showInFolder();
 
     void downloadProgressUpdate();
-    void downloadStateChanged(QWebEngineDownloadRequest::DownloadState state);
+    void downloadStateChanged(Engine::DownloadRequest::State state);
     void finished();
 
 private:
+    void expandButtonClicked();
     void getFileName();
     void init();
     void updateInfoLabel();
+    void updateDetails();
+    void restartDownload();
+    void sampleSpeed();
+    void freezeSpeedSeries();
     bool confirmSafeToSave(const QString &fileName);
     void removePartialFile();
 
@@ -132,16 +158,20 @@ private:
 
     // Backend-neutral accessors — the same card drives a Chromium
     // request or the rustdl engine behind these.
-    QWebEnginePage *page() const;
+    Engine::Page *page() const;
     QString mimeType() const;
     QString suggestedFileName() const;
-    QWebEngineDownloadRequest::DownloadState currentState() const;
+    Engine::DownloadRequest::State currentState() const;
     bool isFinished() const;
 
-    QPointer<QWebEngineDownloadRequest> m_download;
+    QPointer<Engine::DownloadRequest> m_download;
 #ifdef ARORA_RUSTDL
     QPointer<RustDownloadEngine> m_engine;
 #endif
+    // DOWN02: the owning manager, captured at construction — the item
+    // is reparented into the sidebar's detail pane while displayed, so
+    // a window() lookup can no longer find the manager.
+    QPointer<DownloadManager> m_manager;
     bool m_requestFileName;
     qint64 m_bytesReceived;
     QElapsedTimer m_downloadTime;
@@ -151,6 +181,22 @@ private:
     bool m_awaitingRetry;
     bool m_offTheRecord;
     QElapsedTimer m_lastProgressTime;
+
+    // DOWN01 card state.  m_speedSamples is a bounded ring of
+    // instantaneous bytes/second readings taken every ~500ms; it is
+    // frozen when the transfer reaches a terminal state and
+    // m_finishedTime records the wall-clock end.  m_restoredTotalBytes
+    // carries the persisted size for items reloaded from QSettings
+    // (they have no live backend to query).
+    QVector<double> m_speedSamples;
+    qint64 m_lastSampleMs;
+    qint64 m_lastSampleBytes;
+    qint64 m_restoredTotalBytes;
+    QDateTime m_startedTime;
+    QDateTime m_finishedTime;
+    double m_finalSpeed;
+    bool m_expanded;
+    bool m_expandUserOverride;
 
     friend class DownloadManager;
     friend class DownloadModel;
@@ -163,7 +209,12 @@ class QFileIconProvider;
 class QMimeData;
 QT_END_NAMESPACE
 
-class DownloadManager : public QDialog, public Ui_DownloadDialog
+// DOWN02: the separate downloads window is gone — the sidebar's
+// Downloads panel is the download surface.  The manager is now a
+// never-shown controller widget: items stay widget children of it so
+// ownership, findChildren and lifetime keep working whether an item
+// is parked here or hosted in a panel's detail pane.
+class DownloadManager : public QWidget
 {
     Q_OBJECT
     Q_PROPERTY(RemovePolicy removePolicy READ removePolicy WRITE setRemovePolicy)
@@ -187,7 +238,7 @@ public:
     // SLEEP01: true while any in-flight download was initiated by
     // this page — the sleeping-tabs sweep skips such tabs so a
     // suspend can never orphan a stream.
-    bool hasActiveDownloadForPage(QWebEnginePage *page) const;
+    bool hasActiveDownloadForPage(Engine::Page *page) const;
     bool allowQuit();
 
     RemovePolicy removePolicy() const;
@@ -202,16 +253,22 @@ public:
     // Hooks this manager into the profile's downloadRequested signal.
     // Must be called once for every profile that can produce downloads
     // (default profile and the off-the-record private profile).
-    void installOnProfile(QWebEngineProfile *profile);
+    void installOnProfile(Engine::Profile *profile);
 
     // Hidden page used to re-issue downloads whose originating page is
     // already gone (retry of an interrupted or restored download).
-    QWebEnginePage *retryPage(bool offTheRecord);
+    Engine::Page *retryPage(bool offTheRecord);
 
     // SIDE01: read-only model access for the sidebar downloads page —
-    // rows still render through the dialog's index widgets; secondary
-    // views map the DownloadModel::Roles.
+    // secondary views map the DownloadModel::Roles.
     DownloadModel *model() const { return m_model; }
+
+    // DOWN02: row -> item for secondary views; the sidebar panel hosts
+    // the item's detail card for the selected row.
+    DownloadItem *itemAt(int row) const;
+    // DLUX01: inverse lookup — surfaces scroll/select to the row a
+    // just-added item landed on.
+    int rowForItem(DownloadItem *item) const;
 
     // SEC09: hands the url to the user-configured external download
     // handler (Settings > downloadmanager/externalPath).  The url
@@ -222,11 +279,16 @@ public:
     // without a live download.
     static bool externalDownload(const QUrl &url);
 
+signals:
+    // DOWN02: a new download joined the list — download surfaces (the
+    // sidebar panel) use it to reveal their Downloads section.
+    void itemAdded(DownloadItem *item);
+
 public slots:
     // WebEngine downloads can only be initiated from a page; there is no
     // profile-level download() entry point.
-    void download(QWebEnginePage *page, const QUrl &url, bool requestFileName = false);
-    void handleDownloadRequested(QWebEngineDownloadRequest *download);
+    void download(Engine::Page *page, const QUrl &url, bool requestFileName = false);
+    void handleDownloadRequested(Engine::DownloadRequest *download);
     void cleanup();
     // CLR01: the OTR-scoped clear — drops only the off-the-record
     // rows, keeping the persistent session's download history.
@@ -240,9 +302,7 @@ private slots:
 
 private:
     void addItem(DownloadItem *item);
-    void updateItemCount();
     void load();
-    void updateActiveItemCount();
 
     AutoSaver *m_autoSaver;
     DownloadModel *m_model;
@@ -266,14 +326,21 @@ class DownloadModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    // SIDE01: plain-data roles for views that cannot host the
-    // dialog's per-row DownloadItem index widgets (DisplayRole stays
-    // empty so the dialog never paints text under its widgets).
+    // SIDE01: plain-data roles for secondary views (the sidebar
+    // panel).  DisplayRole stays empty — rows paint through delegates,
+    // never as embedded text on an index widget.
     enum Roles {
         FileNameRole = Qt::UserRole + 1,
         OutputFileRole,
         SourceUrlRole,
-        CompletedRole
+        CompletedRole,
+        // DOWN02: sort/filter/detail support for the sidebar panel —
+        // start time, total size, the item's live status line and
+        // whether a transfer is in flight.
+        StartedTimeRole,
+        SizeRole,
+        InfoRole,
+        DownloadingRole
     };
 
     DownloadModel(DownloadManager *downloadManager, QObject *parent = nullptr);

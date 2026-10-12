@@ -21,6 +21,7 @@
 #define BROWSERTHEME_H
 
 #include <qpalette.h>
+#include <qobject.h>
 
 class QDialog;
 
@@ -36,11 +37,23 @@ class QDialog;
 // ARORA_COLOR_SCHEME=dark|light overrides the desktop preference —
 // mainly useful on desktops that do not report a scheme and for
 // headless testing (the offscreen QPA reports Unknown).
+//
+// THEME01: the Appearance page's Theme combo persists
+// "browser/colorScheme" = system|light|dark (default system).  An
+// explicit light/dark pick wins outright; "system" falls through to
+// the env override, then the platform's reported scheme.
 namespace BrowserTheme {
 
-// What the environment asks for: env override, else the platform's
-// reported scheme (may be Unknown — treat as "leave theme alone").
+// What the effective preference is: an explicit settings pick, else
+// the env override, else the platform's reported scheme (may be
+// Unknown — treat as "leave theme alone").
 Qt::ColorScheme preferredColorScheme();
+
+// What "System default" resolves to right now — the env override if
+// set, else the platform's reported scheme (may be Unknown).  The
+// Preferences page previews the combo's System row with this since
+// preferredColorScheme() would consult the not-yet-committed pick.
+Qt::ColorScheme systemColorScheme();
 
 bool isDarkPalette(const QPalette &palette);
 
@@ -54,9 +67,41 @@ QPalette darkPalette();
 // Idempotent; safe to call repeatedly.
 void applyColorScheme();
 
+// THEME02: apply an explicit scheme without consulting the persisted
+// pick — the Preferences page uses it to preview the combo's value
+// before the choice is committed.  Same palette mechanics as
+// applyColorScheme(); undo by calling applyColorScheme() (the
+// persisted pick never changed).
+void previewColorScheme(Qt::ColorScheme scheme);
+
 // True when the current palette was installed by applyColorScheme()
 // rather than the platform theme.
 bool paletteIsForced();
+
+// Singleton notifier (process lifetime): emits chromeSchemeChanged()
+// whenever applyColorScheme() actually flips the application palette.
+// For observers that cannot see the palette change themselves — e.g.
+// the qrc start page's channel object or future chrome pieces.
+class BrowserThemeNotifier : public QObject
+{
+    Q_OBJECT
+
+public:
+    using QObject::QObject;
+
+signals:
+    void chromeSchemeChanged();
+};
+
+BrowserThemeNotifier *themeNotifier();
+
+// THEME01: tags the <html> element of a generated internal page
+// (htmls/*.html) so its dark-scheme CSS rules — the html.arora-dark
+// selectors — engage while the chrome palette is dark.  The pages are
+// produced as QStrings at generation time, so prefers-color-scheme
+// (which follows the OS, not the app palette) is not an option.
+// No-op on a light palette or markup without an <html> tag.
+void decorateInternalPage(QString &html);
 
 // UIP02: uniform, modern metrics for dialog push buttons — a minimum
 // width so OK/Cancel-style rows stop shrinking to their caption text,

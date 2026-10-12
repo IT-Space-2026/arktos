@@ -1,0 +1,6 @@
+# ENG03 spike: route the final cdylib link through lld instead of the
+# default GNU ld — a debug libservo link needs a memory-lean linker on
+# a 16G box. `linker` is a link-time-only cargo setting: rlib dep
+# fingerprints are unaffected, so the cached dep tree stays valid.
+[target.x86_64-unknown-linux-gnu]
+linker = "/home/szefi/Documents/arora/spikes/servo/servo-embed/cc-lld.sh"

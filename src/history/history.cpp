@@ -152,6 +152,10 @@ QVariant HistoryModel::data(const QModelIndex &index, int role) const
         return item.url;
     case TitleRole:
         return item.userTitle();
+    case Qt::ToolTipRole:
+        // SIDE06: same reason as the bookmarks model — the sidebar
+        // hides the address column, hover still shows it.
+        return item.userTitle() + QLatin1Char('\n') + item.url;
     case Qt::DisplayRole:
     case Qt::EditRole: {
         switch (index.column()) {
@@ -374,21 +378,12 @@ void HistoryMenu::postPopulated()
 #if !defined(Q_OS_MACOS)
     showAllAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_H));
 #endif
-    connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryDialog);
+    connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryPage);
     addAction(showAllAction);
 
     QAction *clearAction = new QAction(tr("Clear History..."), this);
     connect(clearAction, &QAction::triggered, this, &HistoryMenu::clearHistoryDialog);
     addAction(clearAction);
-}
-
-void HistoryMenu::showHistoryDialog()
-{
-    HistoryDialog *dialog = new HistoryDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &HistoryDialog::openUrl,
-            this, &HistoryMenu::openUrl);
-    dialog->show();
 }
 
 void HistoryMenu::clearHistoryDialog()
@@ -406,12 +401,17 @@ void HistoryMenu::setInitialActions(QList<QAction*> actions)
         addAction(m_initialActions.at(i));
 }
 
-HistoryDialog::HistoryDialog(QWidget *parent, HistoryManager *setHistory) : QDialog(parent)
+HistoryDialog::HistoryDialog(QWidget *parent, HistoryManager *setHistory) : QWidget(parent)
 {
     HistoryManager *history = setHistory;
     if (!history)
         history = HistoryManager::instance();
     setupUi(this);
+    // HIST02: hosted in a tab, so Close asks the host to close the tab
+    // — a plain QWidget::close() would just hide the widget inside its
+    // tab slot.
+    connect(buttonBox, &QDialogButtonBox::rejected,
+            this, &HistoryDialog::closeRequested);
     tree->setUniformRowHeights(true);
     tree->setSelectionBehavior(QAbstractItemView::SelectRows);
     tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -854,7 +854,7 @@ QModelIndex HistoryTreeModel::index(int row, int column, const QModelIndex &pare
 
     if (!parent.isValid())
         return createIndex(row, column, quintptr(0));
-    return createIndex(row, column, quintptr(parent.row() + 1));
+    return createIndex(row, column, quintptr(parent.row()) + 1);
 }
 
 QModelIndex HistoryTreeModel::parent(const QModelIndex &index) const
@@ -950,7 +950,7 @@ QModelIndex HistoryTreeModel::mapFromSource(const QModelIndex &sourceIndex) cons
         --it;
     int dateRow = qMax(0, int(it - m_sourceRowCache.begin()));
     int row = sourceIndex.row() - m_sourceRowCache.at(dateRow);
-    return createIndex(row, sourceIndex.column(), quintptr(dateRow + 1));
+    return createIndex(row, sourceIndex.column(), quintptr(dateRow) + 1);
 }
 
 bool HistoryTreeModel::removeRows(int row, int count, const QModelIndex &parent)

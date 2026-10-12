@@ -177,6 +177,16 @@ QVariant BookmarksModel::data(const QModelIndex &index, int role) const
         case 1: return bookmarkNode->url;
         }
         break;
+    case Qt::ToolTipRole: {
+        if (bookmarkNode->type() == BookmarkNode::Separator)
+            break;
+        if (bookmarkNode->url.isEmpty())
+            return bookmarkNode->title;
+        // SIDE06: the sidebar's name-only tree hides the Address
+        // column — the URL still surfaces on hover.
+        return bookmarkNode->title + QLatin1Char('\n')
+               + bookmarkNode->url;
+    }
     case BookmarksModel::UrlRole:
         return QUrl(bookmarkNode->url);
         break;

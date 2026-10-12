@@ -369,10 +369,31 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
     // OSE01: the registry is canonical — the record writes through
     // immediately (keyword bindings arrive via setKeywordsForEngine).
     rustCoreEnsureDataDir();
-    const QByteArray json = oseEngineJson(engine);
+    QByteArray json = oseEngineJson(engine);
+    // SENG02: a descriptor's <Alias> keywords seed a FRESH record;
+    // when the store already holds one its live bindings win — the
+    // Qt-side "only bind free slots" rule, store-side.
+    if (!engine->defaultKeywords().isEmpty()) {
+        const QByteArray utf8 = engine->name().toUtf8();
+        char *record = rc_ose_get(utf8.constData());
+        const bool present = record != nullptr;
+        rc_string_free(record);
+        if (!present) {
+            QJsonObject doc = QJsonDocument::fromJson(json).object();
+            doc.insert(QLatin1String("keywords"),
+                       QJsonArray::fromStringList(
+                           engine->defaultKeywords()));
+            json = QJsonDocument(doc).toJson(QJsonDocument::Compact);
+        }
+    }
     if (rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
                    size_t(json.size())) != RC_OK)
         return false;
+#else
+    // SENG02: installs pick up the descriptor's <Alias> defaults;
+    // suppressed during load() so unbound keywords stay unbound.
+    if (!m_loading)
+        bindDefaultKeywords(engine);
 #endif
 
     m_engines[engine->name()] = engine;
@@ -383,6 +404,21 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
 
     return true;
 }
+
+#if !defined(ARORA_RUSTCORE)
+// SENG02: a descriptor's <Alias> elements are INITIAL keyword
+// bindings — claim only slots nobody holds, so a user binding
+// (explicit set or a later keywords-array restore) always wins.
+void OpenSearchManager::bindDefaultKeywords(OpenSearchEngine *engine)
+{
+    if (!engine)
+        return;
+    for (const QString &keyword : engine->defaultKeywords()) {
+        if (!keyword.isEmpty() && !m_keywords.contains(keyword))
+            m_keywords.insert(keyword, engine);
+    }
+}
+#endif
 
 void OpenSearchManager::removeEngine(const QString &name)
 {
@@ -814,6 +850,7 @@ void OpenSearchManager::load()
 
     emit currentEngineChanged();
 #else
+    m_loading = true;
     loadDirectory(enginesDirectory());
 
     // get current engine
@@ -841,6 +878,10 @@ void OpenSearchManager::load()
             continue;
         }
         m_engines[engine->name()] = engine;
+        // SENG02: seed the descriptor's <Alias> keywords — only for
+        // engines the merge actually adds; the keyword array below
+        // re-points any slot the user took over.
+        bindDefaultKeywords(engine);
     }
 
     m_current = settings.value(QLatin1String("engine"), QLatin1String("DuckDuckGo")).toString();
@@ -853,6 +894,7 @@ void OpenSearchManager::load()
         m_keywords.insert(keyword, engine(engineName));
     }
     settings.endArray();
+    m_loading = false;
 
     m_suggestionsEnabled = settings.value(QLatin1String("suggestions")).toStringList();
 

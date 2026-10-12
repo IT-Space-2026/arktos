@@ -70,9 +70,9 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "containermanager.h"
-#include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pdfview.h"
 #include "pictureinpicture.h"
 #include "qrcodedialog.h"
 #include "readermode.h"
@@ -80,8 +80,11 @@
 #include "scriptblockinfobar.h"
 #include "scriptcontrolmanager.h"
 #include "toolbarsearch.h"
+#include "tormanager.h"
 #include "urlcleaner.h"
+#include "webenginebackend.h"
 #include "webpage.h"
+#include "webviewsearch.h"
 
 #include <qapplication.h>
 #include <qclipboard.h>
@@ -106,6 +109,7 @@ WebView::WebView(QWidget *parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(this))
+    , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
 {
     init();
@@ -116,9 +120,29 @@ WebView::WebView(QWebEngineProfile *profile, QWidget *parent)
     , m_progress(0)
     , m_currentZoom(100)
     , m_page(new WebPage(profile, this))
+    , m_enginePage(nullptr)
     , m_scriptBlockBar(nullptr)
 {
     init();
+}
+
+WebView::WebView(Engine::Profile *profile, QWidget *parent)
+    : WebView(WebEngineProfileAdapter::of(profile)
+                  ? WebEngineProfileAdapter::of(profile)->webEngineProfile()
+                  : nullptr,
+              parent)
+{
+}
+
+Engine::Page *WebView::enginePage() const
+{
+    // The canonical adapter for the page — every holder of the same
+    // engine page resolves to this object, so Engine::Page pointers
+    // are identity-comparable (forPage is parented to m_page and
+    // shares its clock).
+    if (!m_enginePage)
+        m_enginePage = WebEnginePageAdapter::forPage(m_page);
+    return m_enginePage;
 }
 
 void WebView::init()
@@ -213,6 +237,41 @@ QString WebView::containerId() const
         ->containerIdForProfile(m_page->profile());
 }
 
+// Translates the engine's context-menu payload into the interface's
+// neutral shape — the menu logic below consumes only Engine::
+// ContextMenuInfo so the request type never crosses the boundary.
+static Engine::ContextMenuInfo contextMenuInfo(
+        const QWebEngineContextMenuRequest *request)
+{
+    Engine::ContextMenuInfo info;
+    info.position = request->position();
+    info.linkUrl = request->linkUrl();
+    info.linkText = request->linkText();
+    info.mediaUrl = request->mediaUrl();
+    info.selectedText = request->selectedText();
+    // QWebEngineContextMenuRequest carries no pageUrl — the struct's
+    // field stays empty and the menu reads the page url from the view.
+    info.isContentEditable = request->isContentEditable();
+    switch (request->mediaType()) {
+    case QWebEngineContextMenuRequest::MediaTypeImage:
+        info.hasImage = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeVideo:
+        info.hasMedia = true;
+        info.hasVideo = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeAudio:
+        info.hasMedia = true;
+        break;
+    case QWebEngineContextMenuRequest::MediaTypeCanvas:
+        info.isCanvas = true;
+        break;
+    default:
+        break;
+    }
+    return info;
+}
+
 void WebView::contextMenuEvent(QContextMenuEvent *event)
 {
     QWebEngineContextMenuRequest *request = lastContextMenuRequest();
@@ -220,48 +279,100 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         QWebEngineView::contextMenuEvent(event);
         return;
     }
+    const Engine::ContextMenuInfo info = contextMenuInfo(request);
 
     QMenu *menu = new QMenu(this);
 
-    if (!request->linkUrl().isEmpty()) {
-        QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(request->linkUrl());
-        QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openActionUrlInNewTab);
-        newTabAction->setData(request->linkUrl());
+    if (!info.linkUrl.isEmpty()) {
+        // CONT07: every entry hands an attacker-influenced page url to
+        // a new browsing context — the slots gate the scheme through
+        // isUrlAllowedFromPageLink, and entries that can never succeed
+        // are disabled at build time rather than refused on trigger.
+        const bool allowed = isUrlAllowedFromPageLink(info.linkUrl);
+        QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openLinkInNewTab);
+        newTabAction->setData(info.linkUrl);
+        newTabAction->setEnabled(allowed);
+        QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openLinkInNewWindow);
+        newWindowAction->setData(info.linkUrl);
+        newWindowAction->setEnabled(allowed);
+        // The private entries are hidden wherever they could not
+        // honestly deliver a new isolated context: a fully private
+        // window already routes every new tab/window through the OTR
+        // profile, and inside a tor window they would have to land on
+        // the CLEARNET OTR profile — a leak (isPrivate() covers tor
+        // mode).  'Open in New Tor Window' always works — it spawns a
+        // real --tor process.
+        if (!BrowserApplication::isPrivate()) {
+            QAction *privateTabAction = menu->addAction(tr("Open in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+            privateTabAction->setData(info.linkUrl);
+            privateTabAction->setEnabled(allowed);
+            QAction *privateWindowAction = menu->addAction(tr("Open in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+            privateWindowAction->setData(info.linkUrl);
+            privateWindowAction->setEnabled(allowed);
+        }
+        QAction *torWindowAction = menu->addAction(tr("Open in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        torWindowAction->setData(info.linkUrl);
+        torWindowAction->setEnabled(allowed);
+        if (TorManager::resolveBinary().isEmpty()) {
+            torWindowAction->setEnabled(false);
+            torWindowAction->setToolTip(
+                tr("No tor binary found — install tor or run "
+                   "BuildProcess/fetch-tor.sh"));
+        }
         menu->addSeparator();
         QAction *saveLinkAction = menu->addAction(tr("Save Lin&k"), this, &WebView::downloadLinkToDisk);
-        saveLinkAction->setData(request->linkUrl());
+        saveLinkAction->setData(info.linkUrl);
         QAction *bookmarkAction = menu->addAction(tr("&Bookmark This Link"), this, &WebView::bookmarkLink);
-        bookmarkAction->setData(request->linkUrl());
+        bookmarkAction->setData(info.linkUrl);
         menu->addSeparator();
-        if (!request->selectedText().isEmpty())
-            menu->addAction(pageAction(QWebEnginePage::Copy));
+        if (!info.selectedText.isEmpty())
+            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         QAction *copyLinkAction = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
-        copyLinkAction->setData(request->linkUrl());
+        copyLinkAction->setData(info.linkUrl);
         // POL01: same copy but with tracking query parameters removed.
         QAction *cleanLinkAction = menu->addAction(tr("Copy &Clean Link"), this, &WebView::copyCleanLinkToClipboard);
-        cleanLinkAction->setData(request->linkUrl());
+        cleanLinkAction->setData(info.linkUrl);
     }
 
-    const bool isImage = request->mediaType()
-            == QWebEngineContextMenuRequest::MediaTypeImage;
-    const bool isCanvas = request->mediaType()
-            == QWebEngineContextMenuRequest::MediaTypeCanvas;
+    const bool isImage = info.hasImage;
+    const bool isCanvas = info.isCanvas;
 
-    if (isImage && !request->mediaUrl().isEmpty()) {
+    if (isImage && !info.mediaUrl.isEmpty()) {
         if (!menu->isEmpty())
             menu->addSeparator();
-        QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(request->mediaUrl());
+        // The same-profile opens keep the permissive base gate — a
+        // blob: media url is only resolvable inside this profile.  The
+        // private/tor entries hand the page-supplied url to another
+        // context and take the strict page-link gate (CONT07).
         QAction *newTabAction = menu->addAction(tr("Open Image in New &Tab"), this, &WebView::openActionUrlInNewTab);
-        newTabAction->setData(request->mediaUrl());
+        newTabAction->setData(info.mediaUrl);
+        QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
+        newWindowAction->setData(info.mediaUrl);
+        const bool allowed = isUrlAllowedFromPageLink(info.mediaUrl);
+        if (!BrowserApplication::isPrivate()) {
+            QAction *privateTabAction = menu->addAction(tr("Open Image in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+            privateTabAction->setData(info.mediaUrl);
+            privateTabAction->setEnabled(allowed);
+            QAction *privateWindowAction = menu->addAction(tr("Open Image in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+            privateWindowAction->setData(info.mediaUrl);
+            privateWindowAction->setEnabled(allowed);
+        }
+        QAction *torWindowAction = menu->addAction(tr("Open Image in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        torWindowAction->setData(info.mediaUrl);
+        torWindowAction->setEnabled(allowed);
+        if (TorManager::resolveBinary().isEmpty()) {
+            torWindowAction->setEnabled(false);
+            torWindowAction->setToolTip(
+                tr("No tor binary found — install tor or run "
+                   "BuildProcess/fetch-tor.sh"));
+        }
         menu->addSeparator();
         QAction *saveImageAction = menu->addAction(tr("&Save Image"), this, &WebView::downloadImageToDisk);
-        saveImageAction->setData(request->mediaUrl());
+        saveImageAction->setData(info.mediaUrl);
         menu->addAction(tr("&Copy Image"), this, &WebView::copyImageToClipboard);
-        menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(request->mediaUrl().toString());
+        menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(info.mediaUrl.toString());
         menu->addSeparator();
-        menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(request->mediaUrl().toString());
+        menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(info.mediaUrl.toString());
 
         // SRCH04: reverse-image search through the configured image
         // engine — only offered when an engine actually advertises an
@@ -272,7 +383,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
                 tr("Search Image with %1")
                     .arg(SafeText::menu(imageEngine->name())),
                 this, &WebView::imageSearchRequested);
-            imageSearchAction->setData(request->mediaUrl());
+            imageSearchAction->setData(info.mediaUrl);
         }
     } else if (isImage || isCanvas) {
         // CTX01: a <canvas> reports no mediaUrl (its pixels only exist
@@ -283,7 +394,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         // canvas has no location to copy or block rule to write.
         if (!menu->isEmpty())
             menu->addSeparator();
-        const QPoint position = request->position();
+        const QPoint position = info.position;
         menu->addAction(tr("Open Image in New &Window"), this,
                 [this, position, isCanvas]() {
             grabContextImage(position, isCanvas,
@@ -355,11 +466,11 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
 
     // PIP01: right-click on a <video> offers the pop-out.  The
     // element itself is resolved in-page (click point + media url).
-    if (request->mediaType() == QWebEngineContextMenuRequest::MediaTypeVideo) {
+    if (info.hasVideo) {
         if (!menu->isEmpty())
             menu->addSeparator();
-        const QUrl mediaUrl = request->mediaUrl();
-        const QPoint position = request->position();
+        const QUrl mediaUrl = info.mediaUrl;
+        const QPoint position = info.position;
         menu->addAction(tr("Picture-in-Picture"), this,
                 [this, mediaUrl, position]() {
             m_pip->popOutContext(mediaUrl, position);
@@ -377,9 +488,9 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         });
     }
 
-    if (!request->selectedText().isEmpty()) {
+    if (!info.selectedText.isEmpty()) {
         if (menu->isEmpty()) {
-            menu->addAction(pageAction(QWebEnginePage::Copy));
+            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
         } else {
             menu->addSeparator();
         }
@@ -395,7 +506,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
         }
     }
 
-    if (request->isContentEditable()) {
+    if (info.isContentEditable) {
         // TODO(MIG08): "Add to the toolbar search" — needs the input element's
         // form data via runJavaScript (was synchronous QWebElement access).
     }
@@ -403,9 +514,10 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     if (menu->isEmpty()) {
         delete menu;
         menu = createStandardContextMenu();
-        // The stock menu's own "Inspect element" is the same no-op
-        // bare page action — remove it; the hosted one is added below.
-        menu->removeAction(pageAction(QWebEnginePage::InspectElement));
+        // The stock menu's own "Inspect element" is a no-op bare page
+        // action — the context menu carries no inspect path (DEVT04),
+        // so strip it here too.
+        menu->removeAction(enginePage()->action(Engine::StandardAction::InspectElement));
     }
     if (!menu->isEmpty())
         menu->addSeparator();
@@ -413,7 +525,7 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     // Link' was already added against the link URL above; here it
     // cleans the page address itself.  The QR action is always for
     // the current page.
-    if (request->linkUrl().isEmpty()) {
+    if (info.linkUrl.isEmpty()) {
         menu->addAction(tr("Copy &Clean Link"), this, [this]() {
             QApplication::clipboard()->setText(
                 UrlCleaner::cleanedUrl(url()).toString());
@@ -421,17 +533,6 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
     menu->addAction(tr("Show &QR Code for This Page"), this,
             [this]() { QrCodeDialog::showForUrl(url(), this); });
-    menu->addSeparator();
-
-    // The bare page action is a no-op until a devToolsPage is bound —
-    // route it through the shared inspector host (DVT01).  Triggering
-    // InspectElement still uses the stored context-menu position, so
-    // the right-clicked element is the one inspected.
-    QAction *inspectPageAction = pageAction(QWebEnginePage::InspectElement);
-    QAction *inspectAction = menu->addAction(inspectPageAction->text());
-    inspectAction->setIcon(inspectPageAction->icon());
-    connect(inspectAction, &QAction::triggered,
-            this, [this]() { DevToolsWindow::inspectElement(m_page); });
 
     if (!menu->isEmpty()) {
         if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {
@@ -497,6 +598,117 @@ void WebView::openActionUrlInNewWindow()
         openUrlInTarget(action->data().toUrl(), TabWidget::NewWindow);
 }
 
+// CONT07: the link-menu New Tab/New Window slots take the strict
+// page-link gate — the same-profile image opens above stay permissive
+// so a blob: media url keeps working inside its own profile.
+void WebView::openLinkInNewTab()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTarget(action->data().toUrl(),
+                            TabWidget::NewNotSelectedTab);
+}
+
+void WebView::openLinkInNewWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTarget(action->data().toUrl(),
+                            TabWidget::NewWindow);
+}
+
+void WebView::openUrlInNewPrivateTab()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInPrivateTab(action->data().toUrl());
+}
+
+void WebView::openUrlInNewPrivateWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInPrivateWindow(action->data().toUrl());
+}
+
+void WebView::openUrlInNewTorWindow()
+{
+    if (QAction *action = qobject_cast<QAction*>(sender()))
+        openPageUrlInTorWindow(action->data().toUrl());
+}
+
+void WebView::openPageUrlInTarget(const QUrl &linkUrl,
+                                  TabWidget::OpenUrlIn target)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    openUrlInTarget(linkUrl, target);
+}
+
+void WebView::openPageUrlInPrivateTab(const QUrl &linkUrl)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    WebView *newView = nullptr;
+    if (TabWidget *tabs = tabWidget())
+        // Background placement, matching 'Open in New Tab'.  Reached
+        // from a tor window anyway (the entry is hidden there), this
+        // resolves to a tor-profile tab — never clearnet OTR.
+        newView = tabs->makeNewPrivateTab(false);
+    if (!newView) {
+        // Detached view (no TabWidget above us): a standalone OTR
+        // WebView.  privateWebEngineProfile() is always the CLEARNET
+        // off-the-record profile — a tor process must hand out its
+        // own profile here.
+        newView = new WebView(BrowserApplication::isTorMode()
+            ? BrowserApplication::webEngineProfile()
+            : BrowserApplication::privateWebEngineProfile());
+        newView->setAttribute(Qt::WA_DeleteOnClose);
+        newView->show();
+    }
+    loadUrlInView(newView, linkUrl);
+}
+
+void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
+{
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    WebView *newView = nullptr;
+    if (BrowserApplication *application = BrowserApplication::instance()) {
+        // The same first-tab swap getView(NewWindow) performs for an
+        // off-the-record source: a page's profile is fixed at
+        // creation, so the fresh window's default tab is replaced by
+        // an off-the-record one — which also means no container
+        // binding is carried across.
+        BrowserMainWindow *window = application->newMainWindow();
+        if (WebView *privateTab =
+                window->tabWidget()->makeNewPrivateTab(true)) {
+            window->tabWidget()->closeTab(0);
+            newView = privateTab;
+        } else {
+            // The OTR tab could not be bound — closing the window is
+            // safer than letting the link land in its default tab.
+            window->close();
+        }
+    }
+    if (!newView) {
+        newView = new WebView(BrowserApplication::isTorMode()
+            ? BrowserApplication::webEngineProfile()
+            : BrowserApplication::privateWebEngineProfile());
+        newView->setAttribute(Qt::WA_DeleteOnClose);
+        newView->show();
+    }
+    loadUrlInView(newView, linkUrl);
+}
+
+void WebView::openPageUrlInTorWindow(const QUrl &linkUrl)
+{
+    // The url travels to the new --tor process as its own argv
+    // element — never through a shell — and is re-gated there as
+    // untrusted input (BrowserApplication::torStartup).  Refusing the
+    // dangerous schemes on this side too keeps a dead hand-off from
+    // ever being offered.
+    if (!isUrlAllowedFromPageLink(linkUrl))
+        return;
+    BrowserApplication::openTorWindow(linkUrl);
+}
+
 void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
 {
     WebView *newView = nullptr;
@@ -509,17 +721,26 @@ void WebView::openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target)
         newView->setAttribute(Qt::WA_DeleteOnClose);
         newView->show();
     }
-    // CTX01: keep the request-based load for http(s) — the Referer
-    // header preserves hotlink-protection behavior.  Everything else
-    // (data: canvas dumps, blob: media, file:, view-source:) has no
-    // use for the header and QWebEngineHttpRequest only applies extra
-    // headers to http(s) anyway; the plain url load keeps javascript:
-    // refused through isUrlAllowedOnUntrustedInput (SEC02).
+    loadUrlInView(newView, linkUrl);
+}
+
+// CTX01: keep the request-based load for http(s) — the Referer header
+// preserves hotlink-protection behavior, but only when the target
+// page lives on THIS page's profile: attaching it to a private or
+// tor hand-off would leak the source page's url across a privacy
+// boundary (CONT07).  Everything else (data: canvas dumps, blob:
+// media, file:, view-source:) has no use for the header and
+// QWebEngineHttpRequest only applies extra headers to http(s)
+// anyway; the plain url load keeps javascript: refused through
+// isUrlAllowedOnUntrustedInput (SEC02).
+void WebView::loadUrlInView(WebView *newView, const QUrl &linkUrl)
+{
     const QString scheme = linkUrl.scheme();
     if (scheme == QLatin1String("http")
         || scheme == QLatin1String("https")) {
         QWebEngineHttpRequest request(linkUrl);
-        request.setHeader("Referer", url().toEncoded());
+        if (newView->webPage()->profile() == m_page->profile())
+            request.setHeader("Referer", url().toEncoded());
         newView->load(request);
         return;
     }
@@ -540,7 +761,7 @@ void WebView::copyImageToClipboard()
 {
     // No URL equivalent: copying the image pixels has to go through the
     // page action, which uses the live context-menu request.
-    pageAction(QWebEnginePage::CopyImageToClipboard)->trigger();
+    enginePage()->action(Engine::StandardAction::CopyImageToClipboard)->trigger();
 }
 
 void WebView::copyImageLocationToClipboard()
@@ -633,7 +854,7 @@ int WebView::levelForZoom(int zoom)
 
 void WebView::applyZoom()
 {
-    setZoomFactor(qreal(m_currentZoom) / 100.0);
+    enginePage()->setZoomFactor(qreal(m_currentZoom) / 100.0);
     emit zoomChanged(m_currentZoom);
 }
 
@@ -675,11 +896,19 @@ bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)
     return url.scheme() != QLatin1String("javascript");
 }
 
+bool WebView::isUrlAllowedFromPageLink(const QUrl &url)
+{
+    const QString scheme = url.scheme();
+    return isUrlAllowedOnUntrustedInput(url)
+        && scheme != QLatin1String("data")
+        && scheme != QLatin1String("blob");
+}
+
 void WebView::loadUrl(const QUrl &url, const QString &title)
 {
     if (url.scheme() == QLatin1String("javascript")) {
         QString scriptSource = QUrl::fromPercentEncoding(url.toString(QUrl::RemoveScheme).toUtf8());
-        m_page->runJavaScript(scriptSource);
+        enginePage()->runJavaScript(scriptSource);
         return;
     }
     m_initialUrl = url;
@@ -704,6 +933,47 @@ QUrl WebView::url() const
     return m_initialUrl;
 }
 
+void WebView::showPdfDocument(const QString &localPath,
+                              const QUrl &sourceUrl)
+{
+    // Tabbed views delegate to the WebViewWithSearch stack — the
+    // WebView was reparented into its QStackedWidget, so the host is
+    // an ancestor, not necessarily the direct parent.
+    for (QWidget *p = parentWidget(); p; p = p->parentWidget()) {
+        if (WebViewWithSearch *container =
+                qobject_cast<WebViewWithSearch *>(p)) {
+            container->showPdfDocument(localPath, sourceUrl);
+            return;
+        }
+    }
+    // Standalone path (smoke harnesses, bare engine views): the same
+    // shell widget hosts the document as a top-level window — still
+    // engine-neutral, still confined-worker rasterized.
+    if (!m_pdfView) {
+        // Parented for lifetime but flagged as a window — the view
+        // floats over the desktop rather than embedding in the
+        // (already-busy) engine surface.
+        m_pdfView = new PdfView(this);
+        m_pdfView->setWindowFlag(Qt::Window, true);
+        m_pdfView->setAttribute(Qt::WA_DeleteOnClose, false);
+        connect(m_pdfView, &PdfView::reloadRequested, this,
+                [this](const QUrl &url) { loadUrl(url); });
+    }
+    m_pdfView->setDocument(localPath, sourceUrl);
+    m_pdfView->resize(size());
+    m_pdfView->show();
+}
+
+PdfView *WebView::pdfView() const
+{
+    for (QWidget *p = parentWidget(); p; p = p->parentWidget()) {
+        if (WebViewWithSearch *container =
+                qobject_cast<WebViewWithSearch *>(p))
+            return container->pdfView();
+    }
+    return m_pdfView;
+}
+
 void WebView::mousePressEvent(QMouseEvent *event)
 {
     // Stash the current modifiers so WebPage::acceptNavigationRequest
@@ -715,10 +985,10 @@ void WebView::mousePressEvent(QMouseEvent *event)
     }
     switch (event->button()) {
     case Qt::XButton1:
-        triggerPageAction(QWebEnginePage::Back);
+        enginePage()->back();
         break;
     case Qt::XButton2:
-        triggerPageAction(QWebEnginePage::Forward);
+        enginePage()->forward();
         break;
     default:
         QWebEngineView::mousePressEvent(event);
@@ -867,40 +1137,11 @@ void WebView::runContextImageScript(
 {
     const QString program = contextImageBundle()
         + QLatin1Char('\n') + call;
-    if (m_page->settings()->testAttribute(
-            QWebEngineSettings::JavascriptEnabled)) {
-        m_page->runJavaScript(program, callback);
-        return;
-    }
-    // JSCTL/SECLVL: runJavaScript is silently dropped while
-    // JavascriptEnabled is off, but a video poster or canvas content
-    // is still rendered — the click is an explicit gesture on it, so
-    // lift the attribute for the injection window the same way
-    // PictureInPicture::runPageJs does (page scripts blocked at parse
-    // time do not retro-run while the flag is up).
-    m_page->settings()->setAttribute(
-        QWebEngineSettings::JavascriptEnabled, true);
-    QPointer<WebPage> livePage(m_page);
-    QTimer::singleShot(700, this, [livePage, program, callback]() {
-        if (!livePage)
-            return;
-        livePage->runJavaScript(program,
-                [callback, livePage](const QVariant &result) {
-            callback(result);
-            QTimer::singleShot(400, qApp, [livePage]() {
-                if (livePage) {
-                    livePage->settings()->setAttribute(
-                        QWebEngineSettings::JavascriptEnabled, false);
-                }
-            });
-        });
-    });
-    QTimer::singleShot(5000, this, [livePage]() {
-        if (livePage) {
-            livePage->settings()->setAttribute(
-                QWebEngineSettings::JavascriptEnabled, false);
-        }
-    });
+    // JSCTL/SECLVL: a video poster or canvas content is still
+    // rendered while JavascriptEnabled is off — the click is an
+    // explicit gesture on it, so the script goes through the lifted
+    // path (Engine::Page owns the attribute juggling now).
+    enginePage()->runJavaScriptLifted(program, callback);
 }
 
 // Resolves the image content under a context-menu click point:
@@ -912,7 +1153,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
 {
     // The request's position is in view pixels; elementFromPoint wants
     // CSS pixels (same conversion PictureInPicture applies).
-    qreal zoom = m_page->zoomFactor();
+    qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
     const QString call = QStringLiteral("__aroraCtxImage.%1(%2,%3);")
@@ -942,7 +1183,7 @@ void WebView::grabContextImage(const QPoint &viewPos, bool canvas,
 void WebView::openContextPosterInTarget(const QPoint &viewPos,
         TabWidget::OpenUrlIn target)
 {
-    qreal zoom = m_page->zoomFactor();
+    qreal zoom = enginePage()->zoomFactor();
     if (zoom <= 0)
         zoom = 1.0;
     const QString call = QStringLiteral("__aroraCtxImage.posterUrl(%1,%2);")

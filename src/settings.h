@@ -63,7 +63,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-#include <qdialog.h>
+#include <qwidget.h>
 #include <qhash.h>
 #include <qlist.h>
 #include <qset.h>
@@ -71,7 +71,13 @@
 #include "ui_settings.h"
 
 class QTreeWidgetItem;
-class SettingsDialog : public QDialog, public Ui_Settings
+// PREFS01: despite the historical name this is a QWidget — the
+// settings page is hosted inside a browser tab (see
+// BrowserMainWindow::showSettingsPage), not exec()ed as a dialog.
+// The OK/Cancel box survives inside the page: accept() applies and
+// asks the host to close, reject()/tab-close discards — the same
+// semantics the modal dialog had.
+class SettingsDialog : public QWidget, public Ui_Settings
 {
     Q_OBJECT
 
@@ -88,20 +94,40 @@ public:
         AutoFillPage,
         AdvancedPage,
         ExtensionsPage,
-        ContainersPage
+        ContainersPage,
+        DownloadsPage,
+        // PREFUI04: appended — currentTab persists the stack index, so
+        // a mid-enum insert would renumber every stored session.
+        PerformancePage
     };
 
     SettingsDialog(QWidget *parent = nullptr);
-    void accept() override;
+    ~SettingsDialog() override;
     void openAtPage(Page page);
+    // Opens the settings page in the ancestor window's Preferences
+    // tab; with no BrowserMainWindow ancestor (autotests, detached
+    // widgets) it is shown as a standalone modeless window so the
+    // deep link still lands somewhere.
+    static void openPage(QWidget *context, Page page);
     // CMD01: display names for the sidebar pages, kept in enum order —
     // the command palette deep-links to sections without constructing
     // the dialog.  Must match settings.ui's pagesList order.
     static int pageCount();
     static QString pageTitle(Page page);
 
+signals:
+    // Emitted by accept() (after the settings were applied) and by
+    // reject() — the host closes the tab (or standalone window) on it.
+    // Closing the tab directly discards exactly like the old Cancel.
+    void closeRequested();
+
+public slots:
+    void accept();
+    void reject();
+
 protected:
     void showEvent(QShowEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void loadDefaults();
@@ -121,10 +147,29 @@ private slots:
     void chooseStyleSheet();
     void editAutoFillUser();
 
+    // PREFUI10: the Appearance page shows the stored Accept-Language
+    // list next to its Select button — refreshed after the editor
+    // dialog closes and on every (re)load.
+    void refreshAcceptLanguages();
+
+    // ADDR01: the AutoFill page's Saved Addresses section — mutates
+    // the shared manager directly, like the containers editor.
+    void refreshAddresses();
+    void addAddress();
+    void editAddress();
+    void removeAddress();
+    void removeAllAddresses();
+    void addressSelectionChanged();
+
     void refreshSearchEngines();
     void refreshSearchSuggestions();
     // SRCH06: Search-page-owned settings back to compiled defaults.
     void resetSearchSettings();
+    // PREFUI04: Performance-page-owned settings (incl. the migrated
+    // suspend/prefetch keys) back to compiled defaults.
+    void resetPerformanceSettings();
+    // PREFUI05: live battery status line under the Energy Saver radios.
+    void updateEnergySaverStatus();
 
     // SRCH05: inline search-engine editor (replaces the Manage dialog).
     void refreshEngineList();
@@ -175,7 +220,33 @@ private slots:
     void refreshContainerSites();
     void containerSiteRemove();
 
+    // PREFUI03: the nav filter narrows the sidebar to pages whose
+    // title or control labels match the typed terms.
+    void filterPages(const QString &text);
+
+    // THEME02: the Appearance Theme combo previews instantly — the
+    // palette flips on index change without touching the persisted
+    // key; closing the page un-committed undoes the preview.
+    void previewTheme(int index);
+
+    // LANG01: the General page's Language combo applies its pick to
+    // the shared LanguageManager immediately (persisted there, not
+    // staged for OK like the other fields).
+    void applyLanguagePick(int row);
+
 private:
+    // ADB06: the Content Blocking status line mirrors the engine that
+    // is actually answering requests (effective pick, not the combo's
+    // unsaved position).
+    void updateContentBlockerStatus();
+    // Re-applies the persisted color scheme if a combo preview flipped
+    // the palette but the pick was never committed (Cancel/tab close).
+    void revertThemePreview();
+    // LANG01: fills languageCombo from the LanguageManager and re-runs
+    // it (plus every code-owned string) on QEvent::LanguageChange.
+    void populateLanguageCombo();
+    void retranslate();
+    void buildPageSearchIndex();
     void stashSearchSuggestions();
     void populateEngineForm();
     void updateEngineButtonStates();
@@ -197,6 +268,12 @@ private:
     // EXT03: distinguishes the button-triggered check (summary box)
     // from the opt-in background check firing while the dialog is up.
     bool m_manualExtensionCheck = false;
+    // PREFUI03: per-page lowercase search text, built lazily on the
+    // first keystroke (after loadFromSettings populated the combos).
+    QStringList m_pageSearchTexts;
+    // THEME02: a combo-driven preview flipped the palette and has not
+    // been committed or reverted yet.
+    bool m_themePreviewed = false;
 };
 
 #endif // SETTINGS_H

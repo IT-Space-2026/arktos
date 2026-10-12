@@ -24,6 +24,8 @@
 #include <qpointer.h>
 #include <qstringlist.h>
 
+#include <functional>
+
 class QCompleter;
 class QTimer;
 class OmniboxCompletionModel;
@@ -50,6 +52,12 @@ public:
                        QCompleter *completer,
                        QObject *parent = nullptr);
 
+    // PTAB01: private context is per-tab — the host reports whether
+    // the tab whose location bar is being edited browses
+    // off-the-record (the process-global private flag still counts).
+    // Without a provider only the global flag applies.
+    void setPrivateContextProvider(const std::function<bool()> &provider);
+
 public slots:
     // Connect each location bar's QLineEdit::textEdited here.
     void scheduleSuggestions(const QString &text);
@@ -62,7 +70,9 @@ private slots:
 
 private:
     bool enabled() const;
+    bool privateContext() const;
 
+    std::function<bool()> m_privateContextProvider;
     OmniboxCompletionModel *m_model;
     QCompleter *m_completer;
     QTimer *m_timer;
@@ -73,6 +83,10 @@ private:
     // keyword engine.
     QPointer<OpenSearchEngine> m_engine;
     QPointer<OpenSearchEngine> m_boundEngine;
+    // SRCH10: the latest scheduled edit shrank the text — a delete
+    // burst; a late reply still updates the model but does not repop
+    // the dropdown.
+    bool m_deleting = false;
 };
 
 #endif // OMNIBOXSUGGESTIONS_H

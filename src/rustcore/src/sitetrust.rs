@@ -47,18 +47,46 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Probe-selection bits for `lookup_opts` — TRUST03's per-signal
+/// Preferences switches.  A cleared bit skips that probe ENTIRELY:
+/// it never runs, so it cannot fire and cannot appear in signals[].
+/// The rank and first-seen inputs are ungated — they carry no
+/// per-signal switch.
+pub const PROBE_THREATLIST: u32 = 0x1;
+pub const PROBE_LOOKALIKE: u32 = 0x2;
+/// Every probe on — the plain rc_sitetrust_lookup request.
+pub const PROBE_ALL: u32 = PROBE_THREATLIST | PROBE_LOOKALIKE;
+
 /// rc_sitetrust_lookup: the verdict as a JSON string the FFI
 /// marshals verbatim.  Never fails on content — an empty or
 /// un-evaluable host naturally produces {"level":"amber",
 /// "signals":[]}: nothing listed it, nothing ranked it.
 pub fn lookup(host: &str, is_https: bool) -> String {
-    lookup_at(host, is_https, now_ms())
+    lookup_opts(host, is_https, PROBE_ALL)
 }
 
-fn lookup_at(host: &str, is_https: bool, now: i64) -> String {
-    let threat = blocklist::check(host);
+/// rc_sitetrust_lookup_opts: like lookup() but `probes` selects
+/// which advisory inputs run (PROBE_* bits) — the threat-list and
+/// lookalike checks each answer their own Preferences switch.
+pub fn lookup_opts(host: &str, is_https: bool, probes: u32) -> String {
+    lookup_at(host, is_https, now_ms(), probes)
+}
+
+fn lookup_at(host: &str, is_https: bool, now: i64, probes: u32) -> String {
+    let threat =
+        probes & PROBE_THREATLIST != 0 && blocklist::check(host);
     let rank = tranco::rank(host);
-    let probe = lookalike::probe(host);
+    // A skipped probe evaluates clean — it must not synthesize a
+    // signal the switch was meant to suppress.
+    let probe = if probes & PROBE_LOOKALIKE != 0 {
+        lookalike::probe(host)
+    } else {
+        lookalike::Probe {
+            verdict: lookalike::Verdict::Clean,
+            mixed_script: false,
+            skeleton: String::new(),
+        }
+    };
     // An unopened/erroring history store reads as "seen" — a signal
     // the store cannot evaluate must not be claimed (the popover
     // would show "first visit" on every page while the DB is down).
@@ -175,7 +203,7 @@ mod tests {
         // Threat-list hit -> red, "threat" fired (first_seen too —
         // the host was never visited).
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("threat.example", true, now))
+            serde_json::from_str(&lookup_at("threat.example", true, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "red");
         assert_eq!(
@@ -187,7 +215,7 @@ mod tests {
         // Tranco-known + https -> green; never visited -> first_seen
         // rides along quietly without demoting the level.
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("popular.example", true, now))
+            serde_json::from_str(&lookup_at("popular.example", true, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "green");
         assert_eq!(
@@ -198,7 +226,7 @@ mod tests {
 
         // Same site over plaintext http -> amber.
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("popular.example", false, now))
+            serde_json::from_str(&lookup_at("popular.example", false, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "amber");
         assert!(j["signals"]
@@ -208,7 +236,7 @@ mod tests {
 
         // Unknown rank -> amber even on https.
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("obscure.example", true, now))
+            serde_json::from_str(&lookup_at("obscure.example", true, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "amber");
         assert_eq!(
@@ -229,7 +257,7 @@ mod tests {
         let now = now_ms();
 
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("paypa1.com", true, now))
+            serde_json::from_str(&lookup_at("paypa1.com", true, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "red");
         assert_eq!(
@@ -240,7 +268,7 @@ mod tests {
 
         // The real domain stays green.
         let j: serde_json::Value =
-            serde_json::from_str(&lookup_at("paypal.com", true, now))
+            serde_json::from_str(&lookup_at("paypal.com", true, now, PROBE_ALL))
                 .unwrap();
         assert_eq!(j["level"], "green");
         assert!(j.get("lookalike_of").is_none());
@@ -259,7 +287,7 @@ mod tests {
 
         let signals = |host: &str| -> Vec<String> {
             let j: serde_json::Value =
-                serde_json::from_str(&lookup_at(host, true, now)).unwrap();
+                serde_json::from_str(&lookup_at(host, true, now, PROBE_ALL)).unwrap();
             j["signals"]
                 .as_array()
                 .unwrap()
@@ -313,6 +341,75 @@ mod tests {
         .ok();
     }
 
+    // TRUST03: a cleared probe bit must suppress the signal outright
+    // — the Preferences switches behind rc_sitetrust_lookup_opts.
+    #[test]
+    fn probe_flags_gate_their_signals() {
+        let _g = guard();
+        let db = fixture(
+            "flags",
+            "1,paypal.com\n",
+            "threat-flag.example\n",
+        );
+        let now = now_ms();
+
+        // Threat-list probe off -> the listed host cannot flag; the
+        // level drops to what the remaining inputs say (unranked ->
+        // amber) and "threat" never appears.
+        let j: serde_json::Value = serde_json::from_str(&lookup_at(
+            "threat-flag.example",
+            true,
+            now,
+            PROBE_ALL & !PROBE_THREATLIST,
+        ))
+        .unwrap();
+        assert_eq!(j["level"], "amber");
+        assert_eq!(j["signals"], serde_json::json!(["first_seen"]));
+
+        // Lookalike probe off -> the confusable twin cannot flag
+        // either: no "lookalike" signal, no lookalike_of, amber.
+        let j: serde_json::Value = serde_json::from_str(&lookup_at(
+            "paypa1.com",
+            true,
+            now,
+            PROBE_ALL & !PROBE_LOOKALIKE,
+        ))
+        .unwrap();
+        assert_eq!(j["level"], "amber");
+        assert_eq!(j["signals"], serde_json::json!(["first_seen"]));
+        assert!(j.get("lookalike_of").is_none());
+
+        // Both off -> only the ungated inputs (rank, first_seen)
+        // remain; the same host over the full mask stays red as the
+        // all-on control.
+        let j: serde_json::Value = serde_json::from_str(&lookup_at(
+            "threat-flag.example",
+            true,
+            now,
+            0,
+        ))
+        .unwrap();
+        assert_eq!(j["level"], "amber");
+        let j: serde_json::Value = serde_json::from_str(&lookup_at(
+            "threat-flag.example",
+            true,
+            now,
+            PROBE_ALL,
+        ))
+        .unwrap();
+        assert_eq!(j["level"], "red");
+        let j: serde_json::Value = serde_json::from_str(&lookup_at(
+            "paypa1.com", true, now, PROBE_ALL,
+        ))
+        .unwrap();
+        assert_eq!(j["level"], "red");
+
+        std::fs::remove_dir_all(
+            std::path::Path::new(&db).parent().unwrap(),
+        )
+        .ok();
+    }
+
     #[test]
     fn unopened_history_never_claims_first_seen() {
         let _g = guard();
@@ -325,6 +422,7 @@ mod tests {
             "never-db.example",
             true,
             now_ms(),
+            PROBE_ALL,
         ))
         .unwrap();
         assert_eq!(j["level"], "amber");

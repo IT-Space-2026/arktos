@@ -1,0 +1,9 @@
+
+DevTools listening on ws://127.0.0.1:33863/devtools/browser/2dbdd12e-e65d-4962-909a-99d654cfdcc4
+Remote debugging server started successfully. Try pointing a Chromium-based browser to http://127.0.0.1:33863
+Fontconfig error: Cannot load default config file: No such file: (null)
+TlsVerifier: hup:443 4
+
+DevTools listening on ws://127.0.0.1:34537/devtools/browser/50d8455d-e157-42ad-b80b-d5caf7b6d557
+Remote debugging server started successfully. Try pointing a Chromium-based browser to http://127.0.0.1:34537
+TlsVerifier: example.com:443 2

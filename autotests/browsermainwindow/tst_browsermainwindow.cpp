@@ -29,28 +29,47 @@
 #include <QtGui/QtGui>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qcombobox.h>
 #include <qdockwidget.h>
+#include <qframe.h>
+#include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
+#include <qlistview.h>
 #include <qmenu.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qplaintextedit.h>
+#include <qprintdialog.h>
+#include <qprintpreviewdialog.h>
+#include <qprinterinfo.h>
 #include <qprogressbar.h>
 #include <qpushbutton.h>
+#include <qsortfilterproxymodel.h>
+#include <qsplitter.h>
 #include <qstatusbar.h>
 #include <qtabwidget.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
+#include <qtemporarydir.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
+#include <qtreeview.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "bookmarknode.h"
+#include "bookmarksdialog.h"
+#include "bookmarksmanager.h"
+#include "bookmarksmodel.h"
+#include "edittreeview.h"
+#include "history.h"
+#include "sidebargrip.h"
 #include "sidebarpanel.h"
 #include "statusbarwidgets.h"
 #include "tabwidget.h"
 #include "tabbar.h"
+#include "readermode.h"
 #include "webview.h"
 #include "webpage.h"
 #include "webviewsearch.h"
@@ -100,15 +119,28 @@ private slots:
     void viewToggles();
     void menuPopulation();
     void dialogSlots();
+    void historyTab();
     void toolsMenuDedup();
+    void fileMenuOrder();
+    void downloadsMenuHome();
+    void devToolsSubmenu();
     void stateSerialization();
     void events();
+    void printPaths();
     void closeConfirm();
     void chromeMetrics();
     void searchBoxVisibility();
+    void torSearchBoxHidden();
+    void torCircuitStatusLabel();
+    void readerModeButton();
     void statusBarWidgets();
+    void statusBarIndicators();
     void sidebarPanel();
+    void sidebarResize();
+    void downloadsSidebarPanel();
+    void bookmarksSidebarPanel();
     void chromeSlots();
+    void widgetTabBookmarksSafety();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -243,29 +275,101 @@ void tst_BrowserMainWindow::dialogSlots()
     acceptModal(); // ClearPrivateData
     QVERIFY(QMetaObject::invokeMethod(window, "clearPrivateData"));
 
-    acceptModal(); // SettingsDialog
+    // PREFS01: preferences() opens the settings page as a tab, not a
+    // modal — single-instance: a second call only refocuses it.
+    const int tabsBeforePrefs = window->tabWidget()->count();
     QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    int prefsIndex = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        if (window->tabWidget()->widget(i)->inherits("SettingsDialog"))
+            prefsIndex = i;
+    }
+    QVERIFY(prefsIndex >= 0);
+    QCOMPARE(window->tabWidget()->currentIndex(), prefsIndex);
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    QCOMPARE(window->tabWidget()->count(), tabsBeforePrefs + 1);
+    window->tabWidget()->closeTab(prefsIndex);
 
-    // Private-browsing prompt answered Cancel — mode stays off.
+    // PTAB01: "New Private Tab" opens an off-the-record tab in the
+    // same window — no prompt, and the process-global flag stays off.
     QVERIFY(!BrowserApplication::isPrivate());
-    rejectModal();
-    QVERIFY(QMetaObject::invokeMethod(window, "privateBrowsing"));
+    const int tabCount = window->tabWidget()->count();
+    QVERIFY(QMetaObject::invokeMethod(window->tabWidget(), "newPrivateTab"));
+    QCOMPARE(window->tabWidget()->count(), tabCount + 1);
+    QVERIFY(window->tabWidget()->isTabPrivate(
+        window->tabWidget()->currentIndex()));
     QVERIFY(!BrowserApplication::isPrivate());
 
-    // fileNew spins up a second window; downloadManager shows the
-    // non-modal download dialog.
+    // fileNew spins up a second window; downloadManager raises the
+    // sidebar dock on the Downloads section (DOWN02 — the standalone
+    // dialog is gone).
     QVERIFY(QMetaObject::invokeMethod(window, "fileNew"));
     QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
 
     const QWidgetList topLevel = QApplication::topLevelWidgets();
     for (QWidget *widget : topLevel) {
         if (widget != window && widget->inherits("QMainWindow"))
             widget->close();
     }
-    if (QDialog *downloads = qobject_cast<QDialog *>(
-            BrowserApplication::downloadManager()))
-        downloads->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    closeWindow(window);
+}
+
+// HIST02: "Show All History" hosts the history manager in a tab of the
+// current window — repeat calls refocus the one tab, entries open into
+// a fresh tab beside it, and the page's Close button closes the tab.
+void tst_BrowserMainWindow::historyTab()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    const int tabsBefore = window->tabWidget()->count();
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
+
+    HistoryDialog *page = nullptr;
+    int historyIndex = -1;
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        if (HistoryDialog *candidate = qobject_cast<HistoryDialog *>(
+                    window->tabWidget()->widget(i))) {
+            page = candidate;
+            historyIndex = i;
+        }
+    }
+    QVERIFY(page);
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QCOMPARE(window->tabWidget()->currentIndex(), historyIndex);
+    QCOMPARE(window->tabWidget()->tabText(historyIndex),
+             QLatin1String("History"));
+
+    // It is a tab page, not a floating window.
+    for (QWidget *topLevel : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<HistoryDialog *>(topLevel));
+
+    // Single-instance: invoking again only refocuses the same tab.
+    window->tabWidget()->setCurrentIndex(0);
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QCOMPARE(window->tabWidget()->currentIndex(), historyIndex);
+
+    // An activated entry opens in a NEW tab; the history tab survives.
+    emit page->openUrl(QUrl(QLatin1String("about:blank")),
+                       QLatin1String("Blank"));
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 2);
+    QCOMPARE(window->tabWidget()->indexOf(page), historyIndex);
+
+    // The page's Close button asks the host to close its tab.
+    QAbstractButton *close =
+        page->buttonBox->button(QDialogButtonBox::Close);
+    QVERIFY(close);
+    close->click();
+    QCOMPARE(window->tabWidget()->indexOf(page), -1);
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 1);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
     closeWindow(window);
 }
 
@@ -288,7 +392,20 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     for (QAction *action : toolsMenu->actions()) {
         QVERIFY2(!action->text().contains(QLatin1String("Search")),
                  qPrintable(action->text()));
+        // MENU03: Preferences moved to the File menu — nothing named
+        // Options/Preferences may linger in Tools.
+        QVERIFY2(!action->text().contains(QLatin1String("Options")),
+                 qPrintable(action->text()));
+        QVERIFY2(!action->text().contains(QLatin1String("Preferences")),
+                 qPrintable(action->text()));
+        // MENU05: filter management moved into Preferences > Privacy
+        // (Content Blocking > Manage...) — no Ad Block entry in Tools.
+        QVERIFY2(!action->text().contains(QLatin1String("Ad Block")),
+                 qPrintable(action->text()));
     }
+    // The separator that used to precede Options... went with it.
+    QVERIFY(!toolsMenu->actions().isEmpty());
+    QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
     // The Ctrl+K carrier detached from the menu onto the window.
     QAction *webSearch = nullptr;
@@ -301,13 +418,16 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     QVERIFY(webSearch);
     QVERIFY(!toolsMenu->actions().contains(webSearch));
 
-    // Triggering it still runs webSearch() — SRCH04's button mode
-    // (fresh profile) answers with the non-modal engines menu, whose
-    // "Search..." prompt is the search entry point.
+    // Triggering it still runs webSearch() — SRCH08 hides the box
+    // outright on a fresh profile, so the shortcut falls back to the
+    // omnibox location bar rather than opening the engines popup.
     webSearch->trigger();
-    QWidget *popup = QApplication::activePopupWidget();
-    QVERIFY(popup);
-    popup->close();
+    QVERIFY(!QApplication::activePopupWidget());
+    QVERIFY(QApplication::focusWidget() != window->toolbarSearch());
+    if (window->isActiveWindow())
+        QCOMPARE(QApplication::focusWidget(),
+                 static_cast<QWidget *>(
+                     window->tabWidget()->currentLocationBar()));
 
     // Field mode goes back to selecting the box text.
     QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
@@ -316,6 +436,239 @@ void tst_BrowserMainWindow::toolsMenuDedup()
     webSearch->trigger();
     QVERIFY(window->toolbarSearch()->hasSelectedText());
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    closeWindow(window);
+}
+
+// MENU02+PTAB01: the New-X group rides at the top of the File menu —
+// New Window, New Tab, New Private Tab, New Tor Window — and the old
+// app-global "Private Browsing" checkbox is gone (private browsing is
+// per-tab now).
+void tst_BrowserMainWindow::fileMenuOrder()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *fileMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("File")))
+            fileMenu = menuAction->menu();
+    }
+    QVERIFY(fileMenu);
+
+    QStringList entries;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->isSeparator())
+            continue;
+        QString title = action->menu() ? action->menu()->title()
+                                       : action->text();
+        entries << title.remove(QLatin1Char('&'));
+    }
+
+    const int newWindow = entries.indexOf(QLatin1String("New Window"));
+    const int newTab = entries.indexOf(QLatin1String("New Tab"));
+    const int newPrivateTab =
+        entries.indexOf(QLatin1String("New Private Tab"));
+    const int newTor = entries.indexOf(QLatin1String("New Tor Window"));
+    const int privateBrowsing =
+        entries.indexOf(QLatin1String("Private Browsing..."));
+    const int closeWindowIndex =
+        entries.indexOf(QLatin1String("Close Window"));
+    const int preferencesIndex =
+        entries.indexOf(QLatin1String("Preferences..."));
+    QVERIFY(newWindow != -1 && newTab != -1 && newPrivateTab != -1
+            && newTor != -1);
+    QVERIFY(newWindow < newTab);
+    QVERIFY(newTab < newPrivateTab);
+    QVERIFY(newPrivateTab < newTor);
+    QCOMPARE(privateBrowsing, -1);
+    QVERIFY(newTor < closeWindowIndex);
+
+    // MENU03: Preferences sits directly above Close Window in the
+    // File menu's bottom group, keeping the Ctrl+, shortcut and the
+    // PreferencesRole platform hint.
+    QCOMPARE(preferencesIndex, closeWindowIndex - 1);
+    QAction *prefsAction = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Preferences..."))
+            prefsAction = action;
+    }
+    QVERIFY(prefsAction);
+    QCOMPARE(prefsAction->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+,")));
+    QCOMPARE(prefsAction->menuRole(), QAction::PreferencesRole);
+
+    // The action fires the tab widget's private-tab slot and carries
+    // the incognito-style shortcut (Ctrl+Shift+P is the palette).
+    QAction *privateAction = nullptr;
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("New Private Tab"))
+            privateAction = action;
+    }
+    QVERIFY(privateAction);
+    QCOMPARE(privateAction->shortcut(),
+             QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                          | Qt::Key_N));
+    closeWindow(window);
+}
+
+// MENU04: Downloads moved out of the Window menu into the Tools
+// menu's utility cluster — same text, icon, and Ctrl+Y shortcut, and
+// neither menu keeps a doubled/orphaned separator.
+void tst_BrowserMainWindow::downloadsMenuHome()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *toolsMenu = nullptr;
+    QMenu *windowMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu())
+            continue;
+        if (menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+        if (menuAction->text().contains(QLatin1String("Window")))
+            windowMenu = menuAction->menu();
+    }
+    QVERIFY(toolsMenu);
+    QVERIFY(windowMenu);
+
+    // The Tools copy is the only Downloads entry.
+    QAction *downloads = nullptr;
+    for (QAction *action : toolsMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Downloads"))
+            downloads = action;
+    }
+    QVERIFY(downloads);
+    QCOMPARE(downloads->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+Y")));
+    QVERIFY(!downloads->icon().isNull());
+    for (QAction *action : windowMenu->actions())
+        QVERIFY(!action->text().contains(QLatin1String("Downloads")));
+
+    // No doubled or dangling separators in either menu after the move.
+    for (QMenu *menu : {toolsMenu, windowMenu}) {
+        bool previousWasSeparator = true;
+        for (QAction *action : menu->actions()) {
+            QVERIFY2(!(previousWasSeparator && action->isSeparator()),
+                     qPrintable(menu->title()));
+            previousWasSeparator = action->isSeparator();
+        }
+        QVERIFY(!menu->actions().constLast()->isSeparator());
+    }
+
+    // Triggering it reveals the sidebar focused on Downloads (DOWN02);
+    // the manager object is a hidden controller, never a window.
+    downloads->trigger();
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
+    QVERIFY(!BrowserApplication::downloadManager()->isVisible());
+
+    closeWindow(window);
+}
+
+// DEVT04: Tools > Development Tools holds the engine-tool entries —
+// "Chromium Dev Tool" (the working inspector) and "BiDi Dev Tool"
+// (disabled placeholder until DEVT02 lands).  The View menu keeps
+// Page Source + Text Encoding and carries no dev-tools entry.
+void tst_BrowserMainWindow::devToolsSubmenu()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *viewMenu = nullptr;
+    QMenu *toolsMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu())
+            continue;
+        if (menuAction->text().contains(QLatin1String("View")))
+            viewMenu = menuAction->menu();
+        if (menuAction->text().contains(QLatin1String("Tools")))
+            toolsMenu = menuAction->menu();
+    }
+    QVERIFY(viewMenu);
+    QVERIFY(toolsMenu);
+
+    // The View menu no longer hosts the submenu — Page Source is
+    // followed straight by Text Encoding.
+    const QList<QAction *> viewActions = viewMenu->actions();
+    int sourceIndex = -1;
+    for (int i = 0; i < viewActions.size(); ++i) {
+        QAction *action = viewActions.at(i);
+        if (action->menu())
+            QVERIFY2(action->menu()->title()
+                         != QLatin1String("Development Tools"),
+                     qPrintable(action->menu()->title()));
+        QVERIFY2(!action->text().contains(QLatin1String("Dev Tool")),
+                 qPrintable(action->text()));
+        QVERIFY2(!action->text().contains(QLatin1String("Inspect")),
+                 qPrintable(action->text()));
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Page Source"))
+            sourceIndex = i;
+    }
+    QVERIFY(sourceIndex != -1);
+    QVERIFY(sourceIndex + 2 < viewActions.size());
+    QVERIFY(viewActions.at(sourceIndex + 1)->isSeparator());
+    QCOMPARE(viewActions.at(sourceIndex + 2)
+                 ->text().remove(QLatin1Char('&')),
+             QLatin1String("Text Encoding"));
+
+    // The submenu lives in the Tools menu's utility cluster — after
+    // Clear Private Data, before User Agent.
+    QMenu *devToolsMenu = nullptr;
+    int devToolsIndex = -1;
+    int clearIndex = -1;
+    int userAgentIndex = -1;
+    const QList<QAction *> toolsActions = toolsMenu->actions();
+    for (int i = 0; i < toolsActions.size(); ++i) {
+        QAction *action = toolsActions.at(i);
+        if (action->menu()
+            && action->menu()->title()
+                   == QLatin1String("Development Tools")) {
+            devToolsMenu = action->menu();
+            devToolsIndex = i;
+        }
+        if (action->menu()
+            && action->menu()->title() == QLatin1String("User Agent"))
+            userAgentIndex = i;
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Clear Private Data"))
+            clearIndex = i;
+    }
+    QVERIFY(devToolsMenu);
+    QVERIFY(clearIndex != -1);
+    QVERIFY(userAgentIndex != -1);
+    QVERIFY(devToolsIndex > clearIndex);
+    QVERIFY(devToolsIndex < userAgentIndex);
+
+    // Exactly two entries: the live inspector and the BiDi
+    // placeholder (disabled, with a tooltip explaining why).
+    QStringList entries;
+    QAction *chromium = nullptr;
+    QAction *bidi = nullptr;
+    for (QAction *action : devToolsMenu->actions()) {
+        if (action->isSeparator())
+            continue;
+        entries << action->text();
+        if (action->text() == QLatin1String("Chromium Dev Tool"))
+            chromium = action;
+        if (action->text() == QLatin1String("BiDi Dev Tool"))
+            bidi = action;
+    }
+    QCOMPARE(entries.size(), 2);
+    QVERIFY(chromium);
+    QVERIFY(chromium->isEnabled());
+    QVERIFY(bidi);
+    QVERIFY(!bidi->isEnabled());
+    QVERIFY(!bidi->toolTip().isEmpty());
+    QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
+
     closeWindow(window);
 }
 
@@ -347,17 +700,88 @@ void tst_BrowserMainWindow::events()
                            Qt::NoModifier);
     window->sendMousePress(&mouseEvent);
 
-    // printRequested needs a live page; the dialog is rejected.
+    // printRequested needs a live page; the dialog is rejected.  A
+    // repeating dismisser beats the print dialog's variable startup —
+    // a one-shot rejectModal() can fire before the CUPS-backed dialog
+    // becomes the active modal and strand it open forever.
     if (window->currentTab() && window->currentTab()->webPage()) {
-        rejectModal();
+        QTimer modal;
+        modal.setInterval(50);
+        QObject::connect(&modal, &QTimer::timeout, qApp, []() {
+            if (QDialog *dialog = qobject_cast<QDialog *>(
+                    QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        modal.start();
         QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
-                       Q_ARG(QWebEnginePage *, static_cast<QWebEnginePage *>(window->currentTab()->webPage()))));
+                       Q_ARG(WebView *, window->currentTab())));
+        modal.stop();
     }
 
     // Last-tab-closed closes the window (and, via WA_DeleteOnClose,
     // schedules its deletion) — leave this last.
     QVERIFY(QMetaObject::invokeMethod(window, "lastTabClosed"));
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// CRASH02: the print paths must never kill the app.  On a host with
+// zero printers an ACCEPTED print dialog still describes an
+// unprintable target (file-format printer pointed at a directory) —
+// the engine's paint into it was the suspected death; the path now
+// warns and refuses before reaching the engine.  The preview path
+// must also survive a mid-print dialog close (its internal printer
+// used to be freed under the engine's async job).
+void tst_BrowserMainWindow::printPaths()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+
+    const bool noPrinters =
+        QPrinterInfo::availablePrinterNames().isEmpty();
+
+    // Dismiss whatever modal comes up: the print dialog gets accepted
+    // (only an accepted dialog reaches the target validation) and a
+    // refusal warning gets recorded then dismissed.
+    bool sawPrintDialog = false;
+    bool sawWarning = false;
+    QTimer modal;
+    modal.setInterval(50);
+    QObject::connect(&modal, &QTimer::timeout, qApp, [&]() {
+        QWidget *widget = QApplication::activeModalWidget();
+        if (QMessageBox *box = qobject_cast<QMessageBox *>(widget)) {
+            sawWarning = true;
+            box->accept();
+            return;
+        }
+        if (QPrintDialog *printDialog =
+                qobject_cast<QPrintDialog *>(widget)) {
+            sawPrintDialog = true;
+            printDialog->accept();
+            return;
+        }
+        if (QDialog *dialog = qobject_cast<QDialog *>(widget))
+            dialog->accept();
+    });
+    modal.start();
+
+    QVERIFY(QMetaObject::invokeMethod(window, "printRequested",
+                                    Q_ARG(WebView *, view)));
+    QVERIFY(sawPrintDialog);
+    if (noPrinters) {
+        // The accepted dialog described a dead target: refusal must
+        // have warned instead of printing.
+        QVERIFY(sawWarning);
+    }
+
+    // filePrintPreview drives the borrowed-printer path; the generic
+    // QDialog accept above closes it mid-print — exactly the case
+    // that used to paint into a dead printer.
+    QVERIFY(QMetaObject::invokeMethod(window, "filePrintPreview"));
+
+    modal.stop();
+    closeWindow(window);
 }
 
 // With confirmClosingMultipleTabs on, closeEvent() raises a Yes/No
@@ -436,23 +860,31 @@ void tst_BrowserMainWindow::chromeMetrics()
     closeWindow(window);
 }
 
-// SRCH03+SRCH04: the dedicated search box has two display modes —
-// showSearchBox unset/false collapses it to the engine button
-// (Vivaldi's "Show as a Button"), true gives the full text field.
-// The preference applies live without restart.
+// SRCH03+SRCH08: the dedicated search box is opt-in — showSearchBox
+// unset/false hides the widget outright (the SRCH04 collapsed-button
+// mode is retired), true gives the full text field.  The preference
+// applies live without restart.
 void tst_BrowserMainWindow::searchBoxVisibility()
 {
-    // initTestCase cleared settings; no showSearchBox key = button mode.
+    // initTestCase cleared settings; no showSearchBox key = hidden.
     SubWindow *window = new SubWindow;
     window->show();
-    QVERIFY(window->toolbarSearch()->isButtonMode());
-    QVERIFY(window->toolbarSearch()->isVisible());
-    QVERIFY(window->toolbarSearch()->isReadOnly());
+    QVERIFY(!window->toolbarSearch()->isButtonMode());
+    QVERIFY(window->toolbarSearch()->isHidden());
+    QVERIFY(!window->toolbarSearch()->isVisible());
+
+    // A hidden box must not strand focus — the shortcut falls back to
+    // the omnibox location bar.
+    window->activateWindow();
+    QApplication::processEvents();
+    QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
+    QVERIFY(QApplication::focusWidget() != window->toolbarSearch());
 
     // Field mode applies live and the shortcut selects the box text.
     QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
     window->applySearchBoxVisibility();
     QVERIFY(!window->toolbarSearch()->isButtonMode());
+    QVERIFY(!window->toolbarSearch()->isHidden());
     QVERIFY(!window->toolbarSearch()->isReadOnly());
     window->toolbarSearch()->setText(QLatin1String("arora"));
     QVERIFY(QMetaObject::invokeMethod(window, "webSearch"));
@@ -463,9 +895,240 @@ void tst_BrowserMainWindow::searchBoxVisibility()
     SubWindow *shown = new SubWindow;
     shown->show();
     QVERIFY(!shown->toolbarSearch()->isButtonMode());
+    QVERIFY(!shown->toolbarSearch()->isHidden());
     closeWindow(shown);
 
+    // Back to hidden live — the toggle works in both directions.
+    SubWindow *off = new SubWindow;
+    off->show();
     QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+    off->applySearchBoxVisibility();
+    QVERIFY(off->toolbarSearch()->isHidden());
+    closeWindow(off);
+}
+
+// TOR03: a tor window never carries the dedicated search box — even
+// collapsed to a button it is a divergent-engine leakage surface.
+// The widget stays constructed but hidden, the showSearchBox
+// preference cannot resurrect it, and the webSearch shortcut falls
+// back to the omnibox location bar instead of stranding focus on an
+// invisible widget.
+void tst_BrowserMainWindow::torSearchBoxHidden()
+{
+    // Collect state first and assert after cleanup — a mid-test
+    // QVERIFY abort would otherwise leave tor mode armed for the
+    // remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->show();
+    window->activateWindow();
+    QApplication::processEvents();
+
+    ToolbarSearch *search = window->toolbarSearch();
+    QLineEdit *bar = window->tabWidget()->currentLocationBar();
+    if (!search || !bar) {
+        closeWindow(window);
+        BrowserApplication::setTorMode(false);
+        QFAIL("tor window missing toolbarSearch/locationBar");
+    }
+    const bool hiddenAtConstruction = search->isHidden();
+
+    // The opt-in field preference must not resurrect it in tor mode.
+    QSettings().setValue(QLatin1String("MainWindow/showSearchBox"), true);
+    window->applySearchBoxVisibility();
+    const bool hiddenAfterPref = search->isHidden();
+
+    const bool invoked =
+        QMetaObject::invokeMethod(window, "webSearch");
+    // Focus must not land on the invisible widget; when the platform
+    // grants the window activation it falls through to the omnibox.
+    const QWidget *focus = QApplication::focusWidget();
+    const bool focusOnSearch = focus == search;
+    const bool focusOnBar = focus == bar;
+    const bool wasActive = window->isActiveWindow();
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+    QSettings().remove(QLatin1String("MainWindow/showSearchBox"));
+
+    QVERIFY(hiddenAtConstruction);
+    QVERIFY(hiddenAfterPref);
+    QVERIFY(invoked);
+    QVERIFY(!focusOnSearch);
+    if (wasActive)
+        QVERIFY(focusOnBar);
+}
+
+// TOR04: a tor window carries a permanent status-bar label that shows
+// the live circuit chain; a normal window must not get one.  (No
+// daemon is armed in the autotest build — the label renders its
+// daemon-off state; chain rendering itself is covered by
+// tst_tormanager::circuitInfo + --tor-window-smoke.)
+void tst_BrowserMainWindow::torCircuitStatusLabel()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(!window->findChild<QLabel *>(
+                QLatin1String("torCircuitLabel")));
+    closeWindow(window);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QLabel *label = torWindow->findChild<QLabel *>(
+        QLatin1String("torCircuitLabel"));
+    const bool parented = label
+        && label->parentWidget()
+               == static_cast<QWidget *>(torWindow->statusBar());
+    const QString text = label ? label->text() : QString();
+    const QString tooltip = label ? label->toolTip() : QString();
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(label);
+    QVERIFY(parented);
+    QVERIFY(text.startsWith(QLatin1String("Tor:")));
+    QVERIFY(!tooltip.isEmpty());
+}
+
+// READ02/READ04: the navigation toolbar carries a reader-mode toggle
+// between stop/reload and the location bar — always present on engine
+// tabs (the article heuristic only sets the "suggested" accent),
+// checked while the overlay is up, agreeing with the View-menu
+// action, and hidden only where reader mode can never apply
+// (widget tabs like History).
+void tst_BrowserMainWindow::readerModeButton()
+{
+    SubWindow *window = new SubWindow;
+    window->resize(1400, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QToolButton *reader = navBar->findChild<QToolButton *>(
+        QLatin1String("navReaderButton"));
+    QVERIFY(reader);
+    QVERIFY(reader->autoRaise());
+    QVERIFY(reader->isCheckable());
+    // READ04: about:blank is not article-like but the button still
+    // shows — the user may always try reader mode.
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 5000);
+    QVERIFY(!reader->isChecked());
+    QVERIFY(!reader->property("suggested").toBool());
+    QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
+
+    // Slot order in the toolbar's action list: Back, Forward,
+    // Stop/Reload, the reader button, then the location-bar splitter.
+    const QList<QAction *> barActions = navBar->actions();
+    int readerIndex = -1;
+    int splitterIndex = -1;
+    for (int i = 0; i < barActions.size(); ++i) {
+        QWidget *widget = navBar->widgetForAction(barActions.at(i));
+        if (widget == reader)
+            readerIndex = i;
+        else if (widget && qobject_cast<QSplitter *>(widget))
+            splitterIndex = i;
+    }
+    QCOMPARE(readerIndex, 3);
+    QCOMPARE(splitterIndex, readerIndex + 1);
+
+    // The View-menu action shares the same ReaderMode state.
+    QAction *viewAction = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu()
+            || !menuAction->text().contains(QLatin1String("View")))
+            continue;
+        for (QAction *action : menuAction->menu()->actions()) {
+            if (action->text().remove(QLatin1Char('&'))
+                    == QLatin1String("Reader Mode"))
+                viewAction = action;
+        }
+    }
+    QVERIFY(viewAction);
+    QCOMPARE(reader->isChecked(), viewAction->isChecked());
+
+    // A page the Readability heuristic calls readerable flips
+    // availability -> the "suggested" accent lights up (the button
+    // was already there); click enters reader mode.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QByteArray paragraph =
+        QByteArray("The quick brown fox jumps over the lazy dog. ")
+        .repeated(30);
+    const QByteArray body = QByteArray(
+        "<html><head><title>Article</title></head><body><article>"
+        "<h1>Heading</h1><p>") + paragraph + "</p><p>" + paragraph
+        + "</p><p>" + paragraph + "</p></article></body></html>";
+    QObject::connect(&server, &QTcpServer::newConnection, &server,
+                     [&server, &body]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write(QByteArray("HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Content-Length: ")
+                      + QByteArray::number(body.size())
+                      + "\r\n\r\n" + body);
+        socket->disconnectFromHost();
+    });
+    window->currentTab()->loadUrl(
+        QUrl(QStringLiteral("http://127.0.0.1:%1/article")
+                 .arg(server.serverPort())));
+    QTRY_VERIFY_WITH_TIMEOUT(reader->property("suggested").toBool(),
+                             20000);
+    QVERIFY(reader->toolTip().contains(
+        QLatin1String("article")));
+
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(reader->isChecked(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(viewAction->isChecked(), 5000);
+
+    // The menu action exits again — the button follows.
+    viewAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!viewAction->isChecked(), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isChecked(), 5000);
+
+    // Tab switches re-point the button at the current view.  READ04:
+    // the fresh tab stays visible even though it is no article — only
+    // the "suggested" accent drops.
+    window->tabWidget()->newTab();
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->property("suggested").toBool(),
+                             10000);
+    QVERIFY(!reader->isHidden());
+    QVERIFY(!reader->isChecked());
+    QVERIFY(!viewAction->isChecked());
+
+    // Clicking on a non-article page is allowed — reader mode just
+    // reports it cannot apply rather than hiding the option up front.
+    WebView *blankView = window->currentTab();
+    QVERIFY(blankView && blankView->readerMode());
+    QSignalSpy messageSpy(blankView->readerMode(),
+                          &ReaderMode::message);
+    reader->click();
+    QTRY_VERIFY_WITH_TIMEOUT(messageSpy.count() >= 1, 20000);
+    QVERIFY(!reader->isChecked());
+    QVERIFY(!blankView->readerMode()->isActive());
+
+    // Back on the article tab the suggested state returns.
+    window->tabWidget()->setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(reader->property("suggested").toBool(),
+                             10000);
+    QVERIFY(!reader->isHidden());
+
+    // Widget tabs are where the control really hides — reader mode
+    // can never apply to a History/Preferences page.
+    QVERIFY(QMetaObject::invokeMethod(window, "showHistoryPage"));
+    QTRY_VERIFY_WITH_TIMEOUT(reader->isHidden(), 10000);
+    QVERIFY(!viewAction->isEnabled());
+    window->tabWidget()->setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 10000);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    closeWindow(window);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a
@@ -595,6 +1258,87 @@ void tst_BrowserMainWindow::statusBarWidgets()
     closeWindow(window);
 }
 
+// SBAR01: per-tab renderer memory + live bandwidth — the /proc
+// helpers are deterministic, the widgets' bind/auto-hide behavior is
+// driven through their slots like statusBarWidgets() does.
+void tst_BrowserMainWindow::statusBarIndicators()
+{
+    // VmRSS reader: bogus/dead pids report -1, a live one reads > 0.
+    QCOMPARE(MemIndicator::residentMemoryKb(-1), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(0), qint64(-1));
+    QCOMPARE(MemIndicator::residentMemoryKb(99999999), qint64(-1));
+    QVERIFY(MemIndicator::residentMemoryKb(
+                QCoreApplication::applicationPid()) > 0);
+
+    // Display ladder: one decimal under 100MB, integer from there,
+    // GB past a gigabyte.
+    QCOMPARE(MemIndicator::formatRss(87 * 1024),
+             QLatin1String("87.0 MB"));
+    QCOMPARE(MemIndicator::formatRss(238 * 1024),
+             QLatin1String("238 MB"));
+    QCOMPARE(MemIndicator::formatRss(1536 * 1024),
+             QLatin1String("1.5 GB"));
+
+    // Rate formatter shares the DownloadManager unit ladder + "/s".
+    QCOMPARE(NetIndicator::formatRate(84 * 1024),
+             QLatin1String("84.0 kB/s"));
+    QCOMPARE(NetIndicator::formatRate(1200 * 1024),
+             QLatin1String("1.2 MB/s"));
+
+    // The standalone io scan is a soft check — a test run may have
+    // engine children (earlier cases spawn renderers) or none.
+    qint64 ioRead = -1, ioWrite = -1;
+    if (NetIndicator::engineIoTotals(&ioRead, &ioWrite)) {
+        QVERIFY(ioRead >= 0);
+        QVERIFY(ioWrite >= 0);
+    }
+
+    {
+        MemIndicator mem;
+        QLabel *label = mem.findChild<QLabel *>(
+            QLatin1String("memLabel"));
+        QVERIFY(label);
+        // No bound view -> "MEM —", and refresh keeps it there.
+        QVERIFY(label->text().startsWith(QLatin1String("MEM")));
+        QVERIFY(QMetaObject::invokeMethod(&mem, "refresh"));
+        QVERIFY(label->text().contains(
+            QString::fromUtf8("\xe2\x80\x94")));
+
+        NetIndicator net;
+        QVERIFY(!net.isVisible());
+        // First sample only builds the baseline — no burst, stays
+        // hidden.
+        QVERIFY(QMetaObject::invokeMethod(&net, "sample"));
+        QVERIFY(!net.isVisible());
+        net.setVisible(true);
+        QVERIFY(QMetaObject::invokeMethod(&net, "hideWhenIdle"));
+        QVERIFY(!net.isVisible());
+    }
+
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    MemIndicator *mem = window->findChild<MemIndicator *>(
+        QLatin1String("memIndicator"));
+    NetIndicator *net = window->findChild<NetIndicator *>(
+        QLatin1String("netIndicator"));
+    QVERIFY(mem && net);
+    QCOMPARE(mem->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(net->parentWidget(),
+             static_cast<QWidget *>(window->statusBar()));
+    QCOMPARE(mem->webView(), window->currentTab());
+
+    // The memory indicator follows tab switches like the zoom
+    // control does.
+    WebView *firstTab = window->currentTab();
+    window->tabWidget()->newTab();
+    QVERIFY(window->currentTab() != firstTab);
+    QCOMPARE(mem->webView(), window->currentTab());
+
+    closeWindow(window);
+}
+
 // SIDE01: the optional sidebar dock — off by default, lazily built on
 // first show, persisted through MainWindow/showSidebar +
 // sidebarDockArea, all four sections functional.
@@ -605,6 +1349,7 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
     SubWindow *window = new SubWindow;
     window->show();
@@ -635,6 +1380,97 @@ void tst_BrowserMainWindow::sidebarPanel()
                 QLatin1String("sidebarDownloadsView")));
     QVERIFY(panel->notes());
 
+    // SIDE02: the switcher is a vertical icon rail — entries carry
+    // their title as text (a11y) + tooltip plus a themed glyph, but
+    // the rail only paints the icon.
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::West);
+    for (int i = 0; i < panel->tabs()->count(); ++i) {
+        QVERIFY(!panel->tabs()->tabIcon(i).isNull());
+        QVERIFY(!panel->tabs()->tabText(i).isEmpty());
+        QCOMPARE(panel->tabs()->tabToolTip(i),
+                 panel->tabs()->tabText(i));
+    }
+
+    // SIDE06: name-only trees — the Address column used to soak the
+    // slack (stretchLastSection) while titles elided at a fixed
+    // ~100px.  Column 0 now stretches across the panel and column 1
+    // is hidden (the URL still rides the tooltip).
+    QTreeView *bookmarksView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QTreeView *historyView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarHistoryView"));
+    QVERIFY(bookmarksView);
+    QVERIFY(historyView);
+    for (QTreeView *view : { bookmarksView, historyView }) {
+        QVERIFY(view->isColumnHidden(1));
+        QCOMPARE(view->header()->sectionResizeMode(0),
+                 QHeaderView::Stretch);
+    }
+    // The stretched column tracks the viewport — names only elide at
+    // the true panel edge.
+    QTRY_VERIFY(bookmarksView->header()->sectionSize(0)
+                >= bookmarksView->viewport()->width() - 4);
+    QTRY_VERIFY(historyView->header()->sectionSize(0)
+                >= historyView->viewport()->width() - 4);
+
+    // The context menu's "Edit Address" unhides the column to host
+    // the editor; the delegate's closeEditor hook folds it back.
+    panel->showBookmarks();
+    BookmarksManager *bookmarksManager = BookmarksManager::instance();
+    BookmarkNode *entry = new BookmarkNode(BookmarkNode::Bookmark);
+    entry->title = QLatin1String("Sidebar Elide Check");
+    entry->url = QLatin1String("https://example.com/sidebar-elide");
+    bookmarksManager->addBookmark(bookmarksManager->menu(), entry);
+    QAbstractItemModel *bmModel = bookmarksView->model();
+    QModelIndex menuIndex;
+    for (int row = 0; row < bmModel->rowCount(); ++row) {
+        const QModelIndex candidate = bmModel->index(row, 0);
+        if (candidate.data(Qt::DisplayRole).toString()
+            == bookmarksManager->menu()->title) {
+            menuIndex = candidate;
+            break;
+        }
+    }
+    QVERIFY(menuIndex.isValid());
+    bookmarksView->setExpanded(menuIndex, true);
+    const int entryRow = bmModel->rowCount(menuIndex) - 1;
+    const QModelIndex urlIndex = bmModel->index(entryRow, 1, menuIndex);
+    QVERIFY(urlIndex.isValid());
+    QCOMPARE(urlIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("https://example.com/sidebar-elide"));
+    bookmarksView->setColumnHidden(1, false);
+    bookmarksView->edit(urlIndex);
+    QApplication::processEvents();
+    QVERIFY(bookmarksView->viewport()->findChild<QLineEdit *>());
+    QTest::keyClick(bookmarksView->viewport()
+                        ->findChild<QLineEdit *>(), Qt::Key_Escape);
+    QTRY_VERIFY(bookmarksView->isColumnHidden(1));
+    bmModel->removeRow(entryRow, menuIndex);
+
+    // Unchecking a section in settings drops its tab on apply; the
+    // rail keeps registry order when it comes back.
+    SidebarPanel::setPanelVisible("history", false);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 3);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!panel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    SidebarPanel::setPanelVisible("history", true);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("History"));
+
+    // Offscreen panel grab for visual review — set
+    // ARORA_SIDEBAR_GRAB_DIR to a directory and the panel lands there
+    // as sidebar-panel.png (same convention as ARORA_SETTINGS_GRAB_DIR).
+    const QByteArray sidebarGrabDir = qgetenv("ARORA_SIDEBAR_GRAB_DIR");
+    if (!sidebarGrabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(sidebarGrabDir));
+        qApp->processEvents();
+        panel->grab().save(QString::fromLocal8Bit(sidebarGrabDir)
+            + QStringLiteral("/sidebar-panel.png"));
+    }
+
     // Toggling writes the persisted key; hiding is remembered.
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
                  .toBool(), true);
@@ -651,6 +1487,14 @@ void tst_BrowserMainWindow::sidebarPanel()
     window->applySidebarSettings();
     QVERIFY(dock->isVisible());
     QCOMPARE(window->dockWidgetArea(dock), Qt::RightDockWidgetArea);
+
+    // SIDE06: the rail hugs the outer edge — it flips East under a
+    // right dock and follows live moves back and forth.
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::East);
+    window->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::West);
+    window->addDockWidget(Qt::RightDockWidgetArea, dock);
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::East);
 
     // Notes persist through the panel's autosave slot.
     panel->notes()->setPlainText(QLatin1String("remember me"));
@@ -673,6 +1517,378 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
+    settings.remove(QLatin1String("sidebar/panels"));
+    closeWindow(window);
+}
+
+// RSZ01: the sidebar's inner edge is a real resize grip — dragging
+// it resizes the dock live and persists MainWindow/sidebarWidth on
+// release, double-click resets to the default, the grip follows the
+// dock area, and the stored width lands on a fresh window's first
+// sidebar show.
+void tst_BrowserMainWindow::sidebarResize()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QDockWidget *dock = window->sidebarDock();
+    dock->toggleViewAction()->trigger();
+    QApplication::processEvents();
+    QVERIFY(dock->isVisible());
+    QVERIFY(window->sidebarPanel());
+
+    SidebarGrip *grip = dock->findChild<SidebarGrip *>();
+    QVERIFY(grip);
+    QVERIFY(grip->isVisible());
+    QCOMPARE(window->dockWidgetArea(dock), Qt::LeftDockWidgetArea);
+    // Left dock: the grip trails the panel (the content-facing edge).
+    QLayout *layout = grip->parentWidget()->layout();
+    QVERIFY(layout);
+    QCOMPARE(layout->indexOf(grip), layout->count() - 1);
+
+    const auto dragGrip = [grip](int dx) {
+        const QPoint local(3, 20);
+        const QPoint start = grip->mapToGlobal(local);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(local),
+                          QPointF(start), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(grip, &press);
+        const QPoint end = start + QPoint(dx, 0);
+        QMouseEvent move(QEvent::MouseMove,
+                         QPointF(grip->mapFromGlobal(end)),
+                         QPointF(end), Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QApplication::sendEvent(grip, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease,
+                            QPointF(grip->mapFromGlobal(end)),
+                            QPointF(end), Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(grip, &release);
+        QApplication::processEvents();
+    };
+
+    // Left dock: dragging right widens; release persists the width.
+    const int startWidth = dock->width();
+    dragGrip(60);
+    QVERIFY(dock->width() >= startWidth + 50);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), dock->width());
+
+    // The clamp keeps the panel usable and leaves room for content.
+    QCOMPARE(SidebarGrip::clampedWidth(50, 1000), 160);
+    QCOMPARE(SidebarGrip::clampedWidth(2000, 1000), 800);
+    dragGrip(5000);
+    const int maxed = dock->width();
+    QVERIFY(maxed <= window->width());
+    dragGrip(-5000);
+    QVERIFY(dock->width() < maxed);
+
+    // Double-click snaps back to the default and persists it.
+    const QPoint local(3, 20);
+    QMouseEvent dblClick(QEvent::MouseButtonDblClick, QPointF(local),
+                       QPointF(grip->mapToGlobal(local)),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &dblClick);
+    QApplication::processEvents();
+    QCOMPARE(dock->width(), SidebarGrip::defaultWidth());
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), SidebarGrip::defaultWidth());
+
+    // The grip follows the dock to the right side (leading edge now)
+    // and a leftward drag widens from there.
+    settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
+                      int(Qt::RightDockWidgetArea));
+    window->applySidebarSettings();
+    QApplication::processEvents();
+    QCOMPARE(window->dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    QVERIFY(grip->isVisible());
+    QCOMPARE(layout->indexOf(grip), 0);
+    const int rightStart = dock->width();
+    dragGrip(-60);
+    QVERIFY(dock->width() >= rightStart + 50);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), dock->width());
+
+    // The stored width lands on a fresh window's first show — the
+    // dock auto-opens from the persisted showSidebar setting.
+    settings.setValue(QLatin1String("MainWindow/sidebarWidth"), 400);
+    SubWindow *window2 = new SubWindow;
+    window2->resize(1000, 700);
+    window2->show();
+    QVERIFY(window2->sidebarDock()->isVisible());
+    QTRY_COMPARE(window2->sidebarDock()->width(), 400);
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+}
+
+// DOWN02: the sidebar's Downloads page is the only download surface —
+// Ctrl+Y / Tools > Downloads focuses it, the filter narrows rows, the
+// sort combo reorders, a selected row hosts the item's expanded detail
+// card, and the header X folds the dock away.
+void tst_BrowserMainWindow::downloadsSidebarPanel()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->downloadsPage());
+    // The manager is a hidden controller — never a window.
+    QVERIFY(!DownloadManager::instance()->isVisible());
+
+    QListView *view = panel->findChild<QListView *>(
+        QLatin1String("sidebarDownloadsView"));
+    QVERIFY(view);
+    QAbstractItemModel *model = view->model();
+    QVERIFY(model);
+
+    // Seed a real download so there is a row to filter and select.
+    const QUrl url(QString::fromLatin1("data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64()));
+    Engine::Page *page = DownloadManager::instance()->retryPage(false);
+    QVERIFY(page);
+    DownloadManager::instance()->download(page, url);
+    QTRY_COMPARE(model->rowCount(), 1);
+    QVERIFY(DownloadManager::instance()->itemAt(0));
+    QVERIFY(!model->index(0, 0).data(Qt::DisplayRole)
+                 .toString().isEmpty());
+
+    // Search filters on file name / source url; clearing restores.
+    QLineEdit *search = panel->findChild<QLineEdit *>(
+        QLatin1String("sidebarDownloadsSearch"));
+    QVERIFY(search);
+    search->setText(QLatin1String("zzz-no-match"));
+    QTRY_COMPARE(model->rowCount(), 0);
+    search->clear();
+    QTRY_COMPARE(model->rowCount(), 1);
+
+    // The sort combo drives the proxy's sort role (Date default).
+    QComboBox *sort = panel->findChild<QComboBox *>(
+        QLatin1String("sidebarDownloadsSort"));
+    QVERIFY(sort);
+    QCOMPARE(sort->count(), 3);
+    QSortFilterProxyModel *proxy = qobject_cast<QSortFilterProxyModel *>(model);
+    QVERIFY(proxy);
+    QCOMPARE(proxy->sortRole(), int(DownloadModel::StartedTimeRole));
+    for (int i = 0; i < sort->count(); ++i) {
+        sort->setCurrentIndex(i);
+        emit sort->activated(i);
+        QCOMPARE(proxy->sortRole(), sort->itemData(i).toInt());
+    }
+
+    // Selecting a row hosts the item's expanded detail card in the
+    // bottom pane.
+    view->setCurrentIndex(model->index(0, 0));
+    QFrame *detail = panel->findChild<QFrame *>(
+        QLatin1String("sidebarDownloadDetail"));
+    QVERIFY(detail);
+    QVERIFY(detail->isVisibleTo(detail->parentWidget()));
+    DownloadItem *card = detail->findChild<DownloadItem *>();
+    QVERIFY(card);
+    QVERIFY(card->isExpanded());
+    QCOMPARE(card, DownloadManager::instance()->itemAt(
+                proxy->mapToSource(view->currentIndex()).row()));
+
+    // Clearing the selection folds the pane and parks the card back on
+    // the hidden manager.
+    view->setCurrentIndex(QModelIndex());
+    QVERIFY(!detail->isVisibleTo(detail->parentWidget()));
+    QCOMPARE(card->parentWidget(),
+             static_cast<QWidget *>(DownloadManager::instance()));
+
+    // The header's X folds the whole dock.
+    QToolButton *closeButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(closeButton);
+    closeButton->click();
+    QVERIFY(!dock->isVisible());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+
+    // The seeded download left a retry page on the singleton manager;
+    // drop it before process teardown or the profile dies with a live
+    // page (and segfaults).
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// SIDE04: Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) raises the
+// sidebar dock on the Bookmarks rail — the standalone manager window
+// is gone from this path.  The rail carries the old dialog's
+// Add/Remove over the shared model: Add runs the same
+// AddBookmarkDialog the toolbar star uses and lands the current
+// page in the rail-selected folder; Remove deletes the selected
+// bookmark (disabled on folders/empty selection), and the context
+// menu's "Remove Entry" is the same delete.
+void tst_BrowserMainWindow::bookmarksSidebarPanel()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    BookmarksManager *manager = BookmarksManager::instance();
+    BookmarkNode *seed = new BookmarkNode(BookmarkNode::Bookmark);
+    seed->title = QLatin1String("SidebarSeed");
+    seed->url = QLatin1String("http://sidebar-seed.example.com/");
+    manager->addBookmark(manager->menu(), seed);
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    WebView *webView = window->currentTab();
+    QVERIFY(webView);
+    QSignalSpy loaded(webView->page(), &QWebEnginePage::loadFinished);
+    webView->load(QUrl(QLatin1String(
+        "data:text/html,<title>Sidebar Add</title><p>page</p>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+
+    // Menu path — same entry as before, but it opens the dock now.
+    QMenu *bookmarksMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().remove(QLatin1Char('&'))
+                   == QLatin1String("Bookmarks"))
+            bookmarksMenu = menuAction->menu();
+    }
+    QVERIFY(bookmarksMenu);
+    QAction *showAll = nullptr;
+    for (QAction *action : bookmarksMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                .contains(QLatin1String("Show All Bookmarks")))
+            showAll = action;
+    }
+    QVERIFY(showAll);
+    QCOMPARE(showAll->shortcut(),
+             QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                          | Qt::Key_B));
+
+    showAll->trigger();
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+    // No second toplevel — the old BookmarksDialog path is gone.
+    for (QWidget *widget : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<BookmarksDialog *>(widget));
+
+    EditTreeView *view = panel->findChild<EditTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QPushButton *addButton = panel->findChild<QPushButton *>(
+        QLatin1String("sidebarAddBookmark"));
+    QPushButton *removeButton = panel->findChild<QPushButton *>(
+        QLatin1String("sidebarRemoveBookmark"));
+    QVERIFY(view);
+    QVERIFY(addButton);
+    QVERIFY(addButton->isEnabled());
+    QVERIFY(removeButton);
+    QSortFilterProxyModel *proxy =
+        qobject_cast<QSortFilterProxyModel *>(view->model());
+    QVERIFY(proxy);
+
+    // Remove is gated on a bookmark selection — nothing/folder = off.
+    view->setCurrentIndex(QModelIndex());
+    QVERIFY(!removeButton->isEnabled());
+    QModelIndex seedSource = manager->bookmarksModel()->index(seed);
+    QVERIFY(seedSource.isValid());
+    QModelIndex seedRow = proxy->mapFromSource(seedSource);
+    view->setCurrentIndex(seedRow);
+    QVERIFY(removeButton->isEnabled());
+
+    // Add opens the AddBookmarkDialog prefilled with the current
+    // page; accepting lands the node in the seed's folder (menu).
+    const int menuRows = manager->menu()->children().count();
+    acceptModal(300);
+    addButton->click();
+    QCOMPARE(manager->menu()->children().count(), menuRows + 1);
+    BookmarkNode *added = manager->menu()->children().constLast();
+    QVERIFY(added->url.contains(QLatin1String("data:text/html")));
+    QCOMPARE(added->title, QLatin1String("Sidebar Add"));
+
+    // The button deletes the selection straight out of the shared
+    // model — the toolbar/menu views see it through the same model.
+    view->setCurrentIndex(
+        proxy->mapFromSource(manager->bookmarksModel()->index(added)));
+    removeButton->click();
+    QCOMPARE(manager->menu()->children().count(), menuRows);
+    QVERIFY(!manager->menu()->children().contains(added));
+
+    // The context menu's "Remove Entry" deletes the seed the same
+    // way — build + trigger through the nested exec loop.
+    view->setCurrentIndex(seedRow = proxy->mapFromSource(
+            manager->bookmarksModel()->index(seed)));
+    bool removed = false;
+    int tries = 0;
+    QTimer *timer = new QTimer(qApp);
+    timer->setInterval(80);
+    QObject::connect(timer, &QTimer::timeout, qApp, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(
+            QApplication::activePopupWidget());
+        if (!menu) {
+            const QWidgetList tops = QApplication::topLevelWidgets();
+            for (QWidget *widget : tops) {
+                menu = qobject_cast<QMenu *>(widget);
+                if (menu && menu->isVisible())
+                    break;
+                menu = nullptr;
+            }
+        }
+        if (!menu) {
+            if (++tries > 25)
+                timer->stop();
+            return;
+        }
+        timer->stop();
+        for (QAction *action : menu->actions()) {
+            if (action->text().remove(QLatin1Char('&'))
+                    .contains(QLatin1String("Remove Entry"))
+                && action->isEnabled()) {
+                action->trigger();
+                removed = true;
+            }
+        }
+        // A programmatic trigger does not dismiss an exec'd menu.
+        menu->close();
+    });
+    timer->start();
+    const QPoint pos = view->visualRect(seedRow).center();
+    QVERIFY(QMetaObject::invokeMethod(
+        panel, "bookmarksContextMenu", Q_ARG(QPoint, pos)));
+    timer->stop();
+    timer->deleteLater();
+    QVERIFY(removed);
+    QVERIFY(!manager->menu()->children().contains(seed));
+
+    // Hiding the dock then re-invoking keeps it docked, on bookmarks.
+    dock->hide();
+    showAll->trigger();
+    QVERIFY(dock->isVisible());
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
     closeWindow(window);
 }
 
@@ -682,6 +1898,14 @@ void tst_BrowserMainWindow::sidebarPanel()
 // the privacy-mode mirror, and lastTabClosed's keep-open branch.
 void tst_BrowserMainWindow::chromeSlots()
 {
+    // The CONT06 strip (default on) filters tabs to the active
+    // container level — pin inline mode so the count assertions
+    // below see every tab.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     SubWindow *window = new SubWindow;
     window->show();
 
@@ -781,6 +2005,97 @@ void tst_BrowserMainWindow::chromeSlots()
             window->tabWidget()->closeTab(i);
     }
     QVERIFY(containers->deleteContainer(cid));
+    closeWindow(window);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// SIDE07: a widget tab (Preferences, History) has no WebView, so
+// currentTab() is null — every bookmarks/sidebar entry point reachable
+// from that state must survive it: "Show All Bookmarks" still opens,
+// bookmark/history opens land in a fresh real tab instead of dying,
+// "Add Bookmark" opens its dialog with empty fields rather than
+// dereferencing the missing page.
+void tst_BrowserMainWindow::widgetTabBookmarksSafety()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panels/bookmarks"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    const int tabsBefore = window->tabWidget()->count();
+
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    QVERIFY(!window->currentTab());
+
+    // "Show All Bookmarks" raises the sidebar on the Bookmarks page —
+    // the reported crash path.  No dialog, no second window.
+    QVERIFY(QMetaObject::invokeMethod(window, "showBookmarksDialog"));
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+    for (QWidget *widget : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<BookmarksDialog *>(widget));
+
+    rejectModal(); // AddBookmarkDialog opens empty, never crashes.
+    QVERIFY(QMetaObject::invokeMethod(window, "addBookmark"));
+
+    // A bookmark's open-in-current-tab cannot navigate a widget tab —
+    // it degrades to a new tab instead of doing nothing (or crashing).
+    emit panel->openUrl(QUrl(QLatin1String("about:blank")),
+                        TabWidget::CurrentTab, QString());
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 2);
+    QVERIFY(window->currentTab());
+
+    // Back on the widget tab, every menu path that used to dereference
+    // currentTab() unchecked now no-ops or degrades gracefully.
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+
+    QAction action;
+    action.setData(1); // forward-navigation offset
+    QVERIFY(QMetaObject::invokeMethod(window, "openActionUrl",
+                                      Q_ARG(QAction *, &action)));
+
+    // Window-menu switching to a window whose current tab is a widget
+    // tab used to deref the null currentTab() for the focus call —
+    // only BrowserApplication::newMainWindow() registers, so this leg
+    // needs a window born there.
+    BrowserApplication *app = BrowserApplication::instance();
+    QVERIFY(app);
+    BrowserMainWindow *registered = app->newMainWindow();
+    QVERIFY(QMetaObject::invokeMethod(registered, "preferences"));
+    QVERIFY(!registered->currentTab());
+    const int windowIndex = app->mainWindows().indexOf(registered);
+    QVERIFY(windowIndex >= 0);
+    QVERIFY(QMetaObject::invokeMethod(window, "aboutToShowWindowMenu"));
+    QMenu *windowMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("Window")))
+            windowMenu = menuAction->menu();
+    }
+    QVERIFY(windowMenu);
+    QAction *registeredAction = nullptr;
+    for (QAction *menuAction : windowMenu->actions()) {
+        if (menuAction->data().isValid()
+            && menuAction->data().toInt() == windowIndex) {
+            registeredAction = menuAction;
+            break;
+        }
+    }
+    QVERIFY(registeredAction);
+    registeredAction->trigger();
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/panels/bookmarks"));
+    closeWindow(registered);
     closeWindow(window);
 }
 

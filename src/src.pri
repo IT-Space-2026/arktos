@@ -7,7 +7,7 @@ CONFIG += qt warn_on
 # (compiler family is tested via CONFIG — the clang spec also sets
 # CONFIG+=gcc, so clang must be checked first)
 clang {
-    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated-warnings -Wdeprecated-declarations
+    QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
 } else:gcc {
     QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
 }
@@ -50,11 +50,13 @@ exists(../.git/HEAD) {
 #
 include(adblock/adblock.pri)          # MIG09 done
 include(bookmarks/bookmarks.pri)      # MIG07 done
+include(engine/engine.pri)            # ENG01 — interface sketch, unused
 include(extensions/extensions.pri)    # EXT01 done
 include(history/history.pri)          # MIG06 done
 include(locationbar/locationbar.pri)  # MIG08 done
 include(network/network.pri)          # MIG04 done; cookiejar.pri split out (MIG03)
 include(opensearch/opensearch.pri)    # MIG08 done
+include(sandbox/sandbox.pri)          # SAND01 done
 # The two Rust crates are default-on via the root .qmake.conf (RDEF01):
 # opt out with CONFIG-=rustcore / CONFIG-=rustdl / CONFIG+=no-rust.
 include(rustcore/rustcore.pri)        # RCORE01 — default-on, no-rust opt-out
@@ -71,14 +73,15 @@ include(network/cookiejar/cookiejar.pri)
 FORMS += \
     $$PWD/aboutdialog.ui \
     $$PWD/acceptlanguagedialog.ui \
+    $$PWD/addressdialog.ui \
     $$PWD/autofilldialog.ui \
     $$PWD/downloaditem.ui \
-    $$PWD/downloads.ui \
     $$PWD/searchbanner.ui \
     $$PWD/settings.ui
 HEADERS += \
     $$PWD/aboutdialog.h \
     $$PWD/acceptlanguagedialog.h \
+    $$PWD/addressdialog.h \
     $$PWD/argon2id.h \
     $$PWD/autofilldialog.h \
     $$PWD/autofillmanager.h \
@@ -93,13 +96,20 @@ HEADERS += \
     $$PWD/commandpalette.h \
     $$PWD/containermanager.h \
     $$PWD/devtoolswindow.h \
+    $$PWD/downloadgraph.h \
     $$PWD/downloadmanager.h \
+    $$PWD/energysaver.h \
+    $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
+    $$PWD/pdfsupport.h \
+    $$PWD/pdfview.h \
+    $$PWD/pdfworker.h \
     $$PWD/pictureinpicture.h \
     $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
+    $$PWD/positionpicker.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -110,13 +120,18 @@ HEADERS += \
     $$PWD/searchlineedit.h \
     $$PWD/securestore.h \
     $$PWD/settings.h \
+    $$PWD/sidebargrip.h \
     $$PWD/sidebarpanel.h \
+    $$PWD/bidiclient.h \
+    $$PWD/bidipanel.h \
+    $$PWD/sidebarpositionpicker.h \
     $$PWD/sourcehighlighter.h \
     $$PWD/sourceviewer.h \
     $$PWD/startupprofile.h \
     $$PWD/statusbarwidgets.h \
     $$PWD/streamingutils.h \
     $$PWD/tabbar.h \
+    $$PWD/tabpositionpicker.h \
     $$PWD/tabpreview.h \
     $$PWD/tabwidget.h \
     $$PWD/toolbarsearch.h \
@@ -127,6 +142,7 @@ HEADERS += \
     $$PWD/webview.h \
     $$PWD/webviewsearch.h \
     $$PWD/utils/aroraicon.h \
+    $$PWD/utils/crashreporter.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
     $$PWD/utils/languagemanager.h \
@@ -136,10 +152,12 @@ HEADERS += \
     $$PWD/utils/scopeshortcuts.h \
     $$PWD/utils/singleapplication.h \
     $$PWD/utils/squeezelabel.h \
+    $$PWD/utils/terminationsignalhandler.h \
     $$PWD/utils/treesortfilterproxymodel.h
 SOURCES += \
     $$PWD/aboutdialog.cpp \
     $$PWD/acceptlanguagedialog.cpp \
+    $$PWD/addressdialog.cpp \
     $$PWD/argon2id.c \
     $$PWD/autofilldialog.cpp \
     $$PWD/autofillmanager.cpp \
@@ -153,13 +171,20 @@ SOURCES += \
     $$PWD/commandpalette.cpp \
     $$PWD/containermanager.cpp \
     $$PWD/devtoolswindow.cpp \
+    $$PWD/downloadgraph.cpp \
     $$PWD/downloadmanager.cpp \
+    $$PWD/energysaver.cpp \
+    $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
+    $$PWD/pdfsupport.cpp \
+    $$PWD/pdfview.cpp \
+    $$PWD/pdfworker.cpp \
     $$PWD/pictureinpicture.cpp \
     $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
+    $$PWD/positionpicker.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
@@ -170,11 +195,16 @@ SOURCES += \
     $$PWD/searchlineedit.cpp \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
+    $$PWD/sidebargrip.cpp \
     $$PWD/sidebarpanel.cpp \
+    $$PWD/bidiclient.cpp \
+    $$PWD/bidipanel.cpp \
+    $$PWD/sidebarpositionpicker.cpp \
     $$PWD/sourcehighlighter.cpp \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \
     $$PWD/tabbar.cpp \
+    $$PWD/tabpositionpicker.cpp \
     $$PWD/tabpreview.cpp \
     $$PWD/tabwidget.cpp \
     $$PWD/toolbarsearch.cpp \
@@ -185,6 +215,7 @@ SOURCES += \
     $$PWD/webview.cpp \
     $$PWD/webviewsearch.cpp \
     $$PWD/utils/aroraicon.cpp \
+    $$PWD/utils/crashreporter.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
     $$PWD/utils/languagemanager.cpp \
@@ -193,6 +224,7 @@ SOURCES += \
     $$PWD/utils/scopeshortcuts.cpp \
     $$PWD/utils/singleapplication.cpp \
     $$PWD/utils/squeezelabel.cpp \
+    $$PWD/utils/terminationsignalhandler.cpp \
     $$PWD/utils/treesortfilterproxymodel.cpp
 
 RESOURCES += \

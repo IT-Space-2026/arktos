@@ -66,6 +66,7 @@
 #include <qdatetime.h>
 #include <qhash.h>
 #include <qicon.h>
+#include <qset.h>
 #include <qtimer.h>
 #include <qurl.h>
 
@@ -136,13 +137,17 @@ public:
 
     // Favicon lookup for the history models (replaces
     // BrowserApplication::icon() / the WebKit icon database).  Pages
-    // feed entries via setIcon().  Under rustcore icons persist as
-    // per-host PNG blobs in history.db (the HIST01 store folded into
-    // the Rust core); otherwise the cache is memory-only.
+    // feed entries via setIcon() from WebPage's iconChanged hook.
+    // Icons are keyed by host and persisted so they survive restarts:
+    // under rustcore as per-host PNG blobs in history.db (the HIST01
+    // store folded into the Rust core), otherwise as png files under
+    // the data dir's icons/; in the C++ store hostless urls keep a
+    // memory-only per-url entry.
     QIcon icon(const QUrl &url) const;
     void setIcon(const QUrl &url, const QIcon &icon);
     // QWebSettings::clearIconDatabase() replacement: drops the
-    // in-memory icon cache (MIG11, used by ClearPrivateData).
+    // in-memory icon cache and the persisted host icons (MIG11, used
+    // by ClearPrivateData).
     void clearIcons();
 
     // History manager keeps around these models for use by the completer and other classes
@@ -181,7 +186,8 @@ private:
     QHash<QString, int> m_atomicStringHash;
     QList<HistoryEntry> m_history;
     QString m_lastSavedUrl;
-    QHash<QString, QIcon> m_icons;
+    mutable QHash<QString, QIcon> m_icons;
+    mutable QSet<QString> m_iconMisses;
 
     HistoryModel *m_historyModel;
     HistoryFilterModel *m_historyFilterModel;

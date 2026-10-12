@@ -50,6 +50,7 @@ private slots:
     void generateEngineFileName();
     void restoreDefaults();
     void keywords();
+    void defaultKeywordSeed();
     void contextEngines();
     void engineOrdering();
     void renameEngine();
@@ -73,7 +74,12 @@ public:
 
     static int defaultCount()
     {
-        return QDir(":/searchengines/").count();
+        // SENG01: icons/ now lives under :/searchengines — count only
+        // descriptors, like the *.xml seeding filter does.
+        return QDir(":/searchengines/")
+            .entryList(QStringList() << QLatin1String("*.xml"),
+                       QDir::Files)
+            .count();
     }
 };
 
@@ -289,6 +295,12 @@ void tst_OpenSearchManager::keywords()
         OpenSearchEngine *engine1 = manager.engine(names.at(0));
         OpenSearchEngine *engine2 = manager.engine(names.at(1));
 
+        // SENG02: bundled engines arrive with <Alias> default
+        // keywords — clear them so the binding assertions below stay
+        // exact.
+        manager.setKeywordsForEngine(engine1, QStringList());
+        manager.setKeywordsForEngine(engine2, QStringList());
+
         QCOMPARE(manager.keywordsForEngine(engine1), QStringList());
         QCOMPARE(manager.keywordsForEngine(engine2), QStringList());
 
@@ -350,6 +362,58 @@ void tst_OpenSearchManager::keywords()
 
         manager.setKeywordsForEngine(engine1, QStringList());
         manager.setKeywordsForEngine(engine2, QStringList());
+    }
+}
+
+// SENG02: a bundled descriptor's <Alias> seeds the keyword binding
+// once — the seed never steals a slot someone else claimed, an
+// unbound keyword stays unbound across a save/load cycle, and an
+// installed engine's own <Alias> defaults bind only free slots.
+void tst_OpenSearchManager::defaultKeywordSeed()
+{
+    {
+        SubOpenSearchManager manager;
+        manager.restoreDefaults();
+
+        // Prior tests may have cleared the seeded binding; put Bing
+        // back through the bundled seed path itself.
+        manager.removeEngine(QLatin1String("Bing"));
+        manager.restoreDefaults();
+        OpenSearchEngine *bing = manager.engine(QLatin1String("Bing"));
+        QVERIFY(bing);
+        QCOMPARE(manager.engineForKeyword(QLatin1String("b")), bing);
+        QCOMPARE(manager.engineForKeyword(QLatin1String("q")),
+                 manager.engine(QLatin1String("Qwant")));
+        QCOMPARE(manager.engineForKeyword(QLatin1String("sp")),
+                 manager.engine(QLatin1String("Startpage")));
+        QCOMPARE(manager.engineForKeyword(QLatin1String("e")),
+                 manager.engine(QLatin1String("Ecosia")));
+
+        // An installed engine's <Alias> claims only free slots.
+        OpenSearchEngine *custom = new OpenSearchEngine();
+        custom->setName(QLatin1String("KwCustom"));
+        custom->setSearchUrlTemplate(
+            QLatin1String("http://kwcustom.test/?q={searchTerms}"));
+        custom->setDefaultKeywords(
+            QStringList() << QLatin1String("b") << QLatin1String("kwc"));
+        QVERIFY(manager.addEngine(custom));
+        QCOMPARE(manager.engineForKeyword(QLatin1String("kwc")), custom);
+        QCOMPARE(manager.engineForKeyword(QLatin1String("b")), bing);
+
+        // Unbinding the seeded keyword persists.
+        manager.setKeywordsForEngine(bing, QStringList());
+        manager.save();
+    }
+    {
+        SubOpenSearchManager reloaded;
+        QVERIFY(!reloaded.engineForKeyword(QLatin1String("b")));
+        OpenSearchEngine *bing =
+            reloaded.engine(QLatin1String("Bing"));
+        QVERIFY(bing);
+        QCOMPARE(reloaded.keywordsForEngine(bing), QStringList());
+        // Leave the canonical seed state behind for later tests.
+        reloaded.setEngineForKeyword(QLatin1String("b"), bing);
+        reloaded.save();
     }
 }
 

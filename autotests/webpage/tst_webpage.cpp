@@ -31,7 +31,9 @@
 #include <qwebchannel.h>
 #include <qwebengineloadinginfo.h>
 
+#include <addressdialog.h>
 #include <autofillmanager.h>
+#include <browserprofile.h>
 #include <opensearchmanager.h>
 #include <popupblocker.h>
 #include <privacyrequestinterceptor.h>
@@ -77,6 +79,10 @@ private slots:
     void webChannelAddSearchProviderConsent();
     void webChannelAutofillCapture();
     void webChannelAutofillIsolation();
+    void webChannelAutofillAddressFill();
+    void webChannelAutofillAddressMru();
+    void webChannelAutofillAddressOtr();
+    void webChannelAutofillAddressCapturePrompt();
     void userAgent();
     void rateLimitInterstitialUrl_data();
     void rateLimitInterstitialUrl();
@@ -1194,6 +1200,307 @@ void tst_WebPage::webChannelAutofillIsolation()
              qPrintable(page->consoleMessages.join(QLatin1Char('\n'))));
 
     autoFill->setForms(baseline);
+}
+
+// ADDR02: the saved address fills real page fields at DocumentReady —
+// html autocomplete tokens map authoritatively (incl. multi-line
+// street and first/last-name splits), name/id heuristics apply only
+// when no token resolves, and a <select> fills by option value.
+void tst_WebPage::webChannelAutofillAddressFill()
+{
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    server.pageBody = QByteArrayLiteral(
+        "<html><body>"
+        "<form name='ship' onsubmit='return false'>"
+        "<input id='an' autocomplete='name'>"
+        "<input id='ao' autocomplete='organization'>"
+        "<input id='as1' autocomplete='address-line1'>"
+        "<input id='as2' autocomplete='address-line2'>"
+        "<input id='ac' autocomplete='address-level2'>"
+        "<input id='ar' autocomplete='address-level1'>"
+        "<input id='az' autocomplete='postal-code'>"
+        "<input id='at' autocomplete='tel'>"
+        "<input id='ae' autocomplete='email'>"
+        "<select id='acountry' autocomplete='country'>"
+        "<option value=''>--</option>"
+        "<option value='US'>United States</option>"
+        "<option value='HU'>Hungary</option></select>"
+        "</form>"
+        "<form name='heur' onsubmit='return false'>"
+        "<input id='hf' name='fname'>"
+        "<input id='hl' name='lname'>"
+        "<input id='hs' name='addr1'>"
+        "<input id='hc' name='city'>"
+        "<input id='hst' name='state'>"
+        "<input id='hz' name='zipcode'>"
+        "<input id='hp' name='phone'>"
+        "<input id='he' name='email'>"
+        "</form>"
+        // The token wins over a contradictory field name.
+        "<form name='tok' onsubmit='return false'>"
+        "<input id='tk' name='zipcode' autocomplete='email'>"
+        "</form></body></html>");
+
+    AutoFillManager *autoFill = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> baseline = autoFill->addresses();
+    AutoFillManager::Address address;
+    address.country = QLatin1String("US");
+    address.name = QLatin1String("Ada Lovelace");
+    address.organization = QLatin1String("Analytical Engines Ltd");
+    address.street = QLatin1String("1 Main St\nApt 2");
+    address.city = QLatin1String("Springfield");
+    address.state = QLatin1String("IL");
+    address.zip = QLatin1String("62701");
+    address.phone = QLatin1String("+1 555 0100");
+    address.email = QLatin1String("ada@example.com");
+    autoFill->setAddresses(QList<AutoFillManager::Address>() << address);
+
+    QWebEngineProfile profile(QStringLiteral("tst_webpage_addrfill"));
+    WebView view(&profile);
+    view.resize(800, 600);
+    view.show();
+    WebPage *page = view.webPage();
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 15000);
+
+    // The bundle ran once the capture hook's marker is in place.
+    QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
+        "HTMLFormElement.prototype.submit.toString()"
+        ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
+
+    const auto field = [this, page](const char *id) {
+        return evalSync(page, QString::fromLatin1(
+            "document.getElementById('%1').value").arg(QLatin1String(id)))
+                .toString();
+    };
+    // autocomplete tokens.
+    QCOMPARE(field("an"), QLatin1String("Ada Lovelace"));
+    QCOMPARE(field("ao"), QLatin1String("Analytical Engines Ltd"));
+    QCOMPARE(field("as1"), QLatin1String("1 Main St"));
+    QCOMPARE(field("as2"), QLatin1String("Apt 2"));
+    QCOMPARE(field("ac"), QLatin1String("Springfield"));
+    QCOMPARE(field("ar"), QLatin1String("IL"));
+    QCOMPARE(field("az"), QLatin1String("62701"));
+    QCOMPARE(field("at"), QLatin1String("+1 555 0100"));
+    QCOMPARE(field("ae"), QLatin1String("ada@example.com"));
+    QCOMPARE(field("acountry"), QLatin1String("US"));
+    // name/id heuristics (no autocomplete attributes at all).
+    QCOMPARE(field("hf"), QLatin1String("Ada"));
+    QCOMPARE(field("hl"), QLatin1String("Lovelace"));
+    QCOMPARE(field("hs"), QLatin1String("1 Main St"));
+    QCOMPARE(field("hc"), QLatin1String("Springfield"));
+    QCOMPARE(field("hst"), QLatin1String("IL"));
+    QCOMPARE(field("hz"), QLatin1String("62701"));
+    QCOMPARE(field("hp"), QLatin1String("+1 555 0100"));
+    QCOMPARE(field("he"), QLatin1String("ada@example.com"));
+    // Token beats a contradictory heuristic name.
+    QCOMPARE(field("tk"), QLatin1String("ada@example.com"));
+
+    autoFill->setAddresses(baseline);
+}
+
+// ADDR02: with several saved addresses the most recently used fills;
+// submitting the filled form reports the pick back and stamps its
+// lastUsed, so the MRU order survives in the store.
+void tst_WebPage::webChannelAutofillAddressMru()
+{
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    server.pageBody = QByteArrayLiteral(
+        "<html><body><form name='ship' onsubmit='return false'>"
+        "<input id='an' name='n1' autocomplete='name'>"
+        "<textarea id='as' name='n2' autocomplete='street-address'></textarea>"
+        "<input id='az' name='n3' autocomplete='postal-code'>"
+        "</form></body></html>");
+
+    AutoFillManager *autoFill = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> baseline = autoFill->addresses();
+    AutoFillManager::Address first;
+    first.name = QLatin1String("Ada Lovelace");
+    first.street = QLatin1String("1 Main St");
+    first.zip = QLatin1String("62701");
+    first.lastUsed = 100;
+    AutoFillManager::Address second;
+    second.name = QLatin1String("Bob Second");
+    second.street = QLatin1String("2 Side Rd");
+    second.zip = QLatin1String("12345");
+    second.lastUsed = 50;
+    autoFill->setAddresses(QList<AutoFillManager::Address>()
+                           << first << second);
+    QCOMPARE(autoFill->preferredAddress()->name,
+             QLatin1String("Ada Lovelace"));
+
+    QWebEngineProfile profile(QStringLiteral("tst_webpage_addrmru"));
+    WebView view(&profile);
+    view.resize(800, 600);
+    view.show();
+    WebPage *page = view.webPage();
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
+        "document.getElementById('an').value")).toString()
+        == QLatin1String("Ada Lovelace"), 15000);
+
+    // Submitting the form we filled marks that exact address used —
+    // the candidate is a near-dup of the stored entry so no save
+    // prompt opens.
+    page->runJavaScript(QLatin1String(
+        "document.forms[0].dispatchEvent("
+        "  new Event('submit', {bubbles:true, cancelable:true}));"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        autoFill->addresses().first().lastUsed > 100, 5000);
+    QCOMPARE(autoFill->addresses().count(), 2);
+    QVERIFY(!QApplication::activeModalWidget());
+
+    autoFill->setAddresses(baseline);
+}
+
+// ADDR02: off-the-record pages get neither the address fill nor the
+// save prompt — no address data leaves the store into a private page.
+void tst_WebPage::webChannelAutofillAddressOtr()
+{
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    server.pageBody = QByteArrayLiteral(
+        "<html><body><form name='ship' onsubmit='return false'>"
+        "<input id='an' name='n1' autocomplete='name'>"
+        "<input id='as' name='n2' autocomplete='street-address'>"
+        "<input id='az' name='n3' autocomplete='postal-code'>"
+        "</form></body></html>");
+
+    AutoFillManager *autoFill = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> baseline = autoFill->addresses();
+    AutoFillManager::Address address;
+    address.name = QLatin1String("Ada Lovelace");
+    address.street = QLatin1String("1 Main St");
+    address.zip = QLatin1String("62701");
+    autoFill->setAddresses(QList<AutoFillManager::Address>() << address);
+
+    QWebEngineView view;
+    SubWebPage *page = new SubWebPage(BrowserProfile::privateProfile(),
+                                    &view);
+    view.setPage(page);
+    view.resize(800, 600);
+    view.show();
+    QVERIFY(page->profile()->isOffTheRecord());
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 15000);
+
+    // Let the DocumentReady turn settle: nothing may have been
+    // filled, and no fill tag may sit on the form.
+    QTest::qWait(800);
+    QCOMPARE(evalSync(page, QLatin1String(
+        "document.getElementById('an').value")).toString(), QString());
+    QVERIFY(evalSync(page, QLatin1String(
+        "document.forms[0].__aroraAddrId === undefined")).toBool());
+
+    page->runJavaScript(QLatin1String(
+        "document.getElementById('an').value='Otr Person';"
+        "document.getElementById('as').value='5 Secret Ln';"
+        "document.getElementById('az').value='99999';"
+        "document.forms[0].dispatchEvent("
+        "  new Event('submit', {bubbles:true, cancelable:true}));"));
+    QTest::qWait(700);
+    QVERIFY(!QApplication::activeModalWidget());
+    QCOMPARE(autoFill->addresses().count(), 1);
+
+    autoFill->setAddresses(baseline);
+}
+
+// ADDR02: a submitted address-shaped form opens the Add-Address
+// editor pre-filled with the detected fields (the same dialog the
+// prefs page's Add button shows); fields marked autocomplete="off"
+// are excluded like the Form path drops them.
+void tst_WebPage::webChannelAutofillAddressCapturePrompt()
+{
+    LocalHttpServer server;
+    QVERIFY(server.start());
+    server.pageBody = QByteArrayLiteral(
+        "<html><body><form name='ship' onsubmit='return false'>"
+        "<input name='fname' autocomplete='off'>"
+        "<input name='lname'>"
+        "<input name='addr1'>"
+        "<input name='city'>"
+        "<input name='zip'>"
+        "<input name='phone' autocomplete='off'>"
+        "</form></body></html>");
+
+    AutoFillManager *autoFill = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> baseline = autoFill->addresses();
+    autoFill->setAddresses(QList<AutoFillManager::Address>());
+
+    QWebEngineProfile profile(QStringLiteral("tst_webpage_addrcap"));
+    WebView view(&profile);
+    view.resize(800, 600);
+    view.show();
+    WebPage *page = view.webPage();
+    QSignalSpy loaded(page, SIGNAL(loadFinished(bool)));
+    page->load(server.url());
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty()
+            && loaded.last().at(0).toBool(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(evalSync(page, QLatin1String(
+        "HTMLFormElement.prototype.submit.toString()"
+        ".indexOf('nativeSubmit')>=0")).toBool(), 15000);
+
+    // The editor's exec() nests inside the channel callback — the
+    // inspection has to run from a timer armed BEFORE the submit, the
+    // same way answerModal/ModalClicker reach a modal QMessageBox.
+    QString name, street, city, zip, phone;
+    bool seen = false;
+    QTimer timer;
+    timer.setInterval(50);
+    QObject::connect(&timer, &QTimer::timeout, qApp, [&]() {
+        AddressDialog *dialog = qobject_cast<AddressDialog *>(
+            QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        name = dialog->nameEdit->text();
+        street = dialog->streetEdit->toPlainText();
+        city = dialog->cityEdit->text();
+        zip = dialog->zipEdit->text();
+        phone = dialog->phoneEdit->text();
+        seen = true;
+        timer.stop();
+        dialog->accept();
+    });
+    timer.start();
+
+    page->runJavaScript(QLatin1String(
+        "var e=document.forms[0].elements;"
+        "e['fname'].value='Prefilled';"
+        "e['lname'].value='Person';"
+        "e['addr1'].value='9 Side Rd';"
+        "e['city'].value='Shelbyville';"
+        "e['zip'].value='12345';"
+        "e['phone'].value='+1 555 9999';"
+        "document.forms[0].dispatchEvent("
+        "  new Event('submit', {bubbles:true, cancelable:true}));"));
+
+    for (int i = 0; i < 100 && !seen; ++i)
+        QTest::qWait(50);
+    QVERIFY2(seen, "address-shaped submit did not open the editor");
+    // lname maps nameLast; fname is autocomplete="off" and dropped.
+    QCOMPARE(name, QLatin1String("Person"));
+    QCOMPARE(street, QLatin1String("9 Side Rd"));
+    QCOMPARE(city, QLatin1String("Shelbyville"));
+    QCOMPARE(zip, QLatin1String("12345"));
+    QCOMPARE(phone, QString());
+
+    QTRY_VERIFY_WITH_TIMEOUT(autoFill->addresses().count() == 1, 5000);
+    QCOMPARE(autoFill->addresses().first().name,
+             QLatin1String("Person"));
+    QCOMPARE(autoFill->addresses().first().street,
+             QLatin1String("9 Side Rd"));
+    QCOMPARE(autoFill->addresses().first().phone, QString());
+
+    autoFill->setAddresses(baseline);
 }
 
 void tst_WebPage::userAgent()

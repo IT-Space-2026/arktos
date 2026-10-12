@@ -112,11 +112,11 @@ public:
     // the PRIV01 privacy/trimReferer bool (false -> EngineDefault,
     // anything else -> the Trimmed default).
     //   EngineDefault  untouched — Chromium strict-origin-when-cross-origin
-    //   Trimmed        cross-site -> the *target's* own origin (uBO
-    //                  referrer-spoof trick: nothing about the source
-    //                  page crosses); same-site -> the referrer's
-    //                  origin only, never path/query.  Redirect
-    //                  follow-ups still carry the source ORIGIN —
+    //   Trimmed        strict-origin semantics: every request carries
+    //                  the *source's* bare origin, never its path/query
+    //                  (REFER01 — the earlier target-origin spoof broke
+    //                  embed checks like YouTube's iframe Referer test).
+    //                  Redirect follow-ups carry the source ORIGIN too —
     //                  Chromium recomputes them past the interceptor.
     //   Strict         cross-site -> no Referer at all (the injected
     //                  meta covers redirect legs too); same-site ->
@@ -169,6 +169,18 @@ public:
     static bool noteNavigationFailure(const QUrl &url, int errorDomain,
                                       int errorCode, const QString &scope);
 
+    // BADSSL03: mark host downgraded without a connection failure —
+    // an https->http redirect hop that lands on the same address with
+    // only the scheme changed is the secure endpoint bouncing the
+    // request to plaintext, which the https-first upgrade would
+    // re-upgrade forever (upgrade <-> downgrade redirect loop that
+    // Chromium fails as ERR_FAILED).  Marking the host lets the http:
+    // hop pass to the ordinary HTTPS-Only/plain-http decision.
+    // Session-scoped + TTL'd like the failure marks; a later committed
+    // https load still self-heals it.  No-op for loopback/LAN/local
+    // hosts — they were never upgrade candidates.
+    static void markDowngraded(const QString &host, const QString &scope);
+
     // Whether http: requests to host currently skip the upgrade in
     // scope — either because it was downgraded after a failed https
     // load, or because it was never a candidate
@@ -204,10 +216,9 @@ public:
     // policy — the source document's policy is what the redirect
     // chain carries.  Maps a level to the <meta name="referrer">
     // content injected into pages that don't set their own:
-    //   Trimmed -> "strict-origin"  (path/query never leaves on any
-    //                              leg; the interceptor's target-
-    //                              origin spoof still covers the legs
-    //                              it can write)
+    //   Trimmed -> "strict-origin"  (the source's bare origin on every
+    //                              leg — exactly what the interceptor
+    //                              writes for the legs it can reach)
     //   Strict  -> "same-origin"    (cross-site gets nothing, incl.
     //                              redirect legs)
     //   Never   -> "no-referrer"
@@ -251,6 +262,14 @@ public:
     // report requests are dropped while it is set.  The tor
     // interceptor consults the same toggle.
     static bool blockPingsEnabled();
+    // PING02: the pure request classification both interceptors
+    // share — true for ResourceTypePing (sendBeacon and <a ping> both
+    // arrive as ping), ResourceTypeCspReport (legacy report-uri) and
+    // any request carrying the engine-set Sec-Fetch-Dest: report
+    // metadata header (Reporting-API deliveries — report-to, NEL,
+    // deprecation/intervention — should a future QtWebEngine ever
+    // perform them through an interceptor-visible path).
+    static bool isPingTelemetryRequest(QWebEngineUrlRequestInfo &info);
 
     // SAFE04: the persisted privacy/blockRemoteFonts (default off)
     // and privacy/blockPrefetch (default on) toggles as loaded into
@@ -359,6 +378,12 @@ public:
     // warning.
     static void recordBlockedDomainNav(const QUrl &url);
     static bool takeBlockedDomainNav(const QUrl &url);
+
+    // PDF01: audit probe — the PDF smoke asserts the sanitize fetch
+    // and any viewer-side traffic actually traverse this interceptor.
+    // Monotonic count of interceptRequest calls since reset.
+    static qint64 requestsSeen();
+    static void resetRequestsSeen();
 
 private:
     AdBlockRequestInterceptor *m_adBlock;

@@ -22,7 +22,7 @@ include(locale/locale.pri)
 
 !mac {
 unix {
-    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata
+    INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata sandboxlauncher
 
     translations.path = $$PKGDATADIR
     translations.files += .qm/locale
@@ -55,6 +55,12 @@ unix {
 
     man.path = $$DATADIR/man/man1
     man.files += data/arora.1
+
+    # SAND01: the generated bwrap launcher installs next to the binary
+    # as `arora-sandbox`.  `executable` makes qmake install it 755.
+    sandboxlauncher.path = $$BINDIR
+    sandboxlauncher.files += sandbox/arora-sandbox
+    sandboxlauncher.CONFIG += executable
 
     man-compress.path = $$DATADIR/man/man1
     man-compress.extra = "" "gzip -9 -f \$(INSTALL_ROOT)/$$DATADIR/man/man1/arora.1" ""

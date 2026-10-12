@@ -4,7 +4,7 @@ ported from Qt 4.5 to Qt 6.x / QtWebEngine).
 
 Your job in THIS run:
 
-1. Read `.devin/Arora-Task.md`. It contains a markdown table of tasks with a
+1. Read `.devin/Arora-Task.md`. It contains a markdown table of tasks with a The table's Task column holds a short summary only — the FULL task specification lives in the `### <ID>` section under `## Task details` at the bottom of the file. Always read the details section for your assigned row before starting work. When you write Notes, keep them short (one line); put long evidence in the details section.
    Status column (pending / in_progress / done / blocked).
 2. Pick the FIRST row whose Status is `pending` or `in_progress`
    (in_progress means a previous run was interrupted — inspect the

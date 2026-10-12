@@ -166,6 +166,11 @@ protected:
 
 private:
     bool confirmAddition(OpenSearchEngine *engine);
+#if !defined(ARORA_RUSTCORE)
+    // SENG02: bind a descriptor's <Alias> keywords to free slots —
+    // never steals a live binding.
+    void bindDefaultKeywords(OpenSearchEngine *engine);
+#endif
 #if defined(ARORA_RUSTCORE)
     // OSE01: one-shot migration of the legacy descriptor dir +
     // QSettings openSearch keys into the rustcore searchengines.json
@@ -196,6 +201,10 @@ private:
     bool m_suggestInAddressField = true;
     bool m_suggestInSearchField = true;
     bool m_suggestOnlyWithKeyword = false;
+    // SENG02: true while load() replays the persisted descriptor dir —
+    // addEngine() must not re-bind <Alias> defaults there or a keyword
+    // the user unbound would resurrect every launch.
+    bool m_loading = false;
 };
 
 #endif //OPENSEARCHMANAGER_H

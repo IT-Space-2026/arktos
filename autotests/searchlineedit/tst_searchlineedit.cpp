@@ -33,6 +33,7 @@ public slots:
 private slots:
     void searchlineedit_data();
     void searchlineedit();
+    void backspaceClearsBaseline();
 };
 
 // Subclass that exposes the protected functions.
@@ -71,6 +72,39 @@ void tst_SearchLineEdit::searchlineedit()
     SubSearchLineEdit edit;
     QVERIFY(edit.clearButton() != nullptr);
     QVERIFY(edit.searchButton() != nullptr);
+}
+
+// SRCH10: Backspace on the field's baseline text (unchanged since it
+// was last set) clears the whole line — the one-key clear the url and
+// search fields share.  Once the user has edited, Backspace is
+// character-wise all the way to empty.
+void tst_SearchLineEdit::backspaceClearsBaseline()
+{
+    SubSearchLineEdit edit;
+
+    edit.setText(QLatin1String("baseline"));
+    QTest::keyClick(&edit, Qt::Key_Backspace);
+    QVERIFY(edit.text().isEmpty());
+
+    // After a real user edit backspace stays char-wise.
+    QTest::keyClicks(&edit, QLatin1String("abc"));
+    QTest::keyClick(&edit, Qt::Key_Backspace);
+    QCOMPARE(edit.text(), QLatin1String("ab"));
+
+    // Mid-text too — the cursor position doesn't matter.
+    edit.setCursorPosition(1);
+    QTest::keyClick(&edit, Qt::Key_Backspace);
+    QCOMPARE(edit.text(), QLatin1String("b"));
+
+    // Repeated backspace reaches empty.
+    edit.setCursorPosition(edit.text().size());
+    QTest::keyClick(&edit, Qt::Key_Backspace);
+    QVERIFY(edit.text().isEmpty());
+
+    // A programmatic setText re-baselines: one-key clear applies again.
+    edit.setText(QLatin1String("again"));
+    QTest::keyClick(&edit, Qt::Key_Backspace);
+    QVERIFY(edit.text().isEmpty());
 }
 
 QTEST_MAIN(tst_SearchLineEdit)

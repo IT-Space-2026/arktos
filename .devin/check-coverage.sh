@@ -95,17 +95,19 @@ TESTS_RC=$?
 # session the save-phase smoke writes into the shared scratch HOME.
 SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
---settings-smoke --autofill-smoke --find-smoke --source-smoke
+--search-guess-smoke --settings-smoke --autofill-smoke --find-smoke --source-smoke
 --adblock-smoke --adblock-list-smoke --adblock-rust-smoke --extension-smoke
 --extension-otr-smoke --extension-update-smoke --ua-smoke
 --container-smoke --palette-smoke --pip-smoke --tabstrip-smoke
 --icons-smoke --fingerprint-smoke --fingerprint-child-smoke --ping-smoke
---httpsonly-smoke --telemetry-smoke
+--httpsonly-smoke --telemetry-smoke --telemetry-browse-smoke
 --tls-smoke --tls-off-smoke --webrtc-smoke --webrtc-off-smoke
 --doh-smoke --seclvl-smoke --privacy-smoke --referer-smoke
 --resourceblock-smoke --reader-smoke --sorry-smoke --perf-smoke
 --sleep-smoke --session-smoke --restore-smoke --tor-smoke
---tor-window-smoke"
+--tor-window-smoke --startpage-smoke --sandbox-smoke --sandbox-status
+--bidi-smoke --parallel-download-smoke --parallel-download-off-smoke
+--ingress-smoke --engine-list --engine-smoke"
 for flag in $SMOKE_FLAGS; do
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"
@@ -113,7 +115,7 @@ for flag in $SMOKE_FLAGS; do
         echo "check-coverage: smoke $flag exit=$? (tolerated)"
     fi
 done
-if timeout 240 ./arora --download-smoke "file://$BUILD/README" >/dev/null 2>&1; then
+if timeout 240 ./arora --download-smoke "file://$BUILD/README.md" >/dev/null 2>&1; then
     echo "check-coverage: smoke --download-smoke PASS"
 else
     echo "check-coverage: smoke --download-smoke exit=$? (tolerated)"

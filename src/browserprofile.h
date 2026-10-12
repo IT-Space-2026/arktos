@@ -53,6 +53,11 @@ QWebEngineProfile *torProfile();
 // re-application).
 QWebEngineProfile *privateProfileIfCreated();
 
+// The tor profile only if it has already been brought up — nullptr
+// otherwise.  Lets per-profile feature checks recognize tor sessions
+// without materializing the profile on normal runs.
+QWebEngineProfile *torProfileIfCreated();
+
 // UA03: the Chrome milestone the default UA presents on the wire.
 // Sites version-sniff "Chrome/<major>" to nag "browser out of date" —
 // honestly reporting the bundled Chromium reads stale as soon as its
@@ -123,6 +128,16 @@ void applySettings(QWebEngineProfile *profile);
 // that pin a level after the profile was already prepared.
 void installReferrerPolicy(QWebEngineProfile *profile);
 
+// SAFE06: (re)installs the named "arora:fingerprint" injection script
+// — canvas readout noise, generic WebGL identity and normalized
+// navigator device hints — when privacy/fingerprintProtection is on,
+// unconditionally on the tor profile; removes it otherwise.  The
+// per-site exemption list and the session noise seed are baked into
+// the source by FingerprintProtector::scriptSource.  applySettings()
+// calls it; FingerprintProtector::reinstallOnProfiles re-pushes it
+// after an exemption change.
+void installFingerprintProtection(QWebEngineProfile *profile);
+
 // SEC12: QWebEngineProfile exposes no API for DOM storage —
 // clearHttpCache() only reaches the HTTP cache.  This schedules
 // removal of the per-site storage trees Chromium persists under the
@@ -170,6 +185,31 @@ bool clearDeferredSiteStorage(const QString &storagePath);
 // holds them open.  Do NOT call on a live profile's root.
 bool clearSiteStorageNow(const QString &storagePath);
 
+// BADSSL03: TLS client certificates.  QWebEngineProfile's
+// clientCertificateStore() is in-memory only, so user-installed
+// certificates are re-registered at every profile bring-up from a
+// convention directory:
+//     <AppDataLocation>/clientcertificates/<name>.pem
+// Each PEM file holds the leaf certificate as the first CERTIFICATE
+// block (optionally followed by chain certs) plus the unencrypted
+// private key — the layout `openssl pkcs12 -in client.p12 -nodes
+// -out client.pem` produces.  Unencrypted .p12/.pfx bundles are also
+// picked up.  Installing only makes a cert offerable — WebPage's
+// selectClientCertificate handler still asks before one goes on the
+// wire.  prepareProfile() runs this on the normal and off-the-record
+// profiles; the tor profile is skipped (a client cert is a strong
+// user identity — exactly what tor sessions must not offer).
+void loadClientCertificates(QWebEngineProfile *profile);
+
+// Registers one certificate file on the profile's
+// clientCertificateStore — .pem (leaf cert first, then optional
+// chain, then the private key) or .p12/.pfx with passPhrase.  Shared
+// by loadClientCertificates() and the --clientcert-smoke harness.
+// True when a usable cert+key pair was added.
+bool addClientCertificateFile(QWebEngineProfile *profile,
+                              const QString &path,
+                              const QByteArray &passPhrase = QByteArray());
+
 // PRIV01: appends privacy-motivated Chromium switches to
 // QTWEBENGINE_CHROMIUM_FLAGS for QtWebEngineProcess.  Must run before
 // the first page spawns the process — main() calls it right after the
@@ -191,8 +231,25 @@ bool clearSiteStorageNow(const QString &storagePath);
 //     are unaffected; the escape hatch exists for ancient TLS sites.
 //     A --cipher-suite-blacklist already present in the environment
 //     takes precedence over the built-in list.
+//   websettings/disableGpuCompositing (default off) -> CRASH01
+//     --disable-gpu-compositing — Qt 6.12's WebEngine traps (SIGTRAP)
+//     on a CHECK in the in-process GPU thread when the viz display
+//     compositor binds; software compositing sidesteps the CHECK while
+//     the GPU process — and therefore WebGL/canvas acceleration —
+//     stays alive.  Also armed by ARORA_DISABLE_GPU_COMPOSITING=1 or
+//     automatically once two consecutive starts end uncleanly.
 // Flags are process-lifetime — toggling the settings needs a restart.
 void applyChromiumFlags();
+
+// CRASH01: crash-loop bookkeeping feeding the compositor safe mode in
+// applyChromiumFlags().  markSessionStart() runs once per committed
+// browser process (after single-instance arbitration and the parser's
+// --help/--version exits); markSessionCleanExit() runs on every
+// normal exit path.  A fatal engine CHECK kills the process without
+// unwinding, so only crashes leave the sentinel set for the next
+// start to count into browser/gpuCrashCount.
+void markSessionStart();
+void markSessionCleanExit();
 
 // DOH01: pushes the privacy/secureDns* settings to
 // QWebEngineGlobalSettings::setDnsMode — the Qt6.6+ API for
@@ -213,6 +270,20 @@ void applyChromiumFlags();
 // downgrading the strict mode to plaintext DNS.
 // Engine-global and safe to re-call — invoked from applySettings().
 void applySecureDns();
+
+// SEC20: the mode applySecureDns()/applyChromiumFlags() actually act
+// on — the stored privacy/secureDnsMode, except in a tor process where
+// it reads 0: DNS in a tor window resolves remotely through the
+// managed SOCKS proxy, and a local DoH resolver would bypass the
+// tunnel with the whole lookup stream.
+int effectiveSecureDnsMode();
+
+// DEVT03: the BiDi devtools channel arming decided in
+// applyChromiumFlags().  Port 0 / empty origin means the channel is
+// disabled this run (devtools/bidiBackend=0, tor mode, or the
+// operator already set QTWEBENGINE_REMOTE_DEBUGGING).
+quint16 bidiDebugPort();
+QString bidiDebugOrigin();
 
 // PRIV02: fingerprint-normalization that works through the process
 // environment rather than a Chromium switch.  When

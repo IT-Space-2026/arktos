@@ -467,8 +467,84 @@ void OpenSearchEngine::setImageUrl(QString imageUrl)
     m_imageUrl = std::move(imageUrl);
 }
 
+/*!
+    \property defaultKeywords
+    \brief the keyword bindings this descriptor declares as defaults
+
+    Populated from <Alias> elements (an Arora extension — OpenSearch
+    1.1 has no keyword element).  These are INITIAL bindings applied
+    when the engine is seeded or installed; the manager owns the live
+    bindings and never re-reads this list, so a user removing or
+    re-pointing a keyword sticks.
+
+    \sa OpenSearchManager::setKeywordsForEngine()
+*/
+QStringList OpenSearchEngine::defaultKeywords() const
+{
+    return m_defaultKeywords;
+}
+
+void OpenSearchEngine::setDefaultKeywords(const QStringList &keywords)
+{
+    m_defaultKeywords = keywords;
+}
+
+// Engine icons are small; drop oversized payloads instead of
+// letting a hostile server pump unlimited data into the image
+// decoder.
+static const qint64 MaximumImageSize = 1024 * 1024;
+
+// Bundled descriptor file names follow the same rule as
+// OpenSearchManager::generateEngineFileName — spaces become
+// underscores and non-letter/digits are dropped — and the bundled
+// icon set in the qrc is keyed on them.
+static QString bundledIconFileName(const QString &engineName)
+{
+    QString fileName;
+    for (const QChar &ch : engineName) {
+        if (ch.isSpace())
+            fileName.append(QLatin1Char('_'));
+        else if (ch.isLetterOrNumber())
+            fileName.append(ch);
+    }
+    return fileName;
+}
+
 void OpenSearchEngine::loadImage() const
 {
+    // SENG01: bundled engines carry a qrc favicon keyed on the
+    // descriptor file name — the engine pickers show the real mark
+    // on a fresh profile with neither a favicon-cache hit nor a
+    // network request.  The bundled name match wins over the stored
+    // remote imageUrl because it resolves offline in every case.
+    const QString iconFile = bundledIconFileName(m_name);
+    if (!iconFile.isEmpty()) {
+        const QImage bundled(QLatin1String(":/searchengines/icons/")
+                             + iconFile + QLatin1String(".png"));
+        if (!bundled.isNull()) {
+            m_image = bundled;
+            return;
+        }
+    }
+
+    // Inline icons — engines persisted via setImage() or descriptors
+    // carrying a data: imageUrl — decode locally; the fetch below
+    // would only resolve them asynchronously anyway.
+    if (m_imageUrl.startsWith(QLatin1String("data:"))) {
+        const int comma = m_imageUrl.indexOf(QLatin1Char(','));
+        if (comma > 0) {
+            const QByteArray payload =
+                m_imageUrl.mid(comma + 1).toUtf8();
+            const QByteArray bytes =
+                m_imageUrl.left(comma).endsWith(QLatin1String(";base64"))
+                    ? QByteArray::fromBase64(payload)
+                    : QByteArray::fromPercentEncoding(payload);
+            if (bytes.size() <= MaximumImageSize)
+                m_image.loadFromData(bytes);
+        }
+        return;
+    }
+
     if (!m_networkAccessManager || m_imageUrl.isEmpty())
         return;
 
@@ -483,10 +559,6 @@ void OpenSearchEngine::imageObtained()
     if (!reply)
         return;
 
-    // Engine icons are small; drop oversized responses instead of
-    // letting a hostile server pump unlimited data into the image
-    // decoder.
-    static const qint64 MaximumImageSize = 1024 * 1024;
     QByteArray response;
     if (reply->size() <= MaximumImageSize)
         response = reply->readAll();
@@ -798,6 +870,17 @@ void openSearchEngineApplyJson(OpenSearchEngine *engine,
         engine->setImageSearchMethod(
             image.value(QLatin1String("method")).toString());
     }
+
+    // SENG02: on a descriptor parse this member carries the <Alias>
+    // defaults; on a store record it carries the live bindings.
+    // Either way it lands on defaultKeywords — consumed only by
+    // OpenSearchManager::addEngine()'s insert-time seed.
+    QStringList keywords;
+    const QJsonArray keywordArray =
+        root.value(QLatin1String("keywords")).toArray();
+    for (const QJsonValue &value : keywordArray)
+        keywords.append(value.toString());
+    engine->setDefaultKeywords(keywords);
 }
 
 QJsonObject openSearchEngineToJson(const OpenSearchEngine *engine)

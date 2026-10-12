@@ -65,11 +65,9 @@
 #include "browsermainwindow.h"
 
 #include "aboutdialog.h"
-#include "adblockmanager.h"
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
 #include "autosaver.h"
-#include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
 #include "bookmarksmodel.h"
@@ -80,14 +78,20 @@
 #include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
+#include "engineindicator.h"
+#include "engineinterface.h"
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "pdfview.h"
 #include "pictureinpicture.h"
+#include "readerbutton.h"
 #include "readermode.h"
 #include "safetext.h"
 #include "securestore.h"
 #include "settings.h"
+#include "bidipanel.h"
+#include "sidebargrip.h"
 #include "sidebarpanel.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
@@ -96,24 +100,32 @@
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "useragentmenu.h"
+#include "webenginebackend.h"
 #include "webview.h"
 #include "webviewsearch.h"
 
+#include <qboxlayout.h>
 #include <qdockwidget.h>
 #include <qevent.h>
+#include <qeventloop.h>
 #include <qfiledialog.h>
+#include <qfileinfo.h>
 #include <qlabel.h>
+#include <qpointer.h>
 #include <qprintdialog.h>
 #include <qprintpreviewdialog.h>
 #include <qprinter.h>
+#include <qprinterinfo.h>
 #include <qscreen.h>
 #include <qsettings.h>
 #include <qstringconverter.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
 #include <qstatusbar.h>
+#include <qtimer.h>
 #include <qtoolbar.h>
 #include <qinputdialog.h>
+#include <qlineedit.h>
 #include <qsplitter.h>
 
 #include <qurl.h>
@@ -125,8 +137,17 @@
 
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
+    , m_sidebarGrip(nullptr)
+    , m_sidebarGripLayout(nullptr)
+    , m_sidebarWidthTimer(new QTimer(this))
+    , m_applyingSidebarWidth(false)
+    , m_sidebarWidthApplied(false)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
+    , m_engineIndicatorHost(nullptr)
+    , m_engineIndicator(nullptr)
+    , m_readerModeButton(nullptr)
+    , m_navReaderAction(nullptr)
     , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
     , m_bookmarksToolbarFrame(0)
@@ -135,6 +156,8 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_tabWidget(new TabWidget(this))
     , m_loadingIndicator(new LoadingIndicator(this))
     , m_zoomControl(new ZoomControl(this))
+    , m_memIndicator(new MemIndicator(this))
+    , m_netIndicator(new NetIndicator(this))
     , m_autoSaver(new AutoSaver(this))
 {
     setAttribute(Qt::WA_DeleteOnClose, true);
@@ -145,11 +168,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     setupMenu();
     setupToolBar();
 
-    m_filePrivateBrowsingAction->setChecked(BrowserApplication::isPrivate());
     if (BrowserApplication::isTorMode()) {
         // TOR02: a tor window is private by construction (dedicated
-        // OTR profile) — the toggle is meaningless and hidden.
-        m_filePrivateBrowsingAction->setVisible(false);
+        // OTR profile) — a "New Private Tab" entry would be a no-op
+        // there, so it is hidden and disabled.
+        m_fileNewPrivateTabAction->setVisible(false);
+        m_fileNewPrivateTabAction->setEnabled(false);
 
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
@@ -165,6 +189,49 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             " border-radius: 6px; padding: 1px 8px; font-weight: bold; }"));
         badge->setToolTip(tr("This window browses through the Tor network"));
         m_navigationBar->addWidget(badge);
+
+        // READ02: the reader button paints its glyph from
+        // ButtonText — dark on the violet tor bar.  Lift it to the
+        // badge's light text color; the next refresh() picks it up
+        // (the button only ever repaints while a page is loaded).
+        QPalette readerPalette = m_readerModeButton->palette();
+        readerPalette.setColor(QPalette::ButtonText,
+                               QColor(238, 238, 238));
+        m_readerModeButton->setPalette(readerPalette);
+
+        // TOR04: the live circuit chain — a permanent status-bar
+        // label fed by TorManager (GETINFO circuit-status refreshed
+        // on 650 CIRC events, the Ready transition, and tab
+        // switches).  Added before the load indicator/zoom control so
+        // it anchors the permanent group; never created for
+        // non-tor windows.
+        m_torCircuitLabel = new QLabel(this);
+        m_torCircuitLabel->setObjectName(
+            QLatin1String("torCircuitLabel"));
+        statusBar()->addPermanentWidget(m_torCircuitLabel);
+        BrowserApplication *app = BrowserApplication::instance();
+        TorManager *tor = app ? app->torManager() : nullptr;
+        if (tor) {
+            connect(tor, &TorManager::circuitsChanged,
+                    this, [this](const QList<TorCircuit> &) {
+                updateTorCircuitLabel();
+            });
+            connect(tor, &TorManager::stateChanged,
+                    this, [this](TorManager::State) {
+                updateTorCircuitLabel();
+            });
+            connect(tor, &TorManager::bootstrapProgressChanged,
+                    this, [this](int, const QString &) {
+                updateTorCircuitLabel();
+            });
+            connect(m_tabWidget, &QTabWidget::currentChanged,
+                    this, [this, tor](int) {
+                updateTorCircuitLabel();
+                tor->requestCircuitInfo();
+            });
+            tor->requestCircuitInfo();
+        }
+        updateTorCircuitLabel();
     }
 
     QWidget *centralWidget = new QWidget(this);
@@ -229,6 +296,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebarDock);
     m_sidebarDock->setVisible(false);
 
+    addDockWidget(Qt::RightDockWidgetArea, m_bidiPanelDock);
+    m_bidiPanelDock->setVisible(false);
+
     connect(m_tabWidget, &TabWidget::setCurrentTitle,
             this, &BrowserMainWindow::updateWindowTitle);
     connect(m_tabWidget, &TabWidget::showStatusBarMessage,
@@ -246,12 +316,18 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
 
     // UIP04: permanent status-bar widgets — page-load timing and a
     // zoom control, both bound to whichever tab is current.
+    // SBAR01: the memory/bandwidth pair anchors the group's left edge
+    // (Vivaldi-style stats-first ordering); the net indicator hides
+    // itself while idle, so the stable widgets sit right of it.
+    statusBar()->addPermanentWidget(m_memIndicator);
+    statusBar()->addPermanentWidget(m_netIndicator);
     statusBar()->addPermanentWidget(m_loadingIndicator);
     statusBar()->addPermanentWidget(m_zoomControl);
     connect(m_tabWidget, &QTabWidget::currentChanged,
             this, [this](int) {
         m_loadingIndicator->setWebView(currentTab());
         m_zoomControl->setWebView(currentTab());
+        m_memIndicator->setWebView(currentTab());
         updateReaderState();
     });
 
@@ -271,10 +347,37 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         m_autoSaver->changeOccurred();
     });
     connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
-            this, [](Qt::DockWidgetArea area) {
+            this, [this](Qt::DockWidgetArea area) {
         QSettings settings;
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
+        // SIDE06: the rail follows the dock to the other edge.
+        if (m_sidebarPanel)
+            m_sidebarPanel->setDockSide(area);
+        updateSidebarGripPlacement();
+    });
+    // RSZ01: a floating dock has no window edge to resize against —
+    // the grip hides while it floats.
+    connect(m_sidebarDock, &QDockWidget::topLevelChanged,
+            this, [this](bool) { updateSidebarGripPlacement(); });
+    // RSZ01: debounce for dock width persistence — an edge drag
+    // emits a Resize per pixel; the write lands once the drag ends.
+    m_sidebarWidthTimer->setSingleShot(true);
+    m_sidebarWidthTimer->setInterval(150);
+    connect(m_sidebarWidthTimer, &QTimer::timeout, this, [this]() {
+        if (m_sidebarDock)
+            persistSidebarWidth(m_sidebarDock->width());
+    });
+    // DOWN02: a new download no longer pops a separate window — the
+    // Downloads section is selected when the dock is already up, and
+    // the window flashes so the arrival is still noticeable when the
+    // panel is hidden.
+    connect(BrowserApplication::downloadManager(),
+            &DownloadManager::itemAdded, this, [this]() {
+        if (m_sidebarPanel)
+            m_sidebarPanel->showDownloads();
+        if (isActiveWindow())
+            QApplication::alert(this);
     });
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
@@ -543,6 +646,31 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_fileNewWindowAction);
     m_fileMenu->addAction(m_tabWidget->newTabAction());
 
+    // PTAB01: private browsing is per-tab — the off-the-record page
+    // lives inside this window alongside normal tabs.
+    m_fileNewPrivateTabAction = new QAction(m_fileMenu);
+    // Ctrl+Shift+P is the command palette (CMD01); Ctrl+Shift+N is the
+    // incognito/private shortcut Chrome popularized.
+    m_fileNewPrivateTabAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_N));
+    connect(m_fileNewPrivateTabAction, &QAction::triggered,
+            m_tabWidget, &TabWidget::newPrivateTab);
+    m_fileMenu->addAction(m_fileNewPrivateTabAction);
+
+    // TOR02: a Tor window is a separate `arora --tor` process — the
+    // application proxy is process-global, so routing cannot be a
+    // mode of this window.  Disabled when no tor binary resolves.
+    m_fileNewTorWindowAction = new QAction(m_fileMenu);
+    connect(m_fileNewTorWindowAction, &QAction::triggered,
+            this, []() { BrowserApplication::openTorWindow(); });
+    if (TorManager::resolveBinary().isEmpty()) {
+        m_fileNewTorWindowAction->setEnabled(false);
+        m_fileNewTorWindowAction->setToolTip(
+            tr("No tor binary found — install tor or run "
+               "BuildProcess/fetch-tor.sh"));
+    }
+    m_fileMenu->addAction(m_fileNewTorWindowAction);
+
     // CONT02: container tabs — the submenu lists the registry and is
     // repopulated on open (containers are runtime-editable).  Tor
     // windows hide it — a tor process has no containers.
@@ -604,25 +732,13 @@ void BrowserMainWindow::setupMenu()
     m_fileMenu->addAction(m_filePrintAction);
     m_fileMenu->addSeparator();
 
-    m_filePrivateBrowsingAction = new QAction(m_fileMenu);
-    connect(m_filePrivateBrowsingAction, &QAction::triggered,
-            this, &BrowserMainWindow::privateBrowsing);
-    m_filePrivateBrowsingAction->setCheckable(true);
-    m_fileMenu->addAction(m_filePrivateBrowsingAction);
-
-    // TOR02: a Tor window is a separate `arora --tor` process — the
-    // application proxy is process-global, so routing cannot be a
-    // mode of this window.  Disabled when no tor binary resolves.
-    m_fileNewTorWindowAction = new QAction(m_fileMenu);
-    connect(m_fileNewTorWindowAction, &QAction::triggered,
-            this, []() { BrowserApplication::openTorWindow(); });
-    if (TorManager::resolveBinary().isEmpty()) {
-        m_fileNewTorWindowAction->setEnabled(false);
-        m_fileNewTorWindowAction->setToolTip(
-            tr("No tor binary found — install tor or run "
-               "BuildProcess/fetch-tor.sh"));
-    }
-    m_fileMenu->addAction(m_fileNewTorWindowAction);
+    // MENU03: Preferences lives in the File menu's bottom group,
+    // directly above Close Window (cross-browser convention).
+    m_filePreferencesAction = new QAction(m_fileMenu);
+    m_filePreferencesAction->setMenuRole(QAction::PreferencesRole);
+    connect(m_filePreferencesAction, &QAction::triggered,
+            this, &BrowserMainWindow::preferences);
+    m_fileMenu->addAction(m_filePreferencesAction);
     m_fileMenu->addSeparator();
 
     m_fileCloseWindow = new QAction(m_fileMenu);
@@ -655,28 +771,28 @@ void BrowserMainWindow::setupMenu()
     menuBar()->addMenu(m_editMenu);
     m_editUndoAction = new QAction(m_editMenu);
     m_editUndoAction->setShortcuts(QKeySequence::Undo);
-    m_tabWidget->addWebAction(m_editUndoAction, QWebEnginePage::Undo);
+    m_tabWidget->addWebAction(m_editUndoAction, Engine::StandardAction::Undo);
     m_editMenu->addAction(m_editUndoAction);
     m_editRedoAction = new QAction(m_editMenu);
     m_editRedoAction->setShortcuts(QKeySequence::Redo);
-    m_tabWidget->addWebAction(m_editRedoAction, QWebEnginePage::Redo);
+    m_tabWidget->addWebAction(m_editRedoAction, Engine::StandardAction::Redo);
     m_editMenu->addAction(m_editRedoAction);
     m_editMenu->addSeparator();
     m_editCutAction = new QAction(m_editMenu);
     m_editCutAction->setShortcuts(QKeySequence::Cut);
-    m_tabWidget->addWebAction(m_editCutAction, QWebEnginePage::Cut);
+    m_tabWidget->addWebAction(m_editCutAction, Engine::StandardAction::Cut);
     m_editMenu->addAction(m_editCutAction);
     m_editCopyAction = new QAction(m_editMenu);
     m_editCopyAction->setShortcuts(QKeySequence::Copy);
-    m_tabWidget->addWebAction(m_editCopyAction, QWebEnginePage::Copy);
+    m_tabWidget->addWebAction(m_editCopyAction, Engine::StandardAction::Copy);
     m_editMenu->addAction(m_editCopyAction);
     m_editPasteAction = new QAction(m_editMenu);
     m_editPasteAction->setShortcuts(QKeySequence::Paste);
-    m_tabWidget->addWebAction(m_editPasteAction, QWebEnginePage::Paste);
+    m_tabWidget->addWebAction(m_editPasteAction, Engine::StandardAction::Paste);
     m_editMenu->addAction(m_editPasteAction);
     m_editSelectAllAction = new QAction(m_editMenu);
     m_editSelectAllAction->setShortcuts(QKeySequence::SelectAll);
-    m_tabWidget->addWebAction(m_editSelectAllAction, QWebEnginePage::SelectAll);
+    m_tabWidget->addWebAction(m_editSelectAllAction, Engine::StandardAction::SelectAll);
     m_editMenu->addAction(m_editSelectAllAction);
     m_editMenu->addSeparator();
 
@@ -740,12 +856,26 @@ void BrowserMainWindow::setupMenu()
     // the persisted authority (settings keys, not the window blob).
     m_sidebarDock = new QDockWidget(this);
     m_sidebarDock->setObjectName(QLatin1String("sidebarDock"));
+    // RSZ01: the filter watches for native edge resizes (persisted,
+    // debounced) and the first show (applies the stored width — a
+    // hidden dock ignores resizeDocks).
+    m_sidebarDock->installEventFilter(this);
     m_sidebarDock->setAllowedAreas(Qt::LeftDockWidgetArea
                                  | Qt::RightDockWidgetArea);
     m_viewSidebarAction = m_sidebarDock->toggleViewAction();
     m_viewSidebarAction->setShortcut(QKeySequence(Qt::Key_F4));
     m_viewSidebarAction->setIcon(SidebarPanel::icon(this));
     m_viewMenu->addAction(m_viewSidebarAction);
+
+    // DEVT03: dev tools dock — the BiDi panel builds lazily on first
+    // show (ensureBidiPanel).  Its toggle action joins the Tools menu
+    // next to the Chromium inspector entry further down.
+    m_bidiPanelDock = new QDockWidget(this);
+    m_bidiPanelDock->setObjectName(QLatin1String("bidiPanelDock"));
+    m_bidiPanelDock->setAllowedAreas(Qt::LeftDockWidgetArea
+                                   | Qt::RightDockWidgetArea);
+    connect(m_bidiPanelDock, &QDockWidget::visibilityChanged,
+            this, [this](bool visible) { if (visible) ensureBidiPanel(); });
 
     m_viewMenu->addSeparator();
 
@@ -754,7 +884,7 @@ void BrowserMainWindow::setupMenu()
     shortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_Period));
     shortcuts.append(Qt::Key_Escape);
     m_viewStopAction->setShortcuts(shortcuts);
-    m_tabWidget->addWebAction(m_viewStopAction, QWebEnginePage::Stop);
+    m_tabWidget->addWebAction(m_viewStopAction, Engine::StandardAction::Stop);
     m_viewMenu->addAction(m_viewStopAction);
 
     m_viewReloadAction = new QAction(m_viewMenu);
@@ -762,7 +892,7 @@ void BrowserMainWindow::setupMenu()
     shortcuts.append(QKeySequence(Qt::ControlModifier | Qt::Key_R));
     shortcuts.append(QKeySequence(Qt::Key_F5));
     m_viewReloadAction->setShortcuts(shortcuts);
-    m_tabWidget->addWebAction(m_viewReloadAction, QWebEnginePage::Reload);
+    m_tabWidget->addWebAction(m_viewReloadAction, Engine::StandardAction::Reload);
     m_viewMenu->addAction(m_viewReloadAction);
 
     m_viewZoomInAction = new QAction(m_viewMenu);
@@ -867,18 +997,20 @@ void BrowserMainWindow::setupMenu()
     m_historyMenu = new HistoryMenu(this);
     connect(m_historyMenu, &HistoryMenu::openUrl,
             m_tabWidget, &TabWidget::loadUrlFromUser);
+    connect(m_historyMenu, &HistoryMenu::showHistoryPage,
+            this, &BrowserMainWindow::showHistoryPage);
     menuBar()->addMenu(m_historyMenu);
     QList<QAction*> historyActions;
 
     m_historyBackAction = new QAction(this);
-    m_tabWidget->addWebAction(m_historyBackAction, QWebEnginePage::Back);
+    m_tabWidget->addWebAction(m_historyBackAction, Engine::StandardAction::Back);
     m_historyBackAction->setShortcuts(QKeySequence::Back);
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyBackAction->setIconVisibleInMenu(false);
 #endif
 
     m_historyForwardAction = new QAction(this);
-    m_tabWidget->addWebAction(m_historyForwardAction, QWebEnginePage::Forward);
+    m_tabWidget->addWebAction(m_historyForwardAction, Engine::StandardAction::Forward);
     m_historyForwardAction->setShortcuts(QKeySequence::Forward);
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyForwardAction->setIconVisibleInMenu(false);
@@ -979,6 +1111,15 @@ void BrowserMainWindow::setupMenu()
     m_toolsMenu->addAction(m_toolsCommandPaletteAction);
     m_toolsMenu->addSeparator();
 
+    // MENU04: Downloads heads the Tools menu's utility cluster — the
+    // Window menu keeps only tab/window-management entries.
+    m_toolsDownloadsAction = new QAction(m_toolsMenu);
+    m_toolsDownloadsAction->setIcon(
+        AroraIcon::get(QLatin1String("emblem-downloads")));
+    connect(m_toolsDownloadsAction, &QAction::triggered,
+            this, &BrowserMainWindow::downloadManager);
+    m_toolsMenu->addAction(m_toolsDownloadsAction);
+
     // MENU01: no Tools-menu entry — the action lives on the window
     // itself so the Ctrl+K shortcut keeps reaching webSearch()
     // without a menu item to show.
@@ -1007,33 +1148,58 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsMenu->addAction(m_toolsLockStoreAction);
 
-    // Qt WebEngine has no DeveloperExtrasEnabled toggle — Chromium
-    // DevTools are always available, so the menu entry opens the
-    // inspector on the current page directly.  The bare page action is
-    // a no-op until a devToolsPage is bound, so it routes through the
-    // shared inspector host (DVT01).
-    m_toolsEnableInspectorAction = new QAction(m_toolsMenu);
-    connect(m_toolsEnableInspectorAction, &QAction::triggered,
+    // DEVT01/DEVT04: engine-facing tools share one submenu under
+    // Tools (moved out of View; the context menu's click-to-inspect
+    // entry is gone too — this action is the way in).  Qt WebEngine
+    // has no DeveloperExtrasEnabled toggle — Chromium DevTools are
+    // always available, so the entry opens the inspector on the
+    // current page directly.  The bare page action is a no-op until
+    // a devToolsPage is bound, so it routes through the shared
+    // inspector host (DVT01).
+    m_toolsDevToolsMenu = new QMenu(m_toolsMenu);
+    m_toolsMenu->addMenu(m_toolsDevToolsMenu);
+
+    m_toolsChromiumDevToolAction = new QAction(m_toolsDevToolsMenu);
+    connect(m_toolsChromiumDevToolAction, &QAction::triggered,
             this, [this]() {
-        if (currentTab())
-            DevToolsWindow::inspectElement(currentTab()->page());
+        if (!currentTab())
+            return;
+        // DevTools is engine-bound (capabilities().devTools) — reach
+        // the wrapped page through the adapter's escape hatch.
+        if (WebEnginePageAdapter *adapter =
+                WebEnginePageAdapter::of(currentTab()->enginePage()))
+            DevToolsWindow::inspectElement(adapter->webEnginePage());
     });
-    m_toolsMenu->addAction(m_toolsEnableInspectorAction);
+    m_toolsDevToolsMenu->addAction(m_toolsChromiumDevToolAction);
+
+    // Placeholder until DEVT02 wires the BiDi panel — kept visible but
+    // disabled so the submenu structure stays stable.
+    m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
+    m_toolsBidiDevToolAction->setEnabled(false);
+    m_toolsDevToolsMenu->addAction(m_toolsBidiDevToolAction);
+
+    // DEVT03: engine-neutral dev tools dock — toggleViewAction keeps
+    // its check state synced with the dock's close button.  No-rust
+    // builds have no BiDi backend at all — the entry stays out of the
+    // menu there; a tor window keeps it visible but disabled since
+    // its process never arms the debug channel.
+#ifdef ARORA_RUSTCORE
+    QAction *bidiAction = m_bidiPanelDock->toggleViewAction();
+    bidiAction->setText(tr("BiDi Dev &Tools"));
+    if (BrowserApplication::isTorMode()) {
+        bidiAction->setEnabled(false);
+        bidiAction->setToolTip(
+            tr("The debug channel is never armed in Tor windows."));
+    }
+    m_toolsMenu->addAction(bidiAction);
+#endif
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
     m_toolsMenu->addMenu(m_toolsUserAgentMenu);
 
-    m_adBlockDialogAction = new QAction(m_toolsMenu);
-    connect(m_adBlockDialogAction, &QAction::triggered,
-            AdBlockManager::instance(), &AdBlockManager::showDialog);
-    m_toolsMenu->addAction(m_adBlockDialogAction);
-
-    m_toolsMenu->addSeparator();
-    m_toolsPreferencesAction = new QAction(m_toolsMenu);
-    m_toolsPreferencesAction->setMenuRole(QAction::PreferencesRole);
-    connect(m_toolsPreferencesAction, &QAction::triggered,
-            this, &BrowserMainWindow::preferences);
-    m_toolsMenu->addAction(m_toolsPreferencesAction);
+    // MENU05: filter management lives on the Preferences Privacy
+    // page (Content Blocking > Manage...) — the Tools menu no
+    // longer carries it.
 
     // Help
     m_helpMenu = new QMenu(menuBar());
@@ -1098,6 +1264,16 @@ void BrowserMainWindow::updateReaderState()
     m_viewReaderAction->setEnabled(view != nullptr);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
+    // READ02/READ04: the nav-row button follows the same tab — it
+    // manages its own checked/suggested state off the view's
+    // ReaderMode, and it stays visible on every engine tab.  The
+    // article heuristic no longer gates presence; it only drives the
+    // "suggested" accent.  Only tabs where reader mode can never
+    // apply (widget pages like History/Preferences, non-WebView
+    // engine tabs) hide the control.
+    m_readerModeButton->setWebView(view);
+    m_navReaderAction->setVisible(view != nullptr);
+    m_readerModeButton->setVisible(view != nullptr);
     m_viewPipAction->setEnabled(view != nullptr);
     m_viewPipAction->setChecked(view && view->pictureInPicture()
                                 && view->pictureInPicture()->isActive());
@@ -1139,8 +1315,15 @@ void BrowserMainWindow::viewTextEncoding(QAction *action)
     // The default only applies to future page loads, so set the
     // encoding on all currently open pages too.
     for (int i = 0; i < m_tabWidget->count(); ++i) {
-        if (WebView *view = m_tabWidget->webView(i))
-            view->page()->settings()->setDefaultTextEncoding(codec);
+        WebView *view = m_tabWidget->webView(i);
+        if (!view)
+            continue;
+        // The encoding override is a per-page engine setting — no
+        // engine-neutral surface, so the escape hatch applies.
+        if (WebEnginePageAdapter *adapter =
+                WebEnginePageAdapter::of(view->enginePage()))
+            adapter->webEnginePage()->settings()
+                ->setDefaultTextEncoding(codec);
     }
 }
 
@@ -1156,8 +1339,10 @@ void BrowserMainWindow::retranslate()
     m_fileExportBookmarksAction->setText(tr("&Export Bookmarks..."));
     m_filePrintPreviewAction->setText(tr("P&rint Preview..."));
     m_filePrintAction->setText(tr("&Print..."));
-    m_filePrivateBrowsingAction->setText(tr("Private &Browsing..."));
+    m_fileNewPrivateTabAction->setText(tr("New &Private Tab"));
     m_fileNewTorWindowAction->setText(tr("New &Tor Window"));
+    m_filePreferencesAction->setText(tr("Preferences..."));
+    m_filePreferencesAction->setShortcut(tr("Ctrl+,"));
     m_fileCloseWindow->setText(tr("Close Window"));
     m_fileQuit->setText(tr("&Quit"));
 
@@ -1186,6 +1371,7 @@ void BrowserMainWindow::retranslate()
     m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewPipAction->setText(tr("Picture-&in-Picture"));
     m_sidebarDock->setWindowTitle(tr("Sidebar"));
+    m_bidiPanelDock->setWindowTitle(tr("Development Tools"));
     m_viewSidebarAction->setText(tr("Sidebar"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
@@ -1208,16 +1394,20 @@ void BrowserMainWindow::retranslate()
 
     m_toolsMenu->setTitle(tr("&Tools"));
     m_toolsCommandPaletteAction->setText(tr("Command &Palette..."));
+    m_toolsDownloadsAction->setText(tr("Downloads"));
+    m_toolsDownloadsAction->setShortcut(
+        QKeySequence(tr("Ctrl+Y", "Download Manager")));
     m_toolsWebSearchAction->setText(tr("Web &Search"));
     m_toolsWebSearchAction->setShortcut(QKeySequence(tr("Ctrl+K", "Web Search")));
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
     m_toolsClearPrivateDataAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Delete", "Clear Private Data")));
     m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
-    m_toolsEnableInspectorAction->setText(tr("Web &Inspector"));
-    m_toolsPreferencesAction->setText(tr("Options..."));
-    m_toolsPreferencesAction->setShortcut(tr("Ctrl+,"));
+    m_toolsDevToolsMenu->setTitle(tr("Development Tools"));
+    m_toolsChromiumDevToolAction->setText(tr("Chromium Dev Tool"));
+    m_toolsBidiDevToolAction->setText(tr("BiDi Dev Tool"));
+    m_toolsBidiDevToolAction->setToolTip(
+        tr("Coming with the BiDi backend"));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
-    m_adBlockDialogAction->setText(tr("&Ad Block..."));
 
     m_helpMenu->setTitle(tr("&Help"));
     m_helpChangeLanguageAction->setText(tr("Switch application language "));
@@ -1270,8 +1460,61 @@ void BrowserMainWindow::setupToolBar()
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
 
+    // READ02: reader-mode toggle in the nav row — after stop/reload,
+    // before the location bar starts.  READ03: the only reader
+    // control — the in-bar duplicate is gone.  Palette-painted glyph
+    // (no icon theme ships a reader glyph), hidden until the first
+    // updateReaderState() — READ04 keeps it present on every engine
+    // tab, accent-marked on article-like pages, checked while the
+    // overlay is up.  updateReaderState() re-points it at the
+    // current tab along with the View-menu action, so the two can
+    // never disagree.
+    m_readerModeButton = new ReaderButton(m_navigationBar);
+    m_readerModeButton->setObjectName(QLatin1String("navReaderButton"));
+    // addWidget() wraps the button in a QWidgetAction — a toolbar
+    // item's presence is governed by the ACTION's visibility, so
+    // updateReaderState() toggles that (the widget's own hidden flag
+    // alone leaves the item latched off).
+    m_navReaderAction = m_navigationBar->addWidget(m_readerModeButton);
+    m_navReaderAction->setVisible(false);
+    m_navReaderAction->setEnabled(true);
+
     m_navigationSplitter = new QSplitter(m_navigationBar);
+    m_navigationSplitter->setObjectName(QLatin1String("navigationSplitter"));
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());
+
+    // ENG08: the engine switcher is chrome, not part of the field —
+    // one shared button hugging the url bar's right edge, replacing
+    // the per-bar embedded indicators.  A fixed-width host keeps the
+    // cell from stretching inside the splitter and vertically centers
+    // the button at nav-row height; hiding the cell (single backend,
+    // tor, private or widget tab — see updateEngineIndicator) hands
+    // the width back to the location bar with no dead padding.
+    m_engineIndicator = new EngineIndicator(m_navigationBar);
+    m_engineIndicator->setObjectName(QLatin1String("navEngineIndicator"));
+    m_engineIndicator->setIconSize(m_navigationBar->iconSize());
+    m_engineIndicatorHost = new QWidget(m_navigationBar);
+    m_engineIndicatorHost->setObjectName(
+        QLatin1String("navEngineIndicatorHost"));
+    QHBoxLayout *indicatorLayout = new QHBoxLayout(m_engineIndicatorHost);
+    indicatorLayout->setContentsMargins(2, 0, 2, 0);
+    indicatorLayout->addWidget(m_engineIndicator);
+    m_engineIndicatorHost->setFixedWidth(
+        m_engineIndicator->sizeHint().width() + 4);
+    m_navigationSplitter->insertWidget(1, m_engineIndicatorHost);
+    m_navigationSplitter->setCollapsible(1, false);
+    m_navigationSplitter->setStretchFactor(1, 0);
+    // One owner, one path: the request always resolves against the
+    // current tab — the button's state mirrors it (below), so the
+    // choice can never land on a background tab.
+    connect(m_engineIndicator, &EngineIndicator::switchRequested,
+            this, [this](const QString &engineId) {
+        m_tabWidget->reloadTabInEngine(
+            m_tabWidget->currentIndex(), engineId);
+    });
+    connect(m_tabWidget, &QTabWidget::currentChanged,
+            this, [this](int) { updateEngineIndicator(); });
+    updateEngineIndicator();
 
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
     m_navigationSplitter->addWidget(m_toolbarSearch);
@@ -1295,26 +1538,64 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_viewSidebarAction);
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
-    sizes << (int)((double)splitterWidth * .80) << (int)((double)splitterWidth * .20);
+    sizes << (int)((double)splitterWidth * .80)
+          << m_engineIndicatorHost->sizeHint().width()
+          << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
 
     applySearchBoxVisibility();
 }
 
 // SRCH03: the dedicated search box is opt-in — the omnibox location
-// bar (SRCH01) covers the same job.  SRCH04 repurposes the setting
-// into Vivaldi's two display modes: showSearchBox on gives the full
-// text field, off collapses it to just the engine button instead of
-// hiding it outright.  The widget stays constructed either way: the
-// splitter layout, the search signal wiring, and setWebView()
-// tracking are all unchanged.
+// bar (SRCH01) covers the same job.  SRCH08 retires the SRCH04
+// collapsed-button mode entirely: showSearchBox off hides the widget
+// outright so the splitter gives the location bar the full width,
+// on restores the full text field.  The widget stays constructed
+// either way: the splitter layout, the search signal wiring, and
+// setWebView() tracking are all unchanged.
 void BrowserMainWindow::applySearchBoxVisibility()
 {
+    // TOR03: tor windows never carry the dedicated search box — a
+    // divergent-engine field is a deanonymization wart and even the
+    // collapsed button sliver wastes splitter width; the location
+    // bar's omnibox search covers the same job.  The widget stays
+    // constructed (search wiring, setWebView() tracking, and the
+    // clearPrivateData widget sweep all still reach it) but is
+    // hidden outright, so the location bar gets the full width.
+    if (BrowserApplication::isTorMode()) {
+        m_toolbarSearch->setVisible(false);
+        return;
+    }
     QSettings settings;
     const bool field = settings.value(
         QLatin1String("MainWindow/showSearchBox"), false).toBool();
-    m_toolbarSearch->setButtonMode(!field);
-    m_toolbarSearch->setVisible(true);
+    m_toolbarSearch->setButtonMode(false);
+    m_toolbarSearch->setVisible(field);
+}
+
+// ENG08: one toolbar-level indicator mirrors the ACTIVE tab.  The
+// rules are the same ones the embedded indicators enforced, now
+// computed per tab switch instead of baked per bar:
+//   - a private tab refuses the swap (no OTR profile on foreign
+//     backends) -> swappable off, hidden;
+//   - a tor window is Chromium-locked -> hidden;
+//   - a widget tab (Preferences, History, ...) has no engine -> the
+//     whole cell hides;
+//   - an engine tab reports its own backend id and stays swappable
+//     — "Reload in Chromium" on the menu is the swap-back path.
+void BrowserMainWindow::updateEngineIndicator()
+{
+    const int index = m_tabWidget->currentIndex();
+    const QString engineId = index >= 0
+        ? m_tabWidget->tabEngineId(index) : QString();
+    m_engineIndicator->setSwappable(
+        index >= 0 && !m_tabWidget->isTabPrivate(index));
+    m_engineIndicator->setEngineId(engineId);
+    // The setters refresh() the button's own availability (2+
+    // backends, swappable, not tor); the host cell gates the one
+    // case the button cannot see — a tab with no engine at all.
+    m_engineIndicatorHost->setVisible(
+        !engineId.isEmpty() && !m_engineIndicator->isHidden());
 }
 
 // SIDE01: the panel is built on first show so a hidden sidebar is
@@ -1331,7 +1612,40 @@ void BrowserMainWindow::ensureSidebarPanel()
                                 const QString &title) {
         m_tabWidget->loadUrl(url, tab, title);
     });
-    m_sidebarDock->setWidget(m_sidebarPanel);
+    // SIDE04: the rail's Add button adds the current tab's page —
+    // the window owns the tab, the panel supplies the folder.
+    connect(m_sidebarPanel, &SidebarPanel::addBookmarkRequested,
+            this, &BrowserMainWindow::addSidebarBookmark);
+    // DOWN02: the Downloads page header's X folds the dock away (the
+    // toggle action + persistence follow via visibilityChanged).
+    connect(m_sidebarPanel, &SidebarPanel::closeRequested,
+            m_sidebarDock, &QWidget::hide);
+    // RSZ01: the dock's content is the panel plus a slim grip along
+    // its inner edge — which side the grip sits on follows the dock
+    // area (updateSidebarGripPlacement reorders on area changes).
+    QWidget *container = new QWidget(m_sidebarDock);
+    m_sidebarGripLayout = new QHBoxLayout(container);
+    m_sidebarGripLayout->setContentsMargins(0, 0, 0, 0);
+    m_sidebarGripLayout->setSpacing(0);
+    m_sidebarGrip = new SidebarGrip(m_sidebarDock, container);
+    connect(m_sidebarGrip, &SidebarGrip::resizeFinished,
+            this, &BrowserMainWindow::persistSidebarWidth);
+    m_sidebarGripLayout->addWidget(m_sidebarPanel);
+    m_sidebarGripLayout->addWidget(m_sidebarGrip);
+    m_sidebarDock->setWidget(container);
+    // SIDE06: the rail hugs the dock's outer edge.
+    m_sidebarPanel->setDockSide(dockWidgetArea(m_sidebarDock));
+    updateSidebarGripPlacement();
+}
+
+// DEVT03: built on first show for the same zero-footprint reason as
+// the sidebar — the BiDi client inside connects on show too.
+void BrowserMainWindow::ensureBidiPanel()
+{
+    if (m_bidiPanel)
+        return;
+    m_bidiPanel = new BidiPanel(m_bidiPanelDock);
+    m_bidiPanelDock->setWidget(m_bidiPanel);
 }
 
 void BrowserMainWindow::applySidebarSettings()
@@ -1350,7 +1664,87 @@ void BrowserMainWindow::applySidebarSettings()
             .toBool();
     if (show)
         ensureSidebarPanel();
+    // SIDE02: an already-built panel picks up per-panel visibility
+    // changes here too (a hidden dock re-reads on next show anyway).
+    if (m_sidebarPanel) {
+        m_sidebarPanel->applyPanelVisibility();
+        // SIDE06: keep the rail on the outer edge after a
+        // settings-driven dock move.
+        m_sidebarPanel->setDockSide(area);
+    }
+    // RSZ01: the stored width lands before the dock shows; the dock's
+    // first Show re-applies it via the event filter.
+    applySidebarWidth();
     m_sidebarDock->setVisible(show);
+    updateSidebarGripPlacement();
+}
+
+void BrowserMainWindow::applySidebarWidth()
+{
+    if (!m_sidebarDock)
+        return;
+    QSettings settings;
+    const int stored =
+        settings.value(QLatin1String("MainWindow/sidebarWidth"),
+                       SidebarGrip::defaultWidth()).toInt();
+    m_applyingSidebarWidth = true;
+    resizeDocks({ m_sidebarDock },
+                { SidebarGrip::clampedWidth(stored, width()) },
+                Qt::Horizontal);
+    m_applyingSidebarWidth = false;
+}
+
+void BrowserMainWindow::persistSidebarWidth(int width)
+{
+    // Same convention as the dock-area write above — an immediate
+    // QSettings key, no autosaver churn.
+    QSettings settings;
+    settings.setValue(QLatin1String("MainWindow/sidebarWidth"), width);
+}
+
+void BrowserMainWindow::updateSidebarGripPlacement()
+{
+    if (!m_sidebarGrip || !m_sidebarGripLayout)
+        return;
+    const Qt::DockWidgetArea area = dockWidgetArea(m_sidebarDock);
+    m_sidebarGrip->setDockArea(area);
+    // The grip hugs the content-facing edge — after the panel when
+    // docked left, before it when docked right.
+    m_sidebarGrip->setVisible(!m_sidebarDock->isFloating()
+        && (area == Qt::LeftDockWidgetArea
+            || area == Qt::RightDockWidgetArea));
+    const int gripIndex = m_sidebarGripLayout->indexOf(m_sidebarGrip);
+    if (area == Qt::RightDockWidgetArea) {
+        if (gripIndex != 0) {
+            m_sidebarGripLayout->removeWidget(m_sidebarGrip);
+            m_sidebarGripLayout->insertWidget(0, m_sidebarGrip);
+        }
+    } else if (gripIndex != m_sidebarGripLayout->count() - 1) {
+        m_sidebarGripLayout->removeWidget(m_sidebarGrip);
+        m_sidebarGripLayout->addWidget(m_sidebarGrip);
+    }
+}
+
+bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
+{
+    if (object == m_sidebarDock) {
+        // RSZ01: a hidden dock ignores resizeDocks, so the stored
+        // width lands again on the first show.  Afterwards every
+        // resize we didn't perform ourselves (the native edge drag)
+        // is persisted, debounced to one write per gesture.
+        if (event->type() == QEvent::Show && !m_sidebarWidthApplied) {
+            m_sidebarWidthApplied = true;
+            QTimer::singleShot(0, this,
+                               &BrowserMainWindow::applySidebarWidth);
+        } else if (event->type() == QEvent::Resize
+                   && m_sidebarWidthApplied
+                   && !m_applyingSidebarWidth
+                   && m_sidebarDock->isVisible()
+                   && !m_sidebarDock->isFloating()) {
+            m_sidebarWidthTimer->start();
+        }
+    }
+    return QMainWindow::eventFilter(object, event);
 }
 
 SidebarPanel *BrowserMainWindow::sidebarPanel() const
@@ -1363,20 +1757,51 @@ QDockWidget *BrowserMainWindow::sidebarDock() const
     return m_sidebarDock;
 }
 
+// SIDE04: "Show All Bookmarks" raises the sidebar dock on the
+// Bookmarks rail instead of spawning a separate window — the same
+// single-instance pattern downloadManager() uses above.  The
+// BookmarksDialog class itself stays (tests still exercise it); this
+// path simply stops instantiating it.
 void BrowserMainWindow::showBookmarksDialog()
 {
-    BookmarksDialog *dialog = new BookmarksDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &BookmarksDialog::openUrl,
-            m_tabWidget, &TabWidget::loadUrl);
-    dialog->show();
+    // SIDE02/SIDE07: "Show All Bookmarks" raises the sidebar on its
+    // Bookmarks section — the dock is the bookmark surface, the same
+    // pattern Tools > Downloads follows (DOWN02).
+    ensureSidebarPanel();
+    m_sidebarDock->setVisible(true);
+    m_sidebarDock->raise();
+    m_sidebarPanel->showBookmarks();
+}
+
+// The rail's Add button — the same AddBookmarkDialog the toolbar
+// star uses, pre-filled with the current tab's page and opened on
+// the folder the rail selection resolves to.
+void BrowserMainWindow::addSidebarBookmark(const QModelIndex &folder)
+{
+    AddBookmarkDialog dialog;
+    if (WebView *webView = currentTab()) {
+        dialog.setUrl(QLatin1String(webView->url().toEncoded()));
+        dialog.setTitle(webView->title());
+    }
+    BookmarksManager *bookmarksManager =
+        BrowserApplication::bookmarksManager();
+    QModelIndex index = folder;
+    if (!index.isValid())
+        index = bookmarksManager->bookmarksModel()
+                    ->index(bookmarksManager->menu());
+    dialog.setCurrentIndex(index);
+    dialog.exec();
 }
 
 void BrowserMainWindow::addBookmark()
 {
     WebView *webView = currentTab();
-    QString url = QLatin1String(webView->url().toEncoded());
-    QString title = webView->title();
+    // PREFS01: a widget tab (Preferences, History) has no page — the
+    // dialog opens with blank fields instead of dereferencing the
+    // missing view.
+    QString url = webView ? QLatin1String(webView->url().toEncoded())
+                          : QString();
+    QString title = webView ? webView->title() : QString();
 
     AddBookmarkDialog dialog;
     dialog.setUrl(url);
@@ -1447,7 +1872,13 @@ void BrowserMainWindow::viewStatusbar()
 
 void BrowserMainWindow::downloadManager()
 {
-    BrowserApplication::downloadManager()->show();
+    // DOWN02: downloads live in the sidebar — Ctrl+Y / Tools >
+    // Downloads raises the dock on the Downloads section instead of
+    // opening the (removed) standalone window.
+    ensureSidebarPanel();
+    m_sidebarPanel->showDownloads();
+    m_sidebarDock->setVisible(true);
+    m_sidebarDock->raise();
 }
 
 void BrowserMainWindow::selectLineEdit()
@@ -1463,13 +1894,78 @@ void BrowserMainWindow::fileSaveAs()
 {
     if (!currentTab())
         return;
-    BrowserApplication::downloadManager()->download(currentTab()->page(), currentTab()->url(), true);
+    BrowserApplication::downloadManager()->download(
+        currentTab()->enginePage(), currentTab()->url(), true);
 }
 
 void BrowserMainWindow::preferences()
 {
-    SettingsDialog settingsDialog(this);
-    settingsDialog.exec();
+    showSettingsPage();
+}
+
+void BrowserMainWindow::showSettingsPage(int page)
+{
+    // PREFS01: Preferences is a tab, not a modal dialog — one per
+    // window.  A second invocation focuses the existing tab instead
+    // of stacking another.
+    SettingsDialog *settings = nullptr;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        settings = qobject_cast<SettingsDialog*>(m_tabWidget->widget(i));
+        if (settings)
+            break;
+    }
+    if (!settings) {
+        settings = new SettingsDialog(m_tabWidget);
+        // The page's OK applies + closes; its Cancel — and the tab's
+        // own close — discard, exactly the dialog's old semantics.
+        connect(settings, &SettingsDialog::closeRequested,
+                this, [this, settings]() {
+            const int index = m_tabWidget->indexOf(settings);
+            if (index >= 0)
+                m_tabWidget->closeTab(index);
+        });
+        m_tabWidget->addWidgetTab(settings, tr("Preferences"),
+                                  AroraIcon::get(QLatin1String("preferences-system")));
+    }
+    if (page >= 0)
+        settings->openAtPage(SettingsDialog::Page(page));
+    m_tabWidget->setCurrentWidget(settings);
+    settings->setFocus();
+}
+
+void BrowserMainWindow::showHistoryPage()
+{
+    // HIST02: "Show All History" is a tab, not a floating dialog —
+    // one per window.  A second invocation focuses the existing tab
+    // instead of stacking another.
+    HistoryDialog *history = nullptr;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        history = qobject_cast<HistoryDialog*>(m_tabWidget->widget(i));
+        if (history)
+            break;
+    }
+    if (!history) {
+        history = new HistoryDialog(m_tabWidget);
+        connect(history, &HistoryDialog::closeRequested,
+                this, [this, history]() {
+            const int index = m_tabWidget->indexOf(history);
+            if (index >= 0)
+                m_tabWidget->closeTab(index);
+        });
+        // Entries open in a fresh tab so the history tab stays open;
+        // the dialog records the activating modifiers so Ctrl/Shift
+        // clicks still route through modifyWithUserBehavior.
+        connect(history, &HistoryDialog::openUrl,
+                this, [this](const QUrl &url, const QString &title) {
+            m_tabWidget->loadUrl(url,
+                TabWidget::modifyWithUserBehavior(TabWidget::NewSelectedTab),
+                title);
+        });
+        m_tabWidget->addWidgetTab(history, tr("History"),
+                                  QIcon(QLatin1String(":graphics/history.png")));
+    }
+    m_tabWidget->setCurrentWidget(history);
+    history->setFocus();
 }
 
 CommandPalette *BrowserMainWindow::commandPalette()
@@ -1492,6 +1988,82 @@ void BrowserMainWindow::showTabSearch()
 void BrowserMainWindow::updateStatusbar(const QString &string)
 {
     statusBar()->showMessage(string, 2000);
+}
+
+// TOR04: renders the circuit chain ("Tor: guard -> middle -> exit")
+// on the tor window's status-bar label.  Hop labels prefer the relay
+// nickname and fall back to a short fingerprint; TOR05 appends each
+// hop's country code ("(DE)", "--" while unknown) resolved by
+// TorManager via the control port; the tooltip carries the full
+// chain, circuit id, status and purpose.
+void BrowserMainWindow::updateTorCircuitLabel()
+{
+    if (!m_torCircuitLabel)
+        return;
+    BrowserApplication *app = BrowserApplication::instance();
+    TorManager *tor = app ? app->torManager() : nullptr;
+    if (!tor) {
+        m_torCircuitLabel->setText(tr("Tor: daemon off"));
+        m_torCircuitLabel->setToolTip(
+            tr("The managed Tor daemon is not running."));
+        return;
+    }
+    switch (tor->state()) {
+    case TorManager::Failed:
+        m_torCircuitLabel->setText(tr("Tor: failed"));
+        m_torCircuitLabel->setToolTip(tor->errorString());
+        return;
+    case TorManager::Ready:
+        break;
+    default: {
+        const int progress = tor->bootstrapProgress();
+        m_torCircuitLabel->setText(progress >= 0
+            ? tr("Tor: connecting %1%").arg(progress)
+            : tr("Tor: connecting..."));
+        m_torCircuitLabel->setToolTip(tor->bootstrapSummary());
+        return;
+    }
+    }
+
+    const TorCircuit *circuit = nullptr;
+    const QList<TorCircuit> circuits = tor->circuits();
+    for (const TorCircuit &candidate : circuits) {
+        if (candidate.id == tor->displayCircuitId()) {
+            circuit = &candidate;
+            break;
+        }
+    }
+    if (!circuit || circuit->hops.isEmpty()) {
+        m_torCircuitLabel->setText(tr("Tor: no circuit"));
+        m_torCircuitLabel->setToolTip(
+            tr("No traffic-bearing Tor circuit yet."));
+        return;
+    }
+    QStringList names;
+    QStringList detail;
+    for (const TorCircuitHop &hop : circuit->hops) {
+        const QString country = hop.country.isEmpty()
+            ? QStringLiteral("--") : hop.country;
+        names << QStringLiteral("%1 (%2)")
+                     .arg(hop.nickname.isEmpty()
+                              ? hop.fingerprint.left(8)
+                              : hop.nickname,
+                          country);
+        detail << (hop.nickname.isEmpty()
+                       ? QStringLiteral("%1 [%2]")
+                             .arg(hop.fingerprint, country)
+                       : QStringLiteral("%1 (%2) [%3]")
+                             .arg(hop.nickname, hop.fingerprint,
+                                  country));
+    }
+    m_torCircuitLabel->setText(
+        tr("Tor: %1").arg(names.join(QLatin1String(" -> "))));
+    QString tooltip = tr("Circuit %1 (%2): %3")
+        .arg(circuit->id)
+        .arg(circuit->status, detail.join(QLatin1String(" -> ")));
+    if (!circuit->purpose.isEmpty())
+        tooltip += tr(" — purpose %1").arg(circuit->purpose);
+    m_torCircuitLabel->setToolTip(tooltip);
 }
 
 void BrowserMainWindow::updateWindowTitle(const QString &title)
@@ -1546,32 +2118,69 @@ void BrowserMainWindow::fileOpen()
 
 void BrowserMainWindow::filePrintPreview()
 {
-    if (!currentTab())
+    QPointer<WebView> view = currentTab();
+    if (!view)
         return;
     QPrintPreviewDialog dialog(this);
-    // Qt6: QWebEngineView::print runs asynchronously; the preview
-    // dialog owns the printer for the duration of exec().
-    connect(&dialog, &QPrintPreviewDialog::paintRequested,
-            currentTab(), &QWebEngineView::print);
+    // The engine view's print runs asynchronously while the preview
+    // dialog owns the printer — a mid-print close used to leave the
+    // engine painting into a dead printer (reproduced SIGSEGV).  Track
+    // in-flight jobs and drain them before the dialog can unwind.
+    int printsInFlight = 0;
+    connect(&dialog, &QPrintPreviewDialog::paintRequested, &dialog,
+            [view, &printsInFlight](QPrinter *printer) {
+        if (!view)
+            return;
+        ++printsInFlight;
+        view->print(printer);
+    });
+    connect(view, &WebView::printFinished, &dialog,
+            [&printsInFlight](bool) {
+        if (printsInFlight > 0)
+            --printsInFlight;
+    });
     dialog.exec();
+    // exec() can return while a job is still queued inside the engine;
+    // the dialog's printer must outlive the last printFinished.
+    while (printsInFlight > 0 && view) {
+        QEventLoop drain;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        connect(&timeout, &QTimer::timeout,
+                &drain, &QEventLoop::quit);
+        connect(view, &WebView::printFinished,
+                &drain, &QEventLoop::quit);
+        timeout.start(15000);
+        drain.exec();
+        if (!timeout.isActive())
+            break;
+    }
 }
 
 void BrowserMainWindow::filePrint()
 {
     if (!currentTab())
         return;
-    printRequested(currentTab()->page());
+    printRequested(currentTab());
 }
 
-void BrowserMainWindow::printRequested(QWebEnginePage *page)
+void BrowserMainWindow::printRequested(WebView *view)
 {
-    if (!page)
-        return;
-    QWebEngineView *view = QWebEngineView::forPage(page);
     if (!view)
         return;
-    // QWebEngineView::print is asynchronous — the printer must stay
-    // alive until printFinished fires.
+    // PDF02: a tab showing the shell document view prints through
+    // the pdf raster path — engine printing has nothing to paint
+    // (the page underneath holds the previous document).
+    if (PdfView *pdfView = view->pdfView()) {
+        if (pdfView->isReady()) {
+            pdfView->printDocument();
+            return;
+        }
+    }
+    // Engine printing is asynchronous — the printer must stay alive
+    // until printFinished fires. The guard is a child of the view, so
+    // the printer is also freed if the view is destroyed mid-print
+    // (the connection alone would leak it).
     QPrinter *printer = new QPrinter(QPrinter::HighResolution);
     QPrintDialog dialog(printer, this);
     dialog.setWindowTitle(tr("Print Document"));
@@ -1579,42 +2188,45 @@ void BrowserMainWindow::printRequested(QWebEnginePage *page)
         delete printer;
         return;
     }
-    connect(view, &QWebEngineView::printFinished, view,
-            [printer](bool) { delete printer; });
-    view->print(printer);
-}
-
-void BrowserMainWindow::privateBrowsing()
-{
-    if (!BrowserApplication::isPrivate()) {
-        QString title = tr("Are you sure you want to turn on private browsing?");
-        QString text1 = tr("When private browsing is turned on, some actions concerning your privacy will be disabled:");
-
-        QStringList actions;
-        actions.append(tr("Webpages are not added to the history."));
-        actions.append(tr("Items are automatically removed from the Downloads window."));
-        actions.append(tr("New cookies are not stored, current cookies can't be accessed."));
-        actions.append(tr("Site icons won't be stored."));
-        actions.append(tr("Session won't be saved."));
-        actions.append(tr("Searches are not added to the pop-up menu in the search box."));
-        actions.append(tr("No new network cache is written to disk."));
-
-        QString text2 = tr("Until you close the window, you can still click the Back and Forward "
-                           "buttons to return to the webpages you have opened.");
-
-        QString message = QString(QLatin1String("<b>%1</b><p>%2</p><ul><li>%3</li></ul><p>%4</p>"))
-                          .arg(title, text1, actions.join(QLatin1String("</li><li>")), text2);
-
-        QMessageBox::StandardButton button = QMessageBox::question(this, tr("Private Browsing"), message,
-                                                                   QMessageBox::Ok | QMessageBox::Cancel,
-                                                                   QMessageBox::Ok);
-        if (button == QMessageBox::Ok)
-            BrowserApplication::setPrivate(true);
-        else
-            m_filePrivateBrowsingAction->setChecked(false);
+    // CRASH02: an accepted dialog can still describe an unprintable
+    // target — on a CUPS host with zero destinations Qt leaves a
+    // file-format printer pointed at a *directory* (the user's home
+    // dir), and the engine's print path dies trying to paint into it
+    // ("QPainter::begin(): Returned false" then a silent exit).  Fail
+    // visibly instead of handing the engine a dead printer.
+    QString refuseReason;
+    if (!printer->isValid()) {
+        refuseReason = tr("The selected printer is not valid.");
     } else {
-        BrowserApplication::setPrivate(false);
+        const bool fileTarget =
+            printer->outputFormat() != QPrinter::NativeFormat
+            || printer->printerName().isEmpty();
+        if (fileTarget) {
+            const QFileInfo outFile(printer->outputFileName());
+            const QFileInfo outDir(outFile.dir().absolutePath());
+            if (printer->outputFileName().isEmpty() || outFile.isDir()
+                    || (outFile.exists() && !outFile.isWritable())
+                    || (!outFile.exists() && !outDir.isWritable()))
+                refuseReason =
+                    tr("The output file '%1' cannot be written.")
+                        .arg(printer->outputFileName());
+        } else if (QPrinterInfo::printerInfo(printer->printerName())
+                       .isNull()) {
+            refuseReason = tr("The selected printer is not available.");
+        }
     }
+    if (!refuseReason.isEmpty()) {
+        QMessageBox::warning(this, tr("Print Document"),
+                             tr("Cannot print: %1").arg(refuseReason));
+        delete printer;
+        return;
+    }
+    QObject *printerGuard = new QObject(view);
+    connect(printerGuard, &QObject::destroyed,
+            [printer] { delete printer; });
+    connect(view, &WebView::printFinished, printerGuard,
+            [printerGuard](bool) { printerGuard->deleteLater(); });
+    view->print(printer);
 }
 
 void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)
@@ -1624,7 +2236,9 @@ void BrowserMainWindow::zoomTextOnlyChanged(bool textOnly)
 
 void BrowserMainWindow::privacyChanged(bool isPrivate)
 {
-    m_filePrivateBrowsingAction->setChecked(isPrivate);
+    // PTAB01: private browsing is per-tab now — the global flag still
+    // exists internally (full-private windows, tests), and leaving it
+    // drops the off-the-record per-tab state kept here.
     if (!isPrivate)
         tabWidget()->clear();
 }
@@ -1639,7 +2253,10 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    if (m_tabWidget->count() > 1) {
+    // CONT06: count() only sees the active container level — tabs in
+    // filtered levels still die with the window, so they must count.
+    const int openTabs = m_tabWidget->totalTabCount();
+    if (openTabs > 1) {
         QSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         bool confirm = settings.value(QLatin1String("confirmClosingMultipleTabs"), true).toBool();
@@ -1647,7 +2264,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
             QApplication::alert(this);
             int ret = QMessageBox::warning(this, QString(),
                                            tr("Are you sure you want to close the window?"
-                                              "  There are %1 tabs open").arg(m_tabWidget->count()),
+                                              "  There are %1 tabs open").arg(openTabs),
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
             if (ret == QMessageBox::No) {
@@ -1745,9 +2362,9 @@ void BrowserMainWindow::viewPageSource()
 
     QString title = currentTab()->title();
     QUrl url = currentTab()->url();
-    // Qt6: QWebEnginePage::toHtml answers asynchronously — the viewer
-    // opens once the serialized DOM arrives from the render process.
-    currentTab()->page()->toHtml([title, url](const QString &markup) {
+    // toHtml answers asynchronously — the viewer opens once the
+    // serialized DOM arrives from the render process.
+    currentTab()->enginePage()->toHtml([title, url](const QString &markup) {
         SourceViewer *viewer = new SourceViewer(markup, title, url);
         viewer->setAttribute(Qt::WA_DeleteOnClose);
         viewer->show();
@@ -1764,9 +2381,20 @@ void BrowserMainWindow::goHome()
 
 void BrowserMainWindow::webSearch()
 {
+    // TOR03/SRCH08: a hidden search box has nothing to focus — the
+    // shortcut falls back to the omnibox, which runs the same
+    // engines.
+    if (m_toolbarSearch->isHidden()) {
+        if (QLineEdit *bar = m_tabWidget->currentLocationBar()) {
+            bar->selectAll();
+            bar->setFocus();
+        }
+        return;
+    }
     // SRCH04: in button mode there is no field to focus — the
     // shortcut opens the engines menu, which leads with a "Search..."
-    // prompt.
+    // prompt.  applySearchBoxVisibility() no longer arms it, but the
+    // ToolbarSearch API still supports it, so keep the path live.
     if (m_toolbarSearch->isButtonMode()) {
         m_toolbarSearch->showEnginesMenu();
         return;
@@ -1778,7 +2406,20 @@ void BrowserMainWindow::webSearch()
 void BrowserMainWindow::clearPrivateData()
 {
     ClearPrivateData dialog;
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted) {
+        // TABS05: the undo-close stacks hold urls, titles and history
+        // blobs — a private-data wipe drops them in every window, the
+        // same trace removal the dialog performs on the stores.
+        if (BrowserApplication *application =
+                BrowserApplication::instance()) {
+            const QList<BrowserMainWindow*> windows =
+                application->mainWindows();
+            for (BrowserMainWindow *window : windows)
+                window->tabWidget()->clearRecentlyClosedTabs();
+        } else {
+            m_tabWidget->clearRecentlyClosedTabs();
+        }
+    }
 }
 
 void BrowserMainWindow::swapFocus()
@@ -1880,16 +2521,16 @@ void BrowserMainWindow::aboutToShowBackMenu()
     m_historyBackMenu->clear();
     if (!currentTab())
         return;
-    QWebEngineHistory *history = currentTab()->history();
-    int historyCount = history->count();
-    const QList<QWebEngineHistoryItem> backItems = history->backItems(historyCount);
+    Engine::Page *page = currentTab()->enginePage();
+    int historyCount = page->historyCount();
+    const QList<Engine::HistoryEntry> backItems = page->backItems(historyCount);
     for (int i = backItems.count() - 1; i >= 0; --i) {
-        const QWebEngineHistoryItem item = backItems.at(i);
+        const Engine::HistoryEntry item = backItems.at(i);
         QAction *action = new QAction(this);
         action->setData(-1 * (historyCount - i - 1));
-        QIcon icon = BrowserApplication::icon(item.url());
+        QIcon icon = BrowserApplication::icon(item.url);
         action->setIcon(icon);
-        action->setText(SafeText::menu(item.title()));
+        action->setText(SafeText::menu(item.title));
         m_historyBackMenu->addAction(action);
     }
 }
@@ -1899,16 +2540,16 @@ void BrowserMainWindow::aboutToShowForwardMenu()
     m_historyForwardMenu->clear();
     if (!currentTab())
         return;
-    QWebEngineHistory *history = currentTab()->history();
-    int historyCount = history->count();
-    const QList<QWebEngineHistoryItem> forwardItems = history->forwardItems(historyCount);
+    Engine::Page *page = currentTab()->enginePage();
+    int historyCount = page->historyCount();
+    const QList<Engine::HistoryEntry> forwardItems = page->forwardItems(historyCount);
     for (int i = 0; i < forwardItems.count(); ++i) {
-        const QWebEngineHistoryItem item = forwardItems.at(i);
+        const Engine::HistoryEntry item = forwardItems.at(i);
         QAction *action = new QAction(this);
         action->setData(historyCount - i);
-        QIcon icon = BrowserApplication::icon(item.url());
+        QIcon icon = BrowserApplication::icon(item.url);
         action->setIcon(icon);
-        action->setText(SafeText::menu(item.title()));
+        action->setText(SafeText::menu(item.title));
         m_historyForwardMenu->addAction(action);
     }
 }
@@ -1919,16 +2560,13 @@ void BrowserMainWindow::aboutToShowWindowMenu()
     m_windowMenu->addAction(m_tabWidget->nextTabAction());
     m_windowMenu->addAction(m_tabWidget->previousTabAction());
     m_windowMenu->addAction(m_windowTabSearchAction);
-    m_windowMenu->addSeparator();
-    QAction *downloadManagerAction = m_windowMenu->addAction(tr("Downloads"), QKeySequence(tr("Ctrl+Y", "Download Manager")), this, &BrowserMainWindow::downloadManager);
-
-    downloadManagerAction->setIcon(AroraIcon::get(QLatin1String("emblem-downloads")));
-
-    m_windowMenu->addSeparator();
     BrowserApplication *application = BrowserApplication::instance();
     if (!application)
         return;
     QList<BrowserMainWindow*> windows = application->mainWindows();
+    if (windows.isEmpty())
+        return;
+    m_windowMenu->addSeparator();
     for (int i = 0; i < windows.count(); ++i) {
         BrowserMainWindow *window = windows.at(i);
         QAction *action = m_windowMenu->addAction(SafeText::menu(window->windowTitle()), this, &BrowserMainWindow::showWindow);
@@ -1951,7 +2589,9 @@ void BrowserMainWindow::showWindow()
             QList<BrowserMainWindow*> windows = application->mainWindows();
             windows.at(offset)->activateWindow();
             windows.at(offset)->raise();
-            windows.at(offset)->currentTab()->setFocus();
+            // A widget tab (Preferences, History) has no view to focus.
+            if (WebView *view = windows.at(offset)->currentTab())
+                view->setFocus();
         }
     }
 }
@@ -1959,15 +2599,17 @@ void BrowserMainWindow::showWindow()
 void BrowserMainWindow::openActionUrl(QAction *action)
 {
     int offset = action->data().toInt();
-    QWebEngineHistory *history = currentTab()->history();
+    if (!currentTab())
+        return;
+    Engine::Page *page = currentTab()->enginePage();
     if (offset < 0) {
-        const QList<QWebEngineHistoryItem> items = history->backItems(-1 * offset);
+        const QList<Engine::HistoryEntry> items = page->backItems(-1 * offset);
         if (!items.isEmpty())
-            history->goToItem(items.first()); // back
+            page->goToHistoryEntry(items.first()); // back
     } else if (offset > 0) {
-        const QList<QWebEngineHistoryItem> items = history->forwardItems(history->count() - offset + 1);
+        const QList<Engine::HistoryEntry> items = page->forwardItems(page->historyCount() - offset + 1);
         if (!items.isEmpty())
-            history->goToItem(items.back()); // forward
+            page->goToHistoryEntry(items.back()); // forward
     }
 }
 

@@ -37,6 +37,7 @@ pass() { echo "check-bundle: PASS: $*"; }
 echo "check-bundle: bundling into $BUNDLE"
 "$SRCROOT/BuildProcess/bundle-linux.sh" "$BUNDLE"
 [ -x "$BUNDLE/arora" ] || fail "no launcher in $BUNDLE"
+[ -x "$BUNDLE/arora-sandbox" ] || fail "no sandbox launcher in $BUNDLE"
 [ -x "$BUNDLE/bin/arora" ] || fail "no binary in $BUNDLE/bin"
 [ -f "$BUNDLE/bin/qt.conf" ] || fail "no qt.conf"
 
@@ -64,6 +65,16 @@ out=$(sandbox QT_QPA_PLATFORM=offscreen \
 echo "$out" | grep -q loadFinished || fail "offscreen: no loadFinished"
 pass "offscreen: --quit-after-load exit 0"
 
+# The bundled arora-sandbox launcher must chain through the wrapper (which
+# sets LD_LIBRARY_PATH).  ARORA_NO_SANDBOX exercises that chain without
+# nesting a second bwrap inside this script's own.
+out=$(sandbox QT_QPA_PLATFORM=offscreen ARORA_NO_SANDBOX=1 \
+      "$BUNDLE/arora-sandbox" --sandbox-status 2>&1) \
+    || fail "arora-sandbox run: $out"
+echo "$out" | grep -q "this process sandboxed: no" \
+    || fail "arora-sandbox status: $out"
+pass "arora-sandbox launcher chains through the bundle wrapper"
+
 # -- 3. native Wayland smoke -------------------------------------------------
 mkdir -p "$SCRATCH/xdgrun"
 chmod 700 "$SCRATCH/xdgrun"
@@ -76,8 +87,11 @@ cc -O1 -I"$SCRATCH" -o "$SCRATCH/wayland-compositor" \
     $(pkg-config --cflags --libs wayland-server) \
     || fail "compositor build"
 
-XDG_RUNTIME_DIR="$SCRATCH/xdgrun" "$SCRATCH/wayland-compositor" \
-    > "$SCRATCH/comp.log" 2>&1 &
+# Pin WAYLAND_DISPLAY: the compositor names its socket after it, and an
+# ambient session value (e.g. wayland-0) would otherwise desync it from
+# the fixed "arora-smoke" the client below connects to.
+XDG_RUNTIME_DIR="$SCRATCH/xdgrun" WAYLAND_DISPLAY=arora-smoke \
+    "$SCRATCH/wayland-compositor" > "$SCRATCH/comp.log" 2>&1 &
 COMP_PID=$!
 sleep 0.5
 kill -0 "$COMP_PID" || { cat "$SCRATCH/comp.log"; fail "compositor exited"; }

@@ -37,6 +37,7 @@
 
 #include <acceptlanguagedialog.h>
 #include <adblocknetwork.h>
+#include <browserapplication.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
 #include <privacyrequestinterceptor.h>
@@ -108,6 +109,7 @@ private slots:
 
     void forceDarkMode();
     void chromiumFlags();
+    void secureDnsTorGate();
     void fingerprintNormalization();
 
 private:
@@ -551,10 +553,12 @@ void tst_Privacy::refererRewriteMatrix()
     QCOMPARE(P::rewrittenReferer(P::RefererEngineDefault, srcHttp,
                                  crossSite), full);
 
-    // Trimmed: the source's path/query never leave — cross-site sees
-    // only the *target's* origin, same-site sees only its own origin.
+    // Trimmed: strict-origin — the source's path/query never leave;
+    // every request sees the *source's* bare origin, same-site and
+    // cross-site alike (REFER01 — YouTube-embed-shaped: the iframe to
+    // site-b must name site-a, not site-b itself).
     QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, crossSite),
-             QByteArray("http://site-b.test/"));
+             QByteArray("http://site-a.test/"));
     QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp, sameSite),
              QByteArray("http://site-a.test/"));
 
@@ -584,12 +588,14 @@ void tst_Privacy::refererRewriteMatrix()
 
     // Sibling hosts under one site are same-site; a different
     // registrable base is not (same two-label rule as adblock).
-    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
+    // The boundary is observable at Strict — cross-site loses the
+    // header while same-site keeps the origin.  (Trimmed sends the
+    // source origin either way since REFER01.)
+    QCOMPARE(P::rewrittenReferer(P::RefererStrict, srcHttp,
                                  QUrl("http://cdn.site-a.test/x")),
              QByteArray("http://site-a.test/"));
-    QCOMPARE(P::rewrittenReferer(P::RefererTrimmed, srcHttp,
-                                 QUrl("http://a.co.uk/x")),
-             QByteArray("http://a.co.uk/"));
+    QVERIFY(P::rewrittenReferer(P::RefererStrict, srcHttp,
+                              QUrl("http://a.co.uk/x")).isEmpty());
 
     // The injected referrer-meta mapping — the legs the interceptor
     // cannot rewrite (redirect follow-ups) are covered by the page's
@@ -1413,7 +1419,19 @@ void tst_Privacy::chromiumFlags()
     QVERIFY(flags.contains(QLatin1String("--user-flag=1")));
     QCOMPARE(flags.count(QLatin1String(
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")), 1);
-    QVERIFY(flags.contains(QLatin1String("--enable-features=DnsOverHttps")));
+    // The list switches MERGE: DnsOverHttps (secureDns) and
+    // ParallelDownloading (DLACC02, on by default) ride the same
+    // --enable-features switch rather than shadowing each other.
+    QString enableFeatures;
+    for (const QString &flag : flags) {
+        if (flag.startsWith(QLatin1String("--enable-features=")))
+            enableFeatures = flag;
+    }
+    const QStringList enabled = enableFeatures.mid(
+        QStringLiteral("--enable-features=").size()).split(
+        QLatin1Char(','), Qt::SkipEmptyParts);
+    QVERIFY(enabled.contains(QLatin1String("DnsOverHttps")));
+    QVERIFY(enabled.contains(QLatin1String("ParallelDownloading")));
 
     // Toggles off -> only the unconditional TELEM01 kill-list is
     // appended, user flags stay put, and a second run adds nothing.
@@ -1538,8 +1556,115 @@ void tst_Privacy::chromiumFlags()
     settings.endGroup();
     QSettings().remove(QLatin1String("websettings/middleClickAutoscroll"));
 
+    // DLACC02: a stored "off" leaves ParallelDownloading out of the
+    // merged switch entirely; removing the key restores the
+    // default-on.
+    QSettings().setValue(
+        QLatin1String("downloadmanager/parallelSegments"), false);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("ParallelDownloading")));
+    QSettings().remove(
+        QLatin1String("downloadmanager/parallelSegments"));
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("ParallelDownloading")));
+
+    // CRASH01: the GPU-compositor safe mode — off by default, armed by
+    // the websettings toggle, by ARORA_DISABLE_GPU_COMPOSITING (an
+    // explicit =0 overrides a stored "on"), and auto-engaged — with
+    // the toggle persisted — once browser/gpuCrashCount records an
+    // unclean start (a stored 1 already means two consecutive
+    // crashes: the counter is written by the crashed run's SUCCESSOR,
+    // after applyChromiumFlags already read it).
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+
+    QSettings().setValue(QLatin1String("websettings/disableGpuCompositing"),
+                         true);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+
+    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "0");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+    qputenv("ARORA_DISABLE_GPU_COMPOSITING", "1");
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+    qunsetenv("ARORA_DISABLE_GPU_COMPOSITING");
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+
+    // No recorded crash leaves it off; a recorded one — which only
+    // exists after two consecutive unclean exits — engages the safe
+    // mode and persists the toggle so the settings dialog reflects it.
+    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(!QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                 .contains(QLatin1String("--disable-gpu-compositing")));
+    QSettings().setValue(QLatin1String("browser/gpuCrashCount"), 1);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("--disable-gpu-compositing")));
+    QVERIFY(QSettings().value(
+        QLatin1String("websettings/disableGpuCompositing")).toBool());
+    QSettings().remove(QLatin1String("websettings/disableGpuCompositing"));
+    QSettings().remove(QLatin1String("browser/gpuCrashCount"));
+
     // Leave the privacy group at the shipped defaults for any
     // post-test settings writes elsewhere in the suite.
+    init();
+}
+
+void tst_Privacy::secureDnsTorGate()
+{
+    // SEC20: a tor process resolves names remotely through the managed
+    // SOCKS proxy — local DoH would bypass the tunnel, so the stored
+    // mode is forced off regardless of what normal-window settings
+    // say.  Covers both surfaces that read it: the feature switch in
+    // applyChromiumFlags() and the resolver mode in applySecureDns().
+    QSettings settings;
+    settings.beginGroup(QLatin1String("privacy"));
+    settings.setValue(QLatin1String("secureDnsMode"), 3);
+    settings.setValue(QLatin1String("secureDnsServer"),
+                      QLatin1String("https://127.0.0.1:1/dns-query"));
+    settings.endGroup();
+
+    QCOMPARE(BrowserProfile::effectiveSecureDnsMode(), 3);
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    QVERIFY(QString::fromLocal8Bit(qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"))
+                .contains(QLatin1String("DnsOverHttps")));
+
+    // Gather-then-assert: QVERIFY would early-return with s_torMode
+    // still armed, poisoning every later test in this binary.
+    BrowserApplication::setTorMode(true);
+    const int torMode = BrowserProfile::effectiveSecureDnsMode();
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", QByteArray());
+    BrowserProfile::applyChromiumFlags();
+    const QString torFlags = QString::fromLocal8Bit(
+        qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"));
+    BrowserProfile::applySecureDns();
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(torMode, 0);
+    QVERIFY(!torFlags.contains(QLatin1String("DnsOverHttps")));
+    QCOMPARE(BrowserProfile::effectiveSecureDnsMode(), 3);
+
     init();
 }
 

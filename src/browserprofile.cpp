@@ -20,6 +20,9 @@
 #include "browserprofile.h"
 
 #include "acceptlanguagedialog.h"
+#include "browserapplication.h"
+#include "browserpaths.h"
+#include "fingerprintprotector.h"
 #include "privacyrequestinterceptor.h"
 
 #include <qapplication.h>
@@ -32,7 +35,13 @@
 #include <qregularexpression.h>
 #include <qset.h>
 #include <qsettings.h>
+#include <QHostAddress>
+#include <QRandomGenerator>
+#include <qsslcertificate.h>
+#include <qsslkey.h>
+#include <QTcpServer>
 #include <qurl.h>
+#include <qwebengineclientcertificatestore.h>
 #include <qwebengineclienthints.h>
 #include <qwebengineglobalsettings.h>
 #include <qwebengineprofile.h>
@@ -47,6 +56,11 @@
 #include <ctime>
 
 namespace BrowserProfile {
+
+// DEVT03: populated by applyChromiumFlags() when it arms the
+// remote-debugging endpoint — the BiDi panel's connect parameters.
+static quint16 s_bidiDebugPort = 0;
+static QString s_bidiDebugOrigin;
 
 QWebEngineProfile *normalProfile()
 {
@@ -90,6 +104,11 @@ QWebEngineProfile *torProfile()
         s_torProfile = new QWebEngineProfile(qApp);
         s_torProfile->setHttpCacheType(QWebEngineProfile::MemoryHttpCache);
     }
+    return s_torProfile;
+}
+
+QWebEngineProfile *torProfileIfCreated()
+{
     return s_torProfile;
 }
 
@@ -365,6 +384,40 @@ void installReferrerPolicy(QWebEngineProfile *profile)
     scripts->insert(script);
 }
 
+// SAFE06: anti-fingerprinting injection.  Unlike the referrer meta
+// this has to live in the page's own world — an isolated world's
+// prototypes are invisible to page script, so only a MainWorld
+// DocumentCreation script can present spoofed globals before any
+// site code runs.
+void installFingerprintProtection(QWebEngineProfile *profile)
+{
+    const QString name = QLatin1String("arora:fingerprint");
+    QWebEngineScriptCollection *scripts = profile->scripts();
+    const QList<QWebEngineScript> installed = scripts->toList();
+    for (const QWebEngineScript &script : installed) {
+        if (script.name() == name)
+            scripts->remove(script);
+    }
+
+    // Opt-in per the privacy toggle; the tor profile gets the
+    // countermeasures unconditionally — fingerprint resistance is the
+    // point of that window, and every tor window should look alike.
+    FingerprintProtector *protector = FingerprintProtector::instance();
+    if (!protector->isEnabled() && profile != s_torProfile)
+        return;
+
+    const QString source = protector->scriptSource();
+    if (source.isEmpty())
+        return;
+    QWebEngineScript script;
+    script.setName(name);
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setRunsOnSubFrames(true);
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setSourceCode(source);
+    scripts->insert(script);
+}
+
 void applySettings(QWebEngineProfile *profile)
 {
     QWebEngineSettings *engineSettings = profile->settings();
@@ -403,7 +456,13 @@ void applySettings(QWebEngineProfile *profile)
                                  settings.value(QLatin1String("enableImages"), true).toBool());
     engineSettings->setAttribute(QWebEngineSettings::LocalStorageEnabled,
                                  settings.value(QLatin1String("enableLocalStorage"), true).toBool());
-    engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
+    // TELEM02: DNS prefetch resolves every hostname a rendered page
+    // merely links to — a stream of browsing hints to the resolver the
+    // user never asked for (and in proxied contexts it leaks the name
+    // outside the tunnel).  Opt-in only; tor pins it off
+    // unconditionally in prepareProfile regardless of this setting.
+    engineSettings->setAttribute(QWebEngineSettings::DnsPrefetchEnabled,
+        QSettings().value(QLatin1String("privacy/dnsPrefetch"), false).toBool());
 
     // POL03: Chromium's auto-dark for web contents — pages that ship
     // their own dark scheme (prefers-color-scheme: dark) use it, and
@@ -465,6 +524,15 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setAttribute(QWebEngineSettings::HyperlinkAuditingEnabled,
         !QSettings().value(QLatin1String("privacy/blockPings"), true).toBool());
 
+    // PDF01: Chromium's built-in PDFium viewer, bound to the
+    // privacy/pdfViewer toggle (default on) — PDFium parses inside
+    // the sandboxed renderer, and the privacy/pdfSanitize rustcore
+    // pass rewrites what the viewer gets to see on .pdf navigations.
+    // Applied per profile, so normal, private, tor and container
+    // profiles all follow the toggle.
+    engineSettings->setAttribute(QWebEngineSettings::PdfViewerEnabled,
+        QSettings().value(QLatin1String("privacy/pdfViewer"), true).toBool());
+
     // PRIV01: refresh the request interceptor's IO-thread snapshot
     // (https-first upgrade, referrer trim) alongside the profile
     // settings — the privacy group lives outside websettings/network.
@@ -497,6 +565,10 @@ void applySettings(QWebEngineProfile *profile)
     // REF01: page-level referrer policy for the legs the request
     // interceptor cannot write (redirect follow-ups).
     installReferrerPolicy(profile);
+
+    // SAFE06: canvas/WebGL/navigator spoofing — installed or removed
+    // with the privacy toggle (always on for tor).
+    installFingerprintProtection(profile);
 
     // The app's network cache preference drives both the profile's
     // Chromium cache and (through NetworkAccessManager::loadSettings)
@@ -762,11 +834,22 @@ static QString secureDnsServerSetting()
     return QLatin1String("https://cloudflare-dns.com/dns-query");
 }
 
+int effectiveSecureDnsMode()
+{
+    // SEC20: a tor process resolves names remotely through the managed
+    // SOCKS proxy — a local DoH resolver would carry the whole lookup
+    // stream around the tunnel.  The stored mode is therefore forced
+    // off for the entire process; it still applies to normal windows.
+    if (BrowserApplication::isTorMode())
+        return 0;
+    return secureDnsModeSetting();
+}
+
 void applySecureDns()
 {
     using QWebEngineGlobalSettings::SecureDnsMode;
     QWebEngineGlobalSettings::DnsMode dnsMode;
-    switch (secureDnsModeSetting()) {
+    switch (effectiveSecureDnsMode()) {
     case 2:
         dnsMode.secureMode = SecureDnsMode::SecureWithFallback;
         dnsMode.serverTemplates << secureDnsServerSetting();
@@ -798,7 +881,7 @@ void applyChromiumFlags()
     const bool strictTlsCiphers =
         settings.value(QLatin1String("tlsStrictCiphers"), true).toBool();
     settings.endGroup();
-    const bool secureDns = secureDnsModeSetting() != 0;
+    const bool secureDns = effectiveSecureDnsMode() != 0;
 
     // POL03: middle-click autoscroll is Chromium's own implementation
     // (the Blink MiddleClickAutoscroll feature) — it already
@@ -863,6 +946,57 @@ void applyChromiumFlags()
             == QLatin1String("offscreen"))
         addFlag(QLatin1String("--disable-gpu"));
 
+    // CRASH01: Qt 6.12's WebEngine traps (SIGTRAP) on a CHECK in the
+    // in-process GPU thread (Chrome_InProcGp, fixed offset 0x76e6481)
+    // when the viz display compositor binds — reproduced on
+    // Intel/Wayland during normal browsing and under the offscreen
+    // QPA; the release-build CHECK logs no text.  Flag bisect ruled
+    // out Vulkan (--disable-vulkan / --disable-features=Vulkan),
+    // the GPU sandbox (--disable-gpu-sandbox), the process model
+    // (--in-process-gpu), the Ozone backend and the ANGLE/GL
+    // selection — only --disable-gpu-compositing (and the broader
+    // --disable-gpu) avoids the trap.  It moves the display
+    // compositor to software while the GPU process — and therefore
+    // WebGL/canvas acceleration — stays alive, which is why it is
+    // the surgical pick over --disable-gpu.  Three arming paths:
+    // the websettings toggle, ARORA_DISABLE_GPU_COMPOSITING (an
+    // explicit =0 even overrides a stored "on", for a one-shot
+    // verification run), and the crash-loop counter — two
+    // consecutive unclean starts auto-engage it and persist the
+    // toggle so the settings dialog shows the engaged state.  The
+    // counter is written by markSessionStart() AFTER this function
+    // ran, so a stored 1 already means the previous run both counted
+    // an earlier crash and then died uncleanly itself — i.e. two
+    // consecutive crashes, which is the arming threshold.
+    bool disableGpuCompositing;
+    if (qEnvironmentVariableIsSet("ARORA_DISABLE_GPU_COMPOSITING")) {
+        disableGpuCompositing =
+            qEnvironmentVariableIntValue("ARORA_DISABLE_GPU_COMPOSITING")
+                != 0;
+    } else {
+        if (settings.value(QLatin1String("browser/gpuCrashCount"), 0)
+                    .toInt() >= 1
+            && !settings.value(
+                QLatin1String("websettings/disableGpuCompositing"),
+                false).toBool()) {
+            settings.setValue(
+                QLatin1String("websettings/disableGpuCompositing"), true);
+        }
+        disableGpuCompositing = settings.value(
+            QLatin1String("websettings/disableGpuCompositing"),
+            false).toBool();
+    }
+    if (disableGpuCompositing)
+        addFlag(QLatin1String("--disable-gpu-compositing"));
+
+    // PREFUI04: Preferences > Performance can opt GPU compositing out
+    // entirely — the flag latches at startup, so the page's restart
+    // note is honest (same lifecycle as parallelSegments below).
+    if (!settings.value(
+            QLatin1String("performance/hardwareAcceleration"),
+            true).toBool())
+        addFlag(QLatin1String("--disable-gpu"));
+
     if (webrtcProtection) {
         // Strongest WebRTC IP policy Chromium exposes: every ICE
         // transport goes through the configured proxy (SOCKS5 cannot
@@ -888,6 +1022,19 @@ void applyChromiumFlags()
         addListEntry(QLatin1String("--enable-blink-features"),
                      QLatin1String("MiddleClickAutoscroll"));
     }
+    // DLACC02: Chromium's ParallelDownloading feature splits a
+    // range-capable download into ~3 parallel byte-range requests —
+    // engine-native acceleration for the built-in download engine
+    // with no app code path.  Tor windows take the same flag: the
+    // engine path stays proxied either way, so no special-casing.
+    // Latched at engine init — a settings change applies at the next
+    // launch (the checkbox text says so).
+    if (settings.value(
+            QLatin1String("downloadmanager/parallelSegments"),
+            true).toBool()) {
+        addListEntry(QLatin1String("--enable-features"),
+                     QLatin1String("ParallelDownloading"));
+    }
     if (strictTlsCiphers) {
         // TLS01: strip the weak suites from the ClientHello — RSA key
         // exchange has no forward secrecy and CBC is weak — leaving
@@ -907,7 +1054,84 @@ void applyChromiumFlags()
             flags.append(prefix
                 + QLatin1String("0x009c,0x009d,0x002f,0x0035,0xc013,0xc014"));
     }
+    // DEVT03: arm the BiDi devtools channel.  The remote-debugging
+    // server binds loopback only; the per-session Origin token in
+    // --remote-allow-origins rejects every websocket handshake that
+    // presents a foreign Origin (verified: foreign origins get 403,
+    // the token origin 101) — the web-content path that could
+    // otherwise drive the channel cross-origin.  A handshake with NO
+    // Origin header is accepted like Chrome's own tooling contract —
+    // only a same-uid local process can omit it, and that process
+    // could read the token off disk anyway.  The browser target's ws
+    // path additionally carries an unguessable GUID.  Gated off entirely in a tor process — its
+    // spec forbids a debug channel — and by devtools/bidiBackend=0.
+    // An operator-set QTWEBENGINE_REMOTE_DEBUGGING is left untouched.
+    const bool bidiBackend = settings.value(
+        QLatin1String("devtools/bidiBackend"), true).toBool();
+    if (bidiBackend && !BrowserApplication::isTorMode()
+        && !qEnvironmentVariableIsSet("QTWEBENGINE_REMOTE_DEBUGGING")) {
+        QTcpServer probe;
+        if (probe.listen(QHostAddress::LocalHost, 0)) {
+            s_bidiDebugPort = probe.serverPort();
+            probe.close();
+            s_bidiDebugOrigin = QStringLiteral("http://bidi-")
+                + QString::number(QRandomGenerator::system()->generate64(), 16)
+                + QString::number(QRandomGenerator::system()->generate64(), 16)
+                + QStringLiteral(".invalid");
+            qputenv("QTWEBENGINE_REMOTE_DEBUGGING",
+                    QByteArray::number(s_bidiDebugPort));
+            addFlag(QStringLiteral("--remote-allow-origins=")
+                    + s_bidiDebugOrigin);
+        }
+    }
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.join(QLatin1Char(' ')).toLocal8Bit());
+}
+
+// CRASH01: see the header comment — a fatal GPU CHECK never unwinds,
+// so the sentinel surviving to the next start IS the crash signal.
+// The tor window gets its own sentinel: it is a second committed
+// browser process on the same settings store, and sharing one key
+// would read the main window's healthy run as a tor crash.
+void markSessionStart()
+{
+    QSettings settings;
+    const QLatin1String sentinel = BrowserApplication::isTorMode()
+        ? QLatin1String("browser/sessionActiveTor")
+        : QLatin1String("browser/sessionActive");
+    if (settings.value(sentinel, false).toBool()) {
+        settings.setValue(QLatin1String("browser/gpuCrashCount"),
+            settings.value(QLatin1String("browser/gpuCrashCount"), 0)
+                .toInt() + 1);
+    }
+    settings.setValue(sentinel, true);
+    // The crash this detects never lets a destructor flush — force the
+    // sentinel onto disk before the engine window opens.
+    settings.sync();
+}
+
+void markSessionCleanExit()
+{
+    QSettings settings;
+    // Only this process's own sentinel — a clean tor exit must not
+    // clear the still-running main window's marker.  The shared
+    // counter does reset on any clean run: one healthy session proves
+    // the current configuration works.
+    const QLatin1String sentinel = BrowserApplication::isTorMode()
+        ? QLatin1String("browser/sessionActiveTor")
+        : QLatin1String("browser/sessionActive");
+    settings.setValue(sentinel, false);
+    settings.setValue(QLatin1String("browser/gpuCrashCount"), 0);
+    settings.sync();
+}
+
+quint16 bidiDebugPort()
+{
+    return s_bidiDebugPort;
+}
+
+QString bidiDebugOrigin()
+{
+    return s_bidiDebugOrigin;
 }
 
 void applyFingerprintEnvironment()
@@ -944,6 +1168,60 @@ void applyFingerprintEnvironment()
 #else
     tzset();
 #endif
+}
+
+bool addClientCertificateFile(QWebEngineProfile *profile,
+                              const QString &path,
+                              const QByteArray &passPhrase)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QSslKey key;
+    QSslCertificate cert;
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QLatin1String("p12") || suffix == QLatin1String("pfx")) {
+        if (!QSslCertificate::importPkcs12(&file, &key, &cert, nullptr,
+                                         passPhrase)
+            || cert.isNull() || key.isNull())
+            return false;
+    } else {
+        const QByteArray pem = file.readAll();
+        for (QSsl::KeyAlgorithm algorithm : {
+                QSsl::Rsa, QSsl::Ec, QSsl::Dsa, QSsl::Opaque }) {
+            const QSslKey candidate(pem, algorithm, QSsl::Pem,
+                                    QSsl::PrivateKey, passPhrase);
+            if (!candidate.isNull()) {
+                key = candidate;
+                break;
+            }
+        }
+        const QList<QSslCertificate> certs =
+            QSslCertificate::fromData(pem, QSsl::Pem);
+        // Convention: the leaf is the first CERTIFICATE block — the
+        // layout openssl's pkcs12->pem export produces.
+        if (key.isNull() || certs.isEmpty())
+            return false;
+        cert = certs.first();
+    }
+    profile->clientCertificateStore()->add(cert, key);
+    return true;
+}
+
+void loadClientCertificates(QWebEngineProfile *profile)
+{
+    const QDir dir(BrowserPaths::dataFilePath(
+            QLatin1String("clientcertificates")));
+    const QFileInfoList files = dir.entryInfoList(
+            QStringList() << QStringLiteral("*.pem")
+                          << QStringLiteral("*.p12")
+                          << QStringLiteral("*.pfx"),
+            QDir::Files | QDir::Readable, QDir::Name);
+    for (const QFileInfo &info : files) {
+        if (!addClientCertificateFile(profile, info.absoluteFilePath()))
+            qWarning() << "clientcertificates: skipping unusable file"
+                       << info.fileName();
+    }
 }
 
 } // namespace BrowserProfile

@@ -137,11 +137,16 @@ void AcceptLanguageDialog::accept()
     QDialog::accept();
 }
 
-void AcceptLanguageDialog::load()
+QStringList AcceptLanguageDialog::storedAcceptLanguages()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("network"));
-    m_model.setStringList(settings.value(QLatin1String("acceptLanguages"), defaultAcceptList()).toStringList());
+    return settings.value(QLatin1String("acceptLanguages"), defaultAcceptList()).toStringList();
+}
+
+void AcceptLanguageDialog::load()
+{
+    m_model.setStringList(storedAcceptLanguages());
 }
 
 void AcceptLanguageDialog::save()

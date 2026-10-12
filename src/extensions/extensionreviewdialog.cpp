@@ -19,13 +19,14 @@
 
 #include "extensionreviewdialog.h"
 
+#include <qboxlayout.h>
+#include <qcheckbox.h>
 #include <qdialogbuttonbox.h>
 #include <qdir.h>
 #include <qfileinfo.h>
 #include <qlabel.h>
 #include <qlistwidget.h>
 #include <qpushbutton.h>
-#include <qboxlayout.h>
 
 // Everything fed from manifest.json is attacker-influenced text —
 // every label that shows it is forced Qt::PlainText so markup-looking
@@ -112,10 +113,10 @@ ExtensionReviewDialog::ExtensionReviewDialog(
 
     // Anything but manifest_version 3 is rejected by Chromium, so the
     // approve button stays disabled — the dialog becomes read-only.
-    const bool fatal = manifest.valid && manifest.manifestVersion != 3;
+    m_fatal = manifest.valid && manifest.manifestVersion != 3;
     if (!manifest.error.isEmpty())
         new QListWidgetItem(manifest.error, m_warningsList);
-    if (fatal)
+    if (m_fatal)
         new QListWidgetItem(
             tr("Qt WebEngine will reject this package — installation "
                "cannot proceed."),
@@ -131,17 +132,6 @@ ExtensionReviewDialog::ExtensionReviewDialog(
             tr("Declares APIs with only partial Qt WebEngine support: %1")
                 .arg(manifest.unverified.join(QLatin1String(", "))),
             m_warningsList);
-    // EXT06: the deny-by-default set (populated by rustcore's
-    // rc_ext_manifest_check — empty on no-Rust builds and on manifests
-    // that declare none of them).  EXT05 turns this warning into
-    // per-permission consent checkboxes; surfacing it now keeps the
-    // classification visible.
-    if (!manifest.dangerous.isEmpty())
-        new QListWidgetItem(
-            tr("Declares high-risk access — review carefully before "
-               "consenting: %1")
-                .arg(manifest.dangerous.join(QLatin1String(", "))),
-            m_warningsList);
     if (!manifest.packageNote.isEmpty())
         new QListWidgetItem(manifest.packageNote, m_warningsList);
     // Qt WebEngine surfaces actionPopupUrl but has no toolbar to host
@@ -155,12 +145,43 @@ ExtensionReviewDialog::ExtensionReviewDialog(
     if (m_warningsList->count())
         layout->addWidget(m_warningsList);
 
+    // EXT05: the deny-by-default set becomes per-permission consent —
+    // every dangerous entry must be ticked individually before the
+    // approve button unlocks; anything left unchecked refuses the
+    // install outright (deny-by-default, no partial installs).
+    if (!manifest.dangerous.isEmpty()) {
+        QLabel *dangerHint = plainLabel(
+            tr("This extension requests high-risk access. Each item "
+               "must be allowed explicitly — leaving one unticked "
+               "refuses the install:"), this);
+        dangerHint->setObjectName(QLatin1String("dangerousHint"));
+        layout->addWidget(dangerHint);
+        for (const QString &entry : manifest.dangerous) {
+            const bool hostPattern =
+                entry.contains(QLatin1String("://"))
+                || entry.startsWith(QLatin1Char('<'));
+            QCheckBox *box = new QCheckBox(
+                tr("Allow: %1").arg(hostPattern
+                        ? describeHostPermission(entry)
+                        : describePermission(entry)),
+                this);
+            box->setObjectName(QLatin1String("dangerousConsent"));
+            box->setToolTip(entry);
+            box->setChecked(false);
+            connect(box, &QCheckBox::toggled, this, [this]() {
+                m_approveButton->setEnabled(approveAllowed());
+            });
+            m_dangerousBoxes.append(box);
+            layout->addWidget(box);
+        }
+    }
+
     m_buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
     m_approveButton = m_buttonBox->addButton(
         mode == Install ? tr("Install") : tr("Load"),
         QDialogButtonBox::AcceptRole);
     m_approveButton->setObjectName(QLatin1String("approveButton"));
-    m_approveButton->setEnabled(!fatal);
+    m_approveButton->setEnabled(approveAllowed());
     // Consent must be deliberate — Cancel is the default button.
     m_buttonBox->button(QDialogButtonBox::Cancel)->setDefault(true);
     connect(m_buttonBox, &QDialogButtonBox::accepted,
@@ -170,13 +191,29 @@ ExtensionReviewDialog::ExtensionReviewDialog(
     layout->addWidget(m_buttonBox);
 }
 
+bool ExtensionReviewDialog::approveAllowed() const
+{
+    if (m_fatal)
+        return false;
+    for (const QCheckBox *box : m_dangerousBoxes) {
+        if (!box->isChecked())
+            return false;
+    }
+    return true;
+}
+
 bool ExtensionReviewDialog::review(const ExtensionManager::Manifest &manifest,
                                    const QString &sourcePath,
                                    Mode mode,
                                    QWidget *parent)
 {
     ExtensionReviewDialog dialog(manifest, sourcePath, mode, parent);
-    return dialog.exec() == QDialog::Accepted;
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    // EXT05: approval is the consent the manager's gate consumes —
+    // the very next load/install of this exact path is authorized.
+    ExtensionManager::instance()->grantConsent(sourcePath);
+    return true;
 }
 
 QString ExtensionReviewDialog::describePermission(const QString &permission)

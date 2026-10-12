@@ -37,6 +37,8 @@
 #include <qwebengineview.h>
 
 #include "aboutdialog.h"
+#include "addressdialog.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "clearprivatedata.h"
@@ -59,6 +61,7 @@
 #include "opensearchengineaction.h"
 #include "opensearchmanager.h"
 #include "opensearchengine.h"
+#include "securestore.h"
 #include "settings.h"
 #include "toolbarsearch.h"
 #include "edittableview.h"
@@ -134,6 +137,8 @@ private slots:
     void openSearchDialog();
     void openSearchEngineAction();
     void autoFillDialog();
+    void addressDialog();
+    void autoFillAddresses();
     void bookmarksDialog();
     void acceptLanguageDialog();
     void adBlockDialog();
@@ -143,6 +148,8 @@ private slots:
     void storagePermissions();
     void deferredSiteWipe();
     void colorSchemeApply();
+    void themeSettingPrecedence();
+    void internalPageDarkDecoration();
     void dialogsRenderInBothSchemes();
     void dialogButtonPolish();
 };
@@ -377,6 +384,157 @@ void tst_Dialogs::autoFillDialog()
     QCOMPARE(manager->forms().count(), 0);
 
     manager->setForms(saved);
+}
+
+// ADDR01: the address editor gates Save on at least a name or a
+// street, seeds the country combo from QLocale's territories, and
+// round-trips every field.
+void tst_Dialogs::addressDialog()
+{
+    AddressDialog dialog;
+    QPushButton *save = dialog.buttonBox->button(QDialogButtonBox::Save);
+    QVERIFY(save);
+    QVERIFY(!save->isEnabled());
+    QVERIFY(!dialog.address().isValid());
+
+    dialog.nameEdit->setText(QLatin1String("Ada"));
+    QVERIFY(save->isEnabled());
+    dialog.nameEdit->clear();
+    QVERIFY(!save->isEnabled());
+    dialog.streetEdit->setPlainText(QLatin1String("1 Main St"));
+    QVERIFY(save->isEnabled());
+
+    // The territory list is populated and a real code is selected.
+    QVERIFY(dialog.countryCombo->count() > 100);
+    const QString code = dialog.countryCombo->currentData().toString();
+    QVERIFY(!code.isEmpty());
+    QCOMPARE(dialog.countryCombo->currentText(),
+             AddressDialog::countryDisplayName(code));
+
+    // Every field round-trips through setAddress()/address().
+    AutoFillManager::Address address;
+    address.country = QLatin1String("DE");
+    address.name = QLatin1String("Ada Lovelace");
+    address.organization = QLatin1String("Analytical Engines Ltd");
+    address.street = QLatin1String("1 Main St\nApt 2");
+    address.city = QLatin1String("Springfield");
+    address.state = QLatin1String("IL");
+    address.zip = QLatin1String("62701");
+    address.phone = QLatin1String("+1 555 0100");
+    address.email = QLatin1String("ada@example.com");
+    dialog.setAddress(address);
+    const AutoFillManager::Address out = dialog.address();
+    QCOMPARE(out.country, address.country);
+    QCOMPARE(out.name, address.name);
+    QCOMPARE(out.organization, address.organization);
+    QCOMPARE(out.street, address.street);
+    QCOMPARE(out.city, address.city);
+    QCOMPARE(out.state, address.state);
+    QCOMPARE(out.zip, address.zip);
+    QCOMPARE(out.phone, address.phone);
+    QCOMPARE(out.email, address.email);
+    QVERIFY(out.isValid());
+    // "DE" resolves to the territory's (locale-dependent) name.
+    const QString countryName = AddressDialog::countryDisplayName(
+        QLatin1String("DE"));
+    QVERIFY(!countryName.isEmpty());
+    QCOMPARE(dialog.countryCombo->currentText(), countryName);
+
+    // The prefs list summary: "Name — Street, City, State ZIP — Country".
+    const QString summary = AddressDialog::summaryText(address);
+    QVERIFY(summary.startsWith(QLatin1String("Ada Lovelace")));
+    QVERIFY(summary.contains(QLatin1String("1 Main St, Springfield, IL 62701")));
+    QVERIFY(summary.endsWith(countryName));
+    // A street-only address still summarizes (name section drops out).
+    AutoFillManager::Address sparse;
+    sparse.street = QLatin1String("2 Side Rd");
+    QCOMPARE(AddressDialog::summaryText(sparse), QLatin1String("2 Side Rd"));
+
+    // A stored country that isn't a territory code is surfaced, not
+    // silently reset to the default.
+    QCOMPARE(AddressDialog::countryDisplayName(QLatin1String("Atlantis")),
+             QLatin1String("Atlantis"));
+    AutoFillManager::Address custom = address;
+    custom.country = QLatin1String("Atlantis");
+    dialog.setAddress(custom);
+    QCOMPARE(dialog.address().country, QLatin1String("Atlantis"));
+}
+
+// ADDR01: the manager's address list mutates, persists through the
+// appended [addresses] payload tail, and a legacy forms-only file
+// loads as an empty list.
+void tst_Dialogs::autoFillAddresses()
+{
+    AutoFillManager *manager = AutoFillManager::instance();
+    const QList<AutoFillManager::Form> savedForms = manager->forms();
+    const QList<AutoFillManager::Address> savedAddresses =
+        manager->addresses();
+
+    AutoFillManager::Address address;
+    address.country = QLatin1String("US");
+    address.name = QLatin1String("Ada");
+    address.street = QLatin1String("1 Main St\nApt 2");
+    address.city = QLatin1String("Springfield");
+    address.state = QLatin1String("IL");
+    address.zip = QLatin1String("62701");
+
+    manager->addAddress(address);
+    QCOMPARE(manager->addresses().count(), savedAddresses.count() + 1);
+    QCOMPARE(manager->addresses().last().name, QLatin1String("Ada"));
+    manager->removeAddress(manager->addresses().count() - 1);
+    QCOMPARE(manager->addresses(), savedAddresses);
+    // Out-of-range removes are ignored.
+    manager->removeAddress(-1);
+    manager->removeAddress(manager->addresses().count());
+    QCOMPARE(manager->addresses(), savedAddresses);
+
+    // Persistence: save() is a private slot but the metaobject still
+    // reaches it — a fresh manager reads the file the singleton wrote.
+    manager->setForms(QList<AutoFillManager::Form>());
+    manager->setAddresses(QList<AutoFillManager::Address>() << address);
+    QVERIFY(QMetaObject::invokeMethod(manager, "save",
+                                      Qt::DirectConnection));
+    {
+        AutoFillManager reloaded;
+        QCOMPARE(reloaded.forms().count(), 0);
+        QCOMPARE(reloaded.addresses().count(), 1);
+        QCOMPARE(reloaded.addresses().first().name, QLatin1String("Ada"));
+        QCOMPARE(reloaded.addresses().first().street, address.street);
+        QCOMPARE(reloaded.addresses().first().country, address.country);
+    }
+
+    // A legacy file ends after the forms — the missing address tail
+    // must decode as an empty list, not a corrupt read.  (The
+    // plaintext shape exercises the unsealed branch; the sealed
+    // branch shares decodePayload.)
+#ifdef ARORA_RUSTCORE
+    // The rustcore store is canonical once it exists — clear it so
+    // the legacy file below is exercised as the import source.
+    QFile::remove(BrowserPaths::dataFilePath(
+        QLatin1String("autofill-store.dat")));
+    SecureStore::lock();
+#endif
+    const QString path = BrowserPaths::dataFilePath(
+        QLatin1String("autofill.dat"));
+    QByteArray legacy;
+    {
+        QDataStream out(&legacy, QIODevice::WriteOnly);
+        out << QList<AutoFillManager::Form>();
+    }
+    {
+        QFile file(path);
+        QVERIFY(file.open(QFile::WriteOnly));
+        QCOMPARE(file.write(legacy), qint64(legacy.size()));
+    }
+    {
+        AutoFillManager reloaded;
+        QCOMPARE(reloaded.addresses().count(), 0);
+    }
+
+    manager->setForms(savedForms);
+    manager->setAddresses(savedAddresses);
+    QVERIFY(QMetaObject::invokeMethod(manager, "save",
+                                      Qt::DirectConnection));
 }
 
 void tst_Dialogs::bookmarksDialog()
@@ -814,6 +972,67 @@ void tst_Dialogs::colorSchemeApply()
     QVERIFY(!BrowserTheme::paletteIsForced());
     QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
     QCOMPARE(QApplication::palette().color(QPalette::Window), platformWindow);
+    qunsetenv("ARORA_COLOR_SCHEME");
+}
+
+// THEME01: the persisted browser/colorScheme pick sits above the env
+// override — an explicit light/dark wins, "system" (or an absent key)
+// falls through to ARORA_COLOR_SCHEME then the platform.
+void tst_Dialogs::themeSettingPrecedence()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("browser/colorScheme"));
+
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
+    // An explicit pick beats the env override both ways.
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("light"));
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("dark"));
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Dark);
+    // "system" hands the decision back to env/platform.
+    settings.setValue(QLatin1String("browser/colorScheme"),
+                      QLatin1String("system"));
+    QCOMPARE(BrowserTheme::preferredColorScheme(), Qt::ColorScheme::Light);
+
+    settings.remove(QLatin1String("browser/colorScheme"));
+    qunsetenv("ARORA_COLOR_SCHEME");
+}
+
+// THEME01: generated branded pages (error pages, dirlist) are tagged
+// for their dark CSS rules only while the chrome palette is dark —
+// and the notifier fires so live observers (the start page's channel
+// object) see mid-session flips.
+void tst_Dialogs::internalPageDarkDecoration()
+{
+    const QString light =
+        QStringLiteral("<html><body>err</body></html>");
+
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    QString html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QCOMPARE(html, light);
+
+    QSignalSpy schemeSpy(BrowserTheme::themeNotifier(),
+                         &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged);
+    qputenv("ARORA_COLOR_SCHEME", "dark");
+    BrowserTheme::applyColorScheme();
+    QCOMPARE(schemeSpy.count(), 1);
+    html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QVERIFY(html.contains(QLatin1String("class=\"arora-dark\"")));
+
+    // Flipping back lights the notifier again and stops the tagging.
+    qputenv("ARORA_COLOR_SCHEME", "light");
+    BrowserTheme::applyColorScheme();
+    QCOMPARE(schemeSpy.count(), 2);
+    html = light;
+    BrowserTheme::decorateInternalPage(html);
+    QCOMPARE(html, light);
     qunsetenv("ARORA_COLOR_SCHEME");
 }
 

@@ -53,6 +53,7 @@ private slots:
     void description_data();
     void description();
     void image();
+    void bundledIcon();
     void imageUrl_data();
     void imageUrl();
     void isValid_data();
@@ -328,11 +329,12 @@ void tst_OpenSearchEngine::image()
     image.save(&imageBuffer, "PNG");
     QString imageUrl = QString("data:image/png;base64,").append(imageBuffer.buffer().toBase64());
     engine.setImageUrl(imageUrl);
-    QCOMPARE(engine.image(), QImage());
 
-    QTRY_COMPARE(spy0.count(), 1);
-    QCOMPARE(spy1.count(), 0);
+    // SENG01: data: imageUrls decode synchronously inside image() —
+    // no reply round-trip, so no imageChanged emission either.
     QVERIFY(engine.image() != QImage());
+    QCOMPARE(spy0.count(), 0);
+    QCOMPARE(spy1.count(), 0);
 
     SubOpenSearchEngine engine2;
     QSignalSpy spy2(&engine2, SIGNAL(imageChanged()));
@@ -342,6 +344,32 @@ void tst_OpenSearchEngine::image()
     QCOMPARE(engine2.imageUrl(), imageUrl);
 
     QCOMPARE(spy2.count(), 1);
+}
+
+// SENG01: engines whose name matches a bundled descriptor resolve
+// their favicon from the qrc synchronously — no network access
+// manager and no favicon cache involved.
+void tst_OpenSearchEngine::bundledIcon()
+{
+    SubOpenSearchEngine google;
+    google.setName(QLatin1String("Google"));
+    google.setImageUrl(QLatin1String("https://example.invalid/favicon.ico"));
+    QVERIFY(!google.image().isNull());
+
+    SubOpenSearchEngine lucky;
+    lucky.setName(QLatin1String("Google (I'm Feeling Lucky)"));
+    QVERIFY(!lucky.image().isNull());
+
+    SubOpenSearchEngine wikipedia;
+    wikipedia.setName(QLatin1String("Wikipedia (en)"));
+    QVERIFY(!wikipedia.image().isNull());
+
+    // A name matching no bundled descriptor resolves nothing without
+    // a network access manager — the remote path still applies.
+    SubOpenSearchEngine custom;
+    custom.setName(QLatin1String("Custom Engine"));
+    custom.setImageUrl(QLatin1String("https://example.invalid/favicon.ico"));
+    QVERIFY(custom.image().isNull());
 }
 
 void tst_OpenSearchEngine::imageUrl_data()

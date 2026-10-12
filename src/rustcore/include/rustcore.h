@@ -145,6 +145,9 @@ RcStatus rc_cred_reseal(const uint8_t *from32, const uint8_t *to32);
  *
  * Form JSON (both directions):
  *   [{"url","name","has_password":bool,"elements":[["k","v"],...]}]
+ * Address JSON (ADDR01/02 — an appended tail in the same payload):
+ *   [{"country","name","organization","street","city","state","zip",
+ *     "phone","email","last_used":int}]
  * Mutations emit the "autofill" change topic. */
 /* Whether the Rust store file exists — gates the legacy import. */
 int rc_autofill_store_present(void);
@@ -153,6 +156,9 @@ int rc_autofill_store_present(void);
 char *rc_autofill_forms(void);
 /* Atomic whole-set replace; RC_INVALID_ARGUMENT keeps the old set. */
 RcStatus rc_autofill_set_forms(const uint8_t *jsonUtf8, size_t len);
+/* Same pair for the saved-address list. */
+char *rc_autofill_addresses(void);
+RcStatus rc_autofill_set_addresses(const uint8_t *jsonUtf8, size_t len);
 /* Re-seal the autofill file between explicit keys mid-transition. */
 RcStatus rc_autofill_reseal(const uint8_t *from32, const uint8_t *to32);
 
@@ -199,6 +205,52 @@ RcStatus rc_blocklist_load(const uint8_t *textUtf8, size_t len);
  * exists but yields no usable entries — previous list stays active. */
 RcStatus rc_blocklist_reload(void);
 size_t rc_blocklist_count(void);
+
+/* --- navigation policy (ENG02) ----------------------------------------
+ * The engine-agnostic request-policy core: every branching decision the
+ * interceptors and the cookie gate used to make in C++ lives here as
+ * pure verdict functions over a compact JSON manifest.  The Qt side
+ * only marshals context in and applies verdicts out — no policy
+ * branching remains on the adapter.  Everything fails OPEN on errors:
+ * a NULL verdict reads as "allow", never as a block.
+ *
+ * rc_policy_load_snapshot: pushes the privacy snapshot (toggles +
+ *   https-only exceptions) from the GUI thread.
+ *   JSON {"https_first","https_only","referer_policy","security_level",
+ *   "block_pings","block_remote_fonts","block_prefetch",
+ *   "block_third_party_ws","strip_tracking_params","domain_blocklist",
+ *   "https_only_exceptions":[...]}
+ *
+ * rc_policy_evaluate: request manifest -> verdict JSON.
+ *   in  {"url","first_party_url","resource_type","method",
+ *        "headers":[["k","v"],...],"scope","tor_mode",
+ *        "script_allowed","min_referer_level"}
+ *   out {"action":"pass"}
+ *     | {"action":"block","reason":...}
+ *     | {"action":"redirect","url":...,"reason":...}
+ *     | {"action":"allow","referer":{"op":"keep"|"set","value":...}}
+ *   NULL on malformed input — treat as "allow".  rc_string_free().
+ *
+ * rc_policy_cookie_filter: cookie-gate manifest -> 1 accept / 0 reject
+ *   / -1 malformed (fail open).  in {"host","third_party","block_3p",
+ *   "accept_policy","block":[],"allow":[],"allow_session":[]}
+ *
+ * rc_policy_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: flag, referrer_meta, rewritten_referer,
+ *   referer_apply, upgrade_candidate, warn_http, warn_form_post,
+ *   is_http_allowed, allow_http, clear_http_allowance, http_exceptions,
+ *   is_downgraded, mark_downgraded, clear_downgraded,
+ *   clear_all_downgraded, ttl_get, ttl_set,
+ *   failure_implies_downgrade, note_nav_failure, record_blocked_nav,
+ *   take_blocked_nav, block_domain, is_domain_blocked,
+ *   is_blocked_domain_allowed, allow_blocked_domain,
+ *   clear_blocked_domain_allowance, clear_all_blocked_domain,
+ *   is_ping, block_resource, block_ws, block_script, private_or_local.
+ *   NULL on error — rc_string_free() the result. */
+RcStatus rc_policy_load_snapshot(const uint8_t *jsonUtf8, size_t len);
+char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
+int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
+char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
 
 /* --- Tranco rank table (TRUST04) ------------------------------------
  * The Tranco top-site rank table the site-trust signals consult —
@@ -262,6 +314,21 @@ char *rc_lookalike_check(const char *hostUtf8);
  * never decides the level alone. */
 char *rc_sitetrust_lookup(const char *hostUtf8, int isHttps);
 
+/* Probe-selection bits for rc_sitetrust_lookup_opts — TRUST03's
+ * per-signal Preferences switches.  A cleared bit skips that
+ * advisory probe entirely: it never runs and cannot appear in
+ * signals[].  The rank and first-seen inputs are ungated. */
+#define RC_SITETRUST_PROBE_THREATLIST 0x1u
+#define RC_SITETRUST_PROBE_LOOKALIKE  0x2u
+#define RC_SITETRUST_PROBE_ALL \
+    (RC_SITETRUST_PROBE_THREATLIST | RC_SITETRUST_PROBE_LOOKALIKE)
+
+/* Same verdict as rc_sitetrust_lookup with the probes bitmask
+ * applied — the threat-list and lookalike inputs each answer their
+ * own Preferences switch. */
+char *rc_sitetrust_lookup_opts(const char *hostUtf8, int isHttps,
+                               unsigned int probes);
+
 /* Re-run both input-table merges (blocklist + Tranco) — the list
  * updaters call this after dropping a new file.  Both reloads run
  * even when the first fails; the first error is reported. */
@@ -297,6 +364,51 @@ RcStatus rc_updatemanifest_parse(const uint8_t *xml, size_t len,
 RcStatus rc_xbel_check(const uint8_t *xml, size_t len);
 RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
                           RcBuffer *outJson);
+
+/* --- PDF sanitization (PDF01) --------------------------------------
+ * The built-in viewer only ever opens the rewrite this produces: the
+ * Qt side fetches the PDF body through the profile, calls this and
+ * displays the sanitized copy from a 0700 temp dir.  Strips the
+ * action surface the renderer sandbox does not policy — /JS and
+ * /JavaScript payloads, /Launch, /AA and /OpenAction triggers,
+ * /Names->/EmbeddedFiles attachments, AcroForm /XFA and remote
+ * submit/import actions — then re-serializes a standalone PDF.
+ * RC_CORRUPT when the input is not a parseable PDF: the caller
+ * refuses the view rather than showing unsanitized bytes. */
+RcStatus rc_pdf_sanitize(const uint8_t *data, size_t len,
+                         RcBuffer *out);
+
+/* --- pdf document rasterization (PDF02) -----------------------------
+ * The shell-owned document view renders pages through this surface,
+ * normally inside the `arora --pdf-worker` confined subprocess (one
+ * document per worker).  The same calls work in-process as the
+ * fallback when no sandbox backend exists.
+ *
+ * rc_pdfdoc_open returns an opaque handle (0 = failure, error text
+ * via rc_last_error_message).  The handle is single-threaded: one owner,
+ * rc_pdfdoc_close releases it. */
+uintptr_t rc_pdfdoc_open(const uint8_t *data, size_t len);
+/* Page count, 0 on a bad handle. */
+int32_t rc_pdfdoc_page_count(uintptr_t doc);
+/* Page dimensions in PDF points (1/72in); RC_INVALID_ARGUMENT when
+ * the handle or page index is bad. */
+RcStatus rc_pdfdoc_page_size(uintptr_t doc, int32_t page,
+                             double *w, double *h);
+/* Document /Title or NULL — rc_string_free the result. */
+char *rc_pdfdoc_title(uintptr_t doc);
+/* Page rasterized to PNG bytes (rc_buffer_free) — scale 1.0 = 72dpi.
+ * RC_CORRUPT on render failure, RC_INVALID_ARGUMENT on a bad
+ * handle/page/scale or a bitmap over the pixel cap. */
+RcStatus rc_pdfdoc_render_png(uintptr_t doc, int32_t page,
+                              double scale, RcBuffer *out);
+/* Page index holding the next/prev `needle` match from `from_page`
+ * (dir >= 0 forward, < 0 backward, wraps once), -1 on no match or a
+ * bad handle.  Text is page-granular.  out_total may be NULL; when
+ * given it receives the document-wide occurrence count. */
+int32_t rc_pdfdoc_find(uintptr_t doc, const char *needleUtf8,
+                       int32_t from_page, int32_t dir,
+                       int32_t *out_total);
+void rc_pdfdoc_close(uintptr_t doc);
 
 /* --- reader-mode extraction (RDR01) ----------------------------------
  * The article extraction that used to run as injected JS (vendored
@@ -497,6 +609,36 @@ RcStatus rc_session_decode(const uint8_t *blob, size_t len,
                            RcBuffer *outJson);
 
 #define RC_SESSION_FILE "session.dat"
+
+/* --- DEVT03 devtools client ----------------------------------------
+ *
+ * Engine-neutral devtools channel: callers speak WebDriver-BiDi-
+ * shaped commands (session.new, session.subscribe,
+ * browsingContext.getTree/navigate, script.evaluate,
+ * storage.getCookies); the WebEngine backend translates them onto
+ * CDP inside the crate (Qt's Chromium ships no BiDi mapper), so a
+ * future Servo backend can swap in a native BiDi transport without
+ * touching callers.
+ *
+ * The callback fires on an internal thread for:
+ *   kind="response"  id=<bidi id>   json={"result":..}|{"error":{..}}
+ *   kind="event"     id=0           json={"method":..,"params":..}
+ *   kind="state"     id=0           json={"state":"closed"}
+ * It must be thread-safe and non-blocking (queue to the GUI thread).
+ *
+ * `path` is the ws path ("/devtools/browser/<guid>"); `origin` is the
+ * per-session allow-origins token arming the debug server. */
+typedef struct RcBidiClient RcBidiClient;
+typedef void (*RcBidiCallback)(void *userdata, const char *kindUtf8,
+                               uint64_t id, const char *jsonUtf8);
+RcBidiClient *rc_bidi_connect(const char *hostUtf8, uint16_t port,
+                              const char *pathUtf8,
+                              const char *originUtf8,
+                              RcBidiCallback cb, void *userdata);
+uint64_t rc_bidi_command(RcBidiClient *client, const char *methodUtf8,
+                         const char *paramsJsonUtf8);
+int rc_bidi_is_alive(const RcBidiClient *client);
+void rc_bidi_free(RcBidiClient *client);
 
 /* --- omnibox (OMNI01) -------------------------------------------------
  * The location-bar routing decision and the frecency ranking the

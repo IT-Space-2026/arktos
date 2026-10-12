@@ -103,6 +103,11 @@ public:
     static QIcon icon(const QUrl &url);
 
     void saveSession();
+    // SESS02: termination-signal entry point — flushes every window's
+    // pending AutoSaver debounce plus a forced session write, after
+    // which the caller re-raises the signal.  See
+    // TerminationSignalHandler.
+    void flushSessionsForTermination();
     bool canRestoreSession() const;
 
     static HistoryManager *historyManager();
@@ -110,6 +115,10 @@ public:
     // The profile pages are created on: the default profile normally, an
     // off-the-record profile while private browsing is enabled (MIG03).
     static QWebEngineProfile *webEngineProfile();
+    // PTAB01: the prepared off-the-record profile regardless of the
+    // global private flag — a private TAB inside a normal window needs
+    // it while webEngineProfile() still hands out the normal profile.
+    static QWebEngineProfile *privateWebEngineProfile();
     // Attaches the app-level services to a profile the first time it
     // is seen: cookie jar, custom scheme handlers, persisted settings,
     // download manager, the adblock + privacy request interceptors and
@@ -147,8 +156,33 @@ public:
     static void setTorMode(bool torMode);
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
-    // Spawns an independent `arora --tor` process.
-    static void openTorWindow();
+    // Spawns an independent `arora --tor` process.  An optional start
+    // url (CONT07's 'Open in New Tor Window') rides as its own argv
+    // element — never a shell string — and is re-gated as untrusted
+    // input on the receiving side (torStartup).
+    static void openTorWindow(const QUrl &url = QUrl());
+    // CONT08: the argument vector openTorWindow() spawns with — a
+    // QStringList, so the url is a verbatim argv element no shell can
+    // ever re-parse, and a refused scheme leaves this process as
+    // nothing but the bare --tor switch.  Exposed for the
+    // security-audit tests.
+    static QStringList torWindowArguments(const QUrl &url);
+    // The receiving-side gate torStartup() applies to an argv url
+    // operand — the same page-link discipline the sender enforced.
+    static bool isUrlAllowedOnTorArgv(const QString &operand);
+
+    // TRUST06: master switch for the site-trust surface (Preferences
+    // > Privacy > Site Trust).  The toolbar badge and every
+    // per-signal lookup gate on this — consumers read it live so a
+    // Preferences flip applies without a restart.  Default on.
+    static bool siteTrustEnabled();
+
+    // TRUST02: per-signal gates inside the same group — the
+    // lookalike check and the threat-list probe each read their key
+    // live so a Preferences flip applies on the next navigation.
+    // Both default on.
+    static bool siteTrustLookalikeEnabled();
+    static bool siteTrustThreatlistEnabled();
 
 #if defined(Q_OS_MACOS)
     bool event(QEvent *event);

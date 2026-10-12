@@ -97,6 +97,7 @@
 //!     warning signal only; it never blocks.
 //!
 mod autofill;
+mod bidi;
 mod blocklist;
 mod bookmarkhtml;
 mod bookmarks;
@@ -112,6 +113,9 @@ mod omnibox;
 mod opensearch;
 mod palette;
 mod parsers;
+mod pdfdoc;
+mod pdfsanitize;
+mod policy;
 mod qrcode;
 mod readability;
 mod session;
@@ -774,6 +778,62 @@ pub unsafe extern "C" fn rc_autofill_set_forms(
     st
 }
 
+/// JSON array of every stored address (ADDR01/02):
+/// [{"country","name","organization","street","city","state","zip",
+///   "phone","email","last_used":int}]
+/// Free with rc_string_free(); NULL on error (locked store, corrupt
+/// file — rc_last_error_message says which).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_addresses() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match store::lock().autofill_addresses_json() {
+            Ok(j) => util::to_c_string(j),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Replaces the whole address set from the JSON array and persists it
+/// atomically; emits the "autofill" change topic when the set
+/// actually changed.  RC_INVALID_ARGUMENT on malformed JSON — the
+/// store keeps its previous contents then.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_autofill_set_addresses(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let st = status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let records = autofill::addresses_from_json(data)?;
+        changed = store::lock().autofill_set_addresses(records)?;
+        Ok(())
+    });
+    if st == RcStatus::Ok && changed {
+        notify::emit("autofill");
+    }
+    st
+}
+
 /// Re-seals autofill-store.dat between explicit keys during a custody
 /// transition; no-op when the file does not exist.
 ///
@@ -936,6 +996,115 @@ pub unsafe extern "C" fn rc_blocklist_count() -> usize {
     catch_unwind(AssertUnwindSafe(blocklist::count)).unwrap_or(0)
 }
 
+// ---- navigation policy (ENG02) ------------------------------------------
+// The engine-agnostic request-policy core.  The Qt interceptors marshal
+// a request manifest in; verdicts come out.  No Qt types cross here.
+
+/// Pushes the policy snapshot (privacy toggles + https-only exceptions)
+/// from the GUI thread.  JSON body, RC_CORRUPT on malformed input.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_load_snapshot(
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad snapshot pointer".into(),
+        })?;
+        let manifest = policy::parse_json(data)?;
+        policy::load_snapshot_json(&manifest)
+    })
+}
+
+/// Evaluates one request manifest (JSON) and returns the verdict as a
+/// JSON string: {"action":"pass"|"block"|"redirect"|"allow", ...}.
+/// NULL on malformed input or panic — the adapter must fail open
+/// (treat NULL as "allow", never as a block).
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_evaluate(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => {
+                let verdict = policy::evaluate_json(&manifest);
+                util::to_c_string(verdict.to_string())
+            }
+            None => {
+                error::set_error("bad policy manifest");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Cookie-gate decision: 1 = accept the cookie, 0 = reject,
+/// -1 on malformed input (adapter fails open → accept).
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_cookie_filter(
+    json: *const u8,
+    len: usize,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+            .and_then(|m| policy::cookie_filter_json(&m))
+        {
+            Some(allow) => allow as i32,
+            None => -1,
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Generic granular-policy endpoint — JSON in {"op":..., params},
+/// JSON out.  Covers every historical decision point (downgrade
+/// marks, allowances, referer rewriting, host classifiers, blocked-nav
+/// registries...).  NULL on error — see rc_last_error_message().
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_policy_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match policy::call_json(&manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad policy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- Tranco rank table (TRUST04) -------------------------------------
 
 /// The host's Tranco rank, or 0 when unlisted (Tranco ranks start at
@@ -1072,6 +1241,34 @@ pub unsafe extern "C" fn rc_sitetrust_lookup(
     .unwrap_or(ptr::null_mut())
 }
 
+/// rc_sitetrust_lookup variant carrying the probe-selection mask —
+/// `probes` is a bitmask of the RC_SITETRUST_PROBE_* bits
+/// (sitetrust::PROBE_*); a cleared bit skips that advisory probe
+/// entirely so a Preferences switch (TRUST03) can suppress the
+/// lookalike or threat-list input without touching the verdict
+/// shape.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitetrust_lookup_opts(
+    host: *const c_char,
+    is_https: i32,
+    probes: u32,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => util::to_c_string(sitetrust::lookup_opts(
+                h,
+                is_https != 0,
+                probes,
+            )),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Re-runs both input-table merges the composite reads (blocklist +
 /// Tranco) — the list updaters call this after dropping a new file.
 /// Both reloads run even when the first fails; the first error is
@@ -1171,6 +1368,211 @@ pub unsafe extern "C" fn rc_suggest_parse(
         buffer_out(out, json);
         Ok(())
     })
+}
+
+// ---- PDF sanitization (PDF01) ----------------------------------------
+//
+// The in-browser viewer never sees remote PDF bytes directly: the Qt
+// side downloads the file, hands the body here and displays only the
+// sanitized rewrite.  RC_CORRUPT means the input was not a parseable
+// PDF — the caller then refuses the view rather than falling back to
+// unsanitized bytes.
+
+/// Rewrites a PDF body with its action surface stripped (JS/Launch/
+/// OpenAction/AA triggers, embedded files, XFA, remote submits).
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `out` receives a buffer
+/// to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdf_sanitize(
+    data: *const u8,
+    len: usize,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let input = unsafe { util::bytes(data, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad input pointer".into(),
+        })?;
+        let cleaned = pdfsanitize::sanitize(input).map_err(|msg| error::Fail {
+            status: RcStatus::Corrupt,
+            msg,
+        })?;
+        buffer_out(out, cleaned);
+        Ok(())
+    })
+}
+
+// ---- pdf document rasterization (PDF02) -----------------------------
+
+/// Opaque handle for an open document — a heap `pdfdoc::PdfDocument`
+/// pointer.  0 is invalid.  One document lives per `--pdf-worker`
+/// process; the API is single-threaded by contract.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes.  The caller owns the
+/// returned handle and must release it with rc_pdfdoc_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_open(data: *const u8, len: usize) -> usize {
+    catch_unwind(AssertUnwindSafe(|| {
+        let input = match unsafe { util::bytes(data, len) } {
+            Some(b) => b.to_vec(),
+            None => return 0,
+        };
+        match pdfdoc::PdfDocument::open(input) {
+            Ok(doc) => Box::into_raw(Box::new(doc)) as usize,
+            Err(msg) => {
+                error::set_error(&msg);
+                0
+            }
+        }
+    }))
+    .unwrap_or(0)
+}
+
+fn pdfdoc_ref<'a>(handle: usize) -> Option<&'a mut pdfdoc::PdfDocument> {
+    if handle == 0 {
+        return None;
+    }
+    unsafe { (handle as *mut pdfdoc::PdfDocument).as_mut() }
+}
+
+/// Page count, or 0 on a bad handle.
+///
+/// # Safety
+/// `doc` must be a live handle from rc_pdfdoc_open().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_page_count(doc: usize) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        pdfdoc_ref(doc).map(|d| d.page_count() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// Page dimensions in PDF points (1/72 inch).
+///
+/// # Safety
+/// `doc` must be a live handle; `w`/`h` are writable out pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_page_size(
+    doc: usize,
+    page: i32,
+    w: *mut f64,
+    h: *mut f64,
+) -> RcStatus {
+    status_of(|| {
+        let d = pdfdoc_ref(doc).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad pdfdoc handle".into(),
+        })?;
+        let (pw, ph) = d.page_size(page.max(0) as usize).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "page out of range".into(),
+        })?;
+        if let Some(p) = unsafe { w.as_mut() } {
+            *p = pw;
+        }
+        if let Some(p) = unsafe { h.as_mut() } {
+            *p = ph;
+        }
+        Ok(())
+    })
+}
+
+/// Document /Title, or NULL.  rc_string_free the result.
+///
+/// # Safety
+/// `doc` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_title(doc: usize) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        pdfdoc_ref(doc)
+            .and_then(|d| d.title())
+            .map(util::to_c_string)
+            .unwrap_or(ptr::null_mut())
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Rasterize `page` at `scale` (1.0 = 72 dpi) into PNG bytes
+/// (rc_buffer_free).  RC_CORRUPT on render failure, RC_INVALID_ARGUMENT
+/// on a bad handle/page or a bitmap over the pixel cap.
+///
+/// # Safety
+/// `doc` must be a live handle; `out` receives a buffer to release
+/// with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_render_png(
+    doc: usize,
+    page: i32,
+    scale: f64,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let d = pdfdoc_ref(doc).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad pdfdoc handle".into(),
+        })?;
+        if !(scale > 0.0 && scale.is_finite()) {
+            return error::fail(RcStatus::InvalidArgument, "bad scale");
+        }
+        let png = d
+            .render_png(page.max(0) as usize, scale)
+            .map_err(|msg| error::Fail {
+                status: RcStatus::Corrupt,
+                msg,
+            })?;
+        buffer_out(out, png);
+        Ok(())
+    })
+}
+
+/// Page index holding the next/prev `needle` match from `from_page`
+/// (dir >= 0 scans forward, < 0 backward, wraps once), or -1.  Text is
+/// page-granular — the view jumps to the page, it cannot paint hit
+/// rects.  `out_total` optionally receives the document-wide
+/// occurrence count.
+///
+/// # Safety
+/// `doc` must be a live handle; `needle` is a NUL-terminated UTF-8
+/// string; `out_total` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_find(
+    doc: usize,
+    needle: *const c_char,
+    from_page: i32,
+    dir: i32,
+    out_total: *mut i32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(d) = pdfdoc_ref(doc) else {
+            return -1;
+        };
+        let Some(text) = (unsafe { util::cstr(needle) }) else {
+            return -1;
+        };
+        if let Some(p) = unsafe { out_total.as_mut() } {
+            *p = d.count_occurrences(text) as i32;
+        }
+        d.find(text, i64::from(from_page), i64::from(dir))
+            .map(|p| p as i32)
+            .unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Releases a document handle.  NULL-tolerant (0 is a no-op).
+///
+/// # Safety
+/// `doc` must be a live handle or 0; after this call it is invalid.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_close(doc: usize) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if doc != 0 {
+            drop(unsafe { Box::from_raw(doc as *mut pdfdoc::PdfDocument) });
+        }
+    }));
 }
 
 // ---- reader-mode extraction (RDR01) ---------------------------------

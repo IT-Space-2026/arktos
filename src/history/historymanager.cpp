@@ -170,6 +170,23 @@ QList<HistoryEntry> HistoryManager::history() const
     return m_history;
 }
 
+// HIST01: the favicon store is keyed by host so every entry for a
+// site shares its icon, and persisted like the WebKit icon database
+// it replaces — one small png per host under <data dir>/icons/.
+static QString iconStoreDir()
+{
+    return BrowserPaths::dataFilePath(QLatin1String("icons"));
+}
+
+#ifndef ARORA_RUSTCORE
+static QString iconFilePath(const QString &host)
+{
+    return iconStoreDir() + QLatin1Char('/')
+            + QString::fromLatin1(QUrl::toPercentEncoding(host))
+            + QLatin1String(".png");
+}
+#endif
+
 QIcon HistoryManager::icon(const QUrl &url) const
 {
 #ifdef ARORA_RUSTCORE
@@ -189,7 +206,19 @@ QIcon HistoryManager::icon(const QUrl &url) const
             const_cast<HistoryManager *>(this)->m_icons.insert(key, icon);
     }
 #else
-    QIcon icon = m_icons.value(url.toString());
+    const QString host = url.host().toLower();
+    const QString key = host.isEmpty() ? url.toString() : host;
+    QIcon icon = m_icons.value(key);
+    if (icon.isNull() && !host.isEmpty() && !m_iconMisses.contains(host)) {
+        const QPixmap pixmap(iconFilePath(host));
+        if (!pixmap.isNull()) {
+            icon = QIcon(pixmap);
+            m_icons.insert(host, icon);
+        } else {
+            // remember the miss so lookups don't keep stat()ing
+            m_iconMisses.insert(host);
+        }
+    }
 #endif
     if (icon.isNull())
         icon = QIcon(QLatin1String(":graphics/defaulticon.png"));
@@ -198,8 +227,9 @@ QIcon HistoryManager::icon(const QUrl &url) const
 
 void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
 {
-    if (icon.isNull())
+    if (url.isEmpty() || icon.isNull())
         return;
+    const QString host = url.host().toLower();
 #ifdef ARORA_RUSTCORE
     const QString key = historyIconKey(url);
     m_icons.insert(key, icon);
@@ -214,13 +244,35 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
                          size_t(png.size()));
     }
 #else
-    m_icons.insert(url.toString(), icon);
+    const QString key = host.isEmpty() ? url.toString() : host;
+    QHash<QString, QIcon>::const_iterator it = m_icons.constFind(key);
+    if (it != m_icons.constEnd() && it->cacheKey() == icon.cacheKey())
+        return;
+    m_icons.insert(key, icon);
+    m_iconMisses.remove(key);
+
+    if (!host.isEmpty()) {
+        QDir().mkpath(iconStoreDir());
+        icon.pixmap(64).save(iconFilePath(host), "PNG");
+    }
 #endif
+
+    // Entries already in the model share the host icon — refresh the
+    // views (menu, dialog, completer) so they repaint immediately.
+    for (int i = 0; i < m_history.count(); ++i) {
+        const QUrl entryUrl(m_history.at(i).url);
+        if (host.isEmpty()
+                ? entryUrl == url
+                : entryUrl.host().compare(host, Qt::CaseInsensitive) == 0)
+            emit entryUpdated(i);
+    }
 }
 
 void HistoryManager::clearIcons()
 {
     m_icons.clear();
+    m_iconMisses.clear();
+    QDir(iconStoreDir()).removeRecursively();
 #ifdef ARORA_RUSTCORE
     rc_hist_icon_clear();
 #endif

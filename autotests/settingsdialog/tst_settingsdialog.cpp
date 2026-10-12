@@ -25,17 +25,37 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qboxlayout.h>
+#include <qcheckbox.h>
+#include <qdir.h>
+#include <qfile.h>
+#include <qfileinfo.h>
+#include <qframe.h>
+#include <qgridlayout.h>
+#include <qgroupbox.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
+#include <qstandarditemmodel.h>
+#include <qstyle.h>
+#include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 
 #include "settings.h"
+#include "addressdialog.h"
+#include "autofillmanager.h"
+#include "adblockdialog.h"
+#include "adblockmanager.h"
+#include "aroraicon.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
+#include "energysaver.h"
+#include "languagemanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -47,6 +67,10 @@
 #include "sitedecisionstore.h"
 #endif
 #include "scopeshortcuts.h"
+#include "sidebarpanel.h"
+#include "sidebarpositionpicker.h"
+#include "tabpositionpicker.h"
+#include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "webview.h"
 #include "qtest_arora.h"
@@ -58,9 +82,11 @@ class tst_SettingsDialog : public QObject
 
 private slots:
     void initTestCase();
+    void cleanup();
 
     void constructDefaults();
     void saveAndReload();
+    void buttonBoxCloseRequest();
     void searchTab();
     void searchContextControls();
     void suggestionsCheckbox();
@@ -69,11 +95,23 @@ private slots:
     void resetSearchSettings();
     void sidebarNavigation();
     void sidebarSettings();
+    void sidebarPositionPicker();
+    void settingsFilter();
+    void iconThemeSelector();
+    void themeSelector();
+    void themePreview();
+    void uniformSidebarIcons();
     void scrollablePages();
+    void densityAndFooter();
     void subDialogButtons();
     void setHomeToCurrentPage();
     void popupExceptions();
     void containersPage();
+    void autoFillAddressesPage();
+    void downloadsPage();
+    void tabPositionPicker();
+    void contentBlockerEngine();
+    void adblockManageButton();
     void pagePolishSettings();
     void extensionReview();
     void permissionsPage();
@@ -81,14 +119,35 @@ private slots:
     void extensionPage();
     void credentialsPage();
     void containerSiteRows();
+    void performancePage();
+    void energySaver();
+    void tabHoverPreviews();
+    void appearanceLeftAnchored();
+    void fieldWidthCaps();
+    void siteTrustToggle();
+    void siteTrustSignalToggles();
+    void languageSelector();
+    void privacyGroupAlignment();
+    void appearanceFieldBounds();
 };
+
+// Every re-arming modal driver below stamps itself with this counter
+// at schedule time and self-terminates once it changes — cleanup()
+// bumps it after each test so a chain whose prompt never appeared can
+// never accept or reject a later test's dialogs (an accept() that is
+// not a button click maps QMessageBox::question to "not Yes", and a
+// reject() is an outright cancel).
+static int s_janitorGeneration = 0;
 
 // CONT03: fills the container editor's Name field and accepts — the
 // editor exec()s synchronously inside the button click, so the driver
 // keeps re-arming until the modal appears.
-static void fillContainerEditor(const QString &name, int attempts = 150)
+static void fillContainerEditor(const QString &name, int attempts = 150,
+                                int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(20, qApp, [name, attempts]() {
+    QTimer::singleShot(20, qApp, [name, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QDialog *dialog = qobject_cast<QDialog *>(
             QApplication::activeModalWidget());
         if (dialog) {
@@ -96,36 +155,65 @@ static void fillContainerEditor(const QString &name, int attempts = 150)
                 edit->setText(name);
             dialog->accept();
         } else if (attempts > 0) {
-            fillContainerEditor(name, attempts - 1);
+            fillContainerEditor(name, attempts - 1, generation);
+        }
+    });
+}
+
+// ADDR01: fills the address editor's Name (+ optional ZIP) field and
+// accepts — same re-arming shape as fillContainerEditor.
+static void fillAddressEditor(const QString &name,
+                              const QString &zip = QString(),
+                              int attempts = 150,
+                              int generation = s_janitorGeneration)
+{
+    QTimer::singleShot(20, qApp, [name, zip, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
+        AddressDialog *dialog = qobject_cast<AddressDialog *>(
+            QApplication::activeModalWidget());
+        if (dialog) {
+            dialog->nameEdit->setText(name);
+            if (!zip.isNull())
+                dialog->zipEdit->setText(zip);
+            dialog->accept();
+        } else if (attempts > 0) {
+            fillAddressEditor(name, zip, attempts - 1, generation);
         }
     });
 }
 
 // Same re-arming driver for the delete confirmation QMessageBox.
 static void answerNextBox(QMessageBox::StandardButton button,
-                          int attempts = 150)
+                          int attempts = 150,
+                          int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(20, qApp, [button, attempts]() {
+    QTimer::singleShot(20, qApp, [button, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QMessageBox *box = qobject_cast<QMessageBox *>(
             QApplication::activeModalWidget());
         if (box && box->button(button)) {
             box->button(button)->click();
         } else if (attempts > 0) {
-            answerNextBox(button, attempts - 1);
+            answerNextBox(button, attempts - 1, generation);
         }
     });
 }
 
 // Clicks the button whose text matches inside the next QMessageBox —
 // needed for custom addButton() choices standard-button lookups miss.
-static void clickModalButtonText(const QString &text, int attempts = 150)
+static void clickModalButtonText(const QString &text, int attempts = 150,
+                                 int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [text, attempts]() {
+    QTimer::singleShot(30, qApp, [text, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QMessageBox *box = qobject_cast<QMessageBox *>(
             QApplication::activeModalWidget());
         if (!box) {
             if (attempts > 0)
-                clickModalButtonText(text, attempts - 1);
+                clickModalButtonText(text, attempts - 1, generation);
             return;
         }
         for (QAbstractButton *button : box->buttons()) {
@@ -141,14 +229,32 @@ static void clickModalButtonText(const QString &text, int attempts = 150)
 // Accepts whatever QMessageBox is active, then re-arms — a modal
 // janitor for paths that raise a box asynchronously (the extension
 // update check finishes whenever the fetch settles).
-static void dismissModalBoxes(int attempts = 200)
+static void dismissModalBoxes(int generation, int attempts = 200)
 {
-    QTimer::singleShot(30, qApp, [attempts]() {
+    QTimer::singleShot(30, qApp, [generation, attempts]() {
+        if (generation != s_janitorGeneration)
+            return;
         if (QMessageBox *box = qobject_cast<QMessageBox *>(
                 QApplication::activeModalWidget()))
             box->accept();
         if (attempts > 0)
-            dismissModalBoxes(attempts - 1);
+            dismissModalBoxes(generation, attempts - 1);
+    });
+}
+
+// Rejects whatever QDialog is active, then re-arms — the EXT05
+// extension consent review exec()s synchronously inside
+// updateCheckFinished and is not a QMessageBox.
+static void rejectModalDialogs(int generation, int attempts = 200)
+{
+    QTimer::singleShot(30, qApp, [generation, attempts]() {
+        if (generation != s_janitorGeneration)
+            return;
+        if (QDialog *dialog = qobject_cast<QDialog *>(
+                QApplication::activeModalWidget()))
+            dialog->reject();
+        if (attempts > 0)
+            rejectModalDialogs(generation, attempts - 1);
     });
 }
 
@@ -157,14 +263,17 @@ static void dismissModalBoxes(int attempts = 200)
 // each call answers one round — schedule one call per round and the
 // shared list doles out that round's pair.
 static void fillPassphraseDialog(std::shared_ptr<QStringList> fills,
-                                 int attempts = 150)
+                                 int attempts = 150,
+                                 int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [fills, attempts]() {
+    QTimer::singleShot(30, qApp, [fills, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QDialog *dialog = qobject_cast<QDialog *>(
             QApplication::activeModalWidget());
         if (!dialog) {
             if (attempts > 0)
-                fillPassphraseDialog(fills, attempts - 1);
+                fillPassphraseDialog(fills, attempts - 1, generation);
             return;
         }
         const QList<QLineEdit *> edits =
@@ -180,13 +289,16 @@ static void fillPassphraseDialog(std::shared_ptr<QStringList> fills,
 }
 
 // Types into the single QLineEdit of the unlock prompt and accepts.
-static void answerModalPassphrase(const QString &text, int attempts = 150)
+static void answerModalPassphrase(const QString &text, int attempts = 150,
+                                  int generation = s_janitorGeneration)
 {
-    QTimer::singleShot(30, qApp, [text, attempts]() {
+    QTimer::singleShot(30, qApp, [text, attempts, generation]() {
+        if (generation != s_janitorGeneration)
+            return;
         QWidget *widget = QApplication::activeModalWidget();
         if (!widget) {
             if (attempts > 0)
-                answerModalPassphrase(text, attempts - 1);
+                answerModalPassphrase(text, attempts - 1, generation);
             return;
         }
         if (QLineEdit *edit = widget->findChild<QLineEdit *>())
@@ -205,6 +317,30 @@ void tst_SettingsDialog::initTestCase()
     // Site decisions outlive QSettings cleanup — clear them too.
     SiteDecisionStore::reset();
 #endif
+
+    // LANG01: the LanguageManager singleton was already built by
+    // BrowserApplication's ctor (custom QTEST_MAIN) with the app's
+    // real locale dirs — none of which carry .qm files here.  Adding
+    // the languagemanager test assets rescans and stands in for
+    // "installed" translations.
+    const QString assets = QDir(qApp->applicationDirPath()).absoluteFilePath(
+        QLatin1String("../utils/languagemanager/.qm/locale"));
+    QVERIFY2(QFileInfo(assets + QLatin1String("/hu_HU.qm")).exists(),
+             qPrintable(assets));
+    QVERIFY2(QFileInfo(assets + QLatin1String("/de_DE.qm")).exists(),
+             qPrintable(assets));
+    LanguageManager::instance()->addLocaleDirectory(assets);
+}
+
+// Disarm any modal driver chain still armed when the test function
+// returns — without this, an unanswered fillPassphraseDialog /
+// answerNextBox / rejectModalDialogs tick keeps polling for ~5s and
+// accepts or rejects the NEXT test's modal (performancePage's reset
+// confirmation was eaten this way: accept() maps to "not Yes", the
+// reset bailed, and hardwareAccel stayed unchecked).
+void tst_SettingsDialog::cleanup()
+{
+    ++s_janitorGeneration;
 }
 
 void tst_SettingsDialog::constructDefaults()
@@ -300,6 +436,36 @@ void tst_SettingsDialog::saveAndReload()
         QVERIFY(reloaded.minimFontSizeCheckBox->isChecked());
         QCOMPARE(reloaded.minimumFontSizeSpinBox->value(), 12);
     }
+}
+
+// PREFS01: the in-tab button box keeps the modal dialog's contract —
+// OK applies + asks the host to close, Cancel asks to close without
+// applying.  closeRequested replaces QDialog::done().
+void tst_SettingsDialog::buttonBoxCloseRequest()
+{
+    const QString original = QSettings().value(
+        QLatin1String("MainWindow/home")).toString();
+
+    SettingsDialog dialog;
+    QSignalSpy spy(&dialog, &SettingsDialog::closeRequested);
+
+    // Cancel discards the pending edit.
+    dialog.homeLineEdit->setText(QLatin1String("http://discarded.example/"));
+    dialog.buttonBox->button(QDialogButtonBox::Cancel)->click();
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+             original);
+
+    // OK persists the edit + closes.
+    dialog.homeLineEdit->setText(QLatin1String("http://kept.example/"));
+    dialog.buttonBox->button(QDialogButtonBox::Ok)->click();
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(QSettings().value(QLatin1String("MainWindow/home")).toString(),
+             QLatin1String("http://kept.example/"));
+
+    SettingsDialog restore;
+    restore.homeLineEdit->setText(original);
+    restore.accept();
 }
 
 // SRCH02: the Search tab's engine combo mirrors the OpenSearchManager
@@ -803,7 +969,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 10);
+        QCOMPARE(dialog.pagesList->count(), 12);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -821,6 +987,10 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("Extensions"));
         QCOMPARE(dialog.pagesList->item(9)->text(),
                  QStringLiteral("Containers"));
+        QCOMPARE(dialog.pagesList->item(10)->text(),
+                 QStringLiteral("Downloads"));
+        QCOMPARE(dialog.pagesList->item(11)->text(),
+                 QStringLiteral("Performance"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -843,24 +1013,46 @@ void tst_SettingsDialog::sidebarNavigation()
     }
 }
 
-// SIDE01: the General page's sidebar controls — off by default,
-// Left/Right dock side round-trips through MainWindow/sidebarDockArea.
+// SIDE02: the sidebar controls live in the Appearance page's
+// "Sidebar" group — off by default, Left/Right dock side round-trips
+// through MainWindow/sidebarDockArea, and the Panels checklist
+// persists each registered section under sidebar/panels/<id>.
 void tst_SettingsDialog::sidebarSettings()
 {
     QSettings settings;
     settings.remove(QLatin1String("MainWindow/showSidebar"));
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/panels"));
 
-    // Fresh dialog defaults: unchecked, Left.
     {
         SettingsDialog dialog;
         QVERIFY(!dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
-    }
+        // The whole group moved off General onto the Appearance page.
+        QWidget *host = dialog.sidebarGroupBox;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::AppearancePage));
 
-    // Enabling + Right persists and reads back.
-    {
-        SettingsDialog dialog;
+        // The Panels checklist mirrors the registered rail entries —
+        // every one on by default.
+        QCOMPARE(dialog.sidebarPanelsList->count(),
+                 SidebarPanel::panels().count());
+        QListWidgetItem *history = nullptr;
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QVERIFY(item->flags() & Qt::ItemIsUserCheckable);
+            QCOMPARE(item->checkState(), Qt::Checked);
+            QVERIFY(!item->icon().isNull());
+            if (item->data(Qt::UserRole).toByteArray() == "history")
+                history = item;
+        }
+        QVERIFY(history);
+
+        // Unchecking persists under sidebar/panels/history.
+        history->setCheckState(Qt::Unchecked);
         dialog.showSidebar->setChecked(true);
         dialog.sidebarDockArea->setCurrentIndex(1);
         dialog.accept();
@@ -869,18 +1061,450 @@ void tst_SettingsDialog::sidebarSettings()
              true);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::RightDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             false);
+    QVERIFY(!SidebarPanel::isPanelVisible("history"));
     {
         SettingsDialog dialog;
         QVERIFY(dialog.showSidebar->isChecked());
         QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i) {
+            QListWidgetItem *item = dialog.sidebarPanelsList->item(i);
+            QCOMPARE(item->checkState(),
+                     item->data(Qt::UserRole).toByteArray() == "history"
+                         ? Qt::Unchecked : Qt::Checked);
+        }
         dialog.showSidebar->setChecked(false);
         dialog.sidebarDockArea->setCurrentIndex(0);
+        for (int i = 0; i < dialog.sidebarPanelsList->count(); ++i)
+            dialog.sidebarPanelsList->item(i)->setCheckState(Qt::Checked);
         dialog.accept();
     }
     QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar")).toBool(),
              false);
     QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarDockArea")).toInt(),
              int(Qt::LeftDockWidgetArea));
+    QCOMPARE(settings.value(QLatin1String("sidebar/panels/history")).toBool(),
+             true);
+}
+
+// SIDE03: the Sidebar group docks its position choice in a two-tile
+// visual picker (miniature window + panel edge sketch) — same
+// currentIndex semantics as the old combo (0 Left, 1 Right), click +
+// keyboard commits, and the pick still persists through
+// MainWindow/sidebarDockArea so applySidebarSettings moves the dock.
+void tst_SettingsDialog::sidebarPositionPicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+
+    SettingsDialog dialog;
+    // The tiles can only take focus while their page is current —
+    // navigate there instead of relying on a persisted currentTab.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AppearancePage));
+    QCOMPARE(dialog.sidebarDockArea->count(), 2);
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
+
+    // Two tile children, one per dock side.
+    const QList<QWidget *> tiles =
+        dialog.sidebarDockArea->findChildren<QWidget *>();
+    QCOMPARE(tiles.count(), 2);
+    QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Left"));
+    QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Right"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // Focus asserts need the window ACTIVE, not just exposed — the
+    // offscreen platform can lag activation past the expose event.
+    dialog.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&dialog));
+
+    QSignalSpy spy(dialog.sidebarDockArea,
+                   &SidebarPositionPicker::positionChanged);
+
+    // Clicking the Right tile commits index 1.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 1);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 1);
+    // Re-clicking the selected tile is a no-op.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(spy.count(), 0);
+
+    // Keyboard: arrows move focus between the two tiles (wrapping);
+    // Enter commits the focused tile's index.
+    tiles.at(0)->setFocus();
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Left);   // wraps to Right
+    QVERIFY(tiles.at(1)->hasFocus());
+    QTest::keyClick(tiles.at(1), Qt::Key_Right);  // wraps to Left
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Return); // commits 0
+    QCOMPARE(dialog.sidebarDockArea->currentIndex(), 0);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().at(0).toInt(), 0);
+    dialog.close();
+
+    // Persisted round-trip through accept(): index 1 keeps writing
+    // RightDockWidgetArea, index 0 LeftDockWidgetArea — the values
+    // applySidebarSettings consumes, unchanged from the combo.
+    {
+        SettingsDialog persist;
+        persist.sidebarDockArea->setCurrentIndex(1);
+        persist.accept();
+        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+                     .toInt(), int(Qt::RightDockWidgetArea));
+    }
+    {
+        SettingsDialog reload;
+        QCOMPARE(reload.sidebarDockArea->currentIndex(), 1);
+        reload.sidebarDockArea->setCurrentIndex(0);
+        reload.accept();
+        QCOMPARE(QSettings().value(QLatin1String("MainWindow/sidebarDockArea"))
+                     .toInt(), int(Qt::LeftDockWidgetArea));
+    }
+
+    // An out-of-range stored area maps to the Left tile.
+    settings.setValue(QLatin1String("MainWindow/sidebarDockArea"), 99);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.sidebarDockArea->currentIndex(), 0);
+    }
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+}
+
+// PREFUI03: the nav filter field narrows the sidebar by page title
+// and by control labels inside each page, keeps the stack on a listed
+// hit, and restores the full list when cleared.
+void tst_SettingsDialog::settingsFilter()
+{
+    SettingsDialog dialog;
+    QVERIFY(dialog.pagesFilter);
+    QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
+    const int total = dialog.pagesList->count();
+
+    // "cookie" is not a page title — it matches Privacy's cookie
+    // controls (and the Containers explainer) through control labels,
+    // and the stack auto-jumps to the first listed hit.
+    dialog.pagesFilter->setText(QStringLiteral("cookie"));
+    int visible = 0;
+    for (int i = 0; i < total; ++i) {
+        if (!dialog.pagesList->item(i)->isHidden())
+            ++visible;
+    }
+    QVERIFY(visible >= 1);
+    QVERIFY(visible < total);
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::PrivacyPage))
+                 ->isHidden());
+    QVERIFY(dialog.pagesList->item(int(SettingsDialog::GeneralPage))
+                ->isHidden());
+    QCOMPARE(dialog.pagesList->currentRow(),
+             int(SettingsDialog::PrivacyPage));
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::PrivacyPage));
+
+    // Selecting a listed hit opens its page (UserRole mapping —
+    // visible row != stacked index once rows are hidden).
+    dialog.pagesList->setCurrentRow(int(SettingsDialog::ContainersPage));
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::ContainersPage));
+
+    // Page-title matching: "proxy" lists the Proxy page.
+    dialog.pagesFilter->setText(QStringLiteral("proxy"));
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::ProxyPage))
+                 ->isHidden());
+    QVERIFY(dialog.pagesList->item(int(SettingsDialog::ContainersPage))
+                ->isHidden());
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::ProxyPage));
+
+    // "font" lives inside Appearance's controls, not its title.
+    dialog.pagesFilter->setText(QStringLiteral("font"));
+    QVERIFY(!dialog.pagesList->item(int(SettingsDialog::AppearancePage))
+                 ->isHidden());
+    QCOMPARE(dialog.tabWidget->currentIndex(),
+             int(SettingsDialog::AppearancePage));
+
+    // A no-match term hides every row without crashing.
+    dialog.pagesFilter->setText(QStringLiteral("zzz-no-such-setting"));
+    for (int i = 0; i < total; ++i)
+        QVERIFY(dialog.pagesList->item(i)->isHidden());
+
+    // Clearing restores the full list.
+    dialog.pagesFilter->clear();
+    for (int i = 0; i < total; ++i)
+        QVERIFY(!dialog.pagesList->item(i)->isHidden());
+}
+
+// ICONS03: the icon-theme selector lives on the Appearance page (not
+// General), and every row previews a multi-glyph strip rendered from
+// the set's own artwork — Adwaita/Breeze/Tabler strips must visibly
+// differ from each other.
+void tst_SettingsDialog::iconThemeSelector()
+{
+    SettingsDialog dialog;
+
+    // The combo's top-level page inside the stacked widget is
+    // Appearance (sidebar row 2).
+    QWidget *host = dialog.iconThemeCombo;
+    while (host && host->parentWidget() != dialog.tabWidget)
+        host = host->parentWidget();
+    QVERIFY(host);
+    QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+    QCOMPARE(dialog.pagesList->item(2)->text(), QStringLiteral("Appearance"));
+    QCOMPARE(dialog.iconThemeLabel->parentWidget(),
+             dialog.iconThemeCombo->parentWidget());
+    QCOMPARE(dialog.iconThemeLabel->buddy(),
+             static_cast<QWidget *>(dialog.iconThemeCombo));
+
+    // Every row carries a painted strip, and distinct sets paint
+    // distinct previews.
+    QCOMPARE(dialog.iconThemeCombo->count(),
+             AroraIcon::themeIds().count());
+    QHash<QString, QImage> strips;
+    for (int row = 0; row < dialog.iconThemeCombo->count(); ++row) {
+        const QIcon icon = dialog.iconThemeCombo->itemIcon(row);
+        QVERIFY2(!icon.isNull(),
+                 qPrintable(dialog.iconThemeCombo->itemText(row)));
+        const QImage image =
+            icon.pixmap(dialog.iconThemeCombo->iconSize()).toImage();
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y).alpha() > 40)
+                    ++opaque;
+        QVERIFY2(opaque > 0,
+                 qPrintable(dialog.iconThemeCombo->itemText(row)));
+        strips[dialog.iconThemeCombo->itemData(row).toString()] = image;
+    }
+    QVERIFY(strips.value(QLatin1String("adwaita"))
+            != strips.value(QLatin1String("tabler")));
+    QVERIFY(strips.value(QLatin1String("adwaita"))
+            != strips.value(QLatin1String("breeze")));
+}
+
+// THEME01: the Appearance Theme combo persists browser/colorScheme
+// and applies live — accept() flips the palette mid-session; picking
+// System again restores the captured platform palette even though the
+// offscreen QPA reports Qt::ColorScheme::Unknown.
+void tst_SettingsDialog::themeSelector()
+{
+    // Sits on the Appearance page (sidebar row 2), next to the
+    // page-content forceDarkMode checkbox it must not be confused
+    // with — the note label underneath keeps the split honest.
+    {
+        SettingsDialog dialog;
+        QWidget *host = dialog.themeCombo;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+        QCOMPARE(dialog.themeCombo->count(), 3);
+        QCOMPARE(dialog.themeCombo->itemText(0),
+                 QStringLiteral("System default"));
+        QCOMPARE(dialog.themeLabel->buddy(),
+                 static_cast<QWidget *>(dialog.themeCombo));
+        QVERIFY(!dialog.themeNoteLabel->text().isEmpty());
+        // Default with no stored key is System.
+        QCOMPARE(dialog.themeCombo->currentIndex(), 0);
+    }
+
+    const QColor platformWindow =
+        QApplication::palette().color(QPalette::Window);
+
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("dark"));
+    QVERIFY(BrowserTheme::paletteIsForced());
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Reloaded dialog shows the stored pick; Light applies live too.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.themeCombo->currentIndex(), 2);
+        dialog.themeCombo->setCurrentIndex(1);   // Light
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("light"));
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Dark once more, then back to System — offscreen reports Unknown,
+    // so this exercises the forced-palette teardown on the no-opinion
+    // path rather than an explicit Light.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        dialog.accept();
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(0);   // System default
+        dialog.accept();
+    }
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("system"));
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+}
+
+// THEME02: the combo previews instantly — the palette flips on index
+// change with no accept() and no key write; reverting the combo,
+// pressing Cancel, or closing the page all undo the preview by
+// re-resolving the persisted pick.
+void tst_SettingsDialog::themePreview()
+{
+    // themeSelector (previous leg) leaves "system" persisted and the
+    // platform palette restored.
+    QCOMPARE(QSettings().value(
+                 QLatin1String("browser/colorScheme")).toString(),
+             QLatin1String("system"));
+    const QColor platformWindow =
+        QApplication::palette().color(QPalette::Window);
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Instant preview: the palette flips on index change alone and
+    // nothing is persisted yet.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);   // Dark
+        QVERIFY(BrowserTheme::paletteIsForced());
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        QCOMPARE(QSettings().value(
+                     QLatin1String("browser/colorScheme")).toString(),
+                 QLatin1String("system"));
+        // Reverting the combo before Apply restores the prior scheme.
+        dialog.themeCombo->setCurrentIndex(0);   // System default
+        QVERIFY(!BrowserTheme::paletteIsForced());
+        QCOMPARE(QApplication::palette().color(QPalette::Window),
+                 platformWindow);
+    }
+
+    // Cancel discards the preview, not just the widget state.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        dialog.reject();
+    }
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+
+    // Closing the page outright (tab close — no reject()) reverts too.
+    {
+        SettingsDialog *dialog = new SettingsDialog;
+        dialog->themeCombo->setCurrentIndex(2);
+        QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+        delete dialog;
+    }
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+
+    // Committed dark + Light preview + discard -> the committed dark
+    // scheme comes back, not the platform palette.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(2);
+        dialog.accept();
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    {
+        SettingsDialog *dialog = new SettingsDialog;
+        QCOMPARE(dialog->themeCombo->currentIndex(), 2);
+        dialog->themeCombo->setCurrentIndex(1);   // Light
+        QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
+        delete dialog;
+    }
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+
+    // Restore "system" + the platform palette for the following legs.
+    {
+        SettingsDialog dialog;
+        dialog.themeCombo->setCurrentIndex(0);
+        dialog.accept();
+    }
+    QVERIFY(!BrowserTheme::paletteIsForced());
+    QCOMPARE(QApplication::palette().color(QPalette::Window),
+             platformWindow);
+}
+
+// ICONS02: the sidebar, the theme-preview combo and the engine list
+// all pin iconSize at the style's small-icon metric — without it the
+// delegate paints each icon at the resolved asset's own nominal size
+// and rows render unevenly.  A runtime theme switch must not regrow
+// the pin.
+void tst_SettingsDialog::uniformSidebarIcons()
+{
+    const QString originalTheme = AroraIcon::theme();
+    SettingsDialog dialog;
+
+    // PREFUI08: the nav font is bumped ~30% relative to the app font
+    // and the pinned icon extent is derived from the enlarged metrics
+    // — bigger than PM_SmallIconSize but still one uniform size.
+    // (Metrics-based compare: the font may be pixel- or point-based.)
+    QVERIFY(QFontMetricsF(dialog.pagesList->font()).height()
+            > QFontMetricsF(dialog.font()).height() * 1.2);
+    const int extent = qRound(
+        QFontMetricsF(dialog.pagesList->font()).height() * 1.1);
+    const int smallExtent =
+        dialog.style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QVERIFY(extent > smallExtent);
+    const QSize iconExtent(extent, extent);
+
+    QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
+    QVERIFY(dialog.pagesList->uniformItemSizes());
+    // The fixed nav column is re-measured under the larger font.
+    QCOMPARE(dialog.pagesList->width(),
+             dialog.pagesList->sizeHintForColumn(0)
+                 + 2 * dialog.pagesList->frameWidth() + 8);
+    // The Panels checklist is the same icon+label list family —
+    // same enlarged font and extent.
+    QCOMPARE(dialog.sidebarPanelsList->iconSize(), iconExtent);
+    QVERIFY(dialog.sidebarPanelsList->font()
+            == dialog.pagesList->font());
+    // ICONS03: the combo's pin is the whole preview strip — N glyph
+    // cells wide, one small-icon extent tall.
+    QCOMPARE(dialog.iconThemeCombo->iconSize().height(), smallExtent);
+    QCOMPARE(dialog.iconThemeCombo->iconSize().width() % smallExtent, 0);
+    QVERIFY(dialog.iconThemeCombo->iconSize().width() > smallExtent);
+    QCOMPARE(dialog.engineTree->iconSize(),
+             QSize(smallExtent, smallExtent));
+
+    const auto checkRows = [&dialog, extent]() {
+        const int height = dialog.pagesList->sizeHintForRow(0);
+        // Row grew with the font and still fits the icon — the
+        // delegate centers it, nothing clips.
+        QVERIFY(height >= extent);
+        for (int row = 0; row < dialog.pagesList->count(); ++row) {
+            QCOMPARE(dialog.pagesList->sizeHintForRow(row), height);
+            QVERIFY(!dialog.pagesList->item(row)->icon().isNull());
+        }
+    };
+    checkRows();
+
+    // Re-resolving under each bundled set keeps the pinned extent and
+    // uniform row heights.
+    for (const QString &id : AroraIcon::themeIds()) {
+        if (id == QLatin1String("native"))
+            continue;
+        AroraIcon::setTheme(id);
+        QCOMPARE(dialog.pagesList->iconSize(), iconExtent);
+        checkRows();
+    }
+    AroraIcon::setTheme(originalTheme);
 }
 
 // UIP06: every stacked page lives inside a scroll area so a page
@@ -893,7 +1517,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 10);
+    QCOMPARE(dialog.tabWidget->count(), 12);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));
@@ -959,6 +1583,83 @@ void tst_SettingsDialog::scrollablePages()
         }
     }
     QVERIFY(sawScrollablePage);
+    dialog.close();
+}
+
+// PREFUI02: one compact padding rhythm across the whole page —
+// identical insets on every stacked page, identical inner padding in
+// every group box, and a slim right-aligned footer strip (separator
+// line + content-sized button box) instead of the full-width box the
+// style defaults produced.
+void tst_SettingsDialog::densityAndFooter()
+{
+    SettingsDialog dialog;
+
+    for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+        QScrollArea *area = qobject_cast<QScrollArea *>(
+            dialog.tabWidget->widget(i));
+        QVERIFY(area);
+        QWidget *page = area->widget();
+        QVERIFY(page && page->layout());
+        QCOMPARE(page->layout()->contentsMargins(),
+                 QMargins(8, 8, 8, 8));
+    }
+    const QList<QGroupBox *> groups =
+        dialog.findChildren<QGroupBox *>();
+    QVERIFY(!groups.isEmpty());
+    for (QGroupBox *box : groups) {
+        QVERIFY2(box->layout(), qPrintable(box->title()));
+        QCOMPARE(box->layout()->contentsMargins(),
+                 QMargins(9, 6, 9, 9));
+    }
+
+    // Footer strip: a full-width separator line above a button box
+    // pinned to the right edge at content width — the box must no
+    // longer stretch across the window.
+    QFrame *line = dialog.findChild<QFrame *>(
+        QLatin1String("footerLine"));
+    QVERIFY(line);
+    QCOMPARE(line->frameShape(), QFrame::HLine);
+    QCOMPARE(dialog.buttonBox->sizePolicy().horizontalPolicy(),
+             QSizePolicy::Maximum);
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    qApp->processEvents();
+    const int shellRight =
+        dialog.layout()->contentsMargins().right();
+    // geometry().right() is inclusive — +1 is the real edge.
+    QVERIFY(qAbs(dialog.buttonBox->geometry().right() + 1
+                 - (dialog.width() - shellRight)) <= 1);
+    QVERIFY(dialog.buttonBox->geometry().left()
+            > dialog.width() / 2);
+    // The line spans the content width just above the buttons.
+    QVERIFY(line->geometry().bottom()
+            <= dialog.buttonBox->geometry().top());
+    QVERIFY(line->width() >= dialog.width() - shellRight
+            - dialog.layout()->contentsMargins().left());
+
+    // Offscreen page grabs for visual review — set
+    // ARORA_SETTINGS_GRAB_DIR to a directory and each page lands
+    // there as settings-page-<n>.png; ARORA_SETTINGS_GRAB_SIZE=WxH
+    // resizes the dialog before grabbing.
+    const QByteArray grabDir = qgetenv("ARORA_SETTINGS_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        const QStringList grabSizeParts = QString::fromLocal8Bit(
+            qgetenv("ARORA_SETTINGS_GRAB_SIZE")).split(QLatin1Char('x'));
+        if (grabSizeParts.size() == 2) {
+            dialog.resize(grabSizeParts[0].toInt(), grabSizeParts[1].toInt());
+            qApp->processEvents();
+        }
+        for (int i = 0; i < dialog.tabWidget->count(); ++i) {
+            dialog.tabWidget->setCurrentIndex(i);
+            dialog.pagesList->setCurrentRow(i);
+            qApp->processEvents();
+            dialog.grab().save(QString::fromLocal8Bit(grabDir)
+                + QStringLiteral("/settings-page-%1.png").arg(i));
+        }
+    }
     dialog.close();
 }
 
@@ -1159,6 +1860,68 @@ void tst_SettingsDialog::containersPage()
     }
 }
 
+// ADDR01: the AutoFill page's Saved Addresses section — Add opens the
+// editor, the row appears on accept, Edit rewrites the stored fields,
+// Remove/Remove All delete, and the manager's change signal re-syncs
+// the open page.
+void tst_SettingsDialog::autoFillAddressesPage()
+{
+    AutoFillManager *manager = AutoFillManager::instance();
+    const QList<AutoFillManager::Address> saved = manager->addresses();
+    manager->setAddresses(QList<AutoFillManager::Address>());
+
+    {
+        SettingsDialog dialog;
+        dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AutoFillPage));
+
+        // Empty state: Edit/Remove are gated on a selection.
+        QCOMPARE(dialog.addressesList->count(), 0);
+        QVERIFY(!dialog.editAddressButton->isEnabled());
+        QVERIFY(!dialog.removeAddressButton->isEnabled());
+
+        // Cancelling the editor adds nothing.
+        rejectModal();
+        dialog.addAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+
+        // Accepting with a name stores + selects the new row.
+        fillAddressEditor(QLatin1String("Ada"));
+        dialog.addAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 1);
+        QCOMPARE(manager->addresses().first().name, QLatin1String("Ada"));
+        QCOMPARE(dialog.addressesList->count(), 1);
+        QCOMPARE(dialog.addressesList->currentRow(), 0);
+        QVERIFY(dialog.addressesList->item(0)->text()
+                .contains(QLatin1String("Ada")));
+        QVERIFY(dialog.editAddressButton->isEnabled());
+        QVERIFY(dialog.removeAddressButton->isEnabled());
+
+        // Edit rewrites the persisted fields.
+        fillAddressEditor(QLatin1String("Ada"), QLatin1String("62701"));
+        dialog.editAddressButton->click();
+        QCOMPARE(manager->addresses().first().zip, QLatin1String("62701"));
+
+        // Remove deletes the selected row.
+        dialog.addressesList->setCurrentRow(0);
+        dialog.removeAddressButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+        QCOMPARE(dialog.addressesList->count(), 0);
+        QVERIFY(!dialog.removeAddressButton->isEnabled());
+
+        // A write through the manager re-syncs the open page; Remove
+        // All clears the store.
+        AutoFillManager::Address address;
+        address.name = QLatin1String("Grace");
+        manager->addAddress(address);
+        QCOMPARE(dialog.addressesList->count(), 1);
+        dialog.removeAllAddressesButton->click();
+        QCOMPARE(manager->addresses().count(), 0);
+        QCOMPARE(dialog.addressesList->count(), 0);
+    }
+
+    manager->setAddresses(saved);
+}
+
 // POL03: Appearance's dark-mode checkbox (off by default) and
 // General's middle-click autoscroll (on by default everywhere but
 // macOS) round-trip through the websettings group.
@@ -1204,6 +1967,322 @@ void tst_SettingsDialog::pagePolishSettings()
                  .toBool(), false);
     QCOMPARE(settings.value(QLatin1String("websettings/middleClickAutoscroll"))
                  .toBool(), autoscrollDefault);
+}
+
+// DLACC01: the Downloads page carries the engine selector — persisted
+// under downloadmanager/engine, the same key the routing stub in
+// handleDownloadRequested reads — plus the accelerated segment count
+// and the finished-downloads cleanup policy, which had no UI before.
+void tst_SettingsDialog::downloadsPage()
+{
+    // DLACC06: the fresh-profile default is only provable with no
+    // persisted pick — drop any engine key an earlier leg wrote.
+    QSettings().remove(QLatin1String("downloadmanager/engine"));
+    {
+        SettingsDialog dialog;
+        dialog.openAtPage(SettingsDialog::DownloadsPage);
+        QVERIFY(dialog.tabWidget->currentWidget());
+        QCOMPARE(dialog.pagesList->currentItem()->text(),
+                 QStringLiteral("Downloads"));
+
+        QCOMPARE(dialog.downloadEngineCombo->count(), 2);
+        QCOMPARE(dialog.downloadEngineCombo->itemData(0).toString(),
+                 QLatin1String("builtin"));
+        QCOMPARE(dialog.downloadEngineCombo->itemData(1).toString(),
+                 QLatin1String("rust"));
+        QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
+            dialog.downloadEngineCombo->model());
+        QVERIFY(model);
+#ifdef ARORA_RUSTDL
+        QVERIFY(model->item(1)->isEnabled());
+        // DLACC06: rust is the default — a fresh profile opens with
+        // Accelerated selected and the segment spin armed.
+        QCOMPARE(dialog.downloadEngineCombo->currentData().toString(),
+                 QLatin1String("rust"));
+        QVERIFY(dialog.downloadConnectionsSpin->isEnabled());
+        // Picking Accelerated arms the segment spin; back to built-in
+        // greys it out again.
+        dialog.downloadEngineCombo->setCurrentIndex(1);
+        QVERIFY(dialog.downloadConnectionsSpin->isEnabled());
+        dialog.downloadEngineCombo->setCurrentIndex(0);
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#else
+        // Without a rustdl build the Accelerated row stays listed but
+        // disabled (a persisted pick round-trips), and the segment
+        // spin greys out under Built-in.
+        QVERIFY(!model->item(1)->isEnabled());
+        QVERIFY(!dialog.downloadConnectionsSpin->isEnabled());
+#endif
+        dialog.downloadConnectionsSpin->setValue(12);
+        dialog.downloadCleanupCombo->setCurrentIndex(1);   // Exit
+        // DLACC02: the built-in engine's ParallelDownloading toggle —
+        // on by default, persisted downloadmanager/parallelSegments.
+        QVERIFY(dialog.downloadParallelSegments->isChecked());
+        dialog.downloadParallelSegments->setChecked(false);
+        dialog.accept();
+    }
+
+    QSettings settings;
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/engine")).toString(),
+             QLatin1String("builtin"));
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/connections")).toInt(),
+             12);
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/parallelSegments"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Exit"));
+    // The choice live-applied to the running manager, not just the key.
+    QCOMPARE(int(DownloadManager::instance()->removePolicy()),
+             int(DownloadManager::Exit));
+
+    // Reopen: the saved engine, segment count, and policy read back.
+    {
+        SettingsDialog reloaded;
+        QCOMPARE(reloaded.downloadEngineCombo->currentIndex(), 0);
+        QCOMPARE(reloaded.downloadConnectionsSpin->value(), 12);
+        QCOMPARE(reloaded.downloadCleanupCombo->currentIndex(), 1);
+        QCOMPARE(reloaded.downloadParallelSegments->isChecked(), false);
+        // Restore harness defaults for the tests that follow.
+        reloaded.downloadConnectionsSpin->setValue(0);
+        reloaded.downloadCleanupCombo->setCurrentIndex(0);
+        reloaded.downloadParallelSegments->setChecked(true);
+        reloaded.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/removeDownloadsPolicy"))
+                 .toString(), QLatin1String("Never"));
+    QCOMPARE(settings.value(QLatin1String("downloadmanager/parallelSegments"))
+                 .toBool(), true);
+}
+
+// TABS03: the Tab Settings page replaced the position combo with a
+// Vivaldi-style tile picker inside a "Tab Bar Position" group.  The
+// tiles display in Vivaldi's Top/Left/Right/Bottom order but commit
+// the persisted combo indices Top/Bottom/Left/Right = 0/1/2/3 — the
+// click, keyboard and clamp paths all prove the decoupled order.
+void tst_SettingsDialog::tabPositionPicker()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/tabBarPosition"));
+
+    SettingsDialog dialog;
+    // The tiles can only take focus while their page is current —
+    // navigate there instead of relying on a persisted currentTab.
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::TabSettingsPage));
+    QVERIFY(dialog.tabBarPositionGroup);
+    QCOMPARE(dialog.tabBarPositionGroup->title(),
+             QLatin1String("Tab Bar Position"));
+    QCOMPARE(dialog.tabBarPosition->count(), 4);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 0);
+
+    // Four tile children, one per position, in display order.
+    const QList<QWidget *> tiles =
+        dialog.tabBarPosition->findChildren<QWidget *>();
+    QCOMPARE(tiles.count(), 4);
+    QCOMPARE(tiles.at(0)->accessibleName(), QLatin1String("Top"));
+    QCOMPARE(tiles.at(1)->accessibleName(), QLatin1String("Left"));
+    QCOMPARE(tiles.at(2)->accessibleName(), QLatin1String("Right"));
+    QCOMPARE(tiles.at(3)->accessibleName(), QLatin1String("Bottom"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // Focus asserts need the window ACTIVE, not just exposed — the
+    // offscreen platform can lag activation past the expose event.
+    dialog.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&dialog));
+
+    QSignalSpy spy(dialog.tabBarPosition,
+                   &TabPositionPicker::positionChanged);
+
+    // Clicking Left (display slot 1) commits persisted index 2;
+    // clicking Bottom (slot 3) commits index 1.
+    QTest::mouseClick(tiles.at(1), Qt::LeftButton);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 2);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 2);
+    QTest::mouseClick(tiles.at(3), Qt::LeftButton);
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 1);
+    QCOMPARE(spy.count(), 1);
+
+    // Keyboard: arrows move focus between tiles in display order
+    // (wrapping); Enter commits the focused tile's persisted index.
+    tiles.at(0)->setFocus();
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Left);      // wraps to Bottom
+    QVERIFY(tiles.at(3)->hasFocus());
+    QTest::keyClick(tiles.at(3), Qt::Key_Right);
+    QVERIFY(tiles.at(0)->hasFocus());
+    QTest::keyClick(tiles.at(0), Qt::Key_Right);
+    QVERIFY(tiles.at(1)->hasFocus());
+    QTest::keyClick(tiles.at(1), Qt::Key_Return);    // Left -> index 2
+    QCOMPARE(dialog.tabBarPosition->currentIndex(), 2);
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.last().at(0).toInt(), 2);
+    QTest::keyClick(tiles.at(1), Qt::Key_Space);     // re-commit: no-op
+    QCOMPARE(spy.count(), 2);
+    dialog.close();
+
+    // Persisted round-trip through accept().
+    {
+        SettingsDialog persist;
+        persist.tabBarPosition->setCurrentIndex(3);  // Right
+        persist.accept();
+        QCOMPARE(QSettings().value(QLatin1String("tabs/tabBarPosition"))
+                     .toInt(), 3);
+    }
+
+    // Out-of-range saved values clamp onto the edge tiles.
+    settings.setValue(QLatin1String("tabs/tabBarPosition"), 99);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.tabBarPosition->currentIndex(), 3);
+    }
+    settings.setValue(QLatin1String("tabs/tabBarPosition"), -2);
+    {
+        SettingsDialog clamped;
+        QCOMPARE(clamped.tabBarPosition->currentIndex(), 0);
+    }
+    settings.remove(QLatin1String("tabs/tabBarPosition"));
+}
+
+// ADB06/ADBLK01: the Content Blocking group on the Privacy page
+// carries the runtime adblock-engine picker — persisted as
+// AdBlock/engine through AdBlockManager::setEngine, so the switch
+// answers the next request.  Brave adblock-rust is the default (an
+// absent key selects it and materializes no key on accept); without a
+// CONFIG+=adblock_rust build the Brave row is listed but disabled (a
+// persisted pick round-trips), never a dead option.
+void tst_SettingsDialog::contentBlockerEngine()
+{
+    // ADBLK01: start from a genuinely unset key — earlier legs'
+    // accept()s may already have persisted a pick — so the dialog
+    // shows the new Brave default, not leftovers.
+    QSettings().remove(QLatin1String("AdBlock/engine"));
+    {
+        SettingsDialog dialog;
+        dialog.openAtPage(SettingsDialog::PrivacyPage);
+        QCOMPARE(dialog.pagesList->currentItem()->text(),
+                 QStringLiteral("Privacy"));
+
+        // The picker lives inside the Privacy page's Content
+        // Blocking group, not on a page of its own.
+        QWidget *host = dialog.adblockEngineCombo;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::PrivacyPage));
+        QCOMPARE(dialog.adblockEngineLabel->buddy(),
+                 static_cast<QWidget *>(dialog.adblockEngineCombo));
+        QVERIFY(!dialog.adblockEngineStatus->text().isEmpty());
+
+        QCOMPARE(dialog.adblockEngineCombo->count(), 2);
+        QCOMPARE(dialog.adblockEngineCombo->itemData(0).toString(),
+                 QLatin1String("cpp"));
+        QCOMPARE(dialog.adblockEngineCombo->itemData(1).toString(),
+                 QLatin1String("rust"));
+        QStandardItemModel *model = qobject_cast<QStandardItemModel *>(
+            dialog.adblockEngineCombo->model());
+        QVERIFY(model);
+        // The unset default selects the Brave row on either build —
+        // enabled where the engine ships, disabled with the rebuild
+        // hint where it does not.
+        QCOMPARE(dialog.adblockEngineCombo->currentIndex(), 1);
+#ifdef ARORA_ADBLOCK_RUST
+        QVERIFY(model->item(1)->isEnabled());
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("adblock-rust")));
+        // Accepting the default writes nothing — the absent key IS
+        // the Brave pick.
+        dialog.accept();
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::RustEngine);
+
+        // Opting out to Built-in persists "cpp" and flips live.
+        SettingsDialog reloaded;
+        reloaded.adblockEngineCombo->setCurrentIndex(0);
+        reloaded.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("cpp"));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        SettingsDialog reloaded2;
+        QCOMPARE(reloaded2.adblockEngineCombo->currentIndex(), 0);
+        QVERIFY(reloaded2.adblockEngineStatus->text().contains(
+            QStringLiteral("Built-in")));
+        // Picking Brave again writes the explicit id back.
+        reloaded2.adblockEngineCombo->setCurrentIndex(1);
+        reloaded2.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("rust"));
+        // Restore the opt-out so the shared config ends native.
+        SettingsDialog reloaded3;
+        reloaded3.adblockEngineCombo->setCurrentIndex(0);
+        reloaded3.accept();
+#else
+        QVERIFY(!model->item(1)->isEnabled());
+        // The defaulted rust pick selects the (disabled) row and the
+        // status line explains the native fallback — no silent
+        // rewrite, no half-selected engine.
+        QVERIFY(dialog.adblockEngineStatus->text().contains(
+            QStringLiteral("not compiled")));
+        QCOMPARE(AdBlockManager::instance()->engine(),
+                 AdBlockManager::NativeEngine);
+        // Accepting keeps the default absent — nothing materializes
+        // a key the user never picked.
+        dialog.accept();
+        QVERIFY(!QSettings().contains(QLatin1String("AdBlock/engine")));
+        QCOMPARE(AdBlockManager::storedEngine(),
+                 AdBlockManager::RustEngine);
+
+        // A persisted rust pick round-trips through the disabled row
+        // the same way the default does.
+        QSettings().setValue(QLatin1String("AdBlock/engine"),
+                             QLatin1String("rust"));
+        SettingsDialog reloaded;
+        QCOMPARE(reloaded.adblockEngineCombo->currentIndex(), 1);
+        QVERIFY(reloaded.adblockEngineStatus->text().contains(
+            QStringLiteral("not compiled")));
+        reloaded.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("rust"));
+        // Switch back to Built-in and persist that.
+        reloaded.adblockEngineCombo->setCurrentIndex(0);
+        reloaded.accept();
+        QCOMPARE(QSettings().value(QLatin1String("AdBlock/engine"))
+                     .toString(), QLatin1String("cpp"));
+#endif
+    }
+    QCOMPARE(AdBlockManager::storedEngine(), AdBlockManager::NativeEngine);
+}
+
+// MENU05: with the Tools-menu "Ad Block..." entry removed, the
+// Content Blocking group's Manage button is the Preferences-side
+// path to the same modeless AdBlockDialog the site panel opens.
+void tst_SettingsDialog::adblockManageButton()
+{
+    SettingsDialog dialog;
+    dialog.openAtPage(SettingsDialog::PrivacyPage);
+
+    QCOMPARE(dialog.adblockManageButton->parentWidget()
+                 ->objectName(),
+             QStringLiteral("contentBlockingGroup"));
+
+    dialog.adblockManageButton->click();
+    AdBlockDialog *adblock = nullptr;
+    for (int i = 0; i < 50 && !adblock; ++i) {
+        QTest::qWait(20);
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            AdBlockDialog *candidate =
+                qobject_cast<AdBlockDialog *>(widget);
+            if (candidate && candidate->isVisible()) {
+                adblock = candidate;
+                break;
+            }
+        }
+    }
+    QVERIFY(adblock);
+    adblock->close();
 }
 
 // EXT02: the permission-review dialog is the consent gate every
@@ -1282,6 +2361,21 @@ void tst_SettingsDialog::extensionReview()
         QPushButton *approve = dialog.findChild<QPushButton *>(
             QLatin1String("approveButton"));
         QVERIFY(approve);
+        // EXT05: HostileExt declares dangerous access (cookies,
+        // debugger, <all_urls>) — approve stays locked until every
+        // per-permission consent box is ticked.
+        QVERIFY(manifest.dangerous.contains(QLatin1String("cookies")));
+        QVERIFY(manifest.dangerous.contains(QLatin1String("debugger")));
+        QVERIFY(manifest.dangerous.contains(QLatin1String("<all_urls>")));
+        QVERIFY(!approve->isEnabled());
+        const QList<QCheckBox *> consents =
+            dialog.findChildren<QCheckBox *>(
+                QLatin1String("dangerousConsent"));
+        QCOMPARE(consents.size(), manifest.dangerous.size());
+        for (QCheckBox *box : consents) {
+            QVERIFY(!box->isChecked());
+            box->setChecked(true);
+        }
         QVERIFY(approve->isEnabled());
         QCOMPARE(approve->text(), QLatin1String("Install"));
     }
@@ -1330,18 +2424,27 @@ void tst_SettingsDialog::extensionReview()
         QVERIFY(warnings->count() > 0);
     }
 
-    // Consent gate: approve returns true, cancel returns false.
+    // Consent gate: approve returns true, cancel returns false — and
+    // an unchecked dangerous permission keeps approve locked, so the
+    // review can only pass once every consent box is ticked.
     const QString dirPath = dir.path();
     QTimer::singleShot(50, qApp, [dirPath]() {
         QWidget *widget = QApplication::activeModalWidget();
         if (ExtensionReviewDialog *dialog =
                 qobject_cast<ExtensionReviewDialog *>(widget)) {
+            const QList<QCheckBox *> consents =
+                dialog->findChildren<QCheckBox *>(
+                    QLatin1String("dangerousConsent"));
+            for (QCheckBox *box : consents)
+                box->setChecked(true);
             dialog->findChild<QPushButton *>(
                 QLatin1String("approveButton"))->click();
         }
     });
     QVERIFY(ExtensionReviewDialog::review(
         manifest, dirPath, ExtensionReviewDialog::Install));
+    // The approval recorded a one-shot consent for the path.
+    QVERIFY(ExtensionManager::instance()->hasConsent(dirPath));
 
     rejectModal(50);
     QVERIFY(!ExtensionReviewDialog::review(
@@ -1482,6 +2585,9 @@ void tst_SettingsDialog::extensionPage()
             "update_url": "https://127.0.0.1:9/updates.xml"
         })");
     }
+    // EXT05: simulate the approved review — loadExtension refuses
+    // paths that never passed the consent gate.
+    manager->grantConsent(dir.path());
     manager->loadExtension(dir.path());
 
     QString extId;
@@ -1548,15 +2654,19 @@ void tst_SettingsDialog::extensionPage()
     // The update button kicks a real check; the dead https source
     // fails asynchronously, so the manual flag is still set when the
     // crafted results land through the signal — the summary box shows
-    // the installed/downloaded/failed join.
-    dismissModalBoxes();
+    // the offered/downloaded/failed join, and the installable package
+    // falls through to the EXT05 consent review (rejected here).
+    const int janitorGeneration = ++s_janitorGeneration;
+    dismissModalBoxes(janitorGeneration);
+    rejectModalDialogs(janitorGeneration);
     dialog.extensionUpdateButton->click();
     {
         QList<ExtensionManager::UpdateResult> results;
         ExtensionManager::UpdateResult installed;
         installed.name = QLatin1String("Installed");
         installed.availableVersion = QLatin1String("2.0");
-        installed.installTriggered = true;
+        installed.savedTo = QLatin1String("/tmp/covext-installed.zip");
+        installed.installable = true;
         results << installed;
         ExtensionManager::UpdateResult downloaded;
         downloaded.name = QLatin1String("Downloaded");
@@ -1587,6 +2697,10 @@ void tst_SettingsDialog::extensionPage()
         }
         return true;
     }(), 10000);
+
+    // Disarm the modal janitors — the async update check has
+    // settled, and armed rejects would eat the next test's dialogs.
+    ++s_janitorGeneration;
 }
 
 // SEC13: the saved-credentials group reflects SecureStore state —
@@ -1697,6 +2811,896 @@ void tst_SettingsDialog::containerSiteRows()
             .contains(QLatin1String("always open in the selected container")));
 
     QVERIFY(manager->deleteContainer(id));
+}
+
+// PREFUI04: the Performance page — every control persists under its
+// consumer's key, the migrated suspend/prefetch keys keep their
+// original paths, each setting has exactly one home (the old Privacy
+// prefetch checkbox and the Tab Settings suspend row are gone), and
+// the page's reset restores compiled defaults only.
+void tst_SettingsDialog::performancePage()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    settings.remove(QLatin1String("privacy/blockPrefetch"));
+
+    // Defaults and the single-home invariant.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->text(),
+                 QStringLiteral("Performance"));
+        QVERIFY(dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        QVERIFY(!dialog.lazyRestoreTabs->isChecked());
+        // The pinned opt-out only enables while lazy restore is on.
+        QVERIFY(!dialog.alwaysLoadPinnedTabs->isEnabled());
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isChecked());
+        // Positive form of the default-on privacy/blockPrefetch key.
+        QVERIFY(!dialog.prefetchResources->isChecked());
+        QVERIFY(!dialog.findChild<QCheckBox *>(
+                    QLatin1String("blockPrefetch")));
+        QVERIFY(!dialog.findChild<QCheckBox *>(
+                    QLatin1String("suspendTabs")));
+        QVERIFY(!dialog.findChild<QSpinBox *>(
+                    QLatin1String("suspendTabsMinutes")));
+
+        dialog.hardwareAccel->setChecked(false);
+        dialog.memorySaverMaximum->setChecked(true);
+        dialog.lazyRestoreTabs->setChecked(true);
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
+        dialog.alwaysLoadPinnedTabs->setChecked(false);
+        dialog.prefetchResources->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/hardwareAcceleration"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/lazyRestoreTabs"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/alwaysLoadPinnedTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabsMinutes"))
+                 .toInt(), 10);
+    QCOMPARE(settings.value(QLatin1String("privacy/blockPrefetch"))
+                 .toBool(), false);
+
+    // Round-trip back into a fresh dialog.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverMaximum->isChecked());
+        QVERIFY(dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(dialog.alwaysLoadPinnedTabs->isEnabled());
+        QVERIFY(!dialog.alwaysLoadPinnedTabs->isChecked());
+        QVERIFY(dialog.prefetchResources->isChecked());
+        dialog.accept();
+    }
+
+    // Migration mapping: a stored non-preset minute value lands on
+    // the nearest tier, and "Never" keeps it for later.
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabsMinutes"), 45);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.memorySaverBalanced->isChecked());
+        dialog.memorySaverNever->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabsMinutes"))
+                 .toInt(), 45);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        dialog.reject();
+    }
+
+    // The page's filter haystack: "performance" and "saver" list it.
+    {
+        SettingsDialog dialog;
+        dialog.pagesFilter->setText(QStringLiteral("saver"));
+        QVERIFY(!dialog.pagesList->item(
+                     int(SettingsDialog::PerformancePage))->isHidden());
+    }
+
+    // Reset restores only this page's keys (the migrated ones
+    // included) — a foreign setting survives.
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("privacy/blockPrefetch"), false);
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(dialog.prefetchResources->isChecked());
+        answerNextBox(QMessageBox::Yes);
+        dialog.resetPerformanceButton->click();
+        QVERIFY(dialog.hardwareAccel->isChecked());
+        QVERIFY(dialog.memorySaverNever->isChecked());
+        QVERIFY(!dialog.lazyRestoreTabs->isChecked());
+        QVERIFY(!dialog.prefetchResources->isChecked());
+        dialog.reject();
+    }
+    QCOMPARE(settings.value(
+                 QLatin1String("performance/lazyRestoreTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("tabs/suspendTabs"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("privacy/blockPrefetch"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/showSidebar"))
+                 .toBool(), true);
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    settings.remove(QLatin1String("privacy/blockPrefetch"));
+}
+
+// PREFUI05: Energy Saver — radio persistence, the sysfs battery seam
+// driving live activation, the forced suspend clock, and the honest
+// no-battery degrade.
+void tst_SettingsDialog::energySaver()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("performance"));
+
+    // Fake sysfs tree: one battery on AC power.
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    auto writeAttr = [&root](const QString &rel, const QByteArray &data) {
+        const QString path = root.filePath(rel);
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(data);
+        file.close();
+    };
+    writeAttr(QLatin1String("BAT0/type"), "Battery\n");
+    writeAttr(QLatin1String("BAT0/status"), "Charging\n");
+    writeAttr(QLatin1String("BAT0/capacity"), "64\n");
+    writeAttr(QLatin1String("AC/type"), "Mains\n");
+    writeAttr(QLatin1String("AC/online"), "1\n");
+
+    EnergySaver *saver = EnergySaver::instance();
+    EnergySaver::setPowerSupplyRootForTesting(root.path());
+    QVERIFY(saver->hasBattery());
+    QVERIFY(!saver->onBattery());
+    QCOMPARE(saver->batteryPercent(), 64);
+
+    // Default is Never; the radios persist a round trip.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverNever->isChecked());
+        QVERIFY(!dialog.energySaverStatus->text().isEmpty());
+        dialog.energySaverOnBattery->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("performance/energySaver"))
+                 .toInt(), int(EnergySaver::OnBattery));
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverOnBattery->isChecked());
+        dialog.reject();
+    }
+
+    // The suspend clock: Memory Saver's own pick applies while the
+    // saver is off.
+    TabWidget tabs;
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(0));
+    settings.setValue(QLatin1String("tabs/suspendTabs"), true);
+    settings.setValue(QLatin1String("tabs/suspendTabsMinutes"), 60);
+    tabs.loadSettings();
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(60 * 60 * 1000));
+
+    // AC -> battery flips the saver live and pins the clock to the
+    // 10-minute cap, overriding the 60-minute pick.
+    QSignalSpy spy(saver, &EnergySaver::activeChanged);
+    QVERIFY(!saver->active());
+    writeAttr(QLatin1String("AC/online"), "0\n");
+    writeAttr(QLatin1String("BAT0/status"), "Discharging\n");
+    saver->refreshBatteryState();
+    QVERIFY(saver->onBattery());
+    QVERIFY(saver->active());
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(10 * 60 * 1000));
+
+    // Back on AC it releases and the configured pick returns.
+    writeAttr(QLatin1String("AC/online"), "1\n");
+    writeAttr(QLatin1String("BAT0/status"), "Charging\n");
+    saver->refreshBatteryState();
+    QVERIFY(!saver->active());
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(60 * 60 * 1000));
+
+    // The 20% mode is level-driven.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::BelowThreshold));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+    writeAttr(QLatin1String("BAT0/capacity"), "19\n");
+    saver->refreshBatteryState();
+    QVERIFY(saver->active());
+    writeAttr(QLatin1String("BAT0/capacity"), "21\n");
+    saver->refreshBatteryState();
+    QVERIFY(!saver->active());
+
+    // Always and Never need no battery state at all.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Always));
+    saver->loadSettings();
+    QVERIFY(saver->active());
+    QCOMPARE(tabs.suspendIdleIntervalMs(), qint64(10 * 60 * 1000));
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Never));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+
+    // No-battery degrade: conditioned modes behave like Never and the
+    // page says so.
+    QTemporaryDir empty;
+    QVERIFY(empty.isValid());
+    EnergySaver::setPowerSupplyRootForTesting(empty.path());
+    QVERIFY(!saver->hasBattery());
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::OnBattery));
+    saver->loadSettings();
+    QVERIFY(!saver->active());
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverStatus->text().contains(
+            QLatin1String("No battery")));
+    }
+
+    // With a battery the status line names the charge level.
+    EnergySaver::setPowerSupplyRootForTesting(root.path());
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverStatus->text().contains(
+            QLatin1String("21%")));
+    }
+
+    // Reset covers energySaver via the performance group.
+    settings.setValue(QLatin1String("performance/energySaver"),
+                      int(EnergySaver::Always));
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.energySaverAlways->isChecked());
+        answerNextBox(QMessageBox::Yes);
+        dialog.resetPerformanceButton->click();
+        QVERIFY(dialog.energySaverNever->isChecked());
+        dialog.reject();
+    }
+    QCOMPARE(settings.value(QLatin1String("performance/energySaver"))
+                 .toInt(), int(EnergySaver::Never));
+
+    EnergySaver::setPowerSupplyRootForTesting(QString());
+    settings.remove(QLatin1String("performance"));
+    settings.remove(QLatin1String("tabs/suspendTabs"));
+    settings.remove(QLatin1String("tabs/suspendTabsMinutes"));
+    saver->loadSettings();
+}
+
+// TPREV01: the Appearance page's 'Show tab previews on hover'
+// checkbox persists tabs/tabHoverPreviews — on by default for a
+// fresh profile, and the state round-trips through save/reload.
+void tst_SettingsDialog::tabHoverPreviews()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+
+    // The control lives on the Appearance page (sidebar row 2).
+    {
+        SettingsDialog dialog;
+        QWidget *host = dialog.tabHoverPreviews;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host), 2);
+
+        QVERIFY(dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), false);
+
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.tabHoverPreviews->isChecked());
+        dialog.tabHoverPreviews->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("tabs/tabHoverPreviews"))
+                 .toBool(), true);
+
+    settings.remove(QLatin1String("tabs/tabHoverPreviews"));
+}
+
+// PREFUI06: the Appearance page rendered its label column mid-page —
+// a column shared by the 'Minimum Font size:' checkbox and the long
+// 'Window theme' label pushed every label's text right while the
+// checkbox/group rows anchored at the inset. Labels must paint their
+// text at the page inset, the label column must be sized by the
+// labels alone, and the font-name/note fields must not center text.
+void tst_SettingsDialog::appearanceLeftAnchored()
+{
+    SettingsDialog dialog;
+    dialog.resize(1400, 800);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.pagesList->setCurrentRow(2);
+    dialog.tabWidget->setCurrentIndex(2);
+    qApp->processEvents();
+
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->widget(2));
+    QVERIFY(area);
+    QWidget *page = area->widget();
+    QVERIFY(page);
+
+    auto textX = [&page](QLabel *l) {
+        const int x = l->mapTo(page, QPoint(0, 0)).x();
+        const int tw = l->fontMetrics().horizontalAdvance(l->text());
+        const Qt::Alignment a = l->alignment();
+        if (a & Qt::AlignHCenter)
+            return x + (l->width() - tw) / 2;
+        if (a & Qt::AlignRight)
+            return x + l->width() - tw;
+        return x;
+    };
+
+    const QList<QLabel *> pageLabels = {
+        dialog.iconThemeLabel, dialog.label_5,
+        dialog.label_6, dialog.themeLabel
+    };
+    for (QLabel *l : pageLabels) {
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2 — label column drifts")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // The label column is sized by the labels alone — no checkbox or
+    // other non-label row may inflate it past the widest label hint.
+    int maxLabelHint = 0;
+    for (QLabel *l : pageLabels)
+        maxLabelHint = qMax(maxLabelHint, l->sizeHint().width());
+    QVERIFY2(dialog.iconThemeLabel->width() <= maxLabelHint,
+             qPrintable(QStringLiteral(
+                 "label column %1 wider than widest label hint %2")
+                 .arg(dialog.iconThemeLabel->width())
+                 .arg(maxLabelHint)));
+
+    // Sidebar group's inner labels anchor inside the group too.
+    for (QLabel *l : {dialog.sidebarDockAreaLabel,
+                      dialog.sidebarPanelsLabel}) {
+        QVERIFY2(!(l->alignment() & Qt::AlignRight),
+                 qPrintable(l->objectName()));
+        QVERIFY2(textX(l) <= 30,
+                 qPrintable(QStringLiteral(
+                     "%1 text starts at %2")
+                     .arg(l->objectName()).arg(textX(l))));
+    }
+
+    // Field text reads like a line edit — no centered painting.
+    QVERIFY(!(dialog.standardLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.fixedLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(!(dialog.themeNoteLabel->alignment() & Qt::AlignHCenter));
+    QVERIFY(dialog.themeNoteLabel->mapTo(page, QPoint(0, 0)).x() <= 20);
+
+    // Widening the dialog must not drift the anchored block.
+    dialog.resize(1600, 800);
+    qApp->processEvents();
+    for (QLabel *l : pageLabels)
+        QVERIFY2(textX(l) <= 20,
+                 qPrintable(l->objectName()));
+    dialog.close();
+}
+
+// PREFUI07: every settings text field caps at a content-class width
+// so a wide dialog can't stretch a proxy credential or a home-page
+// URL across the page. Classes: 240 short names/credentials/tokens,
+// 300 hostnames, 480 URLs and paths. Measured at a 1500px dialog
+// where the uncapped fields ran to ~85% of the page width.
+void tst_SettingsDialog::fieldWidthCaps()
+{
+    struct Capped { QLineEdit *edit; int cap; };
+    SettingsDialog dialog;
+    const QList<Capped> fields = {
+        {dialog.homeLineEdit, 480},
+        {dialog.engineNameEdit, 240},
+        {dialog.engineNicknameEdit, 240},
+        {dialog.engineUrlEdit, 480},
+        {dialog.engineSuggestUrlEdit, 480},
+        {dialog.engineImageUrlEdit, 480},
+        {dialog.enginePostParamsEdit, 480},
+        {dialog.engineImagePostParamsEdit, 480},
+        {dialog.shortcutBookmarksToken, 240},
+        {dialog.shortcutHistoryToken, 240},
+        {dialog.shortcutTabsToken, 240},
+        {dialog.secureDnsServer, 480},
+        {dialog.proxyHostName, 300},
+        {dialog.proxyUserName, 240},
+        {dialog.proxyPassword, 240},
+        {dialog.userStyleSheet, 480},
+        {dialog.downloadsLocation, 480},
+        {dialog.externalDownloadPath, 480}
+    };
+    for (const Capped &f : fields) {
+        QCOMPARE(f.edit->maximumWidth(), f.cap);
+        // Capped, not fixed — fields still shrink with a narrow window.
+        QVERIFY(f.edit->sizePolicy().horizontalPolicy()
+                != QSizePolicy::Fixed);
+    }
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.resize(1500, 900);
+    qApp->processEvents();
+
+    // A field's geometry is only real while its page is current —
+    // walk up to the scroll area to find which stack index hosts it.
+    auto showPageOf = [&dialog](QWidget *w) {
+        while (w->parentWidget()
+               && w->parentWidget() != dialog.tabWidget)
+            w = w->parentWidget();
+        const int page = dialog.tabWidget->indexOf(w);
+        if (page >= 0) {
+            dialog.tabWidget->setCurrentIndex(page);
+            qApp->processEvents();
+        }
+        return page;
+    };
+
+    for (const Capped &f : fields) {
+        QVERIFY2(showPageOf(f.edit) >= 0,
+                 qPrintable(f.edit->objectName()));
+        QVERIFY2(f.edit->width() <= f.cap,
+                 qPrintable(QStringLiteral(
+                     "%1 width %2 exceeds cap %3")
+                     .arg(f.edit->objectName())
+                     .arg(f.edit->width()).arg(f.cap)));
+        QVERIFY(f.edit->width() > 0);
+    }
+
+    // The browse buttons sit directly beside their capped fields —
+    // no dead band where the old stretch used to be.
+    const QList<QPair<QLineEdit *, QPushButton *>> rows = {
+        {dialog.userStyleSheet, dialog.styleSheetBrowseButton},
+        {dialog.downloadsLocation, dialog.downloadDirectoryButton},
+        {dialog.externalDownloadPath, dialog.externalDownloadBrowse}
+    };
+    for (const auto &row : rows) {
+        QVERIFY2(showPageOf(row.first) >= 0,
+                 qPrintable(row.first->objectName()));
+        const int gap = row.second->x()
+                - (row.first->x() + row.first->width());
+        QVERIFY2(gap <= 40,
+                 qPrintable(QStringLiteral(
+                     "%1..%2 gap %3 — button floated off the field")
+                     .arg(row.first->objectName(),
+                          row.second->objectName())
+                     .arg(gap)));
+    }
+
+    // Already-capped combos on the swept pages still render capped.
+    for (QComboBox *combo : {dialog.proxyType, dialog.secureDnsMode}) {
+        QVERIFY2(showPageOf(combo) >= 0,
+                 qPrintable(combo->objectName()));
+        QCOMPARE(combo->sizePolicy().horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
+                 qPrintable(combo->objectName()));
+    }
+
+    // Narrow case: at 700px the Proxy page fields stay inside their
+    // caps and nothing forces a horizontal scrollbar.
+    dialog.resize(700, 900);
+    qApp->processEvents();
+    QVERIFY(showPageOf(dialog.proxyPassword) >= 0);
+    QVERIFY2(dialog.proxyPassword->width() <= 240,
+             qPrintable(QString::number(dialog.proxyPassword->width())));
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->currentWidget());
+    QVERIFY(area);
+    QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
+    dialog.close();
+}
+
+// TRUST06: the Privacy page's 'Site trust' group holds the master
+// toggle — trust/enabled, on by default.  The persisted key and the
+// live accessor BrowserApplication::siteTrustEnabled() (what the
+// badge and the per-signal lookups gate on) round-trip a restart.
+void tst_SettingsDialog::siteTrustToggle()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("trust/enabled"));
+
+    // The group box lives on the Privacy page.
+    {
+        SettingsDialog dialog;
+        QVERIFY(dialog.siteTrustGroupBox);
+        QWidget *host = dialog.siteTrustEnabled;
+        while (host && host->parentWidget() != dialog.tabWidget)
+            host = host->parentWidget();
+        QVERIFY(host);
+        QCOMPARE(dialog.tabWidget->indexOf(host),
+                 int(SettingsDialog::PrivacyPage));
+
+        QVERIFY(dialog.siteTrustEnabled->isChecked());
+        QVERIFY(BrowserApplication::siteTrustEnabled());
+        dialog.siteTrustEnabled->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/enabled")).toBool(),
+             false);
+    QVERIFY(!BrowserApplication::siteTrustEnabled());
+
+    // A reopened dialog reads the stored state back; re-enabling
+    // restores the default-on profile.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.siteTrustEnabled->isChecked());
+        dialog.siteTrustEnabled->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/enabled")).toBool(),
+             true);
+    QVERIFY(BrowserApplication::siteTrustEnabled());
+
+    settings.remove(QLatin1String("trust/enabled"));
+}
+
+// TRUST02: the 'Site trust' group's per-signal toggles —
+// trust/lookalike and trust/threatlist, both on by default.  Each
+// persisted key and its live accessor (what the per-signal lookups
+// gate on) round-trips a restart.
+void tst_SettingsDialog::siteTrustSignalToggles()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
+
+    // Both toggles live inside the Site Trust group box.
+    {
+        SettingsDialog dialog;
+        QCOMPARE(dialog.siteTrustLookalike->parentWidget(),
+                 dialog.siteTrustGroupBox);
+        QCOMPARE(dialog.siteTrustThreatlist->parentWidget(),
+                 dialog.siteTrustGroupBox);
+
+        QVERIFY(dialog.siteTrustLookalike->isChecked());
+        QVERIFY(dialog.siteTrustThreatlist->isChecked());
+        QVERIFY(BrowserApplication::siteTrustLookalikeEnabled());
+        QVERIFY(BrowserApplication::siteTrustThreatlistEnabled());
+        dialog.siteTrustLookalike->setChecked(false);
+        dialog.siteTrustThreatlist->setChecked(false);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/lookalike")).toBool(),
+             false);
+    QCOMPARE(settings.value(QLatin1String("trust/threatlist")).toBool(),
+             false);
+    QVERIFY(!BrowserApplication::siteTrustLookalikeEnabled());
+    QVERIFY(!BrowserApplication::siteTrustThreatlistEnabled());
+
+    // A reopened dialog reads the stored state back; re-enabling
+    // restores the default-on profile.
+    {
+        SettingsDialog dialog;
+        QVERIFY(!dialog.siteTrustLookalike->isChecked());
+        QVERIFY(!dialog.siteTrustThreatlist->isChecked());
+        dialog.siteTrustLookalike->setChecked(true);
+        dialog.siteTrustThreatlist->setChecked(true);
+        dialog.accept();
+    }
+    QCOMPARE(settings.value(QLatin1String("trust/lookalike")).toBool(),
+             true);
+    QCOMPARE(settings.value(QLatin1String("trust/threatlist")).toBool(),
+             true);
+    QVERIFY(BrowserApplication::siteTrustLookalikeEnabled());
+    QVERIFY(BrowserApplication::siteTrustThreatlistEnabled());
+
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
+}
+
+// LANG01: the General page's Language combo mirrors the
+// LanguageManager pick — "System default", one row per installed
+// translation (chooseNewLanguage's display shape), then an explicit
+// English row — and applies a selection immediately through the
+// manager (persisted there, not staged for OK).
+void tst_SettingsDialog::languageSelector()
+{
+    LanguageManager *manager = LanguageManager::instance();
+    const QStringList languages = manager->languages();
+    QVERIFY(languages.contains(QLatin1String("hu_HU")));
+    QVERIFY(languages.contains(QLatin1String("de_DE")));
+
+    SettingsDialog dialog;
+    QVERIFY(dialog.languageCombo);
+    QVERIFY(dialog.languageCombo->isEnabled());
+    QVERIFY(dialog.languageLabel->isEnabled());
+    QCOMPARE(dialog.languageCombo->count(), languages.count() + 2);
+    QCOMPARE(dialog.languageCombo->itemData(0).toString(),
+             QLatin1String("system"));
+    QVERIFY(dialog.languageCombo->itemText(0).contains(
+        QLatin1String("System default")));
+    QCOMPARE(dialog.languageCombo->itemData(
+                 dialog.languageCombo->count() - 1).toString(),
+             QString());
+    // Every installed translation gets a row carrying its locale code
+    // in the popup's display shape.
+    for (const QString &name : languages) {
+        const int row = dialog.languageCombo->findData(name);
+        QVERIFY(row > 0);
+        QVERIFY(dialog.languageCombo->itemText(row).contains(
+            QLatin1Char('(') + name + QLatin1Char(')')));
+    }
+
+    // Fresh profile with no override -> the System default row.
+    QCOMPARE(dialog.languageCombo->currentIndex(), 0);
+
+    // Picking Hungarian applies + persists immediately, and the page
+    // itself retranslates live (LanguageChange -> retranslate()).
+    const int huRow = dialog.languageCombo->findData(
+        QLatin1String("hu_HU"));
+    QVERIFY(huRow > 0);
+    dialog.languageCombo->setCurrentIndex(huRow);
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QLatin1String("hu_HU"));
+    qApp->processEvents();
+    QCOMPARE(dialog.label_3->text(), QString::fromUtf8("Kezdőlap:"));
+
+    // The trailing English row writes the explicit no-translation pick.
+    dialog.languageCombo->setCurrentIndex(
+        dialog.languageCombo->count() - 1);
+    QVERIFY(QSettings().contains(QLatin1String("LanguageManager/language")));
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QString());
+    qApp->processEvents();
+    QCOMPARE(dialog.label_3->text(), QLatin1String("Home Page:"));
+
+    // System default persists the "system" sentinel — never a resolved
+    // code — so an OS-language change still wins on the next launch.
+    dialog.languageCombo->setCurrentIndex(0);
+    QCOMPARE(QSettings().value(QLatin1String("LanguageManager/language"))
+                 .toString(),
+             QLatin1String("system"));
+
+    // A reopened dialog selects whatever the manager persisted.
+    {
+        SettingsDialog reopened;
+        QCOMPARE(reopened.languageCombo->currentIndex(), 0);
+        QCOMPARE(reopened.languageCombo->currentData().toString(),
+                 QLatin1String("system"));
+    }
+
+    // Leave the process in English so later legs don't run under a
+    // translation.
+    manager->setCurrentLanguage(QString());
+    qApp->processEvents();
+}
+
+// PREFUI09: the Privacy page's Cookies / Site Permissions / Saved
+// Passwords groups keep a left-anchored form.  A QGridLayout cell that
+// spans the stretched column redirects the surplus width into the
+// label column (or centers the whole block), so the groups now keep
+// spanning rows out of the stretch column or use a vbox + trailing
+// hbox spacer like the sibling groups.
+void tst_SettingsDialog::privacyGroupAlignment()
+{
+    SettingsDialog dialog;
+    dialog.resize(1400, 900);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::PrivacyPage));
+    qApp->processEvents();
+
+    auto gapAfter = [](QWidget *first, QWidget *second) {
+        return second->x() - (first->x() + first->width());
+    };
+
+    // Cookies: the label column sizes to its labels, the combos and
+    // their buttons pack to the left in columnar order, and the
+    // checkbox rows share the group's left edge.
+    QVERIFY(qobject_cast<QGridLayout *>(
+                dialog.cookiesGroupBox->layout()));
+    int maxLabelHint = 0;
+    for (QLabel *l : {dialog.label_2, dialog.label,
+                      dialog.cookieSessionLabel})
+        maxLabelHint = qMax(maxLabelHint, l->sizeHint().width());
+    QVERIFY2(dialog.label_2->width() <= maxLabelHint + 2,
+             qPrintable(QStringLiteral(
+                 "label column %1 wider than widest label hint %2 — "
+                 "surplus leaked into column 0")
+                 .arg(dialog.label_2->width()).arg(maxLabelHint)));
+
+    QCOMPARE(dialog.filterTrackingCookiesCheckbox->x(),
+             dialog.label_2->x());
+    QCOMPARE(dialog.blockThirdPartyCookies->x(),
+             dialog.label_2->x());
+    // Combos share the field column's left edge; buttons share the
+    // action column's left edge — no centered/floating cells.
+    QCOMPARE(dialog.keepUntilCombo->x(), dialog.acceptCombo->x());
+    QCOMPARE(dialog.cookieSessionCombo->x(), dialog.acceptCombo->x());
+    QCOMPARE(dialog.cookiesButton->x(), dialog.exceptionsButton->x());
+    // The action column hugs the field column — nothing pushed right.
+    QVERIFY2(gapAfter(dialog.acceptCombo, dialog.exceptionsButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Exceptions... gap %1 — floated off the field")
+                 .arg(gapAfter(dialog.acceptCombo,
+                               dialog.exceptionsButton))));
+    QVERIFY2(dialog.exceptionsButton->x()
+             + dialog.exceptionsButton->width()
+             < dialog.cookiesGroupBox->width() - 40,
+             qPrintable(QStringLiteral(
+                 "Exceptions... ends at %1 of %2 — hugging right edge")
+                 .arg(dialog.exceptionsButton->x()
+                      + dialog.exceptionsButton->width())
+                 .arg(dialog.cookiesGroupBox->width())));
+    QVERIFY(dialog.acceptCombo->width()
+            <= dialog.acceptCombo->sizeHint().width() + 4);
+
+    // Widening the dialog must not drift the anchored block right.
+    dialog.resize(1600, 900);
+    qApp->processEvents();
+    QCOMPARE(dialog.filterTrackingCookiesCheckbox->x(),
+             dialog.label_2->x());
+    QCOMPARE(dialog.cookiesButton->x(), dialog.exceptionsButton->x());
+    QVERIFY2(gapAfter(dialog.acceptCombo, dialog.exceptionsButton) <= 20,
+             "Exceptions... drifted on resize");
+    dialog.resize(1400, 900);
+    qApp->processEvents();
+
+    // Site Permissions: hint + tree fill the group width; the buttons
+    // pack left instead of flanking a centered column.
+    QVERIFY(qobject_cast<QVBoxLayout *>(
+                dialog.permissionsGroupBox->layout()));
+    QVERIFY2(dialog.permissionsTree->x() <= 30,
+             qPrintable(QString::number(dialog.permissionsTree->x())));
+    QVERIFY2(dialog.permissionsTree->width()
+             >= dialog.permissionsGroupBox->width() - 40,
+             qPrintable(QStringLiteral(
+                 "tree width %1 in group width %2 — not full width")
+                 .arg(dialog.permissionsTree->width())
+                 .arg(dialog.permissionsGroupBox->width())));
+    QVERIFY2(dialog.permissionsHintLabel->width()
+             >= dialog.permissionsGroupBox->width() - 40,
+             qPrintable(QString::number(
+                 dialog.permissionsHintLabel->width())));
+    QVERIFY(dialog.permissionRemoveButton->x() <= 30);
+    QVERIFY2(gapAfter(dialog.permissionRemoveButton,
+                      dialog.permissionClearAllButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Clear All gap %1 — floated right")
+                 .arg(gapAfter(dialog.permissionRemoveButton,
+                               dialog.permissionClearAllButton))));
+
+    // Saved Passwords: status line full width, the three buttons pack
+    // left with a trailing spacer — Lock Now must not hug the right
+    // edge.
+    QVERIFY(qobject_cast<QVBoxLayout *>(
+                dialog.credentialGroupBox->layout()));
+    QVERIFY(dialog.credentialPassphraseButton->x() <= 30);
+    QVERIFY2(gapAfter(dialog.credentialPassphraseButton,
+                      dialog.credentialRemoveButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Remove Passphrase gap %1")
+                 .arg(gapAfter(dialog.credentialPassphraseButton,
+                               dialog.credentialRemoveButton))));
+    QVERIFY2(gapAfter(dialog.credentialRemoveButton,
+                      dialog.credentialLockButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Lock Now gap %1")
+                 .arg(gapAfter(dialog.credentialRemoveButton,
+                               dialog.credentialLockButton))));
+    QVERIFY2(dialog.credentialLockButton->x()
+             + dialog.credentialLockButton->width()
+             < dialog.credentialGroupBox->width() - 40,
+             "Lock Now hugs the group's right edge");
+    QVERIFY2(dialog.credentialStatusLabel->width()
+             >= dialog.credentialGroupBox->width() - 40,
+             qPrintable(QString::number(
+                 dialog.credentialStatusLabel->width())));
+
+    dialog.close();
+}
+
+// PREFUI10: the Appearance page's value+picker rows are bounded —
+// a capped display field with its Select button glued on the right,
+// never a full-width band stranding the button at the page edge.
+void tst_SettingsDialog::appearanceFieldBounds()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("network/acceptLanguages"),
+        QStringList{QLatin1String("French [fr]"),
+                    QLatin1String("German/Austria [de-at]")});
+
+    SettingsDialog dialog;
+    const QList<QLabel *> fields = {
+        dialog.standardLabel, dialog.fixedLabel,
+        dialog.acceptLanguagesLabel
+    };
+    for (QLabel *field : fields) {
+        QCOMPARE(field->maximumWidth(), 300);
+        // Capped, not fixed — still shrinks with a narrow window.
+        QVERIFY(field->sizePolicy().horizontalPolicy()
+                != QSizePolicy::Fixed);
+    }
+    // The stored editor list shows in the field, bracket tags trimmed.
+    QCOMPARE(dialog.acceptLanguagesLabel->text(),
+             QLatin1String("French, German/Austria"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.resize(1500, 900);
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AppearancePage));
+    qApp->processEvents();
+
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->currentWidget());
+    QVERIFY(area);
+    QVERIFY(area->widget());
+
+    const QList<QPair<QLabel *, QPushButton *>> rows = {
+        {dialog.standardLabel, dialog.standardFontButton},
+        {dialog.fixedLabel, dialog.fixedFontButton},
+        {dialog.acceptLanguagesLabel, dialog.languageButton}
+    };
+    for (const auto &row : rows) {
+        QVERIFY2(row.first->width() <= 300,
+                 qPrintable(QStringLiteral(
+                     "%1 width %2 exceeds cap")
+                     .arg(row.first->objectName())
+                     .arg(row.first->width())));
+        const int gap = row.second->x()
+                - (row.first->x() + row.first->width());
+        QVERIFY2(gap >= 0 && gap <= 40,
+                 qPrintable(QStringLiteral(
+                     "%1..%2 gap %3 — button floated off the field")
+                     .arg(row.first->objectName(),
+                          row.second->objectName())
+                     .arg(gap)));
+        // The pair must not reach the far half of the page.
+        QVERIFY2(row.second->x() + row.second->width()
+                 < area->widget()->width() / 2,
+                 qPrintable(QStringLiteral(
+                     "%1 ends at %2 of %3 — hugging the page edge")
+                     .arg(row.second->objectName())
+                     .arg(row.second->x() + row.second->width())
+                     .arg(area->widget()->width())));
+    }
+
+    // The page's combos stay content-sized too — same defect class.
+    for (QComboBox *combo : {dialog.iconThemeCombo, dialog.themeCombo}) {
+        QCOMPARE(combo->sizePolicy().horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
+                 qPrintable(combo->objectName()));
+    }
+
+    // Narrow case: the fields stay capped and nothing forces a
+    // horizontal scrollbar.
+    dialog.resize(700, 900);
+    qApp->processEvents();
+    for (QLabel *field : fields)
+        QVERIFY(field->width() <= 300);
+    QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
+
+    dialog.close();
+    settings.remove(QLatin1String("network/acceptLanguages"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)

@@ -19,6 +19,7 @@
 
 #include "clearprivatedata.h"
 
+#include "autofillmanager.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
 #include "containermanager.h"
@@ -27,6 +28,7 @@
 #include "historymanager.h"
 #include "networkaccessmanager.h"
 #include "toolbarsearch.h"
+#include "webenginebackend.h"
 
 #include <qabstractnetworkcache.h>
 #include <qapplication.h>
@@ -90,6 +92,13 @@ ClearPrivateData::ClearPrivateData(QWidget *parent)
     m_searchHistory = new QCheckBox(tr("&Search History"));
     m_searchHistory->setChecked(settings.value(QLatin1String("searchHistory"), true).toBool());
     itemLayout->addWidget(m_searchHistory);
+
+    // ADDR01: saved form data + saved addresses — the store had no
+    // wipe path at all before this checkbox.
+    m_autoFill = new QCheckBox(tr("AutoFill &Form Data"));
+    m_autoFill->setToolTip(tr("Saved form fields, passwords and addresses"));
+    m_autoFill->setChecked(settings.value(QLatin1String("autofill"), true).toBool());
+    itemLayout->addWidget(m_autoFill);
 
     m_cookies = new QCheckBox(tr("&Cookies"));
     m_cookies->setChecked(settings.value(QLatin1String("cookies"), true).toBool());
@@ -322,8 +331,13 @@ static void clearPlanSiteDataSweep(const QString &scope)
     const QWidgetList widgets = qApp->allWidgets();
     for (QWidget *widget : widgets) {
         QWebEngineView *view = qobject_cast<QWebEngineView*>(widget);
-        if (view && view->page() && profileSet.contains(view->page()->profile()))
-            view->page()->runJavaScript(wipeScript);
+        if (view && view->page() && profileSet.contains(view->page()->profile())) {
+            // Lifted so the wipe also reaches pages whose scripts
+            // are blocked (JSCTL) — a dropped wipe leaves live DOM
+            // storage to re-flush over the cleared profile.
+            WebEnginePageAdapter::runJavaScriptLiftedOn(
+                view->page(), wipeScript);
+        }
     }
 }
 
@@ -360,7 +374,6 @@ void ClearPrivateData::executePlan(const QJsonArray &ops)
                 profile->clearAllVisitedLinks();
         } else if (name == QLatin1String("downloads.clear")) {
             DownloadManager::instance()->cleanup();
-            DownloadManager::instance()->hide();
         } else if (name == QLatin1String("downloads.clear_otr")) {
             DownloadManager::instance()->cleanupOffTheRecord();
         } else if (name == QLatin1String("search.clear")) {
@@ -430,6 +443,7 @@ void ClearPrivateData::accept()
     settings.setValue(QLatin1String("browsingHistory"), m_browsingHistory->isChecked());
     settings.setValue(QLatin1String("downloadHistory"), m_downloadHistory->isChecked());
     settings.setValue(QLatin1String("searchHistory"), m_searchHistory->isChecked());
+    settings.setValue(QLatin1String("autofill"), m_autoFill->isChecked());
     settings.setValue(QLatin1String("cookies"), m_cookies->isChecked());
     settings.setValue(QLatin1String("siteData"), m_siteData->isChecked());
     settings.setValue(QLatin1String("cache"), m_cache->isChecked());
@@ -459,5 +473,13 @@ void ClearPrivateData::accept()
     // the persistent profile's stores are absent from it entirely.
     executePlan(plan(QLatin1String("all"), categories,
                      BrowserApplication::isPrivate()));
+
+    // ADDR01: the autofill store is app-side and has no op in the
+    // plan vocabulary — wipe it directly.  Same scope rule as the
+    // plan: a private session's clear must not reach the persistent
+    // store.
+    if (m_autoFill->isChecked() && !BrowserApplication::isPrivate())
+        AutoFillManager::instance()->clearData();
+
     QDialog::accept();
 }

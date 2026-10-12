@@ -20,6 +20,7 @@
 #include "privacyindicator.h"
 
 #include "browserapplication.h"
+#include "tabwidget.h"
 #include "webview.h"
 
 #include <qicon.h>
@@ -38,11 +39,21 @@ PrivacyIndicator::PrivacyIndicator(QWidget *parent)
     setAccessibleDescription(
         tr("Private browsing is on. Activate to leave private mode."));
     connect(this, &QToolButton::clicked, this, [this]() {
-        // Leaving private mode: setPrivate(false) emits privacyChanged
-        // and each BrowserMainWindow::privacyChanged clears its tabs —
-        // a page's profile cannot be switched in place, so the
-        // off-the-record pages have to go.
-        BrowserApplication::setPrivate(false);
+        if (BrowserApplication::isPrivate()) {
+            // Leaving private mode: setPrivate(false) emits
+            // privacyChanged and each BrowserMainWindow::privacyChanged
+            // clears its tabs — a page's profile cannot be switched in
+            // place, so the off-the-record pages have to go.
+            BrowserApplication::setPrivate(false);
+            return;
+        }
+        // PTAB01: a private tab inside a normal window — "leave
+        // private mode" for it means closing the off-the-record tab.
+        if (m_webView && m_webView->tabWidget()) {
+            const int index = m_webView->tabWidget()->webViewIndex(m_webView);
+            if (index >= 0)
+                m_webView->tabWidget()->closeTab(index);
+        }
     });
     hide();
 }
@@ -52,6 +63,13 @@ void PrivacyIndicator::setWebView(WebView *webView)
     // Private browsing is a profile property under Qt WebEngine (MIG03):
     // the indicator shows whether this location bar's page lives on an
     // off-the-record profile rather than a global QWebSettings flag.
+    m_webView = webView;
     QWebEnginePage *page = webView ? webView->page() : nullptr;
-    setVisible(page && page->profile()->isOffTheRecord());
+    const bool privatePage = page && page->profile()->isOffTheRecord();
+    setVisible(privatePage);
+    if (privatePage && !BrowserApplication::isPrivate())
+        setToolTip(tr("This is a private tab — nothing it visits is recorded. "
+                      "Activate to close it."));
+    else
+        setToolTip(tr("Private browsing is on. Activate to leave private mode."));
 }

@@ -83,6 +83,11 @@ void OpenSearchWriter::write(OpenSearchEngine *engine)
     if (!engine->description().isEmpty())
         writeTextElement(QStringLiteral("Description"), engine->description());
 
+    // SENG02: <Alias> round-trips a descriptor's default keyword
+    // bindings so an exported engine installs with them again.
+    for (const QString &keyword : engine->defaultKeywords())
+        writeTextElement(QStringLiteral("Alias"), keyword);
+
     if (!engine->searchUrlTemplate().isEmpty()) {
         writeStartElement(QStringLiteral("Url"));
         writeAttribute(QStringLiteral("method"), engine->searchMethod());

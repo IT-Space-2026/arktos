@@ -19,6 +19,7 @@
 
 #include <QtTest/QtTest>
 
+#include "opensearchreader.h"
 #include "opensearchwriter.h"
 #include "opensearchengine.h"
 
@@ -36,6 +37,7 @@ private slots:
     void write_data();
     void write();
     void writeImageSearch();
+    void writeAlias();
 };
 
 // This will be called before the first test function is executed.
@@ -151,6 +153,38 @@ void tst_OpenSearchWriter::writeImageSearch()
     QFile expected(QStringLiteral(":/testfile4.xml"));
     QVERIFY(expected.open(QIODevice::ReadOnly));
     QCOMPARE(output, expected.readAll());
+}
+
+// SENG02: an engine carrying default keywords writes one <Alias>
+// element per keyword after <Description> — and a read-back
+// round-trips them into defaultKeywords().
+void tst_OpenSearchWriter::writeAlias()
+{
+    OpenSearchEngine engine;
+    engine.setName(QStringLiteral("Kw"));
+    engine.setDescription(QStringLiteral("keyword carrying"));
+    engine.setDefaultKeywords(QStringList() << QStringLiteral("g")
+                                            << QStringLiteral("kw2"));
+    engine.setSearchUrlTemplate(
+        QStringLiteral("http://kw.test/search?q={searchTerms}"));
+
+    QByteArray output;
+    QBuffer buffer(&output);
+    OpenSearchWriter writer;
+    QVERIFY(writer.write(&buffer, &engine));
+
+    QVERIFY(output.contains("<Alias>g</Alias>"));
+    QVERIFY(output.contains("<Alias>kw2</Alias>"));
+    QVERIFY(output.indexOf("<Alias>g</Alias>")
+            < output.indexOf("<Url"));
+
+    QBuffer readBack(&output);
+    QVERIFY(readBack.open(QIODevice::ReadOnly));
+    OpenSearchReader reader;
+    OpenSearchEngine *copy = reader.read(&readBack);
+    QVERIFY(copy);
+    QCOMPARE(copy->defaultKeywords(), engine.defaultKeywords());
+    delete copy;
 }
 
 QTEST_MAIN(tst_OpenSearchWriter)

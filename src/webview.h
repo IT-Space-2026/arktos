@@ -65,17 +65,21 @@
 #define WEBVIEW_H
 
 #include <qwebengineview.h>
+#include <qpointer.h>
 
 #include <functional>
 
 #include "tabwidget.h"
 
+namespace Engine { class Page; class Profile; }
 class QWebEngineProfile;
 class BrowserMainWindow;
+class PdfView;
 class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
 class TabWidget;
+class WebEnginePageAdapter;
 class WebPage;
 class WebView : public QWebEngineView
 {
@@ -84,9 +88,15 @@ class WebView : public QWebEngineView
 public:
     WebView(QWidget *parent = nullptr);
     // Creates the view's WebPage on the given profile (used to point tabs
-    // at the private off-the-record profile, for example).
+    // at the private off-the-record profile, for example).  The
+    // Engine::Profile overload is the neutral spelling chrome code
+    // uses; both land on the same WebPage.
     WebView(QWebEngineProfile *profile, QWidget *parent = nullptr);
+    WebView(Engine::Profile *profile, QWidget *parent = nullptr);
     WebPage *webPage() const { return m_page; }
+    // ENG04: the engine-neutral view of this tab's page — the path
+    // chrome code migrates onto so it stops naming QWebEngine types.
+    Engine::Page *enginePage() const;
 
     void loadSettings();
 
@@ -98,6 +108,14 @@ public:
     // page's origin.  Typed input and bookmarklets reach loadUrl()
     // through the trusted path (SEC02/SEC09).
     static bool isUrlAllowedOnUntrustedInput(const QUrl &url);
+    // CONT07: stricter variant for urls pulled out of page content —
+    // context-menu link/media urls and the argv carry-over to a fresh
+    // --tor process.  In addition to javascript:, data: and blob: are
+    // refused: a data: document would plant attacker markup in a new
+    // chrome context and a blob: url is only resolvable inside the
+    // context that minted it.  Internally generated urls (the canvas
+    // serializer's png data url) keep the base gate.
+    static bool isUrlAllowedFromPageLink(const QUrl &url);
     QUrl url() const;
 
     QString lastStatusBarText() const;
@@ -116,6 +134,17 @@ public:
     // null).  QtWebEngine has no PiP delegate — the video pops out
     // into an app-side floating window.
     PictureInPicture *pictureInPicture() const { return m_pip; }
+
+    // PDF02: hand a staged (already-sanitized) PDF to the shell-owned
+    // document view.  Inside a WebViewWithSearch the PdfView stacks
+    // over this view; a standalone WebView (dev harnesses, future
+    // engine tabs) gets the same widget as a top-level window bound
+    // to this view's lifetime.
+    void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
+    // The live document view when this tab is showing one — resolves
+    // through the WebViewWithSearch stack on the tabbed path and the
+    // standalone window otherwise.
+    PdfView *pdfView() const;
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
@@ -149,6 +178,19 @@ private:
     int levelForZoom(int zoom);
     void init();
     void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
+    // The load half of an open-in-target operation — shared by the
+    // same-profile targets and the cross-profile private hand-offs so
+    // the Referer discipline cannot drift between them.
+    void loadUrlInView(WebView *newView, const QUrl &linkUrl);
+    // CONT07: the context-menu page-content opens — every target
+    // funnels the page-supplied url through isUrlAllowedFromPageLink
+    // first.  The private/tor helpers serve both the link entries and
+    // their 'Open Image …' counterparts.
+    void openPageUrlInTarget(const QUrl &linkUrl,
+                             TabWidget::OpenUrlIn target);
+    void openPageUrlInPrivateTab(const QUrl &linkUrl);
+    void openPageUrlInPrivateWindow(const QUrl &linkUrl);
+    void openPageUrlInTorWindow(const QUrl &linkUrl);
     void updateScriptBlockBar(bool blocked);
     void allowScriptsOnThisSite(bool persistent);
     // CTX01: context-menu shapes Chromium's request cannot express —
@@ -170,6 +212,11 @@ private slots:
     void setStatusBarText(QString string);
     void openActionUrlInNewTab();
     void openActionUrlInNewWindow();
+    void openLinkInNewTab();
+    void openLinkInNewWindow();
+    void openUrlInNewPrivateTab();
+    void openUrlInNewPrivateWindow();
+    void openUrlInNewTorWindow();
     void downloadLinkToDisk();
     void copyLinkToClipboard();
     void copyCleanLinkToClipboard();
@@ -188,9 +235,14 @@ private:
     int m_currentZoom;
     QList<int> m_zoomLevels;
     WebPage *m_page;
+    mutable WebEnginePageAdapter *m_enginePage;
     ScriptBlockInfoBar *m_scriptBlockBar;
     ReaderMode *m_readerMode;
     PictureInPicture *m_pip;
+    // PDF02: shell document view — only populated on the standalone
+    // (no WebViewWithSearch parent) path; inside a tab the
+    // WebViewWithSearch owns it and pdfView() resolves up the chain.
+    QPointer<PdfView> m_pdfView;
 };
 
 #endif

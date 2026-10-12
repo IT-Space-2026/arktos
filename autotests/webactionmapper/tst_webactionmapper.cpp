@@ -23,6 +23,7 @@
 #include <QtWebEngineWidgets>
 
 
+#include <engineinterface.h>
 #include <webactionmapper.h>
 #include <webview.h>
 
@@ -56,7 +57,7 @@ private slots:
 class SubWebActionMapper : public WebActionMapper
 {
 public:
-    SubWebActionMapper(QAction *root, QWebEnginePage::WebAction webAction, QObject *parent)
+    SubWebActionMapper(QAction *root, Engine::StandardAction webAction, QObject *parent)
         : WebActionMapper(root, webAction, parent) {}
 
 };
@@ -89,17 +90,17 @@ void tst_WebActionMapper::webactionmapper_data()
 
 void tst_WebActionMapper::webactionmapper()
 {
-    SubWebActionMapper mapper(nullptr, QWebEnginePage::Stop, nullptr);
+    SubWebActionMapper mapper(nullptr, Engine::StandardAction::Stop, nullptr);
     mapper.addChild(nullptr);
     mapper.updateCurrent(nullptr);
-    QCOMPARE(mapper.webAction(), QWebEnginePage::Stop);
+    QCOMPARE(mapper.webAction(), Engine::StandardAction::Stop);
 }
 
 // public void addChild(QAction *action)
 void tst_WebActionMapper::addChild()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Stop, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Stop, nullptr);
     QVERIFY(!root->isEnabled());
 
     QAction *child = new QAction(this);
@@ -119,14 +120,14 @@ void tst_WebActionMapper::updateCurrent_data()
 void tst_WebActionMapper::updateCurrent()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Stop, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Stop, nullptr);
     QVERIFY(!root->isEnabled());
 
     WebView webView;
-    QAction *childAction = webView.page()->action(mapper.webAction());
+    QAction *childAction = webView.enginePage()->action(mapper.webAction());
     mapper.addChild(childAction);
 
-    mapper.updateCurrent(webView.page());
+    mapper.updateCurrent(webView.enginePage());
     QCOMPARE(root->isChecked(), childAction->isChecked());
     QCOMPARE(root->isEnabled(), childAction->isEnabled());
 
@@ -138,13 +139,13 @@ void tst_WebActionMapper::updateCurrent()
 void tst_WebActionMapper::triggerRoot()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Reload, nullptr);
 
     WebView webView;
-    QAction *childAction = webView.page()->action(mapper.webAction());
+    QAction *childAction = webView.enginePage()->action(mapper.webAction());
     mapper.addChild(childAction);
 
-    mapper.updateCurrent(webView.page());
+    mapper.updateCurrent(webView.enginePage());
     QCOMPARE(root->isEnabled(), true);
 
     QSignalSpy spy(childAction, SIGNAL(triggered()));
@@ -155,17 +156,17 @@ void tst_WebActionMapper::triggerRoot()
 void tst_WebActionMapper::destroyRoot()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Reload, nullptr);
 
     WebView webView;
-    QAction *childAction = webView.page()->action(mapper.webAction());
+    QAction *childAction = webView.enginePage()->action(mapper.webAction());
     mapper.addChild(childAction);
 
-    mapper.updateCurrent(webView.page());
+    mapper.updateCurrent(webView.enginePage());
     QCOMPARE(root->isEnabled(), true);
 
     delete root;
-    mapper.updateCurrent(webView.page());
+    mapper.updateCurrent(webView.enginePage());
     webView.load(QUrl("data:text/html;<p>hello world"));
     childAction->setEnabled(false);
     childAction->setEnabled(true);
@@ -174,13 +175,13 @@ void tst_WebActionMapper::destroyRoot()
 void tst_WebActionMapper::destroyCurrent()
 {
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Reload, nullptr);
 
     WebView *webView = new WebView;
-    QAction *childAction = webView->page()->action(mapper.webAction());
+    QAction *childAction = webView->enginePage()->action(mapper.webAction());
     mapper.addChild(childAction);
 
-    mapper.updateCurrent(webView->page());
+    mapper.updateCurrent(webView->enginePage());
 
     delete webView;
     root->trigger();
@@ -197,14 +198,14 @@ void tst_WebActionMapper::childChanged()
 {
     QFETCH(bool, isCurrent);
     QAction *root = new QAction(this);
-    SubWebActionMapper mapper(root, QWebEnginePage::Reload, nullptr);
+    SubWebActionMapper mapper(root, Engine::StandardAction::Reload, nullptr);
 
     WebView webView;
-    QAction *childAction = webView.page()->action(mapper.webAction());
+    QAction *childAction = webView.enginePage()->action(mapper.webAction());
     mapper.addChild(childAction);
 
     if (isCurrent)
-        mapper.updateCurrent(webView.page());
+        mapper.updateCurrent(webView.enginePage());
 
     childAction->setEnabled(false);
     QSignalSpy spy(root, SIGNAL(changed()));

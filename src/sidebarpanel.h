@@ -21,13 +21,22 @@
 
 #include "tabwidget.h"
 
+#include <functional>
+
+#include <qlist.h>
+#include <QModelIndex>
+#include <qpointer.h>
 #include <qwidget.h>
 
 class AutoSaver;
-class EditTableView;
+class DownloadItem;
 class EditTreeView;
-class QIdentityProxyModel;
+class QComboBox;
+class QFrame;
+class QListView;
 class QPlainTextEdit;
+class QPushButton;
+class QSortFilterProxyModel;
 class QTabWidget;
 class TreeSortFilterProxyModel;
 
@@ -41,8 +50,31 @@ class SidebarPanel : public QWidget
 signals:
     void openUrl(const QUrl &url, TabWidget::OpenUrlIn tab,
                  const QString &title);
+    // DOWN02: the Downloads page header's X asks the host window to
+    // fold the whole dock away.
+    void closeRequested();
+    // SIDE04: the bookmarks rail's Add button — the host window owns
+    // the current tab so it fills the dialog; folder is the source
+    // model index to preselect (invalid = the bookmarks menu root).
+    void addBookmarkRequested(const QModelIndex &folder);
 
 public:
+    // SIDE02: one entry on the rail — a panel registers (id, icon,
+    // title, factory) instead of the constructor knowing every
+    // section.  The id doubles as the sidebar/panels/<id> visibility
+    // key; hidden panels are never constructed.
+    struct Panel {
+        QByteArray id;
+        QString title;
+        QByteArray iconName;    // freedesktop-style AroraIcon name
+        std::function<QWidget *(SidebarPanel *)> create;
+    };
+
+    static QList<Panel> panels();
+    static void registerPanel(const Panel &panel);
+    static bool isPanelVisible(const QByteArray &id);
+    static void setPanelVisible(const QByteArray &id, bool visible);
+
     explicit SidebarPanel(QWidget *parent = nullptr);
 
     // Palette-following toggle glyph — the bundled icon themes ship no
@@ -52,27 +84,69 @@ public:
 
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
+    QWidget *downloadsPage() const;
+    QWidget *bookmarksPage() const;
 
 public slots:
     // AutoSaver target — flushes the notes text and the selected tab.
     void save();
+    // DOWN02: Ctrl+Y / Tools > Downloads lands here — the dock is the
+    // only downloads surface now.
+    void showDownloads();
+    // SIDE04: Ctrl+Shift+B / Bookmarks > Show All Bookmarks lands
+    // here — the dock is the bookmarks manager surface now.
+    // SIDE07: Bookmarks > Show All Bookmarks selects the Bookmarks
+    // section the same way Ctrl+Y selects Downloads.
+    void showBookmarks();
+    // SIDE02: syncs the rail with the persisted per-panel visibility —
+    // newly enabled panels build on demand, disabled ones are dropped.
+    void applyPanelVisibility();
+    // SIDE06: mirrors the icon rail onto the dock's outer edge —
+    // left rail when docked left, right rail when docked right.
+    void setDockSide(Qt::DockWidgetArea area);
 
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void bookmarksContextMenu(const QPoint &pos);
+    void removeSelectedBookmark();
+    void updateBookmarkRemoveState();
+    void newBookmarkFolder(const QModelIndex &index);
     void openHistoryEntry(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void historyContextMenu(const QPoint &pos);
     void openDownload(const QModelIndex &index);
+    void downloadsContextMenu(const QPoint &pos);
+    void downloadSelectionChanged(const QModelIndex &current,
+                                  const QModelIndex &previous);
+    void applyDownloadSort();
 
 private:
+    static QList<Panel> &registry();
+
+    // Registered factories — each builds its page on demand and fills
+    // in the matching members (they stay null while the panel is
+    // hidden, and QPointer clears them again when it is dropped).
+    QWidget *buildBookmarksPage();
+    QWidget *buildHistoryPage();
+    QWidget *buildDownloadsPage();
+    QWidget *buildNotesPage();
+    int indexOfPanel(const QByteArray &id) const;
+    QModelIndex selectedBookmarkFolder() const;
+
     QTabWidget *m_tabs;
-    EditTreeView *m_bookmarksView;
-    EditTreeView *m_historyView;
-    EditTableView *m_downloadsView;
-    TreeSortFilterProxyModel *m_bookmarksProxy;
-    TreeSortFilterProxyModel *m_historyProxy;
-    QIdentityProxyModel *m_downloadsProxy;
-    QPlainTextEdit *m_notes;
+    QPointer<QWidget> m_bookmarksPage;
+    QPointer<QPushButton> m_bookmarksRemoveButton;
+    QPointer<EditTreeView> m_bookmarksView;
+    QPointer<EditTreeView> m_historyView;
+    QPointer<QListView> m_downloadsView;
+    QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
+    QPointer<TreeSortFilterProxyModel> m_historyProxy;
+    QPointer<QSortFilterProxyModel> m_downloadsProxy;
+    QPointer<QWidget> m_downloadsPage;
+    QPointer<QComboBox> m_downloadsSort;
+    QPointer<QFrame> m_downloadDetail;
+    // The DownloadItem card currently hosted in the detail pane.
+    QPointer<QWidget> m_detailItem;
+    QPointer<QPlainTextEdit> m_notes;
     AutoSaver *m_autoSaver;
 };
 

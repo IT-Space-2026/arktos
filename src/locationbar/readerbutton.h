@@ -25,9 +25,12 @@
 
 class WebView;
 
-// READ01: the location-bar reader-mode icon — visible only while the
-// current page looks article-like (ReaderMode::isAvailable), checked
-// while the reader overlay is up.  Click toggles reader mode.
+// READ02: the navigation-toolbar reader-mode button — the browser's
+// single reader control (READ03 removed the in-bar twin).  READ04:
+// always present on engine tabs — the article heuristic is allowed to
+// be wrong, so it no longer gates presence; ReaderMode::isAvailable()
+// only drives the "suggested" accent.  Checked while the reader
+// overlay is up.  Click toggles reader mode.
 class ReaderButton : public QToolButton
 {
     Q_OBJECT
@@ -38,7 +41,7 @@ public:
 
 private:
     void refresh();
-    QIcon makeIcon(bool active) const;
+    QIcon makeIcon(bool active, bool suggested) const;
 
     QPointer<WebView> m_webView;
 };

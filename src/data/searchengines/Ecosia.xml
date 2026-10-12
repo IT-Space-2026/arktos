@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>Ecosia</ShortName>
+    <Description>Ecosia Web Search</Description>
+    <Alias>e</Alias>
+    <Url method="get" type="text/html" template="https://www.ecosia.org/search?q={searchTerms}" />
+    <Url method="get" type="application/x-suggestions+json" template="https://ac.ecosia.org/autocomplete?q={searchTerms}&amp;type=list" />
+    <Url method="get" type="text/html" purpose="image" template="https://www.ecosia.org/images?q={searchTerms}" />
+    <Image width="16" height="16">https://www.ecosia.org/favicon.ico</Image>
+</OpenSearchDescription>

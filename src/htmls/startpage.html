@@ -78,6 +78,17 @@
             }
             connect(function (channel) {
                 arora = channel.objects.arora;
+                // THEME01: prefers-color-scheme tracks the OS, not
+                // the app's forced palette — the channel carries the
+                // chrome scheme instead, live via darkChromeChanged.
+                if (arora) {
+                    var applyScheme = function (dark) {
+                        document.documentElement.classList
+                            .toggle('arora-dark', !!dark);
+                    };
+                    applyScheme(arora.darkChrome);
+                    arora.darkChromeChanged.connect(applyScheme);
+                }
                 update();
             });
         }

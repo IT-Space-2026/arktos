@@ -29,18 +29,22 @@
 #include "autofillmanager.h"
 #include "bookmarknode.h"
 #include "bookmarksmanager.h"
+#include "bidiclient.h"
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "crashreporter.h"
 #include "browserprofile.h"
 #include "browsertheme.h"
+#include "bwrapgenerator.h"
 #include "clearprivatedata.h"
 #include "commandpalette.h"
 #include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "extensionmanager.h"
+#include "fingerprintprotector.h"
 #include "history.h"
 #include "historymanager.h"
 #include "historyparser.h"
@@ -51,11 +55,16 @@
 #include "opensearchmanager.h"
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
+#include "pdfsupport.h"
+#include "pdfview.h"
+#include "pdfworker.h"
 #include "pictureinpicture.h"
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
+#include "sandboxmanager.h"
+#include "sandboxpolicy.h"
 #include "schemeaccesshandler.h"
 #include "securestore.h"
 #include "settings.h"
@@ -65,9 +74,12 @@
 #include "tabbar.h"
 #include "tabpreview.h"
 #include "tabwidget.h"
+#include "terminationsignalhandler.h"
 #include "toolbarsearch.h"
 #include "tormanager.h"
 #include "torsocks5.h"
+#include "engineregistry.h"
+#include "webenginebackend.h"
 #include "webpage.h"
 #include "webview.h"
 #include "webviewsearch.h"
@@ -79,6 +91,13 @@
 #include "rustcorebridge.h"
 #endif
 
+#ifdef ARORA_RUSTDL
+#include "downloadworker.h"
+#endif
+// EngineTab is engine-layer, not rust-layer — --servo-smoke needs it
+// in no-rust builds too (ENG12).
+#include "enginetab.h"
+
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QCryptographicHash>
@@ -87,12 +106,14 @@
 #include <QtCore/QDebug>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMutex>
 #include <QtCore/QSet>
 #include <QtCore/QSettings>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTextStream>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUrlQuery>
@@ -101,6 +122,8 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
+#include <QtCore/QProcessEnvironment>
+#include <QtCore/QScopeGuard>
 #include <QtGui/QAbstractTextDocumentLayout>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
@@ -112,6 +135,8 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QEventLoop>
 #include <QtNetwork/QHostAddress>
+#include <QtNetwork/QLocalServer>
+#include <QtNetwork/QLocalSocket>
 #include <QtNetwork/QNetworkCookie>
 #include <QtNetwork/QNetworkProxy>
 #include <QtNetwork/QNetworkReply>
@@ -140,7 +165,9 @@
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
+#include <QtPrintSupport/QPrinter>
 #include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
@@ -150,10 +177,17 @@
 #include <cstring>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 
 #if defined(Q_OS_UNIX)
+#include <arpa/inet.h>
+#include <atomic>
 #include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <thread>
@@ -258,15 +292,261 @@ static QList<quint16> tlsClientHelloCiphers(const QByteArray &record)
 // consent-gated adblock fetches and the engine's flag latch can both
 // happen that early, and QTcpServer cannot exist before the
 // application.  Every accepted connection's first request line is
-// recorded (mutex-guarded) and answered 502 so the caller fails fast.
+// recorded (mutex-guarded); in idle mode it is answered 502 so the
+// caller fails fast, in --telemetry-browse-smoke mode
+// (s_telemetryForward) it is forwarded so real browsing works through
+// the tap and every CONNECT/Host target lands in s_telemetryHosts for
+// the after-session classification.
 static QMutex s_telemetryMutex;
 static QStringList s_telemetryHits;
+static QStringList s_telemetryHosts;
+// ip:port of every upstream the forwarding proxy dialed — the /proc
+// socket scan sees these as process-owned remote sockets, so the
+// browse smoke must not count them as proxy bypasses.
+static QSet<QString> s_telemetryUpstream;
+static std::atomic<bool> s_telemetryForward{false};
+
+static void telemetryRecord(const QByteArray &head, const QString &target)
+{
+    const QMutexLocker lock(&s_telemetryMutex);
+    s_telemetryHits.append(QString::fromLatin1(
+        head.split('\n').first().trimmed()));
+    if (!target.isEmpty() && !s_telemetryHosts.contains(target))
+        s_telemetryHosts.append(target);
+}
+
+// Bidirectional byte pump between the accepted client fd and the
+// upstream connection — dumb relay, half-close aware, idles out after
+// a minute so dead peers cannot pile up detached threads.
+static void telemetryRelay(int clientFd, int upstreamFd)
+{
+    char buffer[16384];
+    pollfd fds[2] = { { clientFd, short(POLLIN), 0 },
+                      { upstreamFd, short(POLLIN), 0 } };
+    int open = 2;
+    while (open == 2) {
+        const int ready = ::poll(fds, 2, 60000);
+        if (ready <= 0)
+            break;
+        for (int i = 0; i < 2 && open == 2; ++i) {
+            const int from = fds[i].fd;
+            const int to = fds[1 - i].fd;
+            if (from < 0
+                || !(fds[i].revents & (POLLIN | POLLERR | POLLHUP)))
+                continue;
+            const ssize_t got = ::recv(from, buffer, sizeof(buffer), 0);
+            if (got <= 0) {
+                // Half-close: the peer may still be replying, so only
+                // signal EOF to the other direction and keep pumping.
+                ::shutdown(to, SHUT_WR);
+                fds[i].fd = -1;
+                --open;
+                if (fds[1 - i].fd < 0)
+                    break;
+                continue;
+            }
+            ssize_t sent = 0;
+            while (sent < got) {
+                const ssize_t n = ::send(to, buffer + sent,
+                                         size_t(got - sent),
+                                         MSG_NOSIGNAL);
+                if (n <= 0) {
+                    open = 0;
+                    break;
+                }
+                sent += n;
+            }
+        }
+    }
+    ::close(clientFd);
+    ::close(upstreamFd);
+}
+
+// Connects to host:port with a bounded timeout.  Returns the fd or -1.
+static int telemetryConnect(const QString &host, quint16 port)
+{
+    addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *results = nullptr;
+    if (::getaddrinfo(host.toUtf8().constData(),
+                      QByteArray::number(port).constData(),
+                      &hints, &results) != 0 || !results)
+        return -1;
+    int fd = -1;
+    for (addrinfo *it = results; it && fd == -1; it = it->ai_next) {
+        const int candidate =
+            ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (candidate == -1)
+            continue;
+        const int flags = ::fcntl(candidate, F_GETFL, 0);
+        ::fcntl(candidate, F_SETFL, flags | O_NONBLOCK);
+        if (::connect(candidate, it->ai_addr, it->ai_addrlen) == 0) {
+            fd = candidate;
+        } else if (errno == EINPROGRESS) {
+            pollfd pfd;
+            pfd.fd = candidate;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (::poll(&pfd, 1, 10000) > 0
+                && ::getsockopt(candidate, SOL_SOCKET, SO_ERROR,
+                                &error, &len) == 0
+                && error == 0)
+                fd = candidate;
+        }
+        if (fd == -1)
+            ::close(candidate);
+        else
+            ::fcntl(fd, F_SETFL, flags);
+    }
+    ::freeaddrinfo(results);
+    if (fd != -1) {
+        sockaddr_storage peer;
+        socklen_t peerLength = sizeof(peer);
+        if (::getpeername(fd, reinterpret_cast<sockaddr *>(&peer),
+                          &peerLength) == 0) {
+            char ip[INET6_ADDRSTRLEN] = {};
+            quint16 peerPort = 0;
+            if (peer.ss_family == AF_INET) {
+                const sockaddr_in *v4 =
+                    reinterpret_cast<const sockaddr_in *>(&peer);
+                ::inet_ntop(AF_INET, &v4->sin_addr, ip, sizeof(ip));
+                peerPort = ntohs(v4->sin_port);
+            } else if (peer.ss_family == AF_INET6) {
+                const sockaddr_in6 *v6 =
+                    reinterpret_cast<const sockaddr_in6 *>(&peer);
+                ::inet_ntop(AF_INET6, &v6->sin6_addr, ip, sizeof(ip));
+                peerPort = ntohs(v6->sin6_port);
+            }
+            if (peerPort != 0 && ip[0] != '\0') {
+                const QMutexLocker lock(&s_telemetryMutex);
+                s_telemetryUpstream.insert(
+                    QString::fromLatin1(ip) + QLatin1Char(':')
+                    + QString::number(peerPort));
+            }
+        }
+    }
+    return fd;
+}
+
+// Serves one captured connection: read the request head, record the
+// request line + normalized host:port, then either refuse (idle mode —
+// a 502 keeps TELEM01's fail-fast semantics) or forward (browse mode —
+// CONNECT gets a 200 tunnel, plain http gets the verbatim head).
+static void telemetryConnection(int fd)
+{
+    static const char replyBadGateway[] =
+        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n";
+    static const char replyTunnel[] =
+        "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+    QByteArray head;
+    head.reserve(4096);
+    char buffer[8192];
+    while (!head.contains("\r\n\r\n") && head.size() < 65536) {
+        pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        if (::poll(&pfd, 1, 10000) <= 0) {
+            ::close(fd);
+            return;
+        }
+        const ssize_t n = ::recv(fd, buffer, sizeof(buffer), 0);
+        if (n <= 0) {
+            ::close(fd);
+            return;
+        }
+        head.append(buffer, int(n));
+    }
+    const int headEnd = head.indexOf("\r\n\r\n");
+    const QByteArray requestHead =
+        head.left(headEnd == -1 ? head.size() : headEnd + 4);
+    const QByteArray extra = head.mid(requestHead.size());
+
+    // Normalize the target: CONNECT carries host:port on the request
+    // line, plain-http requests carry it in the absolute URI or the
+    // Host header.
+    const QList<QByteArray> firstLine =
+        requestHead.split('\n').first().simplified().split(' ');
+    const bool isConnect = firstLine.count() >= 2
+        && firstLine.at(0).toUpper() == "CONNECT";
+    QString host;
+    quint16 port = 80;
+    if (isConnect) {
+        const QByteArray target = firstLine.at(1);
+        const int colon = target.lastIndexOf(':');
+        if (colon != -1) {
+            host = QString::fromUtf8(target.left(colon));
+            port = target.mid(colon + 1).toUShort();
+        } else {
+            host = QString::fromUtf8(target);
+            port = 443;
+        }
+    } else if (firstLine.count() >= 2) {
+        QByteArray authority = firstLine.at(1);
+        if (authority.startsWith("http://"))
+            authority = authority.mid(7);
+        else if (authority.startsWith("https://"))
+            authority = authority.mid(8);
+        else
+            authority.clear();   // origin-form: Host header below
+        authority = authority.left(authority.indexOf('/'));
+        if (authority.isEmpty()) {
+            for (const QByteArray &line : requestHead.split('\n')) {
+                if (line.startsWith("Host:")) {
+                    authority = line.mid(5).trimmed();
+                    break;
+                }
+            }
+        }
+        if (authority.endsWith(":443"))
+            port = 443;
+        const int colon = authority.lastIndexOf(':');
+        if (colon != -1) {
+            host = QString::fromUtf8(authority.left(colon));
+            port = authority.mid(colon + 1).toUShort();
+        } else {
+            host = QString::fromUtf8(authority);
+        }
+    }
+    const QString target = host.isEmpty()
+        ? QString()
+        : host.toLower() + QLatin1Char(':') + QString::number(port);
+    telemetryRecord(requestHead, target);
+
+    if (!s_telemetryForward.load() || host.isEmpty()) {
+        ::send(fd, replyBadGateway, sizeof(replyBadGateway) - 1,
+               MSG_NOSIGNAL);
+        ::close(fd);
+        return;
+    }
+
+    const int upstream = telemetryConnect(host, port);
+    if (upstream == -1) {
+        ::send(fd, replyBadGateway, sizeof(replyBadGateway) - 1,
+               MSG_NOSIGNAL);
+        ::close(fd);
+        return;
+    }
+    if (isConnect) {
+        ::send(fd, replyTunnel, sizeof(replyTunnel) - 1, MSG_NOSIGNAL);
+    } else {
+        ::send(upstream, requestHead.constData(),
+               size_t(requestHead.size()), MSG_NOSIGNAL);
+    }
+    if (!extra.isEmpty())
+        ::send(upstream, extra.constData(), size_t(extra.size()),
+               MSG_NOSIGNAL);
+    telemetryRelay(fd, upstream);
+}
 
 static void telemetryAcceptLoop(int listenFd)
 {
-    static const char reply[] =
-        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
-        "Connection: close\r\n\r\n";
     for (;;) {
         const int fd = ::accept(listenFd, nullptr, nullptr);
         if (fd == -1) {
@@ -274,23 +554,17 @@ static void telemetryAcceptLoop(int listenFd)
                 continue;
             return;
         }
-        char buffer[1024];
-        pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        const ssize_t n =
-            (::poll(&pfd, 1, 3000) > 0)
-                ? ::recv(fd, buffer, sizeof(buffer) - 1, 0) : -1;
-        if (n > 0) {
-            buffer[n] = '\0';
-            const QByteArray firstLine =
-                QByteArray(buffer, n).split('\n').first().trimmed();
-            const QMutexLocker lock(&s_telemetryMutex);
-            s_telemetryHits.append(QString::fromLatin1(firstLine));
-        }
-        ::send(fd, reply, sizeof(reply) - 1, MSG_NOSIGNAL);
-        ::close(fd);
+        std::thread(telemetryConnection, fd).detach();
     }
+}
+
+// Spins the event loop for ms — the smoke polling loop's QTest-free
+// wait (src does not link testlib).
+static void telemetryWait(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 // Opens the capture proxy: binds + listens on an ephemeral loopback
@@ -639,7 +913,7 @@ static int browserAuditSmoke(BrowserApplication &application,
         // cache or storage — and prepareProfile() never sees it, so no
         // app services reach this page: the bare-engine baseline.
         QWebEngineProfile *profile = new QWebEngineProfile(&application);
-        QWebEngineView *bareView = new QWebEngineView;
+        QWebEngineView *bareView = nullptr;
 
         // SEC15 bisection aid: ARORA_AUDIT_WIRE=<csv> applies selected
         // pieces of prepareProfile()/WebPage wiring onto the OTR profile
@@ -678,6 +952,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                 webView->webPage()->setInjectedScriptsEnabled(false);
             view = webView;
         } else {
+            bareView = new QWebEngineView;
             if (wire.contains(QLatin1String("webpage")))
                 bareView->setPage(new WebPage(profile, bareView));
             else
@@ -700,7 +975,8 @@ static int browserAuditSmoke(BrowserApplication &application,
                         &QWebEnginePage::urlChanged, bareView,
                         [wp](const QUrl &url) {
                             AutoFillManager::instance()
-                                ->scheduleOnPage(wp, url);
+                                ->scheduleOnPage(
+                                    WebEnginePageAdapter::forPage(wp), url);
                         });
             }
             if (wire.contains(QLatin1String("cosmetic"))) {
@@ -713,7 +989,8 @@ static int browserAuditSmoke(BrowserApplication &application,
                         &QWebEnginePage::urlChanged, bareView,
                         [wp](const QUrl &url) {
                             AdBlockManager::instance()->page()
-                                ->scheduleRulesOnPage(wp, url);
+                                ->scheduleRulesOnPage(
+                                    WebEnginePageAdapter::forPage(wp), url);
                         });
             }
             if (wire.contains(QLatin1String("bar"))) {
@@ -744,13 +1021,13 @@ static int browserAuditSmoke(BrowserApplication &application,
         view->window()->show();
     }
 
-    QWebEngineScript capture;
-    capture.setName(QStringLiteral("arora-browseraudit-capture"));
-    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    capture.setWorldId(QWebEngineScript::MainWorld);
-    capture.setRunsOnSubFrames(false);
-    capture.setSourceCode(QString::fromUtf8(kBrowserAuditCaptureJs));
-    view->page()->scripts().insert(capture);
+    Engine::Page *enginePage =
+        WebEnginePageAdapter::forPage(view->page());
+    enginePage->insertScript(Engine::Script{
+        QStringLiteral("arora-browseraudit-capture"),
+        QString::fromUtf8(kBrowserAuditCaptureJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
     const QUrl suiteUrl(qEnvironmentVariable("ARORA_AUDIT_URL",
         QStringLiteral("https://browseraudit.com/test"
@@ -767,7 +1044,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                      [=, &application]() {
         if (*finished)
             return;
-        view->page()->runJavaScript(
+        enginePage->runJavaScript(
             QStringLiteral("JSON.stringify({"
                            "done: window.__aroraDone === true,"
                            " n: (window.__aroraResults || []).length,"
@@ -792,7 +1069,7 @@ static int browserAuditSmoke(BrowserApplication &application,
                     return;
                 }
                 *finished = true;
-                view->page()->runJavaScript(
+                enginePage->runJavaScript(
                     QStringLiteral("JSON.stringify({"
                                    "userAgent: navigator.userAgent,"
                                    "summary: window.__aroraSummary || null,"
@@ -980,13 +1257,11 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
     view->window()->resize(1024, 768);
     view->window()->show();
 
-    QWebEngineScript iceProbe;
-    iceProbe.setName(QStringLiteral("arora-anon-ice-probe"));
-    iceProbe.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    iceProbe.setWorldId(QWebEngineScript::MainWorld);
-    iceProbe.setRunsOnSubFrames(false);
-    iceProbe.setSourceCode(QString::fromUtf8(kAnonIceProbeJs));
-    view->page()->scripts().insert(iceProbe);
+    view->enginePage()->insertScript(Engine::Script{
+        QStringLiteral("arora-anon-ice-probe"),
+        QString::fromUtf8(kAnonIceProbeJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
     const QUrl target(qEnvironmentVariable("ARORA_ANON_URL",
         QStringLiteral("https://ipduh.com/privacy-test/")));
@@ -1018,7 +1293,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                      [=, &application]() {
         if (!*loaded || deadline.elapsed() > settleMs)
             return;
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QString::fromUtf8(kAnonSettleJs),
             [=, &application](const QVariant &status) {
                 const QJsonObject state = QJsonDocument::fromJson(
@@ -1036,7 +1311,7 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
                     return;
                 }
                 poller->stop();
-                view->page()->runJavaScript(
+                view->enginePage()->runJavaScript(
                     QString::fromUtf8(kAnonExtractJs),
                     [=, &application](const QVariant &payload) {
                         const QByteArray json =
@@ -1104,6 +1379,440 @@ static int anonSmoke(BrowserApplication &application, WebView *view)
         application.exit(2);
     });
 
+    return application.exec();
+}
+
+// BADSSL02: --badssl-smoke drives the badssl.com front-page test
+// matrix against the real browsing profile (CookieJar filter,
+// PrivacyRequestInterceptor, WebPage navigation policy, cert-error
+// and HTTPS-Only interstitials — the full app wiring) and records a
+// per-case outcome for .devin/BADSSL01-report.md.  This is a
+// measurement harness only: it loads each case url, observes which
+// of the app's block/interstitial paths fired or whether the page
+// committed, and writes JSON.  The case table is transcribed from
+// https://badssl.com/ (fetched 2026-10-09) — each link's class
+// attribute is the site's own expectation: "bad" should not load,
+// "dubious" is allowed-but-should-warn, "good" must load.
+//
+// Per-case observation points:
+//   - WebPage::certificateErrorInterstitial  -> SEC06 interstitial
+//   - WebPage::httpOnlyInterstitial          -> SAFE01 warning
+//   - loadingChanged(LoadFailedStatus)       -> engine block/failure
+//   - urlChanged                             -> redirect/upgrade chain
+//   - loadFinished + a short settle debounce -> then a DOM probe
+//     (title, footer text, image naturalWidths, body background) so
+//     mixed-content pages self-report whether insecure subresources
+//     actually ran/loaded.
+//
+// Environment:
+//   ARORA_BADSSL_OUT        output path (default /tmp/badssl.json)
+//   ARORA_BADSSL_ONLY       substring filter on the case name —
+//                           BADSSL03 re-runs a single fixed case with
+//                           e.g. ARORA_BADSSL_ONLY=revoked
+//   ARORA_BADSSL_TIMEOUT_MS per-case budget (default 30000)
+struct BadSslCase {
+    const char *group;
+    const char *name;
+    const char *url;
+    const char *expect;
+};
+
+static const BadSslCase kBadSslCases[] = {
+    // certificate
+    { "certificate", "expired",          "https://expired.badssl.com/",          "bad" },
+    { "certificate", "wrong.host",       "https://wrong.host.badssl.com/",       "bad" },
+    { "certificate", "self-signed",      "https://self-signed.badssl.com/",      "bad" },
+    { "certificate", "untrusted-root",   "https://untrusted-root.badssl.com/",   "bad" },
+    { "certificate", "revoked",          "https://revoked.badssl.com/",          "bad" },
+    { "certificate", "pinning-test",     "https://pinning-test.badssl.com/",     "bad" },
+    { "certificate", "no-common-name",   "https://no-common-name.badssl.com/",   "dubious" },
+    { "certificate", "no-subject",       "https://no-subject.badssl.com/",       "dubious" },
+    { "certificate", "incomplete-chain", "https://incomplete-chain.badssl.com/", "dubious" },
+    { "certificate", "sha256",           "https://sha256.badssl.com/",           "good" },
+    { "certificate", "sha384",           "https://sha384.badssl.com/",           "good" },
+    { "certificate", "sha512",           "https://sha512.badssl.com/",           "good" },
+    { "certificate", "1000-sans",        "https://1000-sans.badssl.com/",        "good" },
+    { "certificate", "10000-sans",       "https://10000-sans.badssl.com/",       "good" },
+    { "certificate", "ecc256",           "https://ecc256.badssl.com/",           "good" },
+    { "certificate", "ecc384",           "https://ecc384.badssl.com/",           "good" },
+    { "certificate", "rsa2048",          "https://rsa2048.badssl.com/",          "good" },
+    { "certificate", "rsa4096",          "https://rsa4096.badssl.com/",          "good" },
+    { "certificate", "rsa8192",          "https://rsa8192.badssl.com/",          "dubious" },
+    { "certificate", "extended-validation", "https://extended-validation.badssl.com/", "good" },
+    // client-certificate
+    { "client-certificate", "client",              "https://client.badssl.com/",              "good" },
+    { "client-certificate", "client-cert-missing", "https://client-cert-missing.badssl.com/", "bad" },
+    // mixed-content
+    { "mixed-content", "mixed-script",  "https://mixed-script.badssl.com/",  "bad" },
+    { "mixed-content", "very",          "https://very.badssl.com/",          "bad" },
+    { "mixed-content", "mixed",         "https://mixed.badssl.com/",         "dubious" },
+    { "mixed-content", "mixed-favicon", "https://mixed-favicon.badssl.com/", "dubious" },
+    { "mixed-content", "mixed-form",    "https://mixed-form.badssl.com/",    "dubious" },
+    // http
+    { "http", "http",               "http://http.badssl.com/",               "bad" },
+    { "http", "http-textarea",      "http://http-textarea.badssl.com/",      "bad" },
+    { "http", "http-password",      "http://http-password.badssl.com/",      "bad" },
+    { "http", "http-login",         "http://http-login.badssl.com/",         "bad" },
+    { "http", "http-dynamic-login", "http://http-dynamic-login.badssl.com/", "bad" },
+    { "http", "http-credit-card",   "http://http-credit-card.badssl.com/",   "bad" },
+    // cipher-suite
+    { "cipher-suite", "cbc",                  "https://cbc.badssl.com/",                  "dubious" },
+    { "cipher-suite", "rc4-md5",              "https://rc4-md5.badssl.com/",              "bad" },
+    { "cipher-suite", "rc4",                  "https://rc4.badssl.com/",                  "bad" },
+    { "cipher-suite", "3des",                 "https://3des.badssl.com/",                 "bad" },
+    { "cipher-suite", "null",                 "https://null.badssl.com/",                 "bad" },
+    { "cipher-suite", "mozilla-old",          "https://mozilla-old.badssl.com/",          "bad" },
+    { "cipher-suite", "mozilla-intermediate", "https://mozilla-intermediate.badssl.com/", "dubious" },
+    { "cipher-suite", "mozilla-modern",       "https://mozilla-modern.badssl.com/",       "good" },
+    // key-exchange
+    { "key-exchange", "dh480",            "https://dh480.badssl.com/",            "bad" },
+    { "key-exchange", "dh512",            "https://dh512.badssl.com/",            "bad" },
+    { "key-exchange", "dh1024",           "https://dh1024.badssl.com/",           "bad" },
+    { "key-exchange", "dh2048",           "https://dh2048.badssl.com/",           "dubious" },
+    { "key-exchange", "dh-small-subgroup", "https://dh-small-subgroup.badssl.com/", "bad" },
+    { "key-exchange", "dh-composite",     "https://dh-composite.badssl.com/",     "bad" },
+    { "key-exchange", "static-rsa",       "https://static-rsa.badssl.com/",       "dubious" },
+    // protocol
+    { "protocol", "tls-v1-0", "https://tls-v1-0.badssl.com:1010/", "dubious" },
+    { "protocol", "tls-v1-1", "https://tls-v1-1.badssl.com:1011/", "dubious" },
+    { "protocol", "tls-v1-2", "https://tls-v1-2.badssl.com:1012/", "good" },
+    // certificate-transparency
+    { "certificate-transparency", "no-sct", "https://no-sct.badssl.com/", "bad" },
+    // upgrade
+    { "upgrade", "hsts",                      "https://hsts.badssl.com/",                      "good" },
+    { "upgrade", "upgrade",                   "https://upgrade.badssl.com/",                   "good" },
+    { "upgrade", "preloaded-hsts",            "https://preloaded-hsts.badssl.com/",            "good" },
+    { "upgrade", "subdomain.preloaded-hsts",  "https://subdomain.preloaded-hsts.badssl.com/",  "bad" },
+    { "upgrade", "https-everywhere",          "https://https-everywhere.badssl.com/",          "good" },
+    // ui
+    { "ui", "spoofed-favicon", "https://spoofed-favicon.badssl.com/", "dubious" },
+    { "ui", "lock-title",      "https://lock-title.badssl.com/",      "dubious" },
+    { "ui", "long-extended-subdomain-name", "https://long-extended-subdomain-name-containing-many-letters-and-dashes.badssl.com/", "good" },
+    { "ui", "longextendedsubdomain",        "https://longextendedsubdomainnamewithoutdashesinordertotestwordwrapping.badssl.com/", "good" },
+    // known-bad
+    { "known-bad", "superfish",           "https://superfish.badssl.com/",           "bad" },
+    { "known-bad", "edellroot",           "https://edellroot.badssl.com/",           "bad" },
+    { "known-bad", "dsdtestprovider",     "https://dsdtestprovider.badssl.com/",     "bad" },
+    { "known-bad", "preact-cli",          "https://preact-cli.badssl.com/",          "bad" },
+    { "known-bad", "webpack-dev-server",  "https://webpack-dev-server.badssl.com/",  "bad" },
+    // chrome
+    { "chrome", "captive-portal", "https://captive-portal.badssl.com/", "bad" },
+    { "chrome", "mitm-software",  "https://mitm-software.badssl.com/",  "bad" },
+    // defunct
+    { "defunct", "sha1-2016",             "https://sha1-2016.badssl.com/",             "dubious" },
+    { "defunct", "sha1-2017",             "https://sha1-2017.badssl.com/",             "bad" },
+    { "defunct", "sha1-intermediate",     "https://sha1-intermediate.badssl.com/",     "bad" },
+    { "defunct", "invalid-expected-sct",  "https://invalid-expected-sct.badssl.com/",  "bad" },
+};
+
+// DOM probe run after a case settles.  The footer/background fields
+// are badssl-specific self-reports (nonsecure.js rewrites #footer and
+// paints the body red when active mixed content actually executed);
+// imgWidths detect whether passive mixed images were fetched.
+static const char kBadSslProbeJs[] = R"JS(
+(function () {
+    var d = document;
+    var footer = '';
+    try {
+        var f = d.getElementById('footer');
+        footer = f ? String(f.innerText) : '';
+    } catch (e) { }
+    var bg = '';
+    try { bg = String(getComputedStyle(d.body).backgroundColor); }
+    catch (e) { }
+    var imgs = [];
+    try {
+        imgs = Array.prototype.map.call(d.images,
+            function (i) { return i.naturalWidth; });
+    } catch (e) { }
+    return JSON.stringify({
+        title: String(d.title || ''),
+        href: String(location.href),
+        footer: footer.slice(0, 300),
+        bodyBg: bg,
+        imgWidths: imgs,
+        readyState: String(d.readyState)
+    });
+})()
+)JS";
+
+static int badSslSmoke(BrowserApplication &application, WebView *view)
+{
+    const QString outPath = qEnvironmentVariable("ARORA_BADSSL_OUT",
+        QStringLiteral("/tmp/badssl.json"));
+    const QString only = qEnvironmentVariable("ARORA_BADSSL_ONLY");
+    int caseTimeoutMs =
+        qEnvironmentVariableIntValue("ARORA_BADSSL_TIMEOUT_MS");
+    if (caseTimeoutMs <= 0)
+        caseTimeoutMs = 30000;
+
+    // BADSSL03: the client-certificate case only goes green with a
+    // cert in the profile's store — ARORA_CLIENTCERT_FILE (+optional
+    // ARORA_CLIENTCERT_PASSPHRASE) installs one for the run and arms
+    // non-interactive selection.  Unset, the case is recorded on the
+    // cert-less path (HTTP 400 — cert-less Chrome parity).
+    const QString clientCertFile =
+        qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+    if (!clientCertFile.isEmpty()) {
+        if (BrowserProfile::addClientCertificateFile(
+                view->webPage()->profile(), clientCertFile,
+                qgetenv("ARORA_CLIENTCERT_PASSPHRASE")))
+            qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
+        else
+            qInfo() << "badssl-smoke: WARN client cert"
+                    << clientCertFile << "did not install";
+    }
+
+    // The smoke dispatch returns before main()'s window.show() —
+    // show the stub window so the page is not treated as hidden.
+    view->window()->show();
+    WebPage *page = view->webPage();
+
+    struct CaseState {
+        QJsonArray navChain;     // committed urls, in order
+        QJsonArray failures;     // loadingChanged LoadFailed records
+        QUrl certInterstitial;   // target url the SEC06 page names
+        QUrl httpWarning;        // target url the SAFE01 page names
+        int popupsBlocked = 0;
+        bool sawFinish = false;
+        bool finishOk = false;
+    };
+    struct Runner {
+        WebView *view;
+        WebPage *page;
+        BrowserApplication *app;
+        QList<BadSslCase> cases;
+        int index = 0;
+        CaseState cur;
+        QElapsedTimer caseTimer;
+        QTimer settleTimer;
+        QTimer caseTimer2;
+        QJsonArray results;
+        QString outPath;
+        bool finishing = false;
+    };
+    Runner *r = new Runner;
+    r->view = view;
+    r->page = page;
+    r->app = &application;
+    r->outPath = outPath;
+    for (const BadSslCase &c : kBadSslCases) {
+        if (!only.isEmpty()
+            && !QString::fromLatin1(c.name).contains(
+                only, Qt::CaseInsensitive))
+            continue;
+        r->cases.append(c);
+    }
+    if (r->cases.isEmpty()) {
+        qInfo() << "badssl-smoke: FAIL (no cases match"
+                << (only.isEmpty() ? QStringLiteral("<empty table>")
+                                   : only) << ")";
+        delete r;
+        return 1;
+    }
+    r->settleTimer.setSingleShot(true);
+    r->settleTimer.setInterval(900);
+    r->caseTimer2.setSingleShot(true);
+    r->caseTimer2.setInterval(caseTimeoutMs);
+
+    QObject::connect(page, &QWebEnginePage::urlChanged, r->app,
+                     [r](const QUrl &url) {
+        r->cur.navChain.append(QString::fromUtf8(url.toEncoded()));
+    });
+    QObject::connect(page, &QWebEnginePage::loadingChanged, r->app,
+                     [r](const QWebEngineLoadingInfo &info) {
+        if (info.status() != QWebEngineLoadingInfo::LoadFailedStatus)
+            return;
+        QJsonObject failure;
+        failure.insert(QStringLiteral("url"),
+                       QString::fromUtf8(info.url().toEncoded()));
+        failure.insert(QStringLiteral("domain"), int(info.errorDomain()));
+        failure.insert(QStringLiteral("code"), info.errorCode());
+        failure.insert(QStringLiteral("error"), info.errorString());
+        r->cur.failures.append(failure);
+    });
+    QObject::connect(page, &WebPage::certificateErrorInterstitial,
+                     r->app, [r](const QUrl &url) {
+        r->cur.certInterstitial = url;
+    });
+    QObject::connect(page, &WebPage::httpOnlyInterstitial,
+                     r->app, [r](const QUrl &url) {
+        r->cur.httpWarning = url;
+    });
+    QObject::connect(page, &WebPage::popupBlocked,
+                     r->app, [r]() { ++r->cur.popupsBlocked; });
+    // Every loadFinished — including the interstitial/error-page
+    // commits that follow a failed navigation — restarts the settle
+    // debounce; a case is complete only once signals go quiet.
+    QObject::connect(view, &QWebEngineView::loadFinished, r->app,
+                     [r](bool ok) {
+        r->cur.sawFinish = true;
+        r->cur.finishOk = ok;
+        r->settleTimer.start();
+    });
+
+    auto writeAndExit = [r](int rc) {
+        QJsonObject envelope;
+        envelope.insert(QStringLiteral("chromiumVersion"),
+                        QLatin1String(qWebEngineChromiumVersion()));
+        envelope.insert(QStringLiteral("generated"),
+                        QDateTime::currentDateTimeUtc()
+                            .toString(Qt::ISODate));
+        envelope.insert(QStringLiteral("profile"),
+                        QStringLiteral("app"));
+        envelope.insert(QStringLiteral("cases"), r->results);
+        int loaded = 0, blocked = 0, other = 0;
+        for (const QJsonValue &value : r->results) {
+            const QString outcome = value.toObject()
+                .value(QLatin1String("outcome")).toString();
+            if (outcome == QLatin1String("loaded"))
+                ++loaded;
+            else if (outcome.startsWith(QLatin1String("blocked")))
+                ++blocked;
+            else
+                ++other;
+        }
+        QJsonObject summary;
+        summary.insert(QStringLiteral("total"), r->results.count());
+        summary.insert(QStringLiteral("loaded"), loaded);
+        summary.insert(QStringLiteral("blocked"), blocked);
+        summary.insert(QStringLiteral("other"), other);
+        envelope.insert(QStringLiteral("summary"), summary);
+        QFile out(r->outPath);
+        if (!out.open(QIODevice::WriteOnly)) {
+            qInfo() << "badssl-smoke: FAIL (cannot write"
+                    << r->outPath << ")";
+            r->app->exit(3);
+            return;
+        }
+        out.write(QJsonDocument(envelope).toJson(
+            QJsonDocument::Indented));
+        qInfo() << "badssl-smoke: DONE" << r->results.count()
+                << "cases -" << loaded << "loaded" << blocked
+                << "blocked" << other << "other ->" << r->outPath;
+        r->app->exit(rc);
+    };
+
+    auto advance = std::make_shared<std::function<void()>>();
+    auto finish = std::make_shared<std::function<void(bool)>>();
+
+    *finish = [r, writeAndExit, advance](bool timedOut) {
+        if (r->finishing)
+            return;
+        r->finishing = true;
+        r->caseTimer2.stop();
+        r->settleTimer.stop();
+        const BadSslCase &c = r->cases.at(r->index);
+        if (timedOut)
+            r->view->stop();
+        // Probe the settled DOM — on interstitial/error pages this
+        // captures the chrome page's own title; on real pages the
+        // badssl self-report markers.
+        r->view->enginePage()->runJavaScript(QString::fromUtf8(kBadSslProbeJs),
+            [r, writeAndExit, advance, timedOut, c](
+                const QVariant &payload) {
+            QJsonObject rec;
+            rec.insert(QStringLiteral("group"),
+                       QLatin1String(c.group));
+            rec.insert(QStringLiteral("name"), QLatin1String(c.name));
+            rec.insert(QStringLiteral("url"), QLatin1String(c.url));
+            rec.insert(QStringLiteral("expect"),
+                       QLatin1String(c.expect));
+            rec.insert(QStringLiteral("durationMs"),
+                       qint64(r->caseTimer.elapsed()));
+            rec.insert(QStringLiteral("navChain"), r->cur.navChain);
+            rec.insert(QStringLiteral("failures"), r->cur.failures);
+            if (!r->cur.certInterstitial.isEmpty())
+                rec.insert(QStringLiteral("certInterstitialFor"),
+                           QString::fromUtf8(
+                               r->cur.certInterstitial.toEncoded()));
+            if (!r->cur.httpWarning.isEmpty())
+                rec.insert(QStringLiteral("httpWarningFor"),
+                           QString::fromUtf8(
+                               r->cur.httpWarning.toEncoded()));
+            if (r->cur.popupsBlocked)
+                rec.insert(QStringLiteral("popupsBlocked"),
+                           r->cur.popupsBlocked);
+
+            const QJsonObject probe = QJsonDocument::fromJson(
+                payload.toString().toUtf8()).object();
+            const QString title = probe.value(QLatin1String("title"))
+                .toString();
+            const QString href = probe.value(QLatin1String("href"))
+                .toString();
+            rec.insert(QStringLiteral("probe"), probe);
+            rec.insert(QStringLiteral("finalUrl"), href);
+
+            QString outcome;
+            if (!r->cur.certInterstitial.isEmpty()
+                || href.startsWith(QLatin1String("arora-cert-error:")))
+                outcome = QStringLiteral("blocked:cert-interstitial");
+            else if (!r->cur.httpWarning.isEmpty()
+                || href.startsWith(QLatin1String("arora-http-warning:")))
+                outcome = QStringLiteral("blocked:http-warning");
+            else if (timedOut)
+                outcome = QStringLiteral("timeout");
+            else if (title.startsWith(QLatin1String("Error loading")))
+                outcome = QStringLiteral("blocked:error-page");
+            else if (r->cur.sawFinish && r->cur.finishOk)
+                outcome = QStringLiteral("loaded");
+            else if (!r->cur.failures.isEmpty())
+                outcome = QStringLiteral("blocked:load-failed");
+            else
+                outcome = QStringLiteral("no-terminal-signal");
+            rec.insert(QStringLiteral("outcome"), outcome);
+
+            QString verdict;
+            const QString expect = QLatin1String(c.expect);
+            if (expect == QLatin1String("bad"))
+                verdict = (outcome == QLatin1String("loaded"))
+                    ? QStringLiteral("MISS")
+                    : QStringLiteral("ok-blocked");
+            else if (expect == QLatin1String("good"))
+                verdict = (outcome == QLatin1String("loaded"))
+                    ? QStringLiteral("ok-loaded")
+                    : QStringLiteral("REGRESSION");
+            else
+                verdict = QStringLiteral("info-") + outcome;
+            rec.insert(QStringLiteral("verdict"), verdict);
+
+            r->results.append(rec);
+            qInfo() << "badssl-smoke:" << r->results.count() << "/"
+                    << r->cases.count() << c.name << "->" << outcome
+                    << verdict;
+            ++r->index;
+            (*advance)();
+        });
+    };
+
+    *advance = [r, finish, writeAndExit]() {
+        if (r->index >= r->cases.count()) {
+            writeAndExit(0);
+            return;
+        }
+        const BadSslCase &c = r->cases.at(r->index);
+        r->cur = CaseState();
+        r->finishing = false;
+        r->caseTimer.start();
+        r->caseTimer2.start();
+        r->view->loadUrl(QUrl(QLatin1String(c.url)));
+    };
+
+    QObject::connect(&r->settleTimer, &QTimer::timeout, r->app,
+                     [finish]() { (*finish)(false); });
+    QObject::connect(&r->caseTimer2, &QTimer::timeout, r->app,
+                     [finish]() { (*finish)(true); });
+
+    // Global watchdog — write whatever has been measured so a hung
+    // endpoint cannot lose the whole baseline.
+    QTimer::singleShot(25 * 60 * 1000, &application,
+                       [r, writeAndExit]() {
+        qInfo() << "badssl-smoke: global timeout at case"
+                << r->index << "of" << r->cases.count();
+        writeAndExit(2);
+    });
+
+    (*advance)();
     return application.exec();
 }
 
@@ -1202,9 +1911,7 @@ JSON.stringify({
 )JS";
 
 static int xsLeakSmoke(BrowserApplication &application, WebView *view,
-                       bool permissive,
-                       const QVariant &savedPopupBlocking,
-                       const QVariant &savedBlockPings)
+                       bool permissive)
 {
     const QString mode = permissive ? QStringLiteral("open")
                                     : QStringLiteral("defaults");
@@ -1218,47 +1925,27 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     view->window()->resize(1024, 768);
     view->window()->show();
 
-    QWebEngineScript capture;
-    capture.setName(QStringLiteral("arora-xsleak-capture"));
-    capture.setInjectionPoint(QWebEngineScript::DocumentCreation);
-    capture.setWorldId(QWebEngineScript::MainWorld);
-    capture.setRunsOnSubFrames(false);
-    capture.setSourceCode(QString::fromUtf8(kXsLeakCaptureJs));
-    view->page()->scripts().insert(capture);
+    view->enginePage()->insertScript(Engine::Script{
+        QStringLiteral("arora-xsleak-capture"),
+        QString::fromUtf8(kXsLeakCaptureJs),
+        Engine::InjectionPoint::DocumentCreation,
+        0 /* main world */, false });
 
-    // Restore the caller's real settings on the way out — the
-    // permissive run pinned them on the live store before the
-    // BrowserApplication constructor (QSettings ignores the test-mode
-    // paths).
+    // The permissive run's pinned keys die with the per-run settings
+    // store — nothing to restore on the way out.
     auto done = std::make_shared<bool>(false);
-    const auto finish = [&application, done, permissive,
-                         &savedPopupBlocking, &savedBlockPings]
+    const auto finish = [&application, done]
                         (int rc, const QString &line) {
         if (*done)
             return;
         *done = true;
         qInfo().noquote() << "xsleak-smoke:" << line;
-        if (permissive) {
-            QSettings settings;
-            if (savedPopupBlocking.isValid())
-                settings.setValue(
-                    QLatin1String("websettings/blockPopupWindows"),
-                    savedPopupBlocking);
-            else
-                settings.remove(
-                    QLatin1String("websettings/blockPopupWindows"));
-            if (savedBlockPings.isValid())
-                settings.setValue(QLatin1String("privacy/blockPings"),
-                                  savedBlockPings);
-            else
-                settings.remove(QLatin1String("privacy/blockPings"));
-        }
         application.exit(rc);
     };
 
     const auto dumpResults = [view, &application, outPath, mode,
                               finish](bool complete) {
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QStringLiteral(
                 "JSON.stringify(window.xsLeakDump && "
                 "window.xsLeakDump())"),
@@ -1329,7 +2016,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
                      [=, &application]() {
         if (*finished)
             return;
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QString::fromUtf8(kXsLeakStatusJs),
             [=, &application](const QVariant &status) {
                 const QJsonObject state = QJsonDocument::fromJson(
@@ -1363,7 +2050,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     QTimer::singleShot(timeoutMs, &application, [=, &application]() {
         // Still dump whatever the suite produced — a partial result
         // table distinguishes a stalled run from a dead page.
-        view->page()->runJavaScript(
+        view->enginePage()->runJavaScript(
             QStringLiteral("window.__aroraTimedOut = true"),
             [=, &application](const QVariant &) { dumpResults(false); });
     });
@@ -1371,91 +2058,415 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     return application.exec();
 }
 
-// SEC16: the adblock smokes below inject probe filters into the shared
-// test-mode custom subscription and AdBlockManager's AutoSaver
-// persists whatever the subscription still holds when the process
-// exits.  A run that fails to clean up leaves its probes behind for
-// every later run — a leftover "##body" element-hide rule restyled
-// every page the browseraudit harness loaded.  Drop leftovers from
-// earlier runs before snapshotting.
-static const char *const kSmokeFilters[] = {
-    "||adblock-smoke.invalid^",
-    ".invalid^",
-    "@@||allowed-smoke.invalid^",
-    "##body",
-    "||list-smoke.invalid^",
-    "||ads.example.com^",
-    "||banner.example^$script",
-    "@@||banner.example^$script,domain=trusted.example",
-    "||tracker.example^$third-party",
-    "||cdn.example/lib.js$~third-party",
-    "||redir.example/vast.xml$redirect=noop-vast-4.0",
-    "||param.example^$removeparam=utm_source",
-    "smoke.example##.ad-banner",
-};
-
-static void purgeSmokeFilters(AdBlockSubscription *custom)
+// PING02: --pingspotter-smoke re-runs the live ping-spotter
+// (https://armin.dev/apps/ping-spotter/ redirects to
+// https://apps.armin.dev/ping-spotter/) on the real browsing profile.
+// The SPA's "Start test" button fires all three vectors — a <a ping>
+// click, navigator.sendBeacon, and a /csp-frame iframe whose page
+// carries a report-uri CSP — then POSTs /results and renders a
+// "Request sent" / "Request blocked" verdict per vector.  This smoke
+// clicks the button once the SPA mounts it, polls the three verdict
+// cells until none reads "Unknown", and exits 0 only when all three
+// report "Request blocked".  The site uses the legacy report-uri
+// directive (verified from its /csp-frame response headers), which
+// PING01's ResourceTypeCspReport block covers; Reporting-API
+// report-to deliveries do not exist on this engine at all (probed
+// against a SPKI-pinned https collector — see the PING02 task notes).
+// Live-site dependency — deliberately absent from check-coverage's
+// SMOKE_FLAGS.
+static int pingSpotterSmoke(BrowserApplication &application, WebView *view)
 {
-    const QList<AdBlockRule> rules = custom->allRules();
-    for (int i = rules.count() - 1; i >= 0; --i) {
-        const QString filter = rules.at(i).filter();
-        for (const char *smokeFilter : kSmokeFilters) {
-            if (filter == QLatin1String(smokeFilter)) {
-                custom->removeRule(i);
-                break;
-            }
+    view->window()->show();
+    const QUrl site(qEnvironmentVariable("ARORA_PINGSPOTTER_URL",
+        QStringLiteral("https://apps.armin.dev/ping-spotter/")));
+    qInfo() << "pingspotter-smoke: loading" << site;
+
+    auto clicked = std::make_shared<bool>(false);
+    QTimer *poller = new QTimer(&application);
+    poller->setInterval(1000);
+    QObject::connect(poller, &QTimer::timeout, &application,
+                     [&application, view, clicked]() {
+        if (!*clicked) {
+            view->enginePage()->runJavaScript(QStringLiteral(
+                "var b = document.querySelector('.start-button');"
+                "if (b) { b.click(); 'clicked'; } else { ''; }"),
+                [clicked](const QVariant &result) {
+                    if (result.toString() == QLatin1String("clicked"))
+                        *clicked = true;
+                });
+            return;
         }
-    }
+        view->enginePage()->runJavaScript(QStringLiteral(
+            "JSON.stringify(Array.prototype.map.call("
+            "  document.querySelectorAll('.request-status-text'),"
+            "  function (e) { return e.textContent.trim(); }))"),
+            [&application](const QVariant &result) {
+                const QJsonArray verdicts = QJsonDocument::fromJson(
+                    result.toString().toUtf8()).array();
+                if (verdicts.size() < 3)
+                    return;
+                QStringList texts;
+                bool unknown = false;
+                for (const QJsonValue &v : verdicts) {
+                    const QString text = v.toString();
+                    texts << text;
+                    if (text.contains(QLatin1String("Unknown"))
+                        || text.isEmpty())
+                        unknown = true;
+                }
+                if (unknown)
+                    return;
+                // Cell order in the SPA: Beacon API, Ping, CSP report.
+                bool pass = true;
+                for (const QString &text : texts) {
+                    if (!text.contains(QLatin1String("blocked")))
+                        pass = false;
+                }
+                qInfo() << "pingspotter-smoke:" << (pass ? "PASS" : "FAIL")
+                        << "beacon:" << texts.value(0)
+                        << "ping:" << texts.value(1)
+                        << "csp:" << texts.value(2);
+                application.exit(pass ? 0 : 1);
+            });
+    });
+    poller->start();
+    view->loadUrl(site);
+
+    QTimer::singleShot(60000, &application, [&application]() {
+        qInfo() << "pingspotter-smoke: FAIL (timeout — site"
+                << "unreachable or test never completed)";
+        application.exit(1);
+    });
+    return application.exec();
 }
 
-// Snapshots every subscription's rules and enabled flag plus the
-// subscription list itself, and restores them from a post-routine:
-// those run inside ~QCoreApplication, before ~QObject tears down the
-// children (NetworkAccessManager -> AdBlockManager) whose destructor
-// performs the final saveIfNeccessary — so a smoke's mutations never
-// reach disk on either the exit() or the early-return path.
-struct AdBlockSmokeState {
-    AdBlockSubscription *subscription;
-    QList<AdBlockRule> rules;
-    bool enabled;
-};
-static QList<AdBlockSmokeState> *s_adBlockSmokeSaved = nullptr;
-
-static void restoreAdBlockState()
+// START01: the qrc start page must always finish loading AND get a
+// working channel — the regression net for both reported suspects:
+// a stalled qrc subresource in the interceptor path (STALL01's
+// mechanism aimed at the start page's own qrc:///qtwebchannel/
+// qwebchannel.js, qrc:/startpage.css and qrc:/arora.svg fetches —
+// any one of them spinning keeps isLoading() true forever) and the
+// channel-registration ordering ('arora' registers on urlChanged at
+// commit; the page's init() handshake at onload must still resolve
+// it on every load).
+//
+// The shared custom subscription is armed with the same widened uBO
+// shape that produced the original hang — a global $script
+// redirect-rule whose arora-resource: stub re-entered the matcher —
+// plus rules naming the start page's own qrc subresources, so every
+// one of the fifty loads crosses the interceptor with hostile rules
+// live.  Each load must emit loadFinished inside the per-load
+// deadline, then resolve channel.objects.arora — proven by the
+// page's own update() filling document.title and the search button
+// — and answer an explicit searchUrl() round-trip, the call the
+// search box itself makes.
+// DEVT03: --bidi-smoke exercises the engine-neutral devtools channel
+// end to end — connect to the armed loopback endpoint (Origin-token
+// gated), open the BiDi session, subscribe for events, list browsing
+// contexts, evaluate script, navigate the view's context, and require
+// a console log entry plus network lifecycle events.  Exits 0 on
+// PASS, 1 on FAIL.
+static int bidiSmoke(BrowserApplication &application, WebView *view)
 {
-    if (!s_adBlockSmokeSaved)
-        return;
-    AdBlockManager *manager = AdBlockManager::instance();
-    for (AdBlockSubscription *subscription : manager->subscriptions()) {
-        bool savedBefore = false;
-        for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
-            if (state.subscription == subscription) {
-                savedBefore = true;
-                break;
+    struct Smoke {
+        BidiClient client;
+        QString context;
+        bool sawTree = false;
+        bool sawEval = false;
+        bool sawLog = false;
+        bool sawNetRequest = false;
+        bool sawNetResponse = false;
+        bool sawCookies = false;
+        bool done = false;
+    };
+    Smoke *sm = new Smoke;
+
+    const auto finish = [&application, sm](bool pass, const QString &why) {
+        if (sm->done)
+            return;
+        sm->done = true;
+        qInfo() << "bidi-smoke:" << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+
+    QObject::connect(&sm->client, &BidiClient::connectionChanged,
+                     &application, [&application, sm, view](int state) {
+        if (state == BidiClient::Connected) {
+            sm->client.sendCommand(QStringLiteral("session.new"));
+            sm->client.sendCommand(QStringLiteral("session.subscribe"),
+                QByteArray("{\"events\":[\"browsingContext\",\"log\",\"network\"]}"));
+            sm->client.sendCommand(QStringLiteral("browsingContext.getTree"));
+        } else if (state == BidiClient::Unavailable
+                   || (state == BidiClient::Disconnected && sm->done == false
+                       && sm->sawTree)) {
+            qInfo() << "bidi-smoke: FAIL (channel:" << state << ")"
+                    << sm->client.unavailableReason();
+            sm->done = true;
+            application.exit(1);
+        }
+        Q_UNUSED(view);
+    });
+
+    QObject::connect(&sm->client, &BidiClient::responseReceived,
+                     &application, [sm, view, finish](quint64 id,
+                                               const QByteArray &json) {
+        Q_UNUSED(id);
+        const QJsonObject root =
+            QJsonDocument::fromJson(json).object();
+        const QJsonObject result =
+            root[QStringLiteral("result")].toObject();
+
+        if (result.contains(QStringLiteral("contexts"))) {
+            // browsingContext.getTree
+            const QJsonArray contexts =
+                result[QStringLiteral("contexts")].toArray();
+            if (contexts.isEmpty())
+                return;
+            sm->sawTree = true;
+            // Prefer the context matching the view's url.
+            const QString want = view->url().toString();
+            QString pick = contexts.first().toObject()
+                               [QStringLiteral("context")].toString();
+            for (const QJsonValue &cv : contexts) {
+                const QJsonObject c = cv.toObject();
+                if (c[QStringLiteral("url")].toString() == want)
+                    pick = c[QStringLiteral("context")].toString();
+            }
+            sm->context = pick;
+            qInfo() << "bidi-smoke: tree has" << contexts.size()
+                    << "contexts, using" << pick;
+            // eval
+            sm->client.sendCommand(QStringLiteral("script.evaluate"),
+                QByteArray("{\"expression\":\"40+2\",\"target\":{\"context\":\"")
+                + pick.toUtf8()
+                + QByteArray("\"},\"awaitPromise\":true}"));
+            // storage
+            sm->client.sendCommand(QStringLiteral("storage.getCookies"),
+                QByteArray("{\"context\":\"") + pick.toUtf8()
+                + QByteArray("\"}"));
+            // navigate to a page that logs and fetches
+            sm->client.sendCommand(QStringLiteral("browsingContext.navigate"),
+                QByteArray("{\"context\":\"") + pick.toUtf8()
+                + QByteArray("\",\"url\":\"data:text/html,"
+                    "<script>console.log('bidi-marker');"
+                    "fetch('data:,ok')</script>bidi-smoke-page\"}"));
+            return;
+        }
+        if (result.contains(QStringLiteral("cookies"))) {
+            sm->sawCookies = true;
+            qInfo() << "bidi-smoke: cookies"
+                    << result[QStringLiteral("cookies")].toArray().size();
+            return;
+        }
+        if (result[QStringLiteral("type")].toString()
+            == QLatin1String("success")) {
+            const QJsonObject remote =
+                result[QStringLiteral("result")].toObject();
+            if (remote[QStringLiteral("value")].toInt() == 42) {
+                sm->sawEval = true;
+                qInfo() << "bidi-smoke: eval 40+2 == 42";
             }
         }
-        if (!savedBefore)
-            manager->removeSubscription(subscription);
+    });
+
+    QObject::connect(&sm->client, &BidiClient::eventReceived,
+                     &application, [sm, finish](const QByteArray &json) {
+        const QJsonObject env = QJsonDocument::fromJson(json).object();
+        const QString method =
+            env[QStringLiteral("method")].toString();
+        const QJsonObject params =
+            env[QStringLiteral("params")].toObject();
+        if (method == QLatin1String("log.entryAdded")
+            && params[QStringLiteral("text")].toString()
+                   .contains(QLatin1String("bidi-marker"))) {
+            sm->sawLog = true;
+            qInfo() << "bidi-smoke: saw console marker";
+        }
+        if (method == QLatin1String("network.beforeRequestSent"))
+            sm->sawNetRequest = true;
+        if (method == QLatin1String("network.responseCompleted")
+            || method == QLatin1String("network.fetchError"))
+            sm->sawNetResponse = true;
+        if (sm->sawTree && sm->sawEval && sm->sawLog && sm->sawNetRequest
+            && sm->sawCookies) {
+            const bool ok = sm->sawNetResponse;
+            finish(ok, ok ? QStringLiteral("all checks green")
+                          : QStringLiteral("no terminal network event"));
+        }
+    });
+
+    sm->client.connectToEngine();
+    if (sm->client.state() == BidiClient::Unavailable) {
+        // exit() before exec() is a no-op — return the code directly.
+#ifndef ARORA_RUSTCORE
+        // Same convention as --adblock-rust-smoke: an absent backend
+        // is a skip, not a failure.
+        qInfo() << "bidi-smoke: SKIP" << sm->client.unavailableReason();
+        delete sm;
+        return 0;
+#else
+        qInfo() << "bidi-smoke: FAIL" << sm->client.unavailableReason();
+        delete sm;
+        return 1;
+#endif
     }
-    for (const AdBlockSmokeState &state : *s_adBlockSmokeSaved) {
-        state.subscription->setEnabled(state.enabled);
-        state.subscription->setRules(state.rules);
-    }
-    delete s_adBlockSmokeSaved;
-    s_adBlockSmokeSaved = nullptr;
+    QTimer::singleShot(20000, &application, [sm, finish]() {
+        finish(false, QStringLiteral(
+                   "timeout tree=%1 eval=%2 log=%3 net=%4/%5 cookies=%6")
+                   .arg(sm->sawTree).arg(sm->sawEval).arg(sm->sawLog)
+                   .arg(sm->sawNetRequest).arg(sm->sawNetResponse)
+                   .arg(sm->sawCookies));
+    });
+    const int rc = application.exec();
+    delete sm;
+    return rc;
 }
 
-static void restoreAdBlockStateOnExit()
+static int startPageSmoke(BrowserApplication &application, WebView *view)
 {
-    if (s_adBlockSmokeSaved)
-        return;
     AdBlockManager *manager = AdBlockManager::instance();
-    s_adBlockSmokeSaved = new QList<AdBlockSmokeState>;
-    for (AdBlockSubscription *subscription : manager->subscriptions())
-        s_adBlockSmokeSaved->append({subscription,
-                                     subscription->allRules(),
-                                     subscription->isEnabled()});
-    qAddPostRoutine(&restoreAdBlockState);
+    AdBlockSubscription *custom = manager->customRules();
+    if (!custom->isEnabled())
+        custom->setEnabled(true);
+    custom->addRule(AdBlockRule(QLatin1String("*$script,redirect-rule=noopjs")));
+    custom->addRule(AdBlockRule(QLatin1String("qwebchannel.js$script")));
+    custom->addRule(AdBlockRule(QLatin1String("arora.svg$image")));
+    // addRule -> rulesChanged -> queued matcher rebuild; force it so
+    // the snapshot is armed before the first load, then confirm it
+    // through the IO-thread view of the rules — a run whose blocker
+    // is off or whose rules parsed inert could not catch the stall
+    // it exists to catch.
+    AdBlockNetwork *network = manager->network();
+    network->rebuildRules();
+    const AdBlockDecision probe = network->match(
+        QUrl(QLatin1String("http://start01.invalid/probe.js")),
+        QUrl(), int(QWebEngineUrlRequestInfo::ResourceTypeScript));
+    if (!manager->isEnabled()
+        || probe.action == AdBlockDecision::Allow) {
+        qInfo() << "startpage-smoke: FAIL (hostile rules not armed:"
+                << "enabled" << manager->isEnabled()
+                << "probe action" << int(probe.action) << ")";
+        return 1;
+    }
+
+    const QUrl startUrl(QLatin1String("qrc:/startpage.html"));
+    const int iterationCount = 50;
+    auto iteration = std::make_shared<int>(0);
+    // phaseDone: true while waiting on loadFinished, false while the
+    // poll below verifies the channel.  Late JS results from an
+    // earlier tick drop out on it.
+    auto phaseDone = std::make_shared<bool>(true);
+    auto verifyTicks = std::make_shared<int>(0);
+
+    // The deadline is the stall tripwire — a poisoned qrc
+    // subresource keeps isLoading() true forever.
+    QTimer *deadline = new QTimer(&application);
+    deadline->setSingleShot(true);
+    QObject::connect(deadline, &QTimer::timeout, &application,
+                     [&application, iteration]() {
+        qInfo() << "startpage-smoke: FAIL (iteration" << *iteration
+                << "stalled)";
+        application.exit(1);
+    });
+
+    // init()'s handshake runs at onload; by loadFinished the channel
+    // client exists iff 'arora' was registered in time.  The probe
+    // reports the whole page-side state so a failure says which
+    // layer broke, and arms a searchUrl() round-trip once the
+    // client is live.
+    const QString probeJs = QStringLiteral(
+        "(function(){"
+        "  var s = document.getElementById('searchButton');"
+        "  var e = document.getElementById('lineEdit');"
+        "  var ready = (typeof arora === 'object' && arora !== null)"
+        "      && document.title.length > 0"
+        "      && !!s && s.value.length > 0"
+        "      && !!e && e.placeholder.length > 0;"
+        "  if (ready && !window.__spArmed) {"
+        "      window.__spArmed = true;"
+        "      window.__spUrl = '';"
+        "      arora.searchUrl('start01probe', function(u) {"
+        "          window.__spUrl = String(u); });"
+        "  }"
+        "  return [(ready ? 1 : 0),"
+        "      (typeof window.__aroraChannel),"
+        "      (arora === null ? 'null' : typeof arora),"
+        "      document.title,"
+        "      (s ? s.value : 'MISSING'),"
+        "      (e ? e.placeholder : 'MISSING'),"
+        "      (window.__spUrl || '')].join('|');"
+        "})()");
+
+    std::function<void()> startLoad;
+    QTimer *poll = new QTimer(&application);
+    QObject::connect(poll, &QTimer::timeout, &application,
+        [view, &application, iteration, phaseDone, verifyTicks, poll,
+         probeJs, &startLoad]() {
+        if (*phaseDone)
+            return;
+        view->webPage()->runJavaScript(probeJs,
+            [view, &application, iteration, phaseDone, verifyTicks,
+             poll, &startLoad](const QVariant &result) {
+            if (*phaseDone)
+                return;
+            const QStringList parts =
+                result.toString().split(QLatin1Char('|'));
+            const bool ready = parts.value(0) == QLatin1String("1");
+            const QString searchUrl = parts.value(6);
+            if (ready && searchUrl.startsWith(QLatin1String("http"))) {
+                *phaseDone = true;
+                poll->stop();
+                qInfo() << "startpage-smoke: load" << *iteration
+                        << "ok —" << parts.value(3)
+                        << "| engine" << parts.value(5)
+                        << "| search" << searchUrl;
+                startLoad();
+                return;
+            }
+            if (++*verifyTicks > 60) {
+                *phaseDone = true;
+                poll->stop();
+                qInfo() << "startpage-smoke: FAIL (iteration"
+                        << *iteration << "channel never resolved:"
+                        << result.toString() << ")";
+                application.exit(1);
+            }
+        });
+    });
+
+    QObject::connect(view, &QWebEngineView::loadFinished, &application,
+        [view, &application, startUrl, iteration, phaseDone,
+         verifyTicks, poll, deadline](bool ok) {
+        // The smoke issues the only navigations, so a finish while
+        // the start page is committed is this iteration's.
+        if (!*phaseDone || view->webPage()->isLoading()
+            || view->url() != startUrl)
+            return;
+        if (!ok) {
+            qInfo() << "startpage-smoke: FAIL (iteration" << *iteration
+                    << "loadFinished false)";
+            application.exit(1);
+            return;
+        }
+        *phaseDone = false;
+        *verifyTicks = 0;
+        deadline->start(8000);
+        poll->start(50);
+    });
+
+    startLoad = [view, startUrl, iteration, phaseDone, deadline,
+                 iterationCount, &application]() {
+        if (++*iteration > iterationCount) {
+            qInfo() << "startpage-smoke: PASS (" << iterationCount
+                    << "loads, channel resolved on every one)";
+            application.exit(0);
+            return;
+        }
+        deadline->start(5000);
+        view->loadUrl(startUrl);
+    };
+    startLoad();
+    return application.exec();
 }
 
 // SLEEP01: /proc helpers for the sleeping-tabs smoke — the RSS and
@@ -1561,8 +2572,648 @@ static qint64 processTreeRssKb()
 #endif
 }
 
+// SAND01: --sandbox-probe runs INSIDE a bwrap invocation (spawned by
+// --sandbox-smoke, or by hand) and reports what the mounted filesystem
+// looks like from in there.  workdir is the parent-prepared fixture:
+// allowed.txt reads back, deny/ is a masked directory (a tmpfs — empty
+// view, writes land nowhere), secretfile.txt is a masked file
+// (a /dev/null bind — opens but reads empty).  The parent asserts the
+// host-side view afterwards, so the transient write proves the mask.
+static int sandboxProbe(BrowserApplication &application, WebView *view,
+                        const QString &workdir)
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "sandbox-probe:" << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    report(QStringLiteral("env-marker"),
+           qEnvironmentVariable("ARORA_SANDBOXED")
+               == QLatin1String("bwrap"));
+
+    QFile allowed(workdir + QStringLiteral("/allowed.txt"));
+    report(QStringLiteral("read-allowed"),
+           allowed.open(QIODevice::ReadOnly)
+               && allowed.readAll() == "hello-sandbox");
+
+    const QDir deniedDir(workdir + QStringLiteral("/deny"));
+    QFile deniedSecret(
+        deniedDir.filePath(QStringLiteral("secret.txt")));
+    report(QStringLiteral("denied-dir-empty"),
+           deniedDir.entryList(QDir::AllEntries | QDir::NoDotAndDotDot)
+                   .isEmpty()
+               && !deniedSecret.open(QIODevice::ReadOnly));
+
+    QFile maskedFile(workdir + QStringLiteral("/secretfile.txt"));
+    const bool maskedOpened = maskedFile.open(QIODevice::ReadOnly);
+    report(QStringLiteral("denied-file-empty"),
+           !maskedOpened || maskedFile.readAll().isEmpty());
+    maskedFile.close();
+
+    QFile written(workdir + QStringLiteral("/written-by-probe"));
+    report(QStringLiteral("write-allowed"),
+           written.open(QIODevice::WriteOnly)
+               && written.write("from-inside") != -1);
+    written.close();
+
+    // Writing into the masked directory succeeds inside the tmpfs —
+    // the parent's host-side check (the file must NOT exist) is what
+    // makes the result meaningful.
+    {
+        QFile transient(
+            deniedDir.filePath(QStringLiteral("evil.txt")));
+        if (transient.open(QIODevice::WriteOnly))
+            transient.write("x");
+    }
+
+    // The probe's own profile check: a file anywhere in $HOME outside
+    // the denylist must be writable — downloads rely on this.
+    const QString homeProbe = QDir::homePath()
+        + QStringLiteral("/.arora-sandbox-probe-write");
+    QFile homeFile(homeProbe);
+    const bool homeOk = homeFile.open(QIODevice::WriteOnly)
+        && homeFile.write("x") != -1;
+    homeFile.close();
+    QFile::remove(homeProbe);
+    report(QStringLiteral("home-write"), homeOk);
+
+    // The page load (about:blank, already navigated by the standalone
+    // harness) proves the engine itself works inside the wrap.
+    QObject::connect(view, &QWebEngineView::loadFinished, &application,
+                     [&application, &ok](bool loaded) {
+        qInfo() << "sandbox-probe: engine-load"
+                << (loaded ? "PASS" : "FAIL");
+        ok = ok && loaded;
+        qInfo() << "sandbox-probe: RESULT" << (ok ? "PASS" : "FAIL");
+        application.exit(ok ? 0 : 1);
+    });
+    QTimer::singleShot(20000, &application, [&application]() {
+        qInfo() << "sandbox-probe: FAIL (timeout)";
+        application.exit(1);
+    });
+    return application.exec();
+}
+
+// SAND01: --sandbox-smoke — the end-to-end verification.  This process
+// stays unwrapped (the flag makes it a standalone run, and only
+// browsing launches self-wrap); it spawns real bwrap children against
+// a fixture directory to prove the denylist hides files and
+// directories, ordinary writes pass through, the engine runs inside
+// the wrap, the real self-reexec path wraps browsing sessions, and a
+// missing bwrap degrades to a warning rather than a failure.
+static int sandboxSmoke()
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "sandbox-smoke:" << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    const QString bwrap =
+        QStandardPaths::findExecutable(QStringLiteral("bwrap"));
+    if (bwrap.isEmpty()) {
+        qInfo() << "sandbox-smoke: SKIP (bwrap not installed)";
+        return 0;
+    }
+
+    const QString program = QCoreApplication::applicationFilePath();
+    QTemporaryDir work;
+    if (!work.isValid()) {
+        report(QStringLiteral("fixture-dir"), false);
+        return 1;
+    }
+    const QString dir = work.path();
+    const auto writeFixture = [](const QString &path,
+                                 const QByteArray &data) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(data) != -1;
+    };
+    QDir().mkpath(dir + QStringLiteral("/deny"));
+    const bool fixture = writeFixture(
+            dir + QStringLiteral("/allowed.txt"), "hello-sandbox")
+        && writeFixture(dir + QStringLiteral("/deny/secret.txt"),
+                        "topsecret")
+        && writeFixture(dir + QStringLiteral("/secretfile.txt"),
+                        "filesecret");
+    report(QStringLiteral("fixture"), fixture);
+
+    const QProcessEnvironment baseEnv =
+        QProcessEnvironment::systemEnvironment();
+    const auto runChild = [](const QString &childProgram,
+                             const QStringList &arguments,
+                             const QProcessEnvironment &environment,
+                             QByteArray *output,
+                             int timeoutMs = 240000) {
+        QProcess child;
+        child.setProgram(childProgram);
+        child.setArguments(arguments);
+        child.setProcessEnvironment(environment);
+        child.start();
+        if (!child.waitForFinished(timeoutMs)) {
+            child.kill();
+            child.waitForFinished(5000);
+        }
+        *output = child.readAllStandardOutput()
+            + child.readAllStandardError();
+        return child.exitStatus() == QProcess::NormalExit
+            && child.exitCode() == 0;
+    };
+
+    // Stage 1: a wrapped probe child with the fixture appended to the
+    // real denylist — the generated argv drives bwrap verbatim.
+    SandboxPolicy policy = SandboxPolicy::defaultPolicy();
+    policy.deniedDirs << dir + QStringLiteral("/deny");
+    policy.deniedFiles << dir + QStringLiteral("/secretfile.txt");
+    QStringList command = BwrapGenerator::commandLine(
+        policy, program,
+        {QStringLiteral("--sandbox-probe=") + dir});
+    command[0] = bwrap;
+    QByteArray out;
+    QProcessEnvironment env = baseEnv;
+    env.remove(QStringLiteral("ARORA_SANDBOXED"));
+    const bool probeOk = runChild(command.takeFirst(), command, env,
+                                  &out)
+        && out.contains("sandbox-probe: RESULT PASS");
+    if (!probeOk)
+        qInfo() << "sandbox-smoke: probe output:\n" << out;
+    report(QStringLiteral("probe-child"), probeOk);
+    report(QStringLiteral("denied-write-hidden"),
+           !QFile::exists(dir + QStringLiteral("/deny/evil.txt")));
+    report(QStringLiteral("write-through"),
+           QFile::exists(dir + QStringLiteral("/written-by-probe")));
+    {
+        QFile secret(dir + QStringLiteral("/deny/secret.txt"));
+        report(QStringLiteral("host-secret-intact"),
+               secret.open(QIODevice::ReadOnly)
+                   && secret.readAll() == "topsecret");
+    }
+
+    // Stage 2: the real self-wrap path — ARORA_SANDBOX_FORCE wraps the
+    // flagged run through maybeReexec(); the wrapped --sandbox-status
+    // reports the marker only a bwrap child can see.
+    env.insert(QStringLiteral("ARORA_SANDBOX_FORCE"),
+               QStringLiteral("1"));
+    const bool selfWrap = runChild(
+        program, {QStringLiteral("--sandbox-status")}, env, &out)
+        && out.contains("this process sandboxed: yes")
+        && out.contains("backend: bwrap");
+    report(QStringLiteral("self-wrap"), selfWrap);
+
+    // Stage 3: a real browsing run inside the wrap.
+    const bool wrappedBrowse = runChild(
+        program, {QStringLiteral("--quit-after-load")}, env, &out);
+    report(QStringLiteral("wrapped-browse"), wrappedBrowse);
+
+    // Stage 4: graceful fallback — bwrap resolution fails and the run
+    // continues unsandboxed with a warning instead of failing.
+    env.insert(QStringLiteral("ARORA_BWRAP"),
+               QStringLiteral("/nonexistent/bwrap"));
+    const bool fallback = runChild(
+        program, {QStringLiteral("--quit-after-load")}, env, &out)
+        && out.contains("running without");
+    report(QStringLiteral("missing-bwrap-fallback"), fallback);
+    env.remove(QStringLiteral("ARORA_BWRAP"));
+
+    // Stage 5: the generated launcher script, executed from a scratch
+    // bindir — it must wrap (status reports the marker) and honour
+    // ARORA_NO_SANDBOX.
+    QDir().mkpath(dir + QStringLiteral("/bin"));
+    const QString binDir = dir + QStringLiteral("/bin");
+    const QString scriptPath = binDir + QStringLiteral("/arora-sandbox");
+    bool scriptOk = QFile::link(program, binDir + QStringLiteral("/arora"));
+    {
+        QFile script(scriptPath);
+        scriptOk = scriptOk && script.open(QIODevice::WriteOnly);
+        if (scriptOk) {
+            script.write(BwrapGenerator::launcherScript().toUtf8());
+            script.close();
+            script.setPermissions(QFile::ReadOwner | QFile::WriteOwner
+                | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup
+                | QFile::ReadOther | QFile::ExeOther);
+        }
+    }
+    env.remove(QStringLiteral("ARORA_SANDBOX_FORCE"));
+    const bool scriptWraps = scriptOk
+        && runChild(scriptPath, {QStringLiteral("--sandbox-status")},
+                    env, &out)
+        && out.contains("this process sandboxed: yes");
+    report(QStringLiteral("launcher-script-wraps"), scriptWraps);
+    env.insert(QStringLiteral("ARORA_NO_SANDBOX"), QStringLiteral("1"));
+    const bool scriptHatch = runChild(
+        scriptPath, {QStringLiteral("--sandbox-status")}, env, &out)
+        && out.contains("this process sandboxed: no");
+    report(QStringLiteral("launcher-script-hatch"), scriptHatch);
+
+    qInfo() << "sandbox-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// ENG06(b): --engine-smoke — the engine matrix.  The same scripted
+// round-trip runs against every registered backend — navigate a
+// data: document and record the observable signal sequence, then
+// zoom, find and script-eval — so the engine-neutral contract
+// (loadStarted precedes loadFinished, urlChanged echoes the request,
+// progress reaches 100, zoom round-trips) is asserted per backend
+// and the per-backend traces are diffed pairwise.  Surfaces a
+// capability table already declares absent (find matches, script
+// results) are reported as divergences, not failed — the parity the
+// interface promises is what gets asserted.
+static int engineSmoke()
+{
+    bool ok = true;
+    const auto report = [&ok](const QString &backend,
+                              const QString &name, bool pass) {
+        qInfo() << "engine-smoke:" << backend << name
+                << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+
+    struct Trace {
+        QString id;
+        QStringList events;     // ordered observable signals
+        QStringList urls;       // urlChanged sequence
+        QList<int> progress;    // loadProgress sequence
+        QStringList titles;     // titleChanged sequence
+        bool started = false;
+        bool finished = false;
+        bool loadOk = false;
+        QUrl finalUrl;
+        qreal zoom = -1;
+        int findMatches = -1;
+        bool scriptRan = false;
+        bool scriptSawCallback = false;
+        QVariant scriptResult;
+    };
+
+    // A file:// fixture rather than a data: url — QtWebEngine's
+    // find-in-page only counts matches once the renderer owns a real
+    // frame, and file: round-trips identically through every backend
+    // the smoke drives (servo included).
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-engine-smoke.html"));
+    {
+        QFile fixture(fixturePath);
+        if (!fixture.open(QIODevice::WriteOnly)) {
+            qInfo() << "engine-smoke: FAIL (cannot write fixture)";
+            return 1;
+        }
+        fixture.write("<html><head><title>EngineSmokeProbe</title>"
+                      "</head><body><p>needle one</p><p>haystack</p>"
+                      "<p>needle two</p></body></html>");
+    }
+    const QUrl probe = QUrl::fromLocalFile(fixturePath);
+
+    const auto pumpUntil = [](const std::function<bool()> &done,
+                              qint64 timeoutMs) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done() && timer.elapsed() < timeoutMs)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    };
+
+    QList<Trace> traces;
+    const QList<Engine::Backend *> backendList = EngineRegistry::backends();
+    report(QStringLiteral("matrix"), QStringLiteral("backends"),
+           !backendList.isEmpty());
+    for (Engine::Backend *backend : backendList) {
+        Trace trace;
+        trace.id = backend->id();
+        QWidget host;
+        host.resize(800, 600);
+        host.show();
+
+        Engine::ProfileOptions options;
+        options.offTheRecord = true;
+        Engine::Profile *profile =
+            backend->createProfile(options, &host);
+        report(trace.id, QStringLiteral("profile"), profile != nullptr);
+        Engine::Page *page = profile
+            ? backend->createPage(profile, &host) : nullptr;
+        report(trace.id, QStringLiteral("page"), page != nullptr);
+        QWidget *view = page ? backend->createView(page, &host) : nullptr;
+        report(trace.id, QStringLiteral("view"), view != nullptr);
+        if (view)
+            view->resize(800, 600);
+        if (!page)
+            continue;
+
+        QObject::connect(page, &Engine::Page::loadStarted, &host,
+                         [&trace]() {
+                             trace.started = true;
+                             trace.events << QStringLiteral("loadStarted");
+                         });
+        QObject::connect(page, &Engine::Page::loadProgress, &host,
+                         [&trace](int p) {
+                             trace.progress << p;
+                             trace.events << QStringLiteral("loadProgress");
+                         });
+        QObject::connect(page, &Engine::Page::loadFinished, &host,
+                         [&trace](bool success) {
+                             trace.finished = true;
+                             trace.loadOk = success;
+                             trace.events << QStringLiteral("loadFinished");
+                         });
+        QObject::connect(page, &Engine::Page::urlChanged, &host,
+                         [&trace](const QUrl &u) {
+                             trace.urls << u.toString();
+                             trace.events << QStringLiteral("urlChanged");
+                         });
+        QObject::connect(page, &Engine::Page::titleChanged, &host,
+                         [&trace](const QString &t) {
+                             trace.titles << t;
+                             trace.events << QStringLiteral("titleChanged");
+                         });
+        QObject::connect(page, &Engine::Page::findTextFinished, &host,
+                         [&trace](const Engine::FindResult &r) {
+                             trace.findMatches = r.numberOfMatches;
+                         });
+
+        // Let any init navigation settle before the scripted load —
+        // a backend may start an about:blank load on view attach
+        // (servo does) and a probe issued while that is still
+        // in-flight can be dropped entirely.  Wait for the init
+        // loadFinished, or for the observable stream to go quiet.
+        {
+            QElapsedTimer settle;
+            settle.start();
+            int quietCount = -1;
+            qint64 quietSince = -1;
+            while (settle.elapsed() < 15000 && !trace.finished) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents,
+                                                100);
+                if (trace.events.count() != quietCount) {
+                    quietCount = trace.events.count();
+                    quietSince = settle.elapsed();
+                } else if (settle.elapsed()
+                           - (quietSince < 0 ? 0 : quietSince) > 1500) {
+                    break;
+                }
+            }
+            // Scripted-nav recording starts clean from here —
+            // init-lifecycle emissions are not part of the trace.
+            trace.events.clear();
+            trace.urls.clear();
+            trace.progress.clear();
+            trace.titles.clear();
+            trace.started = false;
+            trace.finished = false;
+            trace.loadOk = false;
+        }
+
+        // Navigation: the hard contract, identical for every backend.
+        page->load(probe);
+        pumpUntil([&trace]() { return trace.finished; }, 30000);
+        trace.finalUrl = page->url();
+        report(trace.id, QStringLiteral("load-finished"),
+               trace.finished && trace.loadOk);
+        const int startedAt =
+            trace.events.indexOf(QStringLiteral("loadStarted"));
+        const int finishedAt =
+            trace.events.lastIndexOf(QStringLiteral("loadFinished"));
+        report(trace.id, QStringLiteral("signal-order"),
+               startedAt >= 0 && finishedAt > startedAt);
+        report(trace.id, QStringLiteral("url-echo"),
+               trace.finalUrl == probe
+                   || trace.urls.contains(probe.toString()));
+        report(trace.id, QStringLiteral("progress-complete"),
+               !trace.progress.isEmpty() && trace.progress.last() == 100);
+
+        // Zoom: a pure engine-side setting — every backend round-trips.
+        page->setZoomFactor(1.25);
+        pumpUntil([&page]() {
+                return qAbs(page->zoomFactor() - 1.25) < 0.001;
+            }, 2000);
+        trace.zoom = page->zoomFactor();
+        report(trace.id, QStringLiteral("zoom-roundtrip"),
+               qAbs(trace.zoom - 1.25) < 0.001);
+
+        // Find: the match count is capability-shaped (a backend with
+        // no find-in-page still must emit findTextFinished).
+        page->findText(QStringLiteral("smoke-needle"), {});
+        pumpUntil([&trace]() { return trace.findMatches >= 0; }, 5000);
+        report(trace.id, QStringLiteral("find-answered"),
+               trace.findMatches >= 0);
+
+        // Script eval: only asserted where the capability table
+        // claims a two-way result channel.
+        if (backend->capabilities().scriptEvaluation) {
+            trace.scriptRan = true;
+            page->runJavaScript(QStringLiteral("1+1"),
+                                [&trace](const QVariant &v) {
+                                    trace.scriptSawCallback = true;
+                                    trace.scriptResult = v;
+                                });
+            pumpUntil([&trace]() { return trace.scriptSawCallback; },
+                      5000);
+            report(trace.id, QStringLiteral("script-eval"),
+                   trace.scriptSawCallback && trace.scriptResult == 2);
+        }
+
+        qInfo() << "engine-smoke: trace" << trace.id
+                << "\n  events:" << trace.events
+                << "\n  urls:" << trace.urls
+                << "\n  progress:" << trace.progress
+                << "\n  titles:" << trace.titles
+                << "\n  zoom:" << trace.zoom
+                << " find:" << trace.findMatches
+                << " script:" << trace.scriptResult;
+        traces.append(trace);
+    }
+
+    // Pairwise diff: the load-family event kinds and the terminal
+    // url are the parity the interface promises — diffed, not
+    // assumed.  Exact progress ladders, initial-state emissions
+    // (a backend may push about:blank on view attach), title text,
+    // find counts and script results may legitimately diverge
+    // (capability-shaped), so they print as divergences beside the
+    // asserted rows.
+    for (int i = 0; i < traces.count(); ++i) {
+        for (int j = i + 1; j < traces.count(); ++j) {
+            const Trace &a = traces.at(i);
+            const Trace &b = traces.at(j);
+            const QString pair = a.id + QLatin1Char('/') + b.id;
+            const auto kinds = [](const Trace &t) {
+                QSet<QString> set;
+                for (const QString &event : t.events)
+                    if (event != QLatin1String("titleChanged"))
+                        set.insert(event);
+                return set;
+            };
+            report(pair, QStringLiteral("diff-event-kinds"),
+                   kinds(a) == kinds(b));
+            report(pair, QStringLiteral("diff-terminal-url"),
+                   !a.urls.isEmpty() && a.urls.last() == b.urls.last());
+            if (a.urls != b.urls)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-urls divergent" << a.urls
+                        << "vs" << b.urls;
+            if (a.progress != b.progress)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-progress divergent" << a.progress
+                        << "vs" << b.progress;
+            if (a.titles != b.titles)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-titles divergent" << a.titles
+                        << "vs" << b.titles;
+            if (a.findMatches != b.findMatches)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-find divergent" << a.findMatches
+                        << "vs" << b.findMatches;
+            if (a.scriptResult != b.scriptResult)
+                qInfo() << "engine-smoke:" << pair
+                        << "diff-script divergent" << a.scriptResult
+                        << "vs" << b.scriptResult;
+        }
+    }
+
+    qInfo() << "engine-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// ENG12 — the servo lifecycle guard.  libservo v0.7.0 permits ONE
+// WebView per process lifetime: a second se_init panics inside
+// Opts and the panic aborts the host across the C ABI, so the
+// backend must refuse rather than re-init.  Drives the reported
+// flow — swap an empty Untitled tab onto Servo ("Reload in Servo"),
+// reload it, hit the sibling entry points, swap back, swap forward
+// again — asserting refusal exactly where re-init would be fatal.
+// The process surviving to the PASS line is itself the check.
+// Skips cleanly when the servo backend/artifact is absent.
+static int servoLifecycleSmoke()
+{
+    Engine::Backend *servo =
+        EngineRegistry::backendForId(QStringLiteral("servo"));
+    if (!servo) {
+        qInfo() << "servo-smoke: SKIP (no servo backend/artifact)";
+        return 0;
+    }
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "servo-smoke:" << name << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+    const auto pumpUntil = [](const std::function<bool()> &done,
+                              qint64 timeoutMs) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done() && timer.elapsed() < timeoutMs)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    };
+    const auto pumpDeletes = [] {
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-servo-smoke.html"));
+    {
+        QFile fixture(fixturePath);
+        if (!fixture.open(QIODevice::WriteOnly)) {
+            qInfo() << "servo-smoke: FAIL (cannot write fixture)";
+            return 1;
+        }
+        fixture.write("<html><head><title>ServoSmokeProbe</title>"
+                      "</head><body>servo reload probe</body></html>");
+    }
+    const QUrl probe = QUrl::fromLocalFile(fixturePath);
+
+    // (a)+(b): the user repro — an empty Untitled tab swapped onto
+    // Servo, reloaded 10x plus the sibling entry points (stop/back/
+    // forward/zoom/js), then a real load and a real reload.
+    {
+        TabWidget tabs;
+        tabs.makeNewTab(true);       // empty Untitled, on webengine
+        report(QStringLiteral("empty-tab"), tabs.count() == 1);
+        report(QStringLiteral("swap-to-servo"),
+               tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+        EngineTab *engineTab = tabs.engineTab(0);
+        report(QStringLiteral("engine-tab"), engineTab != nullptr);
+        if (engineTab && engineTab->page()) {
+            Engine::Page *page = engineTab->page();
+            bool finished = false;
+            QObject::connect(engineTab, &EngineTab::loadFinished,
+                             engineTab,
+                             [&finished](bool) { finished = true; });
+            for (int i = 0; i < 10; ++i) {
+                engineTab->reload();
+                tabs.reloadTab(0);   // chrome path: no-op on engine tabs
+            }
+            engineTab->stop();
+            page->back();
+            page->forward();
+            page->setZoomFactor(1.1);
+            page->runJavaScript(QStringLiteral("1+1"));
+            report(QStringLiteral("reload-empty-10x"), true);
+
+            // A loaded servo tab must still reload for real.
+            pumpUntil([page]() { return !page->url().isEmpty(); },
+                      30000);
+            finished = false;
+            engineTab->load(probe);
+            pumpUntil([&finished]() { return finished; }, 30000);
+            report(QStringLiteral("load-finished"), finished);
+            finished = false;
+            engineTab->reload();
+            pumpUntil([&finished]() { return finished; }, 30000);
+            report(QStringLiteral("reload-loaded"), finished);
+        }
+        // (c) mid-tab backend switching stays stable: back to
+        // webengine destroys the only ServoView, and a second
+        // servo tab must be refused — not manufactured into an abort.
+        report(QStringLiteral("swap-back"),
+               tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
+        pumpDeletes();
+        report(QStringLiteral("reswap-refused"),
+               !tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+        report(QStringLiteral("original-kept"),
+               tabs.webView(0) != nullptr);
+    }
+
+    // (d) the direct-API refusal: once the single instance is spent,
+    // createPage hands back nothing instead of letting se_init panic.
+    pumpDeletes();
+    Engine::Profile *profile =
+        servo->createProfile(Engine::ProfileOptions(), nullptr);
+    report(QStringLiteral("second-page-refused"),
+           profile && !servo->createPage(profile, nullptr));
+
+    qInfo() << "servo-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
+    // SAND01: a browsing launch re-execs itself inside the filesystem
+    // sandbox before anything else happens.  Dev/utility runs (any
+    // --flag except --tor) pass through unwrapped so the harnesses keep
+    // their deterministic environments; --no-sandbox,
+    // ARORA_NO_SANDBOX=1 and the sandbox/enabled settings key are the
+    // escape hatches, and a missing backend degrades to a warning.
+    SandboxManager::maybeReexec(argc, argv);
+
+#ifdef ARORA_RUSTDL
+    // SAND02: `arora --download-worker` is the confined download
+    // subprocess RustDownloadEngine spawns under bwrap.  It never
+    // builds the GUI app or touches the profile — dispatch before
+    // anything global exists.  (maybeReexec already passed: a
+    // non-browsing flag never re-wraps, and a wrapped worker carries
+    // ARORA_SANDBOXED so it is idempotent either way.)
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--download-worker") == 0)
+            return downloadWorkerMain();
+    }
+#endif
+
+    // PDF02: `arora --pdf-worker` is the confined rasterization
+    // subprocess PdfDocumentClient spawns under bwrap — same
+    // early-dispatch discipline as --download-worker: no GUI app, no
+    // profile, just the stdio protocol in pdfworker.h.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--pdf-worker") == 0)
+            return pdfWorkerMain();
+    }
+
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;
     perfTimer.start();
@@ -1591,6 +3242,7 @@ int main(int argc, char **argv)
     // managers.
     bool smokeRun = false;
     bool telemetrySmoke = false;
+    bool telemetryBrowseSmoke = false;
     bool dohSmoke = false;
     bool tlsSmoke = false;
     bool tlsOffSmoke = false;
@@ -1598,10 +3250,8 @@ int main(int argc, char **argv)
     bool webrtcOffSmoke = false;
     bool httpOnlySmoke = false;
     bool xsleakOpen = false;
-    QVariant savedDohMode, savedDohServer, savedTlsStrict;
-    QVariant savedWebrtcProtection;
-    QVariant savedHttpsFirst, savedHttpsOnly, savedHttpExceptions;
-    QVariant savedPopupBlocking, savedBlockPings;
+    bool parallelDownloadSmoke = false;
+    bool parallelDownloadOffSmoke = false;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -1612,10 +3262,19 @@ int main(int argc, char **argv)
             smokeRun = true;
         // Modifier for --xsleak-smoke's attribution run; on its own it
         // still takes that path, so it is a smoke run too.
-        if (arg == "--xsleak-open")
+        if (arg == "--xsleak-open") {
             xsleakOpen = true;
+            smokeRun = true;
+        }
+        // Test hooks that don't carry the -smoke suffix — both run the
+        // app's write paths, so they isolate like the smokes.
+        if (arg == "--quit-after-load"
+                || arg == "--fingerprint-inject-seed")
+            smokeRun = true;
         if (arg == "--telemetry-smoke")
             telemetrySmoke = true;
+        if (arg == "--telemetry-browse-smoke")
+            telemetryBrowseSmoke = true;
         if (arg == "--doh-smoke")
             dohSmoke = true;
         if (arg == "--tls-smoke")
@@ -1628,6 +3287,15 @@ int main(int argc, char **argv)
             webrtcOffSmoke = true;
         if (arg == "--httpsonly-smoke")
             httpOnlySmoke = true;
+        // SAND01: --sandbox-probe children run inside the harness's
+        // bwrap fixture; test-mode paths keep their writes out of the
+        // user's real profile.
+        if (arg.startsWith("--sandbox-"))
+            smokeRun = true;
+        if (arg == "--parallel-download-smoke")
+            parallelDownloadSmoke = true;
+        if (arg == "--parallel-download-off-smoke")
+            parallelDownloadOffSmoke = true;
         if (arg == "--profile-startup")
             StartupProfile::enable();
         if (arg == "--sleep-smoke") {
@@ -1654,13 +3322,87 @@ int main(int argc, char **argv)
             qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
         }
     }
-    if (smokeRun)
-        QStandardPaths::setTestModeEnabled(true);
-
     // QSettings resolution needs the application identity; the
     // BrowserApplication constructor sets the same values again.
     QCoreApplication::setOrganizationName(QLatin1String("Arora"));
     QCoreApplication::setApplicationName(QLatin1String("Arora"));
+
+    // SMOKE01: a smoke run must never write to the user's real
+    // config — QSettings ignores QStandardPaths' test mode, so the
+    // pinned fixtures below used to land in the live ~/.config/Arora/
+    // Arora.conf and a mid-run kill left them dirty (the url-bar
+    // search-fallback flip the user hit twice).  Redirect the XDG
+    // roots into a throwaway dir before the first QSettings is
+    // constructed: every QSettings AND QStandardPaths write then
+    // lands in the per-run store — including in child processes,
+    // which inherit the environment — and a kill -9 leaks nothing
+    // but the temp dir itself.
+    //
+    // ARORA_SMOKE_STORE marks the store root for spawned children:
+    // a smoke that re-execs itself (fingerprint-smoke, telemetry's
+    // prefetch probe, the sandbox wraps) needs the child to see the
+    // parent's seeded settings, so the child REUSES the inherited
+    // root instead of minting its own — only the creator's
+    // QTemporaryDir auto-removes it.
+    std::unique_ptr<QTemporaryDir> smokeTempDir;
+    if (smokeRun) {
+        QStandardPaths::setTestModeEnabled(true);
+        const QByteArray inheritedEnv = qgetenv("ARORA_SMOKE_STORE");
+        QString inherited = QFile::decodeName(inheritedEnv);
+        while (inherited.endsWith(QLatin1Char('/')))
+            inherited.chop(1);
+        QString storeRoot;
+        if (!inherited.isEmpty() && QDir(inherited).exists()) {
+            storeRoot = inherited;
+        } else {
+            smokeTempDir.reset(new QTemporaryDir(
+                QDir::temp().filePath(
+                    QStringLiteral("arora-smoke-XXXXXX"))));
+            if (smokeTempDir->isValid()) {
+                storeRoot = smokeTempDir->path();
+                qputenv("ARORA_SMOKE_STORE",
+                        QFile::encodeName(storeRoot));
+                qputenv("XDG_CONFIG_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("config"))));
+                qputenv("XDG_DATA_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("data"))));
+                qputenv("XDG_CACHE_HOME", QFile::encodeName(
+                    smokeTempDir->filePath(QStringLiteral("cache"))));
+            }
+        }
+        if (!storeRoot.isEmpty()) {
+            // QSettings latches the XDG config dir on its FIRST
+            // construction in this process — the env redirect above
+            // only reaches children and QStandardPaths.  setPath is
+            // the unconditional in-process override; both formats,
+            // so explicit-Ini callers land in the store too.
+            const QString configDir =
+                storeRoot + QLatin1String("/config");
+            QSettings::setPath(QSettings::NativeFormat,
+                               QSettings::UserScope, configDir);
+            QSettings::setPath(QSettings::IniFormat,
+                               QSettings::UserScope, configDir);
+        }
+        // GUARD: the resolved settings file must live inside the
+        // active store root — a run that would write to the real
+        // config fails loudly before a single key lands.
+        const QString resolvedConfig = QSettings().fileName();
+        if (storeRoot.isEmpty()
+                || !resolvedConfig.startsWith(
+                    storeRoot + QLatin1Char('/'))) {
+            qWarning() << "smoke-run settings isolation FAILED —"
+                          "QSettings resolves outside the smoke store:"
+                       << resolvedConfig;
+            return 2;
+        }
+    }
+
+    // CRASH02: install the crash reporter as early as the data dir
+    // resolves (smoke runs land it in their isolated store).  A fatal
+    // signal or std::terminate now leaves marker + backtrace in
+    // crashreport.log and on stderr instead of a silent exit.
+    CrashReporter::install(BrowserPaths::dataFilePath(
+        QLatin1String("crashreport.log")));
 
     // DOH01: --doh-smoke seeds the strict custom-DoH mode with a dead
     // loopback endpoint BEFORE applyChromiumFlags reads the keys, so
@@ -1670,11 +3412,6 @@ int main(int argc, char **argv)
     if (dohSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        // Remember the real values — the smoke runs against the live
-        // settings store (QSettings does not follow QStandardPaths'
-        // test mode), so finish() restores them on the way out.
-        savedDohMode = settings.value(QLatin1String("secureDnsMode"));
-        savedDohServer = settings.value(QLatin1String("secureDnsServer"));
         settings.setValue(QLatin1String("secureDnsMode"), 3);
         settings.setValue(QLatin1String("secureDnsServer"),
                           QLatin1String("https://127.0.0.1:1/dns-query"));
@@ -1683,14 +3420,12 @@ int main(int argc, char **argv)
 
     // TLS01: the ClientHello smokes pin privacy/tlsStrictCiphers
     // BEFORE applyChromiumFlags reads it, so each run exercises the
-    // setting deterministically regardless of the real store —
-    // --tls-smoke forces it on, --tls-off-smoke forces it off for the
-    // differential control.  The smoke's finish() restores the real
-    // value on the way out (QSettings ignores the test-mode paths).
+    // setting deterministically — --tls-smoke forces it on,
+    // --tls-off-smoke forces it off for the differential control.
+    // The pin lands in the per-run settings store.
     if (tlsSmoke || tlsOffSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedTlsStrict = settings.value(QLatin1String("tlsStrictCiphers"));
         settings.setValue(QLatin1String("tlsStrictCiphers"), tlsSmoke);
         settings.endGroup();
     }
@@ -1700,13 +3435,10 @@ int main(int argc, char **argv)
     // exercises the armed policy; --webrtc-off-smoke forces it off for
     // the differential control (unprotected ICE gathering must still
     // produce candidates, else a "no leak" verdict proves nothing).
-    // The smoke's finish() restores the real value on the way out —
-    // QSettings ignores the test-mode paths.
+    // The pin lands in the per-run settings store.
     if (webrtcSmoke || webrtcOffSmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedWebrtcProtection =
-            settings.value(QLatin1String("webrtcIpProtection"));
         settings.setValue(QLatin1String("webrtcIpProtection"),
                           webrtcSmoke);
         settings.endGroup();
@@ -1717,7 +3449,7 @@ int main(int argc, char **argv)
     // list) BEFORE applyChromiumFlags/applySettings read them, then
     // points the engine at the answering proxy so a request that
     // should have been refused is observable rather than merely
-    // failed.  finish() restores the real values on the way out.
+    // failed.  The pins land in the per-run settings store.
     quint16 httpOnlyProxyPort = 0;
 #if defined(Q_OS_UNIX)
     if (httpOnlySmoke)
@@ -1726,10 +3458,6 @@ int main(int argc, char **argv)
     if (httpOnlySmoke) {
         QSettings settings;
         settings.beginGroup(QLatin1String("privacy"));
-        savedHttpsFirst = settings.value(QLatin1String("httpsFirst"));
-        savedHttpsOnly = settings.value(QLatin1String("httpsOnly"));
-        savedHttpExceptions =
-            settings.value(QLatin1String("httpsOnlyExceptions"));
         settings.setValue(QLatin1String("httpsFirst"), true);
         settings.setValue(QLatin1String("httpsOnly"), true);
         settings.remove(QLatin1String("httpsOnlyExceptions"));
@@ -1752,10 +3480,26 @@ int main(int argc, char **argv)
     // built, and the app-side fetch manager must read the capture
     // proxy settings early because the adblock consent path fetches
     // inside the same constructor.
+    // TELEM02: the browse variant shares the capture socket but
+    // forwards — real page loads must succeed through the tap, and
+    // every CONNECT/Host target is recorded for classification.  The
+    // dns-prefetch and DoH keys are pinned so the measurement does not
+    // depend on the operator's settings (ARORA_TELEMETRY_PREFETCH=1
+    // arms prefetch instead — the differential proves the detector).
     quint16 telemetryProxyPort = 0;
 #if defined(Q_OS_UNIX)
-    if (telemetrySmoke)
+    s_telemetryForward = telemetryBrowseSmoke;
+    if (telemetrySmoke || telemetryBrowseSmoke)
         telemetryProxyPort = startTelemetryCapture();
+    if (telemetryBrowseSmoke) {
+        QSettings settings;
+        settings.beginGroup(QLatin1String("privacy"));
+        settings.setValue(QLatin1String("dnsPrefetch"),
+                          qEnvironmentVariableIntValue(
+                              "ARORA_TELEMETRY_PREFETCH") == 1);
+        settings.setValue(QLatin1String("secureDnsMode"), 0);
+        settings.endGroup();
+    }
 #endif
     if (telemetryProxyPort != 0) {
         const QByteArray endpoint =
@@ -1779,16 +3523,38 @@ int main(int argc, char **argv)
     // dead-end suite vectors — the popup blocker (window.WW orchestration)
     // and the ping/CSP-report block (the CSPDirective verdict channel) —
     // BEFORE the browsing profile and its interceptor snapshot exist.
-    // xsLeakSmoke's finish() restores the real values on the way out.
+    // The pins land in the per-run settings store.
     if (xsleakOpen) {
         QSettings settings;
-        savedPopupBlocking = settings.value(
-            QLatin1String("websettings/blockPopupWindows"));
-        savedBlockPings = settings.value(
-            QLatin1String("privacy/blockPings"));
         settings.setValue(QLatin1String("websettings/blockPopupWindows"),
                           false);
         settings.setValue(QLatin1String("privacy/blockPings"), false);
+    }
+
+    // SEC20: tor mode is normally discovered in the BrowserApplication
+    // constructor's argv scan — too late for applyChromiumFlags, which
+    // must know it to keep the DnsOverHttps feature switch unarmed for
+    // a tor process.  Decide it from argv here; the constructor's own
+    // scan sets the same flag again (idempotent).
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg(argv[i]);
+        if (arg == "--tor" || arg == "--tor-window-smoke") {
+            BrowserApplication::setTorMode(true);
+            break;
+        }
+    }
+
+    // DLACC02: the parallel-download smokes pin
+    // downloadmanager/parallelSegments BEFORE applyChromiumFlags
+    // reads it — the ParallelDownloading feature switch latches with
+    // the engine flags, so each run deterministically exercises the
+    // armed (or, for the -off control, disarmed) configuration.
+    // The pin lands in the per-run settings store.
+    if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
+        QSettings settings;
+        settings.setValue(
+            QLatin1String("downloadmanager/parallelSegments"),
+            parallelDownloadSmoke);
     }
 
     // PRIV02: the UTC-timezone normalization is process environment
@@ -1814,6 +3580,23 @@ int main(int argc, char **argv)
     if (!application.isStandalone() && !application.isRunning())
         return 0;
 
+#if defined(Q_OS_UNIX)
+    // SESS02: bounce SIGTERM/SIGINT/SIGHUP into the event loop so a
+    // pending AutoSaver debounce + the session blob still flush to
+    // disk before the process dies — an OS kill (logoff, timeout,
+    // service stop) previously lost every change the debounce was
+    // holding.  A wedged loop cannot stall it either: the handler's
+    // watchdog exits on a deadline.  Declared after `application` so
+    // the default dispositions return first during normal teardown.
+    TerminationSignalHandler signalFlush;
+    QObject::connect(&signalFlush,
+                     &TerminationSignalHandler::terminateRequested,
+                     &application,
+                     [&application]() {
+        application.flushSessionsForTermination();
+    });
+#endif
+
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QCoreApplication::translate("main",
@@ -1830,32 +3613,79 @@ int main(int argc, char **argv)
             "Open a Tor window: a separate process that routes all "
             "traffic through a managed tor daemon's SOCKS5 listener "
             "on a dedicated off-the-record profile.")));
+    // SAND01: user-facing sandbox controls.  --no-sandbox is the
+    // flag spelling of the ARORA_NO_SANDBOX=1 escape hatch;
+    // --sandbox-status reports the backend and the active policy.
+    parser.addOption(QCommandLineOption(
+        QLatin1String("no-sandbox"),
+        QCoreApplication::translate("main",
+            "Run without the filesystem sandbox (equivalent to "
+            "ARORA_NO_SANDBOX=1).")));
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sandbox-status"),
+        QCoreApplication::translate("main",
+            "Print the sandbox backend, state and active policy, "
+            "then exit.")));
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sandbox-probe"),
+        QCoreApplication::translate("main",
+            "Internal: filesystem probe executed inside the sandbox "
+            "(spawned by --sandbox-smoke)."),
+        QLatin1String("workdir")));
     // Internal development/verification flags.
     const char *const internalOptions[] = {
         "quit-after-load",
         "nam-smoke", "history-smoke", "download-smoke", "cookie-smoke",
-        "bookmarks-smoke", "search-smoke", "adblock-smoke",
+        "bookmarks-smoke", "search-smoke", "search-guess-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke",
         "ua-smoke", "perf-smoke",
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
+        "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
         "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
+        "fingerprint-inject-smoke", "fingerprint-inject-seed",
         "reader-smoke",
-        "telemetry-smoke", "doh-smoke", "tls-smoke", "tls-off-smoke",
+        "telemetry-smoke", "telemetry-browse-smoke",
+        "telemetry-prefetch-child-smoke",
+        "doh-smoke", "tls-smoke", "tls-off-smoke",
         "webrtc-smoke", "webrtc-off-smoke",
         "profile-startup",
         "browseraudit-smoke", "browseraudit-bare", "anon-smoke",
-        "xsleak-smoke", "xsleak-open",
+        "xsleak-smoke", "xsleak-open", "badssl-smoke", "clientcert-smoke",
+        "pingspotter-smoke",
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
+        "startpage-smoke", "crash-smoke",
+        "sandbox-smoke", "write-sandbox-launcher",
+        "bidi-smoke", "pdf-smoke", "pdfview-smoke",
+        "parallel-download-smoke", "parallel-download-off-smoke",
+        "ingress-smoke",
+        "engine-list", "engine-smoke", "servo-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
+    // SESS02: which signal --sigterm-child-smoke sends to itself.
+    parser.addOption(QCommandLineOption(
+        QLatin1String("sigterm-signal"),
+        QString(), QLatin1String("name")));
     parser.process(application);
+
+    // CRASH01: crash-loop bookkeeping feeding the
+    // --disable-gpu-compositing safe mode in applyChromiumFlags().
+    // Deliberately after parser.process() — its --help/--version paths
+    // exit() inside the parser and must not score as a browser run —
+    // and after the single-instance arbitration above, so a
+    // url-forwarding helper can neither set nor clear the sentinel.
+    // The guard marks the exit clean on every normal return below; a
+    // fatal GPU CHECK kills the process without unwinding, which is
+    // precisely how the next start tells a crash from a clean exit.
+    BrowserProfile::markSessionStart();
+    const auto cleanExitGuard = qScopeGuard(
+        [] { BrowserProfile::markSessionCleanExit(); });
 
     if (!application.isStandalone()) {
         // Normal launch: postLaunch() (queued by the constructor)
@@ -1870,6 +3700,56 @@ int main(int argc, char **argv)
     // on the browsing profile drives --quit-after-load and the smokes.
     const QStringList args = application.arguments();
 
+    // SAND01: pure diagnostics exit before the engine spins up.
+    if (args.contains(QLatin1String("--sandbox-status"))) {
+        QTextStream out(stdout);
+        out << SandboxManager::statusReport() << '\n';
+        return 0;
+    }
+    if (args.contains(QLatin1String("--write-sandbox-launcher"))) {
+        QTextStream out(stdout);
+        out << BwrapGenerator::launcherScript();
+        return 0;
+    }
+    if (args.contains(QLatin1String("--sandbox-smoke")))
+        return sandboxSmoke();
+
+    // ENG04: print the active engine backend + its capability surface.
+    // ENG05: every registered backend reports — an absent servo-embed
+    // artifact shows up as "no servo line" rather than a dead entry.
+    // Pure diagnostic — no profile, no window, exits 0.
+    if (args.contains(QLatin1String("--engine-list"))) {
+        for (Engine::Backend *backend : EngineRegistry::backends()) {
+            const Engine::Capabilities caps = backend->capabilities();
+            qInfo() << "engine:" << backend->id()
+                    << "-" << backend->displayName();
+            qInfo() << "  requestInterception:" << caps.requestInterception
+                    << "scriptInjection:" << caps.scriptInjection
+                    << "scriptEvaluation:" << caps.scriptEvaluation
+                    << "cookieFilter:" << caps.cookieFilter
+                    << "perPageSettings:" << caps.perPageSettings
+                    << "lifecycleDiscard:" << caps.lifecycleDiscard
+                    << "contextMenuInfo:" << caps.contextMenuInfo
+                    << "certificateOverride:" << caps.certificateOverride
+                    << "devTools:" << caps.devTools
+                    << "extensions:" << caps.extensions
+                    << "downloads:" << caps.downloads;
+        }
+        return 0;
+    }
+
+    // ENG06: the engine matrix — scripted navigation/zoom/find
+    // against every registered backend with observable-behavior
+    // diffs (title/url/progress sequences), so backend parity is
+    // asserted rather than assumed.
+    if (args.contains(QLatin1String("--engine-smoke")))
+        return engineSmoke();
+
+    // ENG12: the servo lifecycle guard — swap/reload/refusal matrix
+    // over the real backend (skips when the artifact is absent).
+    if (args.contains(QLatin1String("--servo-smoke")))
+        return servoLifecycleSmoke();
+
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's
     // SOCKS5 listener (the application proxy is process-global, hence
@@ -1880,6 +3760,150 @@ int main(int argc, char **argv)
             && !args.contains(QLatin1String("--tor-window-smoke"))) {
         application.newMainWindow();
         return application.exec();
+    }
+
+    // Headless verification for SRCH07: the omnibox resolver.  Single
+    // words and multi-word input must route to the configured search
+    // engine, address-shaped input must still navigate, engine
+    // keywords keep first priority, the urlloading/searchEngineFallback
+    // opt-out restores the bare-http guess, and a stale saved engine
+    // name must degrade to the built-in default endpoint instead of a
+    // bogus http://<term> navigation.  Runs before the stub WebView is
+    // created — WebPage's ctor touches the OpenSearchManager
+    // singleton, and the stale-name check needs to seed the
+    // openSearch/engine key before the manager loads.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--search-guess-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass,
+                                 const QUrl &got = QUrl()) {
+            qInfo() << "search-guess-smoke:" << (pass ? "PASS" : "FAIL")
+                    << what << (got.isEmpty() ? QString() : got.toString());
+            ok = ok && pass;
+        };
+        const auto isHttp = [](const QUrl &url) {
+            return url.isValid()
+                && (url.scheme() == QLatin1String("http")
+                    || url.scheme() == QLatin1String("https"));
+        };
+
+        QSettings settings;
+
+        // Phase 1 — SRCH07(b): a stale saved engine name must not
+        // degrade to a bogus http://<term> navigation.  The seed has
+        // to land before the manager singleton runs load() — the
+        // qApp-parented instance is detected via findChild so a
+        // startup path that constructs it earlier skips cleanly.
+        // load() itself heals the stale name to an available engine;
+        // either way the resolver has to emit a real search url.
+        const bool managerPreloaded =
+            qApp->findChild<OpenSearchManager *>() != nullptr;
+        if (!managerPreloaded) {
+            settings.setValue(QLatin1String("openSearch/engine"),
+                              QLatin1String("srch07-stale"));
+        }
+        OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+        if (!managerPreloaded) {
+            const QUrl staleGuess =
+                TabWidget::guessUrlFromString(QLatin1String("hup"));
+            check(QLatin1String("'hup' with stale engine name -> search url"),
+                  isHttp(staleGuess)
+                      && staleGuess.host() != QLatin1String("hup"),
+                  staleGuess);
+        } else {
+            qInfo() << "search-guess-smoke: SKIP stale-engine check"
+                       "(manager already loaded)";
+        }
+
+        // Clear the stale-name seed back to the fresh-store state so
+        // the routing checks below run on the compiled default.
+        settings.remove(QLatin1String("openSearch/engine"));
+        manager->setCurrentEngineName(QLatin1String("DuckDuckGo"));
+
+        // Phase 2 — routing.  Whatever engine is configured supplies
+        // the expected search url.
+        OpenSearchEngine *engine = manager->engineForContext(false);
+        const QUrl expectedHup = engine
+            ? engine->searchUrl(QLatin1String("hup"))
+            : QUrl();
+        const QUrl hup = TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("'hup' -> engine search"), isHttp(hup)
+              && (expectedHup.isEmpty()
+                      ? hup.host() == QLatin1String("duckduckgo.com")
+                      : hup == expectedHup),
+              hup);
+        const QUrl twoWords =
+            TabWidget::guessUrlFromString(QLatin1String("two words"));
+        check(QLatin1String("'two words' -> engine search"),
+              isHttp(twoWords)
+                  && (!engine || twoWords == engine->searchUrl(
+                          QLatin1String("two words"))),
+              twoWords);
+
+        const QUrl dotted =
+            TabWidget::guessUrlFromString(QLatin1String("docs.qt.io"));
+        check(QLatin1String("'docs.qt.io' -> address"), isHttp(dotted)
+              && dotted.host() == QLatin1String("docs.qt.io"), dotted);
+        const QUrl localhost =
+            TabWidget::guessUrlFromString(QLatin1String("localhost:8080"));
+        check(QLatin1String("'localhost:8080' -> address"), isHttp(localhost)
+              && localhost.host() == QLatin1String("localhost")
+              && localhost.port() == 8080, localhost);
+        const QUrl explicitUrl = TabWidget::guessUrlFromString(
+            QLatin1String("http://example.com/x"));
+        check(QLatin1String("explicit scheme -> as typed"),
+              explicitUrl == QUrl(QLatin1String("http://example.com/x")),
+              explicitUrl);
+
+        // Phase 3 — engine keyword keeps first priority.
+        OpenSearchEngine *google = manager->engine(QLatin1String("Google"));
+        if (google) {
+            manager->setEngineForKeyword(QLatin1String("sgk"), google);
+            const QUrl keyed =
+                TabWidget::guessUrlFromString(QLatin1String("sgk arora"));
+            check(QLatin1String("'sgk arora' -> keyword engine"),
+                  keyed == google->searchUrl(QLatin1String("arora")),
+                  keyed);
+            manager->setEngineForKeyword(QLatin1String("sgk"), nullptr);
+        } else {
+            qInfo() << "search-guess-smoke: SKIP keyword check"
+                       "(Google engine missing)";
+        }
+
+        // Phase 4 — the opt-out still emits the bare-http guess, and
+        // the key round-trips the settings store.
+        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+        const QUrl optedOut =
+            TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("opt-out 'hup' -> bare http guess"),
+              optedOut == QUrl(QLatin1String("http://hup/"))
+                  || optedOut == QUrl(QLatin1String("http://hup")),
+              optedOut);
+        // SRCH09: the opt-out cannot emit a guess that fails to
+        // parse — multi-word input resolves to search instead of the
+        // invalid "http://two words" url loadUrl() used to drop
+        // silently.
+        const QUrl optedOutMulti =
+            TabWidget::guessUrlFromString(QLatin1String("two words"));
+        check(QLatin1String("opt-out 'two words' -> search, not dead url"),
+              optedOutMulti.isValid() && !optedOutMulti.isEmpty()
+                  && optedOutMulti.host() != QLatin1String("two"),
+              optedOutMulti);
+        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+        settings.sync();
+        QSettings verify;
+        check(QLatin1String("searchEngineFallback persists"),
+              verify.value(QLatin1String("urlloading/searchEngineFallback"))
+                      .toBool() == true);
+        const QUrl reenabled =
+            TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("re-enabled 'hup' -> search"),
+              isHttp(reenabled)
+                  && reenabled.host() != QLatin1String("hup"),
+              reenabled);
+        settings.remove(QLatin1String("urlloading/searchEngineFallback"));
+
+        qInfo() << "search-guess-smoke:" << (ok ? "PASS" : "FAIL");
+        return ok ? 0 : 1;
     }
 
     // PERF03: --profile-startup runs the REAL startup path — real
@@ -1919,7 +3943,11 @@ int main(int argc, char **argv)
         qWarning() << "Ignoring untrusted argv url:" << firstUrl;
         firstUrl = QUrl(QStringLiteral("about:blank"));
     }
-    view->loadUrl(firstUrl);
+    // START01: --startpage-smoke issues its own loads; skipping the
+    // argv navigation keeps a stale loadFinished from being
+    // miscounted as an iteration's.
+    if (!args.contains(QLatin1String("--startpage-smoke")))
+        view->loadUrl(firstUrl);
 
     // Headless verification for MIG15: exercise the real application
     // path — BrowserApplication brings up the profile and services,
@@ -1981,6 +4009,19 @@ int main(int argc, char **argv)
                            [&application]() { application.exit(1); });
     }
 
+    // SAND01: filesystem probe executed inside the harness's bwrap —
+    // --sandbox-smoke is the parent that orchestrates and asserts the
+    // host-side view.
+    if (parser.isSet(QLatin1String("sandbox-probe")))
+        return sandboxProbe(application, view,
+                            parser.value(QLatin1String("sandbox-probe")));
+
+    // START01: fifty consecutive qrc:/startpage.html loads under
+    // hostile adblock rules — every one must finish and resolve its
+    // channel client.
+    if (args.contains(QLatin1String("--startpage-smoke")))
+        return startPageSmoke(application, view);
+
     // SEC15: live-site measurement — runs the complete browseraudit
     // suite on the browsing profile and records per-test outcomes.
     // --browseraudit-bare uses a clean off-the-record profile/plain
@@ -2005,8 +4046,80 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--xsleak-smoke"))
             || args.contains(QLatin1String("--xsleak-open")))
         return xsLeakSmoke(application, view,
-            args.contains(QLatin1String("--xsleak-open")),
-            savedPopupBlocking, savedBlockPings);
+            args.contains(QLatin1String("--xsleak-open")));
+
+    // DEVT03: engine-neutral devtools channel end-to-end.
+    if (args.contains(QLatin1String("--bidi-smoke")))
+        return bidiSmoke(application, view);
+
+    // BADSSL02: live-site measurement — loads every badssl.com
+    // matrix case on the browsing profile and records per-case
+    // block/load outcomes for .devin/BADSSL01-report.md.
+    if (args.contains(QLatin1String("--badssl-smoke")))
+        return badSslSmoke(application, view);
+
+    // PING02: live-site measurement — clicks the ping-spotter test
+    // button on the browsing profile and records the site's three
+    // per-vector verdicts (beacon/ping/csp).
+    if (args.contains(QLatin1String("--pingspotter-smoke")))
+        return pingSpotterSmoke(application, view);
+
+    // BADSSL03: --clientcert-smoke verifies the TLS client-certificate
+    // path end to end.  ARORA_CLIENTCERT_FILE (.pem key+cert — leaf
+    // first — or a .p12/.pfx bundle; passphrase via
+    // ARORA_CLIENTCERT_PASSPHRASE) is installed into the browsing
+    // profile's in-memory clientCertificateStore, selection is armed
+    // non-interactively (the picker dialog cannot run under offscreen
+    // QPA), and ARORA_CLIENTCERT_URL (default
+    // https://client.badssl.com/) is loaded.  PASS when the page
+    // commits without Arora's error chrome and without the site's
+    // HTTP-400 "No required SSL certificate was sent" fallback body.
+    if (args.contains(QLatin1String("--clientcert-smoke"))) {
+        const QString certFile =
+            qEnvironmentVariable("ARORA_CLIENTCERT_FILE");
+        if (certFile.isEmpty()
+            || !BrowserProfile::addClientCertificateFile(
+                    profile, certFile,
+                    qgetenv("ARORA_CLIENTCERT_PASSPHRASE"))) {
+            qInfo() << "clientcert-smoke: FAIL (cannot install"
+                    << certFile << ")";
+            application.exit(1);
+            return application.exec();
+        }
+        qputenv("ARORA_CLIENTCERT_AUTOSELECT", "1");
+        const QUrl certUrl(qEnvironmentVariable("ARORA_CLIENTCERT_URL",
+                QStringLiteral("https://client.badssl.com/")));
+        view->window()->show();
+        QTimer::singleShot(0, &application,
+                           [view, certUrl]() { view->loadUrl(certUrl); });
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [&application, view](bool ok) {
+            if (!ok) {
+                qInfo() << "clientcert-smoke: FAIL (load)" << view->url();
+                application.exit(1);
+                return;
+            }
+            view->enginePage()->runJavaScript(
+                QStringLiteral("document.title + '\\n' + "
+                               "document.body.innerText.slice(0, 400)"),
+                [&application](const QVariant &result) {
+                const QString text = result.toString();
+                const bool accepted =
+                    !text.contains(QLatin1String(
+                            "No required SSL certificate"))
+                    && !text.contains(QLatin1String("400 Bad Request"))
+                    && !text.startsWith(QLatin1String("Error loading"));
+                qInfo() << "clientcert-smoke:"
+                        << (accepted ? "PASS" : "FAIL") << text.left(120);
+                application.exit(accepted ? 0 : 1);
+            });
+        });
+        QTimer::singleShot(60000, &application, [&application]() {
+            qInfo() << "clientcert-smoke: FAIL (timeout)";
+            application.exit(1);
+        });
+        return application.exec();
+    }
 
     window.show();
 
@@ -2056,21 +4169,22 @@ int main(int argc, char **argv)
         // A save-as prompt can't be answered under offscreen QPA.
         QSettings().setValue(
             QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
-        QObject::connect(profile, &QWebEngineProfile::downloadRequested,
+        QObject::connect(WebEngineProfileAdapter::forProfile(profile),
+                         &Engine::Profile::downloadRequested,
                          &application,
-                         [&application](QWebEngineDownloadRequest *request) {
-            QObject::connect(request, &QWebEngineDownloadRequest::stateChanged,
+                         [&application](Engine::DownloadRequest *request) {
+            QObject::connect(request, &Engine::DownloadRequest::stateChanged,
                              &application,
-                             [&application, request](QWebEngineDownloadRequest::DownloadState state) {
-                if (state == QWebEngineDownloadRequest::DownloadCompleted) {
+                             [&application, request](Engine::DownloadRequest::State state) {
+                if (state == Engine::DownloadRequest::State::Completed) {
                     const QString path = request->downloadDirectory()
                         + QLatin1Char('/') + request->downloadFileName();
                     const bool ok = QFile::exists(path) && QFileInfo(path).size() > 0;
                     qInfo() << "download-smoke:" << (ok ? "PASS" : "FAIL")
                             << path << request->receivedBytes() << "bytes";
                     application.exit(ok ? 0 : 1);
-                } else if (state == QWebEngineDownloadRequest::DownloadInterrupted
-                           || state == QWebEngineDownloadRequest::DownloadCancelled) {
+                } else if (state == Engine::DownloadRequest::State::Interrupted
+                           || state == Engine::DownloadRequest::State::Cancelled) {
                     qInfo() << "download-smoke: FAIL"
                             << request->interruptReasonString();
                     application.exit(1);
@@ -2079,7 +4193,219 @@ int main(int argc, char **argv)
         });
         QTimer::singleShot(30000, &application,
                            [&application]() { application.exit(1); });
-        view->webPage()->download(downloadUrl);
+        view->enginePage()->download(downloadUrl);
+    }
+
+    // DLACC02: --parallel-download-smoke proves the ParallelDownloading
+    // feature actually forks slice requests — env-presence of the
+    // switch alone is not the verdict.  A loopback server advertises
+    // Accept-Ranges and streams a 16MB blob slowly: Chromium only
+    // forks sub-requests when the estimated remaining time clears its
+    // (~2s) gate, so the throttle is what deterministically exercises
+    // the fork.  The server logs every connection's Range header; the
+    // download completing over multiple range connections is the
+    // verdict.  --parallel-download-off-smoke pins the setting off as
+    // the differential control: the same blob must arrive over a
+    // single stream with zero range requests, or the "on" result
+    // proves nothing.
+    if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
+        QTcpServer *server = new QTcpServer(&application);
+        auto done = std::make_shared<bool>(false);
+        const auto finish = [&application, done]
+                            (int rc, const QString &line) {
+            if (*done)
+                return;
+            *done = true;
+            qInfo().noquote() << "parallel-download-smoke:" << line;
+            application.exit(rc);
+        };
+        if (!server->listen(QHostAddress::LocalHost)) {
+            finish(1, QStringLiteral("FAIL (listen: %1)")
+                       .arg(server->errorString()));
+            return application.exec();
+        }
+
+        // 16MB in 64KB pieces at ~2MB/s per connection: a lone stream
+        // estimates ~8s remaining — well past the forking gate — and
+        // the ~5.3MB slices still land quickly once split.
+        const qint64 blobSize = 16 * 1024 * 1024;
+        struct ServerStats {
+            int connections = 0;
+            int rangeRequests = 0;
+            int active = 0;
+            int maxActive = 0;
+        };
+        auto stats = std::make_shared<ServerStats>();
+
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, stats, blobSize]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            ++stats->connections;
+            ++stats->active;
+            stats->maxActive = qMax(stats->maxActive, stats->active);
+            auto header = std::make_shared<QByteArray>();
+            auto remaining = std::make_shared<qint64>(-1);
+            auto pump = new QTimer(client);
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [client, stats, pump]() {
+                pump->stop();
+                --stats->active;
+                client->deleteLater();
+            });
+            QObject::connect(pump, &QTimer::timeout, client,
+                             [client, remaining]() {
+                if (*remaining < 0)
+                    return;
+                if (*remaining == 0) {
+                    client->disconnectFromHost();
+                    return;
+                }
+                if (client->bytesToWrite() > 256 * 1024)
+                    return;
+                const int piece = int(qMin<qint64>(64 * 1024, *remaining));
+                client->write(QByteArray(piece, '\0'));
+                *remaining -= piece;
+            });
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, header, remaining, pump, stats,
+                              blobSize]() {
+                if (*remaining >= 0) {
+                    // HTTP pipelining is unused here; drain and ignore.
+                    client->readAll();
+                    return;
+                }
+                header->append(client->readAll());
+                const int headEnd = header->indexOf("\r\n\r\n");
+                if (headEnd < 0)
+                    return;
+                qint64 from = 0, to = blobSize - 1;
+                bool hasRange = false;
+                const QList<QByteArray> lines =
+                    header->left(headEnd).split('\n');
+                for (const QByteArray &raw : lines) {
+                    const QByteArray line = raw.trimmed();
+                    if (!line.toLower().startsWith("range:"))
+                        continue;
+                    QByteArray spec = line.mid(6).trimmed();
+                    if (spec.startsWith("bytes="))
+                        spec = spec.mid(6);
+                    const int dash = spec.indexOf('-');
+                    if (dash < 0)
+                        continue;
+                    hasRange = true;
+                    from = spec.left(dash).toLongLong();
+                    const QByteArray endPart = spec.mid(dash + 1).trimmed();
+                    to = endPart.isEmpty() ? blobSize - 1
+                                           : endPart.toLongLong();
+                }
+                to = qMin(to, blobSize - 1);
+                from = qBound<qint64>(0, from, to + 1);
+                *remaining = to - from + 1;
+                QByteArray reply;
+                if (hasRange) {
+                    ++stats->rangeRequests;
+                    qInfo() << "parallel-download-smoke: range request"
+                            << from << "-" << to
+                            << "(conn" << stats->connections << ")";
+                    reply = "HTTP/1.1 206 Partial Content\r\n"
+                        "Content-Range: bytes "
+                        + QByteArray::number(from) + "-"
+                        + QByteArray::number(to) + "/"
+                        + QByteArray::number(blobSize) + "\r\n";
+                } else {
+                    reply = "HTTP/1.1 200 OK\r\n";
+                }
+                reply += "Content-Type: application/octet-stream\r\n"
+                    "Content-Length: " + QByteArray::number(*remaining)
+                    // Chromium only parallelizes responses carrying a
+                    // strong validator (ETag or Last-Modified).
+                    + "\r\nETag: \"dlacc02\"\r\n"
+                    "Accept-Ranges: bytes\r\n"
+                    "Content-Disposition: attachment;"
+                    " filename=\"blob.bin\"\r\n"
+                    "Connection: close\r\n\r\n";
+                client->write(reply);
+                pump->start(30);
+            });
+        });
+
+        const QString smokeDir = QDir::temp().filePath(
+            QLatin1String("arora-pdl-smoke"));
+        QDir().mkpath(smokeDir);
+        downloadManager->setDownloadDirectory(smokeDir);
+        // A save-as prompt can't be answered under offscreen QPA.
+        QSettings().setValue(
+            QLatin1String("downloadmanager/alwaysPromptForFileName"),
+            false);
+        QObject::connect(WebEngineProfileAdapter::forProfile(profile),
+                         &Engine::Profile::downloadRequested,
+                         &application,
+                         [&application, finish, stats, blobSize,
+                          parallelDownloadOffSmoke]
+                         (Engine::DownloadRequest *request) {
+            QObject::connect(request,
+                &Engine::DownloadRequest::stateChanged,
+                &application,
+                [finish, stats, blobSize, parallelDownloadOffSmoke,
+                 request]
+                (Engine::DownloadRequest::State state) {
+                if (state == Engine::DownloadRequest::State::Interrupted
+                    || state == Engine::DownloadRequest::State::Cancelled) {
+                    finish(1, QStringLiteral("FAIL (download %1)")
+                        .arg(request->interruptReasonString()));
+                    return;
+                }
+                if (state != Engine::DownloadRequest::State::Completed)
+                    return;
+                const QString path = request->downloadDirectory()
+                    + QLatin1Char('/') + request->downloadFileName();
+                if (!QFile::exists(path)
+                    || QFileInfo(path).size() != blobSize) {
+                    finish(1, QStringLiteral(
+                        "FAIL (file incomplete: %1 conns=%2 ranges=%3)")
+                        .arg(path).arg(stats->connections)
+                        .arg(stats->rangeRequests));
+                    return;
+                }
+                QFile::remove(path);
+                qInfo() << "parallel-download-smoke: stats connections="
+                        << stats->connections
+                        << "rangeRequests=" << stats->rangeRequests
+                        << "maxActive=" << stats->maxActive;
+                if (parallelDownloadOffSmoke) {
+                    // Differential control: no slice requests may
+                    // appear at all — a stray range request means the
+                    // feature fired without its setting.
+                    finish(stats->rangeRequests == 0 ? 0 : 1,
+                        QStringLiteral(
+                            "%1 (off-mode control: %2 connections, "
+                            "%3 range requests)")
+                        .arg(stats->rangeRequests == 0
+                                ? QLatin1String("PASS")
+                                : QLatin1String("FAIL"))
+                        .arg(stats->connections)
+                        .arg(stats->rangeRequests));
+                    return;
+                }
+                finish(stats->rangeRequests >= 1
+                           && stats->connections >= 2 ? 0 : 1,
+                    QStringLiteral(
+                        "%1 (%2 connections, %3 range requests — "
+                        "ParallelDownloading %4)")
+                    .arg(stats->rangeRequests >= 1
+                            && stats->connections >= 2
+                        ? QLatin1String("PASS") : QLatin1String("FAIL"))
+                    .arg(stats->connections).arg(stats->rangeRequests)
+                    .arg(stats->rangeRequests >= 1
+                        ? QLatin1String("forked slice requests")
+                        : QLatin1String("never fired")));
+            });
+        });
+        QTimer::singleShot(90000, &application, [finish]() {
+            finish(1, QStringLiteral("FAIL (timeout)"));
+        });
+        view->enginePage()->download(QUrl(QStringLiteral(
+            "http://127.0.0.1:%1/blob.bin").arg(server->serverPort())));
     }
 
     // Headless verification for MIG03: push a cookie through the jar's
@@ -2217,14 +4543,14 @@ int main(int argc, char **argv)
     // the https-first upgrade).  The first-party page on 127.0.0.1
     // must load un-upgraded (a redirect to https would fail — nothing
     // serves TLS), embeds an <img> on 127.0.0.2 whose request must
-    // arrive with its Referer trimmed to the *target's* origin, and
-    // its Set-Cookie must be rejected as third-party while the
-    // first-party Set-Cookie lands.  Exits 0 on PASS.
+    // arrive with its Referer trimmed to the *source's* bare origin
+    // (REFER01 strict-origin), and its Set-Cookie must be rejected as
+    // third-party while the first-party Set-Cookie lands.  Exits 0 on
+    // PASS.
     if (args.contains(QLatin1String("--privacy-smoke"))) {
-        // Hermeticity: the user's real subscription lists match the
+        // Hermeticity: downloaded subscription lists could match the
         // fixture paths (EasyList blocks a bare "/img" request) —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         QTcpServer *server = new QTcpServer(&application);
@@ -2264,10 +4590,11 @@ int main(int argc, char **argv)
                         + QByteArray::number(port) + "/img\"></body></html>";
                 } else {
                     extra = "Set-Cookie: arora_priv_third=1\r\n";
-                    body = "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
+                    body = QByteArrayLiteral(
+                           "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00"
                            "\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00"
                            "\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01"
-                           "\x00;";
+                           "\x00;");
                 }
                 QByteArray reply =
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
@@ -2307,13 +4634,14 @@ int main(int argc, char **argv)
             const bool done = sawImg && !navReferer.isEmpty() && first;
             if (!done && ++*ticks <= 40)
                 return; // retry for ~20s
-            // Navigation referer carries the *target* origin only —
-            // the referring host 127.0.0.1 must not appear in it.
-            // (Subresource referers get the same rewrite since
-            // REF01 — the header write DOES reach the wire on Qt
-            // 6.12; printed for transparency, not gated.)
-            const bool navTrimmed = navReferer.startsWith("http://127.0.0.2:")
-                && !navReferer.contains("127.0.0.1");
+            // Navigation referer carries the *source's* bare origin
+            // (REFER01 strict-origin) — 127.0.0.1's origin is sent but
+            // the /page path must never appear.  (Subresource referers
+            // get the same rewrite since REF01 — the header write DOES
+            // reach the wire on Qt 6.12; printed for transparency, not
+            // gated.)
+            const bool navTrimmed = navReferer.startsWith("http://127.0.0.1:")
+                && !navReferer.contains("/page");
             const bool pass = sawImg && navTrimmed && first && !third;
             qInfo() << "privacy-smoke:" << (pass ? "PASS" : "FAIL")
                     << "imgReferer:" << imgReferer
@@ -2332,7 +4660,7 @@ int main(int argc, char **argv)
             if (!ok)
                 return;
             if (view->url().path() == QLatin1String("/page"))
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "location.href='http://127.0.0.2:%1/nav'").arg(port));
         });
     }
@@ -2344,10 +4672,9 @@ int main(int argc, char **argv)
     // Never, applied mid-run through the same QSettings +
     // loadSettings() path the settings dialog uses.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--referer-smoke"))) {
-        // Hermeticity: the user's real subscription lists match the
-        // fixture paths (EasyList blocks bare "/img" requests) —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // Hermeticity: downloaded subscription lists could match the
+        // fixture paths (EasyList blocks a bare "/img" request) —
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         QTcpServer *server = new QTcpServer(&application);
@@ -2457,18 +4784,7 @@ int main(int argc, char **argv)
         });
 
         // Phase 1 pins the Trimmed level — the smoke grades the
-        // recommended policy, whatever the user profile had stored.
-        const QVariant savedRefererPolicy =
-            QSettings().value(QLatin1String("privacy/refererPolicy"));
-        auto restorePolicy = [savedRefererPolicy]() {
-            QSettings settings;
-            if (savedRefererPolicy.isValid())
-                settings.setValue(QLatin1String("privacy/refererPolicy"),
-                                  savedRefererPolicy);
-            else
-                settings.remove(QLatin1String("privacy/refererPolicy"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
+        // recommended policy.  The pin lands in the per-run store.
         QSettings().setValue(QLatin1String("privacy/refererPolicy"),
                              int(PrivacyRequestInterceptor::RefererTrimmed));
         PrivacyRequestInterceptor::loadSettings();
@@ -2505,7 +4821,7 @@ int main(int argc, char **argv)
         settle->setInterval(800);
         QObject::connect(settle, &QTimer::timeout, &application,
                          [&application, view, steps, stepIndex, phase,
-                          phase2Step, observed, h1, h2, restorePolicy]() {
+                          phase2Step, observed, h1, h2]() {
             const int i = ++*stepIndex;
             if (*phase == 0 && i >= steps.size()) {
                 // Grade phase 1 (Trimmed) once the matrix completed.
@@ -2531,21 +4847,24 @@ int main(int argc, char **argv)
                             .arg(QLatin1String(p));
                 };
                 const QByteArray o1 = (h1 + QLatin1Char('/')).toUtf8();
-                const QByteArray o2 = (h2 + QLatin1Char('/')).toUtf8();
-                expectRef("/img", o2);       // cross-site subresource spoof
-                expectRef("/s.js", o2);
-                expectRef("/ifr", o2);
-                expectRef("/xhr", o2);
+                // REFER01: cross-site legs carry the SOURCE's bare
+                // origin — strict-origin semantics, the
+                // YouTube-embed-shaped case (an iframe to site-B must
+                // name site-A, not site-B itself).
+                expectRef("/img", o1);       // cross-site subresource
+                expectRef("/s.js", o1);
+                expectRef("/ifr", o1);
+                expectRef("/xhr", o1);
                 expectRef("/sameimg", o1);   // same-site: origin only
-                expectRef("/nav", o2);       // link click
+                expectRef("/nav", o1);       // link click
                 expectNone("/nref");         // rel=noreferrer stays silent
                 expectRef("/redir", o1);     // chain hop, same-site
                 // Chain end, cross-site: Chromium recomputes the
                 // Referer of a redirect follow-up AFTER the
-                // interceptor ran, so the target-origin spoof can't
-                // reach it — the wire carries the engine-computed
-                // value, which under the injected strict-origin meta
-                // is the source's ORIGIN (never the full path).
+                // interceptor ran — the wire carries the
+                // engine-computed value, which under the injected
+                // strict-origin meta is the source's ORIGIN (never
+                // the full path).
                 expectRef("/final", o1);
                 // Same-site chain end: redirect legs are likewise
                 // engine-computed, but the injected strict-origin
@@ -2553,8 +4872,8 @@ int main(int argc, char **argv)
                 // without it this would be the page's full URL.
                 expectRef("/sredir", o1);
                 expectRef("/sfinal", o1);
-                expectRef("/metadest", o2);  // meta refresh
-                expectRef("/formdest", o2);  // POST form nav
+                expectRef("/metadest", o1);  // meta refresh
+                expectRef("/formdest", o1);  // POST form nav
                 expectNone("/omimg");        // page meta no-referrer
                 expectNone("/hmimg");        // header no-referrer
                 for (const QString &f : std::as_const(failures))
@@ -2562,7 +4881,6 @@ int main(int argc, char **argv)
                 qInfo() << "referer-smoke: phase-1 trimmed"
                         << (failures.isEmpty() ? "PASS" : "FAIL");
                 if (!failures.isEmpty()) {
-                    restorePolicy();
                     application.exit(1);
                     return;
                 }
@@ -2589,7 +4907,7 @@ int main(int argc, char **argv)
                 if (*phase2Step == 0) {
                     ++*phase2Step;
                     qInfo() << "referer-smoke: phase-2 click n-redir";
-                    view->webPage()->runJavaScript(QStringLiteral(
+                    view->enginePage()->runJavaScript(QStringLiteral(
                         "document.getElementById('redlnk').click()"));
                     return;
                 }
@@ -2613,7 +4931,6 @@ int main(int argc, char **argv)
                     }
                 }
                 qInfo() << "referer-smoke:" << (pass ? "PASS" : "FAIL");
-                restorePolicy();
                 application.exit(pass ? 0 : 1);
                 return;
             }
@@ -2623,7 +4940,7 @@ int main(int argc, char **argv)
             if (!step.url.isEmpty())
                 view->loadUrl(QUrl(step.url));
             else
-                view->webPage()->runJavaScript(QString::fromLatin1(step.js));
+                view->enginePage()->runJavaScript(QString::fromLatin1(step.js));
         });
         // A new navigation cancels any pending settle; a completed one
         // starts the quiet period.  Failed loads don't advance steps —
@@ -2634,9 +4951,8 @@ int main(int argc, char **argv)
                          [settle](bool ok) { if (ok) settle->start(); });
         settle->start();  // first tick runs step 0
         QTimer::singleShot(90000, &application,
-                           [&application, restorePolicy]() {
+                           [&application]() {
             qInfo() << "referer-smoke: FAIL (timeout)";
-            restorePolicy();
             application.exit(1);
         });
     }
@@ -2649,25 +4965,13 @@ int main(int argc, char **argv)
     // server.  Phase 2 turns the toggle off through the same
     // QSettings + applySettings path the dialog uses — a control that
     // must observe all three uploads, else a clean phase 1 was
-    // vacuous.  The real setting is restored on exit.  Exits 0 on PASS.
+    // vacuous.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--ping-smoke"))) {
         // The user's subscription lists could match fixture paths —
-        // neuter adblock for the smoke, restored on exit.
-        restoreAdBlockStateOnExit();
+        // neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
 
-        const QVariant savedBlockPings =
-            QSettings().value(QLatin1String("privacy/blockPings"));
-        auto restorePings = [savedBlockPings]() {
-            QSettings settings;
-            if (savedBlockPings.isValid())
-                settings.setValue(QLatin1String("privacy/blockPings"),
-                                  savedBlockPings);
-            else
-                settings.remove(QLatin1String("privacy/blockPings"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
         auto armPings = [](bool on) {
             QSettings().setValue(QLatin1String("privacy/blockPings"), on);
             PrivacyRequestInterceptor::loadSettings();
@@ -2681,7 +4985,6 @@ int main(int argc, char **argv)
         QTcpServer *server = new QTcpServer(&application);
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "ping-smoke: FAIL (listen)" << server->errorString();
-            restorePings();
             return 1;
         }
         const quint16 port = server->serverPort();
@@ -2695,10 +4998,10 @@ int main(int argc, char **argv)
         // Reporting-API uploads are batched/deferred well past this
         // fixture's window.
         QObject::connect(server, &QTcpServer::newConnection, &application,
-                         [server, hits]() {
+                         [server, hits, port]() {
             QTcpSocket *client = server->nextPendingConnection();
             QObject::connect(client, &QTcpSocket::readyRead, client,
-                             [client, hits]() {
+                             [client, hits, port]() {
                 const QByteArray request = client->readAll();
                 const int sp = request.indexOf(' ');
                 const int httpAt = request.indexOf(" HTTP/");
@@ -2719,6 +5022,31 @@ int main(int argc, char **argv)
                         "<img src=\"/violated.png\">"
                         "<a id=\"lnk\" href=\"/nav-target\""
                         " ping=\"/aping\">x</a>"
+                        "</body></html>";
+                } else if (path == QLatin1String("/page-report")
+                    || path == QLatin1String("/page-report2")) {
+                    // PING02: Reporting-API arm of the fixture — a
+                    // report-to directive with both endpoint header
+                    // spellings.  Loopback cannot register a usable
+                    // endpoint today (reporting endpoints want a
+                    // secure origin and QtWebEngine never attempts
+                    // delivery at all — verified against a
+                    // SPKI-pinned https collector, see the task
+                    // notes), so a /report hit can only ever mean a
+                    // future engine started uploading: the armed
+                    // phase fails the smoke on it.
+                    const QByteArray base =
+                        "http://127.0.0.1:" + QByteArray::number(port);
+                    head = "Content-Type: text/html\r\n"
+                        "Reporting-Endpoints: default=\"" + base
+                            + "/report\"\r\n"
+                        "Report-To: {\"group\":\"default\","
+                            "\"max_age\":3600,\"endpoints\":[{\"url\":\""
+                            + base + "/report\"}]}\r\n"
+                        "Content-Security-Policy: img-src 'none'; "
+                            "report-to default\r\n";
+                    body = "<html><body>"
+                        "<img src=\"/violated.png\">"
                         "</body></html>";
                 }
                 client->write("HTTP/1.1 200 OK\r\n" + head
@@ -2741,49 +5069,76 @@ int main(int argc, char **argv)
             if ((*state == 0 && path == QLatin1String("/page"))
                 || (*state == 1 && path == QLatin1String("/page2"))) {
                 *jsFired = true;
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "navigator.sendBeacon('/beacon','ping-smoke');"
                     "document.getElementById('lnk').click();"));
             }
         });
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, hits, state, jsFired,
-                          settleTicks, ticks, armPings, restorePings,
-                          port]() {
+                          settleTicks, ticks, armPings, port]() {
             const bool beacon = hits->contains(QLatin1String("/beacon"));
             const bool aping = hits->contains(QLatin1String("/aping"));
             const bool csp = hits->contains(QLatin1String("/csp"));
             const bool nav = hits->contains(QLatin1String("/nav-target"));
-            if (*state == 0) {
-                // A leak is a failure the moment it is observed.
-                if (beacon || aping || csp) {
+            const bool report = hits->contains(QLatin1String("/report"));
+            if (*state == 0 || *state == 2) {
+                // A leak is a failure the moment it is observed —
+                // /report covers the Reporting-API delivery path of
+                // any future engine (PING02): Qt 6.12's build never
+                // sends report-to uploads at all, so zero is today's
+                // truth and a hit means a real regression surfaced.
+                if (beacon || aping || csp || report) {
                     qInfo() << "ping-smoke: phase-1 armed FAIL"
+                            << "state:" << *state
                             << "beacon:" << beacon << "aping:" << aping
-                            << "csp:" << csp;
-                    restorePings();
+                            << "csp:" << csp << "report:" << report;
                     application.exit(1);
                     return;
                 }
-                // Wait for the click's navigation to land (proves the
-                // ping vectors fired), then a ~3s settle for any late
-                // upload; no click at all within ~10s means the
-                // fixture broke rather than the block holding.
                 ++*ticks;
-                if (nav && *jsFired)
-                    ++*settleTicks;
-                if (*settleTicks < 12 && *ticks <= 40)
-                    return;
-                qInfo() << "ping-smoke: phase-1 armed nav:" << nav
-                        << "beacon:" << beacon << "aping:" << aping
-                        << "csp:" << csp
-                        << (nav ? "PASS" : "FAIL");
-                if (!nav) {
-                    restorePings();
-                    application.exit(1);
+                if (*state == 0) {
+                    // Wait for the click's navigation to land (proves
+                    // the ping vectors fired), then a ~3s settle for
+                    // any late upload; no click at all within ~10s
+                    // means the fixture broke rather than the block
+                    // holding.
+                    if (nav && *jsFired)
+                        ++*settleTicks;
+                    if (*settleTicks < 12 && *ticks <= 40)
+                        return;
+                    qInfo() << "ping-smoke: phase-1 armed nav:" << nav
+                            << "beacon:" << beacon << "aping:" << aping
+                            << "csp:" << csp
+                            << (nav ? "PASS" : "FAIL");
+                    if (!nav) {
+                        application.exit(1);
+                        return;
+                    }
+                    // Armed Reporting-API probe: still with the block
+                    // on, load the report-to page and watch /report
+                    // for ~4s.  (The real Chromium batching window is
+                    // far longer — this phase exists as a tripwire,
+                    // not a delivery-timing measurement.)
+                    *state = 2;
+                    *jsFired = false;
+                    *settleTicks = 0;
+                    *ticks = 0;
+                    hits->clear();
+                    view->loadUrl(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/page-report").arg(port)));
                     return;
                 }
-                // Phase 2 — control: the toggle off must let all
-                // three vectors through, proving the fixture fires.
+                // state 2: report-to probe settle.
+                if (*ticks <= 16)
+                    return;
+                qInfo() << "ping-smoke: report-to probe clean"
+                        << "(no /report delivery — Qt 6.12 uploads"
+                           " reporting-api reports via a path that"
+                           " never delivers; tripwire stays)";
+                // Phase 3 — control: the toggle off must let all
+                // three classic vectors through, proving the fixture
+                // fires.
                 *state = 1;
                 *jsFired = false;
                 *settleTicks = 0;
@@ -2797,7 +5152,6 @@ int main(int argc, char **argv)
             if (beacon && aping && csp) {
                 qInfo() << "ping-smoke: PASS (control delivered"
                         << "beacon+aping+csp)";
-                restorePings();
                 application.exit(0);
                 return;
             }
@@ -2805,7 +5159,6 @@ int main(int argc, char **argv)
                 qInfo() << "ping-smoke: FAIL (control missing)"
                         << "beacon:" << beacon << "aping:" << aping
                         << "csp:" << csp << "nav:" << nav;
-                restorePings();
                 application.exit(1);
             }
         });
@@ -2814,9 +5167,8 @@ int main(int argc, char **argv)
         view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
                                .arg(port)));
         QTimer::singleShot(40000, &application,
-                           [&application, restorePings]() {
+                           [&application]() {
             qInfo() << "ping-smoke: FAIL (timeout)";
-            restorePings();
             application.exit(1);
         });
     }
@@ -2832,30 +5184,11 @@ int main(int argc, char **argv)
     //             (proves the toggle really gates, not the fixture),
     //             the prefetch still must not
     //   phase 3 — both off: prefetch arrives too (control)
-    // The real settings are restored on exit.  Exits 0 on PASS.
+    // Exits 0 on PASS.
     if (args.contains(QLatin1String("--resourceblock-smoke"))) {
-        restoreAdBlockStateOnExit();
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
 
-        const QVariant savedFonts =
-            QSettings().value(QLatin1String("privacy/blockRemoteFonts"));
-        const QVariant savedPrefetch =
-            QSettings().value(QLatin1String("privacy/blockPrefetch"));
-        auto restoreToggles = [savedFonts, savedPrefetch]() {
-            QSettings settings;
-            if (savedFonts.isValid())
-                settings.setValue(QLatin1String("privacy/blockRemoteFonts"),
-                                  savedFonts);
-            else
-                settings.remove(QLatin1String("privacy/blockRemoteFonts"));
-            if (savedPrefetch.isValid())
-                settings.setValue(QLatin1String("privacy/blockPrefetch"),
-                                  savedPrefetch);
-            else
-                settings.remove(QLatin1String("privacy/blockPrefetch"));
-            PrivacyRequestInterceptor::loadSettings();
-        };
         auto armToggles = [](bool fonts, bool prefetch) {
             QSettings settings;
             settings.setValue(QLatin1String("privacy/blockRemoteFonts"), fonts);
@@ -2867,7 +5200,6 @@ int main(int argc, char **argv)
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "resourceblock-smoke: FAIL (listen)"
                     << server->errorString();
-            restoreToggles();
             return 1;
         }
         const quint16 port = server->serverPort();
@@ -2906,7 +5238,7 @@ int main(int argc, char **argv)
             const QString path = view->url().path();
             if (path == QStringLiteral("/page%1").arg(*state + 1)) {
                 *jsFired = true;
-                view->webPage()->runJavaScript(QStringLiteral(
+                view->enginePage()->runJavaScript(QStringLiteral(
                     "var l=document.createElement('link');"
                     "l.rel='prefetch';l.href='/prefetch-target';"
                     "document.head.appendChild(l);"
@@ -2920,16 +5252,15 @@ int main(int argc, char **argv)
                     "fetch('/probe');"));
             }
         });
-        auto fail = [&application, restoreToggles](const QString &why) {
+        auto fail = [&application](const QString &why) {
             qInfo() << "resourceblock-smoke: FAIL" << why;
-            restoreToggles();
             application.exit(1);
         };
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, hits, state, jsFired,
                           settleTicks, ticks, armToggles, fail,
-                          restoreToggles, port]() {
+                          port]() {
             const bool font = hits->contains(QLatin1String("/font.woff2"));
             const bool prefetchLink =
                 hits->contains(QLatin1String("/prefetch-target"));
@@ -3003,7 +5334,6 @@ int main(int argc, char **argv)
                 if (nav && probe && prefetch) {
                     qInfo() << "resourceblock-smoke: PASS"
                             << "(control delivered font+prefetch)";
-                    restoreToggles();
                     application.exit(0);
                     return;
                 }
@@ -3043,26 +5373,7 @@ int main(int argc, char **argv)
     //   6 toggle off — privacy/httpsOnly=false restores plain-http
     //     loading for a fresh host
     if (args.contains(QLatin1String("--httpsonly-smoke"))) {
-        const auto restoreHttpOnly =
-            [savedHttpsFirst, savedHttpsOnly, savedHttpExceptions]() {
-            QSettings settings;
-            settings.beginGroup(QLatin1String("privacy"));
-            const auto restore = [&settings](const QString &key,
-                                             const QVariant &saved) {
-                if (saved.isValid())
-                    settings.setValue(key, saved);
-                else
-                    settings.remove(key);
-            };
-            restore(QLatin1String("httpsFirst"), savedHttpsFirst);
-            restore(QLatin1String("httpsOnly"), savedHttpsOnly);
-            restore(QLatin1String("httpsOnlyExceptions"),
-                    savedHttpExceptions);
-            settings.endGroup();
-            PrivacyRequestInterceptor::loadSettings();
-        };
-        const auto finish = [&application, restoreHttpOnly](int code) {
-            restoreHttpOnly();
+        const auto finish = [&application](int code) {
             application.exit(code);
         };
 #if !defined(Q_OS_UNIX)
@@ -3076,8 +5387,7 @@ int main(int argc, char **argv)
             return application.exec();
         }
         // Hermeticity: the user's real subscriptions could eat the
-        // fixture hosts — neuter adblock, restored on exit.
-        restoreAdBlockStateOnExit();
+        // fixture hosts — neuter adblock for the run.
         for (AdBlockSubscription *s : AdBlockManager::instance()->subscriptions())
             s->setEnabled(false);
         // SAFE07: downgrade marks are per-profile — the smoke asserts
@@ -3346,9 +5656,6 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        QSettings settings;
-        const QVariant savedLevel =
-            settings.value(QLatin1String("privacy/securityLevel"));
         auto applyLevel = [profile](int level) {
             QSettings().setValue(QLatin1String("privacy/securityLevel"), level);
             PrivacyRequestInterceptor::loadSettings();
@@ -3370,13 +5677,8 @@ int main(int argc, char **argv)
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, view, poll, profile, phase,
                           loaded, settle, ticks, wantPath, observed,
-                          savedLevel, applyLevel, lan, port]() {
+                          applyLevel, lan, port]() {
             auto finish = [&](bool ok, const QString &why) {
-                if (savedLevel.isValid())
-                    QSettings().setValue(QLatin1String("privacy/securityLevel"),
-                                         savedLevel);
-                else
-                    QSettings().remove(QLatin1String("privacy/securityLevel"));
                 PrivacyRequestInterceptor::loadSettings();
                 BrowserProfile::applySettings(profile);
                 qInfo() << "seclvl-smoke:" << (ok ? "PASS" : "FAIL") << why;
@@ -3516,26 +5818,12 @@ int main(int argc, char **argv)
             controlReply->deleteLater();
         });
 
-        const auto finish = [&application, done, &savedDohMode,
-                             &savedDohServer](int rc, const QString &line) {
+        const auto finish = [&application, done]
+                            (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "doh-smoke:" << line;
-            // Put the caller's own settings back before the store
-            // syncs at exit.
-            QSettings settings;
-            settings.beginGroup(QLatin1String("privacy"));
-            const auto restore = [&settings](const QString &key,
-                                             const QVariant &saved) {
-                if (saved.isValid())
-                    settings.setValue(key, saved);
-                else
-                    settings.remove(key);
-            };
-            restore(QLatin1String("secureDnsMode"), savedDohMode);
-            restore(QLatin1String("secureDnsServer"), savedDohServer);
-            settings.endGroup();
             application.exit(rc);
         };
 
@@ -3663,31 +5951,17 @@ int main(int argc, char **argv)
         QTcpServer *server = new QTcpServer(&application);
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "tls-smoke: FAIL (listen)" << server->errorString();
-            if (savedTlsStrict.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/tlsStrictCiphers"));
             return 1;
         }
 
         auto done = std::make_shared<bool>(false);
         auto capturing = std::make_shared<bool>(false);
-        const auto finish = [&application, done, &savedTlsStrict]
+        const auto finish = [&application, done]
                             (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "tls-smoke:" << line;
-            // Put the caller's own setting back before the store
-            // syncs at exit (the pre-app seed pinned it).
-            if (savedTlsStrict.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/tlsStrictCiphers"), savedTlsStrict);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/tlsStrictCiphers"));
             application.exit(rc);
         };
 
@@ -3878,13 +6152,6 @@ int main(int argc, char **argv)
         if (!server->listen(QHostAddress::LocalHost)) {
             qInfo() << "webrtc-smoke: FAIL (listen)"
                     << server->errorString();
-            if (savedWebrtcProtection.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/webrtcIpProtection"),
-                    savedWebrtcProtection);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/webrtcIpProtection"));
             return 1;
         }
         static const QByteArray rtcPage = QByteArray(
@@ -3924,21 +6191,12 @@ int main(int argc, char **argv)
         });
 
         auto done = std::make_shared<bool>(false);
-        const auto finish = [&application, done, &savedWebrtcProtection]
+        const auto finish = [&application, done]
                             (int rc, const QString &line) {
             if (*done)
                 return;
             *done = true;
             qInfo().noquote() << "webrtc-smoke:" << line;
-            // Put the caller's own setting back before the store
-            // syncs at exit (the pre-app seed pinned it).
-            if (savedWebrtcProtection.isValid())
-                QSettings().setValue(
-                    QLatin1String("privacy/webrtcIpProtection"),
-                    savedWebrtcProtection);
-            else
-                QSettings().remove(
-                    QLatin1String("privacy/webrtcIpProtection"));
             application.exit(rc);
         };
 
@@ -4022,7 +6280,7 @@ int main(int argc, char **argv)
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
                          [rtcView, poll, verdict]() {
-            rtcView->webPage()->runJavaScript(
+            rtcView->enginePage()->runJavaScript(
                 QStringLiteral("JSON.stringify(window.__rtc||null)"),
                 [poll, verdict](const QVariant &result) {
                 const QJsonObject rtc = QJsonDocument::fromJson(
@@ -4157,6 +6415,51 @@ int main(int argc, char **argv)
                         .contains(QLatin1String("hello%20world"));
         }
 
+        // SENG01: every bundled engine resolves its favicon locally —
+        // a fresh profile shows the real marks in the picker with no
+        // favicon-cache hit and no network fetch.
+        static const char *bundledEngineNames[] = {
+            "Bing", "DuckDuckGo", "Ecosia", "Google",
+            "Google (I'm Feeling Lucky)", "Qwant", "Yahoo!",
+            "Wikipedia (en)", "YouTube", "Reddit", "Startpage"
+        };
+        for (const char *rawName : bundledEngineNames) {
+            const OpenSearchEngine *bundled =
+                manager->engine(QLatin1String(rawName));
+            if (!bundled || bundled->image().isNull()) {
+                qInfo() << "search-smoke: FAIL (no icon for" << rawName << ")";
+                return 1;
+            }
+        }
+
+        // SENG02: the bundled descriptors' <Alias> keywords seed on
+        // first use — "b arora" routes to Bing's search template.
+        const struct {
+            const char *keyword;
+            const char *engineName;
+        } bundledKeywords[] = {
+            { "b", "Bing" }, { "q", "Qwant" },
+            { "sp", "Startpage" }, { "e", "Ecosia" },
+        };
+        for (const auto &binding : bundledKeywords) {
+            OpenSearchEngine *expected =
+                manager->engine(QLatin1String(binding.engineName));
+            if (manager->engineForKeyword(
+                    QLatin1String(binding.keyword)) != expected) {
+                qInfo() << "search-smoke: FAIL (keyword"
+                        << binding.keyword << "not bound to"
+                        << binding.engineName << ")";
+                return 1;
+            }
+        }
+        const QUrl keywordUrl = manager->convertKeywordSearchToUrl(
+            QLatin1String("b arora"));
+        if (!keywordUrl.isValid()
+                || !keywordUrl.host().endsWith(QLatin1String("bing.com"))) {
+            qInfo() << "search-smoke: FAIL (keyword url" << keywordUrl << ")";
+            return 1;
+        }
+
         // Writer + reader round-trip of a bundled engine.
         QByteArray xml;
         QBuffer writeBuffer(&xml);
@@ -4240,8 +6543,6 @@ int main(int argc, char **argv)
     if (args.contains(QLatin1String("--adblock-smoke"))) {
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||adblock-smoke.invalid^")));
         custom->addRule(AdBlockRule(QLatin1String(".invalid^")));
         custom->addRule(AdBlockRule(QLatin1String("@@||allowed-smoke.invalid^")));
@@ -4301,7 +6602,7 @@ int main(int argc, char **argv)
             // WebPage::schedulePageScripts armed the "arora:adblock-
             // cosmetic" DocumentReady script at commit, so the style
             // element must already exist by loadFinished.
-            view->webPage()->runJavaScript(
+            view->enginePage()->runJavaScript(
                 QLatin1String("!!document.getElementById('arora-adblock')"),
                 [&application](const QVariant &result) {
                     const bool pass = result.toBool();
@@ -4334,9 +6635,8 @@ int main(int argc, char **argv)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockNetwork *network = manager->network();
 
-        // Earlier runs persisted their smoke subscription into the
-        // shared test-mode settings list; drop leftovers before the
-        // exit-restore snapshot is taken.
+        // Drop any earlier list-smoke subscription so the smoke adds
+        // exactly one.
         for (AdBlockSubscription *existing : manager->subscriptions()) {
             const QUrlQuery query(existing->url());
             if (query.queryItemValue(QLatin1String("title"),
@@ -4347,8 +6647,6 @@ int main(int argc, char **argv)
 
         // A second subscription proves multi-subscription matching.
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
         custom->addRule(AdBlockRule(QLatin1String("||list-smoke.invalid^")));
 
         QUrl subscribeUrl;
@@ -4510,7 +6808,7 @@ int main(int argc, char **argv)
                              [&application, otrView, hasElement, fixtureUrl](bool ok) {
                 if (!ok || otrView->url() != fixtureUrl)
                     return;
-                otrView->webPage()->runJavaScript(
+                otrView->enginePage()->runJavaScript(
                     QLatin1String("document.getElementById('u').value"),
                     [&application, otrView, hasElement](const QVariant &result) {
                     // The stored entry holds the values captured in the
@@ -4526,7 +6824,7 @@ int main(int argc, char **argv)
                     }
                     // Give the (supposedly absent) capture hook no
                     // chance: submit and check nothing was stored.
-                    otrView->webPage()->runJavaScript(QLatin1String(
+                    otrView->enginePage()->runJavaScript(QLatin1String(
                         "document.getElementById('u').value='otruser';"
                         "document.getElementById('p').value='otrpass';"
                         "document.forms[0].requestSubmit();"));
@@ -4628,7 +6926,7 @@ int main(int argc, char **argv)
             autofillSmokeStage = 1;
             // Fill check, then rewrite the fields and submit once the
             // channel handshake has had time to install the listener.
-            view->webPage()->runJavaScript(
+            view->enginePage()->runJavaScript(
                 QLatin1String("document.getElementById('u').value"),
                 [&application, view](const QVariant &result) {
                 const bool filled =
@@ -4640,7 +6938,7 @@ int main(int argc, char **argv)
                     return;
                 }
                 QTimer::singleShot(700, &application, [view]() {
-                    view->webPage()->runJavaScript(QLatin1String(
+                    view->enginePage()->runJavaScript(QLatin1String(
                         "document.getElementById('u').value='newuser';"
                         "document.getElementById('p').value='newpass';"
                         "document.forms[0].requestSubmit();"));
@@ -4663,12 +6961,8 @@ int main(int argc, char **argv)
 #if defined(ARORA_ADBLOCK_RUST)
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
-        purgeSmokeFilters(custom);
-        restoreAdBlockStateOnExit();
-        // Test-mode app data persists between runs — an earlier
-        // --adblock-list-smoke leaves a full EasyList subscription
-        // behind.  Disable everything but the custom corpus so the
-        // probes are deterministic.
+        // Disable everything but the custom corpus so the probes are
+        // deterministic even if downloaded subscriptions come back.
         for (AdBlockSubscription *s : manager->subscriptions()) {
             if (s != custom)
                 s->setEnabled(false);
@@ -4686,7 +6980,21 @@ int main(int argc, char **argv)
         for (const char *rule : corpus)
             custom->addRule(AdBlockRule(QLatin1String(rule)));
 
+        // ADB06/ADBLK01: matching is runtime-selected (AdBlock/engine)
+        // and the unset default is now the Rust engine — print both
+        // the stored and effective pick before touching it so a
+        // fresh-config run proves the default path reaches the
+        // matcher.  The explicit selection below is a no-op then;
+        // rulesChanged rebuilds the snapshot synchronously, which is
+        // also the lazy-construction path the Preferences switch
+        // takes.
+        qInfo() << "adblock-rust-smoke: stored-engine"
+                << int(manager->storedEngine())
+                << "effective" << int(manager->engine());
+        manager->setEngine(AdBlockManager::RustEngine);
+
         AdBlockNetwork *network = manager->network();
+        const bool rustActive = network->rustEngineActive();
         struct Probe {
             const char *url;
             const char *firstParty;
@@ -4735,11 +7043,25 @@ int main(int argc, char **argv)
         const bool cosmeticOk = cosmetic.value(QLatin1String("hide"))
             .toArray().contains(QLatin1String(".ad-banner"));
 
-        const bool pass = rustExpected == total && cosmeticOk;
+        // ADB06: toggling back to Built-in must drop the engine and
+        // leave match() answering through the native matcher — the
+        // same live switch the settings combo drives.
+        manager->setEngine(AdBlockManager::NativeEngine);
+        const bool toggledOff = !network->rustEngineActive()
+            && adblockDecisionKind(network->match(
+                    QUrl(QLatin1String("http://ads.example.com/a.js")),
+                    QUrl(QLatin1String("http://site.example/")), 3)) == 1;
+        manager->setEngine(AdBlockManager::RustEngine);
+        const bool toggledOn = network->rustEngineActive();
+
+        const bool pass = rustActive && rustExpected == total
+                && cosmeticOk && toggledOff && toggledOn;
         qInfo() << "adblock-rust-smoke:" << (pass ? "PASS" : "FAIL")
                 << "rust-matches-expected" << rustExpected << "/" << total
                 << "native-agrees" << agree << "/" << total
-                << "cosmetic" << cosmeticOk;
+                << "cosmetic" << cosmeticOk
+                << "engine-active" << rustActive
+                << "toggle" << toggledOff << toggledOn;
         return pass ? 0 : 1;
 #else
         qInfo() << "adblock-rust-smoke: SKIP"
@@ -4856,17 +7178,10 @@ int main(int argc, char **argv)
         }
         const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
 
-        // A leftover ##body cosmetic rule in the shared test-mode
-        // settings hides the whole page (display:none text is
-        // unfindable); suspend adblocking for the duration and put the
-        // persisted flag back on the way out.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // Any cosmetic rule would hide the whole page (display:none
+        // text is unfindable); suspend adblocking for determinism —
+        // the flag dies with the per-run store.
+        AdBlockManager::instance()->setEnabled(false);
 
         WebViewSearch *searchBar = new WebViewSearch(view, &window);
         QLineEdit *searchEdit =
@@ -4930,8 +7245,11 @@ int main(int argc, char **argv)
             searchBar->findNext();
             awaitResult(base1, [=]() {
                 settle([=]() {
+                // A hit lands the "1/2" counter on the info label —
+                // the MIG12 expectation here was inverted (asserted
+                // empty) and the smoke never reached stage 2.
                 const bool pass = *lastMatches == 2 && *lastActive >= 0
-                    && searchInfo->text().isEmpty();
+                    && !searchInfo->text().isEmpty();
                 qInfo() << "find-smoke: next" << (pass ? "PASS" : "FAIL")
                         << "matches:" << *lastMatches
                         << "active:" << *lastActive;
@@ -5044,14 +7362,9 @@ int main(int argc, char **argv)
 
         // Cosmetic adblock rules would be injected into the serialized
         // DOM the viewer compares against (see --find-smoke); suspend
-        // adblocking for the duration.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // adblocking for determinism — the flag dies with the per-run
+        // store.
+        AdBlockManager::instance()->setEnabled(false);
 
         // The ported QRegularExpression state machine must mark up a
         // document without any WebEngine involvement.
@@ -5109,7 +7422,18 @@ int main(int argc, char **argv)
                     return;
                 }
                 poll->stop();
-                const bool contentOk = edit->toPlainText() == expected;
+                // Qt 6.12's toHtml() injects a <head> with a
+                // referrer-policy meta that the source bytes never
+                // contained — strip an injected head when the expected
+                // source has none rather than pinning engine-version-
+                // specific serialization.
+                QString shown = edit->toPlainText();
+                if (!expected.contains(QLatin1String("<head"))) {
+                    static const QRegularExpression injectedHead(
+                        QStringLiteral("<head>.*</head>"));
+                    shown.remove(injectedHead);
+                }
+                const bool contentOk = shown == expected;
                 if (!contentOk)
                     qInfo() << "source-smoke:" << what << "shown was:"
                             << edit->toPlainText().left(200)
@@ -5222,28 +7546,10 @@ int main(int argc, char **argv)
             qInfo() << "reader-smoke: RENDERER DIED" << status << code;
         });
 
-        // Snapshot the reader prefs the in-overlay controls write so
-        // the run leaves no trace in the live settings.
+        // Start from the reader-pref defaults — the in-overlay
+        // controls' writes land in the per-run store.
         {
             QSettings settings;
-            const QVariant savedFont =
-                settings.value(QLatin1String("reader/fontSize"));
-            const QVariant savedTheme =
-                settings.value(QLatin1String("reader/theme"));
-            QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                             &application, [savedFont, savedTheme]() {
-                QSettings settings;
-                if (savedFont.isValid())
-                    settings.setValue(QLatin1String("reader/fontSize"),
-                                      savedFont);
-                else
-                    settings.remove(QLatin1String("reader/fontSize"));
-                if (savedTheme.isValid())
-                    settings.setValue(QLatin1String("reader/theme"),
-                                      savedTheme);
-                else
-                    settings.remove(QLatin1String("reader/theme"));
-            });
             settings.remove(QLatin1String("reader/fontSize"));
             settings.remove(QLatin1String("reader/theme"));
         }
@@ -5275,7 +7581,7 @@ int main(int argc, char **argv)
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {
-            view->webPage()->runJavaScript(script,
+            view->enginePage()->runJavaScript(script,
                 [cb](const QVariant &result) { cb(result); });
         };
         auto settle = [](int ms, std::function<void()> fn) {
@@ -5770,7 +8076,7 @@ int main(int argc, char **argv)
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {
-            view->webPage()->runJavaScript(script,
+            view->enginePage()->runJavaScript(script,
                 [cb](const QVariant &result) { cb(result); });
         };
         auto evalPipJs = [&](const QString &script,
@@ -5780,8 +8086,9 @@ int main(int argc, char **argv)
                 cb(QVariant());
                 return;
             }
-            w->playerView()->page()->runJavaScript(script,
-                [cb](const QVariant &result) { cb(result); });
+            WebEnginePageAdapter::forPage(w->playerView()->page())
+                ->runJavaScript(script,
+                    [cb](const QVariant &result) { cb(result); });
         };
         auto settle = [](int ms, std::function<void()> fn) {
             QTimer::singleShot(ms, qApp, fn);
@@ -6124,19 +8431,9 @@ int main(int argc, char **argv)
     // BrowserApplication::instance() is null and the chrome must
     // degrade gracefully.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--browser-smoke"))) {
-        // A leftover ##body cosmetic rule from earlier test-mode runs
-        // would restyle the page; suspend adblock for determinism and
-        // put the persisted flag back on the way out — the test-mode
-        // settings file is shared with the other smokes, and leaving
-        // enabled=false behind silently breaks --adblock-smoke's
-        // matcher check on the next run.
-        AdBlockManager *adblock = AdBlockManager::instance();
-        const bool adblockWasEnabled = adblock->isEnabled();
-        adblock->setEnabled(false);
-        QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                         &application, [adblock, adblockWasEnabled]() {
-            adblock->setEnabled(adblockWasEnabled);
-        });
+        // Any cosmetic rule would restyle the page; suspend adblock
+        // for determinism — the flag dies with the per-run store.
+        AdBlockManager::instance()->setEnabled(false);
 
         // The window is deleted before application.exit() below: an
         // unregistered window would otherwise outlive the profile at
@@ -6201,7 +8498,7 @@ int main(int argc, char **argv)
             // WebPage::createWindow -> TabWidget::getView and must grow
             // the tab strip to three tabs.  (Synthesized JS has no user
             // activation, so Chromium would block it as a popup.)
-            firstTab->webPage()->runJavaScript(
+            firstTab->enginePage()->runJavaScript(
                 QLatin1String("JSON.stringify("
                               "document.getElementById('l').getBoundingClientRect())"),
                 [tabWidget](const QVariant &rectVar) {
@@ -6278,27 +8575,19 @@ int main(int argc, char **argv)
             return -1;
         };
 
-        // Modal auto-dismisser — Private Browsing exec()s a
-        // QMessageBox, Clear Private Data and the Preferences pages
-        // exec() QDialogs.  What it closed is recorded so the checks
-        // can assert the right dialog actually opened.
-        int sawMessageBox = 0;
+        // Modal auto-dismisser — Clear Private Data still exec()s a
+        // QDialog (Preferences is a tab since PREFS01, so the
+        // deep-link check inspects the tab widget directly).  What it
+        // closed is recorded so the checks can assert the right
+        // dialog actually opened.
         int sawClearData = 0;
-        int sawSettingsAtPage = -1;
         QTimer dismisser;
         QObject::connect(&dismisser, &QTimer::timeout, &application,
                          [&]() {
             QWidget *modal = QApplication::activeModalWidget();
             if (!modal)
                 return;
-            if (QMessageBox *box = qobject_cast<QMessageBox*>(modal)) {
-                ++sawMessageBox;
-                box->reject();
-            } else if (SettingsDialog *dialog =
-                       qobject_cast<SettingsDialog*>(modal)) {
-                sawSettingsAtPage = dialog->tabWidget->currentIndex();
-                dialog->reject();
-            } else if (QDialog *dialog = qobject_cast<QDialog*>(modal)) {
+            if (QDialog *dialog = qobject_cast<QDialog*>(modal)) {
                 if (qobject_cast<ClearPrivateData*>(modal))
                     ++sawClearData;
                 dialog->reject();
@@ -6336,21 +8625,23 @@ int main(int argc, char **argv)
         check(tabWidget->count() == tabsBefore + 1,
               "New Tab command executes");
 
-        // 3. "private" reaches Private Browsing; executing it opens
-        //    the confirmation prompt (auto-rejected — the window must
-        //    stay non-private).
+        // 3. "private" reaches New Private Tab (PTAB01); executing it
+        //    opens an off-the-record tab in the same window — no
+        //    prompt, and the global flag stays off.
         palette->openPalette();
         palette->setQuery(QLatin1String("private"));
         const int privateRow =
-            findRow(QLatin1String("Private Browsing"));
-        check(privateRow >= 0, "'private' query finds Private Browsing");
+            findRow(QLatin1String("New Private Tab"));
+        check(privateRow >= 0, "'private' query finds New Private Tab");
+        const int prePrivateCount = tabWidget->count();
         if (privateRow >= 0) {
             palette->executeRow(privateRow);
             pump();
         }
-        check(sawMessageBox > 0
-                  && !BrowserApplication::isPrivate(),
-              "Private Browsing executes (prompt dismissed)");
+        check(tabWidget->count() == prePrivateCount + 1
+                  && !BrowserApplication::isPrivate()
+                  && tabWidget->isTabPrivate(tabWidget->currentIndex()),
+              "New Private Tab opens an off-the-record tab");
 
         // 4. "clear history" reaches Clear Private Data through the
         //    keyword tail (the action's name never says 'history').
@@ -6406,7 +8697,7 @@ int main(int argc, char **argv)
         bookmarks->removeBookmark(smokeBookmark);
 
         // 7. Settings sections deep-link: "privacy" opens the
-        //    Preferences dialog on the Privacy page.
+        //    Preferences tab on the Privacy page (PREFS01 — no modal).
         palette->openPalette();
         palette->setQuery(QLatin1String("privacy"));
         const int privacyRow =
@@ -6417,8 +8708,16 @@ int main(int argc, char **argv)
             palette->executeRow(privacyRow);
             pump();
         }
-        check(sawSettingsAtPage == int(SettingsDialog::PrivacyPage),
-              "settings page deep-link executes");
+        SettingsDialog *settingsTab = nullptr;
+        for (int i = 0; i < tabWidget->count(); ++i) {
+            if (SettingsDialog *tab =
+                    qobject_cast<SettingsDialog*>(tabWidget->widget(i)))
+                settingsTab = tab;
+        }
+        check(settingsTab && tabWidget->currentWidget() == settingsTab
+                  && settingsTab->tabWidget->currentIndex()
+                         == int(SettingsDialog::PrivacyPage),
+              "settings page deep-link opens the Preferences tab");
 
         // 8. Keyboard: Down moves the selection, Return executes the
         //    current row, Escape dismisses.  Events go through
@@ -6590,8 +8889,14 @@ int main(int argc, char **argv)
         for (int i = 0; i < 200 && (!loaded || !loaded2); ++i)
             waitMs(50);
         check(loaded && loaded2, "fixtures loaded");
-        // Let the deferred thumbnail captures land (300ms timers).
-        waitMs(800);
+        // Let each loaded tab paint + cache its thumbnail while it is
+        // current — the deferred captures (300ms timers) only fire
+        // for the visible view, so tab 2 needs its own dwell before
+        // the hover assertions below rely on the cache.
+        tabWidget->setCurrentIndex(2);
+        waitMs(500);
+        tabWidget->setCurrentIndex(0);
+        waitMs(500);
 
         QWidget *focusBefore = QApplication::focusWidget();
         hoverTab(0);
@@ -6631,8 +8936,9 @@ int main(int argc, char **argv)
         check(preview && !preview->isVisible(),
               "preview hides on leave");
 
-        // Sleeping tab: page discarded -> the card takes the
-        // favicon+title fallback and flags the sleeping state.
+        // Sleeping tab: the page is discarded so no live frame can
+        // exist — the card serves the snapshot cached before the
+        // discard and still flags the sleeping state (TPREV02).
         tabWidget->sleepTab(2);
         for (int i = 0; i < 60 && !tabWidget->isTabSleeping(2); ++i)
             waitMs(100);
@@ -6641,10 +8947,10 @@ int main(int argc, char **argv)
         waitMs(700);
         check(preview && preview->isVisible()
                   && preview->previewedIndex() == 2
-                  && !preview->hasThumbnail()
+                  && preview->hasThumbnail()
                   && preview->detailText()
                          .contains(QLatin1String("Sleeping")),
-              "sleeping tab gets icon fallback card");
+              "sleeping tab shows its pre-sleep snapshot");
         {
             QEvent leaveEvent(QEvent::Leave);
             QCoreApplication::sendEvent(tabBar, &leaveEvent);
@@ -6855,9 +9161,9 @@ int main(int argc, char **argv)
             WebView *formView = tabWidget->webView(5);
             WebView *heavy2 = tabWidget->webView(2);
             WebView *audioView = tabWidget->webView(1);
-            formView->page()->runJavaScript(
+            formView->enginePage()->runJavaScript(
                 QLatin1String("document.getElementById('f').value='x';"));
-            heavy2->page()->runJavaScript(
+            heavy2->enginePage()->runJavaScript(
                 QLatin1String("window.scrollTo(0, 5000);"));
             // recentlyAudible latches a few seconds of playback —
             // wait for it before the sweep so the exemption is live.
@@ -6983,7 +9289,7 @@ int main(int argc, char **argv)
                     fail("wake");
                     return;
                 }
-                heavy2->page()->runJavaScript(
+                heavy2->enginePage()->runJavaScript(
                     QLatin1String("JSON.stringify({"
                                   "y:window.scrollY,"
                                   "title:document.title})"),
@@ -7200,6 +9506,9 @@ int main(int argc, char **argv)
             if (info.id != extensionId)
                 return;
             qInfo() << "extension-smoke: unload PASS";
+            // EXT05: the consent gate requires an explicit grant —
+            // the smoke stands in for the approving user.
+            extensions->grantConsent(extDir);
             extensions->installExtension(extDir);
         });
 
@@ -7248,6 +9557,8 @@ int main(int argc, char **argv)
         QTimer::singleShot(20000, &application, [die]() {
             die(QStringLiteral("timeout"));
         });
+        // Consent gate: headless runs grant explicitly (EXT05).
+        extensions->grantConsent(extDir);
         extensions->loadExtension(extDir);
 
         // exec() must run while this block's locals are still alive:
@@ -7695,9 +10006,13 @@ int main(int argc, char **argv)
                      .arg(info.name, info.error));
                 return;
             }
-            // Feed the next queued fixture install.
-            if (!updateInstallQueue.isEmpty())
-                upm->installExtension(updateInstallQueue.takeFirst());
+            // Feed the next queued fixture install — each grant stands
+            // in for the user's review approval (EXT05 consent gate).
+            if (!updateInstallQueue.isEmpty()) {
+                const QString next = updateInstallQueue.takeFirst();
+                upm->grantConsent(next);
+                upm->installExtension(next);
+            }
             updateNameToId.insert(info.name, info.id);
             if (info.id == updateExtId && updateInstallSeenOnce) {
                 // Second install of the keyed fixture = the update
@@ -7741,8 +10056,13 @@ int main(int argc, char **argv)
                   QStringLiteral("newer version detected"));
             check(!ra.savedTo.isEmpty() && QFile::exists(ra.savedTo),
                   QStringLiteral("update package downloaded"));
-            check(ra.installTriggered,
-                  QStringLiteral("zip package handed to installer"));
+            check(ra.installable,
+                  QStringLiteral("zip package flagged installable"));
+            // EXT05: the check itself installs nothing — applying the
+            // update is an explicit opt-in, driven here the way the
+            // settings UI drives it after the review dialog approves.
+            upm->grantConsent(ra.savedTo);
+            upm->installExtension(ra.savedTo);
             check(findResult(updateNameToId.value(
                       QStringLiteral("upd-b"))).noSource,
                   QStringLiteral("no update_url = no update source"));
@@ -7783,14 +10103,18 @@ int main(int argc, char **argv)
             if (info.name != QLatin1String("upd-b"))
                 return;
             QTimer::singleShot(500, &application, [&]() {
-                if (!updateInstallQueue.isEmpty())
-                    upm->installExtension(updateInstallQueue.takeFirst());
+                if (!updateInstallQueue.isEmpty()) {
+                    const QString next = updateInstallQueue.takeFirst();
+                    upm->grantConsent(next);
+                    upm->installExtension(next);
+                }
             });
         });
 
         QTimer::singleShot(60000, &application, [udie]() {
             udie(QStringLiteral("timeout"));
         });
+        upm->grantConsent(dirB);
         upm->loadExtension(dirB);
 
         // exec() must run while this block's locals are still alive:
@@ -8244,7 +10568,11 @@ int main(int argc, char **argv)
                     qint32 tmarker = 0, tversion = 0;
                     tabStream >> tmarker >> tversion
                         >> restoredUrls >> restoredCurrent;
-                    sessionCheck(tmarker == 0xaa && tversion == 1,
+                    // TabWidget::saveState writes the current format
+                    // (v4 — container/group tails); restoreState
+                    // accepts v1..v4, so assert the same range.
+                    sessionCheck(tmarker == 0xaa
+                                     && tversion >= 1 && tversion <= 4,
                                  "tab-state blob header");
                 }
                 sessionCheck(restoredUrls == fixtureUrls,
@@ -8318,6 +10646,199 @@ int main(int argc, char **argv)
             poll->start(200);
             return application.exec();
         }
+    }
+
+    // Headless verification for SESS02 — termination-signal session
+    // flush.  `--sigterm-smoke` orchestrates: for each covered signal
+    // it clears the session stores and spawns `--sigterm-child-smoke`,
+    // which builds tab state and sends the signal to itself while the
+    // AutoSaver debounce is still holding the changes.  A default-
+    // handler death would leave the stores empty — decoding the blob
+    // after the child's signal death proves the flush ran first.
+    const bool sigtermSmoke = args.contains(QLatin1String("--sigterm-smoke"));
+    const bool sigtermChildSmoke =
+        args.contains(QLatin1String("--sigterm-child-smoke"));
+    if (sigtermSmoke || sigtermChildSmoke) {
+        window.hide();
+        QSettings().setValue(
+            QLatin1String("tabs/confirmClosingMultipleTabs"), false);
+        QSettings().setValue(
+            QLatin1String("MainWindow/restoring"), false);
+        QSettings().setValue(
+            QLatin1String("MainWindow/startupBehavior"), 1);
+
+        QStringList fixtureUrls;
+        for (int i = 1; i <= 3; ++i) {
+            const QString path = QDir::temp().filePath(
+                QStringLiteral("arora-sigterm-%1.html").arg(i));
+            QFile fixture(path);
+            if (fixture.open(QIODevice::WriteOnly)) {
+                fixture.write(QStringLiteral(
+                    "<html><head><title>arora-sigterm-%1</title>"
+                    "</head><body>%1</body></html>").arg(i).toUtf8());
+            }
+            fixtureUrls << QUrl::fromLocalFile(path).toString();
+        }
+
+        int sigtermFailures = 0;
+        const auto sigtermCheck =
+            [&sigtermFailures](bool ok, const char *what) {
+            qInfo() << "sigterm-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++sigtermFailures;
+        };
+
+        if (sigtermChildSmoke) {
+            QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+            rustCoreEnsureDataDir();
+            rc_session_clear();
+#endif
+            BrowserMainWindow *browserWindow =
+                application.newMainWindow();
+            TabWidget *tabWidget = browserWindow->tabWidget();
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(0)),
+                               TabWidget::CurrentTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(1)),
+                               TabWidget::NewNotSelectedTab);
+            tabWidget->loadUrl(QUrl(fixtureUrls.at(2)),
+                               TabWidget::NewNotSelectedTab);
+            // The last change lands inside the AutoSaver debounce
+            // window — exactly the state a default signal handler
+            // would lose.
+            tabWidget->setCurrentIndex(1);
+#if defined(Q_OS_UNIX)
+            int killSignal = SIGTERM;
+            const QString signalName =
+                parser.value(QLatin1String("sigterm-signal"));
+            if (signalName == QLatin1String("hup"))
+                killSignal = SIGHUP;
+            else if (signalName == QLatin1String("int"))
+                killSignal = SIGINT;
+            QTimer::singleShot(400, [killSignal]() {
+                ::kill(::getpid(), killSignal);
+            });
+#else
+            QTimer::singleShot(400, &application,
+                               [&application]() { application.exit(2); });
+#endif
+            return application.exec();
+        }
+
+        // Orchestrator: per signal — clean stores, spawn the child,
+        // confirm it died BY the signal (CrashExit — a clean exit
+        // would mean the session was written by a normal quit path),
+        // then decode whatever the flush persisted.
+        const QStringList signalNames = {QStringLiteral("term"),
+                                         QStringLiteral("hup"),
+                                         QStringLiteral("int")};
+        for (const QString &signal : signalNames) {
+            QSettings().remove(QLatin1String("sessions"));
+#ifdef ARORA_RUSTCORE
+            rustCoreEnsureDataDir();
+            rc_session_clear();
+#endif
+            QProcess child;
+            child.start(
+                QCoreApplication::applicationFilePath(),
+                QStringList()
+                    << QStringLiteral("--sigterm-child-smoke")
+                    << QStringLiteral("--sigterm-signal=%1").arg(signal));
+            const bool finished = child.waitForFinished(60000);
+            sigtermCheck(finished
+                             && child.exitStatus() == QProcess::CrashExit,
+                         "child died by signal");
+
+            QStringList restoredUrls;
+            qint64 restoredCurrent = -1;
+            int windowCount = 0;
+#ifdef ARORA_RUSTCORE
+            QFile sessionFile(BrowserPaths::dataFilePath(
+                QLatin1String(RC_SESSION_FILE)));
+            QByteArray blob;
+            if (sessionFile.open(QIODevice::ReadOnly))
+                blob = sessionFile.readAll();
+            RcBuffer out{nullptr, 0};
+            const RcStatus decoded = rc_session_decode(
+                reinterpret_cast<const uint8_t *>(blob.constData()),
+                size_t(blob.size()), &out);
+            if (decoded == RC_OK) {
+                const QJsonDocument doc = QJsonDocument::fromJson(
+                    QByteArray(
+                        reinterpret_cast<const char *>(out.data),
+                        int(out.len)));
+                rc_buffer_free(out);
+                const QJsonArray windows = doc.object()
+                    .value(QLatin1String("windows")).toArray();
+                windowCount = windows.count();
+                if (!windows.isEmpty()) {
+                    const QJsonObject first = windows.first().toObject();
+                    restoredCurrent = first
+                        .value(QLatin1String("current")).toInteger(-1);
+                    const QJsonArray tabs = first
+                        .value(QLatin1String("tabs")).toArray();
+                    for (const QJsonValue &tab : tabs)
+                        restoredUrls << tab.toObject()
+                            .value(QLatin1String("url")).toString();
+                }
+            }
+#else
+            const QByteArray blob = QSettings()
+                .value(QLatin1String("sessions/lastSession"))
+                .toByteArray();
+            QDataStream stream(blob);
+            qint32 marker = 0, version = 0, windows = 0;
+            stream >> marker >> version >> windows;
+            if (marker == 0xec && version == 2) {
+                windowCount = windows;
+                for (qint32 i = 0; i < windows; ++i) {
+                    QByteArray windowState;
+                    stream >> windowState;
+                    QDataStream windowStream(windowState);
+                    qint32 wmarker = 0, wversion = 0;
+                    QSize size;
+                    bool b1 = false, b2 = false, b3 = false;
+                    QByteArray tabState;
+                    windowStream >> wmarker >> wversion >> size
+                        >> b1 >> b2 >> b3 >> tabState;
+                    QDataStream tabStream(tabState);
+                    qint32 tmarker = 0, tversion = 0;
+                    qint32 current = -1;
+                    tabStream >> tmarker >> tversion >> restoredUrls
+                        >> current;
+                    restoredCurrent = current;
+                }
+            }
+#endif
+            sigtermCheck(windowCount == 1, "session window count");
+            sigtermCheck(restoredUrls == fixtureUrls,
+                         "flushed tab urls in order");
+            sigtermCheck(restoredCurrent == 1, "flushed current index");
+        }
+        qInfo() << "sigterm-smoke:"
+                << (sigtermFailures ? "FAIL" : "PASS");
+        return sigtermFailures ? 1 : 0;
+    }
+
+    // CRASH02: --crash-smoke dies deliberately by the fault named in
+    // ARORA_CRASH_SMOKE (segv|abrt|terminate; default segv) so the
+    // crash reporter's marker + backtrace can be verified end-to-end —
+    // the process exits BY the signal, which is the assertion the
+    // caller checks.
+    if (args.contains(QLatin1String("--crash-smoke"))) {
+        const QByteArray kind = qgetenv("ARORA_CRASH_SMOKE");
+        qInfo() << "crash-smoke: log" << CrashReporter::logPath()
+                << "kind" << (kind.isEmpty() ? "segv" : kind);
+        fflush(nullptr);
+        if (kind == "abrt")
+            std::abort();
+        if (kind == "terminate")
+            throw std::runtime_error(
+                "crash-smoke uncaught exception");
+#if defined(Q_OS_UNIX)
+        ::raise(SIGSEGV);
+#endif
+        return 139;
     }
 
     // Headless measurement for PERF01 — report-only timings for the
@@ -8616,10 +11137,51 @@ int main(int argc, char **argv)
             torWinFail(QLatin1String("tor profile is not off-the-record"));
             return application.exec();
         }
+        // TELEM02: DNS prefetch on a proxied profile would resolve
+        // names through the system resolver — outside the SOCKS
+        // tunnel.  prepareProfile pins it off unconditionally; a
+        // regression here is a proxy-bypass class bug.
+        if (BrowserApplication::webEngineProfile()->settings()
+                ->testAttribute(QWebEngineSettings::DnsPrefetchEnabled)) {
+            torWinFail(QLatin1String(
+                "DnsPrefetchEnabled is on for the tor profile"));
+            return application.exec();
+        }
         if (!BrowserApplication::isPrivate()) {
             torWinFail(QLatin1String("tor mode does not imply private"));
             return application.exec();
         }
+
+        // TOR03: a real tor-mode window must not carry the dedicated
+        // search box — a divergent-engine field is a leakage wart and
+        // the collapsed button sliver wastes splitter width.  The
+        // widget stays constructed (the recent-search sweep and the
+        // Ctrl+K fallback still reach it) but is hidden outright.
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        if (!torWindow->toolbarSearch()
+                || !torWindow->toolbarSearch()->isHidden()) {
+            torWinFail(QLatin1String("tor window still shows the search box"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: search box hidden in tor window";
+
+        // TOR04: the circuit-chain indicator is a permanent
+        // status-bar citizen on tor windows — it must exist already
+        // in a pre-ready state ("Tor: connecting...") and pick up the
+        // parsed hop chain once the daemon's circuit-status answers.
+        QLabel *circuitLabel = torWindow->findChild<QLabel *>(
+            QLatin1String("torCircuitLabel"));
+        if (!circuitLabel
+                || circuitLabel->parentWidget()
+                       != static_cast<QWidget *>(torWindow->statusBar())
+                || !circuitLabel->text().startsWith(
+                       QLatin1String("Tor:"))) {
+            torWinFail(QLatin1String(
+                "tor window missing the circuit status label"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: circuit label present:" 
+                << circuitLabel->text();
 
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
@@ -8652,7 +11214,8 @@ int main(int argc, char **argv)
             qInfo() << "tor:" << line;
         });
         auto onReady = [torManager, &application, networkAccessManager,
-                        view, probeUrl, torWinFail](const QNetworkProxy &) {
+                        view, probeUrl, torWinFail,
+                        circuitLabel](const QNetworkProxy &) {
             const QNetworkProxy applied = QNetworkProxy::applicationProxy();
             if (applied.type() != QNetworkProxy::Socks5Proxy
                     || applied.port() != torManager->socksPort()) {
@@ -8667,7 +11230,7 @@ int main(int argc, char **argv)
                 QNetworkRequest(probeUrl));
             QObject::connect(reply, &QNetworkReply::finished, &application,
                              [&application, reply, view, probeUrl,
-                              torWinFail]() {
+                              torWinFail, circuitLabel]() {
                 const QByteArray body = reply->readAll();
                 qInfo() << "tor-window-smoke: api/ip via NAM:"
                         << reply->error() << body.left(120);
@@ -8689,10 +11252,10 @@ int main(int argc, char **argv)
                 QObject::connect(view, &QWebEngineView::loadFinished,
                                  &application,
                                  [&application, view, pageUrl, probeUrl,
-                                  torWinFail](bool ok) {
+                                  torWinFail, circuitLabel](bool ok) {
                     if (!ok || view->url() != pageUrl)
                         return;
-                    view->page()->runJavaScript(
+                    view->enginePage()->runJavaScript(
                         QStringLiteral(
                             "(function(){"
                             "var x=new XMLHttpRequest();"
@@ -8701,7 +11264,8 @@ int main(int argc, char **argv)
                             "catch(e){return 'XHRERR:'+e+' :: '"
                             "+document.documentElement.innerText"
                             ".slice(0,300);}})()"),
-                        [&application, pageUrl, probeUrl, torWinFail](
+                        [&application, pageUrl, probeUrl, torWinFail,
+                         circuitLabel](
                             const QVariant &result) {
                         const QString body = result.toString();
                         qInfo() << "tor-window-smoke: api/ip via WebEngine:"
@@ -8725,6 +11289,18 @@ int main(int argc, char **argv)
                         if (historyLeaked) {
                             torWinFail(QLatin1String(
                                 "tor page recorded in history"));
+                            return;
+                        }
+                        // TOR04: two real circuit-carrying probes
+                        // have run by now — the status-bar chain must
+                        // show the hops ("guard -> middle -> exit").
+                        qInfo() << "tor-window-smoke: circuit label:"
+                                << circuitLabel->text();
+                        if (!circuitLabel->text().contains(
+                                QLatin1String(" -> "))) {
+                            torWinFail(QLatin1String(
+                                "circuit label never rendered the "
+                                "hop chain"));
                             return;
                         }
                         qInfo() << "tor-window-smoke: PASS"
@@ -8863,12 +11439,6 @@ int main(int argc, char **argv)
         };
 
         QSettings settings;
-        const QVariant savedUtc =
-            settings.value(QLatin1String("privacy/reportUtcTimezone"));
-        const QVariant savedLang =
-            settings.value(QLatin1String("privacy/normalizeAcceptLanguage"));
-        const QVariant savedAccept =
-            settings.value(QLatin1String("network/acceptLanguages"));
 
         // (b) Accept-Language normalization — a distinctive stored
         // list proves the toggle replaces it rather than appending or
@@ -8937,18 +11507,6 @@ int main(int argc, char **argv)
             && child.exitStatus() == QProcess::NormalExit
             && child.exitCode() == 0;
         check(childOk, "child run: normalized surface visible to JS");
-
-        const auto restore = [&settings](const QString &key,
-                                         const QVariant &saved) {
-            if (saved.isValid())
-                settings.setValue(key, saved);
-            else
-                settings.remove(key);
-        };
-        restore(QLatin1String("privacy/reportUtcTimezone"), savedUtc);
-        restore(QLatin1String("privacy/normalizeAcceptLanguage"), savedLang);
-        restore(QLatin1String("network/acceptLanguages"), savedAccept);
-        BrowserProfile::applyFingerprintEnvironment();
 
         qInfo() << "fingerprint-smoke:" << (failures == 0 ? "PASS" : "FAIL")
                 << failures << "failures";
@@ -9022,7 +11580,7 @@ int main(int argc, char **argv)
             if (!ok || view->url().isEmpty()
                 || view->url().scheme() != QLatin1String("http"))
                 return;
-            view->page()->runJavaScript(QStringLiteral(
+            view->enginePage()->runJavaScript(QStringLiteral(
                 "JSON.stringify({"
                 "tz: Intl.DateTimeFormat().resolvedOptions().timeZone,"
                 "offset: new Date().getTimezoneOffset(),"
@@ -9142,6 +11700,1265 @@ int main(int argc, char **argv)
         return application.exec();
     }
 
+    // SAFE06: --fingerprint-inject-seed prints the session noise seed
+    // this process would bake into the injected script — the parent
+    // smoke spawns it twice to prove the seed differs run-to-run.
+    if (args.contains(QLatin1String("--fingerprint-inject-seed"))) {
+        const QString source =
+            FingerprintProtector::instance()->scriptSource();
+        const QRegularExpressionMatch match = QRegularExpression(
+            QStringLiteral("var SEED = (\\d+)")).match(source);
+        if (match.hasMatch())
+            printf("%s\n", qPrintable(match.captured(1)));
+        return match.hasMatch() ? 0 : 1;
+    }
+
+    // SAFE06: --fingerprint-inject-smoke drives the countermeasures
+    // end-to-end on the browsing profile: the unprotected baseline,
+    // the armed surface (canvas noise + normalized navigator
+    // values + generic WebGL identity + native-code disguise), a
+    // reload proving the per-session seed keeps one stable identity,
+    // and the per-site exemption restoring the real readouts.
+    if (args.contains(QLatin1String("--fingerprint-inject-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "fingerprint-inject-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        QSettings settings;
+        FingerprintProtector *protector =
+            FingerprintProtector::instance();
+
+        // The seed is process-lifetime — two fresh children must
+        // embed different values.
+        QStringList seeds;
+        for (int i = 0; i < 2; ++i) {
+            QProcess child;
+            child.start(QCoreApplication::applicationFilePath(),
+                QStringList{QStringLiteral("--fingerprint-inject-seed")});
+            if (child.waitForFinished(30000)
+                && child.exitStatus() == QProcess::NormalExit
+                && child.exitCode() == 0)
+                seeds << QString::fromUtf8(
+                    child.readAllStandardOutput()).trimmed();
+        }
+        check(seeds.count() == 2 && seeds.at(0) != seeds.at(1),
+              QStringLiteral("noise seed differs run-to-run (got %1)")
+                  .arg(seeds.join(QLatin1Char(','))));
+
+        // Exemption bookkeeping — pure C++, no engine needed.
+        protector->clearException(QLatin1String("127.0.0.1"));
+        check(!protector->isExempt(QLatin1String("127.0.0.1")),
+              QLatin1String("exemption list starts clean"));
+        protector->addException(QLatin1String("127.0.0.1"), false);
+        check(protector->isExempt(QLatin1String("127.0.0.1")),
+              QLatin1String("session exemption recorded"));
+        protector->clearException(QLatin1String("127.0.0.1"));
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "fingerprint-inject-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client]() {
+                client->readAll();
+                const QByteArray body =
+                    "<html><body>fingerprint</body></html>";
+                client->write("HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+        });
+        const QString pageUrl = QStringLiteral(
+            "http://127.0.0.1:%1/page").arg(server->serverPort());
+
+        const QString probeSource = QStringLiteral(
+            "(function(){"
+            "var c=document.createElement('canvas');"
+            "c.width=64;c.height=16;"
+            "var x=c.getContext('2d');x.fillStyle='#f60';"
+            "x.fillRect(0,0,64,16);x.fillStyle='#069';"
+            "x.font='12px sans';x.fillText('fp',4,12);"
+            "var glv=null,glr=null;"
+            "try{var g=document.createElement('canvas')"
+            ".getContext('webgl');"
+            "if(g){var e=g.getExtension('WEBGL_debug_renderer_info');"
+            "if(e){glv=g.getParameter(e.UNMASKED_VENDOR_WEBGL);"
+            "glr=g.getParameter(e.UNMASKED_RENDERER_WEBGL);}}}"
+            "catch(ignore){}"
+            "return JSON.stringify({"
+            "canvas:c.toDataURL(),"
+            "hwc:navigator.hardwareConcurrency,"
+            "devmem:(navigator.deviceMemory||0),"
+            "plugins:navigator.plugins.length,"
+            "glv:glv,glr:glr,"
+            "tostr:CanvasRenderingContext2D.prototype"
+            ".getImageData.toString()});})()");
+
+        auto once = [view](std::function<void(bool)> fn) {
+            auto conn = std::make_shared<QMetaObject::Connection>();
+            *conn = QObject::connect(
+                view, &QWebEngineView::loadFinished, view,
+                [conn, fn](bool ok) {
+                    QObject::disconnect(*conn);
+                    fn(ok);
+                });
+        };
+        auto loadAndProbe = [&application, view, pageUrl, probeSource,
+                             once](std::function<void(const QJsonObject &)> cb) {
+            once([view, probeSource, cb](bool ok) {
+                if (!ok) {
+                    cb(QJsonObject());
+                    return;
+                }
+                view->webPage()->runJavaScript(
+                    probeSource,
+                    [cb](const QVariant &result) {
+                        cb(QJsonDocument::fromJson(
+                               result.toString().toUtf8()).object());
+                    });
+            });
+            view->loadUrl(QUrl(pageUrl));
+        };
+
+        auto finish = [&application, &failures,
+                       protector]() mutable {
+            protector->clearException(QLatin1String("127.0.0.1"));
+            qInfo() << "fingerprint-inject-smoke:"
+                    << (failures == 0 ? "PASS" : "FAIL")
+                    << failures << "failures";
+            application.exit(failures == 0 ? 0 : 1);
+        };
+
+        auto baseline = std::make_shared<QJsonObject>();
+        auto armed = std::make_shared<QJsonObject>();
+
+        // Phase 0: unprotected baseline.
+        settings.setValue(
+            QLatin1String("privacy/fingerprintProtection"), false);
+        BrowserProfile::applySettings(profile);
+        loadAndProbe([&application, check, baseline, armed, &settings,
+                      profile, protector, finish, loadAndProbe](
+                         const QJsonObject &probe) mutable {
+            *baseline = probe;
+            check(!probe.isEmpty()
+                      && !probe.value(QLatin1String("canvas"))
+                          .toString().isEmpty(),
+                  QLatin1String("baseline page loaded + canvas read"));
+
+            // Phase 1: armed — the same fixture under the
+            // countermeasures.
+            settings.setValue(
+                QLatin1String("privacy/fingerprintProtection"), true);
+            BrowserProfile::applySettings(profile);
+            loadAndProbe([&application, check, baseline, armed,
+                          protector, finish, loadAndProbe](
+                             const QJsonObject &probe) mutable {
+                *armed = probe;
+                check(!probe.isEmpty(),
+                      QLatin1String("armed page loaded"));
+                check(!probe.value(QLatin1String("canvas"))
+                          .toString().isEmpty()
+                      && probe.value(QLatin1String("canvas"))
+                             != baseline->value(QLatin1String("canvas")),
+                      QLatin1String("canvas readout differs under protection"));
+                check(probe.value(QLatin1String("hwc")).toInt() == 4,
+                      QStringLiteral(
+                          "navigator.hardwareConcurrency normalized (got %1)")
+                          .arg(probe.value(QLatin1String("hwc")).toInt()));
+                check(probe.value(QLatin1String("devmem")).toInt() == 8,
+                      QStringLiteral(
+                          "navigator.deviceMemory normalized (got %1)")
+                          .arg(probe.value(QLatin1String("devmem")).toInt()));
+                check(probe.value(QLatin1String("plugins")).toInt() == 0,
+                      QStringLiteral(
+                          "navigator.plugins empty (got %1)")
+                          .arg(probe.value(QLatin1String("plugins")).toInt()));
+                if (!probe.value(QLatin1String("glv")).isNull()) {
+                    check(probe.value(QLatin1String("glv")).toString()
+                              == QLatin1String("Google Inc. (Intel)"),
+                          QStringLiteral(
+                              "WebGL vendor masked (got %1)")
+                              .arg(probe.value(QLatin1String("glv"))
+                                       .toString()));
+                    check(probe.value(QLatin1String("glr")).toString()
+                              .startsWith(QLatin1String("ANGLE (Intel")),
+                          QStringLiteral(
+                              "WebGL renderer masked (got %1)")
+                              .arg(probe.value(QLatin1String("glr"))
+                                       .toString()));
+                } else {
+                    qInfo() << "fingerprint-inject-smoke: no WebGL"
+                               " context — vendor/renderer checks"
+                               " skipped";
+                }
+                check(probe.value(QLatin1String("tostr")).toString()
+                          .contains(QLatin1String("[native code]")),
+                      QLatin1String(
+                          "patched natives disguise as [native code]"));
+
+                // Phase 2: one seed per session — a reload must
+                // reproduce the same spoofed readouts (uniform
+                // identity, not a new fingerprint per page).
+                loadAndProbe([&application, check, baseline, armed,
+                              protector, finish, loadAndProbe](
+                                 const QJsonObject &probe) mutable {
+                    check(probe.value(QLatin1String("canvas"))
+                              == armed->value(QLatin1String("canvas")),
+                          QLatin1String(
+                              "canvas readout stable across reload"));
+
+                    // Phase 3: a per-site exemption restores the real
+                    // readouts for that host.
+                    protector->addException(
+                        QLatin1String("127.0.0.1"), false);
+                    protector->reinstallOnProfiles();
+                    loadAndProbe([&application, check, baseline,
+                                  finish](const QJsonObject &probe)
+                                     mutable {
+                        check(probe.value(QLatin1String("canvas"))
+                                  == baseline->value(
+                                      QLatin1String("canvas")),
+                              QLatin1String(
+                                  "exempt host gets real canvas"));
+                        check(probe.value(QLatin1String("plugins"))
+                                  == baseline->value(
+                                      QLatin1String("plugins")),
+                              QLatin1String(
+                                  "exempt host gets real plugins"));
+                        finish();
+                    });
+                });
+            });
+        });
+        QTimer::singleShot(90000, &application, [finish]() mutable {
+            qInfo() << "fingerprint-inject-smoke: FAIL (timeout)";
+            finish();
+        });
+        return application.exec();
+    }
+
+    // TELEM02: --telemetry-browse-smoke drives a real browsing session
+    // through the capture proxy in forwarding mode — page navigation,
+    // a search-engine query and a download — then classifies every
+    // endpoint observed during the session.  The browsed hosts are
+    // content; certificate-validation endpoints (OCSP/CRL) are
+    // documented-essential engine traffic; anything else is a
+    // telemetry suspect that fails the run.  A second phase proves the
+    // DNS-prefetch toggle end-to-end: child runs load a fixture page
+    // linking a unique never-visited hostname and the child's netlog
+    // is searched for a resolver event naming it (off = absent,
+    // on = present — the ON control proves the detector works).
+#if defined(Q_OS_UNIX)
+    if (telemetryBrowseSmoke) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "telemetry-browse-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+
+        if (telemetryProxyPort == 0)
+            qWarning() << "telemetry-browse-smoke: capture proxy"
+                          " unavailable — only the socket scan runs";
+
+        // The app-side fetch manager picked the capture proxy up from
+        // the settings written before the application ctor — reload so
+        // a stale value cannot leak in.
+        networkAccessManager->loadSettings();
+
+        const bool prefetchArmed =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+        check(profile->settings()->testAttribute(
+                  QWebEngineSettings::DnsPrefetchEnabled) == prefetchArmed,
+              QStringLiteral("DnsPrefetchEnabled matches pinned value"));
+
+        // Watch for process-tree sockets that bypass the proxy
+        // (QUIC, direct connects, non-proxied DNS) the whole session.
+        auto socketHits = std::make_shared<QStringList>();
+#if defined(Q_OS_LINUX)
+        QTimer *socketPoll = new QTimer(&application);
+        socketPoll->setInterval(250);
+        QObject::connect(socketPoll, &QTimer::timeout, &application,
+                         [socketHits]() {
+            const QSet<QString> endpoints = processRemoteEndpoints();
+            for (const QString &endpoint : endpoints) {
+                if (!socketHits->contains(endpoint))
+                    socketHits->append(endpoint);
+            }
+        });
+        socketPoll->start();
+#endif
+
+        // Browsed targets: two navigation legs (one single-host site,
+        // one search-engine query) plus a download leg, all over the
+        // tapped proxy.  ARORA_TELEMETRY_URLS overrides the set.
+        QStringList urls{
+            QStringLiteral("https://example.com/"),
+            QStringLiteral("https://html.duckduckgo.com/html/?q=arora"),
+        };
+        const QByteArray envUrls = qgetenv("ARORA_TELEMETRY_URLS");
+        if (!envUrls.isEmpty()) {
+            urls = QString::fromUtf8(envUrls).split(
+                QLatin1Char(','), Qt::SkipEmptyParts);
+        }
+
+        QStringList browsedHosts;
+        const auto noteHost = [&browsedHosts](const QUrl &url) {
+            const QString host = url.host().toLower();
+            if (!host.isEmpty() && !browsedHosts.contains(host))
+                browsedHosts.append(host);
+        };
+        for (const QString &text : urls) {
+            const QUrl url(text);
+            noteHost(url);
+            QEventLoop loop;
+            QTimer::singleShot(30000, &loop,
+                               [&loop]() { loop.exit(1); });
+            QObject::connect(view, &QWebEngineView::loadFinished, &loop,
+                             [&loop](bool ok) { loop.exit(ok ? 0 : 2); });
+            view->loadUrl(url);
+            const int rc = loop.exec();
+            QObject::disconnect(view, &QWebEngineView::loadFinished,
+                                &loop, nullptr);
+            noteHost(view->url());
+            check(rc == 0,
+                  QStringLiteral("load %1 (rc %2, final %3)")
+                      .arg(url.toString(), QString::number(rc),
+                           view->url().toString()));
+        }
+
+        // Download leg — the file lands in a scratch dir, never the
+        // operator's real Downloads.
+        const QString downloadDir = QDir::temp().filePath(
+            QStringLiteral("arora-telemetry-dl"));
+        QDir().mkpath(downloadDir);
+        downloadManager->setDownloadDirectory(downloadDir);
+        {
+            const int before = downloadManager->model()->rowCount();
+            downloadManager->download(view->enginePage(),
+                QUrl(QStringLiteral("https://example.com/")), false);
+            QElapsedTimer deadline;
+            deadline.start();
+            bool completed = false;
+            while (deadline.elapsed() < 20000 && !completed) {
+                for (int row = before;
+                     row < downloadManager->model()->rowCount(); ++row) {
+                    completed = downloadManager->model()->data(
+                        downloadManager->model()->index(row),
+                        DownloadModel::CompletedRole).toBool();
+                    if (completed)
+                        break;
+                }
+                if (completed)
+                    break;
+                telemetryWait(250);
+            }
+            check(completed,
+                  QStringLiteral("download leg completed through the proxy"));
+        }
+
+        // Settle: telemetry often fires on a delay after activity.
+        int settleMs =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_SETTLE_MS");
+        if (settleMs <= 0)
+            settleMs = 15000;
+        telemetryWait(settleMs);
+
+        // Classification — every endpoint the tap observed gets a
+        // verdict.  Content = shares the registrable domain of a
+        // browsed host; essential = engine-managed certificate
+        // validation (OCSP/CRL — refusing it would weaken TLS);
+        // anything else fails the run.
+        const auto domainOf = [](const QString &host) {
+            const QStringList labels = host.split(QLatin1Char('.'));
+            if (labels.count() >= 2)
+                return labels.mid(labels.count() - 2).join(QLatin1Char('.'));
+            return host;
+        };
+        QStringList extraContent;
+        const QByteArray envContent =
+            qgetenv("ARORA_TELEMETRY_CONTENT_HOSTS");
+        for (const QByteArray &entry : envContent.split(',')) {
+            const QString host =
+                QString::fromUtf8(entry).trimmed().toLower();
+            if (!host.isEmpty())
+                extraContent.append(host);
+        }
+        const auto isContent = [&](const QString &host) {
+            for (const QString &browsed : browsedHosts) {
+                if (host == browsed || host.endsWith(QLatin1Char('.') + browsed)
+                    || domainOf(host) == domainOf(browsed))
+                    return true;
+            }
+            for (const QString &extra : extraContent) {
+                if (host == extra
+                    || host.endsWith(QLatin1Char('.') + extra))
+                    return true;
+            }
+            return false;
+        };
+        const auto isEssential = [](const QString &host) {
+            // OCSP/CRL revocation fetches and certificate-transparency
+            // log endpoints — engine-managed on behalf of the user.
+            return host.contains(QLatin1String("ocsp"))
+                || host.contains(QLatin1String("crl"))
+                || host.endsWith(QLatin1String(".pki.goog"));
+        };
+
+        QStringList observedHosts;
+        QSet<QString> upstreams;
+        {
+            const QMutexLocker lock(&s_telemetryMutex);
+            observedHosts = s_telemetryHosts;
+            upstreams = s_telemetryUpstream;
+        }
+        int suspects = 0;
+        for (const QString &endpoint : observedHosts) {
+            const int colon = endpoint.lastIndexOf(QLatin1Char(':'));
+            const QString host = endpoint.left(colon);
+            QString verdict;
+            if (isContent(host))
+                verdict = QStringLiteral("content");
+            else if (isEssential(host))
+                verdict = QStringLiteral("essential:cert-validation");
+            else {
+                verdict = QStringLiteral("NON-CONTENT");
+                ++suspects;
+            }
+            qInfo() << "telemetry-browse-smoke: endpoint" << endpoint
+                    << "->" << verdict;
+        }
+        for (const QString &endpoint : *socketHits) {
+            const int colon = endpoint.lastIndexOf(QLatin1Char(':'));
+            const QString port = endpoint.mid(colon + 1);
+            QString verdict;
+            // The forwarding proxy dials upstreams in-process, so its
+            // own connects show up in the /proc scan; and every
+            // upstream hostname it resolves needs system DNS (:53).
+            // Both are expected plumbing, not bypasses.
+            if (upstreams.contains(endpoint))
+                verdict = QStringLiteral("proxied-upstream");
+            else if (port == QLatin1String("53")
+                     || port == QLatin1String("853"))
+                verdict = QStringLiteral("essential:system-dns");
+            else {
+                verdict = QStringLiteral("NON-CONTENT");
+                ++suspects;
+            }
+            qInfo() << "telemetry-browse-smoke: direct socket"
+                    << endpoint << "->" << verdict;
+        }
+        check(suspects == 0,
+              QStringLiteral("%1 non-content endpoint(s) — every one is"
+                             " unsolicited outbound traffic")
+                  .arg(suspects));
+
+        // DNS-prefetch probe: a child run loads a fixture page whose
+        // only reference to a unique .invalid hostname is a
+        // rel=dns-prefetch link + a plain anchor — a resolver event for
+        // that name in the child's netlog means the engine pre-resolved
+        // a site the user never visited.  Run twice: pinned OFF must
+        // produce nothing, the ON control must — an ON run with no
+        // observation means the netlog detector itself is broken, not
+        // that prefetch is safely off.
+        const QString probeTag = QStringLiteral("telem02-%1")
+            .arg(QCoreApplication::applicationPid());
+        const auto prefetchProbe = [&](bool armed) {
+            const QString probeHost =
+                probeTag + QLatin1String(".invalid");
+            const QString logPath = QDir::temp().filePath(
+                QStringLiteral("arora-telemetry-netlog-%1.json")
+                    .arg(armed ? QLatin1String("on")
+                               : QLatin1String("off")));
+            QFile::remove(logPath);
+
+            QSettings settings;
+            settings.setValue(QLatin1String("privacy/dnsPrefetch"),
+                              armed);
+            settings.sync();
+
+            QProcessEnvironment env =
+                QProcessEnvironment::systemEnvironment();
+            // The inherited env carries this run's --proxy-server —
+            // the child must go direct so its page load cannot poke
+            // the parent's tap.  Its own profile setup re-adds the
+            // privacy kill-flags before the engine latches.
+            env.insert(QStringLiteral("QTWEBENGINE_CHROMIUM_FLAGS"),
+                       QStringLiteral("--log-net-log=%1"
+                                      " --net-log-capture-mode=Everything")
+                           .arg(logPath));
+            env.insert(QStringLiteral("ARORA_TELEMETRY_PROBE_HOST"),
+                       probeHost);
+            env.insert(QStringLiteral("ARORA_TELEMETRY_PREFETCH"),
+                       armed ? QStringLiteral("1")
+                             : QStringLiteral("0"));
+
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.setProcessEnvironment(env);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList{QStringLiteral(
+                            "--telemetry-prefetch-child-smoke")});
+            const bool childOk = child.waitForFinished(90000)
+                && child.exitStatus() == QProcess::NormalExit
+                && child.exitCode() == 0;
+            if (!childOk)
+                return QStringLiteral("child-failed");
+            QFile log(logPath);
+            return (log.open(QIODevice::ReadOnly)
+                    && QString::fromUtf8(log.readAll())
+                           .contains(probeHost))
+                ? QStringLiteral("resolved")
+                : QStringLiteral("not-resolved");
+        };
+        const QString offVerdict = prefetchProbe(false);
+        const QString onVerdict = prefetchProbe(true);
+        qInfo() << "telemetry-browse-smoke: prefetch probe off:"
+                << offVerdict << " on:" << onVerdict;
+        check(offVerdict == QLatin1String("not-resolved"),
+              QStringLiteral("prefetch off: probe host unresolved"
+                             " (got %1)").arg(offVerdict));
+        check(onVerdict == QLatin1String("resolved"),
+              QStringLiteral("prefetch on control: probe host resolved"
+                             " (got %1 — detector broken, not safe)")
+                  .arg(onVerdict));
+
+        // The pinned settings + capture proxy die with the per-run
+        // store — only the scratch download dir needs a sweep.
+        QDir(downloadDir).removeRecursively();
+
+        qInfo() << "telemetry-browse-smoke:"
+                << (failures == 0 ? "PASS" : "FAIL") << failures
+                << "failures";
+        return failures == 0 ? 0 : 1;
+    }
+#endif
+
+    // PDF01: in-browser PDF viewer + sanitize-on-view pipeline.
+    // Covers the settings defaults + toggle round-trips, the rustcore
+    // rewrite unit pass, and the end-to-end loopback flow: a hostile
+    // fixture navigated to is fetched through the page's profile,
+    // sanitized, and displayed from the managed temp dir; a save-as
+    // download of the same url keeps raw bytes; sanitize off reverts
+    // to the raw viewer; a non-PDF body on a .pdf url falls back to
+    // the real response.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--pdf-smoke"))) {
+        // PDF01's assertions cover the engine-viewer hand-off —
+        // PDF02's shell view is pinned off here so the staged
+        // file:// path stays what this smoke measures.
+        QSettings().setValue(QLatin1String("privacy/pdfShellView"), false);
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass) {
+            qInfo() << "pdf-smoke:" << (pass ? "PASS" : "FAIL") << what;
+            ok = ok && pass;
+        };
+
+        // Adversarial fixture: structurally valid PDF whose page tree
+        // still renders, carrying JS, auto-exec triggers, a Launch
+        // action, embedded files, XFA and a remote-submit action.
+        const QByteArray pdfBytes = []() {
+            const QList<QByteArray> objs = {
+                "<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R"
+                " /AA << /O 5 0 R >>"
+                " /Names << /EmbeddedFiles 7 0 R >>"
+                " /AcroForm << /Fields [] /XFA << /preamble [] >> >> >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 << /Type /Font"
+                " /Subtype /Type1 /BaseFont /Helvetica >> >> >>"
+                " /Contents 4 0 R /Annots [9 0 R] >>",
+                "<< /Length 30 >>\nstream\nBT /F1 12 Tf 10 100 Td (x) Tj ET\nendstream",
+                "<< /Type /Action /S /JavaScript /JS (app.alert('pwned')) >>",
+                "<< /Type /Action /S /Launch /F (calc.exe) >>",
+                "<< /Names [(a) << /EF << /F 10 0 R >> /F (a) >>] >>",
+                "<< /Type /Action /S /SubmitForm /F (http://e/c) >>",
+                "<< /Subtype /Link /Rect [0 0 9 9] /A 6 0 R >>",
+                "<< /Type /EmbeddedFile /Length 4 >>\nstream\nevil\nendstream",
+            };
+            QByteArray out("%PDF-1.4\n");
+            QList<int> offsets;
+            for (int i = 0; i < objs.count(); ++i) {
+                offsets << out.size();
+                out += QByteArray::number(i + 1) + " 0 obj\n"
+                    + objs.at(i) + "\nendobj\n";
+            }
+            const int xref = out.size();
+            out += "xref\n0 " + QByteArray::number(objs.count() + 1)
+                + "\n0000000000 65535 f \n";
+            for (const int off : offsets)
+                out += QByteArray::number(off).rightJustified(10, '0')
+                    + " 00000 n \n";
+            out += "trailer\n<</Size " + QByteArray::number(objs.count() + 1)
+                + " /Root 1 0 R>>\nstartxref\n"
+                + QByteArray::number(xref) + "\n%%EOF\n";
+            return out;
+        }();
+        const QList<QByteArray> dangerNeedles = {
+            "JavaScript", "Launch", "OpenAction", "EmbeddedFiles",
+            "XFA", "SubmitForm", "app.alert", "pwned",
+        };
+
+        // (c) unit-level rewrite pass.
+        const QByteArray cleaned = PdfSupport::sanitize(pdfBytes);
+        check(QStringLiteral("sanitize returns a standalone pdf"),
+              cleaned.startsWith("%PDF-"));
+        for (const QByteArray &needle : dangerNeedles)
+            check(QStringLiteral("sanitize strips ")
+                      + QString::fromLatin1(needle),
+                  !cleaned.contains(needle));
+        check(QStringLiteral("non-pdf input refused"),
+              PdfSupport::sanitize("<html>not a pdf</html>").isEmpty());
+        check(QStringLiteral("looksLikePdfUrl"),
+              PdfSupport::looksLikePdfUrl(
+                  QUrl(QLatin1String("http://h/A.PDF?x=1")))
+              && !PdfSupport::looksLikePdfUrl(
+                  QUrl(QLatin1String("http://h/a.txt"))));
+
+        // (a) defaults + toggle round-trips.
+        QSettings settings;
+        check(QStringLiteral("viewer+sanitize default on"),
+              PdfSupport::viewerEnabled() && PdfSupport::sanitizeEnabled());
+        check(QStringLiteral("profile PdfViewerEnabled on"),
+              profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        settings.setValue(QLatin1String("privacy/pdfViewer"), false);
+        BrowserProfile::applySettings(profile);
+        check(QStringLiteral("viewer toggle off -> attribute off"),
+              !profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        check(QStringLiteral("viewer off -> shouldIntercept false"),
+              !PdfSupport::shouldIntercept(
+                  QUrl(QLatin1String("http://h/a.pdf")),
+                  QWebEnginePage::NavigationTypeLinkClicked));
+        settings.setValue(QLatin1String("privacy/pdfViewer"), true);
+        BrowserProfile::applySettings(profile);
+        check(QStringLiteral("viewer toggle on -> attribute on"),
+              profile->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        settings.setValue(QLatin1String("privacy/pdfSanitize"), false);
+        check(QStringLiteral("sanitize toggle off"),
+              !PdfSupport::sanitizeEnabled());
+        settings.setValue(QLatin1String("privacy/pdfSanitize"), true);
+        check(QStringLiteral("sanitize toggle on"),
+              PdfSupport::sanitizeEnabled());
+        check(QStringLiteral("form-post pdf nav not intercepted"),
+              !PdfSupport::shouldIntercept(
+                  QUrl(QLatin1String("http://h/a.pdf")),
+                  QWebEnginePage::NavigationTypeFormSubmitted));
+
+        // Tor: the pipeline fetches with QWebEnginePage::download()
+        // on the viewing page's own profile and claim() matches the
+        // request back by page identity, so a tor window's managed
+        // SOCKS routing and OTR storage apply by construction — the
+        // staged bytes can never arrive through another profile's
+        // stack.  The viewer attribute itself follows the same
+        // toggle on the tor profile; bring it up the way a tor
+        // window would and verify.
+        QWebEngineProfile *torProf = BrowserProfile::torProfile();
+        BrowserApplication::prepareProfile(torProf);
+        check(QStringLiteral("tor profile PdfViewerEnabled on"),
+              torProf->settings()->testAttribute(
+                  QWebEngineSettings::PdfViewerEnabled));
+        check(QStringLiteral("tor profile is off the record"),
+              torProf->isOffTheRecord());
+
+        // (b)+(d) end-to-end over loopback.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "pdf-smoke: FAIL (listen)" << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        auto hits = std::make_shared<QHash<QString, int>>();
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, hits, pdfBytes]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            auto *buffer = new QByteArray;
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, hits, pdfBytes, buffer]() {
+                *buffer += client->readAll();
+                // The request head must arrive whole before the
+                // path is parsed — TCP may deliver the header in
+                // fragments (the rustdl engine's several small
+                // writes hit this where Chromium's single write
+                // did not), and answering off a truncated line
+                // serves the wrong body to the segmented download.
+                const int headEnd = buffer->indexOf("\r\n\r\n");
+                if (headEnd < 0)
+                    return;
+                // The request target is the request line's second
+                // token — the method is variable length (the rustdl
+                // engine's HEAD probe was parsed as " /doc.pdf" by a
+                // fixed "GET " skip and answered the wrong body).
+                const QByteArray line =
+                    buffer->left(buffer->indexOf("\r\n"));
+                const QList<QByteArray> tokens = line.split(' ');
+                QByteArray path = tokens.size() > 1
+                    ? tokens.at(1) : QByteArray();
+                (*hits)[QString::fromLatin1(path)] += 1;
+                QByteArray body, mime;
+                if (path == "/doc.pdf") {
+                    mime = "application/pdf";
+                    body = pdfBytes;
+                } else {
+                    mime = "text/html";
+                    body = "<html><head><title>fake-pdf-landing</title>"
+                           "</head><body>not a pdf</body></html>";
+                }
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                    + "\r\nContent-Length: " + QByteArray::number(body.size())
+                    + "\r\nConnection: close\r\n\r\n" + body);
+                client->disconnectFromHost();
+            });
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [buffer]() { delete buffer; });
+        });
+        const QUrl pdfUrl(QStringLiteral("http://127.0.0.1:%1/doc.pdf").arg(port));
+        const QUrl fakeUrl(QStringLiteral("http://127.0.0.1:%1/fake.pdf").arg(port));
+        const QString downloadDir = QDir::temp().filePath(
+            QStringLiteral("arora-pdf-smoke-%1").arg(QCoreApplication::applicationPid()));
+
+        auto phase = std::make_shared<int>(0);
+        auto gotLoad = std::make_shared<bool>(false);
+        auto ticks = std::make_shared<int>(0);
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [gotLoad](bool ok) {
+            if (ok)
+                *gotLoad = true;
+        });
+        QTimer *poll = new QTimer(&application);
+        const auto finish = [&application, poll, &ok](bool pass) {
+            poll->stop();
+            qInfo() << "pdf-smoke:" << (pass && ok ? "PASS" : "FAIL");
+            application.exit(pass && ok ? 0 : 1);
+        };
+        QObject::connect(poll, &QTimer::timeout, &application,
+            [&, phase, gotLoad, ticks, hits, pdfUrl, fakeUrl,
+             downloadDir, dangerNeedles, server]() {
+            if (++*ticks > 200) {   // ~60s ceiling
+                qInfo() << "pdf-smoke: FAIL (timeout in phase" << *phase
+                        << ") url:" << view->url();
+                finish(false);
+                return;
+            }
+            switch (*phase) {
+            case 0: {
+                // Sanitized viewing: the nav is refused, the profile
+                // fetches the body, and the tab ends on a managed
+                // file:// copy that already lost the dangerous keys.
+                const QUrl u = view->url();
+                if (!u.isLocalFile()
+                        || !PdfSupport::isManagedPath(u.toLocalFile()))
+                    return;
+                QFile f(u.toLocalFile());
+                if (!f.open(QIODevice::ReadOnly))
+                    return;
+                const QByteArray bytes = f.readAll();
+                check(QStringLiteral("sanitized view file is a pdf"),
+                      bytes.startsWith("%PDF-"));
+                for (const QByteArray &needle : dangerNeedles)
+                    check(QStringLiteral("viewed pdf strips ")
+                              + QString::fromLatin1(needle),
+                          !bytes.contains(needle));
+                qInfo() << "pdf-smoke: interceptor requestsSeen:"
+                        << PrivacyRequestInterceptor::requestsSeen()
+                        << "doc.pdf hits:"
+                        << hits->value(QLatin1String("/doc.pdf"));
+                check(QStringLiteral("fetch went through profile network"),
+                      hits->value(QStringLiteral("/doc.pdf")) >= 1);
+                // The staged viewer is file://-origin — a hostile
+                // pdf's local links must not ride it into local
+                // content, while remote links still pass.
+                check(QStringLiteral("viewer file:// link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("file:///etc/passwd"))));
+                check(QStringLiteral("viewer dir link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("file:///etc/"))));
+                check(QStringLiteral("viewer arora-file link refused"),
+                      !PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("arora-file:///etc/"))));
+                check(QStringLiteral("viewer https link allowed"),
+                      PdfSupport::managedViewerNavAllowed(u,
+                          QUrl(QLatin1String("https://example.com/"))));
+                check(QStringLiteral("viewer staged reload allowed"),
+                      PdfSupport::managedViewerNavAllowed(u, u));
+                check(QStringLiteral("non-viewer page unclamped"),
+                      PdfSupport::managedViewerNavAllowed(
+                          QUrl(QLatin1String("https://example.com/")),
+                          QUrl(QLatin1String("file:///etc/passwd"))));
+                // (d) the download path keeps raw bytes.
+                QSettings().setValue(
+                    QLatin1String("downloadmanager/alwaysPromptForFileName"), false);
+                QSettings().setValue(
+                    QLatin1String("downloadmanager/external"), false);
+                downloadManager->setDownloadDirectory(downloadDir);
+                // A user "save" from a pdf page is issued by the shell,
+                // not the viewing document — use a fresh page on the
+                // same profile (a download initiated from the local
+                // file:// viewer document would be refused by the
+                // engine before a byte is written).
+                QWebEnginePage *savePage =
+                    new QWebEnginePage(view->webPage()->profile(), view);
+                downloadManager->download(
+                    WebEnginePageAdapter::forPage(savePage),
+                    pdfUrl, false);
+                *phase = 1;
+                return;
+            }
+            case 1: {
+                const QDir dir(downloadDir);
+                const QStringList files = dir.entryList(
+                    QStringList{QStringLiteral("*.pdf")}, QDir::Files);
+                if (files.isEmpty())
+                    return;
+                QFile f(dir.filePath(files.first()));
+                if (!f.open(QIODevice::ReadOnly))
+                    return;
+                const QByteArray bytes = f.readAll();
+                check(QStringLiteral("download path saved raw pdf"),
+                      bytes.contains("app.alert")
+                          && bytes.contains("/Launch"));
+                // sanitize off -> the raw viewer path is unchanged.
+                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), false);
+                *gotLoad = false;
+                *phase = 2;
+                view->loadUrl(pdfUrl);
+                return;
+            }
+            case 2: {
+                if (view->url() != pdfUrl || !*gotLoad)
+                    return;
+                check(QStringLiteral("sanitize off -> raw viewer at url"),
+                      view->url() == pdfUrl);
+                QSettings().setValue(QLatin1String("privacy/pdfSanitize"), true);
+                *gotLoad = false;
+                *phase = 3;
+                view->loadUrl(fakeUrl);
+                return;
+            }
+            case 3: {
+                // A non-PDF body on a .pdf url takes the one-shot
+                // bypass and renders as its true type.
+                if (view->url() != fakeUrl || !*gotLoad)
+                    return;
+                check(QStringLiteral("non-pdf fallback renders html"),
+                      view->title().contains(
+                          QLatin1String("fake-pdf-landing")));
+                finish(true);
+                return;
+            }
+            }
+        });
+        poll->start(300);
+        PrivacyRequestInterceptor::resetRequestsSeen();
+        view->loadUrl(pdfUrl);
+
+        // The toggles die with the per-run store — only the
+        // downloaded raw file needs a sweep.
+        auto *restorer = new QObject(&application);
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         restorer, [downloadDir]() {
+            QDir(downloadDir).removeRecursively();
+        });
+    }
+
+#ifdef ARORA_RUSTCORE
+    // PDF02: the shell-owned, engine-neutral document view.  Covers:
+    //   (a) the document client — open/geometry/raster/find through
+    //       whichever backend launched (bwrap-worker when a sandbox
+    //       exists, in-process otherwise);
+    //   (b) the canvas — page nav, zoom, page-granular find, and the
+    //       engine-free print handoff (rasters painted into a
+    //       QPrinter, verified as a real pdf on disk);
+    //   (c) engine neutrality — the identical PdfView hosted inside
+    //       an EngineTab with no WebEngine backend at all;
+    //   (d) the worker sandbox itself — probe_paths report $HOME and
+    //       the host data dir as invisible inside the namespace;
+    //   (e) end-to-end — a .pdf nav is refused, fetched through the
+    //       profile, sanitized, staged, and shown by the shell view
+    //       while the engine page never touches the staged file.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--pdfview-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass) {
+            qInfo() << "pdfview-smoke:" << (pass ? "PASS" : "FAIL")
+                    << what;
+            ok = ok && pass;
+        };
+
+        // Two-page fixture: text extracts page-granular ("hello" on
+        // p1, "goodbye" on p2) and the catalog carries the hostile
+        // keys PDF01's sanitizer strips.
+        const QByteArray pdfBytes = []() {
+            const QByteArray stream1 =
+                "BT /F1 24 Tf 50 150 Td (hello world) Tj ET";
+            const QByteArray stream2 =
+                "BT /F1 24 Tf 50 150 Td (goodbye) Tj ET";
+            const QList<QByteArray> objs = {
+                "<< /Type /Catalog /Pages 2 0 R /OpenAction 6 0 R"
+                " /Names << /EmbeddedFiles 7 0 R >> >>",
+                "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 5 0 R >> >>"
+                " /Contents 8 0 R >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 5 0 R >> >>"
+                " /Contents 9 0 R >>",
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Action /S /JavaScript /JS (app.alert('pwned')) >>",
+                "<< /Names [(a) << /EF << /F 10 0 R >> /F (a) >>] >>",
+                QByteArray("<< /Length ") + QByteArray::number(stream1.size())
+                    + " >>\nstream\n" + stream1 + "\nendstream",
+                QByteArray("<< /Length ") + QByteArray::number(stream2.size())
+                    + " >>\nstream\n" + stream2 + "\nendstream",
+                "<< /Type /EmbeddedFile /Length 4 >>\nstream\nevil\nendstream",
+            };
+            QByteArray out("%PDF-1.4\n");
+            QList<int> offsets;
+            for (int i = 0; i < objs.count(); ++i) {
+                offsets << out.size();
+                out += QByteArray::number(i + 1) + " 0 obj\n"
+                    + objs.at(i) + "\nendobj\n";
+            }
+            const int xref = out.size();
+            out += "xref\n0 " + QByteArray::number(objs.count() + 1)
+                + "\n0000000000 65535 f \n";
+            for (const int off : offsets)
+                out += QByteArray::number(off).rightJustified(10, '0')
+                    + " 00000 n \n";
+            out += "trailer\n<</Size " + QByteArray::number(objs.count() + 1)
+                + " /Root 1 0 R>>\nstartxref\n"
+                + QByteArray::number(xref) + "\n%%EOF\n";
+            return out;
+        }();
+        const QList<QByteArray> dangerNeedles = {
+            "JavaScript", "OpenAction", "EmbeddedFiles", "app.alert",
+        };
+
+        // Stage the sanitized bytes the way the pipeline would.
+        const QString staged = PdfSupport::tempDirPath()
+            + QLatin1String("/pdfview-smoke.pdf");
+        {
+            const QByteArray cleaned = PdfSupport::sanitize(pdfBytes);
+            check(QStringLiteral("fixture sanitizes to a pdf"),
+                  cleaned.startsWith("%PDF-"));
+            for (const QByteArray &needle : dangerNeedles)
+                check(QStringLiteral("staged strips ")
+                          + QString::fromLatin1(needle),
+                      !cleaned.contains(needle));
+            QFile out(staged);
+            check(QStringLiteral("staged write"),
+                  out.open(QIODevice::WriteOnly)
+                      && out.write(cleaned) == cleaned.size());
+            out.close();
+            QFile::setPermissions(staged,
+                QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        }
+
+        // (a)+(b): direct widget checks.
+        {
+            PdfView *pdf = new PdfView;
+            pdf->resize(800, 600);
+            pdf->show();
+            {
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf, &PdfView::documentReady,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf, &PdfView::documentFailed,
+                                 &loop, [&loop](const QString &msg) {
+                    qInfo() << "pdfview-smoke: open failed:" << msg;
+                    loop.quit();
+                });
+                pdf->setDocument(staged,
+                    QUrl(QLatin1String("http://h/doc.pdf")));
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("document opens"),
+                  pdf->isReady());
+            qInfo() << "pdfview-smoke: raster backend:"
+                    << pdf->backendName();
+            check(QStringLiteral("two pages"),
+                  pdf->client()
+                      && pdf->client()->pageCount() == 2);
+            check(QStringLiteral("page geometry"),
+                  pdf->client()
+                      && pdf->client()->pageSize(0).width() > 0);
+            check(QStringLiteral("page rasters to an image"),
+                  pdf->client()
+                      && !pdf->client()->renderPageSync(0, 1.5).isNull());
+            check(QStringLiteral("canvas page nav"),
+                  pdf->canvas()->pageCount() == 2
+                      && (pdf->canvas()->goToPage(1),
+                          pdf->canvas()->currentPage() == 1));
+            check(QStringLiteral("zoom applies"),
+                  (pdf->canvas()->setZoom(2.0),
+                   qAbs(pdf->canvas()->zoom() - 2.0) < 0.001));
+
+            int hitPage = -2;
+            int hitTotal = 0;
+            {
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf->client(),
+                    &PdfDocumentClient::findResult,
+                    &loop, [&](qint64, int page, int total) {
+                    hitPage = page;
+                    hitTotal = total;
+                    loop.quit();
+                });
+                pdf->client()->findText(
+                    QStringLiteral("goodbye"), 0, 1);
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("find lands on page 2"),
+                  hitPage == 1 && hitTotal == 1);
+
+            // Print handoff: rasters painted through the client into
+            // a QPrinter — no engine involved anywhere.
+            const QString printPath = QDir::temp().filePath(
+                QStringLiteral("arora-pdfview-print-%1.pdf")
+                    .arg(QCoreApplication::applicationPid()));
+            QPrinter printer;
+            printer.setOutputFormat(QPrinter::PdfFormat);
+            printer.setOutputFileName(printPath);
+            QString printError;
+            check(QStringLiteral("print handoff paints"),
+                  pdf->canvas()->printPages(&printer, &printError));
+            QFile printed(printPath);
+            check(QStringLiteral("print output is a pdf"),
+                  printed.open(QIODevice::ReadOnly)
+                      && printed.read(5) == "%PDF-"
+                      && printed.size() > 200);
+            printed.close();
+            QFile::remove(printPath);
+            delete pdf;
+        }
+
+        // (c) engine-neutral hosting: an EngineTab with no backend
+        // still shows the same widget — servo's tab never needs a
+        // pdf renderer of its own.
+        {
+            EngineTab tab(nullptr, nullptr);
+            tab.resize(640, 480);
+            tab.show();
+            tab.showPdfDocument(staged,
+                QUrl(QLatin1String("http://h/doc.pdf")));
+            check(QStringLiteral("enginetab hosts the pdf view"),
+                  tab.pdfView() != nullptr);
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            QObject::connect(&timeout, &QTimer::timeout,
+                             &loop, &QEventLoop::quit);
+            if (tab.pdfView()) {
+                QObject::connect(tab.pdfView(), &PdfView::documentReady,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(tab.pdfView(), &PdfView::documentFailed,
+                                 &loop, [&loop](const QString &msg) {
+                    qInfo() << "pdfview-smoke: enginetab failed:" << msg;
+                    loop.quit();
+                });
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("enginetab document ready"),
+                  tab.pdfView() && tab.pdfView()->isReady());
+        }
+
+        // (d) the worker sandbox sees no $HOME and none of the host
+        // data dir — only /arora-rt mounts and system roots.
+        if (!SandboxManager::bwrapPath().isEmpty()) {
+            QHash<QString, bool> probes;
+            QString probeError;
+            const QStringList paths = {
+                QDir::homePath(),
+                PdfSupport::tempDirPath(),
+                QStringLiteral("/usr"),
+                BwrapGenerator::pdfWorkDirPath(),
+                BwrapGenerator::pdfDocumentPath(),
+            };
+            const bool probed = PdfDocumentClient::probeWorker(
+                paths, &probes, &probeError);
+            check(QStringLiteral("worker probe ran"),
+                  probed);
+            if (probed) {
+                check(QStringLiteral("$HOME hidden inside worker"),
+                      !probes.value(QDir::homePath(), true));
+                check(QStringLiteral("data dir hidden inside worker"),
+                      !probes.value(PdfSupport::tempDirPath(), true));
+                check(QStringLiteral("system root readable"),
+                      probes.value(QStringLiteral("/usr"), false));
+                check(QStringLiteral("work dir mounted"),
+                      probes.value(BwrapGenerator::pdfWorkDirPath(),
+                                   false));
+            }
+        } else {
+            qInfo() << "pdfview-smoke: SKIP sandbox probes (no bwrap)";
+        }
+
+        // (e) end-to-end over loopback: the nav is refused, the
+        // profile fetches + sanitizes + stages, and the SHELL view
+        // opens — the engine page never navigates to the staged file.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "pdfview-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, pdfBytes]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            auto *buffer = new QByteArray;
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, pdfBytes, buffer]() {
+                *buffer += client->readAll();
+                // Answer once the request head is complete —
+                // fragmented TCP delivery would otherwise get one
+                // reply per segment.
+                if (buffer->indexOf("\r\n\r\n") < 0)
+                    return;
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: "
+                    "application/pdf\r\nContent-Length: "
+                    + QByteArray::number(pdfBytes.size())
+                    + "\r\nConnection: close\r\n\r\n" + pdfBytes);
+                client->disconnectFromHost();
+            });
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [buffer]() { delete buffer; });
+        });
+        const QUrl pdfUrl(QStringLiteral(
+            "http://127.0.0.1:%1/doc.pdf").arg(port));
+
+        auto ticks = std::make_shared<int>(0);
+        QTimer *poll = new QTimer(&application);
+        const auto finish = [&application, poll, &ok](bool pass) {
+            poll->stop();
+            qInfo() << "pdfview-smoke:" << (pass && ok ? "PASS" : "FAIL");
+            application.exit(pass && ok ? 0 : 1);
+        };
+        QObject::connect(poll, &QTimer::timeout, &application,
+            [&, ticks, dangerNeedles]() {
+            if (++*ticks > 200) {   // ~60s ceiling
+                qInfo() << "pdfview-smoke: FAIL (timeout)";
+                finish(false);
+                return;
+            }
+            PdfView *pdf = view->pdfView();
+            if (!pdf || !pdf->isReady())
+                return;
+            // The shell view opened the staged copy — the engine
+            // page under it never committed a pdf navigation.
+            check(QStringLiteral("engine page kept off the pdf"),
+                  !view->url().isLocalFile());
+            QFile stagedFile(pdf->localPath());
+            check(QStringLiteral("view shows a managed staged file"),
+                  PdfSupport::isManagedPath(pdf->localPath())
+                      && stagedFile.open(QIODevice::ReadOnly));
+            if (stagedFile.isOpen()) {
+                const QByteArray bytes = stagedFile.readAll();
+                stagedFile.close();
+                check(QStringLiteral("viewed pdf is sanitized"),
+                      bytes.startsWith("%PDF-"));
+                for (const QByteArray &needle : dangerNeedles)
+                    check(QStringLiteral("viewed strips ")
+                              + QString::fromLatin1(needle),
+                          !bytes.contains(needle));
+            }
+            check(QStringLiteral("e2e page count"),
+                  pdf->client()
+                      && pdf->client()->pageCount() == 2);
+            finish(true);
+        });
+        poll->start(300);
+        view->loadUrl(pdfUrl);
+        return application.exec();
+    }
+#endif
+
+    // TELEM02: child half of the DNS-prefetch probe — boots with
+    // privacy/dnsPrefetch pre-pinned by the parent and a netlog path
+    // in QTWEBENGINE_CHROMIUM_FLAGS, serves a fixture page that
+    // references ARORA_TELEMETRY_PROBE_HOST only via rel=dns-prefetch
+    // and a plain anchor, loads it, and waits long enough for a
+    // resolver job to appear in the log before exiting.
+    if (args.contains(QLatin1String("--telemetry-prefetch-child-smoke"))) {
+        const QString probeHost = QString::fromUtf8(
+            qgetenv("ARORA_TELEMETRY_PROBE_HOST"));
+        const bool armed =
+            qEnvironmentVariableIntValue("ARORA_TELEMETRY_PREFETCH") == 1;
+        if (probeHost.isEmpty()) {
+            qInfo() << "telemetry-prefetch-child: FAIL (no probe host)";
+            return 1;
+        }
+        if (profile->settings()->testAttribute(
+                QWebEngineSettings::DnsPrefetchEnabled) != armed) {
+            qInfo() << "telemetry-prefetch-child: FAIL (attribute"
+                    << "mismatch, armed=" << armed << ")";
+            return 1;
+        }
+
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "telemetry-prefetch-child: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, probeHost]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            const QByteArray body =
+                "<html><head><title>prefetch-probe</title>"
+                "<link rel=\"dns-prefetch\" href=\"//" +
+                probeHost.toUtf8() + "\">"
+                "</head><body><a href=\"https://" +
+                probeHost.toUtf8() + "/x\">probe</a></body></html>";
+            client->write("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                          "Content-Length: "
+                          + QByteArray::number(body.size())
+                          + "\r\nConnection: close\r\n\r\n" + body);
+            client->disconnectFromHost();
+        });
+
+        QObject::connect(view, &QWebEngineView::loadFinished,
+                         &application, [&application](bool) {
+            // Prefetch is asynchronous to the load — give the resolver
+            // a generous window before the run ends (the netlog file
+            // flushes on exit).
+            QTimer::singleShot(8000, &application,
+                               [&application]() { application.exit(0); });
+        });
+        QTimer::singleShot(30000, &application, [&application]() {
+            qInfo() << "telemetry-prefetch-child: FAIL (load timeout)";
+            application.exit(1);
+        });
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/probe")
+                           .arg(server->serverPort())));
+        return application.exec();
+    }
+
     // Headless verification for TELEM01: a clean launch must produce
     // zero non-user-initiated connections.  Both network stacks were
     // pointed at a loopback capture proxy — Chromium through the
@@ -9208,6 +13025,489 @@ int main(int argc, char **argv)
             application.exit(pass ? 0 : 1);
         });
         return application.exec();
+    }
+
+    // SEC23: external-URL ingress — every untrusted lane (the argv
+    // operand, the single-instance socket and the QDesktopServices
+    // 'http' handler) must funnel through the same
+    // WebView::isUrlAllowedOnUntrustedInput gate, control-channel
+    // messages must never be reachable from a url-shaped payload, a
+    // --tor process must stay outside the single-instance handshake
+    // and a forwarded url must land on a profile at least as private
+    // as the receiving context.  Synchronous where possible — the
+    // lanes are exercised through the same entry points the real
+    // code uses.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--ingress-smoke"))) {
+        int failures = 0;
+        const auto check = [&failures](bool ok, const QString &what) {
+            qInfo() << "ingress-smoke:" << what << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++failures;
+        };
+        const auto waitFor = [](const std::function<bool()> &predicate,
+                                int timeoutMs) -> bool {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < timeoutMs) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (predicate())
+                    return true;
+                telemetryWait(10);
+            }
+            return predicate();
+        };
+        // Modal auto-dismisser: nothing here should ever raise a
+        // prompt — if an unexpected consent dialog appears anyway,
+        // answering it Cancel keeps the run from hanging instead of
+        // silently allowing an external handoff.
+        QTimer dismisser;
+        QObject::connect(&dismisser, &QTimer::timeout, &application,
+                         []() {
+            QWidget *modal = QApplication::activeModalWidget();
+            if (QMessageBox *box = qobject_cast<QMessageBox*>(modal)) {
+                qInfo() << "ingress-smoke: unexpected modal dismissed:"
+                        << box->text();
+                box->reject();
+            }
+        });
+        dismisser.start(20);
+
+        BrowserMainWindow *browserWindow = application.newMainWindow();
+        TabWidget *tabWidget = browserWindow->tabWidget();
+        WebView *view = tabWidget->currentWebView();
+
+        // The fresh window's first tab is still running its startup
+        // load — let it commit and finish or later assertions race it.
+        waitFor([&view]() {
+            return !view->url().isEmpty() && !view->page()->isLoading();
+        }, 30000);
+
+        // Did any javascript: payload execute in the current page?
+        // loadUrl()'s runJavaScript path would leave this marker.
+        const auto pwned = [&view, &waitFor]() -> bool {
+            bool done = false;
+            bool result = true;   // fail closed on eval trouble
+            view->page()->runJavaScript(
+                QLatin1String("window.__aroraIngressPwned === true"),
+                [&done, &result](const QVariant &v) {
+                    result = v.toBool();
+                    done = true;
+                });
+            if (!waitFor([&done]() { return done; }, 5000))
+                qInfo() << "ingress-smoke: js probe timed out (fails closed)";
+            return result;
+        };
+
+        // Positive control fixture — an allowed operand really does
+        // navigate on every lane.  Loaded FIRST: a live document gives
+        // the runJavaScript probes and the navigation->consent-prompt
+        // path a real renderer to work against.
+        const QString fixturePath = QDir::temp().filePath(
+            QLatin1String("arora-ingress-smoke.html"));
+        {
+            QFile fixture(fixturePath);
+            if (!fixture.open(QIODevice::WriteOnly)
+                    || fixture.write("<title>ingress</title>ok") < 0) {
+                qInfo() << "ingress-smoke: FAIL (cannot write fixture)";
+                return 1;
+            }
+        }
+        const QUrl fixtureUrl = QUrl::fromLocalFile(fixturePath);
+        tabWidget->loadStringFromUntrustedSource(fixtureUrl.toString());
+        check(waitFor([&view, fixtureUrl]() {
+                  return view->url() == fixtureUrl; }, 10000),
+              QStringLiteral("argv lane navigates allowed file: url"));
+
+        // (a) argv/postLaunch lane — loadStringFromUntrustedSource is
+        // exactly what postLaunch() feeds the operand into.
+        {
+            const QUrl before = view->url();
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses javascript:"));
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("   javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses padded javascript:"));
+            check(QUrl(QLatin1String("JaVaScRiPt:x")).scheme()
+                      == QLatin1String("javascript"),
+                  QStringLiteral("QUrl lowercases the scheme"));
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("JaVaScRiPt:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("argv lane refuses case-mangled javascript:"));
+
+            // Non-browser scheme operands: the engine drops a
+            // programmatic load() of an unknown scheme before a
+            // navigation request exists — the safe outcome is no
+            // navigation, no script and no external handoff.
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("vbscript:msgbox(1)"));
+            telemetryWait(500);
+            QCoreApplication::processEvents();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("vbscript: operand dead-ends, never script"));
+
+            // The consent prompt that backs genuine external-protocol
+            // navigations (magnet:, intent:, …) is hook-level covered
+            // by tst_webpage's externalPrompt rows — SAFE05.  Engine-
+            // level unknown schemes dead-end even earlier: deny by
+            // default either way.
+
+            // An aroramessage:// operand takes the NAVIGATION lane —
+            // the socket control channel only exists inside
+            // messageReceived(), which argv never reaches.
+            tabWidget->loadStringFromUntrustedSource(
+                QLatin1String("aroramessage://getwinid"));
+            telemetryWait(500);
+            QCoreApplication::processEvents();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("aroramessage:// operand dead-ends, not the control channel"));
+
+            check(WebView::isUrlAllowedOnUntrustedInput(
+                      QUrl(QLatin1String("data:text/html,<p>x</p>"))),
+                  QStringLiteral("data: passes the gate (typed-equivalent)"));
+            check(WebView::isUrlAllowedOnUntrustedInput(
+                      QUrl(QLatin1String("file:///etc/passwd"))),
+                  QStringLiteral("file: passes the gate (SEC09 decision)"));
+        }
+
+        // (b) single-instance socket lane — drive messageReceived()
+        // with a real socket pair; the first whitespace-delimited
+        // token chooses the lane, exclusively.
+        QLocalServer pairServer;
+        QLocalSocket *client = nullptr;
+        QLocalSocket *serverSide = nullptr;
+        {
+            const QString pairPath = QDir::temp().filePath(
+                QLatin1String("arora-ingress-pair"));
+            QFile::remove(pairPath);
+            const bool pairOk =
+                pairServer.listen(pairPath);
+            client = new QLocalSocket(&application);
+            client->connectToServer(pairPath);
+            check(pairOk && client->waitForConnected(3000)
+                      && pairServer.waitForNewConnection(3000),
+                  QStringLiteral("socket pair established"));
+            serverSide = pairServer.nextPendingConnection();
+        }
+        const auto feed = [&application, client, serverSide](
+                const QByteArray &payload) {
+            if (!client || !serverSide)
+                return;
+            client->write(payload);
+            client->flush();
+            client->waitForBytesWritten(2000);
+            serverSide->waitForReadyRead(2000);
+            QMetaObject::invokeMethod(
+                &application, "messageReceived",
+                Q_ARG(QLocalSocket *, serverSide));
+            // messageReceived() reads only the first token — drain
+            // leftovers so the next case starts from a clean buffer.
+            serverSide->readAll();
+            QCoreApplication::processEvents();
+        };
+        if (serverSide) {
+            const QUrl before = view->url();
+            // Control lane: getwinid answers on the wire and must
+            // not navigate.
+            feed(QByteArrayLiteral("aroramessage://getwinid"));
+            const bool replyReady = client->waitForReadyRead(3000);
+            const QByteArray reply = client->readAll();
+            const bool gotWinid =
+                reply.startsWith(QByteArrayLiteral("aroramessage://winid"));
+            if (!gotWinid || view->url() != before)
+                qInfo() << "ingress-smoke: getwinid diagnostics ready"
+                        << replyReady << "reply" << reply
+                        << "url" << view->url();
+            check(gotWinid && view->url() == before,
+                  QStringLiteral("getwinid control answers, no navigation"));
+
+            // Unknown control token — ignored entirely.
+            feed(QByteArrayLiteral("aroramessage://bogus"));
+            const bool silent = !client->waitForReadyRead(300);
+            check(silent && view->url() == before,
+                  QStringLiteral("unknown control message ignored"));
+
+            // Namespace confusion: a control token carrying a url
+            // stays in the control lane — the first token wins.
+            feed(QByteArrayLiteral(
+                "aroramessage://getwinid javascript:window.__aroraIngressPwned=true"));
+            client->waitForReadyRead(3000);
+            client->readAll();
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("control token + url payload: no navigation, no script"));
+
+            // Url lane: javascript: refused, an allowed url navigates.
+            feed(QByteArrayLiteral(
+                "javascript:window.__aroraIngressPwned=true"));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("socket lane refuses javascript:"));
+            feed(fixtureUrl.toEncoded());
+            check(waitFor([&view, fixtureUrl]() {
+                      return view->url() == fixtureUrl; }, 10000),
+                  QStringLiteral("socket lane navigates allowed url"));
+        }
+
+        // (c) QDesktopServices 'http' handler — the slot is public
+        // surface for in-app paths; SEC23 gives it the same gate.
+        {
+            const QUrl before = view->url();
+            QMetaObject::invokeMethod(
+                &application, "openUrl",
+                Q_ARG(QUrl, QUrl(QLatin1String(
+                    "javascript:window.__aroraIngressPwned=true"))));
+            check(view->url() == before && !pwned(),
+                  QStringLiteral("openUrl refuses javascript:"));
+            QMetaObject::invokeMethod(
+                &application, "openUrl", Q_ARG(QUrl, fixtureUrl));
+            check(waitFor([&view, fixtureUrl]() {
+                      return view->url() == fixtureUrl; }, 10000),
+                  QStringLiteral("openUrl navigates allowed url"));
+        }
+
+        // (f) forwarded url while private browsing is on — lands on
+        // the OTR profile regardless of the openLinksFromAppsIn
+        // target; it is never downgraded onto a persistent profile.
+        // The phase's own window is the only window so mainWindow()
+        // picks it deterministically.
+        delete browserWindow;
+        browserWindow = nullptr;
+        {
+            BrowserApplication::setPrivate(true);
+            BrowserMainWindow *privWindow = application.newMainWindow();
+            check(privWindow->tabWidget()->currentWebView()
+                      ->enginePage()->isOffTheRecord(),
+                  QStringLiteral("private window creates OTR first tab"));
+            QSettings().setValue(
+                QLatin1String("tabs/openLinksFromAppsIn"),
+                int(TabWidget::NewSelectedTab));
+            const int tabsBefore = privWindow->tabWidget()->count();
+            feed(QByteArrayLiteral("about:blank"));
+            check(privWindow->tabWidget()->count() > tabsBefore
+                      && privWindow->tabWidget()->currentWebView()
+                             ->enginePage()->isOffTheRecord(),
+                  QStringLiteral("forwarded url lands in an OTR tab"));
+            // A NewWindow target spawns an OTR window too — the
+            // opener's private context is never dropped.
+            const int windowsBefore = application.mainWindows().count();
+            QSettings().setValue(
+                QLatin1String("tabs/openLinksFromAppsIn"),
+                int(TabWidget::NewWindow));
+            feed(QByteArrayLiteral("about:blank"));
+            const bool spawnedOtr =
+                waitFor([&application, windowsBefore]() {
+                    return application.mainWindows().count()
+                           > windowsBefore; }, 10000)
+                && application.mainWindows().first()
+                       ->tabWidget()->currentWebView()
+                       ->enginePage()->isOffTheRecord();
+            check(spawnedOtr,
+                  QStringLiteral("NewWindow forward spawns an OTR window"));
+            BrowserApplication::setPrivate(false);
+            // Leaving private browsing clears every window's tabs —
+            // delete the smoke windows outright.
+            const QList<BrowserMainWindow*> windows =
+                application.mainWindows();
+            for (BrowserMainWindow *window : windows)
+                delete window;
+        }
+
+        // (d) --tor operand parsing — the url is positional, never an
+        // option value, never shell-adjacent.  --tor=<value> is a
+        // parse error so nothing reaches the navigation machinery.
+        {
+            const auto parseTor = [](const QStringList &argv,
+                                     QStringList *positional,
+                                     bool *torSet) -> bool {
+                QCommandLineParser parser;
+                parser.addPositionalArgument(
+                    QLatin1String("url"), QString(),
+                    QLatin1String("[url...]"));
+                parser.addOption(QCommandLineOption(QLatin1String("tor")));
+                const bool parsed = parser.parse(argv);
+                if (positional)
+                    *positional = parser.positionalArguments();
+                if (torSet)
+                    *torSet = parser.isSet(QLatin1String("tor"));
+                return parsed;
+            };
+            QStringList positional;
+            bool torSet = false;
+            check(parseTor({QLatin1String("arora"),
+                            QLatin1String("--tor"),
+                            QLatin1String("http://example.invalid")},
+                           &positional, &torSet)
+                      && torSet
+                      && positional == QStringList(
+                             QLatin1String("http://example.invalid")),
+                  QStringLiteral("--tor operand lands in the positional slot"));
+            check(parseTor({QLatin1String("arora"),
+                            QLatin1String("--tor"),
+                            QLatin1String("javascript:alert(1)")},
+                           &positional, nullptr)
+                      && positional == QStringList(
+                             QLatin1String("javascript:alert(1)"))
+                      && !WebView::isUrlAllowedOnUntrustedInput(
+                             QUrl(QLatin1String("javascript:alert(1)"))),
+                  QStringLiteral("--tor javascript: operand is positional + gated downstream"));
+            check(!parseTor({QLatin1String("arora"),
+                             QLatin1String("--tor=javascript:x")},
+                            nullptr, nullptr),
+                  QStringLiteral("--tor=<value> is a parser error"));
+        }
+
+        // (d)+(e) child processes — hermetic HOME/XDG so neither the
+        // real profile nor the real runtime socket is touched.
+        // ARORA_NO_SANDBOX keeps the launch paths deterministic.
+        {
+            QTemporaryDir childHome;
+            QTemporaryDir runtimeDir;
+            QTemporaryDir fakeTorDir;
+            const QString fakeTor =
+                fakeTorDir.filePath(QLatin1String("tor"));
+            {
+                QFile fake(fakeTor);
+                if (fake.open(QIODevice::WriteOnly)) {
+                    fake.write("#!/bin/sh\nexit 1\n");
+                    fake.close();
+                }
+                QFile::setPermissions(fakeTor,
+                    QFile::ReadOwner | QFile::WriteOwner
+                        | QFile::ExeOwner);
+            }
+            QFile::setPermissions(runtimeDir.path(),
+                QFile::ReadUser | QFile::WriteUser | QFile::ExeUser);
+
+            QProcessEnvironment childEnv =
+                QProcessEnvironment::systemEnvironment();
+            childEnv.insert(QLatin1String("HOME"), childHome.path());
+            childEnv.insert(QLatin1String("XDG_RUNTIME_DIR"),
+                            runtimeDir.path());
+            childEnv.insert(QLatin1String("XDG_CONFIG_HOME"),
+                            childHome.filePath(QLatin1String("config")));
+            childEnv.insert(QLatin1String("XDG_DATA_HOME"),
+                            childHome.filePath(QLatin1String("data")));
+            childEnv.insert(QLatin1String("XDG_CACHE_HOME"),
+                            childHome.filePath(QLatin1String("cache")));
+            childEnv.insert(QLatin1String("ARORA_TOR_BINARY"), fakeTor);
+            childEnv.insert(QLatin1String("ARORA_NO_SANDBOX"),
+                            QLatin1String("1"));
+
+            const QString self = QCoreApplication::applicationFilePath();
+            const auto runtimeSockets = [&runtimeDir]() {
+                // A unix socket is S_IFSOCK — QDir::System, not Files.
+                return QDir(runtimeDir.path()).entryList(
+                    {QLatin1String("Arora*")},
+                    QDir::Files | QDir::System);
+            };
+
+            // A --tor process is standalone by construction — the
+            // ctor's any-dash-arg rule never connects the handshake,
+            // so no listener may appear for it.
+            QProcess torChild;
+            torChild.setProcessEnvironment(childEnv);
+            torChild.setProgram(self);
+            torChild.setArguments({QLatin1String("--tor")});
+            torChild.start();
+            const bool torSpawns = waitFor(
+                [&torChild]() {
+                    return torChild.state() != QProcess::NotRunning; },
+                10000);
+            telemetryWait(5000);   // give a misbehaving server time
+            check(torSpawns && runtimeSockets().isEmpty(),
+                  QStringLiteral("--tor process never starts the single-instance server"));
+
+            // A normal arora cannot forward into the tor process:
+            // with no listener it must become its own instance — the
+            // socket file appearing proves that.
+            QProcess plainChild;
+            plainChild.setProcessEnvironment(childEnv);
+            plainChild.setProgram(self);
+            plainChild.setArguments({QLatin1String("about:blank")});
+            plainChild.start();
+            const bool socketAppeared = waitFor(
+                [&runtimeSockets]() {
+                    return !runtimeSockets().isEmpty(); }, 45000);
+            if (!socketAppeared)
+                qInfo() << "ingress-smoke: plain-child diagnostics state"
+                        << plainChild.state() << "error"
+                        << plainChild.error()
+                        << "runtimeDir:" << runtimeDir.path()
+                        << "stderr-tail:"
+                        << plainChild.readAllStandardError().right(600);
+            check(socketAppeared,
+                  QStringLiteral("plain arora becomes its own instance "
+                                 "(nothing forwarded to --tor)"));
+            if (socketAppeared) {
+                const QFileInfo dirInfo(runtimeDir.path());
+                const QFileInfo sockInfo(
+                    runtimeDir.filePath(runtimeSockets().constFirst()));
+                const QFile::Permissions ownerOnlyDir =
+                    QFile::ReadUser | QFile::WriteUser | QFile::ExeUser;
+                const QFile::Permissions groupOther =
+                    QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+                    | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+                check((dirInfo.permissions() & ownerOnlyDir) == ownerOnlyDir
+                          && !(dirInfo.permissions() & groupOther),
+                      QStringLiteral("socket dir is user-only (0700)"));
+                check((sockInfo.permissions()
+                           & (QFile::ReadUser | QFile::WriteUser))
+                              == (QFile::ReadUser | QFile::WriteUser)
+                          && !(sockInfo.permissions() & groupOther),
+                      QStringLiteral("socket file is user-only (0600)"));
+            }
+            torChild.kill();
+            torChild.waitForFinished(5000);
+            plainChild.kill();
+            plainChild.waitForFinished(5000);
+
+            // End-to-end argv operand: the standalone harness gate
+            // refuses javascript: before any load.
+            QProcess argvChild;
+            argvChild.setProcessEnvironment(childEnv);
+            argvChild.setProgram(self);
+            argvChild.setArguments(
+                {QLatin1String("--quit-after-load"),
+                 QLatin1String("javascript:alert(1)")});
+            argvChild.start();
+            const bool argvDone = argvChild.waitForFinished(45000);
+            if (!argvDone)
+                argvChild.kill();
+            const QByteArray argvOut =
+                argvChild.readAllStandardError()
+                + argvChild.readAllStandardOutput();
+            check(argvDone && argvChild.exitCode() == 0
+                      && argvOut.contains("Ignoring untrusted argv url"),
+                  QStringLiteral("argv javascript: operand refused end-to-end"));
+
+            // --tor=<value> is a parser error — the operand slot can
+            // never be smuggled through an option value.
+            QProcess badTor;
+            badTor.setProcessEnvironment(childEnv);
+            badTor.setProgram(self);
+            badTor.setArguments({QLatin1String("--tor=javascript:x")});
+            badTor.start();
+            const bool badDone = badTor.waitForFinished(15000);
+            if (!badDone)
+                badTor.kill();
+            check(badDone && badTor.exitCode() != 0,
+                  QStringLiteral("--tor=<value> child exits on parser error"));
+        }
+
+        client->disconnectFromServer();
+        delete client;
+        pairServer.close();
+        QFile::remove(fixturePath);
+        const QList<BrowserMainWindow*> leftovers =
+            application.mainWindows();
+        for (BrowserMainWindow *window : leftovers)
+            delete window;
+
+        qInfo() << "ingress-smoke:" << (failures == 0 ? "PASS" : "FAIL")
+                << "failures:" << failures;
+        return failures == 0 ? 0 : 1;
     }
 
     return application.exec();
