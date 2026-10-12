@@ -71,6 +71,8 @@
 #include <qvector.h>
 
 class DownloadManager;
+class QEvent;
+class QShowEvent;
 class QWebEnginePage;
 #ifdef ARORA_RUSTDL
 class RustDownloadEngine;
@@ -148,6 +150,9 @@ private:
     void init();
     void updateInfoLabel();
     void updateDetails();
+    void applyDetailsCardStyle();
+    bool event(QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void restartDownload();
     void sampleSpeed();
     void freezeSpeedSeries();

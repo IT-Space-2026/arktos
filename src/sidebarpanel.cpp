@@ -633,6 +633,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadDetail->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *detailLayout = new QVBoxLayout(m_downloadDetail);
     detailLayout->setContentsMargins(4, 4, 4, 4);
+    // The card keeps its full height — the scrolling list above
+    // absorbs vertical deficits, the hosted rows never clip.
+    m_downloadDetail->setSizePolicy(QSizePolicy::Expanding,
+                                    QSizePolicy::Minimum);
     m_downloadDetail->setVisible(false);
     downloadsLayout->addWidget(m_downloadDetail);
     // Removing/cleaning rows deletes the hosted card — fold the pane
