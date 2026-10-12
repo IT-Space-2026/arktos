@@ -1,0 +1,118 @@
+/* ENG13: servo-branded variant of startpage.css — same layout and
+   the SAME default coloring (user request: no recolor), plus the
+   Servo logo under the search field.  The gradient lives on a
+   viewport-height <html> like TOR09's fix, so short content leaves
+   no white band under the footer. */
+
+* {
+    margin: 0;
+    padding: 0;
+    font-family: "DejaVu Sans";
+}
+
+html {
+    min-height: 100%;
+    background: linear-gradient(to bottom, #ccc 0%, #fff 50%, #fff 100%);
+    background-repeat: repeat-x;
+}
+
+body {
+    margin-top: 100px;
+}
+
+#header, #search, #servologo, #footer {
+    width: 500px;
+    margin: 10px auto;
+}
+
+#header, #search {
+    border-radius: 0.8em;
+    padding: 25px;
+}
+
+#header {
+    background: linear-gradient(to bottom, #228 0%, #66a 90%, #668 100%);
+    height: 20px;
+}
+
+#header h1 {
+    display: inline;
+    font-size: 1.7em;
+    color: #fff;
+    font-weight: bold;
+}
+
+#header img {
+    display: inline;
+    float: right;
+    height: 150px;
+    margin-top: -80px;
+}
+
+#search {
+    background: linear-gradient(to right, #cdf 0%, #eff 50%, #cdf 100%);
+    height: 50px;
+    color: #000;
+    text-align: center;
+    padding-top: 40px !important;
+}
+
+#search fieldset {
+    border: 0;
+}
+
+#search input[type=text] {
+    width: 65%;
+}
+
+#search input[type=submit] {
+    width: 25%;
+}
+
+/* The logo is a background image, not an <img>: the arora-dark flip
+   below swaps in the negative (light-wordmark) brand variant without
+   any markup or script. */
+#servologo {
+    height: 80px;
+    background-image: url("qrc:/servo-logo.svg");
+    background-repeat: no-repeat;
+    background-position: center center;
+    background-size: contain;
+}
+
+#footer {
+    text-align: center;
+    color: #999;
+}
+
+#footer a {
+    color: #555;
+    text-decoration: none;
+}
+
+#footer a:hover {
+    text-decoration: underline;
+}
+
+/* THEME01: the start page adds the arora-dark class on <html> from
+   the arora channel's darkChrome property — the app chrome palette,
+   not the OS's prefers-color-scheme. */
+html.arora-dark {
+    background: linear-gradient(to bottom, #2a2a30 0%, #1e1e23 50%, #1e1e23 100%);
+}
+html.arora-dark body {
+    color: #e4e4e8;
+}
+html.arora-dark #search {
+    background: linear-gradient(to right, #2e3440 0%, #39404f 50%, #2e3440 100%);
+    color: #e4e4e8;
+}
+html.arora-dark #servologo {
+    background-image: url("qrc:/servo-logo-dark.svg");
+}
+html.arora-dark #footer {
+    color: #8a8a93;
+}
+html.arora-dark #footer a {
+    color: #a9a9c0;
+}

@@ -9,5 +9,9 @@
     <file>startpage-tor.html</file>
     <file>startpage-tor.css</file>
     <file>tor-onion.svg</file>
+    <file>startpage-servo.html</file>
+    <file>startpage-servo.css</file>
+    <file>servo-logo.svg</file>
+    <file>servo-logo-dark.svg</file>
 </qresource>
 </RCC>

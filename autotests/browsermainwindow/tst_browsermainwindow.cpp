@@ -133,6 +133,7 @@ private slots:
     void torNavIconsDarkChrome();
     void torCircuitDropdown();
     void torStartPage();
+    void servoStartPage();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -1435,6 +1436,117 @@ void tst_BrowserMainWindow::torStartPage()
     QVERIFY(bareChannel);
     QVERIFY(aroraRegistered);
     QCOMPARE(dom, QStringLiteral("T|S|H"));
+}
+
+// ENG13: the servo-branded bundled start page — same layout and
+// default coloring as the standard page plus the Servo logo under the
+// search field.  The pick keys on ENG05's MainWindow/defaultEngine
+// setting (the engine a new tab would run); tor precedence holds —
+// it is locked to Chromium.  On this branch there is no servo
+// backend yet, so the key exercises the branding seam the merged
+// engine registry drives for real.
+void tst_BrowserMainWindow::servoStartPage()
+{
+    const QUrl standard(QLatin1String("qrc:/startpage.html"));
+    const QUrl torStart(QLatin1String("qrc:/startpage-tor.html"));
+    const QUrl servoStart(QLatin1String("qrc:/startpage-servo.html"));
+    const QLatin1String engineKey("MainWindow/defaultEngine");
+
+    // The engine-keyed pick: only "servo" re-brands; unknown ids keep
+    // the standard page, and tor mode outranks every engine pick.
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("webengine")), standard);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("servo")), servoStart);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("bogus")), standard);
+    QCOMPARE(BrowserApplication::defaultEngineId(),
+             QStringLiteral("webengine"));
+    QCOMPARE(BrowserApplication::startPageUrl(), standard);
+
+    BrowserApplication::setTorMode(true);
+    const QUrl torWins = BrowserApplication::startPageUrl(
+        QLatin1String("servo"));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(torWins, torStart);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // the servo engine pick armed for the remaining functions.
+    QSettings().setValue(engineKey, QStringLiteral("servo"));
+    const QUrl mapped = BrowserApplication::startPageUrl();
+    const QUrl guessed =
+        TabWidget::guessUrlFromString(QLatin1String("about:home"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    // The window's first tab is itself newTab() — with the servo
+    // engine pick it lands on the servo start page at once.
+    WebView *firstTab = window->currentTab();
+    const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
+    QWebEnginePage *page = firstTab ? firstTab->page() : nullptr;
+    QWebChannel *channel = page ? page->webChannel() : nullptr;
+
+    // A second fresh tab takes the same branded start page.
+    window->tabWidget()->newTab();
+    WebView *servoTab = window->currentTab();
+    const QUrl servoTabUrl = servoTab ? servoTab->url() : QUrl();
+
+    // DOM probe: the logo div sits directly under the search field,
+    // its stylesheet resolves the bundled logo asset, the search box
+    // exists, and headerTitle only fills once the channel's
+    // arora.translate() callback has resolved — the same handshake
+    // proof torStartPage uses.
+    QString dom;
+    if (firstTab) {
+        const QString probe = QStringLiteral(
+            "(function(){var l=document.getElementById('servologo');"
+            "var s=document.getElementById('search');"
+            "var e=document.getElementById('lineEdit');"
+            "var h=document.getElementById('headerTitle');"
+            "var v=l&&s&&s.nextElementSibling===l&&"
+            "getComputedStyle(l).backgroundImage.indexOf("
+            "'servo-logo')>=0?"
+            "'V':'-';"
+            "return v+'|'+(e?'S':'-')+'|'"
+            "+(h&&h.textContent.length?'H':'-');})()");
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("V|S|H") && timer.elapsed() < 15000) {
+            bool jsDone = false;
+            firstTab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+    }
+
+    // Offscreen grab for visual review — set ARORA_SERVO_GRAB_DIR to
+    // a directory and the rendered servo start page lands there.
+    const QByteArray grabDir = qgetenv("ARORA_SERVO_GRAB_DIR");
+    if (!grabDir.isEmpty() && firstTab) {
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        firstTab->resize(760, 700);
+        firstTab->show();
+        QApplication::processEvents();
+        QTest::qWait(400);
+        firstTab->grab().save(dir + QLatin1String("/servo-startpage.png"));
+    }
+
+    closeWindow(window);
+    QSettings().remove(engineKey);
+
+    QCOMPARE(mapped, servoStart);
+    QCOMPARE(guessed, servoStart);
+    QCOMPARE(firstUrl, servoStart);
+    QCOMPARE(servoTabUrl, servoStart);
+    QVERIFY(channel);
+    QCOMPARE(dom, QStringLiteral("V|S|H"));
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between

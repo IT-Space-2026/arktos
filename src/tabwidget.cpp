@@ -474,17 +474,20 @@ int TabWidget::webViewIndex(WebView *webView) const
 void TabWidget::newTab()
 {
     WebView *view = makeNewTab(true);
-    // TOR09: a fresh tab in a tor window lands on the tor-branded
-    // start page (about:tor parity) instead of a blank Untitled view.
-    if (view && BrowserApplication::isTorMode())
-        view->loadUrl(BrowserApplication::startPageUrl());
+    // TOR09/ENG13: a fresh tab lands on the branded start page at
+    // once — tor's about:tor parity, or the servo variant when the
+    // default engine pick is servo.  Standard-mode tabs stay blank.
+    const QUrl startPage = BrowserApplication::startPageUrl();
+    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+        view->loadUrl(startPage);
 }
 
 void TabWidget::newPrivateTab()
 {
     WebView *view = makeNewPrivateTab(true);
-    if (view && BrowserApplication::isTorMode())
-        view->loadUrl(BrowserApplication::startPageUrl());
+    const QUrl startPage = BrowserApplication::startPageUrl();
+    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+        view->loadUrl(startPage);
 }
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)
