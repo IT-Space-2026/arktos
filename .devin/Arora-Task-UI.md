@@ -69,6 +69,7 @@ This file is the task queue for the Devin CLI task loop
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
 | PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
 | DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
+| SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
 
 
 ## Task details
@@ -354,3 +355,13 @@ Diagnosis hints: the card likely uses a hardcoded dark palette/stylesheet (break
 Spec: (a) the details card follows the application palette — readable text on the theme's base/alternate-base color in BOTH day and night themes, no hardcoded background colors; (b) info rows (filename, source URL, size/progress/path) lay out without clipping — elide long URLs middle-out, wrap or tooltip the rest; (c) the button row (Open / Restart / Show in File Manager) aligns cleanly inside the card with sane spacing; (d) 'Download Settings...' placement reviewed — consistent with the panel footer style or moved into the card sensibly; (e) collapsed vs expanded states both render cleanly.
 
 Verify: select a finished + an in-progress download in the sidebar — details card is readable and unclipped in day AND night theme, long URLs elide with full text on tooltip, buttons aligned, make check PASS.
+
+### SIDE06
+
+Sidebar polish — two user-reported issues on the right-docked sidebar:
+
+(a) TREE TEXT ELIDES TOO EARLY — screenshot: the Bookmarks panel shows 'Bo...ar', 'A...a', 'Bo...nu' truncated with '...' even though the panel has plenty of free horizontal space. Diagnosis hints: the QTreeView/model in sidebarpanel (or the bookmarks tree) is eliding because the first column's width is fixed or not stretched — check column resize mode (should be ResizeToContents or Stretch with the URL column taking slack), textElideMode on the item delegate, or a fixed setColumnWidth(0). Text should elide only when genuinely out of space (viewport edge), keeping full names visible whenever they fit.
+
+(b) RAIL ICONS ON THE WRONG SIDE — the vertical icon rail (bookmarks/history/downloads/notes toggle strip, SidebarPanel's QTabWidget rail from TABS02) sits on the LEFT edge of the sidebar even when the whole sidebar is docked on the RIGHT side of the window — the rail should hug the outer edge: left rail when docked left, right rail when docked right. Mirror the rail position to the dock area (Qt::LeftDockWidgetArea vs RightDockWidgetArea) — either reorder the layout (rail widget after the panel content) or setTabPosition on the rail tab widget. Verify the mirror follows a live dock move (drag sidebar to other side, or the SIDE03 position picker).
+
+Verify: bookmark/folder names show fully while space allows, still elide correctly on a narrow panel; rail sits on the outer edge for both dock positions and flips on dock move; make check PASS.
