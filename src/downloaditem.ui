@@ -109,25 +109,18 @@
        <property name="visible" >
         <bool>false</bool>
        </property>
-       <property name="styleSheet" >
-        <string notr="true" >#detailsWidget {
- background-color: palette(alternate-base);
- border: 1px solid palette(midlight);
- border-radius: 6px;
-}</string>
-       </property>
        <layout class="QVBoxLayout" name="verticalLayout_4" >
         <property name="leftMargin" >
-         <number>8</number>
+         <number>0</number>
         </property>
         <property name="topMargin" >
-         <number>8</number>
+         <number>6</number>
         </property>
         <property name="rightMargin" >
-         <number>8</number>
+         <number>0</number>
         </property>
         <property name="bottomMargin" >
-         <number>8</number>
+         <number>0</number>
         </property>
         <property name="spacing" >
          <number>6</number>

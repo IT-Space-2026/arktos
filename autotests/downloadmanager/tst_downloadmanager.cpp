@@ -30,6 +30,7 @@
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwebengineview.h>
+#include "browsertheme.h"
 #include "downloadgraph.h"
 #include "downloadmanager.h"
 #include "squeezelabel.h"
@@ -71,6 +72,7 @@ private slots:
     void speedSeries();
     void restoredCard();
     void autoExpand();
+    void detailsCardTracksTheme();
 };
 
 // Clicks the requested button on any modal QMessageBox that pops while
@@ -1115,6 +1117,97 @@ void tst_DownloadManager::autoExpand()
         QMetaObject::invokeMethod(itemB, "stop");
         QTRY_VERIFY(!itemB->downloading());
     }
+}
+
+// DLUX03: render the real DownloadItem card inside a replica of the
+// sidebar's detail pane, then flip the app palette while the card is
+// shown — a stylesheet-bound palette() snapshot would keep the
+// creation-time fill (dark box on light / light box on dark), so the
+// card skin is resolved in code and must track the flip.
+void tst_DownloadManager::detailsCardTracksTheme()
+{
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    serveDownload(&server, "text/plain",
+                  "attachment; filename=\"qwe_download.txt\"");
+    const QUrl url(QString::fromLatin1(
+        "http://127.0.0.1:%1/some/long/path/qwe_download.txt")
+            .arg(server.serverPort()));
+
+    const QPalette light = QApplication::palette();
+    const QPalette dark = BrowserTheme::darkPalette();
+    QWidget *detailsWidget = nullptr;
+    // pass 0: card created under dark, flipped to light while shown
+    // pass 1: card created under light, flipped to dark while shown
+    for (int pass = 0; pass < 2; ++pass) {
+        QApplication::setPalette(pass == 0 ? dark : light);
+        SubDownloadManager manager;
+        manager.setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
+        QAbstractItemModel *model = manager.model();
+        Engine::Page *page = manager.retryPage(false);
+        manager.download(page, url);
+        QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(), pass + 1, 30000);
+        DownloadItem *item = manager.findChildren<DownloadItem*>().last();
+        QTRY_VERIFY_WITH_TIMEOUT(item->downloadedSuccessfully(), 30000);
+
+        QWidget host;
+        QVBoxLayout *lay = new QVBoxLayout(&host);
+        lay->setContentsMargins(2, 2, 2, 2);
+        QFrame *pane = new QFrame(&host);
+        pane->setObjectName(QLatin1String("sidebarDownloadDetail"));
+        pane->setFrameShape(QFrame::StyledPanel);
+        QVBoxLayout *pl = new QVBoxLayout(pane);
+        pl->setContentsMargins(4, 4, 4, 4);
+        item->setParent(pane);
+        pl->addWidget(item);
+        item->setExpanded(true);
+        item->adjustSize();
+        item->show();
+        lay->addWidget(pane);
+        QPushButton *settings = new QPushButton(tr("Download Settings..."),
+                                                &host);
+        lay->addWidget(settings);
+        host.resize(360, host.sizeHint().height());
+        host.show();
+        QTest::qWait(50);
+        detailsWidget = item->findChild<QWidget*>(
+            QLatin1String("detailsWidget"));
+        QVERIFY(detailsWidget);
+        QVERIFY(host.grab().save(QString::fromLatin1(
+            "/tmp/dlux-card-%1-born.png")
+                .arg(pass == 0 ? QLatin1String("dark")
+                               : QLatin1String("light"))));
+
+        // The user's scenario: the theme flips under a live card.
+        QApplication::setPalette(pass == 0 ? light : dark);
+        QTest::qWait(50);
+        QVERIFY(host.grab().save(QString::fromLatin1(
+            "/tmp/dlux-card-%1-afterflip.png")
+                .arg(pass == 0 ? QLatin1String("dark")
+                               : QLatin1String("light"))));
+
+        // The resolved chrome must track the flip, not the creation
+        // palette — assert the generated stylesheet carries the new
+        // palette's Mid for the hairline separator.  DLUX04 flattened
+        // the card: no background fill may be reintroduced or the
+        // info block regains its visible seam against the pane.
+        const QString active = detailsWidget->styleSheet();
+        QVERIFY2(active.contains(
+                     QApplication::palette()
+                         .color(QPalette::Mid).name()),
+                 qPrintable(active));
+        QVERIFY2(!active.contains(QLatin1String("background-color")),
+                 qPrintable(active));
+
+        host.hide();
+        // The manager still owns the row — park the card back before
+        // the host goes down or the pane's child teardown double-frees.
+        item->setParent(&manager);
+        item->hide();
+    }
+    QApplication::setPalette(light);
 }
 
 QTEST_MAIN(tst_DownloadManager)

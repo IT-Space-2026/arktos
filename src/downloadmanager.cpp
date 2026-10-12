@@ -70,6 +70,7 @@
 
 #include <qapplication.h>
 #include <qdesktopservices.h>
+#include <qevent.h>
 #include <qfiledialog.h>
 #include <qfileiconprovider.h>
 #include <qheaderview.h>
@@ -82,6 +83,7 @@
 #include <qset.h>
 #include <qsettings.h>
 #include <qstandardpaths.h>
+#include <qtimer.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
@@ -149,6 +151,7 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     // dialog-wide minimum button width/height polish.
     setProperty("aroraNoButtonPolish", true);
     tryAgainButton->hide();
+    applyDetailsCardStyle();
     expandButton->setAccessibleName(tr("Show download details"));
     // clicked() fires only on a real user activation — programmatic
     // setChecked() inside setExpanded() is not an override.
@@ -689,6 +692,55 @@ void DownloadItem::setExpanded(bool expanded)
         ? tr("Hide download details") : tr("Show download details"));
     detailsWidget->setVisible(expanded);
     updateGeometry();
+}
+
+// DLUX03: the card skin once lived in downloaditem.ui as
+// "background-color: palette(alternate-base)" — but palette() in a
+// stylesheet resolves ONCE at parse time, so a card created under
+// one theme kept that theme's fill across a day<->night flip
+// (a dark box with unreadable dark text after a night->day switch).
+// Resolve the roles in code and re-apply whenever the palette moves.
+// The colors come from QApplication::palette(), NOT
+// detailsWidget->palette(): carrying a stylesheet sets WA_StyleSheet,
+// which exempts the widget from propagatePaletteChange — its own
+// palette() stays frozen at its creation-theme values.
+// DLUX04: the tinted fill + box border read as a box-in-a-box against
+// the detail pane — the info block now stays transparent (shows the
+// pane/card surface exactly, zero seam on any theme) and keeps only
+// a hairline top separator for readability.
+void DownloadItem::applyDetailsCardStyle()
+{
+    const QPalette pal = QApplication::palette();
+    detailsWidget->setStyleSheet(QStringLiteral(
+        "#detailsWidget {"
+        " border-top: 1px solid %1;"
+        "}")
+        .arg(pal.color(QPalette::Mid).name()));
+}
+
+bool DownloadItem::event(QEvent *event)
+{
+    // QApplication::setPalette posts two events per widget:
+    // ApplicationPaletteChange arrives while this widget's palette is
+    // still stale, PaletteChange arrives once it resolves — but the
+    // detailsWidget child's palette is stale until its OWN turn.  So
+    // defer the re-resolve to the next loop turn, when the whole
+    // propagation burst has drained and every child's palette() reads
+    // post-flip colors.
+    if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::ApplicationPaletteChange) {
+        QTimer::singleShot(0, this,
+                           [this]() { applyDetailsCardStyle(); });
+    }
+    return QWidget::event(event);
+}
+
+void DownloadItem::showEvent(QShowEvent *event)
+{
+    // A card parked hidden on the manager while the theme flipped
+    // missed the PaletteChange — re-resolve on the way back up.
+    applyDetailsCardStyle();
+    QWidget::showEvent(event);
 }
 
 void DownloadItem::sampleSpeed()
