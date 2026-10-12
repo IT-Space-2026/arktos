@@ -528,10 +528,12 @@ void tst_HttpOnly::backFallsBackToStartPage()
     QVERIFY(waitInterstitialCommit(page, loaded, 0));
 
     // No real history entry precedes the refused navigation — "Back
-    // to safety" falls back to the start page.
+    // to safety" falls back to the start page.  This page sits on an
+    // off-the-record profile, so the context-aware pick resolves the
+    // private start page (PTAB02).
     QVERIFY(clickElement(&view, QLatin1String("back")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        page->url() == QUrl(QLatin1String("qrc:/startpage.html")),
+        page->url() == QUrl(QLatin1String("qrc:/startpage-private.html")),
         15000);
 }
 

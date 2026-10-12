@@ -149,6 +149,7 @@ private slots:
     void torTitleBar();
     void torTitleBarTitle();
     void servoStartPage();
+    void privateStartPage();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -318,6 +319,14 @@ void tst_BrowserMainWindow::dialogSlots()
     QVERIFY(window->tabWidget()->isTabPrivate(
         window->tabWidget()->currentIndex()));
     QVERIFY(!BrowserApplication::isPrivate());
+    // PTAB02: the private start page loads asynchronously — let the
+    // load finish before teardown, or the offscreen WebEngine
+    // teardown races an in-flight renderer navigation.
+    WebView *privateView = window->currentTab();
+    QTRY_VERIFY(privateView->url()
+                == QUrl(QLatin1String("qrc:/startpage-private.html"))
+                && privateView->page()
+                && !privateView->page()->isLoading());
 
     // fileNew spins up a second window; downloadManager raises the
     // sidebar dock on the Downloads section (DOWN02 — the standalone
@@ -2090,6 +2099,148 @@ void tst_BrowserMainWindow::servoStartPage()
     QCOMPARE(servoTabUrl, servoStart);
     QVERIFY(channel);
     QCOMPARE(dom, QStringLiteral("V|S|H"));
+}
+
+// PTAB02: private tabs get their own branded start page — a deep
+// navy variant of the tor page carrying the Arora logo, the search
+// box and an original sunglasses glyph.  The pick is context-keyed:
+// precedence tor > private > servo > standard, so a private tab
+// shows something branded even on the servo engine pick (which
+// cannot render qrc yet — ENG18), while a tor context never leaves
+// the tor brand.
+void tst_BrowserMainWindow::privateStartPage()
+{
+    const QUrl standard(QLatin1String("qrc:/startpage.html"));
+    const QUrl torStart(QLatin1String("qrc:/startpage-tor.html"));
+    const QUrl servoStart(QLatin1String("qrc:/startpage-servo.html"));
+    const QUrl privateStart(QLatin1String("qrc:/startpage-private.html"));
+
+    // The context-keyed pick: private outranks every engine id
+    // (including servo — documented precedence), non-private keeps
+    // the engine pick, and tor mode outranks private itself.
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("webengine"), true), privateStart);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("servo"), true), privateStart);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("bogus"), true), privateStart);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("webengine"), false), standard);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("servo"), false), servoStart);
+    QCOMPARE(BrowserApplication::startPageUrl(), standard);
+
+    BrowserApplication::setTorMode(true);
+    const QUrl torWins = BrowserApplication::startPageUrl(
+        QLatin1String("webengine"), true);
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(torWins, torStart);
+
+    // about:home is page-context aware: a private tab's typed
+    // about:home resolves to the private variant, a normal tab's to
+    // the standard one.
+    QCOMPARE(TabWidget::guessUrlFromString(QLatin1String("about:home")),
+             standard);
+    QCOMPARE(TabWidget::guessUrlFromString(QLatin1String("about:home"),
+                                           true),
+             privateStart);
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    // The first (non-private) tab stays blank in normal mode.
+    WebView *firstTab = window->currentTab();
+    const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
+
+    // An explicit private tab lands on the private start page at
+    // once.
+    window->tabWidget()->newPrivateTab();
+    WebView *privTab = window->currentTab();
+    const QUrl privTabUrl = privTab ? privTab->url() : QUrl();
+    const bool privIsOtr = privTab && privTab->enginePage()
+        && privTab->enginePage()->isOffTheRecord();
+    QWebEnginePage *privPage = privTab ? privTab->page() : nullptr;
+    QWebChannel *privChannel =
+        privPage ? privPage->webChannel() : nullptr;
+
+    // A plain newTab spawned while the private tab is current
+    // inherits the off-the-record context and gets the private page
+    // too — PTAB01's child-tab inheritance feeding the pick.
+    window->tabWidget()->newTab();
+    WebView *childTab = window->currentTab();
+    const QUrl childTabUrl = childTab ? childTab->url() : QUrl();
+
+    // DOM probe on the private tab: the sunglasses mark sits under
+    // the search field, the search box exists, and headerTitle only
+    // fills once the channel's arora.translate() callback has
+    // resolved — the same handshake proof torStartPage uses.
+    QString dom;
+    if (privTab) {
+        const QString probe = QStringLiteral(
+            "(function(){var l=document.getElementById('privatelogo');"
+            "var s=document.getElementById('lineEdit');"
+            "var h=document.getElementById('headerTitle');"
+            "return (l&&l.querySelector('img')?'P':'-')+'|'"
+            "+(s?'S':'-')+'|'"
+            "+(h&&h.textContent.length?'H':'-');})()");
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("P|S|H") && timer.elapsed() < 15000) {
+            bool jsDone = false;
+            privTab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+    }
+    const bool aroraRegistered = privChannel
+        && privChannel->registeredObjects().contains(
+            QLatin1String("arora"));
+
+    // Offscreen grab for visual review — set ARORA_PRIVATE_GRAB_DIR
+    // to a directory and the rendered private start page lands
+    // there.
+    const QByteArray grabDir = qgetenv("ARORA_PRIVATE_GRAB_DIR");
+    if (!grabDir.isEmpty() && privTab) {
+        window->tabWidget()->setCurrentWidget(privTab);
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        privTab->resize(760, 700);
+        privTab->show();
+        QApplication::processEvents();
+        QTest::qWait(400);
+        privTab->grab().save(
+            dir + QLatin1String("/private-startpage.png"));
+        // QWidget::grab shows no WebEngine content offscreen —
+        // printToPdf is the rendered-page capture under this
+        // platform (same convention as ENG13's pdfgrab review).
+        if (privPage) {
+            QByteArray pdf;
+            privPage->printToPdf(
+                [&pdf](const QByteArray &data) { pdf = data; });
+            for (int waited = 0; pdf.isEmpty() && waited < 5000;
+                 waited += 50)
+                QTest::qWait(50);
+            QFile pdfFile(dir + QLatin1String("/private-startpage.pdf"));
+            if (pdfFile.open(QIODevice::WriteOnly))
+                pdfFile.write(pdf);
+        }
+    }
+
+    closeWindow(window);
+
+    QVERIFY(firstUrl.isEmpty()
+            || firstUrl == QUrl(QLatin1String("about:blank")));
+    QVERIFY(privIsOtr);
+    QCOMPARE(privTabUrl, privateStart);
+    QCOMPARE(childTabUrl, privateStart);
+    QVERIFY(privChannel);
+    QVERIFY(aroraRegistered);
+    QCOMPARE(dom, QStringLiteral("P|S|H"));
 }
 
 // READ02/READ04: the navigation toolbar carries a reader-mode toggle

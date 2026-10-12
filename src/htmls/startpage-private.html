@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+    <title></title>
+    <link rel="stylesheet" href="qrc:/startpage-private.css" type="text/css" />
+    <script type="text/javascript" src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script type="text/javascript" src="qrc:/startpage.js"></script>
+</head>
+<body onload="init();">
+    <div id="header">
+        <h1 id="headerTitle"></h1>
+        <img src="qrc:/arora.svg" alt="Arora"/>
+    </div>
+    <div id="search">
+        <form action="javascript:formSubmitted();">
+            <fieldset>
+                <input id="lineEdit" name="lineEdit" type="text" />
+                <input id="searchButton" type="submit" />
+            </fieldset>
+        </form>
+    </div>
+    <div id="privatelogo">
+        <img src="qrc:/private-sunglasses.svg" alt="Private"/>
+    </div>
+    <div id="footer"></div>
+</body>
+</html>

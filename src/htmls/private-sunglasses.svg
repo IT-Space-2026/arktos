@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PTAB02: original sunglasses glyph for the private start page —
+     drawn for Arora (no clipart), matching the PTAB01 private-tab
+     mask badge motif. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 72">
+  <!-- temple arms -->
+  <path d="M16 20 L4 8 M144 20 L156 8" fill="none" stroke="#0a1226"
+        stroke-width="7" stroke-linecap="round"/>
+  <!-- brow bar spanning both lenses -->
+  <rect x="12" y="16" width="136" height="10" rx="5" fill="#0a1226"/>
+  <!-- bridge -->
+  <path d="M66 26 q14 -10 28 0" fill="none" stroke="#0a1226"
+        stroke-width="8" stroke-linecap="round"/>
+  <!-- lenses -->
+  <path d="M16 26 h52 a4 4 0 0 1 4 4 v4 c0 15 -11 26 -27 26 h-6
+           c-14 0 -25 -11 -25 -26 v-4 a4 4 0 0 1 4 -4 z"
+        fill="#16233f"/>
+  <path d="M92 26 h52 a4 4 0 0 1 4 4 v4 c0 15 -11 26 -27 26 h-6
+           c-14 0 -25 -11 -25 -26 v-4 a4 4 0 0 1 4 -4 z"
+        fill="#16233f"/>
+  <!-- lens glints -->
+  <path d="M28 34 l18 20 M40 30 l18 20" fill="none" stroke="#7f9cf0"
+        stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+  <path d="M104 34 l18 20 M116 30 l18 20" fill="none" stroke="#7f9cf0"
+        stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+</svg>

@@ -13,5 +13,8 @@
     <file>startpage-servo.css</file>
     <file>servo-logo.svg</file>
     <file>servo-logo-dark.svg</file>
+    <file>startpage-private.html</file>
+    <file>startpage-private.css</file>
+    <file>private-sunglasses.svg</file>
 </qresource>
 </RCC>
