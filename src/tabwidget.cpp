@@ -473,12 +473,18 @@ int TabWidget::webViewIndex(WebView *webView) const
 
 void TabWidget::newTab()
 {
-    makeNewTab(true);
+    WebView *view = makeNewTab(true);
+    // TOR09: a fresh tab in a tor window lands on the tor-branded
+    // start page (about:tor parity) instead of a blank Untitled view.
+    if (view && BrowserApplication::isTorMode())
+        view->loadUrl(BrowserApplication::startPageUrl());
 }
 
 void TabWidget::newPrivateTab()
 {
-    makeNewPrivateTab(true);
+    WebView *view = makeNewPrivateTab(true);
+    if (view && BrowserApplication::isTorMode())
+        view->loadUrl(BrowserApplication::startPageUrl());
 }
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)
@@ -2750,7 +2756,7 @@ QUrl TabWidget::guessUrlFromString(const QString &string, bool privateContext)
 
     if (url.scheme() == QLatin1String("about")
         && url.path() == QLatin1String("home"))
-        url = QUrl(QLatin1String("qrc:/startpage.html"));
+        url = BrowserApplication::startPageUrl();
 
     QSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));

@@ -1096,6 +1096,12 @@ void BrowserApplication::setTorMode(bool torMode)
     s_torMode = torMode;
 }
 
+QUrl BrowserApplication::startPageUrl()
+{
+    return QUrl(QLatin1String(s_torMode
+        ? "qrc:/startpage-tor.html" : "qrc:/startpage.html"));
+}
+
 TorManager *BrowserApplication::torManager() const
 {
     return m_torManager;

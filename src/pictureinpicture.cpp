@@ -19,6 +19,7 @@
 
 #include "pictureinpicture.h"
 
+#include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "engineinterface.h"
 #include "pipwindow.h"
@@ -84,11 +85,15 @@ PictureInPicture::PictureInPicture(WebView *view)
     , m_nonceCounter(0)
 {
     // The bridge rides the page's existing channel (same registration
-    // point as "external"/"aroraReader").  Tor pages carry no channel
-    // — the shim then rejects with NotSupportedError while the manual
-    // pop-out paths (runJavaScript only) still work.
-    if (QWebChannel *channel = m_view->page()->webChannel())
-        channel->registerObject(QLatin1String("aroraPip"), m_bridge);
+    // point as "external"/"aroraReader").  Tor pages carry a bare
+    // channel (TOR09 — the qrc start page's "arora" object only), so
+    // the registration itself is gated on the mode: the shim then
+    // rejects with NotSupportedError while the manual pop-out paths
+    // (runJavaScript only) still work.
+    if (!BrowserApplication::isTorMode()) {
+        if (QWebChannel *channel = m_view->page()->webChannel())
+            channel->registerObject(QLatin1String("aroraPip"), m_bridge);
+    }
 
     // A real navigation kills the popped-out element's document — the
     // window cannot be returned to anything, so close it outright.

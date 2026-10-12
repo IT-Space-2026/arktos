@@ -27,6 +27,7 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qwebchannel.h>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
 #include <qcombobox.h>
@@ -131,6 +132,7 @@ private slots:
     void torChromeTheme();
     void torNavIconsDarkChrome();
     void torCircuitDropdown();
+    void torStartPage();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -1313,6 +1315,126 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     QCOMPARE(stateTexts.count(), 1);
     QVERIFY(stateTexts.at(0).contains(
         QLatin1String("unavailable"), Qt::CaseInsensitive));
+}
+
+// TOR09: the tor window's bundled start page — a violet-branded qrc
+// variant on the same arora-channel contract.  about:home resolves to
+// it, the window's first tab and every fresh/private tab load it, and
+// the channel arms only "arora" on qrc commits — the privileged
+// bridges stay unregistered in tor.
+void tst_BrowserMainWindow::torStartPage()
+{
+    const QUrl standard(QLatin1String("qrc:/startpage.html"));
+    const QUrl torStart(QLatin1String("qrc:/startpage-tor.html"));
+
+    // Normal mode: the standard page answers about:home and fresh
+    // tabs stay blank.
+    QCOMPARE(BrowserApplication::startPageUrl(), standard);
+    QCOMPARE(TabWidget::guessUrlFromString(QLatin1String("about:home")),
+             standard);
+    SubWindow *plain = new SubWindow;
+    plain->show();
+    WebView *plainTab = plain->currentTab();
+    const QUrl plainUrl =
+        plainTab ? plainTab->url() : QUrl(QLatin1String("x:"));
+    closeWindow(plain);
+    QVERIFY(plainUrl.isEmpty()
+            || plainUrl == QUrl(QLatin1String("about:blank")));
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    const QUrl mapped = BrowserApplication::startPageUrl();
+    const QUrl guessed =
+        TabWidget::guessUrlFromString(QLatin1String("about:home"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    // The window's first tab is itself newTab() — it lands on the
+    // tor page at once, before any startup navigation fires.
+    WebView *firstTab = window->currentTab();
+    const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
+    QWebEnginePage *page = firstTab ? firstTab->page() : nullptr;
+    QWebChannel *channel = page ? page->webChannel() : nullptr;
+    const bool bareChannel = channel
+        && !channel->registeredObjects().contains(
+            QLatin1String("external"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraAutofill"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraPip"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraReader"));
+
+    // A second fresh tab and a private tab take the same start page.
+    window->tabWidget()->newTab();
+    WebView *torTab = window->currentTab();
+    const QUrl torTabUrl = torTab ? torTab->url() : QUrl();
+    window->tabWidget()->newPrivateTab();
+    WebView *privTab = window->currentTab();
+    const QUrl privTabUrl = privTab ? privTab->url() : QUrl();
+
+    // The qrc commit registers "arora" on the channel and the page's
+    // own translate() run fills the header text — the DOM probe below
+    // is the proof the whole handshake completed in tor mode.
+    // runJavaScript runs in ApplicationWorld, so the page-global arora
+    // var (MainWorld) is out of reach, but the DOM is shared:
+    // headerTitle only fills once the channel's arora.translate()
+    // callback has resolved.  The probe races the still-committing
+    // load, so it re-issues until the post-load document answers.
+    bool aroraRegistered = false;
+    QString dom;
+    if (firstTab && channel) {
+        const QString probe = QStringLiteral(
+            "(function(){var t=document.getElementById('torlogo');"
+            "var s=document.getElementById('lineEdit');"
+            "var h=document.getElementById('headerTitle');"
+            "return (t&&t.querySelector('img')?'T':'-')+'|'"
+            "+(s?'S':'-')+'|'"
+            "+(h&&h.textContent.length?'H':'-');})()");
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("T|S|H") && timer.elapsed() < 15000) {
+            bool jsDone = false;
+            firstTab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+        aroraRegistered = channel->registeredObjects().contains(
+            QLatin1String("arora"));
+    }
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the rendered tor start page lands there.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty() && firstTab) {
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        firstTab->resize(760, 700);
+        firstTab->show();
+        QApplication::processEvents();
+        QTest::qWait(400);
+        firstTab->grab().save(dir + QLatin1String("/tor-startpage.png"));
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(mapped, torStart);
+    QCOMPARE(guessed, torStart);
+    QCOMPARE(firstUrl, torStart);
+    QCOMPARE(torTabUrl, torStart);
+    QCOMPARE(privTabUrl, torStart);
+    QVERIFY(channel);
+    QVERIFY(bareChannel);
+    QVERIFY(aroraRegistered);
+    QCOMPARE(dom, QStringLiteral("T|S|H"));
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between

@@ -149,6 +149,11 @@ public:
     // Only meaningful before the constructor brings the profile up;
     // exists for AUTOTESTS builds where the argv scan is compiled out.
     static void setTorMode(bool torMode);
+    // TOR09: the bundled start page url — the tor-branded variant in
+    // a tor process, the standard one elsewhere.  Only the DEFAULT
+    // home (about:home) resolves through here; a custom homepage
+    // setting is always loaded as configured.
+    static QUrl startPageUrl();
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
     // Spawns an independent `arora --tor` process.  An optional start

@@ -5,5 +5,9 @@
     <file>notfound.html</file>
     <file>startpage.html</file>
     <file>startpage.css</file>
+    <file>startpage.js</file>
+    <file>startpage-tor.html</file>
+    <file>startpage-tor.css</file>
+    <file>tor-onion.svg</file>
 </qresource>
 </RCC>

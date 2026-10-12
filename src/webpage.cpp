@@ -240,14 +240,19 @@ void WebPage::init()
     //    are dropped (autofillmanager.cpp).
     //  * external.AddSearchProvider validates the descriptor url and
     //    asks for consent before any fetch happens.
-    // TOR02: tor-mode pages get no channel at all — the bridge objects
-    // (autofill capture, search-provider install) are surface a tor
-    // session does not need and must not offer.
+    // TOR02: those two bridge objects stay unregistered in tor mode —
+    // autofill capture and search-provider install are surface a tor
+    // session does not need and must not offer.  The bare channel
+    // itself is armed there too (TOR09): the tor start page is a qrc
+    // page that needs the "arora" object, which only ever registers on
+    // qrc commits — web content still sees an empty object table.
     if (!BrowserApplication::isTorMode()) {
         m_webChannel->registerObject(QLatin1String("external"), m_javaScriptExternalObject);
         m_webChannel->registerObject(QLatin1String("aroraAutofill"), m_autoFillBridge);
-        setWebChannel(m_webChannel);
+    }
+    setWebChannel(m_webChannel);
 
+    if (!BrowserApplication::isTorMode()) {
         // CHAN01: arm the shared-channel bootstrap at DocumentCreation.
         // qt.webChannelTransport is one object per frame with a single
         // onmessage slot — every new QWebChannel replaces it and the
@@ -260,6 +265,9 @@ void WebPage::init()
         // either side.  The demux has to be installed before page
         // script can construct a channel client of its own — hence
         // DocumentCreation, once per page rather than per navigation.
+        // Tor mode skips it: with no co-tenant on the transport the
+        // page's own direct-QWebChannel fallback is uncontended, and
+        // the smaller injected-script surface is worth keeping.
         QString bootstrapSource;
         QFile channelClientFile(
             QLatin1String(":/qtwebchannel/qwebchannel.js"));
@@ -294,20 +302,21 @@ void WebPage::init()
             shim.setSourceCode(QString::fromUtf8(shimFile.readAll()));
             scripts().insert(shim);
         }
-
-        // The "arora" object serves only internal qrc pages (the start
-        // page).  It is registered when the main frame commits to a qrc
-        // url — before the page's channel handshake — and removed again
-        // when the frame navigates away, so web content never sees it.
-        connect(this, &QWebEnginePage::urlChanged, this,
-                [this](const QUrl &url) {
-            if (url.scheme() == QLatin1String("qrc"))
-                m_webChannel->registerObject(QLatin1String("arora"),
-                                             m_javaScriptAroraObject);
-            else
-                m_webChannel->deregisterObject(m_javaScriptAroraObject);
-        });
     }
+
+    // The "arora" object serves only internal qrc pages (the start
+    // page, normal and tor-branded).  It is registered when the main
+    // frame commits to a qrc url — before the page's channel
+    // handshake — and removed again when the frame navigates away, so
+    // web content never sees it.
+    connect(this, &QWebEnginePage::urlChanged, this,
+            [this](const QUrl &url) {
+        if (url.scheme() == QLatin1String("qrc"))
+            m_webChannel->registerObject(QLatin1String("arora"),
+                                         m_javaScriptAroraObject);
+        else
+            m_webChannel->deregisterObject(m_javaScriptAroraObject);
+    });
 
     // SEC16: commits that did not pass through acceptNavigationRequest
     // (or whose final url differs after a redirect) still arm the
@@ -1367,7 +1376,7 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+            page->load(BrowserApplication::startPageUrl());
     });
 }
 
@@ -1551,7 +1560,7 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+            page->load(BrowserApplication::startPageUrl());
     });
 }
 
@@ -1660,7 +1669,7 @@ void WebPage::resolveDomainBlockLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(QUrl(QLatin1String("qrc:/startpage.html")));
+            page->load(BrowserApplication::startPageUrl());
     });
 }
 

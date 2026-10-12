@@ -402,6 +402,10 @@ Tor:
   opens a dropdown of the live circuit — one row per relay hop with
   its country flag and name (relay fingerprint and OR address on
   hover), refreshed on open and on daemon circuit events (TOR08).
+- Tor windows open new tabs on a Tor-branded start page: the familiar
+  Arora header and working search box on a full-viewport purple
+  background with the official Tor onion centered below the search
+  field — all bundled locally, nothing fetched (TOR09).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset
