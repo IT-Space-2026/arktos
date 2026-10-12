@@ -86,7 +86,7 @@ This file is the task queue for the Devin CLI task loop
 | TOR10 | Tor circuit button click crashes the app — details below | done | 1 | click path hardened: live controlConnected() gate + mid-flight disconnect guards, honest 'circuit unavailable' instead of stale rows — verified: --tor-circuit-click-smoke 74/279 open-close cycles (faketor/real tor) 0 crash, new circuitInfoDeadControl test, make check rc=0 |
 
 | TOR11 | Tor window title bar not colored like menu/url chrome — details below | done | 0 | frameless tor window + menubar-as-titlebar (corner widgets); smoke + tests + make check PASS |
-| TABS10 | Vertical tab bar: tabs too big — details below | pending | 0 | |
+| TABS10 | Vertical tab bar: tabs too big — details below | in_progress | 1 | |
 | TOR12 | Tor title bar: window title text unreadable — details below | pending | 0 | user report w/ screenshot |
 | PTAB02 | Private-tab start page: dark blue + sunglasses — details below | pending | 0 | user report w/ design spec |
 | ICONS05 | Dark mode: toolbar buttons unreadable — details below | pending | 0 | user report w/ screenshot |
