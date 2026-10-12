@@ -3062,9 +3062,10 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
     if (searchFallback)
         return manager->searchUrlForEngine(
             manager->engineForContext(privateContext), query);
-    // SRCH09: the bare-http opt-out only has meaning where the guess
-    // produces a usable url — a guess that cannot parse resolves to
-    // search instead of an invalid url loadUrl() would silently drop.
+    // SRCH09/SRCH11: the bare-http opt-out only has meaning where the
+    // guess produces a usable url — a guess that cannot parse
+    // resolves to search instead of an invalid url loadUrl() would
+    // silently drop.
     const QUrl guessed = QUrl::fromEncoded(
         (QLatin1String("http://") + trimmed).toUtf8(),
         QUrl::TolerantMode);
@@ -3117,7 +3118,7 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
     // private engine.
     const auto fallbackUrl = [search, &trimmed, privateContext, manager]() -> QUrl {
         const auto engineSearch = [&trimmed, privateContext, manager]() -> QUrl {
-            // SRCH07/SRCH09: stale or broken engine state resolves
+            // SRCH07/SRCH09/SRCH11: stale or broken engine state resolves
             // through the shared rescue — a missing context engine
             // degrades to the bundled DuckDuckGo descriptor, an
             // unusable template to its endpoint directly.
@@ -3129,8 +3130,8 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
         const QString urlString = QLatin1String("http://") + trimmed;
         const QUrl guessed =
             QUrl::fromEncoded(urlString.toUtf8(), QUrl::TolerantMode);
-        // SRCH09: the bare-http opt-out only has meaning where the
-        // guess yields a usable url — a guess that cannot parse
+        // SRCH09/SRCH11: the bare-http opt-out only has meaning where
+        // the guess yields a usable url — a guess that cannot parse
         // (multi-word input, host-less or otherwise malformed text)
         // resolves to search instead of an invalid url loadUrl()
         // would silently drop.
@@ -3307,8 +3308,8 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
         loadUrlFromUser(url, title);
         return;
     }
-    // SRCH09: an invalid url used to vanish here without a trace —
-    // exactly the "nothing happens on Enter" the opt-out's
+    // SRCH09/SRCH11: an invalid url used to vanish here without a
+    // trace — exactly the "nothing happens on Enter" the opt-out's
     // "http://two words" guess produced.  Complain so a dead url is
     // never mistaken for a dead key.
     if (!url.isValid()) {

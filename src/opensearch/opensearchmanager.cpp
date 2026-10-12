@@ -266,9 +266,10 @@ OpenSearchEngine *OpenSearchManager::imageSearchEngine() const
                                                        : nullptr;
 }
 
-// SRCH09: shared by the omnibox fallback and the dedicated search
-// box — either surface could previously dead-end on a null or broken
-// engine (dead Enter, or an invalid url loadUrl() silently dropped).
+// SRCH09/SRCH11: shared by the omnibox fallback and the dedicated
+// search box — either surface could previously dead-end on a null or
+// broken engine (dead Enter, or an invalid url loadUrl() silently
+// dropped).
 QUrl OpenSearchManager::searchUrlForEngine(OpenSearchEngine *engine,
                                          const QString &terms)
 {

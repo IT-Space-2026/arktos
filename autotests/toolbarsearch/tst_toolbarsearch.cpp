@@ -25,6 +25,7 @@
 #include <QtGui/QtGui>
 #include <qstandarditemmodel.h>
 #include <qcompleter.h>
+#include <qurlquery.h>
 #include <qwebengineprofile.h>
 
 #include "toolbarsearch.h"
@@ -60,6 +61,7 @@ private slots:
 
     void searchEmitsUrl();
     void brokenEngineRescue();
+    void searchEmitsUrlWithBrokenEngine();
     void backspaceClearsField();
     void recentSearches();
     void completerPaths();
@@ -106,6 +108,8 @@ void tst_ToolbarSearch::brokenEngineRescue()
     engine->setName(QLatin1String("broken-test"));
     engine->setSearchUrlTemplate(
         QLatin1String("http://broken-test.invalid/q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
     QVERIFY(manager->addEngine(engine));
     // A descriptor that loses its template after registration —
     // searchUrl() comes back empty.
@@ -122,6 +126,42 @@ void tst_ToolbarSearch::brokenEngineRescue()
         QVERIFY(url.isValid() && !url.isEmpty());
         QVERIFY(url.toString().contains(QLatin1String("duckduckgo")));
     }
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
+}
+
+// SRCH11: a broken selected engine (descriptor that yields no usable
+// search url) used to turn Enter into a dead key — searchNow()
+// early-returned on the null url.  The shared rescue must still emit
+// a loadable address (bundled DuckDuckGo descriptor, else its
+// hardcoded endpoint).
+void tst_ToolbarSearch::searchEmitsUrlWithBrokenEngine()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("broken-engine"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://broken.invalid/s?q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    // The descriptor broke after install — no expansion is possible.
+    engine->setSearchUrlTemplate(QString());
+
+    ToolbarSearch search;
+    search.setText(QLatin1String("rescue me"));
+    QSignalSpy spy(&search, &ToolbarSearch::search);
+    QTest::keyClick(&search, Qt::Key_Return);
+    QCOMPARE(spy.count(), 1);
+    const QUrl url = spy.first().at(0).toUrl();
+    QVERIFY(url.isValid());
+    QVERIFY(!url.isEmpty());
+    QCOMPARE(url.host(), QLatin1String("duckduckgo.com"));
+    QCOMPARE(QUrlQuery(url).queryItemValue(QLatin1String("q")),
+             QLatin1String("rescue me"));
+
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());
 }

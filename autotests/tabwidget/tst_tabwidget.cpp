@@ -45,6 +45,7 @@
 #include <qfile.h>
 #include <qlineedit.h>
 #include <qmenu.h>
+#include <qurlquery.h>
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
@@ -100,6 +101,7 @@ private slots:
     void tabHoverPreviews();
     void tabThumbnailStaleness();
     void omnibox();
+    void omniboxEnterDispatch();
     void omniboxTabScope();
     void tabGroups();
     void pinnedTabs();
@@ -1149,29 +1151,31 @@ void tst_TabWidget::omnibox()
     // 'keyword terms' wins over everything, even address-shaped terms.
     check(QLatin1String("ot hello"), engine->searchUrl(QLatin1String("hello")));
 
-    // SRCH07: a configured engine that produces no usable search url
-    // degrades to the built-in default endpoint instead of emitting a
-    // bogus http://<term> navigation.
+    // SRCH07/SRCH11: a configured engine that produces no usable
+    // search url must not dead-end the bar — the shared rescue
+    // degrades to the bundled DuckDuckGo endpoint instead of emitting
+    // a bogus http://<term> navigation.
+    const QString savedTemplate = engine->searchUrlTemplate();
     engine->setSearchUrlTemplate(QString());
     check(QLatin1String("word"),
           QUrl(QLatin1String("https://duckduckgo.com/?q=word")));
+    QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
+    QUrlQuery rescueQuery;
+    rescueQuery.addQueryItem(QLatin1String("q"),
+                             QLatin1String("two words"));
+    lastResort.setQuery(rescueQuery);
+    check(QLatin1String("two words"), lastResort);
+    engine->setSearchUrlTemplate(savedTemplate);
 
     // Opt-out restores the old bare-http guess for non-address input.
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
     check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));
 
-    // SRCH09: under the opt-out multi-word input still resolves to
-    // search — the bare-http guess ("http://two words") cannot parse
-    // and the invalid url used to be dropped silently by loadUrl(),
-    // a dead Enter.  The emptied template above means this lands on
-    // the built-in last-resort endpoint.
-    {
-        QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
-        QUrlQuery query;
-        query.addQueryItem(QLatin1String("q"), QLatin1String("two words"));
-        lastResort.setQuery(query);
-        check(QLatin1String("two words"), lastResort);
-    }
+    // SRCH09/SRCH11: under the opt-out a guess that cannot parse
+    // still searches — "http://two words" used to reach loadUrl() as
+    // an invalid url and die silently (dead Enter).
+    check(QLatin1String("two words"),
+          engine->searchUrl(QLatin1String("two words")));
 
     if (savedSearchFallback.isValid())
         settings.setValue(
@@ -1194,6 +1198,90 @@ void tst_TabWidget::omnibox()
     else
         settings.remove(QLatin1String("privacy/httpsOnly"));
     PrivacyRequestInterceptor::loadSettings();
+}
+
+// SRCH11: the omnibox contract through the real dispatch — Enter in
+// the location bar (with the completer popup up, the real-world shape
+// of the report) searches the typed text with the default engine, and
+// activating a "Search %engine" suggestion row searches that text.
+void tst_TabWidget::omniboxEnterDispatch()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+    settings.setValue(QLatin1String("privacy/httpsFirst"), false);
+    settings.setValue(QLatin1String("privacy/httpsOnly"), false);
+    PrivacyRequestInterceptor::loadSettings();
+
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("enter-repro"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://enter-repro.invalid/s?q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+
+    SubTabWidget widget;
+    widget.newTab();
+    WebView *view = widget.currentWebView();
+    QVERIFY(view);
+    widget.resize(800, 600);
+    widget.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&widget));
+
+    QLineEdit *bar = widget.currentLocationBar();
+    QVERIFY(bar);
+    bar->setFocus();
+    QTest::qWait(50);
+
+    const QUrl expected = engine->searchUrl(QLatin1String("test query"));
+    QTest::keyClicks(bar, QLatin1String("test query"));
+    // Let the 150ms completer debounce fire so the popup is up — the
+    // real-world shape of the report.
+    QTest::qWait(400);
+    QCompleter *completer = bar->completer();
+    QVERIFY(completer);
+    // Force the real-world shape: suggestion + rows visible in the
+    // dropdown (the test profile's history is empty).
+    OmniboxCompletionModel *omni =
+        qobject_cast<OmniboxCompletionModel*>(completer->model());
+    QVERIFY(omni);
+    omni->setSuggestions(QStringList()
+        << QLatin1String("test query suggestion"));
+    completer->complete();
+    QTest::qWait(100);
+    QTest::keyClick(bar, Qt::Key_Enter);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->url().toString(QUrl::StripTrailingSlash)
+            == expected.toString(QUrl::StripTrailingSlash), 10000);
+
+    // Picking a suggestion row searches its text — the UrlStringRole
+    // payload routes back through loadString/guessUrlFromString.
+    QModelIndex suggestion;
+    QAbstractItemModel *proxy = completer->completionModel();
+    for (int row = 0; row < proxy->rowCount(); ++row) {
+        const QModelIndex at = proxy->index(row, 0);
+        if (at.data(Qt::DisplayRole).toString()
+                == QLatin1String("test query suggestion")) {
+            suggestion = at;
+            break;
+        }
+    }
+    QVERIFY(suggestion.isValid());
+    emit completer->activated(suggestion);
+    const QUrl suggestionExpected = engine->searchUrl(
+        QLatin1String("test query suggestion"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->url().toString(QUrl::StripTrailingSlash)
+            == suggestionExpected.toString(QUrl::StripTrailingSlash),
+        10000);
+
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
+    widget.closeTab();
+    settings.remove(QLatin1String("urlloading/searchEngineFallback"));
 }
 
 // SRCH06: typing the "@tabs" nickname lists this widget's open tabs

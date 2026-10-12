@@ -1249,6 +1249,8 @@ Trust verdict badge on the shield icon (TRUST09):
 
 Site trust Preferences switches now govern the surface (TRUST03):
     The Site Trust group in Preferences > Privacy is wired end to end: turning the master switch off keeps the shield icon plain, hides the panel's Trust section and — most importantly — never runs the site-trust lookup at all; the lookalike and threat-list switches each remove only their own input from the verdict request (a suppressed signal can't flag and can't redden the badge). All three apply live on the next navigation — the badge cache keys on the active switches, so a flip re-evaluates instead of serving a verdict the old settings produced.
+URL-bar search always dispatches (SRCH11):
+    Typing a non-URL string in the location bar and pressing Enter now always performs a web search with the configured default engine — a missing or broken engine descriptor no longer turns Enter into a dead key. The omnibox (Rust and C++ paths) and the dedicated search box share a searchUrlForEngine() rescue that degrades a null engine to the bundled DuckDuckGo descriptor and an unusable template to the DuckDuckGo endpoint directly, and the "Search engine fallback" opt-out only restores the bare-http guess when that guess actually parses — multi-word input searches instead of producing an invalid url loadUrl() silently dropped. Invalid navigation targets now log a warning instead of vanishing, and test binaries write their settings under their own application name so test runs no longer leave searchEngineFallback=false behind in the real user configuration — the recurring trigger behind the "search bar does nothing" report.
 
 0.11.0
 Interface:

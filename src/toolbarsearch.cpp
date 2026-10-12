@@ -374,9 +374,10 @@ void ToolbarSearch::getSuggestions()
 
 void ToolbarSearch::searchNow()
 {
-    // SRCH09: a null field engine used to turn Enter into a dead key.
-    // searchUrlForEngine() rescues the missing/broken descriptor to
-    // the bundled DuckDuckGo endpoint so the search always dispatches.
+    // SRCH09/SRCH11: a null field engine used to turn Enter into a
+    // dead key.  searchUrlForEngine() rescues the missing/broken
+    // descriptor to the bundled DuckDuckGo endpoint so the search
+    // always dispatches.
     QString searchText = text();
 
     // Private browsing is a profile property under Qt WebEngine (MIG03):
