@@ -33,7 +33,6 @@ This file is the task queue for the Devin CLI task loop
 | DEVT01 | View menu -> 'Development Tools' submenu — details below | done | 0 | View > Development Tools submenu after Page Source: "Chromium Dev Tool" is the old inspector action moved+renamed (m_toolsEnableInspectorAction removed — Tools no longer carries it, one source of truth), "BiDi Dev Tool" ships disabled w/ tooltip until DEVT02; palette alias re-keyed to the new label w/ "web inspector" keyword; tst devToolsSubmenu + devToolsMenuOpensInspector re-pointed, tst_browsermainwindow 24/24, tst_devtools 8/8, make check: check-warnings PASS, suites 0 failed except unrelated flakes securestore/containermanager/webpermissions (all PASS standalone) offscreen --disable-gpu |
 | ADB06 | Runtime adblock-engine selector in Preferences -> Security — details below | done | 0 | Preferences > Privacy gains a Content Blocking group: engine combo (Built-in (default) / Brave adblock-rust, itemData cpp / rust persisted as AdBlock/engine) + active-engine status label + semantic-diff tooltip; AdBlockManager gains Engine enum + storedEngine()/engine()/setEngine()/rustEngineAvailable()/rustEngineInUse() — setEngine writes the key and emits rulesChanged so AdBlockNetwork::rebuildRules lazily builds AdBlockRustEngine only when rust is selected (live switch, no restart; native matcher always kept); no-flag builds list the Brave row disabled with 'rebuild with CONFIG+=adblock_rust' and the stored pick round-trips while engine() clamps to native; --adblock-rust-smoke now selects RustEngine + proves delegation. Verified: rust-smoke PASS 13/13 (engine-active true, toggle true true), adblock-smoke PASS, tst_AdBlockManager 15/15 + tst_SettingsDialog (new contentBlockerEngine/engineSelection incl. flagged builds), make check rc=0 (65 programs, 0 failed) |
 | MENU05 | Remove 'Ad Block...' from the Tools menu — details below | done | 0 | m_adBlockDialogAction + Tools entry + retranslate deleted (no orphaned separator — User Agent submenu stays last); new 'Manage content-blocking filters...' QPushButton in the Privacy page's Content Blocking group (Maximum size policy) wired to AdBlockManager::showDialog; palette 'adblock' keywords re-keyed to Preferences...; toolsMenuDedup asserts no Ad Block, new tst_SettingsDialog::adblockManageButton opens the dialog; tst_browsermainwindow 25/25, tst_settingsdialog 29/29, make check: check-warnings PASS + all suites green except known flake fileSchemeErrors (PASS standalone) offscreen --disable-gpu |
-
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | DLACC02 | 'Built-in' turbo: Chromium ParallelDownloading flag — details below | done | 0 | 'Parallel segments (built-in engine, applies at restart)' checkbox on Preferences > Downloads (downloadmanager/parallelSegments default ON, Tor-safe noted in tooltip); applyChromiumFlags addListEntry-merges ParallelDownloading into --enable-features (latched at engine init); new --parallel-download-smoke (loopback ETag+Accept-Ranges server, throttled 16MB, counts Range slice requests) + --parallel-download-off-smoke differential control — PASS 3 conns/2 ranges vs PASS 1 conn/0 ranges (strong-validator ETag is required by Chromium's gate); tst_Privacy::chromiumFlags covers merge+on/off, tst_SettingsDialog::downloadsPage covers persist/reload; sidebarpanel invalidateFilter deprecation fixed (pre-existing check-warnings breakage); make check: check-warnings PASS + 65 programs 0 failed offscreen --disable-gpu |
@@ -82,10 +81,11 @@ This file is the task queue for the Devin CLI task loop
 | TOR09 | Tor-specific start page: Arora logo + Tor logo, tor-themed colors — details below | pending | 0 | |
 | ENG13 | Servo-branded start page: Servo logo under the search field, default colors — details below | pending | 0 | |
 | RSZ02 | Sidebar + tab strip not actually mouse-resizable (RSZ01 grip ineffective) — details below | pending | 0 | |
-
-
 | TABS08 | Tab strip still too tall after TABS07 — details below | pending | 0 | user report: tab size unchanged post-TABS07 |
 | TABS09 | Tab bar icon-only collapse mode — details below | pending | 0 | user feature: minimize tab bar to icons on demand |
+| TOR10 | Tor circuit button click crashes the app — details below | pending | 0 | user report post-TOR08 |
+
+| TOR11 | Tor window title bar not colored like menu/url chrome — details below | pending | 0 | user report post-TOR07 |
 
 ## Task details
 
@@ -443,6 +443,8 @@ Spec: (a) new qrc start page (e.g. startpage-tor.html + assets) loaded as the ne
 
 Verify: new tab in a tor window shows the tor start page (Arora + Tor logos, tor colors, working search box); normal windows still get the standard start page; --startpage-smoke pattern extended or mirrored for the tor variant; make check PASS.
 
+
+USER FOLLOW-UP (post-first-render): (a) the page does NOT fill the viewport — screenshot shows the styled content ending ~60% down with dead white space below; make the page/background cover the entire viewport height (100vh/100% body+html, gradient covering, no bottom whitespace on any window size); (b) use the OFFICIAL Tor Project onion logo — replace the current placeholder onion with the real Tor logo asset (official Tor Project brand asset, license-compatible, bunded as qrc like other start-page art — do NOT hotlink/network-fetch it).
 ### ENG13
 
 Servo-branded start page — user request: 'Same different start page for Servo, where you put the Servo logo into the middle under the search field. No need to change the default coloring.'
@@ -453,6 +455,8 @@ Spec: (a) new qrc start page variant (reuse TOR09's mechanism if it lands first 
 
 Verify: servo-backend new tab shows the servo start page (logo under search field, normal colors, working search); chromium + tor variants unchanged; make check PASS.
 
+
+USER FOLLOW-UP: same two requirements as TOR09 — the servo start page must fill the entire viewport (no dead space below the content) and use the OFFICIAL Servo project logo asset bundled in qrc (not the placeholder, no network fetch).
 ### SIDE07
 
 CRASH: clicking 'Show All Bookmarks' while the current tab is the Preferences page crashes the app — user report: 'Crashed when I clicked on show bookmarks when I was on the preference page.'
@@ -478,3 +482,11 @@ Tab strip still too tall — user report after TABS07 (strip 30->27px, close but
 ### TABS09
 
 NEW FEATURE (user request): 'I want the tab bar to be minimized by me to see only the icons if I want.' Add a user-toggleable icon-only tab-bar mode: a control (corner button in the tab strip and/or tab context menu entry and/or View menu action) that collapses every tab to favicon-only — fixed narrow width, no title text, tooltip keeps the title. Behavior: persists across restarts (settings key), applies to all tabs uniformly (pinned tabs already icon-only — they stay consistent), new tabs in icon mode inherit it, text returns on untoggle; works with groups/containers. Keep it a view mode, not a tab property — no data changes. Verify: toggle shrinks strip to icon tiles and restores; setting survives restart; pinned/group tabs unaffected structurally; make check PASS.
+
+### TOR10
+
+CRASH on clicking the Tor circuit button — user report: 'When I clicked on the Tor button to see the circuit it crashed.' The TorCircuitButton/dropdown is TOR08's fresh code (src/tor + browsermainwindow wiring) — first real-user click segfaults. Reproduce under gdb (tor window -> click the circuit onion button -> capture backtrace). Prime suspects: circuit query with no tor control connection up (TorManager::circuits()/m_streamCircuitId on a null or not-yet-connected controller), the dropdown/menu builder dereferencing a null circuit/relay field, or a flag-icon lookup on a missing country code resource. Guard every deref on the click path; if the tor control connection is not up the dropdown should show an honest 'circuit unavailable' state, not crash. Verify: click -> dropdown opens (or honest unavailable state), zero crash on repeated open/close, make check PASS.
+
+### TOR11
+
+Tor window TITLE BAR not colored — user report: 'the title line of the Tor window is not colored like the menu, url.' TOR07 unified menu/header/tab-strip coloring with the URL-bar treatment, but the OS window title bar itself stays default. Native title bars are WM-drawn — the app cannot tint them directly. Investigate the honest options in order: (a) does the platform honor a dark/colored title variant (GTK _GTK_THEME_VARIANT=dark, xdg decoration hints, KDE color-scheme dbus) — if a cheap hint exists that makes the WM draw a matching dark/tor-toned title bar, use it for tor windows only; (b) if no native path works on this host, weigh a client-side custom title (Qt::FramelessWindowHint + drawn title bar with min/max/close + window drag) — heavier, only if (a) fails; document which was chosen and why. Constraint: normal (non-tor) windows keep the native look. Verify: tor window title area visually matches the tor chrome (menu/url coloring) on this host's WM; non-tor windows unchanged; window still movable/resizable/closable; make check PASS.
