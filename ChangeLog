@@ -497,6 +497,11 @@ UI:
   popup re-laid itself out in an endless loop and crept sideways on
   some desktops. The open menu now refreshes without re-querying and
   only rebuilds when the circuit rows actually change (TOR13).
+- Vivaldi-style application menu: the navigation bar now leads with an
+  Arora logo + "Arora" button whose dropdown holds File, Edit, View,
+  History, Bookmarks, Window, Tools and Help — the classic menubar is
+  hidden by default on every window type, and View → Show Menu Bar
+  (Ctrl+M) brings it back whenever wanted (MENU06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
