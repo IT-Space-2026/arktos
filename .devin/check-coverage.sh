@@ -107,6 +107,8 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --sleep-smoke --session-smoke --restore-smoke --tor-smoke
 --tor-window-smoke --tor-newtab-smoke --startpage-smoke --sandbox-smoke --sandbox-status
 --bidi-smoke --parallel-download-smoke --parallel-download-off-smoke
+--pdf-smoke --pdfview-smoke --sigterm-smoke --servo-smoke
+--crash-smoke --fingerprint-inject-smoke --write-sandbox-launcher
 --ingress-smoke --engine-list --engine-smoke"
 for flag in $SMOKE_FLAGS; do
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
@@ -119,6 +121,163 @@ if timeout 240 ./arora --download-smoke "file://$BUILD/README.md" >/dev/null 2>&
     echo "check-coverage: smoke --download-smoke PASS"
 else
     echo "check-coverage: smoke --download-smoke exit=$? (tolerated)"
+fi
+
+# COV08: with no bwrap on PATH the pdf client rasterizes in-process —
+# a production fallback path the confined run never reaches.  A
+# second pass with the bwrap override pointed nowhere drives it.
+# (pdfworker.cpp itself is covered by the stdio drive below: the
+# client only spawns --pdf-worker under bwrap, so no override can
+# reach it from here.)
+if ARORA_BWRAP=/nonexistent timeout 240 ./arora --pdfview-smoke \
+        >/dev/null 2>&1; then
+    echo "check-coverage: smoke --pdfview-smoke (no bwrap) PASS"
+else
+    echo "check-coverage: smoke --pdfview-smoke (no bwrap) exit=$? (tolerated)"
+fi
+
+# COV08: `arora --download-worker` only ever runs inside a bwrap
+# namespace in production, where it can't write its profraw — drive
+# the stdio JSONL protocol directly so downloadworker.cpp counts.
+# A loopback server serves a small blob; the driver answers gate
+# events with DL_GATE_ALLOW until the download reports done.
+if timeout 240 python3 - "$BUILD" <<'PYEOF' >/dev/null 2>&1; then
+import functools, http.server, json, os, subprocess, sys, tempfile, threading, time
+
+build = sys.argv[1]
+arora = os.path.join(build, "arora")
+fixture = tempfile.mkdtemp(prefix="dlfix-", dir=build)
+work_dir = tempfile.mkdtemp(prefix="dlwork-", dir=build)
+dest_dir = tempfile.mkdtemp(prefix="dldest-", dir=build)
+with open(os.path.join(fixture, "blob.bin"), "wb") as f:
+    f.write(b"\0" * 65536)
+
+handler = functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=fixture)
+httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+proc = subprocess.Popen([arora, "--download-worker"],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL)
+job = {"cmd": "job",
+       "url": "http://127.0.0.1:%d/blob.bin" % httpd.server_address[1],
+       "dest_dir": dest_dir, "suggested_name": "blob.bin",
+       "connections": 1, "work_dir": work_dir,
+       "options": {"first_party": "http://127.0.0.1/",
+                   "scope": "all", "referer_policy": 0,
+                   "require_proxy": False}}
+proc.stdin.write(json.dumps(job).encode() + b"\n")
+proc.stdin.flush()
+
+done = False
+deadline = time.time() + 120
+while time.time() < deadline:
+    line = proc.stdout.readline()
+    if not line:
+        break
+    try:
+        event = json.loads(line)
+    except ValueError:
+        continue
+    kind = event.get("ev")
+    if kind == "gate":
+        proc.stdin.write(json.dumps(
+            {"ev": "gate-reply", "id": event["id"], "action": 0}
+        ).encode() + b"\n")
+        proc.stdin.flush()
+    elif kind == "done":
+        done = True
+        break
+    elif kind in ("error", "cancelled"):
+        break
+
+proc.terminate()
+httpd.shutdown()
+sys.exit(0 if done else 1)
+PYEOF
+    echo "check-coverage: download-worker drive PASS"
+else
+    echo "check-coverage: download-worker drive exit=$? (tolerated)"
+fi
+
+# COV08: `arora --pdf-worker` only ever runs inside a bwrap
+# namespace in production, where it can't write its profraw — drive
+# the stdio JSONL protocol (pdfworker.h) directly so pdfworker.cpp
+# counts.  The fixture is the same sanitized two-page document
+# --pdfview-smoke stages, base64'd.
+if timeout 240 python3 - "$BUILD" <<'PYEOF' >/dev/null 2>&1; then
+import base64, json, os, subprocess, sys, tempfile
+
+PDF_B64 = (
+    "JVBERi0xLjQKJbutwN4KMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFIvTmFtZXM8"
+    "PD4+Pj4KZW5kb2JqCjIgMCBvYmoKPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSIDQgMCBSXS9Db3Vu"
+    "dCAyPj4KZW5kb2JqCjMgMCBvYmoKPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFsw"
+    "IDAgMzAwIDIwMF0vUmVzb3VyY2VzPDwvRm9udDw8L0YxIDUgMCBSPj4+Pi9Db250ZW50cyA4IDAg"
+    "Uj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMiAwIFIvTWVkaWFCb3hbMCAw"
+    "IDMwMCAyMDBdL1Jlc291cmNlczw8L0ZvbnQ8PC9GMSA1IDAgUj4+Pj4vQ29udGVudHMgOSAwIFI+"
+    "PgplbmRvYmoKNSAwIG9iago8PC9UeXBlL0ZvbnQvU3VidHlwZS9UeXBlMS9CYXNlRm9udC9IZWx2"
+    "ZXRpY2E+PgplbmRvYmoKNiAwIG9iago8PD4+CmVuZG9iago3IDAgb2JqCjw8L05hbWVzWyhhKTw8"
+    "L0VGPDwvRiAxMCAwIFI+Pi9GKGEpPj5dPj4KZW5kb2JqCjggMCBvYmoKPDwvTGVuZ3RoIDQyPj5z"
+    "dHJlYW0KQlQgL0YxIDI0IFRmIDUwIDE1MCBUZCAoaGVsbG8gd29ybGQpIFRqIEVUCmVuZHN0cmVh"
+    "bSAKZW5kb2JqCjkgMCBvYmoKPDwvTGVuZ3RoIDM4Pj5zdHJlYW0KQlQgL0YxIDI0IFRmIDUwIDE1"
+    "MCBUZCAoZ29vZGJ5ZSkgVGogRVQKZW5kc3RyZWFtIAplbmRvYmoKMTAgMCBvYmoKPDwvVHlwZS9F"
+    "bWJlZGRlZEZpbGUvTGVuZ3RoIDQ+PnN0cmVhbQpldmlsCmVuZHN0cmVhbSAKZW5kb2JqCnhyZWYK"
+    "MCAxMQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAKMDAwMDAwMDA3MCAw"
+    "MDAwMCBuIAowMDAwMDAwMTI3IDAwMDAwIG4gCjAwMDAwMDAyMzkgMDAwMDAgbiAKMDAwMDAwMDM1"
+    "MSAwMDAwMCBuIAowMDAwMDAwNDE0IDAwMDAwIG4gCjAwMDAwMDA0MzQgMDAwMDAgbiAKMDAwMDAw"
+    "MDQ5MCAwMDAwMCBuIAowMDAwMDAwNTgwIDAwMDAwIG4gCjAwMDAwMDA2NjYgMDAwMDAgbiAKdHJh"
+    "aWxlcgo8PC9TaXplIDExL1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKNzM2CiUlRU9G"
+)
+
+build = sys.argv[1]
+arora = os.path.join(build, "arora")
+work_dir = tempfile.mkdtemp(prefix="pdfwork-", dir=build)
+pdf_path = os.path.join(work_dir, "doc.pdf")
+with open(pdf_path, "wb") as f:
+    f.write(base64.b64decode(PDF_B64))
+
+proc = subprocess.Popen([arora, "--pdf-worker"],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL)
+job = {"cmd": "job", "pdf": pdf_path, "work_dir": work_dir,
+       "probe_paths": ["/usr", "/nonexistent"]}
+proc.stdin.write(json.dumps(job).encode() + b"\n")
+proc.stdin.flush()
+
+meta = page = find = False
+for _ in range(50):
+    line = proc.stdout.readline()
+    if not line:
+        break
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        continue
+    kind = ev.get("ev")
+    if kind == "meta":
+        meta = ev.get("pages") == 2
+        for cmd in ({"cmd": "render", "req": 1, "page": 0, "scale": 1.5},
+                    {"cmd": "find", "req": 2, "needle": "goodbye",
+                     "from": 0, "dir": 1}):
+            proc.stdin.write(json.dumps(cmd).encode() + b"\n")
+        proc.stdin.flush()
+    elif kind == "page":
+        page = True
+    elif kind == "find":
+        find = ev.get("page") == 1 and ev.get("total") == 1
+        proc.stdin.write(json.dumps({"cmd": "stop"}).encode() + b"\n")
+        proc.stdin.flush()
+
+try:
+    proc.wait(timeout=30)
+except subprocess.TimeoutExpired:
+    proc.terminate()
+sys.exit(0 if (meta and page and find) else 1)
+PYEOF
+    echo "check-coverage: pdf-worker drive PASS"
+else
+    echo "check-coverage: pdf-worker drive exit=$? (tolerated)"
 fi
 
 ls "$PROFDIR"/*.profraw >/dev/null 2>&1 || die "no profraw written"
