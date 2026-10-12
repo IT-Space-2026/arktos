@@ -74,6 +74,10 @@ This file is the task queue for the Devin CLI task loop
 | SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |
 | DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | pending | 0 | |
 | PREFUI11 | Move "Show tab previews on hover" from Appearance to Tab Settings page — details below | pending | 0 | |
+| TOR06 | Tor window: tab strip too tall again + overlaps left icon — details below | pending | 0 | |
+| TOR07 | Tor window chrome coloring: menu/header/tab should match URL-bar treatment — details below | pending | 0 | |
+| ICONS04 | Refresh button style differs from back/forward arrows — unify toolbar icon set — details below | pending | 0 | |
+| TOR08 | Tor circuit dropdown: small icon next to reader mode shows circuit w/ country flags+names — details below | pending | 0 | |
 
 
 ## Task details
@@ -409,3 +413,41 @@ TPREV01 added the toggle (persisted setting consumed by the tab-hover preview lo
 Spec: (a) move the checkbox widget + its settings wiring (readSettings/saveToSettings in settings.cpp) from the Appearance page to the Tab Settings page — place it with the other tab-behavior checkboxes, aligned per the page's column conventions; (b) NO behavior change — same settings key, same default, same live-apply path; (c) no orphaned layout row/spacer left on the Appearance page; (d) check the palette-search keywords if PREFUI01-style keyword tagging covers it (retag to the new page if so).
 
 Verify: checkbox appears under Tab Settings, gone from Appearance, persists across restart, previews still toggle live, make check PASS.
+
+### TOR06
+
+Tor window tab strip too big + covers an icon — user screenshot (Arora (Tor)): the tab bar is again oversized in the tor window (same complaint as TABS07) AND the strip overlaps/covers an icon at the left edge (the teal tor/private indicator icon is half-hidden behind the tab strip).
+
+Spec: (a) tab height in tor windows matches whatever TABS07 normalizes the normal-window height to — if TABS07 lands first, verify tor inherits it; if this runs first, fix the shared tabSizeHint path not a tor-only hack; (b) the left-edge icon (tor mode indicator) must not be occluded by the tab strip — the strip should start after it or the indicator should render above/beside it, not under; (c) check normal windows do not regress.
+
+Verify: tor window tab strip normal height, left icon fully visible and clickable; make check PASS.
+
+### TOR07
+
+Tor window chrome coloring consistency — user screenshot + direction: 'the window menu area and the header should be like the URL bar from coloring point of view. Same for the tab as well.'
+
+Current: tor window shows a dark-purple toolbar strip while the menu bar (File/Edit/View...) renders default light-gray and the tab renders white — three unrelated shades in the header block. The URL bar field has its own (light) treatment inside the purple chrome.
+
+Spec: unify the tor-window header block coloring so the menu bar, toolbar/header band, and tab strip share a coherent treatment consistent with the URL bar's — i.e., the tor theme should color the WHOLE chrome (menu bar included), not leave the menu row on the default palette while the toolbar is purple. Interpretation latitude: either all light like the URL field, or all in the tor palette with the field light inside — pick whichever matches how the tor theme defines its chrome colors (the purple is intentional tor branding — the light menu row is the bug). Tabs get the same treatment as normal chrome tabs under that palette.
+
+Verify: tor window menu bar + header + tab strip render in one coherent scheme (no orphan light-gray row), URL bar treatment unchanged, normal (non-tor) windows untouched, both day/night sane; make check PASS.
+
+### ICONS04
+
+Refresh/reload button icon style differs from the back/forward arrows — user report: 'the refresh button is different than the left and right arrow.'
+
+The toolbar's reload icon is a filled/differently-styled glyph while back/forward use another style (outline vs filled mismatch visible in the tor screenshot). Spec: make navigation icons consistent — back, forward, reload, stop should come from the same icon set/style (AroraIcon resolver) at the same weight; check both light and dark + tor themes since contrast differs. If the reload glyph comes from a different source (theme fallback), point it at the matching set or ship a matching glyph.
+
+Verify: back/forward/reload/stop render in one consistent style across normal + tor windows and both themes; make check PASS.
+
+### TOR08
+
+Tor circuit dropdown — user request: 'I want a small icon next to the read mode, and when I click on it it shows the tor circuit in a drop down, showing the country flags and names as well.'
+
+Tor Browser parity feature: a small toolbar button placed next to the reader-mode button in the URL bar area, visible/active in tor windows (and harmless-hidden or disabled in normal windows). Clicking opens a dropdown showing the current tor circuit — each relay hop with country flag + country name (and ideally relay IP/nickname if cheap to show).
+
+Implementation notes: needs the tor control connection (tormanager.cpp may already manage the daemon/control port — check what exists before building a second control channel; tor's GETINFO circuit-status + ns/<fingerprint> for relay info gives country via geoip if tor provides it, else document the fallback: flag 'unknown' glyph). The dropdown is read-only info — refresh on open and/or on 'new circuit'. Flags: use a small bundled flag set keyed on ISO country code (keep it tiny — no giant sprite sheets; only what's needed).
+
+Spec: (a) icon next to reader mode, tor windows only (greyed+tooltip if tor binary/control unavailable); (b) dropdown lists circuit hops with flag + country name; (c) refresh semantics (open re-queries circuit; empty state 'no circuit yet' when idle); (d) never block the UI on control queries (async or cached); (e) no circuit info in non-tor windows (button hidden, not just disabled).
+
+Verify: in a tor window with an established circuit, dropdown shows 3 hops with flags+names; no tor window -> button absent; opening/closing repeatedly does not leak sockets; make check PASS.
