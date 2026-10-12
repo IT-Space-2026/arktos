@@ -556,3 +556,5 @@
 - 2026-10-12 MERGEWATCH: ui-work at 0 ahead — no merge needed
 - 2026-10-12 MERGEWATCH: ui-work merged — clean (.devin/Arora-Task-UI.md only: TOR10/TOR11 task rows; code already on master), build ok
 - 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (WORKLOG.md, sitepanel.cpp/.h, tst_sitepanel.cpp modified mid-run by another agent; 6th consecutive skip)
+- 2026-10-12 MERGEWATCH: ui-work at 0 ahead — no merge needed
+- 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (sitepanel.cpp/.h, tst_sitepanel.cpp still modified mid-run by another agent; 7th consecutive skip)
