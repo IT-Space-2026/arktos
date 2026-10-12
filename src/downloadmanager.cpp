@@ -60,6 +60,7 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#include "flowlayout.h"
 #include "webenginebackend.h"
 #ifdef ARORA_RUSTDL
 #include "rustdownloadengine.h"
@@ -114,6 +115,24 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     , m_expanded(false)
 {
     setupUi(this);
+    // DOWN04: the sidebar detail pane can squeeze the card to ~110px
+    // — a fixed horizontal row would crush the action buttons into
+    // slivers.  Move them into a wrapping flow row at the same spot
+    // so every button keeps its natural size and reflows onto extra
+    // rows instead of clipping.
+    FlowLayout *buttonFlow = new FlowLayout(0, 6, 6);
+    while (QLayoutItem *child = cardButtonsLayout->takeAt(0)) {
+        if (child->widget())
+            buttonFlow->addWidget(child->widget());
+        else
+            delete child;
+    }
+    // The .ui row is the card's last item — swap it for the flow at
+    // the same bottom position.
+    QBoxLayout *box = static_cast<QBoxLayout *>(layout());
+    box->removeItem(cardButtonsLayout);
+    box->addItem(buttonFlow);
+    delete cardButtonsLayout;
     // Server-supplied file names may contain markup-looking text;
     // the labels must always render it literally.
     fileNameLabel->setTextFormat(Qt::PlainText);
@@ -127,8 +146,10 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     downloadInfoLabel->setPalette(p);
     for (QLabel *label : {static_cast<QLabel*>(sourceLabel),
                           static_cast<QLabel*>(destinationLabel),
-                          startedLabel, finishedLabel,
-                          sizeLabel, speedLabel})
+                          static_cast<QLabel*>(startedLabel),
+                          static_cast<QLabel*>(finishedLabel),
+                          static_cast<QLabel*>(sizeLabel),
+                          static_cast<QLabel*>(speedLabel)})
         label->setPalette(p);
     progressBar->setMaximum(0);
     // UIP02: this row packs three compact buttons — exempt it from the

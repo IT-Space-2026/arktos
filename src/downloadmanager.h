@@ -129,7 +129,7 @@ private slots:
     void tryAgain();
     void open();
     // Card actions: Restart re-issues the url for any finished or
-    // failed download; Show in File Manager reveals the folder.
+    // failed download; Show in Folder reveals the folder.
     void restart();
     void showInFolder();
 
