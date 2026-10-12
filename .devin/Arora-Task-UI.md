@@ -79,6 +79,7 @@ This file is the task queue for the Devin CLI task loop
 | ICONS04 | Refresh button style differs from back/forward arrows — unify toolbar icon set — details below | pending | 0 | |
 | TOR08 | Tor circuit dropdown: small icon next to reader mode shows circuit w/ country flags+names — details below | pending | 0 | |
 | TOR09 | Tor-specific start page: Arora logo + Tor logo, tor-themed colors — details below | pending | 0 | |
+| ENG13 | Servo-branded start page: Servo logo under the search field, default colors — details below | pending | 0 | |
 
 
 ## Task details
@@ -462,3 +463,13 @@ Current state: new tabs in tor windows show blank Untitled (possibly the same ro
 Spec: (a) new qrc start page (e.g. startpage-tor.html + assets) loaded as the new-tab/home page inside tor windows (respect the same homepage/new-tab settings path — if the homepage setting is custom, honor it; the tor variant replaces the DEFAULT bundled page only); (b) layout mirrors the normal start page — the Arora logo where it normally sits, and the Tor logo centered in the middle; (c) coloring fits the tor purple theme (background/accents in the tor palette, readable in both day/night if the chrome themes it); (d) keep the start page functional — the search box + arora channel wiring must work identically (the START01 channel-handshake contract); (e) tor logo asset bundled in qrc (no network fetch — a start page must never hit the network, especially in tor).
 
 Verify: new tab in a tor window shows the tor start page (Arora + Tor logos, tor colors, working search box); normal windows still get the standard start page; --startpage-smoke pattern extended or mirrored for the tor variant; make check PASS.
+
+### ENG13
+
+Servo-branded start page — user request: 'Same different start page for Servo, where you put the Servo logo into the middle under the search field. No need to change the default coloring.'
+
+Same pattern as TOR09's dedicated tor start page: tabs/windows running the Servo backend show a servo-branded variant of the bundled start page (qrc, never network). Layout mirrors the normal start page (Arora logo in place) with the SERVO logo placed in the middle UNDER the search field. Keep the DEFAULT/normal coloring — no theme recolor.
+
+Spec: (a) new qrc start page variant (reuse TOR09's mechanism if it lands first — share the branded-variant plumbing rather than copy-pasting a second page implementation); (b) shown when the new-tab/backend is Servo — chromium-backend tabs keep the standard page, tor windows keep the tor page (precedence: tor > servo > standard if they ever compose); (c) Servo logo bundled in qrc; (d) search box + arora channel wiring identical.
+
+Verify: servo-backend new tab shows the servo start page (logo under search field, normal colors, working search); chromium + tor variants unchanged; make check PASS.
