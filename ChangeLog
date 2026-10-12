@@ -127,6 +127,10 @@ UI:
   aborted the browser. The backend now allows a single Servo view and
   refuses further engine tabs with a status-bar message instead of
   crashing; sibling actions on an empty Servo tab are no-ops (ENG12).
+- Servo backend hardening: engine callbacks for url, title, load status
+  and frames now run on the GUI thread and are ignored once the Servo
+  view is being torn down, closing a use-after-free window during tab
+  close (AUDIT02).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and
