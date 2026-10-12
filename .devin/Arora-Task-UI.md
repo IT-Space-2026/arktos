@@ -67,6 +67,7 @@ This file is the task queue for the Devin CLI task loop
 | SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | pending | 0 | |
 | PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
+| PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
 
 
 ## Task details
@@ -332,3 +333,11 @@ Show the current Servo version in the rendering-engine dropdown — user request
 Find the engine/backend selector that displays the engine name + version (the combo/dropdown where 'Chromium <version>' is shown — likely Preferences engine page or the --engine-list/Engine adapter surface wired by the ENG lane). Chromium already displays its version; the Servo backend entry must show the actual Servo version the same way — query it from the servo adapter/embedding API (spikes/servo/servo-embed) rather than hardcoding; if the servo build exposes no version call, fall back honestly (e.g. 'Servo (version unknown)') and note it. Keep the display consistent: same format pattern as the Chromium entry.
 
 Verify: engine dropdown shows 'Servo <version>' matching the real linked servo build; Chromium entry unchanged; entry updates if servo version changes (rebuild), make check PASS.
+
+### PREFUI10
+
+Appearance page fields too wide — user screenshot: Preferences > Appearance shows the font rows ('Standard font', 'Fixed width font') stretching the full page width with their 'Select...' buttons pushed to the far right edge, and 'Preferred languages for viewing webpages' as an oversized full-width multi-line box. PREFUI07's field-sizing sweep apparently missed or regressed this page.
+
+Spec: (a) font fields — the read-only font display + 'Select...' button should size to content/a reasonable field width, not absorb the whole page; use a fixed or maximum field width with the button adjacent (match how Firefox/other pages group a value + picker button); (b) 'Preferred languages' box — cap its width/height to a sensible size (the field does not need the full page); (c) icons combo row — same check (it also looks stretched); (d) keep the page's left-anchored alignment consistent with the other Preferences pages after PREFUI06; (e) re-sweep Appearance page rows for any other full-width field defect.
+
+Verify: Appearance page fields have bounded width (buttons sit next to their fields, not at the page edge), layout still scales on window resize without ugly stretch, make check PASS.
