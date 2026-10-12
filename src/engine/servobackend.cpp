@@ -30,6 +30,7 @@
 #include <qfileinfo.h>
 #include <qlibrary.h>
 #include <qmetaobject.h>
+#include <qmutex.h>
 #include <qpainter.h>
 
 #include "servo_embed.h"
@@ -117,12 +118,46 @@ bool resolve()
 
 } // namespace
 
+// ---- one SeInstance per process (ENG12) ------------------------------
+//
+// libservo v0.7.0 parks its Opts in a process-global OnceCell — the
+// first Servo build wins and EVERY later se_init panics ("Already
+// initialized", components/config/opts.rs).  Rust panics cannot
+// unwind across the extern "C" ABI, so the second ServoView is not a
+// degraded tab, it is a guaranteed process abort.  The slot below is
+// the honest guard: Free -> InUse on se_init, -> Exhausted when the
+// view dies or init fails — a spent slot is never handed back.
+// ServoBackend::createPage refuses once the slot is gone so the
+// swap/new-tab paths fail the whole engine tab instead of
+// manufacturing the abort.
+
+namespace {
+
+enum class ServoSlot { Free, InUse, Exhausted };
+
+QMutex &servoMutex()
+{
+    static QMutex mutex;
+    return mutex;
+}
+
+ServoSlot g_servoSlot = ServoSlot::Free;      // under servoMutex()
+ServoView *g_liveView = nullptr;              // under servoMutex()
+
+} // namespace
+
 // ---- ServoView ------------------------------------------------------
 
 void ServoView::cbWake(void *userdata)
 {
-    // Any Servo thread — bounce to the GUI thread.
+    // Any Servo thread — bounce to the GUI thread.  userdata is a raw
+    // this and Servo threads may still wake while se_destroy unwinds
+    // underneath ~ServoView, so the live-view slot gates the
+    // dereference: a stale wake only compares the pointer value.
+    QMutexLocker lock(&servoMutex());
     ServoView *view = static_cast<ServoView *>(userdata);
+    if (!view || g_liveView != view)
+        return;
     QMetaObject::invokeMethod(view, &ServoView::spinOnce,
                               Qt::QueuedConnection);
 }
@@ -179,6 +214,18 @@ ServoView::ServoView(QWidget *parent)
         qWarning("servo-embed: unavailable — ServoView inert");
         return;
     }
+    {
+        QMutexLocker lock(&servoMutex());
+        if (g_servoSlot != ServoSlot::Free) {
+            // Reached only via a caller that skipped createPage's
+            // refusal — inert, never a second se_init.
+            qWarning("servo-embed: refusing a second se_init — libservo "
+                     "permits one instance per process (see header)");
+            return;
+        }
+        g_servoSlot = ServoSlot::InUse;
+        g_liveView = this;
+    }
 
     SeCallbacks callbacks = {};
     callbacks.userdata = this;
@@ -197,12 +244,27 @@ ServoView::ServoView(QWidget *parent)
                             width() > 0 ? width() : 800,
                             height() > 0 ? height() : 600,
                             configDir.constData());
-    if (!m_instance)
+    if (!m_instance) {
+        QMutexLocker lock(&servoMutex());
+        g_liveView = nullptr;
+        // A failed se_init may already have consumed the global Opts
+        // — never hand the slot back.
+        g_servoSlot = ServoSlot::Exhausted;
         qWarning("servo-embed: se_init failed");
+    }
 }
 
 ServoView::~ServoView()
 {
+    {
+        QMutexLocker lock(&servoMutex());
+        if (g_liveView == this)
+            g_liveView = nullptr;
+        // Only the view that held the claim spends the slot — an
+        // inert never-initialized view must not downgrade a live one.
+        if (m_instance)
+            g_servoSlot = ServoSlot::Exhausted;
+    }
     if (m_instance && resolve())
         api().destroy(m_instance);
 }
@@ -210,6 +272,12 @@ ServoView::~ServoView()
 bool ServoView::isReady() const
 {
     return m_instance != nullptr;
+}
+
+bool ServoView::instanceAvailable()
+{
+    QMutexLocker lock(&servoMutex());
+    return g_servoSlot == ServoSlot::Free;
 }
 
 void ServoView::load(const QUrl &url)
@@ -791,6 +859,17 @@ Engine::Profile *ServoBackend::createProfile(
 Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
                                        QObject *parent)
 {
+    // ENG12: one WebView per process lifetime — a second se_init
+    // aborts (process-global Opts panic crossing the C ABI).  Refusing
+    // the page fails the whole EngineTab upstream (addEngineTab drops
+    // it, reloadTabInEngine keeps the old tab, a servo-default
+    // newTab() falls back to Chromium) instead of manufacturing the
+    // crash.  ServoView's ctor double-checks at se_init time.
+    if (!ServoView::instanceAvailable()) {
+        qWarning("servo: refusing engine tab — libservo supports one "
+                 "WebView per process and it is already claimed");
+        return nullptr;
+    }
     return new ServoPage(profile, parent);
 }
 

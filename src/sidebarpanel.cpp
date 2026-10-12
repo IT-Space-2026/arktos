@@ -753,7 +753,9 @@ void SidebarPanel::bookmarksContextMenu(const QPoint &pos)
         });
     }
     menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("Delete"), m_bookmarksView,
+    // SIDE04/SIDE07: same wording as the history rail's entry so the
+    // remove capability is discoverable in both places.
+    QAction *deleteAction = menu.addAction(tr("Remove Entry"), m_bookmarksView,
                                            &EditTreeView::removeSelected);
     deleteAction->setEnabled(index.flags() & Qt::ItemIsDragEnabled);
     menu.exec(QCursor::pos());

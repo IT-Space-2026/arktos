@@ -10,7 +10,9 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dpi::PhysicalSize;
 use servo::{
@@ -169,12 +171,42 @@ fn cstr(text: &str) -> CString {
     CString::new(text.as_bytes()).unwrap_or_else(|_| CString::new("<invalid>").unwrap())
 }
 
+// ENG12: libservo v0.7.0 parks Opts in a process-global OnceCell —
+// the first Servo build wins, every later init panics "Already
+// initialized" (components/config/opts.rs), and a panic may not
+// unwind across an extern "C" boundary so the host process aborts.
+// One instance per process lifetime, ever — the Qt side enforces the
+// same contract so this gate is the last line of defense.
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 /// Create a Servo instance with one WebView sized `width`x`height`
 /// (device px) on a software rendering context. Returns nullptr on
-/// failure. `config_dir` may be nullptr (Servo's default) or a writable
-/// directory used for the cookie db / storage threads.
+/// failure — including a second call, which libservo cannot serve
+/// (process-global Opts). `config_dir` may be nullptr (Servo's
+/// default) or a writable directory used for the cookie db / storage
+/// threads.
 #[no_mangle]
 pub extern "C" fn se_init(
+    callbacks: SeCallbacks,
+    width: u32,
+    height: u32,
+    config_dir: *const c_char,
+) -> *mut SeInstance {
+    if INITIALIZED.swap(true, Ordering::SeqCst) {
+        eprintln!("servo-embed: se_init called more than once — \
+                   libservo Opts is process-global, refusing");
+        return std::ptr::null_mut();
+    }
+    // catch_unwind keeps any residual init panic (context failure,
+    // missing resource dir, ...) from aborting the host — panics do
+    // not unwind across extern "C".
+    catch_unwind(AssertUnwindSafe(|| {
+        se_init_inner(callbacks, width, height, config_dir)
+    }))
+    .unwrap_or(std::ptr::null_mut())
+}
+
+fn se_init_inner(
     callbacks: SeCallbacks,
     width: u32,
     height: u32,

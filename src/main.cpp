@@ -94,9 +94,9 @@
 #ifdef ARORA_RUSTDL
 #include "downloadworker.h"
 #endif
-#ifdef ARORA_RUSTCORE
+// EngineTab is engine-layer, not rust-layer — --servo-smoke needs it
+// in no-rust builds too (ENG12).
 #include "enginetab.h"
-#endif
 
 #include <QtCore/QBuffer>
 #include <QtCore/QCommandLineParser>
@@ -3073,6 +3073,115 @@ static int engineSmoke()
     return ok ? 0 : 1;
 }
 
+// ENG12 — the servo lifecycle guard.  libservo v0.7.0 permits ONE
+// WebView per process lifetime: a second se_init panics inside
+// Opts and the panic aborts the host across the C ABI, so the
+// backend must refuse rather than re-init.  Drives the reported
+// flow — swap an empty Untitled tab onto Servo ("Reload in Servo"),
+// reload it, hit the sibling entry points, swap back, swap forward
+// again — asserting refusal exactly where re-init would be fatal.
+// The process surviving to the PASS line is itself the check.
+// Skips cleanly when the servo backend/artifact is absent.
+static int servoLifecycleSmoke()
+{
+    Engine::Backend *servo =
+        EngineRegistry::backendForId(QStringLiteral("servo"));
+    if (!servo) {
+        qInfo() << "servo-smoke: SKIP (no servo backend/artifact)";
+        return 0;
+    }
+    bool ok = true;
+    const auto report = [&ok](const QString &name, bool pass) {
+        qInfo() << "servo-smoke:" << name << (pass ? "PASS" : "FAIL");
+        ok = ok && pass;
+    };
+    const auto pumpUntil = [](const std::function<bool()> &done,
+                              qint64 timeoutMs) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done() && timer.elapsed() < timeoutMs)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    };
+    const auto pumpDeletes = [] {
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
+    const QString fixturePath = QDir::temp().filePath(
+        QLatin1String("arora-servo-smoke.html"));
+    {
+        QFile fixture(fixturePath);
+        if (!fixture.open(QIODevice::WriteOnly)) {
+            qInfo() << "servo-smoke: FAIL (cannot write fixture)";
+            return 1;
+        }
+        fixture.write("<html><head><title>ServoSmokeProbe</title>"
+                      "</head><body>servo reload probe</body></html>");
+    }
+    const QUrl probe = QUrl::fromLocalFile(fixturePath);
+
+    // (a)+(b): the user repro — an empty Untitled tab swapped onto
+    // Servo, reloaded 10x plus the sibling entry points (stop/back/
+    // forward/zoom/js), then a real load and a real reload.
+    {
+        TabWidget tabs;
+        tabs.makeNewTab(true);       // empty Untitled, on webengine
+        report(QStringLiteral("empty-tab"), tabs.count() == 1);
+        report(QStringLiteral("swap-to-servo"),
+               tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+        EngineTab *engineTab = tabs.engineTab(0);
+        report(QStringLiteral("engine-tab"), engineTab != nullptr);
+        if (engineTab && engineTab->page()) {
+            Engine::Page *page = engineTab->page();
+            bool finished = false;
+            QObject::connect(engineTab, &EngineTab::loadFinished,
+                             engineTab,
+                             [&finished](bool) { finished = true; });
+            for (int i = 0; i < 10; ++i) {
+                engineTab->reload();
+                tabs.reloadTab(0);   // chrome path: no-op on engine tabs
+            }
+            engineTab->stop();
+            page->back();
+            page->forward();
+            page->setZoomFactor(1.1);
+            page->runJavaScript(QStringLiteral("1+1"));
+            report(QStringLiteral("reload-empty-10x"), true);
+
+            // A loaded servo tab must still reload for real.
+            pumpUntil([page]() { return !page->url().isEmpty(); },
+                      30000);
+            finished = false;
+            engineTab->load(probe);
+            pumpUntil([&finished]() { return finished; }, 30000);
+            report(QStringLiteral("load-finished"), finished);
+            finished = false;
+            engineTab->reload();
+            pumpUntil([&finished]() { return finished; }, 30000);
+            report(QStringLiteral("reload-loaded"), finished);
+        }
+        // (c) mid-tab backend switching stays stable: back to
+        // webengine destroys the only ServoView, and a second
+        // servo tab must be refused — not manufactured into an abort.
+        report(QStringLiteral("swap-back"),
+               tabs.reloadTabInEngine(0, QStringLiteral("webengine")));
+        pumpDeletes();
+        report(QStringLiteral("reswap-refused"),
+               !tabs.reloadTabInEngine(0, QStringLiteral("servo")));
+        report(QStringLiteral("original-kept"),
+               tabs.webView(0) != nullptr);
+    }
+
+    // (d) the direct-API refusal: once the single instance is spent,
+    // createPage hands back nothing instead of letting se_init panic.
+    pumpDeletes();
+    Engine::Profile *profile =
+        servo->createProfile(Engine::ProfileOptions(), nullptr);
+    report(QStringLiteral("second-page-refused"),
+           profile && !servo->createPage(profile, nullptr));
+
+    qInfo() << "servo-smoke:" << (ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     // SAND01: a browsing launch re-execs itself inside the filesystem
@@ -3555,7 +3664,7 @@ int main(int argc, char **argv)
         "bidi-smoke", "pdf-smoke", "pdfview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
-        "engine-list", "engine-smoke",
+        "engine-list", "engine-smoke", "servo-smoke",
     };
     for (const char *option : internalOptions)
         parser.addOption(QCommandLineOption(QLatin1String(option)));
@@ -3635,6 +3744,11 @@ int main(int argc, char **argv)
     // asserted rather than assumed.
     if (args.contains(QLatin1String("--engine-smoke")))
         return engineSmoke();
+
+    // ENG12: the servo lifecycle guard — swap/reload/refusal matrix
+    // over the real backend (skips when the artifact is absent).
+    if (args.contains(QLatin1String("--servo-smoke")))
+        return servoLifecycleSmoke();
 
     // TOR02: `arora --tor` is a standalone process running the real
     // browser UI — every request exits through the managed daemon's

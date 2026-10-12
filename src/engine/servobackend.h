@@ -41,6 +41,17 @@
 // RGBA image into a QImage on frame_ready.  The C ABI exposes no GL
 // surface handoff, so the QOpenGLWidget/surfman upgrade needs a shim
 // extension first (noted in the spike doc).
+//
+// ENG12: exactly ONE ServoView may exist per process lifetime.
+// libservo v0.7.0 parks Opts in a process-global OnceCell — the first
+// Servo build wins, every later se_init panics ("Already initialized"
+// in components/config/opts.rs), and a Rust panic cannot unwind
+// across the extern "C" boundary so the host process aborts.  The
+// backend refuses a second page/view rather than manufacturing the
+// abort; a spent slot is never handed back (even a failed se_init may
+// have consumed Opts).  Upstream fix (init-once + catch_unwind) lives
+// in spikes/servo/servo-embed/src/lib.rs — the pinned artifact
+// predates it.
 
 #include "engineinterface.h"
 
@@ -65,6 +76,9 @@ public:
     ~ServoView() override;
 
     bool isReady() const;
+    // Whether another ServoView may be constructed — false once the
+    // process's single SeInstance slot is claimed or spent (ENG12).
+    static bool instanceAvailable();
     void load(const QUrl &url);
     void spinOnce();              // one se_spin — GUI thread
     void goBack();

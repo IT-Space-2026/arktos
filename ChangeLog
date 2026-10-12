@@ -120,6 +120,13 @@ UI:
   `spikes/servo/servo-embed/target/`, the build auto-enables it and
   qmake announces the resolved engine set; opt out with
   `qmake CONFIG-=servo`, `noservo=1` or `servo=0` (ENG10).
+- Fixed a whole-process crash on the Servo backend: libservo permits
+  exactly one web view per process lifetime — a second engine tab
+  (re-swapping a tab back to Servo, a second Servo tab, or reload after
+  the swap) tripped an unrecoverable panic inside the engine that
+  aborted the browser. The backend now allows a single Servo view and
+  refuses further engine tabs with a status-bar message instead of
+  crashing; sibling actions on an empty Servo tab are no-ops (ENG12).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and
