@@ -279,8 +279,8 @@ void tst_TabBar::tabStripHeight()
     bar.setTabButton(0, bar.freeSide(), favicon);
 
     const int fmH = bar.fontMetrics().height();
-    const int floorH = fmH + 10;
-    const int capH = qMax(fmH, bar.iconSize().height()) + 12;
+    const int floorH = fmH + 8;
+    const int capH = qMax(fmH, bar.iconSize().height()) + 9;
     const QSize natural = bar.call_baseTabSizeHint(0);
     const QSize hint = bar.call_tabSizeHint(0);
     QCOMPARE(hint.height(), qBound(floorH, natural.height(), capH));

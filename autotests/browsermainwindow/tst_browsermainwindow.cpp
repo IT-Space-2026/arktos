@@ -58,6 +58,7 @@
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "aroraicon.h"
+#include "containermanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarknode.h"
@@ -142,6 +143,7 @@ private slots:
     void sidebarGripResize();
     void downloadsSidebarPanel();
     void widgetTabBookmarksSafety();
+    void tabStripCompactHeight();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -2297,6 +2299,67 @@ void tst_BrowserMainWindow::widgetTabBookmarksSafety()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/panels/bookmarks"));
     closeWindow(registered);
+    closeWindow(window);
+}
+
+// TABS08: the rendered tab strip stays in the compact ~26-28px
+// browser band even at desktop-size fonts, and a container tab no
+// longer doubles the row — the regression this fixes: the CONT02
+// name chip reserved a second row (~18px) per container tab and
+// QTabBar sizes every tab to the tallest hint.
+void tst_BrowserMainWindow::tabStripCompactHeight()
+{
+    // The offscreen fallback 'Sans Serif 9' understates fm.height() —
+    // pin a desktop-size font so the exercised bound is the real one.
+    QFont font = QApplication::font();
+    font.setPointSize(11);
+    QApplication::setFont(font);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 700);
+    window->show();
+    for (int i = 0; i < 20; ++i)
+        QApplication::processEvents();
+
+    TabBar *bar = window->tabWidget()->findChild<TabBar *>();
+    QVERIFY(bar);
+    const int cap = qMax(bar->fontMetrics().height(),
+                         bar->iconSize().height()) + 9;
+    QVERIFY2(bar->height() <= cap,
+             qPrintable(QStringLiteral(
+                 "strip height %1 exceeds the compact cap %2")
+                .arg(bar->height()).arg(cap)));
+    QCOMPARE(bar->tabRect(0).height(), bar->height());
+
+    // Inline-chips mode (tabs/containerDisplay=0, what the reporter
+    // runs): a container tab must not stretch the strip.
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+    window->tabWidget()->loadSettings();
+    const ContainerManager::Container container =
+        ContainerManager::instance()->createContainer(
+            QLatin1String("StripBox"), QColor(Qt::blue));
+    window->tabWidget()->makeNewTabInContainer(container.id, true);
+    for (int i = 0; i < 10; ++i)
+        QApplication::processEvents();
+    for (int i = 0; i < bar->count(); ++i)
+        QCOMPARE(bar->tabRect(i).height(), bar->tabRect(0).height());
+    QVERIFY(bar->height() <= cap);
+    QCOMPARE(bar->tabRect(0).height(), bar->height());
+
+    // Close + favicon widgets stay vertically centered in the row.
+    QWidget *close = bar->tabButton(0, QTabBar::RightSide);
+    if (!close)
+        close = bar->tabButton(0, QTabBar::LeftSide);
+    QVERIFY(close);
+    QVERIFY(qAbs(close->geometry().center().y()
+                 - bar->tabRect(0).center().y()) <= 2);
+
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip.png"));
+    }
+    settings.remove(QLatin1String("tabs/containerDisplay"));
     closeWindow(window);
 }
 

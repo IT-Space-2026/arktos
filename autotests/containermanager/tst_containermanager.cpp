@@ -884,12 +884,15 @@ void tst_ContainerManager::sessionRestoresContainers()
     QCOMPARE(legacy.containerIdForTab(0), QString());
 }
 
-// CONT02: the tab-strip indicator — a container tab reserves chip
-// height in its size hint, paints the container's accent color, and
-// names the container in the tab tooltip.  The widget is deliberately
-// never shown: an offscreen show() pulls a container-profile WebView
-// into the compositor's GL path, which traps headless — tabRect and
-// grab() lay out and render the bar without it.
+// CONT02: the tab-strip indicator — a container tab paints the
+// container's accent stripe and names the container in the tab
+// tooltip.  TABS08: the chip no longer reserves a second row — one
+// container tab used to double the whole strip's height because
+// QTabBar sizes every tab to the tallest hint; the row now stays at
+// the shared thickness.  The widget is deliberately never shown: an
+// offscreen show() pulls a container-profile WebView into the
+// compositor's GL path, which traps headless — tabRect and grab()
+// lay out and render the bar without it.
 void tst_ContainerManager::containerChipIndicator()
 {
     const QString id = create(QLatin1String("ChipTest"));
@@ -906,12 +909,12 @@ void tst_ContainerManager::containerChipIndicator()
     WebView *containerTab = widget.makeNewTabInContainer(id, false);
     QVERIFY(containerTab);
 
-    // QTabBar lays out every tab at the strip's max height, so the
-    // chip reservation shows as the whole strip growing taller once
-    // the container tab lands.
+    // TABS08: a container tab stays at the shared strip height — the
+    // accent stripe paints inside the tab's edge instead of a
+    // reserved chip row.
     QVERIFY(bar->tabRect(1).isValid());
-    QVERIFY(bar->tabRect(1).height() > plainHeight);
-    QCOMPARE(bar->sizeHint().height(), bar->tabRect(1).height());
+    QCOMPARE(bar->tabRect(1).height(), plainHeight);
+    QCOMPARE(bar->sizeHint().height(), plainHeight);
 
     // The accent strip lands in the painted output.
     const QImage image = bar->grab().toImage();

@@ -54,6 +54,12 @@ UI:
 - Slimmer tab strip: per-tab close buttons no longer inflate the row
   and tab height is bounded to icon+text height, bringing the strip
   back to normal browser-tab size (TABS07).
+- Tab strip stays compact with container tabs: the container name
+  chip no longer reserves a second row — a single container tab used
+  to double the whole strip's height.  Container tabs now show the
+  container color stripe on the tab's edge with the name in the
+  tooltip, and automatic strip thickness is tightened to the
+  ~26-28px browser band (TABS08).
 - Tor window tab strip: the masked private-browsing favicon on tor
   tabs no longer renders clipped to a sliver — the page-icon widget is
   pinned to the icon box so the badge is fully visible (TOR06).
