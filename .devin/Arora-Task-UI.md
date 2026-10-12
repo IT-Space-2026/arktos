@@ -89,6 +89,7 @@ This file is the task queue for the Devin CLI task loop
 | TABS10 | Vertical tab bar: tabs too big — details below | pending | 0 | |
 | TOR12 | Tor title bar: window title text unreadable — details below | pending | 0 | user report w/ screenshot |
 | PTAB02 | Private-tab start page: dark blue + sunglasses — details below | pending | 0 | user report w/ design spec |
+| ICONS05 | Dark mode: toolbar buttons unreadable — details below | pending | 0 | user report w/ screenshot |
 
 ## Task details
 
@@ -519,7 +520,6 @@ Tor window title bar: the window/page title text is barely readable — user rep
 ### PTAB02
 
 Private-tab start page — user report: 'New Private tab have no start page.' Functional gap + branding in one: makeNewPrivateTab only loads a start page when startPageUrl() returns a branded variant, and private tabs aren't branded — they hit the qrc:/startpage.html skip branch and render blank. Design per user: 'a darker arora color ... like the tor start page but not onion but sunglass. the main dark color should be blue, keep the arora logo and search box.' Spec: (a) NEW PAGE — qrc:/startpage-private.html + css sharing the extracted startpage.js/arora-channel contract like TOR09's page; dark BLUE theme (not the tor violet — a deep private-browsing navy/midnight blue, full-viewport like TOR09's min-height:100% fix, arora-dark overrides); keep the Arora logo + the search box; replace the onion emblem with a SUNGLASSES mark — draw an original simple SVG (no trademarked clipart; a clean glyph matching the private-badged favicon's motif if one exists — check the PTAB01 mask badge). (b) PICK — startPageUrl needs a private dimension: signature gains the private/otr flag (startPageUrl(engineId, bool otr) or take the page/profile), precedence tor > private > servo > standard — a tab that is BOTH tor and private stays tor-branded; private-branded beats servo even when default engine is servo? Decide and document: if the servo backend can't render qrc anyway (ENG18 pending), a private tab on servo engine should still show SOMETHING branded — safest: private page wins, and ENG18's fix covers rendering it. newPrivateTab's skip-branch check must drop private from the 'stay blank' exclusion so it actually loads. (c) about:home alias — check whether about:home inside a private tab should resolve to the private variant (tor does via startPageUrl — private should too if the pick is page-context aware; if not, leave standard). (d) Page internals like TOR09: bare QWebChannel for the search box, keep autofill/pip/reader channels off. Verify: new private tab shows the dark-blue page w/ Arora logo + sunglasses + working search (DuckDuckGo form submits), arora-dark theme coherent, non-private tabs unchanged, tor window private tab stays tor-branded (or whatever precedence is documented), grab reviewed in both themes, make check PASS.
-| ICONS05 | Dark mode: toolbar buttons unreadable — details below | pending | 0 | user report w/ screenshot |
 
 ### ICONS05
 
