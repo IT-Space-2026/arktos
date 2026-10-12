@@ -269,13 +269,6 @@ bool PrivacyRequestInterceptor::blockPingsEnabled()
     return NavigationPolicy::blockPingsEnabled();
 }
 
-bool PrivacyRequestInterceptor::isPingTelemetryRequest(
-        QWebEngineUrlRequestInfo &info)
-{
-    return NavigationPolicy::isPingTelemetry(
-        static_cast<int>(info.resourceType()), toHeaderList(info.httpHeaders()));
-}
-
 bool PrivacyRequestInterceptor::blockRemoteFontsEnabled()
 {
     return NavigationPolicy::blockRemoteFontsEnabled();

@@ -65,12 +65,6 @@ int AdBlockRequestInterceptor::blockedRequestCount(const QString &host)
     return s_blockedCounts.value(host.toLower());
 }
 
-void AdBlockRequestInterceptor::clearBlockedRequestCounts()
-{
-    const QMutexLocker lock(&s_blockedCountLock);
-    s_blockedCounts.clear();
-}
-
 AdBlockRequestInterceptor::AdBlockRequestInterceptor(AdBlockNetwork *network, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
     , m_network(network)

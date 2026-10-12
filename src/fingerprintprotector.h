@@ -73,7 +73,6 @@ public:
     // Per-site exemption lookup (session + persistent, suffix match —
     // an exemption on "example.com" covers "www.example.com").
     bool isExempt(const QString &host) const;
-    QStringList exceptionHosts() const;
     void addException(const QString &host, bool persistent);
     void clearException(const QString &host);
 

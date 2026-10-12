@@ -702,15 +702,6 @@ static void replacePageScript(Engine::Page *page, const QString &name,
         0 /* main world */, false });
 }
 
-void AutoFillManager::attachToPage(Engine::Page *page)
-{
-    if (!page)
-        return;
-    const QString script = scriptForPage(page, page->url());
-    if (!script.isEmpty())
-        page->runJavaScript(script);
-}
-
 void AutoFillManager::scheduleOnPage(Engine::Page *page,
         const QUrl &url)
 {

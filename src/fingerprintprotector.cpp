@@ -97,13 +97,6 @@ bool FingerprintProtector::isExempt(const QString &host) const
     return false;
 }
 
-QStringList FingerprintProtector::exceptionHosts() const
-{
-    QStringList hosts = m_persistent;
-    hosts.sort();
-    return hosts;
-}
-
 void FingerprintProtector::addException(const QString &host,
                                         bool persistent)
 {

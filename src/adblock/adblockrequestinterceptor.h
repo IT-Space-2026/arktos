@@ -57,7 +57,6 @@ public:
     // diffs against a baseline taken at load start (counts can mix
     // when two tabs share a host, which is an accepted approximation).
     static int blockedRequestCount(const QString &host);
-    static void clearBlockedRequestCounts();  // test hook
 
     // STALL01: true only for schemes filter lists can legitimately
     // describe — http(s) pages/resources and ws(s) for $websocket
