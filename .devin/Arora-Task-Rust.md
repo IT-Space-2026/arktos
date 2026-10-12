@@ -57,10 +57,13 @@ Rules for the agent working this file:
 | TRUST01 | Site-trust composite + FFI in rustcore — details below | done | 1 | rustcore sitetrust.rs behind rc_sitetrust_lookup(host,is_https)->JSON {level,signals[],rank,lookalike_of} + rc_sitetrust_reload (both input tables reload, first error reported) — composite folds blocklist::check + tranco::rank + lookalike::probe + history first-seen; locked mapping threat/lookalike->red, http/rank==0->amber, ranked+https->green; first_seen reported in signals but never decides level alone (QUIETLY — ranked+https stays green on first visit); un-evaluable host/history reads no-claim (amber/[]) not manufactured suspicion. history.rs gains hosts(host,first_seen,visits) rollup: add() upserts (MIN first_seen for out-of-order legacy replay), lazy one-shot backfill for pre-TRUST01 dbs + after bulk wipes, seen = visit older than 120s grace OR >=2 visits (a just-committed visit can't flip the verdict); probes walk label suffixes like rank_of. ffi_surface covers both new entry points. Qt badge/popover is main-lane TRUST08/09 — verified: cargo test 186/186 (fixture matrix red/green/amber, lookalike->red+lookalike_of, first_seen grace/ancestor/2-visit rules, unopened-store no-claim, reload both), clippy clean at project level, make check rc=0 offscreen --disable-gpu needs:task:TRUST04,task:TRUST05. |
 | RAUDIT01 | rustcore code-quality sweep — details below | done | 1 | sweep landed: bookmarkhtml closing-tag scans now share a document-wide byte budget (4x input + one window; exhaustion -> empty title + truncated) killing the O(tags x 256KiB) worst case that was failing the <10s hostile-input bound (>15s -> ~50ms); blocklist::contains + tranco::rank_of + both validate_domain gates unified on new util::HostNorm/valid_dns_shape — blocklist probes are now zero-alloc like tranco and >253B hosts probe their rightmost tail on both; cargo clippy --all-targets 110 -> 0 warnings (57 missing # Safety doc sections added — the other 83 fns already had them; doc-indent + ~20 mechanical lints). Report committed at .devin/RAUDIT01-report.md — findings: 15/140 FFI exports have no Qt caller (deliberate: sitetrust/lookalike await main-lane TRUST08/09, cred/bm surface is spec'd ABI), referer twin drift limited to conservative edge cases (documented), lazy-list slot machinery triplicated -> RAUDIT02. verified: cargo test 186/186 (was 185/186), clippy 0 warnings, ABI unchanged needs:task:TRUST01 |
 | RAUDIT02 | rustcore lazy-list slot dedup — details below | done | 1 | shared store::DirCache<T> (RwLock<Option<(dir-stamp, Arc<T>)>>, poison-tolerant guards, get_or_load + replace) + store::data_dir() now back all three lists; per-module load_from_disk(Option<&Path>) stays the injected closure; dir field dropped from BlockList/TrancoList structs (the stamp rides the slot); urlstrip gains the late-dir rebuild blocklist/tranco already had — verified: cargo test 186/186 (incl. tranco reload_picks_up_datadir_override), cargo clippy --all-targets 0 warnings, FFI/ABI untouched (all changes crate-internal) |
-| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
+| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | in_progress | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
 | DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
 | DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
 
+
+| START02 | No start page on new tab — blank Untitled (check servo vs chromium path) — details below | pending | 0 | moved from main lane [user-directed UI task — parallel lane work, Qt files allowed] |
+| TRUST10 | Trust popover header styling: separator + verdict-colored bold Trust label — details below | pending | 0 | moved from main lane [user-directed UI task — parallel lane work, Qt files allowed] |
 
 ## Task details
 
@@ -229,3 +232,19 @@ Spec: (a) NO visible color seam — the info block and graph area must use the s
 
 Verify: expanded card shows no visible color difference between info block/graph and card background in day AND night themes; no thick border around the info section; make check PASS.
 
+
+### START02
+
+No start page on new tab — user report: 'there is no start page anymore.' Screenshot shows a blank 'Untitled' tab. START01 previously fixed a loads-forever stall (adblock interceptor on qrc subresources) — this is a DIFFERENT symptom: the page does not appear at all.
+
+Investigate in order: (a) ENGINE — if the default/last-selected engine is Servo (ENG10 auto-enabled in builds), does the start page render through the servo backend? An empty/servo-handled new tab would explain both this bug and ENG12's reload crash — check whether new tabs on the servo backend just render blank for arora/qrc pages; (b) CHROMIUM PATH — on the WebEngine backend, does qrc:/startpage.html still load (run --startpage-smoke which START01 added — it asserts the channel handshake + searchUrl round-trip); if the smoke fails the stall regressed; (c) SETTINGS — confirm the homepage/new-tab setting still points at the start page and the restore-on-startup path isn't producing a bare Untitled.
+
+Verify: new tab shows the working start page on the default backend (search box + arora channel live), --startpage-smoke PASS, servo-backend tabs either render it or honestly fall back, make check PASS.
+
+### TRUST10
+
+Trust section header styling in the lock/shield popover — user direction: 'Above the Trust there should be a separator line and the Trust text should be bold with the right color (green if trust, yellow if unknown, red is not trustable).'
+
+Current state: TRUST08 added the Trust section inside SitePanel; TRUST09 landed the verdict-driven lock icon. Now style the section header: (a) a separator line (QFrame HLine or styled border) above the Trust section dividing it from the sections above; (b) the 'Trust' section label rendered BOLD; (c) its color driven by the same verdict the lock icon uses — green for a trusted/green verdict, yellow for unknown/amber, red for not-trustable/threat — keep colors theme-aware (works in day AND night themes; use palette-safe tones or the AroraIcon/verdict color tokens TRUST09 introduced if any, not hardcoded hex that dies on dark); (d) color updates live with the verdict (cached verdict changes the label color on the same open).
+
+Verify: open the lock popover on a green verdict -> separator + bold green 'Trust'; amber -> bold yellow; red/threat -> bold red; readable in both themes; make check PASS.
