@@ -3,6 +3,7 @@ DEPENDPATH += $$PWD
 
 HEADERS += \
     $$PWD/torcircuitbutton.h \
+    $$PWD/torcircuitpanel.h \
     $$PWD/torcontrol.h \
     $$PWD/tormanager.h \
     $$PWD/torrequestinterceptor.h \
@@ -11,6 +12,7 @@ HEADERS += \
 
 SOURCES += \
     $$PWD/torcircuitbutton.cpp \
+    $$PWD/torcircuitpanel.cpp \
     $$PWD/torcontrol.cpp \
     $$PWD/tormanager.cpp \
     $$PWD/torrequestinterceptor.cpp \

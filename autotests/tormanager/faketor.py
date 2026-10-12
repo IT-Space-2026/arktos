@@ -38,9 +38,16 @@ NS_RELAYS = {
                                                "171.25.193.9"),
     "DD55DD55DD55DD55DD55DD55DD55DD55DD55DD55": ("SoloHop",
                                                "203.0.113.7"),
+    # TOR15: the post-NEWNYM middle/exit — the guard persists, the
+    # rest of the path rotates like a real daemon would.
+    "EE66EE66EE66EE66EE66EE66EE66EE66EE66EE66": ("MiddleFour",
+                                               "185.220.102.7"),
+    "FF77FF77FF77FF77FF77FF77FF77FF77FF77FF77": ("ExitFour",
+                                               "171.25.193.25"),
 }
 GEOIP = {"5.9.80.11": "de", "185.220.101.4": "nl",
-         "171.25.193.9": "is", "203.0.113.7": "us"}
+         "171.25.193.9": "is", "203.0.113.7": "us",
+         "185.220.102.7": "ch", "171.25.193.25": "us"}
 
 
 def main():
@@ -88,8 +95,33 @@ def main():
         % cport)
     sys.stderr.flush()
 
-    state = {"progress": 10, "owner": False}
+    state = {"progress": 10, "owner": False, "nym": 0, "circ_id": 3}
     no_geoip = os.environ.get("FAKETOR_NOGEOIP") == "1"
+
+    # TOR15: the circuit-status body served before and after SIGNAL
+    # NEWNYM — same guard fingerprint, rotated middle+exit, fresh
+    # CircID.
+    def circuit_lines():
+        if state["nym"] == 0:
+            return ["3 BUILT "
+                    "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
+                    "~GuardOne,"
+                    "$BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22"
+                    "=MiddleTwo,"
+                    "$CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33"
+                    "~ExitThree "
+                    "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
+                    "TIME_CREATED=2026-10-09T00:00:00.000000"]
+        return ["%d BUILT "
+                "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
+                "~GuardOne,"
+                "$EE66EE66EE66EE66EE66EE66EE66EE66EE66EE66"
+                "~MiddleFour,"
+                "$FF77FF77FF77FF77FF77FF77FF77FF77FF77FF77"
+                "~ExitFour "
+                "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
+                "TIME_CREATED=2026-10-09T00:00:00.000000"
+                % state["circ_id"]]
 
     def socks_worker():
         while True:
@@ -187,15 +219,8 @@ def main():
                           "a") as f:
                     f.write("circuit-status\n")
                 reply("250+circuit-status=\r\n")
-                reply("3 BUILT "
-                      "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
-                      "~GuardOne,"
-                      "$BB22BB22BB22BB22BB22BB22BB22BB22BB22BB22"
-                      "=MiddleTwo,"
-                      "$CC33CC33CC33CC33CC33CC33CC33CC33CC33CC33"
-                      "~ExitThree "
-                      "BUILD_FLAGS=NEED_CAPACITY PURPOSE=GENERAL "
-                      "TIME_CREATED=2026-10-09T00:00:00.000000\r\n")
+                for line in circuit_lines():
+                    reply(line + "\r\n")
                 reply("5 EXTENDED "
                       "$DD55DD55DD55DD55DD55DD55DD55DD55DD55DD55"
                       "~SoloHop PURPOSE=HS_CLIENT_HSDIR\r\n")
@@ -223,10 +248,33 @@ def main():
                 reply("250 OK\r\n")
             elif cmd.startswith("GETINFO stream-status"):
                 reply("250+stream-status=\r\n")
-                reply("8 SUCCEEDED 3 127.0.0.1:80\r\n")
-                reply("9 SUCCEEDED 3 127.0.0.1:443\r\n")
+                reply("8 SUCCEEDED %d 127.0.0.1:80\r\n"
+                      % state["circ_id"])
+                reply("9 SUCCEEDED %d 127.0.0.1:443\r\n"
+                      % state["circ_id"])
                 reply("10 NEW 5 127.0.0.1:80\r\n")
                 reply(".\r\n250 OK\r\n")
+            elif cmd == "SIGNAL NEWNYM":
+                # TOR15: rotate to clean circuits — new CircID, new
+                # middle+exit, same guard — then announce it over the
+                # CIRC event channel like a real daemon does.
+                with open(os.path.join(data_dir, "signal-log"),
+                          "a") as f:
+                    f.write("NEWNYM\n")
+                state["nym"] += 1
+                state["circ_id"] += 1
+                reply("250 OK\r\n")
+                try:
+                    reply("650 CIRC %d BUILT "
+                          "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"
+                          "~GuardOne,"
+                          "$EE66EE66EE66EE66EE66EE66EE66EE66EE66EE66"
+                          "~MiddleFour,"
+                          "$FF77FF77FF77FF77FF77FF77FF77FF77FF77FF77"
+                          "~ExitFour PURPOSE=GENERAL\r\n"
+                          % state["circ_id"])
+                except OSError:
+                    return
             elif cmd == "SIGNAL SHUTDOWN":
                 reply("250 OK\r\n250 closing connection\r\n")
                 sys.exit(0)

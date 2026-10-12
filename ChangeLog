@@ -493,6 +493,14 @@ Tor:
   chain, memory/network/load/zoom indicators, the size grip and
   transient messages (like hovered links) now render light-on-violet
   instead of near-invisible dark text on purple (TOR14).
+- The Tor circuit button now opens a Tor-Browser-style panel instead
+  of a flat hop list: a vertical chain from "This browser" through
+  each relay — flag, country and role, OR address, short fingerprint —
+  to the destination site, joined by a connector line, plus a "New
+  Tor circuit for this site" button (SIGNAL NEWNYM — rotates the
+  middle/exit hops, guard may persist, says so underneath) and honest
+  status when the daemon is gone. The chain shown is the shared
+  busiest circuit, not a per-site one (TOR15).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

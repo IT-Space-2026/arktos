@@ -28,6 +28,8 @@
 #include <qstring.h>
 #include <qstringlist.h>
 
+#include <functional>
+
 class QProcess;
 class QTimer;
 class TorControl;
@@ -146,6 +148,17 @@ public:
     // the most streams, else the newest BUILT PURPOSE=GENERAL, else
     // the newest BUILT at all; -1 when none qualify.
     int displayCircuitId() const;
+
+    // TOR15: SIGNAL NEWNYM — tor marks live circuits dirty and builds
+    // clean ones; new streams get a fresh exit/middle while the entry
+    // guard persists.  The callback fires with the control reply code
+    // (250 on success) or -1 when there is no live control
+    // connection.  The replacement circuits land through the CIRC
+    // events -> circuitsChanged like any other rotation.  (A plain
+    // method, not a slot — moc cannot parse the std::function.)
+    void signalNewNym(
+            const std::function<void(int code,
+                                     const QStringList &lines)> &callback);
 
 public slots:
     void start();

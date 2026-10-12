@@ -266,6 +266,17 @@ int TorManager::displayCircuitId() const
     return newestBuilt ? newestBuilt->id : -1;
 }
 
+void TorManager::signalNewNym(
+        const std::function<void(int, const QStringList &)> &callback)
+{
+    if (!m_control || !m_control->isConnected()) {
+        if (callback)
+            callback(-1, QStringList());
+        return;
+    }
+    m_control->signalNewNym(callback);
+}
+
 void TorManager::requestCircuitInfo()
 {
     if (!m_control || !m_control->isConnected()

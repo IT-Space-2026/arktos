@@ -30,9 +30,11 @@
 #include <qaction.h>
 #include <qapplication.h>
 #include <qmenu.h>
+#include <qpushbutton.h>
 #include <qstandardpaths.h>
 
 #include "torcircuitbutton.h"
+#include "torcircuitpanel.h"
 #include "torcontrol.h"
 #include "tormanager.h"
 #include "torsocks5.h"
@@ -55,6 +57,8 @@ private slots:
     void circuitInfo();
     void circuitInfoDeadControl();
     void circuitMenuNoRequeryLoop();
+    void newNymSignal();
+    void circuitPanelNewCircuit();
     void circuitCountries();
     void circuitCountriesNoGeoip();
     void realDaemonLifecycle();
@@ -430,13 +434,18 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
     menu->popup(QPoint(80, 80));
     QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
 
-    // The fresh snapshot renders the displayed circuit's hop rows —
-    // faketor's circuit 3 carries the streams, so it wins the slot.
-    QTRY_VERIFY_WITH_TIMEOUT(menu->actions().size() == 4, 10000);
-    QCOMPARE(menu->actions().at(1)->text(),
-             QStringLiteral("Guard: GuardOne — Germany"));
+    // TOR15: the fresh snapshot renders the displayed circuit's hop
+    // chain inside the hosted panel — faketor's circuit 3 carries the
+    // streams, so it wins the slot.
+    TorCircuitPanel *panel = button.findChild<TorCircuitPanel *>();
+    QVERIFY(panel);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->hopCount() == 3, 10000);
+    QVERIFY(panel->contentLines().contains(
+        QStringLiteral("Germany (guard)")));
+    QVERIFY(panel->contentLines().contains(
+        QStringLiteral("This browser")));
 
-    const QList<QAction *> settledRows = menu->actions();
+    const QStringList settledContent = panel->contentLines();
     auto statusQueryCount = [&dir]() -> int {
         QFile log(dir.path() + QLatin1String("/circuit-status-log"));
         if (!log.open(QIODevice::ReadOnly))
@@ -448,20 +457,152 @@ void tst_TorManager::circuitMenuNoRequeryLoop()
     QVERIFY(baseline >= 1);
 
     // A signal-driven refresh over an unchanged snapshot must leave
-    // the visible menu untouched — same action objects, no rebuild,
+    // the visible menu untouched — same rendered content, no rebuild,
     // the popup does not so much as re-layout (its position is the
     // thing that crept) — and must not touch the control connection.
     const QPoint pos = menu->pos();
     manager.circuitsChanged(manager.circuits());
     manager.stateChanged(manager.state());
     QApplication::processEvents();
-    QCOMPARE(menu->actions(), settledRows);
+    QCOMPARE(panel->contentLines(), settledContent);
     QCOMPARE(menu->pos(), pos);
 
     // Dwell with the menu open: the pre-fix loop would have issued a
     // circuit-status query per reply the whole time.
     QTest::qWait(1500);
     QCOMPARE(statusQueryCount(), baseline);
+
+    menu->hide();
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR15: signalNewNym() queues SIGNAL NEWNYM on the control
+// connection; faketor answers 250, rotates the middle+exit on a new
+// CircID (the guard persists) and announces it over the CIRC event
+// channel — the display circuit refreshes to the new hops.
+void tst_TorManager::newNymSignal()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    QSignalSpy circuitsSpy(&manager, &TorManager::circuitsChanged);
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 1, 10000);
+    QCOMPARE(manager.displayCircuitId(), 3);
+
+    int replyCode = -1;
+    manager.signalNewNym([&replyCode](int code, const QStringList &) {
+        replyCode = code;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(replyCode == 250, 10000);
+
+    // The command reached the daemon.
+    auto signalLog = [&dir]() -> QString {
+        QFile log(dir.path() + QLatin1String("/signal-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return QString();
+        return QString::fromLatin1(log.readAll());
+    };
+    QVERIFY(signalLog().contains(QLatin1String("NEWNYM")));
+
+    // The CIRC event drives a refresh: the display circuit becomes
+    // the new id with rotated middle+exit and the SAME guard
+    // fingerprint — the honest "your guard node may not change"
+    // behavior.
+    QTRY_VERIFY_WITH_TIMEOUT(manager.displayCircuitId() == 4, 15000);
+    QList<TorCircuitHop> hops;
+    for (const TorCircuit &circuit : manager.circuits()) {
+        if (circuit.id == manager.displayCircuitId())
+            hops = circuit.hops;
+    }
+    QCOMPARE(hops.size(), 3);
+    QCOMPARE(hops.at(0).fingerprint,
+             QLatin1String("AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"));
+    QCOMPARE(hops.at(1).nickname, QLatin1String("MiddleFour"));
+    QCOMPARE(hops.at(2).nickname, QLatin1String("ExitFour"));
+
+    // A dead control connection is an honest failure, not a hang.
+    manager.stop();
+    replyCode = -1;
+    manager.signalNewNym([&replyCode](int code, const QStringList &) {
+        replyCode = code;
+    });
+    QCOMPARE(replyCode, -1);
+}
+
+// TOR15: the popup's "New Tor circuit for this site" button drives
+// the whole NEWNYM path without dismissing the menu — the status
+// line reports the outcome and the chain repaints on the rotated
+// circuit once the CIRC-event refresh lands.
+void tst_TorManager::circuitPanelNewCircuit()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(manager.displayCircuitId() == 3, 10000);
+
+    TorCircuitButton button(&manager);
+    button.setSiteHostProvider([]() {
+        return QStringLiteral("check.torproject.org");
+    });
+    QMenu *menu = button.menu();
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+
+    TorCircuitPanel *panel = button.findChild<TorCircuitPanel *>();
+    QVERIFY(panel);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->hopCount() == 3, 10000);
+    QCOMPARE(panel->titleText(),
+             QStringLiteral("Circuit for check.torproject.org"));
+    QVERIFY(panel->contentLines().contains(
+        QStringLiteral("check.torproject.org")));
+    // The chain is anchored browser -> ... -> site.
+    const QStringList before = panel->contentLines();
+    QCOMPARE(before.at(1), QStringLiteral("This browser"));
+    QVERIFY(before.contains(
+        QStringLiteral("Your guard node may not change.")));
+
+    QPushButton *newCircuit = panel->findChild<QPushButton *>(
+        QLatin1String("newCircuitButton"));
+    QVERIFY(newCircuit);
+    QVERIFY(newCircuit->isEnabled());
+    newCircuit->click();
+    QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().contains(
+        QStringLiteral("New circuit requested")), 10000);
+    QVERIFY(menu->isVisible());
+
+    // The rotated circuit repaints the open popup: same guard node,
+    // new middle+exit.
+    QTRY_VERIFY_WITH_TIMEOUT(panel->contentLines().contains(
+        QStringLiteral("United States (exit)")), 15000);
+    QVERIFY(panel->contentLines().contains(
+        QStringLiteral("Switzerland (middle)")));
+    QVERIFY(panel->contentLines().contains(
+        QStringLiteral("Germany (guard)")));
 
     menu->hide();
     manager.stop();

@@ -67,6 +67,7 @@
 #include "tabwidget.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
+#include "torcircuitpanel.h"
 #include "torcontrol.h"
 #include "tormanager.h"
 #include "torsocks5.h"
@@ -141,6 +142,7 @@
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QMenu>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
 #include <QtGui/QAction>
@@ -9751,14 +9753,21 @@ int main(int argc, char **argv)
                                 "hop chain"));
                             return;
                         }
-                        // TOR08: the nav-bar circuit dropdown must
-                        // exist on the tor window and render the same
-                        // live chain — one flag row per hop under the
-                        // circuit header.
+                        // TOR08/TOR15: the nav-bar circuit dropdown
+                        // must exist on the tor window and render the
+                        // live chain — browser -> flagged hop nodes ->
+                        // site — inside the hosted panel, plus the
+                        // New-circuit button and guard note.
                         QToolButton *circuitButton =
                             torWindow->findChild<QToolButton *>(
                                 QLatin1String("torCircuitButton"));
-                        if (!circuitButton || !circuitButton->menu()) {
+                        TorCircuitPanel *circuitPanel =
+                            (circuitButton && circuitButton->menu())
+                            ? circuitButton->menu()
+                                  ->findChild<TorCircuitPanel *>(
+                                      QLatin1String("torCircuitPanel"))
+                            : nullptr;
+                        if (!circuitPanel) {
                             torWinFail(QLatin1String(
                                 "tor window missing the circuit "
                                 "dropdown button"));
@@ -9766,20 +9775,19 @@ int main(int argc, char **argv)
                         }
                         QMetaObject::invokeMethod(
                             circuitButton, "populateMenu");
-                        int hopRows = 0;
-                        for (QAction *action :
-                                 circuitButton->menu()->actions()) {
-                            if (action->isEnabled()
-                                    && !action->isSeparator()
-                                    && !action->icon().isNull())
-                                ++hopRows;
-                        }
+                        const int hopRows = circuitPanel->hopCount();
                         qInfo() << "tor-window-smoke: circuit dropdown:"
-                                << hopRows << "hop rows";
-                        if (hopRows < 3) {
+                                << hopRows << "hop rows |"
+                                << circuitPanel->titleText();
+                        if (hopRows < 3
+                                || !circuitPanel->contentLines()
+                                        .join(QLatin1Char(' '))
+                                        .contains(QLatin1String(
+                                            "guard node may not "
+                                            "change"))) {
                             torWinFail(QLatin1String(
                                 "circuit dropdown did not render the "
-                                "hop rows"));
+                                "hop chain"));
                             return;
                         }
                         // TOR09: by now the first tab's qrc commit
@@ -9900,6 +9908,14 @@ int main(int argc, char **argv)
             return application.exec();
         }
         QMenu *menu = button->menu();
+        TorCircuitPanel *panel = menu->findChild<TorCircuitPanel *>(
+            QLatin1String("torCircuitPanel"));
+        if (!panel) {
+            clickFail(QLatin1String("no circuit panel in the dropdown"));
+            return application.exec();
+        }
+        QPushButton *newCircuitButton = panel->findChild<QPushButton *>(
+            QLatin1String("newCircuitButton"));
         QObject::connect(torManager, &TorManager::failed,
                          &application, clickFail);
         QObject::connect(torManager, &TorManager::logLine,
@@ -9939,6 +9955,12 @@ int main(int argc, char **argv)
             QTimer::singleShot(dwell, menu, &QMenu::close);
             if (*beat % 2)
                 QMetaObject::invokeMethod(button, "populateMenu");
+            // TOR15: every few beats exercise the real New-circuit
+            // press too — SIGNAL NEWNYM must be as crash-free as the
+            // open/close path.
+            if (*phase == 1 && *beat % 9 == 0 && newCircuitButton
+                    && newCircuitButton->isEnabled())
+                newCircuitButton->click();
             if (*phase == 1 && *beat - *phaseBeat > 40) {
                 // Kill the control connection mid-run — the dropdown
                 // must degrade, not crash.
@@ -9954,24 +9976,15 @@ int main(int argc, char **argv)
             }
             if (*phase == 2 && ++(*deadBeats) > 15) {
                 // Dead control must read an honest state — the
-                // unavailable/daemon-off section, never a stale hop
-                // chain, never a crash, never an empty menu.  The
+                // unavailable/daemon-off info, never a stale hop
+                // chain, never a crash, never an empty panel.  The
                 // daemon also exits on owner disconnect
                 // (TAKEOWNERSHIP), so "not running" is a valid honest
                 // landing alongside "unavailable".
                 QMetaObject::invokeMethod(button, "populateMenu");
-                QString joined;
-                bool staleHopRow = false;
-                const QList<QAction *> actions = menu->actions();
-                for (const QAction *action : actions) {
-                    joined += action->text() + QLatin1Char(' ');
-                    const QString text = action->text();
-                    if (text.startsWith(QLatin1String("Guard:"))
-                            || text.startsWith(QLatin1String("Middle:"))
-                            || text.startsWith(QLatin1String("Exit:"))
-                            || text.startsWith(QLatin1String("Hop ")))
-                        staleHopRow = true;
-                }
+                const QString joined =
+                    panel->contentLines().join(QLatin1Char(' '));
+                const bool staleHopRow = panel->hopCount() != 0;
                 const bool honest =
                     joined.contains(QLatin1String("unavailable"),
                                     Qt::CaseInsensitive)

@@ -101,7 +101,7 @@ This file is the task queue for the Devin CLI task loop
 | TRUST12 | Site Trust: 'Update now' button + last-updated label — details below | blocked | 0 | blocked:missing TrancoList — master-only (trancolist.* + rustcore rc_tranco_* come via master sync); DomainBlocklist is also inert here (worktree is rustdl-only, no ARORA_RUSTCORE -> updateNow() emits updateFinished(false)) so neither list can actually update — revisit after sync needs:merge:master-trancolist |
 | SIDE08 | Prefs Sidebar 'Panels' list too short + too wide — details below | done | 0 | .ui-only fix: hsizetype Expanding->Maximum + sizeAdjustPolicy=AdjustToContents + 96px cap removed — content-sized both axes; new tst sidebarPanelsListGeometry, settingsdialog 43/43, offscreen grab clean, make check only 2 documented clean-HEAD flakes |
 | SIDE09 | Sidebar prefs: panel reorder buttons + working Vivaldi-style options — details below | done | 0 | sidebar/panelOrder + ▲▼ buttons drive rail order live; 5 real options (panel toggle/close-X/auto-close/folder counters/lazy load); Vivaldi-only options documented-skipped; focused tests + make check PASS (2 known flakes) |
-| TOR15 | Tor circuit popup: Tor-Browser-style vertical chain + 'New circuit' — details below | pending | 0 | user request w/ Tor Browser screenshot — 'when I click on tor circuite button I want to see it like this' |
+| TOR15 | Tor circuit popup: Tor-Browser-style vertical chain + 'New circuit' — details below | done | 0 | TorCircuitPanel hosted in menu: browser->hops->site chain w/ flags+country(role)+ip+fp, NEWNYM button + guard note; shared-circuit honesty kept; faketor NEWNYM rotate; tst_tormanager 16/0, click-smoke 60cyc, real-tor window smoke PASS |
 
 ## Task details
 

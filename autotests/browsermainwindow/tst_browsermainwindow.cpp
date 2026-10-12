@@ -75,6 +75,7 @@
 #include "locationbar.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
+#include "torcircuitpanel.h"
 #include "tormanager.h"
 #include "tortitlebar.h"
 #include "downloadmanager.h"
@@ -1694,8 +1695,17 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     QVERIFY(TorCircuitButton::countryName(QString()).isEmpty());
     QVERIFY(!TorCircuitButton::flagIcon(QLatin1String("de")).isNull());
     QVERIFY(!TorCircuitButton::flagIcon(QString()).isNull());
-    QCOMPARE(TorCircuitButton::hopText(TorCircuitHop(), 1, 3),
-             QStringLiteral("Middle:  — Unknown"));
+
+    // TOR15: the chain node model — Tor-Browser-style
+    // "Country (role)" titles with OR-address and abbreviated
+    // fingerprint detail lines.
+    QCOMPARE(TorCircuitPanel::roleName(0, 3), QLatin1String("guard"));
+    QCOMPARE(TorCircuitPanel::roleName(1, 3), QLatin1String("middle"));
+    QCOMPARE(TorCircuitPanel::roleName(2, 3), QLatin1String("exit"));
+    QCOMPARE(TorCircuitPanel::roleName(1, 4), QLatin1String("hop 2"));
+    QCOMPARE(TorCircuitPanel::shortFingerprint(
+                 QStringLiteral("AAAABBBBCCCCDDDDEEEEFFFF0000111122223333")),
+             QStringLiteral("AAAABBBB…22223333"));
 
     TorCircuit circuit;
     circuit.id = 7;
@@ -1716,29 +1726,27 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     exit.country = QLatin1String("AT");
     circuit.hops << guard << middle << exit;
 
-    QMenu menu;
-    QVERIFY(TorCircuitButton::addCircuitRows(&menu,
-                                             QList<TorCircuit>() << circuit,
-                                             7));
-    const QList<QAction *> rows = menu.actions();
-    QCOMPARE(rows.count(), 4);            // header section + 3 hops
-    QCOMPARE(rows.at(1)->text(),
-             QStringLiteral("Guard: ElToro — United Kingdom"));
-    QCOMPARE(rows.at(2)->text(),
-             QStringLiteral("Middle: Nightingali — Germany"));
-    QCOMPARE(rows.at(3)->text(),
-             QStringLiteral("Exit: elefant — Austria"));
-    for (int i = 1; i < rows.count(); ++i) {
-        QVERIFY(!rows.at(i)->icon().isNull());
-        QVERIFY(rows.at(i)->isEnabled());
-    }
-    QVERIFY(rows.at(1)->toolTip().contains(QLatin1String("1.2.3.4")));
-    QVERIFY(rows.at(1)->toolTip().contains(guard.fingerprint));
-    // A display id with no matching circuit yields no rows.
-    QMenu emptyMenu;
-    QVERIFY(!TorCircuitButton::addCircuitRows(&emptyMenu,
-                                            QList<TorCircuit>() << circuit,
-                                            99));
+    const QList<TorCircuitPanel::Node> nodes =
+        TorCircuitPanel::nodesForCircuit(
+            circuit, QLatin1String("example.com"));
+    QCOMPARE(nodes.count(), 5);           // browser + 3 hops + site
+    QCOMPARE(nodes.at(0).title, QStringLiteral("This browser"));
+    QCOMPARE(nodes.at(1).title,
+             QStringLiteral("United Kingdom (guard)"));
+    QCOMPARE(nodes.at(2).title, QStringLiteral("Germany (middle)"));
+    QCOMPARE(nodes.at(3).title, QStringLiteral("Austria (exit)"));
+    QCOMPARE(nodes.at(4).title, QStringLiteral("example.com"));
+    QCOMPARE(nodes.at(1).kind, TorCircuitPanel::Node::Hop);
+    QVERIFY(nodes.at(1).details.contains(
+        QStringLiteral("1.2.3.4 — ElToro")));
+    QVERIFY(nodes.at(1).details.contains(
+        QStringLiteral("AAAABBBB…22223333")));
+    QCOMPARE(nodes.at(1).countryCode, QLatin1String("GB"));
+    // A hop without geoip/address still renders honestly.
+    const TorCircuitPanel::Node bare =
+        TorCircuitPanel::hopNode(TorCircuitHop(), 1, 3);
+    QCOMPARE(bare.title, QStringLiteral("Unknown (middle)"));
+    QVERIFY(bare.details.isEmpty());
 
     // Normal window: no button at all.
     SubWindow *plain = new SubWindow;
@@ -1773,19 +1781,22 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         }
     }
     // No TorManager in the autotest — the button greys out and its
-    // menu reports the missing control connection.
+    // panel reports the missing control connection.
     const bool greyed = button && !button->isEnabled();
     QMenu *dropMenu = button ? button->menu() : nullptr;
+    TorCircuitPanel *dropPanel = dropMenu
+        ? dropMenu->findChild<TorCircuitPanel *>(
+              QLatin1String("torCircuitPanel"))
+        : nullptr;
     QStringList stateTexts;
-    if (dropMenu
+    if (dropPanel
             && QMetaObject::invokeMethod(button, "populateMenu")) {
-        for (QAction *action : dropMenu->actions())
-            stateTexts << action->text();
+        stateTexts = dropPanel->contentLines();
     }
 
     // Offscreen grabs for visual review — set ARORA_TOR_GRAB_DIR to a
     // directory and the nav bar, flag glyphs and a fabricated circuit
-    // menu land there.
+    // panel land there.
     const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
     if (!grabDir.isEmpty()) {
         const QString dir = QString::fromLocal8Bit(grabDir);
@@ -1802,10 +1813,11 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         TorCircuitButton::flagIcon(QString())
             .pixmap(QSize(64, 64)).save(dir + QLatin1String(
                 "/flag-unknown.png"));
-        menu.popup(window->geometry().center());
-        QApplication::processEvents();
-        menu.grab().save(dir + QLatin1String("/circuit-menu.png"));
-        menu.hide();
+        TorCircuitPanel demo;
+        demo.setCircuit(QLatin1String("example.com"), nodes);
+        demo.setNewCircuitEnabled(true);
+        demo.resize(demo.sizeHint());
+        demo.grab().save(dir + QLatin1String("/circuit-menu.png"));
     }
 
     closeWindow(window);
@@ -1813,14 +1825,14 @@ void tst_BrowserMainWindow::torCircuitDropdown()
 
     QVERIFY(button);
     QVERIFY(dropMenu);
+    QVERIFY(dropPanel);
     // MENU06: the app-menu button leads the bar — the nav cluster
     // shifts one slot right.  HOME01 adds Home between reload and the
     // reader button.
     QCOMPARE(readerIndex, 5);             // app menu, back, forward, reload, home, reader
     QCOMPARE(circuitIndex, 6);            // onion right next to it
     QVERIFY(greyed);
-    QCOMPARE(stateTexts.count(), 1);
-    QVERIFY(stateTexts.at(0).contains(
+    QVERIFY(stateTexts.join(QLatin1Char('\n')).contains(
         QLatin1String("unavailable"), Qt::CaseInsensitive));
 }
 

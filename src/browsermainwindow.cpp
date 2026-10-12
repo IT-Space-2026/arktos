@@ -1721,6 +1721,12 @@ void BrowserMainWindow::setupToolBar()
             app ? app->torManager() : nullptr, m_navigationBar);
         m_torCircuitButton->setObjectName(
             QLatin1String("torCircuitButton"));
+        // TOR15: the popup's "Circuit for <host>" header and the site
+        // node at the chain's end read the current tab's host.
+        m_torCircuitButton->setSiteHostProvider([this]() {
+            WebView *tab = currentTab();
+            return tab ? tab->url().host() : QString();
+        });
         m_navigationBar->addWidget(m_torCircuitButton);
     }
 
