@@ -11379,6 +11379,23 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: violet chrome covers menu + tab strip";
 
+        // TOR14: the status bar joins the violet chrome — light text
+        // for the circuit label, the permanent indicators and the
+        // transient message line.  The message is painted straight
+        // from palette().windowText() (bypassing the stylesheet), so
+        // the lifted palette role is what this asserts, not just the
+        // sheet.
+        QStatusBar *torStatusBar = torWindow->statusBar();
+        if (!torStatusBar->styleSheet().contains(
+                QLatin1String("4a3372"))
+                || torStatusBar->palette().color(QPalette::WindowText)
+                       .lightness() < 140) {
+            torWinFail(QLatin1String(
+                "tor window status bar not on the violet chrome"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: violet chrome reaches the status bar";
+
         // TOR11: the OS title bar cannot be tinted per-window, so a
         // tor window is frameless and its menu row doubles as the
         // title bar (the TorTitleBar corner widget).

@@ -216,6 +216,12 @@ void ZoomControl::setWebView(WebView *view)
     setZoom(m_view->currentZoom());
 }
 
+void ZoomControl::useOnDarkIcons()
+{
+    m_outButton->setIcon(AroraIcon::getOnDark(QLatin1String("zoom-out")));
+    m_inButton->setIcon(AroraIcon::getOnDark(QLatin1String("zoom-in")));
+}
+
 void ZoomControl::setZoom(int zoom)
 {
     m_valueButton->setText(tr("%1%").arg(zoom));

@@ -143,6 +143,7 @@ private slots:
     void torCircuitStatusLabel();
     void torTabStripLayout();
     void torChromeTheme();
+    void torStatusBarTheme();
     void torNavIconsDarkChrome();
     void darkChromeIcons();
     void torCircuitDropdown();
@@ -1297,6 +1298,173 @@ void tst_BrowserMainWindow::torChromeTheme()
     // the chrome stays violet.
     QVERIFY(darkTabColor.lightness() < 100);
     QVERIFY(isViolet(darkMenuColor));
+}
+
+// TOR14: the tor window's status bar joins the violet chrome — the
+// bug report showed the circuit label, the MEM/loading/zoom widgets
+// and the transient message line all rendered in the app palette's
+// dark text on the violet bar.  The message line is painted from
+// palette().windowText() directly (it bypasses the stylesheet), so
+// both the sheet and the lifted palette role are asserted, plus
+// grabbed pixels proving the text actually renders light.  Normal
+// windows keep the platform status bar.
+void tst_BrowserMainWindow::torStatusBarTheme()
+{
+    const auto isViolet = [](const QColor &c) {
+        // #4a3372/#5d4491/#3a2a5c family — blue > red > green, dark.
+        return c.isValid() && c.blue() > c.red()
+            && c.red() > c.green() && c.lightness() < 160;
+    };
+    const auto iconLuminance = [](const QIcon &icon) -> qlonglong {
+        const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+        qlonglong lum = 0;
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 100) {
+                    lum += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        return opaque ? lum / opaque : -1;
+    };
+    // Opaque near-white pixels in a widget grab — the "is text
+    // visible" probe.  Transparent background regions don't count.
+    const auto lightTextPixels = [](const QImage &image) -> int {
+        int light = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 200 && color.lightness() > 180)
+                    ++light;
+            }
+        return light;
+    };
+
+    // Deterministic icon art: getOnDark only differs from get()
+    // under a bundled theme, and a light palette keeps the normal
+    // window on the dark-glyph variants.
+    QSettings settings;
+    const QVariant savedTheme =
+        settings.value(QLatin1String("MainWindow/iconTheme"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("adwaita"));
+    AroraIcon::applyFromSettings();
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
+
+    // Normal-window baseline: no tor sheet, platform palette.
+    SubWindow *plain = new SubWindow;
+    plain->resize(1000, 600);
+    plain->show();
+    QApplication::processEvents();
+    const bool plainSheet = plain->statusBar()->styleSheet()
+        .contains(QLatin1String("4a3372"));
+    const QImage plainBar = plain->statusBar()->grab().toImage();
+    const QColor plainBackground = plainBar.pixelColor(
+        2, plainBar.height() / 2);
+    closeWindow(plain);
+
+    QVERIFY(!plainSheet);
+    QVERIFY(!isViolet(plainBackground));
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QStatusBar *bar = window->statusBar();
+    const QString sheet = bar->styleSheet();
+    const int textLightness = bar->palette()
+        .color(QPalette::WindowText).lightness();
+    QLabel *circuitLabel = window->findChild<QLabel *>(
+        QLatin1String("torCircuitLabel"));
+    QLabel *memLabel = window->findChild<QLabel *>(
+        QLatin1String("memLabel"));
+    QToolButton *zoomOut = window->findChild<QToolButton *>(
+        QLatin1String("zoomOutButton"));
+    QToolButton *zoomIn = window->findChild<QToolButton *>(
+        QLatin1String("zoomInButton"));
+    QToolButton *zoomValue = window->findChild<QToolButton *>(
+        QLatin1String("zoomValueButton"));
+
+    const QImage barImage = bar->grab().toImage();
+    const QColor barBackground = barImage.pixelColor(
+        2, barImage.height() / 2);
+    const int circuitLight = circuitLabel
+        ? lightTextPixels(circuitLabel->grab().toImage()) : -1;
+    const int memLight = memLabel
+        ? lightTextPixels(memLabel->grab().toImage()) : -1;
+    const int zoomValueLight = zoomValue
+        ? lightTextPixels(zoomValue->grab().toImage()) : -1;
+    const qlonglong zoomOutLum = zoomOut ? iconLuminance(zoomOut->icon())
+                                         : -1;
+    const qlonglong zoomInLum = zoomIn ? iconLuminance(zoomIn->icon())
+                                       : -1;
+
+    // The transient message line — painted by QStatusBar itself from
+    // palette().windowText(); the grab proves it lands light.
+    bar->showMessage(QLatin1String("https://example.test/hover-link"));
+    QApplication::processEvents();
+    const QImage messageImage = bar->grab().toImage();
+    // The message starts at x=6; sample the left stretch only so a
+    // permanent widget can't supply the light pixels.
+    const int messageLight = lightTextPixels(messageImage.copy(
+        0, 0, qMin(200, messageImage.width()), messageImage.height()));
+    bar->clearMessage();
+    QApplication::processEvents();
+
+    // A live dark-scheme flip must not take the bar off violet or
+    // drop the lifted text role back to dark.
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    const QImage darkBarImage = bar->grab().toImage();
+    const QColor darkBarBackground = darkBarImage.pixelColor(
+        2, darkBarImage.height() / 2);
+    const int darkTextLightness = bar->palette()
+        .color(QPalette::WindowText).lightness();
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the tor status bar lands there.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        bar->grab().save(QString::fromLocal8Bit(grabDir)
+                         + QLatin1String("/tor-statusbar.png"));
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+    BrowserTheme::applyColorScheme();
+    if (savedTheme.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          savedTheme);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+
+    QVERIFY(sheet.contains(QLatin1String("4a3372")));
+    QVERIFY(textLightness > 150);
+    QVERIFY(isViolet(barBackground));
+    QVERIFY(circuitLabel);
+    QVERIFY(circuitLight > 0);
+    QVERIFY(memLabel);
+    QVERIFY(memLight > 0);
+    QVERIFY(zoomValue);
+    QVERIFY(zoomValueLight > 0);
+    // The +/- glyphs are pinned to the light -dark art.
+    QVERIFY(zoomOutLum > 140);
+    QVERIFY(zoomInLum > 140);
+    // Transient message text lands light on the violet bar.
+    QVERIFY(messageLight > 0);
+    // Dark scheme: chrome stays violet, text role stays light.
+    QVERIFY(isViolet(darkBarBackground));
+    QVERIFY(darkTextLightness > 150);
 }
 
 // ICONS04: the tor window's violet chrome sits on the light

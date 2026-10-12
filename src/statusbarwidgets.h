@@ -83,6 +83,12 @@ public:
     void setWebView(WebView *view);
     WebView *webView() const;
 
+    // TOR14: the tor window's status bar sits on violet chrome while
+    // the application palette may stay light — resolve the +/-
+    // glyphs to the bundled sets' -dark (light) variants, the same
+    // pin ICONS04 applies to the navigation bar icons.
+    void useOnDarkIcons();
+
 private slots:
     void setZoom(int zoom);
 
