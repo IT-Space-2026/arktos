@@ -540,6 +540,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     QFont titleFont = downloadsTitle->font();
     titleFont.setBold(true);
     downloadsTitle->setFont(titleFont);
+    // DOWN04: the title yields first at narrow widths so the close
+    // button is never pushed off the row's right edge.
+    downloadsTitle->setSizePolicy(QSizePolicy::Ignored,
+                                  QSizePolicy::Preferred);
     downloadsHeader->addWidget(downloadsTitle, 1);
     QToolButton *closeButton = new QToolButton(m_downloadsPage);
     closeButton->setObjectName(QLatin1String("sidebarCloseButton"));
@@ -566,6 +570,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     m_downloadsSort = new QComboBox(m_downloadsPage);
     m_downloadsSort->setObjectName(QLatin1String("sidebarDownloadsSort"));
     m_downloadsSort->setAccessibleName(tr("Sort downloads"));
+    // DOWN04: compress (eliding the text) instead of forcing the dock
+    // wider when the sidebar is at its narrowest.
+    m_downloadsSort->setSizePolicy(QSizePolicy::Ignored,
+                                   QSizePolicy::Fixed);
     m_downloadsSort->addItem(tr("Sort by Date"), DownloadModel::StartedTimeRole);
     m_downloadsSort->addItem(tr("Sort by Name"), DownloadModel::FileNameRole);
     m_downloadsSort->addItem(tr("Sort by Size"), DownloadModel::SizeRole);
@@ -626,7 +634,7 @@ QWidget *SidebarPanel::buildDownloadsPage()
 
     // Bottom detail pane — the selected item's DownloadItem card is
     // reparented in here, so the pane literally IS the card (live
-    // progress, Restart and Show in File Manager included).
+    // progress, Restart and Show in Folder included).
     m_downloadDetail = new QFrame(m_downloadsPage);
     m_downloadDetail->setObjectName(QLatin1String("sidebarDownloadDetail"));
     m_downloadDetail->setAccessibleName(tr("Download details"));
@@ -658,6 +666,10 @@ QWidget *SidebarPanel::buildDownloadsPage()
     QPushButton *settingsButton = new QPushButton(tr("Download Settings..."),
                                                 m_downloadsPage);
     settingsButton->setObjectName(QLatin1String("sidebarDownloadSettings"));
+    // DOWN04: same treatment — a wide push-button minimum must not
+    // hold the whole dock above its 160px floor.
+    settingsButton->setSizePolicy(QSizePolicy::Ignored,
+                                  QSizePolicy::Fixed);
     connect(settingsButton, &QPushButton::clicked, this, [this]() {
         SettingsDialog::openPage(this, SettingsDialog::DownloadsPage);
     });

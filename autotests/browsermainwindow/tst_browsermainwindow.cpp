@@ -159,6 +159,8 @@ private slots:
     void sidebarResize();
     void sidebarGripResize();
     void downloadsSidebarPanel();
+    void downloadsSidebarFinishedRows();
+    void downloadsSidebarMinWidth();
     void bookmarksSidebarPanel();
     void chromeSlots();
     void widgetTabBookmarksSafety();
@@ -3600,6 +3602,247 @@ void tst_BrowserMainWindow::chromeSlots()
                           savedDisplay);
     else
         settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// DOWN04(a): which path removes a finished row — the report said a
+// completed download vanished from the sidebar list with the
+// removeDownloadsPolicy already at Never.  The candidates are the
+// off-the-record rule in DownloadManager::updateRow (a finished
+// private download leaves no record, by design since SEC07) and the
+// proxy/sort layer.  This reproduces both legs end to end through the
+// real sidebar: a normal-profile download must stay in the model and
+// the proxy until the user clears it, while an off-the-record one is
+// still dropped on finish — the documented rule, re-confirmed.
+void tst_BrowserMainWindow::downloadsSidebarFinishedRows()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QListView *view = panel->findChild<QListView *>(
+        QLatin1String("sidebarDownloadsView"));
+    QVERIFY(view);
+    QAbstractItemModel *proxy = view->model();
+    QVERIFY(proxy);
+    QAbstractItemModel *source =
+        DownloadManager::instance()->model();
+    QVERIFY(source);
+    // The singleton may have carried rows over from an earlier test.
+    DownloadManager::instance()->cleanup();
+    QCOMPARE(source->rowCount(), 0);
+
+    // A normal-profile download: the row appears and must still be
+    // there — in BOTH the source model and the sidebar's proxy —
+    // after the transfer finishes (removeDownloadsPolicy is Never).
+    const QUrl url(QString::fromLatin1("data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64()));
+    Engine::Page *normalPage = DownloadManager::instance()->retryPage(false);
+    QVERIFY(normalPage);
+    QVERIFY(!normalPage->isOffTheRecord());
+    DownloadManager::instance()->download(normalPage, url);
+    QTRY_COMPARE(source->rowCount(), 1);
+    QTRY_COMPARE(proxy->rowCount(), 1);
+    DownloadItem *item = DownloadManager::instance()->itemAt(0);
+    QVERIFY(item);
+    QTRY_VERIFY(item->downloadedSuccessfully());
+    QTest::qWait(300);
+    QApplication::processEvents();
+    QCOMPARE(source->rowCount(), 1);
+    QCOMPARE(proxy->rowCount(), 1);
+    // The proxy row maps back to the item and stays selectable.
+    const QModelIndex proxyIndex = proxy->index(0, 0);
+    QVERIFY(proxyIndex.isValid());
+    QCOMPARE(proxyIndex.data(DownloadModel::CompletedRole).toBool(), true);
+    view->setCurrentIndex(proxyIndex);
+    QCOMPARE(DownloadManager::instance()->itemAt(0), item);
+
+    // The off-the-record rule: a private download is dropped from the
+    // model when it finishes — SEC07 persistence semantics, kept by
+    // design (the finished row may not linger as a recoverable record
+    // of a private transfer).  A stalled HTTP response keeps the row
+    // observable: an instant data: transfer can add and drop inside a
+    // single event-loop turn, so rowCount() would never read 2.
+    QTcpServer stalled;
+    QVERIFY(stalled.listen(QHostAddress::LocalHost));
+    QObject::connect(&stalled, &QTcpServer::newConnection, &stalled,
+                     [&stalled]() {
+        QTcpSocket *socket = stalled.nextPendingConnection();
+        socket->setParent(&stalled);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "Content-Disposition: attachment; "
+                          "filename=\"otr.bin\"\r\n"
+                      "Content-Length: 104857600\r\n\r\n");
+        QTimer *trickle = new QTimer(socket);
+        QObject::connect(trickle, &QTimer::timeout, socket, [socket]() {
+            socket->write("x");
+        });
+        trickle->start(50);
+    });
+    const QUrl stalledUrl(QString::fromLatin1(
+        "http://127.0.0.1:%1/otr.bin").arg(stalled.serverPort()));
+    Engine::Page *otrPage = DownloadManager::instance()->retryPage(true);
+    QVERIFY(otrPage);
+    QVERIFY(otrPage->isOffTheRecord());
+    DownloadManager::instance()->download(otrPage, stalledUrl);
+    QTRY_COMPARE_WITH_TIMEOUT(source->rowCount(), 2, 30000);
+    QTRY_COMPARE_WITH_TIMEOUT(proxy->rowCount(), 2, 30000);
+    DownloadItem *otrItem = DownloadManager::instance()->itemAt(1);
+    QVERIFY(otrItem);
+    QVERIFY(otrItem != item);
+    QTRY_VERIFY_WITH_TIMEOUT(otrItem->downloading(), 30000);
+    // Once it leaves the in-flight state the OTR row must vanish;
+    // stop() lands it in a terminal state like a finish would.
+    QMetaObject::invokeMethod(otrItem, "stop");
+    QTRY_COMPARE_WITH_TIMEOUT(source->rowCount(), 1, 30000);
+    QCOMPARE(proxy->rowCount(), 1);
+    // The survivor is the normal download.
+    QCOMPARE(DownloadManager::instance()->itemAt(0), item);
+
+    // The row only leaves the list when the user clears it.
+    QVERIFY(source->removeRow(0));
+    QCOMPARE(source->rowCount(), 0);
+    QCOMPARE(proxy->rowCount(), 0);
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+
+    // Same teardown as downloadsSidebarPanel: the retry pages live on
+    // the singleton manager — drop it before process teardown or a
+    // profile dies under a live page (and segfaults).
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// DOWN04(b): 'I can not see the main action button' — the expanded
+// detail card's fixed-width button row demanded ~440px and got
+// crushed to slivers (32px buttons) whenever the dock narrowed, which
+// also held the dock at ~280px instead of its 160px floor.  Now the
+// buttons reflow in a wrapping row and every page control may
+// compress, so at the floor all controls stay fully inside the page.
+void tst_BrowserMainWindow::downloadsSidebarMinWidth()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    DownloadManager::instance()->setDownloadDirectory(
+        downloadDir.path() + QLatin1Char('/'));
+
+    SubWindow *window = new SubWindow;
+    window->resize(900, 600);
+    window->show();
+    QVERIFY(QMetaObject::invokeMethod(window, "downloadManager"));
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock && dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QListView *view = panel->findChild<QListView *>(
+        QLatin1String("sidebarDownloadsView"));
+    QVERIFY(view);
+
+    // Seed + select a finished download so the expanded card is
+    // hosted in the detail pane.
+    const QUrl url(QString::fromLatin1("data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64()));
+    DownloadManager::instance()->download(
+        DownloadManager::instance()->retryPage(false), url);
+    QTRY_COMPARE(view->model()->rowCount(), 1);
+    DownloadItem *item = DownloadManager::instance()->itemAt(0);
+    QVERIFY(item);
+    QTRY_VERIFY(item->downloadedSuccessfully());
+    view->setCurrentIndex(view->model()->index(0, 0));
+    QFrame *detail = panel->findChild<QFrame *>(
+        QLatin1String("sidebarDownloadDetail"));
+    QVERIFY(detail);
+    QVERIFY(detail->isVisibleTo(detail->parentWidget()));
+    DownloadItem *card = detail->findChild<DownloadItem *>();
+    QVERIFY(card);
+
+    // Drag the dock to its 160px floor — before the fix the card's
+    // 442px minimum refused to let it below ~280px.
+    window->resizeDocks({ dock }, { 160 }, Qt::Horizontal);
+    QTRY_VERIFY_WITH_TIMEOUT(dock->width() < 200, 15000);
+
+    QWidget *page = panel->downloadsPage();
+    QVERIFY(page);
+    const int pageRight = page->rect().right();
+    // Header row: the close button must remain fully inside the page
+    // — it is the header's only action and the report's 'main action
+    // button' must never be clipped again.
+    QToolButton *closeButton = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(closeButton);
+    QVERIFY2(closeButton->isVisibleTo(page), "close button hidden");
+    QVERIFY2(closeButton->geometry().right() <= pageRight,
+             qPrintable(QStringLiteral("close button clipped: %1 > %2")
+                 .arg(closeButton->geometry().right()).arg(pageRight)));
+    // Page-level controls keep a usable width instead of slivers.
+    for (const QString name :
+         { QLatin1String("sidebarDownloadsSearch"),
+           QLatin1String("sidebarDownloadsSort"),
+           QLatin1String("sidebarDownloadSettings") }) {
+        QWidget *control = panel->findChild<QWidget *>(name);
+        QVERIFY2(control, qPrintable(name));
+        QVERIFY2(control->geometry().right() <= pageRight,
+                 qPrintable(name));
+        QVERIFY2(control->width() >= 60,
+                 qPrintable(name + QStringLiteral(" crushed to %1px")
+                     .arg(control->width())));
+    }
+    // The hosted card fits inside the detail pane and every one of
+    // its action buttons keeps its natural size — the flow row wraps
+    // them instead of squeezing.
+    QVERIFY2(card->geometry().right() <= detail->rect().right(),
+             qPrintable(QStringLiteral("card clipped: %1 > %2")
+                 .arg(card->geometry().right())
+                 .arg(detail->rect().right())));
+    const QList<QPushButton *> buttons =
+        card->findChildren<QPushButton *>();
+    QVERIFY(!buttons.isEmpty());
+    for (QPushButton *button : buttons) {
+        if (button->isHidden())
+            continue;
+        QVERIFY2(button->geometry().right() <= card->rect().right(),
+                 qPrintable(QStringLiteral("%1 clipped at %2 (card %3)")
+                     .arg(button->objectName())
+                     .arg(button->geometry().right())
+                     .arg(card->rect().right())));
+        QVERIFY2(button->width() >= 40,
+                 qPrintable(QStringLiteral("%1 squeezed to %2px")
+                     .arg(button->objectName()).arg(button->width())));
+    }
+
+    // Widen back — the buttons reflow onto fewer rows but none of
+    // them is crushed in the process.
+    window->resizeDocks({ dock }, { 320 }, Qt::Horizontal);
+    QTRY_VERIFY_WITH_TIMEOUT(dock->width() >= 250, 15000);
+    for (QPushButton *button : buttons) {
+        if (button->isHidden())
+            continue;
+        QVERIFY2(button->geometry().right() <= card->rect().right(),
+                 qPrintable(button->objectName()));
+    }
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    view->setCurrentIndex(QModelIndex());
+    closeWindow(window);
+
+    DownloadManager::instance()->cleanup();
+    DownloadManager::instance()->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 // SIDE07: a widget tab (Preferences, History) has no WebView, so

@@ -730,6 +730,13 @@ Tor:
   field — bundled locally, nothing fetched.  about:home typed in a
   private tab resolves to it too; a Tor window's tabs keep the Tor
   page (PTAB02).
+- Downloads sidebar detail card now fits the dock's narrowest width:
+  the selected download's action buttons wrap onto extra rows instead
+  of being clipped or squeezed to slivers, and long URL/path labels
+  elide rather than forcing the sidebar wider.  Downloads made in
+  private tabs still vanish from the list when they finish — that is
+  the intended privacy behavior — while normal downloads stay until
+  explicitly cleared (DOWN04).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

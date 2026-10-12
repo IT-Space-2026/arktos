@@ -60,6 +60,7 @@
 
 #include "autosaver.h"
 #include "browserprofile.h"
+#include "flowlayout.h"
 #include "pdfsupport.h"
 #include "webenginebackend.h"
 #ifdef ARORA_RUSTDL
@@ -125,6 +126,27 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     , m_expandUserOverride(false)
 {
     setupUi(this);
+    // DOWN04: the sidebar detail pane can squeeze the card to ~110px
+    // — a fixed horizontal row would crush the action buttons into
+    // slivers.  Move them into wrapping flow rows at the same spots
+    // so every button keeps its natural size and reflows onto extra
+    // rows instead of clipping.
+    for (QHBoxLayout *row : {cardButtonsLayout, cardSecondaryButtonsLayout}) {
+        FlowLayout *buttonFlow = new FlowLayout(0, 6, 6);
+        while (QLayoutItem *child = row->takeAt(0)) {
+            if (child->widget())
+                buttonFlow->addWidget(child->widget());
+            else
+                delete child;
+        }
+        // Each .ui row sits inside the card's vertical box — swap it
+        // for the flow at the same position.
+        QBoxLayout *box = static_cast<QBoxLayout *>(row->parent());
+        const int index = box->indexOf(row);
+        box->removeItem(row);
+        box->insertItem(index, buttonFlow);
+        delete row;
+    }
     // Server-supplied file names may contain markup-looking text;
     // the labels must always render it literally.
     fileNameLabel->setTextFormat(Qt::PlainText);

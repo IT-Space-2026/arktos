@@ -149,6 +149,7 @@ HEADERS += \
     $$PWD/utils/crashreporter.h \
     $$PWD/utils/edittableview.h \
     $$PWD/utils/edittreeview.h \
+    $$PWD/utils/flowlayout.h \
     $$PWD/utils/languagemanager.h \
     $$PWD/utils/lineedit.h \
     $$PWD/utils/lineedit_p.h \
@@ -222,6 +223,7 @@ SOURCES += \
     $$PWD/utils/crashreporter.cpp \
     $$PWD/utils/edittableview.cpp \
     $$PWD/utils/edittreeview.cpp \
+    $$PWD/utils/flowlayout.cpp \
     $$PWD/utils/languagemanager.cpp \
     $$PWD/utils/lineedit.cpp \
     $$PWD/utils/safetext.cpp \
