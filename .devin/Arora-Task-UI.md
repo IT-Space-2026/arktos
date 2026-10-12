@@ -65,6 +65,7 @@ This file is the task queue for the Devin CLI task loop
 | UIAUDIT03 | Post-queue code-quality sweep on ui-work — details below | done | 1 | report at .devin/UIAUDIT03-report.md — dead code clean; shared PositionPicker base extracted for the two visual pickers (-218 net lines, API/index semantics unchanged); TabBar double parent-cast hoisted out of the per-tab paint path; security verified (BKEX01 escaping, ADBLK01 no-rust fallback, ADDR02 injection/prompt gates) + documented inert-by-design TRUST toggles pending main-lane TRUST03; tst_settingsdialog picker legs PASS; make check: check-warnings PASS + all programs green except known flake adblockAppliesOnContainerProfile (PASS standalone) offscreen --disable-gpu needs:task:TRUST02 |
 | DEVT05 | BiDi entry into Development Tools submenu, drop dead placeholder + top-level checkbox — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/BidiClient/rc_bidi_* and the m_toolsMenu toggle live on master only (DEVT02-04, never merged to ui-work); this tree has no checkable BiDi action to move, only DEVT01's View-submenu placeholder; fix targets master's browsermainwindow.cpp ~1154-1190 — re-file on main lane or sync master->ui-work first |
 | SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/rc_bidi_* live on master only (DEVT02-04 never merged to ui-work; same blocker as DEVT05); this tree's only dock is the 'Sidebar' — no duplicate Dev Tools title exists here to fix; re-file on main lane or sync master->ui-work first |
+| SIDE07 | CRASH: Show All Bookmarks while Preferences tab is current — details below | pending | 0 | |
 | PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
 | PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
@@ -80,7 +81,6 @@ This file is the task queue for the Devin CLI task loop
 | TOR08 | Tor circuit dropdown: small icon next to reader mode shows circuit w/ country flags+names — details below | pending | 0 | |
 | TOR09 | Tor-specific start page: Arora logo + Tor logo, tor-themed colors — details below | pending | 0 | |
 | ENG13 | Servo-branded start page: Servo logo under the search field, default colors — details below | pending | 0 | |
-| SIDE07 | CRASH: Show All Bookmarks while Preferences tab is current — details below | pending | 0 | |
 | RSZ02 | Sidebar + tab strip not actually mouse-resizable (RSZ01 grip ineffective) — details below | pending | 0 | |
 
 
