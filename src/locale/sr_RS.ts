@@ -9,11 +9,11 @@
     </message>
     <message>
         <source>Qt version: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Qt верзија: %1</translation>
     </message>
     <message>
         <source>Lightweight WebEngine-based web browser</source>
-        <translation type="unfinished"></translation>
+        <translation>Лаки веб прегледач заснован на WebEngine-у</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -23,7 +23,13 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>Authors</source>
@@ -112,7 +118,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Preset Filter Lists...</source>
-        <translation type="unfinished"></translation>
+        <translation>Унапред дефинисане листе филтера...</translation>
     </message>
     <message>
         <source>Browse Subscriptions...</source>
@@ -124,12 +130,13 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Never</source>
-        <translation type="unfinished">никад</translation>
+        <translation>никад</translation>
     </message>
     <message>
         <source>%1
 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1
+%2</translation>
     </message>
     <message>
         <source>AdBlock Configuration</source>
@@ -141,31 +148,31 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Filter Subscriptions</source>
-        <translation type="unfinished"></translation>
+        <translation>Претплате на филтере</translation>
     </message>
     <message>
         <source>Filter list subscriptions</source>
-        <translation type="unfinished"></translation>
+        <translation>Претплате на листе филтера</translation>
     </message>
     <message>
         <source>Subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Претплата</translation>
     </message>
     <message>
         <source>Rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Правила</translation>
     </message>
     <message>
         <source>Last Update</source>
-        <translation type="unfinished"></translation>
+        <translation>Последње ажурирање</translation>
     </message>
     <message>
         <source>Update Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Ажурирај сада</translation>
     </message>
     <message>
         <source>Remove</source>
-        <translation type="unfinished">Уклони</translation>
+        <translation>Уклони</translation>
     </message>
     <message>
         <source>Action</source>
@@ -173,40 +180,42 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Show rules in the selected list</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи правила у изабраној листи</translation>
     </message>
     <message>
         <source>Filter displayed rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Филтрирај приказана правила</translation>
     </message>
     <message>
         <source>Rules in the selected subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Правила у изабраној претплати</translation>
     </message>
     <message>
         <source>Custom Rules</source>
-        <translation type="unfinished">Прилагођена правила</translation>
+        <translation>Прилагођена правила</translation>
     </message>
     <message>
         <source>One rule per line. Lines starting with ! are comments.</source>
-        <translation type="unfinished"></translation>
+        <translation>Једно правило по реду. Редови који почињу знаком ! су коментари.</translation>
     </message>
     <message>
         <source>Custom ad blocking rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Прилагођена правила за блокирање огласа</translation>
     </message>
 </context>
 <context>
     <name>AdBlockManager</name>
     <message>
         <source>Download Ad-Blocking Filter Lists?</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузети листе филтера за блокирање огласа?</translation>
     </message>
     <message>
         <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation type="unfinished"></translation>
+        <translation>Арора је подешен да блокира огласе и пратиоце користећи заједничке листе филтера EasyList, EasyPrivacy и uBlock филтере. Њихово омогућавање једном преузима листе са easylist.to и ublockorigin.github.io и освежава их отприлике једном недељно.
+
+Док не одлучите, листе се не преузимају и блокирач нема удаљена правила. Ово касније можете променити под Алатке &gt; Адблок.</translation>
     </message>
     <message>
         <source>Custom Rules</source>
@@ -224,110 +233,110 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>AdBlockPresets</name>
     <message>
         <source>Core &amp; Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>Основно и &amp;приватност</translation>
     </message>
     <message>
         <source>Annoyances</source>
-        <translation type="unfinished"></translation>
+        <translation>Сметње</translation>
     </message>
     <message>
         <source>Security</source>
-        <translation type="unfinished"></translation>
+        <translation>Безбедност</translation>
     </message>
     <message>
         <source>Resource Abuse &amp; Mining</source>
-        <translation type="unfinished"></translation>
+        <translation>Злоупотреба ресурса и &amp;рударење</translation>
     </message>
     <message>
         <source>Regional</source>
-        <translation type="unfinished"></translation>
+        <translation>Регионално</translation>
     </message>
     <message>
         <source>uBlock Origin&apos;s own tracking-protection rules, complementing EasyPrivacy.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сопствена правила uBlock Origin-а за заштиту од праћења, као допуна EasyPrivacy-ју.</translation>
     </message>
     <message>
         <source>Repairs site breakage caused by the other filter lists.</source>
-        <translation type="unfinished"></translation>
+        <translation>Исправља кварове на сајтовима проузроковане другим листама филтера.</translation>
     </message>
     <message>
         <source>Fast-shipping fixes for urgent filter issues.</source>
-        <translation type="unfinished"></translation>
+        <translation>Брзо објављиване исправке за хитне проблеме са филтерима.</translation>
     </message>
     <message>
         <source>Blocks pop-ups, newsletter prompts, and other annoyances (the old Fanboy&apos;s Annoyances).</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокира искачуће прозоре, позиве за билтене и друге сметње (стари Fanboy&apos;s Annoyances).</translation>
     </message>
     <message>
         <source>Hides cookie-consent banners and GDPR notice pop-ups.</source>
-        <translation type="unfinished"></translation>
+        <translation>Скрива траке за пристанак на колачиће и GDPR искачућа обавештења.</translation>
     </message>
     <message>
         <source>Removes social-media share buttons, widgets, and embedded feeds.</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклања дугмад за дељење на друштвеним мрежама, виџете и уграђене доводе.</translation>
     </message>
     <message>
         <source>uBlock Origin&apos;s cookie-banner rules; can be combined with EasyList Cookie Notices.</source>
-        <translation type="unfinished"></translation>
+        <translation>Правила uBlock Origin-а за траке колачића; може се комбиновати са EasyList Cookie Notices.</translation>
     </message>
     <message>
         <source>uBlock Origin rules for overlays and other interruptions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Правила uBlock Origin-а за прекриваче и друге сметње.</translation>
     </message>
     <message>
         <source>Bypasses annoying link-shortener interstitials.</source>
-        <translation type="unfinished"></translation>
+        <translation>Заобилази досадне међустранице скраћивача веза.</translation>
     </message>
     <message>
         <source>Blocks domains known to distribute malware and unwanted software.</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокира домене за које се зна да шире злонамеран и нежељен софтвер.</translation>
     </message>
     <message>
         <source>Live abuse.ch URLhaus feed of URLs currently serving malware.</source>
-        <translation type="unfinished"></translation>
+        <translation>Живи довод abuse.ch URLhaus адреса које тренутно служе злонамеран софтвер.</translation>
     </message>
     <message>
         <source>Curated phishing-domain blocklist (the maintained successor to phishing.army).</source>
-        <translation type="unfinished"></translation>
+        <translation>Негована блок-листа фишинг домена (одржавани наследник phishing.army-ја).</translation>
     </message>
     <message>
         <source>Blocks sites that secretly abuse CPU/bandwidth, e.g. crypto miners (NoCoin successor).</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокира сајтове који тајно злоупотребљавају процесор/пропусност, нпр. програме за копање криптовалута (наследник NoCoin-а).</translation>
     </message>
     <message>
         <source>Dedicated browser crypto-mining blocklist, community maintained.</source>
-        <translation type="unfinished"></translation>
+        <translation>Наменска блок-листа за копање криптовалута у прегледачу, одржавана од заједнице.</translation>
     </message>
     <message>
         <source>German-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покривеност сајтова на немачком језику.</translation>
     </message>
     <message>
         <source>French-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покривеност сајтова на француском језику.</translation>
     </message>
     <message>
         <source>Russian-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покривеност сајтова на руском језику.</translation>
     </message>
     <message>
         <source>Czech and Slovak site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покривеност чешких и словачких сајтова.</translation>
     </message>
     <message>
         <source>Lithuanian site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покривеност литванских сајтова.</translation>
     </message>
 </context>
 <context>
     <name>AdBlockPresetsDialog</name>
     <message>
         <source>Filter List Presets</source>
-        <translation type="unfinished"></translation>
+        <translation>Унапред припремљене листе филтера</translation>
     </message>
     <message>
         <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation type="unfinished"></translation>
+        <translation>Означите листу да бисте се претплатили на њу; Арора је преузима једном и освежава отприлике једном недељно. Поништавање ознаке онемогућава претплату. Листе на које сте већ претплаћени (укључујући подразумеване) приказују се као означене.</translation>
     </message>
 </context>
 <context>
@@ -355,15 +364,15 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Bookmark name</source>
-        <translation type="unfinished"></translation>
+        <translation>Име маркера</translation>
     </message>
     <message>
         <source>Bookmark address</source>
-        <translation type="unfinished"></translation>
+        <translation>Адреса маркера</translation>
     </message>
     <message>
         <source>Bookmark folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Фасцикла маркера</translation>
     </message>
     <message>
         <source>Url</source>
@@ -382,66 +391,66 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>AddressDialog</name>
     <message>
         <source>Add Address</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај адресу</translation>
     </message>
     <message>
         <source>Country:</source>
-        <translation type="unfinished"></translation>
+        <translation>Земља:</translation>
     </message>
     <message>
         <source>Country</source>
-        <translation type="unfinished"></translation>
+        <translation>Земља</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Име:</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Име</translation>
+        <translation>Име</translation>
     </message>
     <message>
         <source>Organization:</source>
-        <translation type="unfinished"></translation>
+        <translation>Организација:</translation>
     </message>
     <message>
         <source>Organization</source>
-        <translation type="unfinished"></translation>
+        <translation>Организација</translation>
     </message>
     <message>
         <source>Street address:</source>
-        <translation type="unfinished"></translation>
+        <translation>Улица и број:</translation>
     </message>
     <message>
         <source>Street address</source>
-        <translation type="unfinished"></translation>
+        <translation>Улица и број</translation>
     </message>
     <message>
         <source>City</source>
-        <translation type="unfinished"></translation>
+        <translation>Град</translation>
     </message>
     <message>
         <source>State</source>
-        <translation type="unfinished"></translation>
+        <translation>Покрајина</translation>
     </message>
     <message>
         <source>ZIP code</source>
-        <translation type="unfinished"></translation>
+        <translation>Поштански број</translation>
     </message>
     <message>
         <source>Phone</source>
-        <translation type="unfinished"></translation>
+        <translation>Телефон</translation>
     </message>
     <message>
         <source>Email</source>
-        <translation type="unfinished"></translation>
+        <translation>Е-пошта</translation>
     </message>
 </context>
 <context>
     <name>AroraIcon</name>
     <message>
         <source>Native</source>
-        <translation type="unfinished"></translation>
+        <translation>Изворни</translation>
     </message>
 </context>
 <context>
@@ -452,11 +461,11 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Search saved form data</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи сачуване податке образаца</translation>
     </message>
     <message>
         <source>Saved form data</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачувани подаци образаца</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -475,7 +484,7 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;Желите ли да сачувате ову лозинку?&lt;/b&gt;&lt;br&gt;     Да прегледате сачуване лозинке и уклоните их, отворите панељ Самопопуњавање у поставкама.</translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -501,122 +510,122 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>BidiClient</name>
     <message>
         <source>Debug channel is disabled in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Канал за отклањање грешака је онемогућен у Tor прозорима.</translation>
     </message>
     <message>
         <source>Debug channel is disabled (devtools/bidiBackend).</source>
-        <translation type="unfinished"></translation>
+        <translation>Канал за отклањање грешака је онемогућен (devtools/bidiBackend).</translation>
     </message>
     <message>
         <source>Built without rustcore — no BiDi backend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изграђено без rustcore-а — нема BiDi бекенда.</translation>
     </message>
     <message>
         <source>Could not connect to the debug channel: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Не могу да се повежем на канал за отклањање грешака: %1</translation>
     </message>
 </context>
 <context>
     <name>BidiPanel</name>
     <message>
         <source>Development Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>Развојни алати</translation>
     </message>
     <message>
         <source>Evaluate JavaScript in the selected context</source>
-        <translation type="unfinished"></translation>
+        <translation>Изврши JavaScript у изабраном контексту</translation>
     </message>
     <message>
         <source>Console</source>
-        <translation type="unfinished"></translation>
+        <translation>Конзола</translation>
     </message>
     <message>
         <source>DOM</source>
-        <translation type="unfinished"></translation>
+        <translation>DOM</translation>
     </message>
     <message>
         <source>Method</source>
-        <translation type="unfinished"></translation>
+        <translation>Метода</translation>
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished"></translation>
+        <translation>Статус</translation>
     </message>
     <message>
         <source>State</source>
-        <translation type="unfinished"></translation>
+        <translation>Стање</translation>
     </message>
     <message>
         <source>URL</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ</translation>
     </message>
     <message>
         <source>Network</source>
-        <translation type="unfinished"></translation>
+        <translation>Мрежа</translation>
     </message>
     <message>
         <source>Cookies</source>
-        <translation type="unfinished">Колачићи</translation>
+        <translation>Колачићи</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Име</translation>
+        <translation>Име</translation>
     </message>
     <message>
         <source>Value</source>
-        <translation type="unfinished"></translation>
+        <translation>Вредност</translation>
     </message>
     <message>
         <source>Domain</source>
-        <translation type="unfinished"></translation>
+        <translation>Домен</translation>
     </message>
     <message>
         <source>Path</source>
-        <translation type="unfinished">Путања</translation>
+        <translation>Путања</translation>
     </message>
     <message>
         <source>Local Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Локално складиште</translation>
     </message>
     <message>
         <source>Refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>Освежи</translation>
     </message>
     <message>
         <source>Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Кључ</translation>
     </message>
     <message>
         <source>Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Складиште</translation>
     </message>
     <message>
         <source>Debug channel not connected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Канал за отклањање грешака није повезан.</translation>
     </message>
     <message>
         <source>Debug channel disconnected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Канал за отклањање грешака је прекинут.</translation>
     </message>
     <message>
         <source>loading…</source>
-        <translation type="unfinished"></translation>
+        <translation>учитавање…</translation>
     </message>
     <message>
         <source>pending</source>
-        <translation type="unfinished"></translation>
+        <translation>на чекању</translation>
     </message>
     <message>
         <source>receiving</source>
-        <translation type="unfinished"></translation>
+        <translation>пријем</translation>
     </message>
     <message>
         <source>finished</source>
-        <translation type="unfinished"></translation>
+        <translation>завршено</translation>
     </message>
     <message>
         <source>error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>грешка: %1</translation>
     </message>
 </context>
 <context>
@@ -651,7 +660,7 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Search bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи маркере</translation>
     </message>
     <message>
         <source>&amp;Remove</source>
@@ -674,7 +683,7 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Error when loading bookmarks: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка при учитавању маркера: %1</translation>
     </message>
     <message>
         <source>Error when loading bookmarks on line %1, column %2:
@@ -696,15 +705,15 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Unable to open HTML bookmarks file %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не могу да отворим HTML фајл маркера %1.</translation>
     </message>
     <message>
         <source>Bookmarks file %1 is too large to import.</source>
-        <translation type="unfinished"></translation>
+        <translation>Фајл маркера %1 је превелик за увоз.</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no bookmarks found in %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка при учитавању HTML маркера: у %1 нису пронађени маркери.</translation>
     </message>
     <message>
         <source>Imported %1</source>
@@ -728,36 +737,37 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Error when loading HTML bookmarks: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка при учитавању HTML маркера: %1</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no bookmarks found.</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка при учитавању HTML маркера: маркери нису пронађени.</translation>
     </message>
     <message>
         <source>Import bookmarklets?</source>
-        <translation type="unfinished"></translation>
+        <translation>Увести букмарклете?</translation>
     </message>
     <message>
         <source>The file contains %1 bookmarklet(s) — javascript: links that run script in the current page when opened.
 Import them anyway?</source>
-        <translation type="unfinished"></translation>
+        <translation>Фајл садржи %1 букмарклет(а) — javascript: везе које при отварању покрећу скрипту на текућој страници.
+Ипак их увести?</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no importable bookmarks found.</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка при учитавању HTML маркера: ниједан маркер се не може увести.</translation>
     </message>
     <message>
         <source>Bookmarks imported</source>
-        <translation type="unfinished"></translation>
+        <translation>Маркери увезени</translation>
     </message>
     <message>
         <source>%1 bookmark item(s) imported; %2 item(s) were skipped as unsafe or unsupported URLs.</source>
-        <translation type="unfinished"></translation>
+        <translation>Увезено %1 ставки маркера; %2 ставки је прескочено као небезбедне или неподржане адресе.</translation>
     </message>
     <message>
         <source>%1 bookmark item(s) imported.</source>
-        <translation type="unfinished"></translation>
+        <translation>Увезено %1 ставки маркера.</translation>
     </message>
     <message>
         <source>Remove Bookmark</source>
@@ -849,15 +859,15 @@ Import them anyway?</source>
     <name>BrowserApplication</name>
     <message>
         <source>Connected to the Tor network</source>
-        <translation type="unfinished"></translation>
+        <translation>Повезано на Tor мрежу</translation>
     </message>
     <message>
         <source>Connecting to the Tor network — %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>Повезивање на Tor мрежу — %1%</translation>
     </message>
     <message>
         <source>Tor connection failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Повезивање на Tor није успело: %1</translation>
     </message>
     <message>
         <source>There are %1 windows and %2 tabs open
@@ -1006,19 +1016,19 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>&amp;Reader Mode</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Режим читача</translation>
     </message>
     <message>
         <source>Picture-&amp;in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Слика-у-&amp;слици</translation>
     </message>
     <message>
         <source>Sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Бочна трака</translation>
     </message>
     <message>
         <source>Development Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>Развојни алати</translation>
     </message>
     <message>
         <source>Page S&amp;ource</source>
@@ -1034,15 +1044,15 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Chromium Dev Tool</source>
-        <translation type="unfinished"></translation>
+        <translation>Chromium развојни алат</translation>
     </message>
     <message>
         <source>BiDi Dev Tool</source>
-        <translation type="unfinished"></translation>
+        <translation>BiDi развојни алат</translation>
     </message>
     <message>
         <source>Coming with the BiDi backend</source>
-        <translation type="unfinished"></translation>
+        <translation>Долази са BiDi бекендом</translation>
     </message>
     <message>
         <source>Hi&amp;story</source>
@@ -1086,7 +1096,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Search &amp;Tabs...</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи &amp;језичке...</translation>
     </message>
     <message>
         <source>&amp;Tools</source>
@@ -1094,7 +1104,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Command &amp;Palette...</source>
-        <translation type="unfinished"></translation>
+        <translation>Командна &amp;палета...</translation>
     </message>
     <message>
         <source>Web &amp;Search</source>
@@ -1116,35 +1126,35 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>The selected printer is not valid.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изабрани штампач није исправан.</translation>
     </message>
     <message>
         <source>The output file &apos;%1&apos; cannot be written.</source>
-        <translation type="unfinished"></translation>
+        <translation>Излазни фајл &quot;%1&quot; се не може записати.</translation>
     </message>
     <message>
         <source>The selected printer is not available.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изабрани штампач није доступан.</translation>
     </message>
     <message>
         <source>Cannot print: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Штампање није могуће: %1</translation>
     </message>
     <message>
         <source>Unavailable in private windows</source>
-        <translation type="unfinished"></translation>
+        <translation>Недоступно у приватним прозорима</translation>
     </message>
     <message>
         <source>&amp;No Container</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Без контејнера</translation>
     </message>
     <message>
         <source>New &amp;Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови &amp;контејнер...</translation>
     </message>
     <message>
         <source>&amp;Manage Containers...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Управљај контејнерима...</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
@@ -1185,23 +1195,23 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>This window browses through the Tor network</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај прозор прегледа преко Tor мреже</translation>
     </message>
     <message>
         <source>No tor binary found — install tor or run BuildProcess/fetch-tor.sh</source>
-        <translation type="unfinished"></translation>
+        <translation>tor извршни фајл није пронађен — инсталирајте tor или покрените BuildProcess/fetch-tor.sh</translation>
     </message>
     <message>
         <source>Credential store locked</source>
-        <translation type="unfinished"></translation>
+        <translation>Складиште акредитива је закључано</translation>
     </message>
     <message>
         <source>BiDi Dev &amp;Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>BiDi развојни &amp;алати</translation>
     </message>
     <message>
         <source>The debug channel is never armed in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Канал за отклањање грешака се никад не активира у Tor прозорима.</translation>
     </message>
     <message>
         <source>Hide Toolbar</source>
@@ -1217,71 +1227,71 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>New &amp;Container Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови језичак &amp;контејнера</translation>
     </message>
     <message>
         <source>New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови &amp;приватни језичак</translation>
     </message>
     <message>
         <source>New &amp;Tor Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови T&amp;or прозор</translation>
     </message>
     <message>
         <source>Preferences...</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке...</translation>
     </message>
     <message>
         <source>&amp;Lock Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Закључај складиште акредитива</translation>
     </message>
     <message>
         <source>Preferences</source>
-        <translation type="unfinished">Поставке</translation>
+        <translation>Поставке</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Историјат</translation>
+        <translation>Историјат</translation>
     </message>
     <message>
         <source>Tor: daemon off</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: демон искључен</translation>
     </message>
     <message>
         <source>The managed Tor daemon is not running.</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљани Tor демон не ради.</translation>
     </message>
     <message>
         <source>Tor: failed</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: неуспешно</translation>
     </message>
     <message>
         <source>Tor: connecting %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: повезивање %1%</translation>
     </message>
     <message>
         <source>Tor: connecting...</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: повезивање...</translation>
     </message>
     <message>
         <source>Tor: no circuit</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: нема кола</translation>
     </message>
     <message>
         <source>No traffic-bearing Tor circuit yet.</source>
-        <translation type="unfinished"></translation>
+        <translation>Још нема Tor кола које носи саобраћај.</translation>
     </message>
     <message>
         <source>Tor: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: %1</translation>
     </message>
     <message>
         <source>Circuit %1 (%2): %3</source>
-        <translation type="unfinished"></translation>
+        <translation>Коло %1 (%2): %3</translation>
     </message>
     <message>
         <source> — purpose %1</source>
-        <translation type="unfinished"></translation>
+        <translation> — сврха %1</translation>
     </message>
     <message>
         <source>%1 - Arora</source>
@@ -1324,7 +1334,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Stop</source>
-        <translation type="unfinished">Заустави</translation>
+        <translation>Заустави</translation>
     </message>
     <message>
         <source>Reload the current page</source>
@@ -1332,7 +1342,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Reload</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново учитај</translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -1369,7 +1379,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>User Agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Кориснички агент</translation>
     </message>
     <message>
         <source>&amp;Ad Block...</source>
@@ -1377,7 +1387,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Reload / Stop</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново учитај / Заустави</translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1428,7 +1438,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Clear the text</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти текст</translation>
     </message>
 </context>
 <context>
@@ -1455,11 +1465,11 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>AutoFill &amp;Form Data</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Подаци образаца за самопопуњавање</translation>
     </message>
     <message>
         <source>Saved form fields, passwords and addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачувана поља образаца, лозинке и адресе</translation>
     </message>
     <message>
         <source>&amp;Cookies</source>
@@ -1467,11 +1477,11 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Site &amp;Data</source>
-        <translation type="unfinished"></translation>
+        <translation>Подаци &amp;сајта</translation>
     </message>
     <message>
         <source>localStorage, IndexedDB, service workers and other site databases</source>
-        <translation type="unfinished"></translation>
+        <translation>localStorage, IndexedDB, сервисни радници и друге базе података сајта</translation>
     </message>
     <message>
         <source>C&amp;ached Web Pages</source>
@@ -1494,54 +1504,54 @@ Do you want to reload all pages?</source>
     <name>CommandPalette</name>
     <message>
         <source>Type a command, tab or bookmark name...</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите команду, име језичка или маркера...</translation>
     </message>
     <message>
         <source>Search open tabs...</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи отворене језичке...</translation>
     </message>
     <message>
         <source>Command</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Команда</translation>
     </message>
     <message>
         <source>New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови језичак</translation>
     </message>
     <message>
         <source>Tab</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Језичак</translation>
     </message>
     <message>
         <source>sleeping</source>
-        <translation type="unfinished"></translation>
+        <translation>успаван</translation>
     </message>
     <message>
         <source>Bookmark</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Маркер</translation>
     </message>
     <message>
         <source>Preferences: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке: %1</translation>
     </message>
     <message>
         <source>Settings</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Поставке</translation>
     </message>
 </context>
 <context>
     <name>ContainerManager</name>
     <message>
         <source>New Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови контејнер</translation>
     </message>
     <message>
         <source>Container name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Име контејнера:</translation>
     </message>
 </context>
 <context>
@@ -1668,11 +1678,11 @@ Do you want to reload all pages?</source>
     <name>DevToolsWindow</name>
     <message>
         <source>Web Inspector</source>
-        <translation type="unfinished">Веб инспектор</translation>
+        <translation>Веб инспектор</translation>
     </message>
     <message>
         <source>Web Inspector — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Веб инспектор — %1</translation>
     </message>
 </context>
 <context>
@@ -1694,7 +1704,7 @@ Do you want to reload all pages?</source>
     <name>DownloadGraph</name>
     <message>
         <source>Download speed over time</source>
-        <translation type="unfinished"></translation>
+        <translation>Брзина преузимања кроз време</translation>
     </message>
 </context>
 <context>
@@ -1709,15 +1719,15 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Restart</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново покрени</translation>
     </message>
     <message>
         <source>Show in File Manager</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи у управнику фајлова</translation>
     </message>
     <message>
         <source>Show download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи детаље преузимања</translation>
     </message>
     <message>
         <source>Try Again</source>
@@ -1742,84 +1752,86 @@ Do you want to reload all pages?</source>
     <message>
         <source>&quot;%1&quot; is a type of file that can harm your computer.
 It may run commands or install software when opened.</source>
-        <translation type="unfinished"></translation>
+        <translation>&quot;%1&quot; је врста фајла која може да нашкоди рачунару.
+При отварању може покренути команде или инсталирати софтвер.</translation>
     </message>
     <message>
         <source>The server reports that &quot;%1&quot; is a &quot;%2&quot; file, which does not match its file name.
 It may be disguised software that can harm your computer.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сервер јавља да је &quot;%1&quot; фајл типа &quot;%2&quot;, што се не поклапа с његовим именом.
+Може бити прерушен софтвер који може нашкодити рачунару.</translation>
     </message>
     <message>
         <source>Keep this file only if you trust %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Задржите овај фајл само ако верујете %1.</translation>
     </message>
     <message>
         <source>Download Security Warning</source>
-        <translation type="unfinished"></translation>
+        <translation>Безбедносно упозорење о преузимању</translation>
     </message>
     <message>
         <source>Hide download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Сакриј детаље преузимања</translation>
     </message>
     <message>
         <source>Download interrupted: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузимање прекинуто: %1</translation>
     </message>
     <message>
         <source>%1 of %2 - Download Complete</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 од %2 - преузимање завршено</translation>
     </message>
     <message>
         <source>unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>непознато</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Извор: %1</translation>
     </message>
     <message>
         <source>not saved yet</source>
-        <translation type="unfinished"></translation>
+        <translation>још није сачувано</translation>
     </message>
     <message>
         <source>Destination: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Одредиште: %1</translation>
     </message>
     <message>
         <source>Started: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Започето: %1</translation>
     </message>
     <message>
         <source>Started: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Започето: -</translation>
     </message>
     <message>
         <source>Finished: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Завршено: %1</translation>
     </message>
     <message>
         <source>Finished: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Завршено: -</translation>
     </message>
     <message>
         <source>Size: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Величина: %1</translation>
     </message>
     <message>
         <source>Size: unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>Величина: непозната</translation>
     </message>
     <message>
         <source>Speed: %1/s</source>
-        <translation type="unfinished"></translation>
+        <translation>Брзина: %1/с</translation>
     </message>
     <message>
         <source>Average speed: %1/s</source>
-        <translation type="unfinished"></translation>
+        <translation>Просечна брзина: %1/с</translation>
     </message>
     <message>
         <source>Speed: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Брзина: -</translation>
     </message>
     <message>
         <source>Error opening output file: %1</source>
@@ -1903,419 +1915,419 @@ Do you want to quit anyway?</source>
     <name>DownloadModel</name>
     <message>
         <source>Download %1 to %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузми %1 у %2</translation>
     </message>
 </context>
 <context>
     <name>EngineIndicator</name>
     <message>
         <source>Page Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор странице</translation>
     </message>
     <message>
         <source>Shows the engine rendering this tab and offers to reload the page on another engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Показује којим се мотором приказује овај језичак и нуди поновно учитавање странице другим мотором.</translation>
     </message>
     <message>
         <source>Rendered by %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказано помоћу %1</translation>
     </message>
     <message>
         <source>Reload in %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново учитај у %1</translation>
     </message>
 </context>
 <context>
     <name>ExtensionManager</name>
     <message>
         <source>Refusing to load %1 — extension consent was not granted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбијам учитавање %1 — сагласност за проширење није дата.</translation>
     </message>
     <message>
         <source>Extension support is not available in this build of Qt WebEngine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Подршка за проширења није доступна у овој изградњи Qt WebEngine-а.</translation>
     </message>
     <message>
         <source>Refusing to install %1 — extension consent was not granted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбијам инсталацију %1 — сагласност за проширење није дата.</translation>
     </message>
     <message>
         <source>Extension %1 is no longer loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширење %1 више није учитано.</translation>
     </message>
     <message>
         <source>zip package — manifest not inspected before install</source>
-        <translation type="unfinished"></translation>
+        <translation>zip пакет — манифест није прегледан пре инсталације</translation>
     </message>
     <message>
         <source>not an extension folder or manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>није фасцикла проширења ни manifest.json</translation>
     </message>
     <message>
         <source>cannot read %1</source>
-        <translation type="unfinished"></translation>
+        <translation>не могу да прочитам %1</translation>
     </message>
     <message>
         <source>manifest.json is not valid JSON: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>manifest.json није исправан JSON: %1</translation>
     </message>
     <message>
         <source>malformed document</source>
-        <translation type="unfinished"></translation>
+        <translation>неисправан документ</translation>
     </message>
     <message>
         <source>Qt WebEngine supports Manifest V3 extensions only (this package declares version %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Qt WebEngine подржава само проширења Manifest V3 (овај пакет декларише верзију %1).</translation>
     </message>
     <message>
         <source>update manifest is not valid XML: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>манифест ажурирања није исправан XML: %1</translation>
     </message>
     <message>
         <source>update manifest carries no updatecheck entry</source>
-        <translation type="unfinished"></translation>
+        <translation>манифест ажурирања нема уноса updatecheck</translation>
     </message>
     <message>
         <source>update manifest has no entry for this extension</source>
-        <translation type="unfinished"></translation>
+        <translation>манифест ажурирања нема унос за ово проширење</translation>
     </message>
     <message>
         <source>update server reported status &quot;%1&quot;</source>
-        <translation type="unfinished"></translation>
+        <translation>сервер ажурирања јавља стање &quot;%1&quot;</translation>
     </message>
     <message>
         <source>update package URL &quot;%1&quot; is not https</source>
-        <translation type="unfinished"></translation>
+        <translation>URL пакета ажурирања &quot;%1&quot; није https</translation>
     </message>
     <message>
         <source>An extension update check is already in progress.</source>
-        <translation type="unfinished"></translation>
+        <translation>Провера ажурирања проширења је већ у току.</translation>
     </message>
     <message>
         <source>update_url &quot;%1&quot; is not https</source>
-        <translation type="unfinished"></translation>
+        <translation>update_url &quot;%1&quot; није https</translation>
     </message>
     <message>
         <source>update manifest fetch failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>дохватање манифеста ажурирања није успело: %1</translation>
     </message>
     <message>
         <source>update package rejected: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>пакет ажурирања одбијен: %1</translation>
     </message>
     <message>
         <source>update package carries no readable manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>пакет ажурирања нема читљив manifest.json</translation>
     </message>
     <message>
         <source>update package verification failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>верификација пакета ажурирања није успела: %1</translation>
     </message>
     <message>
         <source>error</source>
-        <translation type="unfinished"></translation>
+        <translation>грешка</translation>
     </message>
     <message>
         <source>update package rejected: sha256 does not match the update manifest&apos;s declared hash</source>
-        <translation type="unfinished"></translation>
+        <translation>пакет ажурирања одбијен: sha256 се не поклапа с хешом декларисаним у манифесту ажурирања</translation>
     </message>
     <message>
         <source>could not save update package to %1</source>
-        <translation type="unfinished"></translation>
+        <translation>не могу да сачувам пакет ажурирања у %1</translation>
     </message>
     <message>
         <source>update package download failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>преузимање пакета ажурирања није успело: %1</translation>
     </message>
 </context>
 <context>
     <name>ExtensionReviewDialog</name>
     <message>
         <source>Install Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирај проширење</translation>
     </message>
     <message>
         <source>Load Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитај проширење</translation>
     </message>
     <message>
         <source>  (package)</source>
-        <translation type="unfinished"></translation>
+        <translation>  (пакет)</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Извор: %1</translation>
     </message>
     <message>
         <source>It requests access to:</source>
-        <translation type="unfinished"></translation>
+        <translation>Захтева приступ:</translation>
     </message>
     <message>
         <source>For this session it requests access to:</source>
-        <translation type="unfinished"></translation>
+        <translation>За ову сесију захтева приступ:</translation>
     </message>
     <message>
         <source>Requested permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Захтеване дозволе</translation>
     </message>
     <message>
         <source>This extension declares no permissions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ово проширење не декларише ниједну дозволу.</translation>
     </message>
     <message>
         <source>Warnings</source>
-        <translation type="unfinished"></translation>
+        <translation>Упозорења</translation>
     </message>
     <message>
         <source>Qt WebEngine will reject this package — installation cannot proceed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Qt WebEngine ће одбити овај пакет — инсталација се не може наставити.</translation>
     </message>
     <message>
         <source>Declares APIs unavailable in Qt WebEngine — these features will not work: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Декларише API-је недоступне у Qt WebEngine-у — ове функције неће радити: %1</translation>
     </message>
     <message>
         <source>Declares APIs with only partial Qt WebEngine support: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Декларише API-је са само делимичном подршком у Qt WebEngine-у: %1</translation>
     </message>
     <message>
         <source>Declares a toolbar action — Qt WebEngine has no extension toolbar, so its button and popup will not appear.</source>
-        <translation type="unfinished"></translation>
+        <translation>Декларише радњу на траци алатки — Qt WebEngine нема траку алатки за проширења, па се дугме и искачући прозор неће појавити.</translation>
     </message>
     <message>
         <source>This extension requests high-risk access. Each item must be allowed explicitly — leaving one unticked refuses the install:</source>
-        <translation type="unfinished"></translation>
+        <translation>Ово проширење захтева приступ високог ризика. Свака ставка мора бити изричито дозвољена — ако једна остане неозначена, инсталација се одбија:</translation>
     </message>
     <message>
         <source>Allow: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи: %1</translation>
     </message>
     <message>
         <source>Install</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирај</translation>
     </message>
     <message>
         <source>Load</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитај</translation>
     </message>
     <message>
         <source>Access the current tab when you invoke it</source>
-        <translation type="unfinished"></translation>
+        <translation>Приступи текућем језичку кад га позовете</translation>
     </message>
     <message>
         <source>Schedule periodic tasks</source>
-        <translation type="unfinished"></translation>
+        <translation>Закажи периодичне задатке</translation>
     </message>
     <message>
         <source>Run in the background</source>
-        <translation type="unfinished"></translation>
+        <translation>Ради у позадини</translation>
     </message>
     <message>
         <source>Read and change your bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај маркере</translation>
     </message>
     <message>
         <source>Clear your browsing data</source>
-        <translation type="unfinished"></translation>
+        <translation>Бриши податке прегледања</translation>
     </message>
     <message>
         <source>Read data you copy and paste</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај податке које копирате и лепите</translation>
     </message>
     <message>
         <source>Modify data you copy and paste</source>
-        <translation type="unfinished"></translation>
+        <translation>Мењај податке које копирате и лепите</translation>
     </message>
     <message>
         <source>Change settings that control site content</source>
-        <translation type="unfinished"></translation>
+        <translation>Мењај поставке које контролишу садржај сајта</translation>
     </message>
     <message>
         <source>Add items to browser context menus</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај ставке у контекстуалне меније прегледача</translation>
     </message>
     <message>
         <source>Read and modify cookies</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај колачиће</translation>
     </message>
     <message>
         <source>Control and inspect web pages through the debugger</source>
-        <translation type="unfinished"></translation>
+        <translation>Контролиши и прегледај веб странице кроз дибагер</translation>
     </message>
     <message>
         <source>Block or modify network requests</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај или мењај мрежне захтеве</translation>
     </message>
     <message>
         <source>Observe network request blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Посматрај блокирање мрежних захтева</translation>
     </message>
     <message>
         <source>Capture content of your screen</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимај садржај екрана</translation>
     </message>
     <message>
         <source>Manage your downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљај преузимањима</translation>
     </message>
     <message>
         <source>Change font settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Мењај поставке фонтова</translation>
     </message>
     <message>
         <source>Detect your physical location</source>
-        <translation type="unfinished"></translation>
+        <translation>Откривај физичку локацију</translation>
     </message>
     <message>
         <source>Read and change your browsing history</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај историјат прегледања</translation>
     </message>
     <message>
         <source>Access your account identity</source>
-        <translation type="unfinished"></translation>
+        <translation>Приступи идентитету налога</translation>
     </message>
     <message>
         <source>Detect when your computer is idle</source>
-        <translation type="unfinished"></translation>
+        <translation>Откривај кад је рачунар у мировању</translation>
     </message>
     <message>
         <source>Manage your extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљај проширењима</translation>
     </message>
     <message>
         <source>Add items to browser menus</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај ставке у меније прегледача</translation>
     </message>
     <message>
         <source>Communicate with cooperating native applications</source>
-        <translation type="unfinished"></translation>
+        <translation>Комуницирај са сарађујућим изворним апликацијама</translation>
     </message>
     <message>
         <source>Display notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказуј обавештења</translation>
     </message>
     <message>
         <source>Run invisible offscreen pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Покрећи невидљиве странице ван екрана</translation>
     </message>
     <message>
         <source>Save pages as local files</source>
-        <translation type="unfinished"></translation>
+        <translation>Чувај странице као локалне фајлове</translation>
     </message>
     <message>
         <source>Override power management settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Заобилази поставке управљања напајањем</translation>
     </message>
     <message>
         <source>Change your privacy-related settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Мењај поставке приватности</translation>
     </message>
     <message>
         <source>Read and change your proxy settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај поставке проксија</translation>
     </message>
     <message>
         <source>Read and change your reading list</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај листу за читање</translation>
     </message>
     <message>
         <source>Inject scripts into web pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Убризгавај скрипте у веб странице</translation>
     </message>
     <message>
         <source>Read and restore recently closed tabs and windows</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и враћај недавно затворене језичке и прозоре</translation>
     </message>
     <message>
         <source>Show content in a side panel</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказуј садржај у бочном панелу</translation>
     </message>
     <message>
         <source>Store data on your device</source>
-        <translation type="unfinished"></translation>
+        <translation>Складишти податке на уређају</translation>
     </message>
     <message>
         <source>Read your computer&apos;s CPU information</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај податке о процесору рачунара</translation>
     </message>
     <message>
         <source>Read your display configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај конфигурацију приказа</translation>
     </message>
     <message>
         <source>Read your computer&apos;s memory information</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај податке о меморији рачунара</translation>
     </message>
     <message>
         <source>Read your storage device information</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај податке о уређајима за складиштење</translation>
     </message>
     <message>
         <source>Capture the visible content of tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимај видљиви садржај језичака</translation>
     </message>
     <message>
         <source>Manage tab groups</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљај групама језичака</translation>
     </message>
     <message>
         <source>Read your browsing history and open tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај историјат прегледања и отворене језичке</translation>
     </message>
     <message>
         <source>Read a list of your most visited websites</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај листу најпосећенијих сајтова</translation>
     </message>
     <message>
         <source>Speak text aloud</source>
-        <translation type="unfinished"></translation>
+        <translation>Изговарај текст наглас</translation>
     </message>
     <message>
         <source>Provide text-to-speech voices</source>
-        <translation type="unfinished"></translation>
+        <translation>Пружи гласове за претварање текста у говор</translation>
     </message>
     <message>
         <source>Store unlimited data on your device</source>
-        <translation type="unfinished"></translation>
+        <translation>Складишти неограничене податке на уређају</translation>
     </message>
     <message>
         <source>Observe your navigation between pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Посматрај навигацију између страница</translation>
     </message>
     <message>
         <source>Observe your network traffic</source>
-        <translation type="unfinished"></translation>
+        <translation>Посматрај мрежни саобраћај</translation>
     </message>
     <message>
         <source>Observe and modify your network traffic</source>
-        <translation type="unfinished"></translation>
+        <translation>Посматрај и мењај мрежни саобраћај</translation>
     </message>
     <message>
         <source>Use the &apos;%1&apos; browser API</source>
-        <translation type="unfinished"></translation>
+        <translation>Користи &apos;%1&apos; API прегледача</translation>
     </message>
     <message>
         <source>Read and change all your data on all websites</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај све податке на свим сајтовима</translation>
     </message>
     <message>
         <source>Read and change your data on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Читај и мењај податке на %1</translation>
     </message>
 </context>
 <context>
     <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation type="unfinished">Садржај %1</translation>
+        <translation>Садржај %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation type="unfinished">%1 КБ</translation>
+        <translation>%1 КБ</translation>
     </message>
     <message>
         <source>Show Hidden Files</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи скривене фајлове</translation>
     </message>
 </context>
 <context>
@@ -2361,7 +2373,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Search history</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи историјат</translation>
     </message>
     <message>
         <source>&amp;Remove</source>
@@ -2459,79 +2471,79 @@ Do you want to quit anyway?</source>
     <name>LoadingIndicator</name>
     <message>
         <source>Loaded in %1 s</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитано за %1 с</translation>
     </message>
     <message>
         <source>Load failed after %1 s</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитавање није успело после %1 с</translation>
     </message>
 </context>
 <context>
     <name>LocationBar</name>
     <message>
         <source>Address Bar</source>
-        <translation type="unfinished"></translation>
+        <translation>Трака адресе</translation>
     </message>
     <message>
         <source>Unicode form: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Unicode облик: %1</translation>
     </message>
 </context>
 <context>
     <name>LocationBarSiteIcon</name>
     <message>
         <source>Site icon — drag to copy this page&apos;s address</source>
-        <translation type="unfinished"></translation>
+        <translation>Икона сајта — превуците да копирате адресу ове странице</translation>
     </message>
     <message>
         <source>Site Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Икона сајта</translation>
     </message>
     <message>
         <source>Drag to copy this page&apos;s address into another application or tab.</source>
-        <translation type="unfinished"></translation>
+        <translation>Превуците да копирате адресу ове странице у другу апликацију или језичак.</translation>
     </message>
 </context>
 <context>
     <name>MemIndicator</name>
     <message>
         <source>Tab memory usage</source>
-        <translation type="unfinished"></translation>
+        <translation>Потрошња меморије језичка</translation>
     </message>
     <message>
         <source>Resident memory of the current tab&apos;s renderer process, read from /proc/&lt;pid&gt;/status every 2 seconds.</source>
-        <translation type="unfinished"></translation>
+        <translation>Резидентна меморија рендерер-процеса текућег језичка, прочитана из /proc/&lt;pid&gt;/status сваке 2 секунде.</translation>
     </message>
     <message>
         <source>MEM %1</source>
-        <translation type="unfinished"></translation>
+        <translation>MEM %1</translation>
     </message>
     <message>
         <source>MEM —</source>
-        <translation type="unfinished"></translation>
+        <translation>MEM —</translation>
     </message>
     <message>
         <source>%1 GB</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 GB</translation>
     </message>
     <message>
         <source>%1 MB</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 MB</translation>
     </message>
 </context>
 <context>
     <name>NetIndicator</name>
     <message>
         <source>Network activity</source>
-        <translation type="unfinished"></translation>
+        <translation>Мрежна активност</translation>
     </message>
     <message>
         <source>Approximate engine bandwidth — sampled from the network service&apos;s /proc io counters, which count IPC alongside sockets and so run high.  Exact download bytes are used while a file downloads.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приближна пропусност мотора — узорковано из /proc io бројача мрежне службе, који рачунају и IPC уз сокете па показују више. Тачни бајтови преузимања користе се док се фајл преузима.</translation>
     </message>
     <message>
         <source>↓ %1 ↑ %2</source>
-        <translation type="unfinished"></translation>
+        <translation>↓ %1 ↑ %2</translation>
     </message>
 </context>
 <context>
@@ -2580,7 +2592,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>OmniboxCompletionModel</name>
     <message>
         <source>Search %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи %1</translation>
     </message>
 </context>
 <context>
@@ -2619,7 +2631,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Search engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотори претраге</translation>
     </message>
     <message>
         <source>&amp;Add</source>
@@ -2646,11 +2658,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>This engine does not provide contextual suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај мотор не даје предлоге из садржаја</translation>
     </message>
     <message>
         <source>Send what is typed in the search box to this engine for suggestions (off by default)</source>
-        <translation type="unfinished"></translation>
+        <translation>Шаље овај мотору оно што се куца у пољу претраге ради предлога (подразумевано искључено)</translation>
     </message>
     <message>
         <source>Name</source>
@@ -2662,7 +2674,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Suggestions</source>
-        <translation type="unfinished">Предлози</translation>
+        <translation>Предлози</translation>
     </message>
 </context>
 <context>
@@ -2688,11 +2700,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>&amp;Username:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Корисничко име:</translation>
     </message>
     <message>
         <source>&amp;Password:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Лозинка:</translation>
     </message>
     <message>
         <source>Username:</source>
@@ -2707,38 +2719,38 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>PictureInPicture</name>
     <message>
         <source>This video does not allow Picture-in-Picture.</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај видео не дозвољава Слику-у-слици.</translation>
     </message>
     <message>
         <source>No video found on this page.</source>
-        <translation type="unfinished"></translation>
+        <translation>На овој страници видео није пронађен.</translation>
     </message>
     <message>
         <source>The video has no playable source.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видео нема извор који се може пустити.</translation>
     </message>
     <message>
         <source>The video is no longer on the page.</source>
-        <translation type="unfinished"></translation>
+        <translation>Видео више није на страници.</translation>
     </message>
 </context>
 <context>
     <name>PipWindow</name>
     <message>
         <source>Picture-in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Слика у слици</translation>
     </message>
     <message>
         <source>Return video to tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати видео у језичак</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">Затвори</translation>
+        <translation>Затвори</translation>
     </message>
     <message>
         <source>The video could not be loaded in Picture-in-Picture (error %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Видео се није могао учитати у режиму Слика у слици (грешка %1).</translation>
     </message>
 </context>
 <context>
@@ -2752,50 +2764,50 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>PopupBlockerButton</name>
     <message>
         <source>Blocked Pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирани искачући прозори</translation>
     </message>
     <message>
         <source>Shows pop-ups this page tried to open, lets you open one once or always allow pop-ups for the site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказује искачуће прозоре које је страница покушала да отвори; омогућава да један отворите једном или да увек дозволите искачуће прозоре сајта.</translation>
     </message>
     <message numerus="yes">
         <source>%n pop-up(s) blocked on this page</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Блокиран %n искачући прозор на овој страници</numerusform>
+            <numerusform>Блокирана %n искачућа прозора на овој страници</numerusform>
+            <numerusform>Блокирано %n искачућих прозора на овој страници</numerusform>
         </translation>
     </message>
     <message>
         <source>Blocked pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирани искачући прозори</translation>
     </message>
     <message>
         <source>Open %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори %1</translation>
     </message>
     <message>
         <source>Always allow pop-ups on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек дозволи искачуће прозоре на %1</translation>
     </message>
     <message>
         <source>Pop-up Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке искачућих прозора...</translation>
     </message>
 </context>
 <context>
     <name>PrivacyIndicator</name>
     <message>
         <source>Private browsing is on. Activate to leave private mode.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватно прегледање је укључено. Активирајте да изађете из приватног режима.</translation>
     </message>
     <message>
         <source>Private Browsing</source>
-        <translation type="unfinished">Приватно прегледање</translation>
+        <translation>Приватно прегледање</translation>
     </message>
     <message>
         <source>This is a private tab — nothing it visits is recorded. Activate to close it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ово је приватни језичак — ништа што посети се не бележи. Активирајте да га затворите.</translation>
     </message>
 </context>
 <context>
@@ -2810,11 +2822,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>&amp;Username:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Корисничко име:</translation>
     </message>
     <message>
         <source>&amp;Password:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Лозинка:</translation>
     </message>
     <message>
         <source>Username:</source>
@@ -2829,15 +2841,15 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>QObject</name>
     <message>
         <source>The XBEL document is too large.</source>
-        <translation type="unfinished"></translation>
+        <translation>ИксБЕЛ документ је превелик.</translation>
     </message>
     <message>
         <source>Unable to read the XBEL document.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не могу да прочитам ИксБЕЛ документ.</translation>
     </message>
     <message>
         <source>The XBEL document is invalid.</source>
-        <translation type="unfinished"></translation>
+        <translation>ИксБЕЛ документ је неисправан.</translation>
     </message>
     <message>
         <source>The file is not an XBEL version 1.0 file.</source>
@@ -2845,7 +2857,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>The XBEL document is nested too deeply.</source>
-        <translation type="unfinished"></translation>
+        <translation>ИксБЕЛ документ је сувише угнежден.</translation>
     </message>
     <message>
         <source>Unknown title</source>
@@ -2853,19 +2865,19 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Unable to read the OpenSearch description.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не могу да прочитам OpenSearch опис.</translation>
     </message>
     <message>
         <source>The OpenSearch description is too large.</source>
-        <translation type="unfinished"></translation>
+        <translation>OpenSearch опис је превелик.</translation>
     </message>
     <message>
         <source>The OpenSearch description is invalid.</source>
-        <translation type="unfinished"></translation>
+        <translation>OpenSearch опис је неисправан.</translation>
     </message>
     <message>
         <source>The OpenSearch description must not contain a DTD.</source>
-        <translation type="unfinished"></translation>
+        <translation>OpenSearch опис не сме да садржи DTD.</translation>
     </message>
     <message>
         <source>The file is not an OpenSearch 1.1 file.</source>
@@ -2873,158 +2885,159 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>cannot read %1</source>
-        <translation type="unfinished"></translation>
+        <translation>не могу да прочитам %1</translation>
     </message>
     <message>
         <source>package verification failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>верификација пакета није успела: %1</translation>
     </message>
     <message>
         <source>error</source>
-        <translation type="unfinished"></translation>
+        <translation>грешка</translation>
     </message>
     <message>
         <source>package rejected: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>пакет одбијен: %1</translation>
     </message>
     <message>
         <source>package contains no readable manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>пакет не садржи читљив manifest.json</translation>
     </message>
     <message>
         <source>CRX3 package carrying a signature block — the signature is structure-checked, not cryptographically verified.</source>
-        <translation type="unfinished"></translation>
+        <translation>CRX3 пакет са блоком потписа — потпис је проверен структурно, а не криптографски.</translation>
     </message>
     <message>
         <source>Package is unsigned — its contents were structure-checked only.</source>
-        <translation type="unfinished"></translation>
+        <translation>Пакет није потписан — садржај је проверен само структурно.</translation>
     </message>
 </context>
 <context>
     <name>QrCodeDialog</name>
     <message>
         <source>QR Code for This Page</source>
-        <translation type="unfinished"></translation>
+        <translation>QR код ове странице</translation>
     </message>
     <message>
         <source>This URL is too long to encode
 as a QR code.</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај УРЛ је предугачак за кодирање
+као QR код.</translation>
     </message>
 </context>
 <context>
     <name>ReaderButton</name>
     <message>
         <source>Reader Mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Режим читача</translation>
     </message>
     <message>
         <source>Shows the page in a clutter-free reader view.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказује страницу у читачком приказу без вишка.</translation>
     </message>
     <message>
         <source>Exit reader view (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Изађи из читачког приказа (Ctrl+Alt+R)</translation>
     </message>
     <message>
         <source>Enter reader view — page looks like an article (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Уђи у читачки приказ — страница изгледа као чланак (Ctrl+Alt+R)</translation>
     </message>
     <message>
         <source>Enter reader view (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Уђи у читачки приказ (Ctrl+Alt+R)</translation>
     </message>
 </context>
 <context>
     <name>ReaderMode</name>
     <message>
         <source>Reader</source>
-        <translation type="unfinished"></translation>
+        <translation>Читач</translation>
     </message>
     <message>
         <source>Smaller text</source>
-        <translation type="unfinished"></translation>
+        <translation>Мањи текст</translation>
     </message>
     <message>
         <source>Larger text</source>
-        <translation type="unfinished"></translation>
+        <translation>Већи текст</translation>
     </message>
     <message>
         <source>Switch between light and dark</source>
-        <translation type="unfinished"></translation>
+        <translation>Пребаци између светлог и тамног</translation>
     </message>
     <message>
         <source>Exit reader view</source>
-        <translation type="unfinished"></translation>
+        <translation>Изађи из читачког приказа</translation>
     </message>
     <message>
         <source>Reader view is not available on this page.</source>
-        <translation type="unfinished"></translation>
+        <translation>Читачки приказ није доступан на овој страници.</translation>
     </message>
 </context>
 <context>
     <name>RustDownloadEngine</name>
     <message>
         <source>Download engine temp directory unavailable</source>
-        <translation type="unfinished"></translation>
+        <translation>Привремена фасцикла мотора преузимања није доступна</translation>
     </message>
     <message>
         <source>Download engine failed to start</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор преузимања се није покренуо</translation>
     </message>
     <message>
         <source>Download interrupted</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузимање прекинуто</translation>
     </message>
     <message>
         <source>Download worker exited unexpectedly</source>
-        <translation type="unfinished"></translation>
+        <translation>Радник преузимања је неочекивано завршио</translation>
     </message>
 </context>
 <context>
     <name>ScriptBlockInfoBar</name>
     <message>
         <source>Allow Once</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи једном</translation>
     </message>
     <message>
         <source>Run JavaScript on this site until the browser closes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Покрећи JavaScript на овом сајту док се прегледач не затвори.</translation>
     </message>
     <message>
         <source>Always Allow</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек дозволи</translation>
     </message>
     <message>
         <source>Always run JavaScript on this site — remembered across sessions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек покрећи JavaScript на овом сајту — памти се кроз сесије.</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">Затвори</translation>
+        <translation>Затвори</translation>
     </message>
     <message>
         <source>Hide this notice</source>
-        <translation type="unfinished"></translation>
+        <translation>Сакриј ово обавештење</translation>
     </message>
     <message>
         <source>Scripts blocked on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Скрипте блокиране на %1</translation>
     </message>
 </context>
 <context>
     <name>SearchBanner</name>
     <message>
         <source>Find previous</source>
-        <translation type="unfinished"></translation>
+        <translation>Нађи претходно</translation>
     </message>
     <message>
         <source>Find next</source>
-        <translation type="unfinished"></translation>
+        <translation>Нађи следеће</translation>
     </message>
     <message>
         <source>Find in page</source>
-        <translation type="unfinished"></translation>
+        <translation>Нађи на страници</translation>
     </message>
     <message>
         <source>Done</source>
@@ -3039,7 +3052,7 @@ as a QR code.</source>
     <name>SearchButton</name>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Претражи</translation>
+        <translation>Претражи</translation>
     </message>
 </context>
 <context>
@@ -3053,26 +3066,26 @@ as a QR code.</source>
     <name>SecureStore</name>
     <message>
         <source>Unlock Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>Откључај складиште акредитива</translation>
     </message>
     <message>
         <source>Enter the master passphrase to unlock the saved password store:</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите главну лозинку да откључате складиште сачуваних лозинки:</translation>
     </message>
     <message>
         <source>Wrong passphrase — try again:</source>
-        <translation type="unfinished"></translation>
+        <translation>Погрешна лозинка — покушајте поново:</translation>
     </message>
 </context>
 <context>
     <name>ServoView</name>
     <message>
         <source>Servo Page</source>
-        <translation type="unfinished"></translation>
+        <translation>Servo страница</translation>
     </message>
     <message>
         <source>Servo engine unavailable — the servo-embed artifact could not be loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Servo мотор није доступан — артефакт servo-embed није могао бити учитан.</translation>
     </message>
 </context>
 <context>
@@ -3147,183 +3160,183 @@ as a QR code.</source>
     </message>
     <message>
         <source>AutoFill Web Forms</source>
-        <translation type="unfinished"></translation>
+        <translation>Самопопуњавање веб образаца</translation>
     </message>
     <message>
         <source>Saved Addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване адресе</translation>
     </message>
     <message>
         <source>Saved addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване адресе</translation>
     </message>
     <message>
         <source>Add...</source>
-        <translation type="unfinished">Додај...</translation>
+        <translation>Додај...</translation>
     </message>
     <message>
         <source>Remove All</source>
-        <translation type="unfinished">Уклони све</translation>
+        <translation>Уклони све</translation>
     </message>
     <message>
         <source>Manifest V3 extensions: load an unpacked folder for the session, or install a folder/.zip into the profile. Every load or install shows a permission review first. Newly loaded extensions start disabled. Extensions never run in private windows or Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширења Manifest V3: учитајте распаковану фасциклу за сесију или инсталирајте фасциклу/.zip у профил. Свако учитавање или инсталација прво приказује преглед дозвола. Новоучитана проширења почињу онемогућена. Проширења се никад не покрећу у приватним прозорима или Tor прозорима.</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Име</translation>
+        <translation>Име</translation>
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished"></translation>
+        <translation>Статус</translation>
     </message>
     <message>
         <source>Source</source>
-        <translation type="unfinished"></translation>
+        <translation>Извор</translation>
     </message>
     <message>
         <source>Load Unpacked...</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитај распаковано...</translation>
     </message>
     <message>
         <source>Install...</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирај...</translation>
     </message>
     <message>
         <source>Check for Updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Провери ажурирања</translation>
     </message>
     <message>
         <source>Checks each extension&apos;s update_url once a day and downloads newer packages for review. Updates are never installed silently — apply them with Check for Updates.</source>
-        <translation type="unfinished"></translation>
+        <translation>Једном дневно проверава update_url сваког проширења и преузима новије пакете ради прегледа. Ажурирања се никад не инсталирају тихо — примените их помоћу Провери ажурирања.</translation>
     </message>
     <message>
         <source>Automatically check for extension updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Аутоматски проверавај ажурирања проширења</translation>
     </message>
     <message>
         <source>User Scripts</source>
-        <translation type="unfinished"></translation>
+        <translation>Корисничке скрипте</translation>
     </message>
     <message>
         <source>.js files in this folder run on every page at document end. Drop scripts here for what extensions cannot cover.</source>
-        <translation type="unfinished"></translation>
+        <translation>.js фајлови у овој фасцикли покрећу се на свакој страници на крају документа. Овде спустите скрипте за оно што проширења не могу да покрију.</translation>
     </message>
     <message>
         <source>User scripts</source>
-        <translation type="unfinished"></translation>
+        <translation>Корисничке скрипте</translation>
     </message>
     <message>
         <source>Open Folder...</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори фасциклу...</translation>
     </message>
     <message>
         <source>Reload</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново учитај</translation>
     </message>
     <message>
         <source>Containers keep site data — cookies, logins and storage — isolated per context. Open a container tab from File &gt; New Container Tab or a tab&apos;s context menu.</source>
-        <translation type="unfinished"></translation>
+        <translation>Контејнери држе податке сајта — колачиће, пријаве и складиште — изоловане по контексту. Отворите језичак контејнера из Фајл &gt; Нови језичак контејнера или контекстуалног менија језичка.</translation>
     </message>
     <message>
         <source>Container display:</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказ контејнера:</translation>
     </message>
     <message>
         <source>Container tab display mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Режим приказа језичака контејнера</translation>
     </message>
     <message>
         <source>Two-level strip groups container tabs under their own header row; inline chips keep every tab in one row with a container label.</source>
-        <translation type="unfinished"></translation>
+        <translation>Двонивоска трака групише језичке контејнера под сопствени ред заглавља; уграђене ознаке држе сваки језичак у једном реду с натписом контејнера.</translation>
     </message>
     <message>
         <source>Inline chips</source>
-        <translation type="unfinished"></translation>
+        <translation>Уграђене ознаке</translation>
     </message>
     <message>
         <source>Two-level strip</source>
-        <translation type="unfinished"></translation>
+        <translation>Двонивоска трака</translation>
     </message>
     <message>
         <source>No containers yet. Create one to keep a site&apos;s data isolated from the rest of your browsing.</source>
-        <translation type="unfinished"></translation>
+        <translation>Још нема контејнера. Направите један да податке сајта држите изоловане од остатка прегледања.</translation>
     </message>
     <message>
         <source>New Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови контејнер...</translation>
     </message>
     <message>
         <source>Delete</source>
-        <translation type="unfinished">Обриши</translation>
+        <translation>Обриши</translation>
     </message>
     <message>
         <source>Sites that always open in the selected container:</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови који се увек отварају у изабраном контејнеру:</translation>
     </message>
     <message>
         <source>Sites assigned to the selected container</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови додељени изабраном контејнеру</translation>
     </message>
     <message>
         <source>Remove Site</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони сајт</translation>
     </message>
     <message>
         <source>Deleting a container permanently removes all site data stored in it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Брисање контејнера трајно уклања све податке сајта ускладиштене у њему.</translation>
     </message>
     <message>
         <source>Download Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор преузимања</translation>
     </message>
     <message>
         <source>Engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор:</translation>
     </message>
     <message>
         <source>Download engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор преузимања</translation>
     </message>
     <message>
         <source>Which backend transfers downloads. Accelerated needs a rustdl-enabled build; the external program option below overrides either engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Који бекенд преноси преузимања. Убрзан захтева изградњу са rustdl; опција спољног програма испод заобилази оба мотора.</translation>
     </message>
     <message>
         <source>Built-in (Chromium)</source>
-        <translation type="unfinished"></translation>
+        <translation>Уграђени (Chromium)</translation>
     </message>
     <message>
         <source>Accelerated (Rust)</source>
-        <translation type="unfinished"></translation>
+        <translation>Убрзани (Rust)</translation>
     </message>
     <message>
         <source>Connections per download:</source>
-        <translation type="unfinished"></translation>
+        <translation>Веза по преузимању:</translation>
     </message>
     <message>
         <source>Connections per download</source>
-        <translation type="unfinished"></translation>
+        <translation>Веза по преузимању</translation>
     </message>
     <message>
         <source>Parallel segments used by the accelerated engine (4-16; 0 = engine default of 8)</source>
-        <translation type="unfinished"></translation>
+        <translation>Паралелни сегменти које користи убрзани мотор (4-16; 0 = подразумевано 8 мотора)</translation>
     </message>
     <message>
         <source>Engine default (8)</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевано мотора (8)</translation>
     </message>
     <message>
         <source>Parallel download segments</source>
-        <translation type="unfinished"></translation>
+        <translation>Паралелни сегменти преузимања</translation>
     </message>
     <message>
         <source>Splits downloads on the built-in (Chromium) engine into parallel byte-range requests when the server accepts ranges. The engine flag latches at startup, so the change applies on the next launch; it also applies in Tor windows where the engine path stays proxied.</source>
-        <translation type="unfinished"></translation>
+        <translation>Дели преузимања на уграђеном (Chromium) мотору на паралелне захтеве опсега бајтова кад сервер прихвата опсеге. Заставица мотора се закључава при покретању, па се промена примењује при следећем лансирању; важи и у Tor прозорима где пут мотора остаје проксиран.</translation>
     </message>
     <message>
         <source>Parallel segments (built-in engine, applies at restart)</source>
-        <translation type="unfinished"></translation>
+        <translation>Паралелни сегменти (уграђени мотор, примењује се при поновном покретању)</translation>
     </message>
     <message>
         <source>Ask for a destination each time</source>
@@ -3335,19 +3348,19 @@ as a QR code.</source>
     </message>
     <message>
         <source>Download directory</source>
-        <translation type="unfinished"></translation>
+        <translation>Фасцикла за преузимања</translation>
     </message>
     <message>
         <source>Use this external download program:</source>
-        <translation type="unfinished"></translation>
+        <translation>Користи овај спољни програм за преузимање:</translation>
     </message>
     <message>
         <source>External download program</source>
-        <translation type="unfinished"></translation>
+        <translation>Спољни програм за преузимање</translation>
     </message>
     <message>
         <source>Choose Program...</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите програм...</translation>
     </message>
     <message>
         <source>Appearance</source>
@@ -3371,7 +3384,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Minimum Font size:</source>
-        <translation type="unfinished"></translation>
+        <translation>Минимална величина фонта:</translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -3379,531 +3392,531 @@ as a QR code.</source>
     </message>
     <message>
         <source>Filter settings pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Филтрирај странице поставки</translation>
     </message>
     <message>
         <source>Filter settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Филтрирај поставке</translation>
     </message>
     <message>
         <source>Settings sections</source>
-        <translation type="unfinished"></translation>
+        <translation>Одељци поставки</translation>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Претражи</translation>
+        <translation>Претражи</translation>
     </message>
     <message>
         <source>Tab Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке језичака</translation>
     </message>
     <message>
         <source>Extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширења</translation>
     </message>
     <message>
         <source>Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Контејнери</translation>
     </message>
     <message>
         <source>Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Перформансе</translation>
     </message>
     <message>
         <source>Show a dedicated search box next to the location bar. When hidden, searches go through the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказује посебно поље претраге поред траке адресе. Кад је скривено, претраге иду кроз траку адресе.</translation>
     </message>
     <message>
         <source>Show dedicated search box</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи посебно поље претраге</translation>
     </message>
     <message>
         <source>Press the middle mouse button on empty page content and move the pointer to scroll. Middle-clicking a link still opens it in a new tab. Takes effect after a restart.</source>
-        <translation type="unfinished"></translation>
+        <translation>Притисните средње дугме миша на празан садржај странице и померајте показивач за померање. Средњи клик на везу и даље је отвара у новом језичку. Ступа на снагу после поновног покретања.</translation>
     </message>
     <message>
         <source>Middle-click autoscroll</source>
-        <translation type="unfinished"></translation>
+        <translation>Аутоматско померање средњим кликом</translation>
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотори претраге</translation>
     </message>
     <message>
         <source>Default engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевани мотор:</translation>
     </message>
     <message>
         <source>Default search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевани мотор претраге</translation>
     </message>
     <message>
         <source>Private window engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор приватног прозора:</translation>
     </message>
     <message>
         <source>Engine used by the location bar and the search field inside private and Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор који користе трака адресе и поље претраге у приватним и Tor прозорима.</translation>
     </message>
     <message>
         <source>Private window search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор претраге приватног прозора</translation>
     </message>
     <message>
         <source>Image search engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор претраге слика:</translation>
     </message>
     <message>
         <source>Engine used by the &quot;Search Image&quot; context menu. Only engines that advertise an image-search endpoint are listed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор који користи контекстуални мени „Претражи слику“. Наведени су само мотори који објављују тачку претраге слика.</translation>
     </message>
     <message>
         <source>Image search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор претраге слика</translation>
     </message>
     <message>
         <source>The default engine is used by the location bar and the dedicated search box. Type &quot;keyword text&quot; in the location bar to query a specific engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевани мотор користе трака адресе и посебно поље претраге. Унесите „кључнареч текст“ у траку адресе да упитате одређени мотор.</translation>
     </message>
     <message>
         <source>Search engine list</source>
-        <translation type="unfinished"></translation>
+        <translation>Листа мотора претраге</translation>
     </message>
     <message>
         <source>Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор</translation>
     </message>
     <message>
         <source>Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак</translation>
     </message>
     <message>
         <source>Badges</source>
-        <translation type="unfinished"></translation>
+        <translation>Значке</translation>
     </message>
     <message>
         <source>Add a new search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај нови мотор претраге</translation>
     </message>
     <message>
         <source>Add</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај</translation>
     </message>
     <message>
         <source>Remove the selected engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони изабрани мотор</translation>
     </message>
     <message>
         <source>Remove</source>
-        <translation type="unfinished">Уклони</translation>
+        <translation>Уклони</translation>
     </message>
     <message>
         <source>Move the selected engine up in the list</source>
-        <translation type="unfinished"></translation>
+        <translation>Помери изабрани мотор горе у листи</translation>
     </message>
     <message>
         <source>Up</source>
-        <translation type="unfinished"></translation>
+        <translation>Горе</translation>
     </message>
     <message>
         <source>Move the selected engine down in the list</source>
-        <translation type="unfinished"></translation>
+        <translation>Помери изабрани мотор доле у листи</translation>
     </message>
     <message>
         <source>Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Доле</translation>
     </message>
     <message>
         <source>Re-add the bundled search engines and refresh them to their shipped defaults</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново додај придожене моторе претраге и освежи их на испоручене подразумеване вредности</translation>
     </message>
     <message>
         <source>Restore Defaults</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати подразумевано</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Име:</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation type="unfinished">Назив мотора</translation>
+        <translation>Назив мотора</translation>
     </message>
     <message>
         <source>Nickname:</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак:</translation>
     </message>
     <message>
         <source>Keyword(s) for the location bar, e.g. &quot;ddg cats&quot; searches with the engine whose nickname is ddg. Separate multiple nicknames with commas.</source>
-        <translation type="unfinished"></translation>
+        <translation>Кључне речи за траку адресе, нпр. &quot;ddg cats&quot; претражује мотором чији је надимак ddg. Више надимака одвојите зарезима.</translation>
     </message>
     <message>
         <source>Engine nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак мотора</translation>
     </message>
     <message>
         <source>Search URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге:</translation>
     </message>
     <message>
         <source>Engine search URL</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге мотора</translation>
     </message>
     <message>
         <source>Suggest URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ предлога:</translation>
     </message>
     <message>
         <source>Suggestions URL</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ предлога</translation>
     </message>
     <message>
         <source>Image URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ слика:</translation>
     </message>
     <message>
         <source>Image search URL</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге слика</translation>
     </message>
     <message>
         <source>POST parameters:</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри:</translation>
     </message>
     <message>
         <source>Search POST parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри претраге</translation>
     </message>
     <message>
         <source>Image POST parameters:</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри слика:</translation>
     </message>
     <message>
         <source>Image search POST parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри претраге слика</translation>
     </message>
     <message>
         <source>Use %s or {searchTerms} where the search text belongs, e.g. &quot;https://example.com/search?q=%s&quot;. POST parameters are name=value pairs separated by &apos;&amp;&apos; — filling them switches the request to POST.</source>
-        <translation type="unfinished"></translation>
+        <translation>Користите %s или {searchTerms} тамо где припада текст претраге, нпр. &quot;https://example.com/search?q=%s&quot;. POST параметри су парови име=вредност раздвојени знаком &apos;&amp;&apos; — њихово попуњавање пребацује захтев на POST.</translation>
     </message>
     <message>
         <source>Set as Default Search</source>
-        <translation type="unfinished"></translation>
+        <translation>Постави као подразумевану претрагу</translation>
     </message>
     <message>
         <source>Use this engine in private and Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Користи овај мотор у приватним и Tor прозорима.</translation>
     </message>
     <message>
         <source>Set as Private Search</source>
-        <translation type="unfinished"></translation>
+        <translation>Постави као приватну претрагу</translation>
     </message>
     <message>
         <source>Search Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Поље претраге</translation>
     </message>
     <message>
         <source>Show a dedicated search field next to the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи посебно поље претраге поред траке адресе.</translation>
     </message>
     <message>
         <source>Show as a Text Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи као текстуално поље</translation>
     </message>
     <message>
         <source>Hide the search field entirely; web searches go through the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Потпуно сакриј поље претраге; веб претраге иду кроз траку адресе.</translation>
     </message>
     <message>
         <source>Hidden</source>
-        <translation type="unfinished"></translation>
+        <translation>Скривено</translation>
     </message>
     <message>
         <source>Show Search Engine Nickname in Drop-Down Menu</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи надимак мотора претраге у падајућем менију</translation>
     </message>
     <message>
         <source>Show Search Engine Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи икону мотора претраге</translation>
     </message>
     <message>
         <source>Always Search in New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек претражуј у новом језичку</translation>
     </message>
     <message>
         <source>Keep the engine last picked in the search field. When off, the field reverts to the default engine after each search.</source>
-        <translation type="unfinished"></translation>
+        <translation>Задржи последње изабрани мотор у пољу претраге. Кад је искључено, поље се после сваке претраге враћа на подразумевани мотор.</translation>
     </message>
     <message>
         <source>Keep Last Selected Search Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Задржи последње изабрани мотор претраге</translation>
     </message>
     <message>
         <source>Keep Typed Text After Searching</source>
-        <translation type="unfinished"></translation>
+        <translation>Задржи укуцани текст после претраге</translation>
     </message>
     <message>
         <source>Use the search engine as fallback when the text typed in the location bar is not a valid URL.</source>
-        <translation type="unfinished"></translation>
+        <translation>Користи мотор претраге као резерву кад текст укуцан у траку адресе није исправан УРЛ.</translation>
     </message>
     <message>
         <source>Search in Address Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражуј у пољу адресе</translation>
     </message>
     <message>
         <source>Open the results of the &quot;Search with&quot; context menu in a background tab.</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвара резултате контекстуалног менија „Претражи помоћу“ у позадинском језичку.</translation>
     </message>
     <message>
         <source>Page Selection Search in Background</source>
-        <translation type="unfinished"></translation>
+        <translation>Претрага означеног текста странице у позадини</translation>
     </message>
     <message>
         <source>Search Suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Предлози претраге</translation>
     </message>
     <message>
         <source>In Address Field</source>
-        <translation type="unfinished"></translation>
+        <translation>У пољу адресе</translation>
     </message>
     <message>
         <source>In Search Field</source>
-        <translation type="unfinished"></translation>
+        <translation>У пољу претраге</translation>
     </message>
     <message>
         <source>The address field only asks for suggestions once the input starts with a search engine&apos;s keyword.</source>
-        <translation type="unfinished"></translation>
+        <translation>Поље адресе тражи предлоге тек кад унос почиње кључном речи мотора претраге.</translation>
     </message>
     <message>
         <source>Only When Using Search Engine Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Само при коришћењу надимка мотора претраге</translation>
     </message>
     <message>
         <source>Allow the engine selected above to provide suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи горе изабраном мотору да даје предлоге</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to the search engine before you press Enter. Off by default; the choice is stored per engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Предлози шаљу сваки притисак тастера мотору претраге пре него што притиснете Enter. Подразумевано искључено; избор се чува по мотору.</translation>
     </message>
     <message>
         <source>Shortcuts Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимци пречица</translation>
     </message>
     <message>
         <source>Bookmarks</source>
-        <translation type="unfinished">Маркери</translation>
+        <translation>Маркери</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching bookmarks.</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите овај надимак па размак у пољу адресе да би се довршавали само одговарајући маркери.</translation>
     </message>
     <message>
         <source>Bookmarks shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак пречице за маркере</translation>
     </message>
     <message>
         <source>@bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>@bookmarks</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Историјат</translation>
+        <translation>Историјат</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching history entries.</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите овај надимак па размак у пољу адресе да би се довршавали само одговарајући уноси историјата.</translation>
     </message>
     <message>
         <source>History shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак пречице за историјат</translation>
     </message>
     <message>
         <source>@history</source>
-        <translation type="unfinished"></translation>
+        <translation>@history</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching open tabs. Picking a tab switches to it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите овај надимак па размак у пољу адресе да би се довршавали само одговарајући отворени језичци. Избор језичка пребацује на њега.</translation>
     </message>
     <message>
         <source>Tabs shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак пречице за језичке</translation>
     </message>
     <message>
         <source>@tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>@tabs</translation>
     </message>
     <message>
         <source>Type a nickname and a space at the start of the address field to scope the completion suggestions to that source. Search engine keywords take precedence over nicknames.</source>
-        <translation type="unfinished"></translation>
+        <translation>Унесите надимак и размак на почетку поља адресе да ограничите предлоге довршавања на тај извор. Кључне речи мотора претраге имају предност над надимцима.</translation>
     </message>
     <message>
         <source>Reset Search Settings to Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати поставке претраге на подразумевано</translation>
     </message>
     <message>
         <source>Icons:</source>
-        <translation type="unfinished"></translation>
+        <translation>Иконе:</translation>
     </message>
     <message>
         <source>Icon set for toolbars, menus and dialogs. Native follows the desktop icon theme; the bundled sets look the same on every platform.</source>
-        <translation type="unfinished"></translation>
+        <translation>Скуп икона за траке алатки, меније и дијалоге. Изворни следи тему икона радне површи; придожени скупови изгледају исто на свакој платформи.</translation>
     </message>
     <message>
         <source>Icon set</source>
-        <translation type="unfinished"></translation>
+        <translation>Скуп икона</translation>
     </message>
     <message>
         <source>Theme:</source>
-        <translation type="unfinished"></translation>
+        <translation>Тема:</translation>
     </message>
     <message>
         <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation type="unfinished"></translation>
+        <translation>Шема боја за Арорине прозоре, меније и дијалоге. „Системски подразумевано“ прати жељу радне површи.</translation>
     </message>
     <message>
         <source>Theme</source>
-        <translation type="unfinished"></translation>
+        <translation>Тема</translation>
     </message>
     <message>
         <source>System default</source>
-        <translation type="unfinished"></translation>
+        <translation>Системски подразумевано</translation>
     </message>
     <message>
         <source>Light</source>
-        <translation type="unfinished"></translation>
+        <translation>Светла</translation>
     </message>
     <message>
         <source>Dark</source>
-        <translation type="unfinished"></translation>
+        <translation>Тамна</translation>
     </message>
     <message>
         <source>Applies to app chrome; page-content dark mode is the separate &quot;Render pages in dark mode&quot; setting below.</source>
-        <translation type="unfinished"></translation>
+        <translation>Примењује се на оквир апликације; тамни режим садржаја страница је засебна поставка „Приказуј странице у тамном режиму“ испод.</translation>
     </message>
     <message>
         <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation type="unfinished"></translation>
+        <translation>Странице које носе сопствену тамну тему користе је; странице само у светлој добијају хеуристичку инверзију боја с минималним контрастом да текст остане читљив. Слике и видео се не инвертују. Погођен је само веб садржај — Арорини прозори задржавају палету радне површи.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказуј странице у тамном режиму</translation>
     </message>
     <message>
         <source>Workaround for QtWebEngine GPU-process crashes (SIGTRAP in the display compositor): page compositing moves to software while WebGL/canvas acceleration stays on. Takes effect after a restart and is enabled automatically after repeated crashy exits.</source>
-        <translation type="unfinished"></translation>
+        <translation>Заобилазно решење за падове GPU-процеса QtWebEngine-а (SIGTRAP у композитору приказа): композиција страница прелази на софтвер док WebGL/canvas убрзање остаје укључено. Ступа на снагу после поновног покретања и укључује се аутоматски после поновљених излазака с пада.</translation>
     </message>
     <message>
         <source>Disable GPU compositing (crash workaround)</source>
-        <translation type="unfinished"></translation>
+        <translation>Онемогући GPU композицију (заобилазно решење за пад)</translation>
     </message>
     <message>
         <source>Sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Бочна трака</translation>
     </message>
     <message>
         <source>Show a side panel with bookmarks, history, downloads and notes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи бочни панел с маркерима, историјатом, преузимањима и белешкама.</translation>
     </message>
     <message>
         <source>Show sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи бочну траку</translation>
     </message>
     <message>
         <source>Sidebar position:</source>
-        <translation type="unfinished"></translation>
+        <translation>Положај бочне траке:</translation>
     </message>
     <message>
         <source>Sidebar position</source>
-        <translation type="unfinished"></translation>
+        <translation>Положај бочне траке</translation>
     </message>
     <message>
         <source>Left</source>
-        <translation type="unfinished"></translation>
+        <translation>Лево</translation>
     </message>
     <message>
         <source>Right</source>
-        <translation type="unfinished"></translation>
+        <translation>Десно</translation>
     </message>
     <message>
         <source>Panels:</source>
-        <translation type="unfinished"></translation>
+        <translation>Панели:</translation>
     </message>
     <message>
         <source>Which panels appear in the sidebar rail. Hidden panels are not loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Који се панели појављују у шини бочне траке. Скривени панели се не учитавају.</translation>
     </message>
     <message>
         <source>Sidebar panels</source>
-        <translation type="unfinished"></translation>
+        <translation>Панели бочне траке</translation>
     </message>
     <message>
         <source>Minimum font size</source>
-        <translation type="unfinished"></translation>
+        <translation>Минимална величина фонта</translation>
     </message>
     <message>
         <source>Security Level</source>
-        <translation type="unfinished"></translation>
+        <translation>Ниво безбедности</translation>
     </message>
     <message>
         <source>Standard is the default browser behavior. Safer keeps JavaScript off pages loaded over plain HTTP and makes media click-to-play. Safest disables JavaScript everywhere.</source>
-        <translation type="unfinished"></translation>
+        <translation>Стандардни је подразумевано понашање прегледача. Сигурнији држи JavaScript ван страница учитаних преко обичног HTTP-а и чини медије покретљивим на клик. Најсигурнији онемогућава JavaScript свуда.</translation>
     </message>
     <message>
         <source>Standard</source>
-        <translation type="unfinished"></translation>
+        <translation>Стандардни</translation>
     </message>
     <message>
         <source>Safer</source>
-        <translation type="unfinished"></translation>
+        <translation>Сигурнији</translation>
     </message>
     <message>
         <source>Safest</source>
-        <translation type="unfinished"></translation>
+        <translation>Најсигурнији</translation>
     </message>
     <message>
         <source>Standard: JavaScript runs everywhere and sites may autoplay media. This is the default browser behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Стандардни: JavaScript се покреће свуда и сајтови могу аутоматски пуштати медије. Ово је подразумевано понашање прегледача.</translation>
     </message>
     <message>
         <source>Content Blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирање садржаја</translation>
     </message>
     <message>
         <source>Content blocker &amp;engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Мотор блокера садржаја:</translation>
     </message>
     <message>
         <source>Content blocker engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор блокера садржаја</translation>
     </message>
     <message>
         <source>Which matcher answers ad and tracker blocking. Brave adblock-rust applies list semantics the built-in engine only approximates ($badfilter, $removeparam, redirect resources); edge-case coverage differs slightly between the two — --adblock-rust-smoke diffs them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Који упоређивач одговара на блокирање огласа и пратиоца. Brave adblock-rust примењује семантику листи коју уграђени мотор само приближава ($badfilter, $removeparam, ресурси преусмеравања); покривеност ивичних случајева мало се разликује — --adblock-rust-smoke их упоређује.</translation>
     </message>
     <message>
         <source>Built-in (default)</source>
-        <translation type="unfinished"></translation>
+        <translation>Уграђени (подразумевано)</translation>
     </message>
     <message>
         <source>Brave adblock-rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust</translation>
     </message>
     <message>
         <source>Active engine: Built-in</source>
-        <translation type="unfinished"></translation>
+        <translation>Активни мотор: Уграђени</translation>
     </message>
     <message>
         <source>Manage content-blocking filters</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљај филтерима блокирања садржаја</translation>
     </message>
     <message>
         <source>Opens the filter-list manager to enable, update or add ad and tracker blocking subscriptions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвара управника листа филтера за омогућавање, ажурирање или додавање претплата за блокирање огласа и пратиоца.</translation>
     </message>
     <message>
         <source>Manage content-blocking filters...</source>
-        <translation type="unfinished"></translation>
+        <translation>Управљај филтерима блокирања садржаја...</translation>
     </message>
     <message>
         <source>Web Content</source>
@@ -3911,7 +3924,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Blocks pop-up windows that sites try to open. A blocked pop-up indicator appears in the address bar, where a pop-up can be opened once or always allowed for the site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокира искачуће прозоре које сајтови покушавају да отворе. У траци адресе се појављује показатељ блокираног искачућег прозора, где се прозор може једном отворити или увек дозволити за сајт.</translation>
     </message>
     <message>
         <source>Block Popup Windows</source>
@@ -3931,7 +3944,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Persistent Data Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Трајно складиштење података</translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -3983,143 +3996,143 @@ as a QR code.</source>
     </message>
     <message>
         <source>Finished downloads list:</source>
-        <translation type="unfinished"></translation>
+        <translation>Листа завршених преузимања:</translation>
     </message>
     <message>
         <source>Finished downloads list cleanup policy</source>
-        <translation type="unfinished"></translation>
+        <translation>Политика чишћења листе завршених преузимања</translation>
     </message>
     <message>
         <source>Keep entries</source>
-        <translation type="unfinished"></translation>
+        <translation>Задржи уносе</translation>
     </message>
     <message>
         <source>Clear on application exit</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти при изласку из апликације</translation>
     </message>
     <message>
         <source>Remove each download when it finishes</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони свако преузимање чим заврши</translation>
     </message>
     <message>
         <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation type="unfinished"></translation>
+        <translation>Приказуј странице на GPU-у. Кад је искључено, Арора додаје --disable-gpu заставицама мотора — прекидач се закључава при покретању, па се промена примењује при следећем лансирању.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
-        <translation type="unfinished"></translation>
+        <translation>Користи хардверско убрзање кад је доступно</translation>
     </message>
     <message>
         <source>Changing this option requires a restart to take effect.</source>
-        <translation type="unfinished"></translation>
+        <translation>Промена ове опције захтева поновно покретање.</translation>
     </message>
     <message>
         <source>Memory Saver</source>
-        <translation type="unfinished"></translation>
+        <translation>Штедња меморије</translation>
     </message>
     <message>
         <source>Never Save Memory</source>
-        <translation type="unfinished"></translation>
+        <translation>Никад не штеди меморију</translation>
     </message>
     <message>
         <source>Unload tabs after 60 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Истовари језичке после 60 минута мировања.</translation>
     </message>
     <message>
         <source>Minimum Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Минимална штедња</translation>
     </message>
     <message>
         <source>Unload tabs after 30 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Истовари језичке после 30 минута мировања.</translation>
     </message>
     <message>
         <source>Balanced Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Уравнотежена штедња</translation>
     </message>
     <message>
         <source>Unload tabs after 10 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Истовари језичке после 10 минута мировања.</translation>
     </message>
     <message>
         <source>Maximum Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Максимална штедња</translation>
     </message>
     <message>
         <source>Unload inactive tabs to save memory. Suspended tabs keep their place on the tab strip and reload when you return to them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Истовари неактивне језичке ради штедње меморије. Успавани језичци задржавају место на траци језичака и поново се учитавају кад им се вратите.</translation>
     </message>
     <message>
         <source>Energy Saver</source>
-        <translation type="unfinished"></translation>
+        <translation>Штедња енергије</translation>
     </message>
     <message>
         <source>Conserve energy by capping background activity, visual effects, and video frame rates. Extends battery life.</source>
-        <translation type="unfinished"></translation>
+        <translation>Штеди енергију ограничавањем позадинске активности, визуелних ефеката и броја кадрова видеа. Продужава трајање батерије.</translation>
     </message>
     <message>
         <source>Never Save Energy</source>
-        <translation type="unfinished"></translation>
+        <translation>Никад не штеди енергију</translation>
     </message>
     <message>
         <source>Turn On at 20% Battery or Lower</source>
-        <translation type="unfinished"></translation>
+        <translation>Укључи на 20% батерије или мање</translation>
     </message>
     <message>
         <source>Turn On When Running on Battery</source>
-        <translation type="unfinished"></translation>
+        <translation>Укључи кад ради на батерију</translation>
     </message>
     <message>
         <source>Always Save Energy</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек штеди енергију</translation>
     </message>
     <message>
         <source>While saving energy: inactive tabs sleep after 10 minutes, tab hover previews are disabled, and tab loading animations pause.</source>
-        <translation type="unfinished"></translation>
+        <translation>Током штедње енергије: неактивни језичци спавају после 10 минута, прегледи при лебдењу над језичцима су онемогућени, а анимације учитавања језичака се паузирају.</translation>
     </message>
     <message>
         <source>Startup with</source>
-        <translation type="unfinished"></translation>
+        <translation>Покретање са</translation>
     </message>
     <message>
         <source>Lazy Load Restored Tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Лено учитавање враћених језичака</translation>
     </message>
     <message>
         <source>Always Load Pinned Tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек учитавај закачене језичке</translation>
     </message>
     <message>
         <source>Wait to load restored session content until the tab is activated.</source>
-        <translation type="unfinished"></translation>
+        <translation>Чекај с учитавањем враћеног садржаја сесије док се језичак не активира.</translation>
     </message>
     <message>
         <source>Network Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Мрежне перформансе</translation>
     </message>
     <message>
         <source>Allow prefetch and prerender hints (&lt;link rel=prefetch&gt;). Leaving this off drops connections to sites a link merely points at — pages you may never visit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи назнаке предучитавања и предрендеровања (&lt;link rel=prefetch&gt;). Искључено, одбацује везе према сајтовима на које веза само показује — странице које можда никад нећете посетити.</translation>
     </message>
     <message>
         <source>Prefetch Resources</source>
-        <translation type="unfinished"></translation>
+        <translation>Предучитавај ресурсе</translation>
     </message>
     <message>
         <source>Follow webpage suggestions to prefetch DNS, and preload resources and documents early.</source>
-        <translation type="unfinished"></translation>
+        <translation>Прати предлоге веб страница за предучитавање DNS-а и рано учитавање ресурса и докумената.</translation>
     </message>
     <message>
         <source>Reset Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати поставке</translation>
     </message>
     <message>
         <source>Reset Performance Settings to Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати поставке перформанси на подразумевано</translation>
     </message>
     <message>
         <source>Restore every setting on this page — hardware acceleration, memory saver, session restore and prefetch — to its default.</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати сваку поставку на овој страници — хардверско убрзање, штедњу меморије, враћање сесије и предучитавање — на подразумевано.</translation>
     </message>
     <message>
         <source>Tabs</source>
@@ -4127,251 +4140,251 @@ as a QR code.</source>
     </message>
     <message>
         <source>Reject cookies set by embedded third-party content even when cookies are accepted generally. Per-site exceptions above still apply.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбиј колачиће које поставља уграђени садржај трећих страна чак и кад се колачићи опште прихватају. Изузеци по сајту одозго и даље важе.</translation>
     </message>
     <message>
         <source>Block third-party cookies</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај колачиће трећих страна</translation>
     </message>
     <message>
         <source>Connections &amp;&amp; Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Везе &amp;&amp; складиште</translation>
     </message>
     <message>
         <source>Upgrade plain HTTP page loads to HTTPS when possible. Sites that fail the secure connection are allowed over HTTP again for the rest of the session — the error page says so.</source>
-        <translation type="unfinished"></translation>
+        <translation>Надогради учитавања страница преко обичног HTTP-а на HTTPS кад је могуће. Сајтовима којима безбедна веза не успе поново се дозвољава HTTP до краја сесије — страница грешке то наводи.</translation>
     </message>
     <message>
         <source>Upgrade connections to HTTPS when possible</source>
-        <translation type="unfinished"></translation>
+        <translation>Надогради везе на HTTPS кад је могуће</translation>
     </message>
     <message>
         <source>Warn before a page loads over plain HTTP: any main-frame navigation that is still HTTP after the HTTPS upgrade pass shows a warning page instead of loading insecurely, offering proceed-once and always-allow choices per site. Localhost, LAN addresses and .onion names stay exempt.</source>
-        <translation type="unfinished"></translation>
+        <translation>Упозори пре учитавања странице преко обичног HTTP-а: свака навигација главног оквира која и после пролаза надоградње на HTTPS остане HTTP приказује страницу упозорења уместо небезбедног учитавања, нудећи изборе настави-једном и увек-дозволи по сајту. Localhost, LAN адресе и .onion имена остају изузети.</translation>
     </message>
     <message>
         <source>Warn before loading a site over plain HTTP</source>
-        <translation type="unfinished"></translation>
+        <translation>Упозори пре учитавања сајта преко обичног HTTP-а</translation>
     </message>
     <message>
         <source>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break. Pages that withhold their own referer (noopener links, stricter site policies, insecure downgrades) always stay silent.</source>
-        <translation type="unfinished"></translation>
+        <translation>Контролише Referer заглавље које друге стране примају. Скраћено: сајтови виде само голо порекло странице с које долазите — никад путању ни упит — стандардна strict-origin политика коју прегледачи користе. Строго не шаље ништа другим сајтовима. Никад ускраћује заглавље свуда — тест-странице реферера то оцењују потпуно чистим, али неки сајтови који захтевају Referer могу да се покваре. Странице које ускраћују сопствени реферер (noopener везе, строжије политике сајтова, небезбедне деградације) увек остају неме.</translation>
     </message>
     <message>
         <source>Referer header:</source>
-        <translation type="unfinished"></translation>
+        <translation>Referer заглавље:</translation>
     </message>
     <message>
         <source>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break.</source>
-        <translation type="unfinished"></translation>
+        <translation>Контролише Referer заглавље које друге стране примају. Скраћено: сајтови виде само голо порекло странице с које долазите — никад путању ни упит — стандардна strict-origin политика коју прегледачи користе. Строго не шаље ништа другим сајтовима. Никад ускраћује заглавље свуда — тест-странице реферера то оцењују потпуно чистим, али неки сајтови који захтевају Referer могу да се покваре.</translation>
     </message>
     <message>
         <source>Chromium default</source>
-        <translation type="unfinished"></translation>
+        <translation>Chromium подразумевано</translation>
     </message>
     <message>
         <source>Trimmed (recommended)</source>
-        <translation type="unfinished"></translation>
+        <translation>Скраћено (препоручено)</translation>
     </message>
     <message>
         <source>Strict — none to other sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Строго — ништа другим сајтовима</translation>
     </message>
     <message>
         <source>Never send</source>
-        <translation type="unfinished"></translation>
+        <translation>Никад не шаљи</translation>
     </message>
     <message>
         <source>Route WebRTC traffic through the configured proxy only, so voice/video sites cannot discover your local or real IP address. Takes effect after a restart; may break WebRTC apps.</source>
-        <translation type="unfinished"></translation>
+        <translation>Усмери WebRTC саобраћај само кроз подешени прокси, да сајтови за глас/видео не могу открити локалну или стварну IP адресу. Ступа на снагу после поновног покретања; може покварити WebRTC апликације.</translation>
     </message>
     <message>
         <source>Prevent WebRTC from exposing IP addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Спречи WebRTC да открива IP адресе</translation>
     </message>
     <message>
         <source>Secure DNS (DoH):</source>
-        <translation type="unfinished"></translation>
+        <translation>Безбедни DNS (DoH):</translation>
     </message>
     <message>
         <source>DNS-over-HTTPS hides lookups from the local network&apos;s plain DNS. Automatic upgrades only when the network resolver is on Chromium&apos;s known-provider list; the Custom modes always use the endpoint below — the strict mode never falls back to plain DNS, so an unreachable endpoint stops name resolution entirely. The feature flag takes effect after a restart.</source>
-        <translation type="unfinished"></translation>
+        <translation>DNS-преко-HTTPS крије упите од обичног DNS-а локалне мреже. Аутоматски надограђује само кад је мрежни разрешавач на Chromium-овој листи познатих пружалаца; прилагођени режими увек користе тачку испод — строги режим никад не прелази на обичан DNS, па недоступна тачка у потпуности зауставља разрешавање имена. Заставица функције ступа на снагу после поновног покретања.</translation>
     </message>
     <message>
         <source>Off (system resolver)</source>
-        <translation type="unfinished"></translation>
+        <translation>Искључено (системски разрешавач)</translation>
     </message>
     <message>
         <source>Automatic upgrade</source>
-        <translation type="unfinished"></translation>
+        <translation>Аутоматска надоградња</translation>
     </message>
     <message>
         <source>Custom server (with system fallback)</source>
-        <translation type="unfinished"></translation>
+        <translation>Прилагођени сервер (са системском резервом)</translation>
     </message>
     <message>
         <source>Custom server (strict — no fallback)</source>
-        <translation type="unfinished"></translation>
+        <translation>Прилагођени сервер (строго — без резерве)</translation>
     </message>
     <message>
         <source>DoH URI template used by the Custom modes, e.g. https://cloudflare-dns.com/dns-query or https://dns.google/dns-query. Invalid entries fall back to the default resolver rather than disabling DoH.</source>
-        <translation type="unfinished"></translation>
+        <translation>Шаблон DoH URI-ја који користе прилагођени режими, нпр. https://cloudflare-dns.com/dns-query или https://dns.google/dns-query. Неисправни уноси прелазе на подразумеваног разрешавача уместо да искључе DoH.</translation>
     </message>
     <message>
         <source>DNS-over-HTTPS server URI template</source>
-        <translation type="unfinished"></translation>
+        <translation>Шаблон URI-ја DNS-over-HTTPS сервера</translation>
     </message>
     <message>
         <source>https://cloudflare-dns.com/dns-query</source>
-        <translation type="unfinished"></translation>
+        <translation>https://cloudflare-dns.com/dns-query</translation>
     </message>
     <message>
         <source>Advertise only forward-secret AEAD cipher suites in TLS connections — RSA key-exchange and CBC suites are never offered. Takes effect after a restart; ancient sites that require the removed suites will not load.</source>
-        <translation type="unfinished"></translation>
+        <translation>Нуди само AEAD комплете шифри с тајношћу унапред у TLS везама — RSA размена кључева и CBC комплети се никад не нуде. Ступа на снагу после поновног покретања; древни сајтови који захтевају уклоњене комплете неће се учитати.</translation>
     </message>
     <message>
         <source>Offer only strong TLS cipher suites</source>
-        <translation type="unfinished"></translation>
+        <translation>Нуди само јаке TLS комплете шифри</translation>
     </message>
     <message>
         <source>Drop navigator.sendBeacon beacons, &lt;a ping&gt; link-tracking pings and Content-Security-Policy violation reports — invisible uploads sites use to track what you click and where you go. CSP still protects you; only its telemetry reports are suppressed. Uncheck to let sites receive them again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбаци navigator.sendBeacon мајаке, &lt;a ping&gt; пингове праћења веза и Content-Security-Policy извештаје о прекршају — невидљива слања која сајтови користе да прате шта кликћете и где идете. CSP вас још увек штити; само су његови телеметријски извештаји потиснути. Опозовите да сајтови поново могу да их примају.</translation>
     </message>
     <message>
         <source>Block tracking pings and beacons</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај пингове и мајаке праћења</translation>
     </message>
     <message>
         <source>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</source>
-        <translation type="unfinished"></translation>
+        <translation>Разреши адресу сваког сајта на који страница само повезује, пре клика — ово шаље разрешавачу DNS-а имена сајтова које никад не посетите. Подразумевано искључено; укључивање само мало убрзава навигацију везама.</translation>
     </message>
     <message>
         <source>Prefetch DNS for linked sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Предучитај DNS за повезане сајтове</translation>
     </message>
     <message>
         <source>Drop downloadable web fonts — font requests fingerprint your GPU/OS text stack and contact third-party hosts on every visit. Local and system fonts still work, but sites relying on icon fonts may render wrong.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбаци веб фонтове који се преузимају — захтеви за фонтове снимају отисак вашег GPU/OS стека текста и при свакој посети контактирају домаћине трећих страна. Локални и системски фонтови још раде, али сајтови који се ослањају на фонтове икона могу се погрешно приказати.</translation>
     </message>
     <message>
         <source>Block remote web fonts</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај удаљене веб фонтове</translation>
     </message>
     <message>
         <source>Refuse WebSocket connections to hosts outside the page&apos;s own site — whether a cross-site socket connects or is refused leaks state the site can read about you (cross-site leak oracle). Off by default: chat widgets, feeds and other real-time features legitimately open cross-site sockets.</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбиј WebSocket везе према домаћинима ван сопственог сајта странице — повезе ли се прекосајтни сокет или се одбије, цури стање које сајт може да прочита о вама (пророчиште цурења између сајтова). Подразумевано искључено: виџети ћаскања, доводи и друге функције у реалном времену легитимно отварају прекосајтне сокете.</translation>
     </message>
     <message>
         <source>Block third-party WebSockets</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај WebSockets трећих страна</translation>
     </message>
     <message>
         <source>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</source>
-        <translation type="unfinished"></translation>
+        <translation>При изласку обриши историјат, колачиће, складиште сајтова и кешове — све што покрива Очисти приватне податке. Сајтови на којима остајете пријављени се одјављују.</translation>
     </message>
     <message>
         <source>Clear browsing data when Arora exits</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти податке прегледања кад се Арора затвори</translation>
     </message>
     <message>
         <source>PDF Documents</source>
-        <translation type="unfinished"></translation>
+        <translation>PDF документи</translation>
     </message>
     <message>
         <source>Open PDF links in Chromium&apos;s built-in PDFium viewer instead of downloading them — the parser runs inside the sandboxed renderer. Turn off to keep the old save-everything behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Отварај PDF везе у Chromium-овом уграђеном PDFium прегледачу уместо да их преузимате — расчлањивач ради унутар изолованог рендерера. Искључите да задржите старо понашање чувања свега.</translation>
     </message>
     <message>
         <source>Open PDFs in the built-in viewer</source>
-        <translation type="unfinished"></translation>
+        <translation>Отварај PDF-ове у уграђеном прегледачу</translation>
     </message>
     <message>
         <source>Before a fetched PDF reaches the viewer, a Rust policy pass rewrites it — removing JavaScript payloads, auto-execute triggers (OpenAction/AA), Launch commands, embedded files, XFA forms and remote-submit actions. Only the in-browser view is sanitized; saving a PDF still gives your external reader the original bytes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Пре него што дохваћени PDF стигне до прегледача, Rust пролаз политике га преписује — уклањајући JavaScript терете, окидаче аутоматског извршавања (OpenAction/AA), Launch команде, уграђене фајлове, XFA обрасце и радње удаљеног слања. Санира се само приказ у прегледачу; чување PDF-а и даље даје спољном читачу изворне бајтове.</translation>
     </message>
     <message>
         <source>Sanitize PDFs before viewing</source>
-        <translation type="unfinished"></translation>
+        <translation>Санирај PDF-ове пре прегледања</translation>
     </message>
     <message>
         <source>Fingerprint Resistance</source>
-        <translation type="unfinished"></translation>
+        <translation>Отпорност на дигитални отисак</translation>
     </message>
     <message>
         <source>Websites see UTC as your timezone instead of the system&apos;s — Date and Intl API reads all report UTC. Takes full effect after a restart; pages already open keep their timezone.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови виде UTC као вашу временску зону уместо системске — читања Date и Intl API-ја све пријављују UTC. Пуни ефекат ступа после поновног покретања; већ отворене странице задржавају своју временску зону.</translation>
     </message>
     <message>
         <source>Report UTC as the timezone</source>
-        <translation type="unfinished"></translation>
+        <translation>Пријави UTC као временску зону</translation>
     </message>
     <message>
         <source>Send &apos;en-US, en&apos; as Accept-Language and navigator.languages instead of the configured list so every user looks alike. The Language list setting is preserved and used again when this is off.</source>
-        <translation type="unfinished"></translation>
+        <translation>Шаљи &apos;en-US, en&apos; као Accept-Language и navigator.languages уместо подешене листе да сваки корисник изгледа исто. Поставка листе језика се чува и поново користи кад је ово искључено.</translation>
     </message>
     <message>
         <source>Report generic language preferences (en-US, en)</source>
-        <translation type="unfinished"></translation>
+        <translation>Пријави генеричке жеље језика (en-US, en)</translation>
     </message>
     <message>
         <source>Inject countermeasures into web pages: canvas read-out noise, a generic WebGL vendor/renderer and normalized device values (cores, memory, plugins). This is opt-in noise, not anonymity — a site can still detect the spoofing and canvas-heavy pages can break; the shield button exempts a site that does. Always on in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Убризгава контрамере у веб странице: шум читања canvas-а, генеричког WebGL продавца/рендерера и нормализоване вредности уређаја (језгра, меморија, прикључци). Ово је шум по избору, не анонимност — сајт још увек може открити лажирање и странице засноване на canvas-у могу да се покваре; дугме штита изузима сајт који се поквари. Увек укључено у Tor прозорима.</translation>
     </message>
     <message>
         <source>Spoof canvas/WebGL fingerprints</source>
-        <translation type="unfinished"></translation>
+        <translation>Лажирај canvas/WebGL отиске</translation>
     </message>
     <message>
         <source>Site Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволе сајта</translation>
     </message>
     <message>
         <source>Websites must ask before using notifications, geolocation or mouse lock. Capture devices and clipboard access are always denied. Remembered permission, JavaScript and pop-up decisions:</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови морају да питају пре коришћења обавештења, геолокације или закључавања миша. Уређаји за снимање и приступ клипборду се увек одбијају. Запамћене одлуке о дозволама, JavaScript-у и искачућим прозорима:</translation>
     </message>
     <message>
         <source>Site permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволе сајта</translation>
     </message>
     <message>
         <source>Site</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајт</translation>
     </message>
     <message>
         <source>Permission</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозвола</translation>
     </message>
     <message>
         <source>Decision</source>
-        <translation type="unfinished"></translation>
+        <translation>Одлука</translation>
     </message>
     <message>
         <source>Clear All</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти све</translation>
     </message>
     <message>
         <source>Saved Passwords</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване лозинке</translation>
     </message>
     <message>
         <source>Saved passwords are encrypted with a key stored next to the data. A master passphrase protects the key itself.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване лозинке су шифроване кључем ускладиштеним поред података. Главна лозинка штити сам кључ.</translation>
     </message>
     <message>
         <source>Set Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Постави главну лозинку...</translation>
     </message>
     <message>
         <source>Remove Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони лозинку</translation>
     </message>
     <message>
         <source>Lock Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Закључај сада</translation>
     </message>
     <message>
         <source>Tab Bar Position</source>
-        <translation type="unfinished"></translation>
+        <translation>Положај траке језичака</translation>
     </message>
     <message>
         <source>Select tabs and windows as they are created</source>
@@ -4423,15 +4436,15 @@ as a QR code.</source>
     </message>
     <message>
         <source>Rendering Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор приказивања</translation>
     </message>
     <message>
         <source>Engine new tabs render with. Experimental engines can render pages but lack browser features like ad blocking, downloads and site permissions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор којим се приказују нови језичци. Експериментални мотори могу да приказују странице али немају функције прегледача попут блокирања огласа, преузимања и дозвола сајта.</translation>
     </message>
     <message>
         <source>Default rendering engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевани мотор приказивања</translation>
     </message>
     <message>
         <source>Use proxy server</source>
@@ -4558,107 +4571,107 @@ as a QR code.</source>
     </message>
     <message>
         <source>Accelerated (Rust) — not in this build</source>
-        <translation type="unfinished"></translation>
+        <translation>Убрзани (Rust) — није у овој изградњи</translation>
     </message>
     <message>
         <source>Extensions never run in a Tor window.</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширења се никад не покрећу у Tor прозору.</translation>
     </message>
     <message>
         <source>This build of Qt WebEngine was compiled without extension support.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ова изградња Qt WebEngine-а је компајлирана без подршке за проширења.</translation>
     </message>
     <message>
         <source>Brave adblock-rust — rebuild with CONFIG+=adblock_rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust — поново изградите са CONFIG+=adblock_rust</translation>
     </message>
     <message>
         <source>Tor windows resolve names remotely through the Tor proxy — local DNS-over-HTTPS would bypass the tunnel.</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor прозори разрешавају имена даљински кроз Tor прокси — локални DNS-over-HTTPS би заобишао тунел.</translation>
     </message>
     <message>
         <source>General</source>
-        <translation type="unfinished">Опште</translation>
+        <translation>Опште</translation>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Претражи</translation>
+        <translation>Претражи</translation>
     </message>
     <message>
         <source>Appearance</source>
-        <translation type="unfinished">Изглед</translation>
+        <translation>Изглед</translation>
     </message>
     <message>
         <source>Privacy</source>
-        <translation type="unfinished">Приватност</translation>
+        <translation>Приватност</translation>
     </message>
     <message>
         <source>Tab Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке језичака</translation>
     </message>
     <message>
         <source>Proxy</source>
-        <translation type="unfinished">Прокси</translation>
+        <translation>Прокси</translation>
     </message>
     <message>
         <source>AutoFill</source>
-        <translation type="unfinished">Смопопуњавање</translation>
+        <translation>Самопопуњавање</translation>
     </message>
     <message>
         <source>Advanced</source>
-        <translation type="unfinished">Напредно</translation>
+        <translation>Напредно</translation>
     </message>
     <message>
         <source>Extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширења</translation>
     </message>
     <message>
         <source>Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Контејнери</translation>
     </message>
     <message>
         <source>Downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузимања</translation>
     </message>
     <message>
         <source>Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Перформансе</translation>
     </message>
     <message>
         <source>Reset Search Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати поставке претраге</translation>
     </message>
     <message>
         <source>Reset the search engine choices, suggestion switches, shortcut nicknames and search display options to their defaults?</source>
-        <translation type="unfinished"></translation>
+        <translation>Вратити изборе мотора претраге, преклопнике предлога, надимке пречица и опције приказа претраге на подразумевано?</translation>
     </message>
     <message>
         <source>Reset Performance Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати поставке перформанси</translation>
     </message>
     <message>
         <source>Restore the Performance page&apos;s settings — hardware acceleration, memory saver, energy saver, lazy session restore and prefetch — to their defaults?</source>
-        <translation type="unfinished"></translation>
+        <translation>Вратити поставке странице Перформансе — хардверско убрзање, штедњу меморије, штедњу енергије, лено враћање сесије и предучитавање — на подразумевано?</translation>
     </message>
     <message>
         <source>No battery detected — the &apos;20% battery&apos; and &apos;on battery&apos; options behave like Never Save Energy on this machine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Батерија није откривена — опције „20% батерије“ и „на батерији“ се на овој машини понашају као Никад не штеди енергију.</translation>
     </message>
     <message>
         <source>Battery at %1% — running on battery.</source>
-        <translation type="unfinished"></translation>
+        <translation>Батерија на %1% — ради на батерију.</translation>
     </message>
     <message>
         <source>Battery at %1% — on external power.</source>
-        <translation type="unfinished"></translation>
+        <translation>Батерија на %1% — на спољном напајању.</translation>
     </message>
     <message>
         <source>Battery detected, charge level unknown.</source>
-        <translation type="unfinished"></translation>
+        <translation>Батерија откривена, ниво напуњености непознат.</translation>
     </message>
     <message>
         <source>Energy Saver is on.</source>
-        <translation type="unfinished"></translation>
+        <translation>Штедња енергије је укључена.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
@@ -4666,7 +4679,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Choose Program</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите програм</translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -4674,739 +4687,742 @@ as a QR code.</source>
     </message>
     <message>
         <source>Edit Address</source>
-        <translation type="unfinished">Уреди адресу</translation>
+        <translation>Уреди адресу</translation>
     </message>
     <message>
         <source>New Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови мотор</translation>
     </message>
     <message>
         <source>New Engine %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови мотор %1</translation>
     </message>
     <message>
         <source>The nickname &quot;%1&quot; is already used by &quot;%2&quot;.</source>
-        <translation type="unfinished"></translation>
+        <translation>Надимак &quot;%1&quot; већ користи &quot;%2&quot;.</translation>
     </message>
     <message>
         <source>The search URL cannot be empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге не сме бити празан.</translation>
     </message>
     <message>
         <source>The search URL must contain %s or {searchTerms} where the search text is inserted (or POST parameters that carry it).</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге мора садржати %s или {searchTerms} тамо где се умеће текст претраге (или POST параметре који га носе).</translation>
     </message>
     <message>
         <source>The suggest URL must contain %s or {searchTerms} where the search text is inserted.</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ предлога мора садржати %s или {searchTerms} тамо где се умеће текст претраге.</translation>
     </message>
     <message>
         <source>The image search URL must contain %s or {searchTerms} where the search text is inserted.</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ претраге слика мора садржати %s или {searchTerms} тамо где се умеће текст претраге.</translation>
     </message>
     <message>
         <source>POST parameters must be name=value pairs separated by &apos;&amp;&apos;.</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри морају бити парови име=вредност раздвојени знаком &apos;&amp;&apos;.</translation>
     </message>
     <message>
         <source>Image POST parameters must be name=value pairs separated by &apos;&amp;&apos;.</source>
-        <translation type="unfinished"></translation>
+        <translation>POST параметри слика морају бити парови име=вредност раздвојени знаком &apos;&amp;&apos;.</translation>
     </message>
     <message>
         <source>The engine name cannot be empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>Назив мотора не сме бити празан.</translation>
     </message>
     <message>
         <source>An engine named &quot;%1&quot; already exists.</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотор имена &quot;%1&quot; већ постоји.</translation>
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотори претраге</translation>
     </message>
     <message>
         <source>Same as Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Исто као подразумевано</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to %1 before you press Enter. Off by default; the choice is stored per engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Предлози шаљу сваки притисак тастера %1 пре него што притиснете Enter. Подразумевано искључено; избор се чува по мотору.</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to the selected engine before you press Enter. Off by default.</source>
-        <translation type="unfinished"></translation>
+        <translation>Предлози шаљу сваки притисак тастера изабраном мотору пре него што притиснете Enter. Подразумевано искључено.</translation>
     </message>
     <message>
         <source>Select Unpacked Extension Folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите распаковану фасциклу проширења</translation>
     </message>
     <message>
         <source>Install Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирај проширење</translation>
     </message>
     <message>
         <source>Install from an unpacked folder or a .zip package?</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирати из распаковане фасцикле или .zip пакета?</translation>
     </message>
     <message>
         <source>Folder...</source>
-        <translation type="unfinished"></translation>
+        <translation>Фасцикла...</translation>
     </message>
     <message>
         <source>ZIP Package...</source>
-        <translation type="unfinished"></translation>
+        <translation>ZIP пакет...</translation>
     </message>
     <message>
         <source>Select Extension Package</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите пакет проширења</translation>
     </message>
     <message>
         <source>Extension packages (*.zip);;All files (*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Пакети проширења (*.zip);;Сви фајлови (*)</translation>
     </message>
     <message>
         <source>Remove Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони проширење</translation>
     </message>
     <message>
         <source>Remove the extension &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклонити проширење &quot;%1&quot;?</translation>
     </message>
     <message>
         <source>%1: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1: %2</translation>
     </message>
     <message>
         <source>%1 (version %2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (верзија %2)</translation>
     </message>
     <message>
         <source>%1 (version %2, saved to %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (верзија %2, сачувано у %3)</translation>
     </message>
     <message>
         <source>All extensions are up to date.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сва проширења су ажурна.</translation>
     </message>
     <message>
         <source>Updates ready to review: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Ажурирања спремна за преглед: %1</translation>
     </message>
     <message>
         <source>Update available, install manually: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Доступно ажурирање, инсталирајте ручно: %1</translation>
     </message>
     <message>
         <source>Failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Неуспешно: %1</translation>
     </message>
     <message>
         <source>Extension Updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Ажурирања проширења</translation>
     </message>
     <message>
         <source>Error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка: %1</translation>
     </message>
     <message>
         <source>Built-in component extension.</source>
-        <translation type="unfinished"></translation>
+        <translation>Уграђено компонентно проширење.</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Извор: %1</translation>
     </message>
     <message>
         <source>Declares a toolbar action — Qt WebEngine has no extension toolbar, so its popup will not appear.</source>
-        <translation type="unfinished"></translation>
+        <translation>Декларише радњу на траци алатки — Qt WebEngine нема траку алатки за проширења, па се искачући прозор неће појавити.</translation>
     </message>
     <message>
         <source>Version %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Верзија %1</translation>
     </message>
     <message>
         <source>No update source — this extension cannot check for updates.</source>
-        <translation type="unfinished"></translation>
+        <translation>Нема извора ажурирања — ово проширење не може проверавати ажурирања.</translation>
     </message>
     <message>
         <source>Update source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Извор ажурирања: %1</translation>
     </message>
     <message>
         <source>Update check failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Провера ажурирања није успела: %1</translation>
     </message>
     <message>
         <source>Update to version %1 downloaded to %2 — it is offered for review on the next update check.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ажурирање на верзију %1 преузето у %2 — биће понуђено за преглед при следећој провери ажурирања.</translation>
     </message>
     <message>
         <source>Update to version %1 downloaded to %2 — install it with the Install button.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ажурирање на верзију %1 преузето у %2 — инсталирајте га дугметом Инсталирај.</translation>
     </message>
     <message>
         <source>Extension is up to date.</source>
-        <translation type="unfinished"></translation>
+        <translation>Проширење је ажурно.</translation>
     </message>
     <message>
         <source>Permissions: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволе: %1</translation>
     </message>
     <message>
         <source>Not available in Qt WebEngine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Недоступно у Qt WebEngine-у: %1</translation>
     </message>
     <message>
         <source>Partially supported in Qt WebEngine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Делимично подржано у Qt WebEngine-у: %1</translation>
     </message>
     <message>
         <source>Error</source>
-        <translation type="unfinished">Грешка</translation>
+        <translation>Грешка</translation>
     </message>
     <message>
         <source>Not loaded</source>
-        <translation type="unfinished"></translation>
+        <translation>Није учитано</translation>
     </message>
     <message>
         <source>Enabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Омогућено</translation>
     </message>
     <message>
         <source>Disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Онемогућено</translation>
     </message>
     <message>
         <source>Built-in</source>
-        <translation type="unfinished"></translation>
+        <translation>Уграђено</translation>
     </message>
     <message>
         <source>Installed</source>
-        <translation type="unfinished"></translation>
+        <translation>Инсталирано</translation>
     </message>
     <message>
         <source>Session</source>
-        <translation type="unfinished"></translation>
+        <translation>Сесија</translation>
     </message>
     <message>
         <source>(empty — drop .js files in the folder)</source>
-        <translation type="unfinished"></translation>
+        <translation>(празно — спустите .js фајлове у фасциклу)</translation>
     </message>
     <message>
         <source>Allowed</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозвољено</translation>
     </message>
     <message>
         <source>Denied</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбијено</translation>
     </message>
     <message>
         <source>JavaScript</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript</translation>
     </message>
     <message>
         <source>Blocked</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирано</translation>
     </message>
     <message>
         <source>Pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Искачући прозори</translation>
     </message>
     <message>
         <source>Clear Site Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти дозволе сајта</translation>
     </message>
     <message>
         <source>Remove every remembered site permission?</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклонити све запамћене дозволе сајтова?</translation>
     </message>
     <message>
         <source>Standard: JavaScript runs everywhere and sites may autoplay media. This is the default browser behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Стандардни: JavaScript се покреће свуда и сајтови могу аутоматски пуштати медије. Ово је подразумевано понашање прегледача.</translation>
     </message>
     <message>
         <source>Safer: pages loaded over plain HTTP cannot load external JavaScript (scripts, workers) and media only plays after a click. Scripts inlined into the page itself can still run; pages on this machine (localhost) are exempt.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сигурнији: странице учитане преко обичног HTTP-а не могу учитавати спољни JavaScript (скрипте, раднике) а медији се пуштају тек на клик. Скрипте уграђене у саму страницу још могу да раде; странице на овој машини (localhost) су изузете.</translation>
     </message>
     <message>
         <source>Safest: JavaScript is disabled on every site and media only plays after a click. Many websites will break. &quot;Enable Javascript&quot; above is ignored while this level is selected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Најсигурнији: JavaScript је онемогућен на сваком сајту а медији се пуштају тек на клик. Многи сајтови ће се покварити. „Омогући Јаваскрипт“ изнад се занемарује док је овај ниво изабран.</translation>
     </message>
     <message>
         <source>Active engine: Built-in — Brave adblock-rust is not compiled into this build (rebuild with CONFIG+=adblock_rust)</source>
-        <translation type="unfinished"></translation>
+        <translation>Активни мотор: Уграђени — Brave adblock-rust није компајлиран у ову изградњу (поново изградите са CONFIG+=adblock_rust)</translation>
     </message>
     <message>
         <source>Active engine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Активни мотор: %1</translation>
     </message>
     <message>
         <source>Brave adblock-rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust</translation>
     </message>
     <message>
         <source>Change Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Промени главну лозинку</translation>
     </message>
     <message>
         <source>Set Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Постави главну лозинку</translation>
     </message>
     <message>
         <source>Choose a new master passphrase (at least 8 characters).
 Everything sealed under the old one is re-encrypted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите нову главну лозинку (најмање 8 знакова).
+Све запечаћено под старом се поново шифрује.</translation>
     </message>
     <message>
         <source>Choose a master passphrase (at least 8 characters).
 Saved passwords will then be decryptable only with it — the
 key is derived in memory and never written to disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изаберите главну лозинку (најмање 8 знакова).
+Сачуване лозинке ће се тада моћи дешифровати само њом —
+кључ се изводи у меморији и никад не уписује на диск.</translation>
     </message>
     <message>
         <source>Passphrase:</source>
-        <translation type="unfinished"></translation>
+        <translation>Лозинка:</translation>
     </message>
     <message>
         <source>Repeat:</source>
-        <translation type="unfinished"></translation>
+        <translation>Поновите:</translation>
     </message>
     <message>
         <source>The passphrase must be at least 8 characters.</source>
-        <translation type="unfinished"></translation>
+        <translation>Лозинка мора имати најмање 8 знакова.</translation>
     </message>
     <message>
         <source>The passphrases do not match.</source>
-        <translation type="unfinished"></translation>
+        <translation>Лозинке се не поклапају.</translation>
     </message>
     <message>
         <source>The crypto backend is unavailable — saved passwords cannot be stored on this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>Криптографски бекенд није доступан — сачуване лозинке се не могу складиштити на овом систему.</translation>
     </message>
     <message>
         <source>Master passphrase set — the saved-password key is derived in memory and never written to disk. The store is currently unlocked.</source>
-        <translation type="unfinished"></translation>
+        <translation>Главна лозинка постављена — кључ сачуваних лозинки се изводи у меморији и никад не уписује на диск. Складиште је тренутно откључано.</translation>
     </message>
     <message>
         <source>Master passphrase set — the store is locked and needs the passphrase before saved passwords can be read or written.</source>
-        <translation type="unfinished"></translation>
+        <translation>Главна лозинка постављена — складиште је закључано и треба му лозинка пре него што сачуване лозинке могу да се читају или уписују.</translation>
     </message>
     <message>
         <source>Saved passwords are encrypted with a key stored next to the data — that protects them from other users and offline reads, but not from malware running as you. Set a master passphrase to protect the key itself.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване лозинке шифроване су кључем ускладиштеним поред података — то их штити од других корисника и читања ван мреже, али не и од злонамерног софтвера који ради као ви. Поставите главну лозинку да заштитите сам кључ.</translation>
     </message>
     <message>
         <source>Change Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Промени главну лозинку...</translation>
     </message>
     <message>
         <source>Set Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Постави главну лозинку...</translation>
     </message>
     <message>
         <source>Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>Складиште акредитива</translation>
     </message>
     <message>
         <source>Remove Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони главну лозинку</translation>
     </message>
     <message>
         <source>Saved passwords will go back to being protected by a key file stored next to the data. Remove the passphrase?</source>
-        <translation type="unfinished"></translation>
+        <translation>Сачуване лозинке ће се вратити на заштиту фајлом кључа ускладиштеним поред података. Уклонити главну лозинку?</translation>
     </message>
     <message>
         <source>Blue</source>
-        <translation type="unfinished"></translation>
+        <translation>Плава</translation>
     </message>
     <message>
         <source>Turquoise</source>
-        <translation type="unfinished"></translation>
+        <translation>Тиркизна</translation>
     </message>
     <message>
         <source>Green</source>
-        <translation type="unfinished"></translation>
+        <translation>Зелена</translation>
     </message>
     <message>
         <source>Yellow</source>
-        <translation type="unfinished"></translation>
+        <translation>Жута</translation>
     </message>
     <message>
         <source>Orange</source>
-        <translation type="unfinished"></translation>
+        <translation>Наранџаста</translation>
     </message>
     <message>
         <source>Red</source>
-        <translation type="unfinished"></translation>
+        <translation>Црвена</translation>
     </message>
     <message>
         <source>Pink</source>
-        <translation type="unfinished"></translation>
+        <translation>Розе</translation>
     </message>
     <message>
         <source>Purple</source>
-        <translation type="unfinished"></translation>
+        <translation>Љубичаста</translation>
     </message>
     <message>
         <source>Container name</source>
-        <translation type="unfinished"></translation>
+        <translation>Име контејнера</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Име:</translation>
     </message>
     <message>
         <source>Color:</source>
-        <translation type="unfinished"></translation>
+        <translation>Боја:</translation>
     </message>
     <message>
         <source>Containers are not available in a Tor window.</source>
-        <translation type="unfinished"></translation>
+        <translation>Контејнери нису доступни у Tor прозору.</translation>
     </message>
     <message>
         <source>No containers yet. Create one to keep a site&apos;s data isolated from the rest of your browsing.</source>
-        <translation type="unfinished"></translation>
+        <translation>Још нема контејнера. Направите један да податке сајта држите изоловане од остатка прегледања.</translation>
     </message>
     <message>
         <source>Sites that always open in the selected container:</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови који се увек отварају у изабраном контејнеру:</translation>
     </message>
     <message>
         <source>Sites that always open in this container — assigned from a tab&apos;s context menu:</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајтови који се увек отварају у овом контејнеру — додељују се из контекстуалног менија језичка:</translation>
     </message>
     <message>
         <source>New Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови контејнер</translation>
     </message>
     <message>
         <source>Edit Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Уреди контејнер</translation>
     </message>
     <message>
         <source>Delete the container &quot;%1&quot;? All site data stored in it — cookies, logins, cache and site storage — will be permanently removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Обрисати контејнер &quot;%1&quot;? Сви подаци сајта ускладиштени у њему — колачићи, пријаве, кеш и складиште сајта — биће трајно уклоњени.</translation>
     </message>
     <message>
         <source>%1 open tab(s) use this container and will be closed.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 отворених језичака користи овај контејнер и биће затворени.</translation>
     </message>
     <message>
         <source>Delete Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Обриши контејнер</translation>
     </message>
 </context>
 <context>
     <name>SidebarPanel</name>
     <message>
         <source>Sidebar panels</source>
-        <translation type="unfinished"></translation>
+        <translation>Панели бочне траке</translation>
     </message>
     <message>
         <source>Bookmarks</source>
-        <translation type="unfinished">Маркери</translation>
+        <translation>Маркери</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Историјат</translation>
+        <translation>Историјат</translation>
     </message>
     <message>
         <source>Downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Преузимања</translation>
     </message>
     <message>
         <source>Notes</source>
-        <translation type="unfinished"></translation>
+        <translation>Белешке</translation>
     </message>
     <message>
         <source>Close sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Затвори бочну траку</translation>
     </message>
     <message>
         <source>Filter downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Филтрирај преузимања</translation>
     </message>
     <message>
         <source>Sort downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Сортирај преузимања</translation>
     </message>
     <message>
         <source>Sort by Date</source>
-        <translation type="unfinished"></translation>
+        <translation>Сортирај по датуму</translation>
     </message>
     <message>
         <source>Sort by Name</source>
-        <translation type="unfinished"></translation>
+        <translation>Сортирај по имену</translation>
     </message>
     <message>
         <source>Sort by Size</source>
-        <translation type="unfinished"></translation>
+        <translation>Сортирај по величини</translation>
     </message>
     <message>
         <source>Download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Детаљи преузимања</translation>
     </message>
     <message>
         <source>Download Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке преузимања...</translation>
     </message>
     <message>
         <source>Notes are saved automatically.</source>
-        <translation type="unfinished"></translation>
+        <translation>Белешке се аутоматски чувају.</translation>
     </message>
     <message>
         <source>Open</source>
-        <translation type="unfinished">Отвори</translation>
+        <translation>Отвори</translation>
     </message>
     <message>
         <source>Open in New Tab</source>
-        <translation type="unfinished">Отвори у новом језичку</translation>
+        <translation>Отвори у новом језичку</translation>
     </message>
     <message>
         <source>Remove Entry</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони унос</translation>
     </message>
     <message>
         <source>Open Location</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори локацију</translation>
     </message>
 </context>
 <context>
     <name>SitePanel</name>
     <message>
         <source>Cookies</source>
-        <translation type="unfinished">Колачићи</translation>
+        <translation>Колачићи</translation>
     </message>
     <message>
         <source>Site default</source>
-        <translation type="unfinished"></translation>
+        <translation>Подразумевано сајта</translation>
     </message>
     <message>
         <source>Always allow</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек дозволи</translation>
     </message>
     <message>
         <source>Always block</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек блокирај</translation>
     </message>
     <message>
         <source>Allow for this session</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи за ову сесију</translation>
     </message>
     <message>
         <source>Per-site cookie exception — overrides the global policy.</source>
-        <translation type="unfinished"></translation>
+        <translation>Изузетак колачића по сајту — заобилази глобалну политику.</translation>
     </message>
     <message>
         <source>Content blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирање садржаја</translation>
     </message>
     <message>
         <source>Blocks ads and trackers on every site — the master switch the Ad Block settings also expose.</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокира огласе и пратиоце на сваком сајту — главни прекидач који излажу и поставке Адблока.</translation>
     </message>
     <message>
         <source>Block ads and trackers on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирај огласе и пратиоце на овом сајту</translation>
     </message>
     <message>
         <source>JavaScript</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript</translation>
     </message>
     <message>
         <source>Per-site JavaScript override — an explicit choice beats the security tier in both directions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Заобилажење JavaScript-а по сајту — изричит избор надјачава безбедносни степен у оба правца.</translation>
     </message>
     <message>
         <source>Allow pop-ups on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволи искачуће прозоре на овом сајту</translation>
     </message>
     <message>
         <source>Always allow insecure HTTP on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек дозволи небезбедни HTTP на овом сајту</translation>
     </message>
     <message>
         <source>Skips the HTTPS-Only warning page for this host — its pages load over plain HTTP without asking.</source>
-        <translation type="unfinished"></translation>
+        <translation>Прескаче страницу упозорења HTTPS-Only за овог домаћина — његове странице се учитавају преко обичног HTTP-а без питања.</translation>
     </message>
     <message>
         <source>Spoof fingerprints on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Лажирај отиске на овом сајту</translation>
     </message>
     <message>
         <source>Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Дозволе</translation>
     </message>
     <message>
         <source>Ad Block Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Поставке Адблока...</translation>
     </message>
     <message>
         <source>Clear site data</source>
-        <translation type="unfinished"></translation>
+        <translation>Очисти податке сајта</translation>
     </message>
     <message>
         <source>Deletes this site&apos;s cookies and local storage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Брише колачиће и локално складиште овог сајта.</translation>
     </message>
     <message>
         <source>This page</source>
-        <translation type="unfinished"></translation>
+        <translation>Ова страница</translation>
     </message>
     <message>
         <source>Certificate error — the connection could not be verified</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка сертификата — веза се није могла проверити</translation>
     </message>
     <message>
         <source>Blocked by HTTPS-Only mode — the site is not secure</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирано HTTPS-Only режимом — сајт није безбедан</translation>
     </message>
     <message>
         <source>Blocked — the domain is on the phishing/malware list</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирано — домен је на листи фишинга/злонамерног софтвера</translation>
     </message>
     <message>
         <source>Connection is secure (HTTPS)</source>
-        <translation type="unfinished"></translation>
+        <translation>Веза је безбедна (HTTPS)</translation>
     </message>
     <message>
         <source>Connection is not secure (HTTP)</source>
-        <translation type="unfinished"></translation>
+        <translation>Веза није безбедна (HTTP)</translation>
     </message>
     <message>
         <source>Local content</source>
-        <translation type="unfinished"></translation>
+        <translation>Локални садржај</translation>
     </message>
     <message>
         <source>TLS verified by Arora</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS проверио Арора</translation>
     </message>
     <message>
         <source>TLS verified by Arora (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS проверио Арора (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ланац сертификата је поново проверен независно од веб мотора.</translation>
     </message>
     <message>
         <source>TLS WARNING: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS УПОЗОРЕЊЕ: %1</translation>
     </message>
     <message>
         <source>unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>непознато</translation>
     </message>
     <message>
         <source>Verifying TLS…</source>
-        <translation type="unfinished"></translation>
+        <translation>Провера TLS-а…</translation>
     </message>
     <message>
         <source>TLS not independently verified</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS није независно проверен</translation>
     </message>
     <message>
         <source>%1 cookies stored for this site</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 колачића ускладиштено за овај сајт</translation>
     </message>
     <message>
         <source>No site to scope cookies to</source>
-        <translation type="unfinished"></translation>
+        <translation>Нема сајта за ограничавање колачића</translation>
     </message>
     <message>
         <source>Content blocking is disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирање садржаја је онемогућено</translation>
     </message>
     <message>
         <source>No web page to count</source>
-        <translation type="unfinished"></translation>
+        <translation>Нема веб странице за бројање</translation>
     </message>
     <message>
         <source>%1 requests blocked on this page</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 захтева блокирано на овој страници</translation>
     </message>
     <message>
         <source>Content blocking is disabled globally</source>
-        <translation type="unfinished"></translation>
+        <translation>Блокирање садржаја је глобално онемогућено</translation>
     </message>
     <message>
         <source>Unchecked, this site&apos;s pages are exempted from content blocking (an @@||host^$document rule in your custom filters).</source>
-        <translation type="unfinished"></translation>
+        <translation>Кад је неозначено, странице овог сајта су изузете од блокирања садржаја (правило @@||host^$document у вашим прилагођеним филтерима).</translation>
     </message>
     <message>
         <source>JavaScript runs on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript се покреће на овом сајту</translation>
     </message>
     <message>
         <source>JavaScript is blocked on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript је блокиран на овом сајту</translation>
     </message>
     <message>
         <source>JavaScript rules apply to web sites</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript правила важу за веб сајтове</translation>
     </message>
     <message>
         <source>No site to scope JavaScript to</source>
-        <translation type="unfinished"></translation>
+        <translation>Нема сајта за ограничавање JavaScript-а</translation>
     </message>
     <message>
         <source>Fingerprint spoofing applies to web sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Лажирање отиска важи за веб сајтове</translation>
     </message>
     <message>
         <source>Fingerprint spoofing is off — enable it in Settings &gt; Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>Лажирање отиска је искључено — укључите га у Поставке &gt; Приватност</translation>
     </message>
     <message>
         <source>Unchecked, this host is exempted from the injected fingerprint countermeasures (takes effect on reload).</source>
-        <translation type="unfinished"></translation>
+        <translation>Кад је неозначено, овај домаћин је изузет од убризганих контрамера за отисак (ступа на снагу при поновном учитавању).</translation>
     </message>
     <message>
         <source>allowed</source>
-        <translation type="unfinished"></translation>
+        <translation>дозвољено</translation>
     </message>
     <message>
         <source>denied</source>
-        <translation type="unfinished"></translation>
+        <translation>одбијено</translation>
     </message>
     <message>
         <source>Revoke</source>
-        <translation type="unfinished"></translation>
+        <translation>Опозови</translation>
     </message>
     <message>
         <source>No remembered permissions for this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Нема запамћених дозвола за овај сајт</translation>
     </message>
 </context>
 <context>
     <name>SiteShieldButton</name>
     <message>
         <source>Site Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватност сајта</translation>
     </message>
     <message>
         <source>Opens the privacy and permissions panel for this site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвара панел приватности и дозвола за овај сајт.</translation>
     </message>
     <message>
         <source>Site privacy and permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватност и дозволе сајта</translation>
     </message>
     <message>
         <source>Site privacy — content blocking is disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватност сајта — блокирање садржаја је онемогућено</translation>
     </message>
     <message>
         <source>Site privacy — content blocking is off for %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватност сајта — блокирање садржаја је искључено за %1</translation>
     </message>
     <message>
         <source> — %1 requests blocked</source>
-        <translation type="unfinished"></translation>
+        <translation> — %1 захтева блокирано</translation>
     </message>
     <message>
         <source> — JavaScript blocked</source>
-        <translation type="unfinished"></translation>
+        <translation> — JavaScript блокиран</translation>
     </message>
 </context>
 <context>
@@ -5432,11 +5448,11 @@ key is derived in memory and never written to disk.</source>
     <name>TabBar</name>
     <message>
         <source>Close tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Затвори језичак</translation>
     </message>
     <message>
         <source>Close Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Затвори језичак</translation>
     </message>
     <message>
         <source>Show Tab Bar</source>
@@ -5448,7 +5464,7 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Reopen Closed Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново отвори затворени језичак</translation>
     </message>
     <message>
         <source>Duplicate Tab</source>
@@ -5456,119 +5472,119 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Unpin Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Откачи језичак</translation>
     </message>
     <message>
         <source>Pin Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Закачи језичак</translation>
     </message>
     <message>
         <source>Reopen in Con&amp;tainer</source>
-        <translation type="unfinished"></translation>
+        <translation>Поново отвори у кон&amp;тејнеру</translation>
     </message>
     <message>
         <source>&amp;No Container</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Без контејнера</translation>
     </message>
     <message>
         <source>New &amp;Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови &amp;контејнер...</translation>
     </message>
     <message>
         <source>&amp;Manage Containers...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Управљај контејнерима...</translation>
     </message>
     <message>
         <source>Always Open This Site in &amp;This Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек отварај овај сајт у &amp;овом контејнеру</translation>
     </message>
     <message>
         <source>Always Open Site in Con&amp;tainer</source>
-        <translation type="unfinished"></translation>
+        <translation>Увек отварај сајт у кон&amp;тејнеру</translation>
     </message>
     <message>
         <source>Wake Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Пробуди језичак</translation>
     </message>
     <message>
         <source>Sleep Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Успавај језичак</translation>
     </message>
     <message>
         <source>Add Tab to &amp;Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај језичак у &amp;групу</translation>
     </message>
     <message>
         <source>&amp;New Group</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Нова група</translation>
     </message>
     <message>
         <source>Unnamed Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Неименована група</translation>
     </message>
     <message>
         <source>&amp;Expand Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Про&amp;шири групу</translation>
     </message>
     <message>
         <source>&amp;Collapse Group</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Скупи групу</translation>
     </message>
     <message>
         <source>R&amp;ename Group...</source>
-        <translation type="unfinished"></translation>
+        <translation>П&amp;реименуј групу...</translation>
     </message>
     <message>
         <source>Rename Tab Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Преименуј групу језичака</translation>
     </message>
     <message>
         <source>Group &amp;name:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Име групе:</translation>
     </message>
     <message>
         <source>Group &amp;Color</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Боја групе</translation>
     </message>
     <message>
         <source>Blue</source>
-        <translation type="unfinished"></translation>
+        <translation>Плава</translation>
     </message>
     <message>
         <source>Turquoise</source>
-        <translation type="unfinished"></translation>
+        <translation>Тиркизна</translation>
     </message>
     <message>
         <source>Green</source>
-        <translation type="unfinished"></translation>
+        <translation>Зелена</translation>
     </message>
     <message>
         <source>Yellow</source>
-        <translation type="unfinished"></translation>
+        <translation>Жута</translation>
     </message>
     <message>
         <source>Orange</source>
-        <translation type="unfinished"></translation>
+        <translation>Наранџаста</translation>
     </message>
     <message>
         <source>Red</source>
-        <translation type="unfinished"></translation>
+        <translation>Црвена</translation>
     </message>
     <message>
         <source>Pink</source>
-        <translation type="unfinished"></translation>
+        <translation>Розе</translation>
     </message>
     <message>
         <source>Purple</source>
-        <translation type="unfinished"></translation>
+        <translation>Љубичаста</translation>
     </message>
     <message>
         <source>Remove Tab from Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Уклони језичак из групе</translation>
     </message>
     <message>
         <source>U&amp;ngroup</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Разгрупиши</translation>
     </message>
     <message>
         <source>&amp;Close Tab</source>
@@ -5588,65 +5604,65 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Tabs</source>
-        <translation type="unfinished">Језичци</translation>
+        <translation>Језичци</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2 tabs%3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2 језичака%3)</translation>
     </message>
     <message>
         <source>, active</source>
-        <translation type="unfinished"></translation>
+        <translation>, активан</translation>
     </message>
     <message>
         <source>Container strip: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Трака контејнера: %1</translation>
     </message>
     <message>
         <source>%1 tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 језичака</translation>
     </message>
 </context>
 <context>
     <name>TabPositionPicker</name>
     <message>
         <source>Tab bar position</source>
-        <translation type="unfinished"></translation>
+        <translation>Положај траке језичака</translation>
     </message>
     <message>
         <source>Top</source>
-        <translation type="unfinished"></translation>
+        <translation>Горе</translation>
     </message>
     <message>
         <source>Left</source>
-        <translation type="unfinished"></translation>
+        <translation>Лево</translation>
     </message>
     <message>
         <source>Right</source>
-        <translation type="unfinished"></translation>
+        <translation>Десно</translation>
     </message>
     <message>
         <source>Bottom</source>
-        <translation type="unfinished"></translation>
+        <translation>Доле</translation>
     </message>
 </context>
 <context>
     <name>TabPreview</name>
     <message>
         <source>New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Нови језичак</translation>
     </message>
     <message>
         <source>Sleeping</source>
-        <translation type="unfinished"></translation>
+        <translation>Успаван</translation>
     </message>
     <message>
         <source>Sleeping — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Успаван — %1</translation>
     </message>
 </context>
 <context>
@@ -5681,15 +5697,15 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Tabs</source>
-        <translation type="unfinished">Језичци</translation>
+        <translation>Језичци</translation>
     </message>
     <message>
         <source>Private tab — visits are not recorded</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватни језичак — посете се не бележе</translation>
     </message>
     <message>
         <source>Loading %1%...</source>
-        <translation type="unfinished"></translation>
+        <translation>Учитавање %1%...</translation>
     </message>
     <message>
         <source>Finished loading</source>
@@ -5701,15 +5717,15 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Tab was not suspended: it has unsaved form input</source>
-        <translation type="unfinished"></translation>
+        <translation>Језичак није успаван: има несачуван унос образца</translation>
     </message>
     <message>
         <source>Page Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Икона странице</translation>
     </message>
     <message>
         <source>Private</source>
-        <translation type="unfinished"></translation>
+        <translation>Приватно</translation>
     </message>
     <message>
         <source>Show Next Tab</source>
@@ -5752,27 +5768,27 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Search...</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи...</translation>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Претражи</translation>
+        <translation>Претражи</translation>
     </message>
     <message>
         <source>Search for:</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи:</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>Search Suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Предлози претраге</translation>
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="unfinished">Подеси моторе претраге...</translation>
+        <translation>Подеси моторе претраге...</translation>
     </message>
     <message>
         <source>No Recent Searches</source>
@@ -5788,7 +5804,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Мотори претраге</translation>
     </message>
     <message>
         <source>Clear Recent Searches</source>
@@ -5799,26 +5815,26 @@ Do you really want to close this page?
     <name>UserAgentMenu</name>
     <message>
         <source>Default</source>
-        <translation type="unfinished">Подразумевано</translation>
+        <translation>Подразумевано</translation>
     </message>
     <message>
         <source>Other...</source>
-        <translation type="unfinished"></translation>
+        <translation>Друго...</translation>
     </message>
     <message>
         <source>Custom user agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Прилагођени кориснички агент</translation>
     </message>
     <message>
         <source>User agent:</source>
-        <translation type="unfinished"></translation>
+        <translation>Кориснички агент:</translation>
     </message>
 </context>
 <context>
     <name>WebPage</name>
     <message>
         <source>Add Search Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Додај мотор претраге</translation>
     </message>
     <message>
         <source>The page at %1 wants to add a search engine described by:
@@ -5826,11 +5842,15 @@ Do you really want to close this page?
 %2
 
 Download and inspect it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Страница на %1 жели да дода мотор претраге описан са:
+
+%2
+
+Преузети га и прегледати?</translation>
     </message>
     <message>
         <source>Open External Application</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори спољну апликацију</translation>
     </message>
     <message>
         <source>The page at %1 wants to open an external application to handle this link:
@@ -5838,21 +5858,27 @@ Download and inspect it?</source>
 %2
 
 Allow it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Страница на %1 жели да отвори спољну апликацију за обраду ове везе:
+
+%2
+
+Дозволити?</translation>
     </message>
     <message>
         <source>Insecure Form Submission</source>
-        <translation type="unfinished"></translation>
+        <translation>Небезбедно слање образца</translation>
     </message>
     <message>
         <source>This form is sending information to %1 over an insecure connection.
 
 Anyone on the network could read or change the data — including passwords.</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај образац шаље податке на %1 преко небезбедне везе.
+
+Било ко на мрежи може прочитати или изменити податке — укључујући лозинке.</translation>
     </message>
     <message>
         <source>Submit Anyway</source>
-        <translation type="unfinished"></translation>
+        <translation>Ипак пошаљи</translation>
     </message>
     <message>
         <source>Error loading page: %1</source>
@@ -5876,131 +5902,131 @@ Anyone on the network could read or change the data — including passwords.</so
     </message>
     <message>
         <source>The secure (HTTPS) connection failed.  Plain HTTP requests to this site will show a warning before loading.</source>
-        <translation type="unfinished"></translation>
+        <translation>Безбедна (HTTPS) веза није успела. Обични HTTP захтеви овом сајту приказаће упозорење пре учитавања.</translation>
     </message>
     <message>
         <source>The secure (HTTPS) connection failed.  Plain HTTP requests to this site will be allowed for the rest of this session.</source>
-        <translation type="unfinished"></translation>
+        <translation>Безбедна (HTTPS) веза није успела. Обични HTTP захтеви овом сајту биће дозвољени до краја ове сесије.</translation>
     </message>
     <message>
         <source>Certificate error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка сертификата: %1</translation>
     </message>
     <message>
         <source>Error: %1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>Грешка: %1 (%2)</translation>
     </message>
     <message>
         <source>&lt;li&gt;Subject: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Субјект: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Issuer: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Издавач: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Valid from %1 to %2&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Важећи од %1 до %2&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Serial: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Серијски број: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;SHA-256 fingerprint: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;SHA-256 отисак: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Назад у сигурност&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Ипак настави (небезбедно)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
-        <translation type="unfinished"></translation>
+        <translation>Сертификат овог сајта није од поверења</translation>
     </message>
     <message>
         <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation type="unfinished"></translation>
+        <translation>Арора не може да провери идентитет %1. Сертификат који је сервер показао није исправан — наставак би могао изложити везу нападачу.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (издао %2, истиче %3)</translation>
     </message>
     <message>
         <source>Client Certificate Requested</source>
-        <translation type="unfinished"></translation>
+        <translation>Захтеван клијентски сертификат</translation>
     </message>
     <message>
         <source>The site at %1 asks you to identify yourself with a certificate.  Pick one to send, or cancel to continue without identifying yourself.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајт на %1 тражи да се идентификујете сертификатом. Изаберите један за слање или откажите да наставите без идентификације.</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Назад у сигурност&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Ипак настави (небезбедно)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Увек дозволи HTTP на овом сајту&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Небезбедна веза: %1</translation>
     </message>
     <message>
         <source>This site does not support HTTPS</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај сајт не подржава HTTPS</translation>
     </message>
     <message>
         <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Арора је зауставила учитавање %1 јер се може доћи само преко нешифроване HTTP везе. Било ко на мрежном путу може читати или мењати све што се шаље овом сајту или прима од њега — укључујући лозинке и колачиће.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Захтевана адреса: %1</translation>
     </message>
     <message>
         <source>The site may simply not offer a secure version, or the connection may have been stripped back to HTTP by a network attacker.</source>
-        <translation type="unfinished"></translation>
+        <translation>Сајт можда једноставно не нуди безбедну верзију, или је нападач на мрежи везу могао свести назад на HTTP.</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Назад у сигурност&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Ипак настави (небезбедно)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Опасан сајт блокиран: %1</translation>
     </message>
     <message>
         <source>This site is on the local phishing/malware blocklist</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај сајт је на локалној блок-листи фишинга/злонамерног софтвера</translation>
     </message>
     <message>
         <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation type="unfinished"></translation>
+        <translation>Арора је зауставила учитавање %1 јер је домен наведен као да служи фишинг или злонамеран софтвер. Посета му може украсти акредитиве или заразити овај рачунар.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
-        <translation type="unfinished"></translation>
+        <translation>Листа је локална копија — ниједан упит није напустио овај рачунар. Наставак се памти само за ову сесију.</translation>
     </message>
     <message>
         <source>Google rate-limited this connection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Google је ограничио ову везу.</translation>
     </message>
     <message>
         <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ово је Google-ова провера ботова, не Арорина грешка — привремено је означила саобраћај претраге из овог профила. Попуните захтев испод или покушајте касније; или промените подразумевани мотор претраге под Алатке &gt; Поставке &gt; Претрага.</translation>
     </message>
     <message>
         <source>Resending POST request</source>
@@ -6015,81 +6041,83 @@ Anyone on the network could read or change the data — including passwords.</so
     <name>WebPermissionManager</name>
     <message>
         <source>Audio capture (microphone)</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимање звука (микрофон)</translation>
     </message>
     <message>
         <source>Video capture (camera)</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимање видеа (камера)</translation>
     </message>
     <message>
         <source>Audio and video capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимање звука и видеа</translation>
     </message>
     <message>
         <source>Screen capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимање екрана</translation>
     </message>
     <message>
         <source>Screen and audio capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Снимање екрана и звука</translation>
     </message>
     <message>
         <source>Mouse lock</source>
-        <translation type="unfinished"></translation>
+        <translation>Закључавање миша</translation>
     </message>
     <message>
         <source>Notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>Обавештења</translation>
     </message>
     <message>
         <source>Geolocation</source>
-        <translation type="unfinished"></translation>
+        <translation>Геолокација</translation>
     </message>
     <message>
         <source>Clipboard read/write</source>
-        <translation type="unfinished"></translation>
+        <translation>Читање/писање клипборда</translation>
     </message>
     <message>
         <source>Local fonts</source>
-        <translation type="unfinished"></translation>
+        <translation>Локални фонтови</translation>
     </message>
     <message>
         <source>Unknown feature</source>
-        <translation type="unfinished"></translation>
+        <translation>Непозната функција</translation>
     </message>
     <message>
         <source>show notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>приказује обавештења</translation>
     </message>
     <message>
         <source>know your location</source>
-        <translation type="unfinished"></translation>
+        <translation>зна вашу локацију</translation>
     </message>
     <message>
         <source>take control of your mouse pointer</source>
-        <translation type="unfinished"></translation>
+        <translation>преузме контролу над показивачем миша</translation>
     </message>
     <message>
         <source>Permission Request</source>
-        <translation type="unfinished"></translation>
+        <translation>Захтев за дозволу</translation>
     </message>
     <message>
         <source>The page at %1 wants to %2.
 
 Allow it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Страница на %1 жели да %2.
+
+Дозволити?</translation>
     </message>
     <message>
         <source>Deny</source>
-        <translation type="unfinished"></translation>
+        <translation>Одбиј</translation>
     </message>
     <message>
         <source>Allow</source>
-        <translation type="unfinished">Дозволи</translation>
+        <translation>Дозволи</translation>
     </message>
     <message>
         <source>Remember this decision</source>
-        <translation type="unfinished"></translation>
+        <translation>Запамти ову одлуку</translation>
     </message>
 </context>
 <context>
@@ -6124,35 +6152,35 @@ Allow it?</source>
     </message>
     <message>
         <source>Open in New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори у новом &amp;приватном језичку</translation>
     </message>
     <message>
         <source>Open in New Pri&amp;vate Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори у новом при&amp;ватном прозору</translation>
     </message>
     <message>
         <source>Open in New T&amp;or Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори у новом T&amp;or прозору</translation>
     </message>
     <message>
         <source>No tor binary found — install tor or run BuildProcess/fetch-tor.sh</source>
-        <translation type="unfinished"></translation>
+        <translation>tor извршни фајл није пронађен — инсталирајте tor или покрените BuildProcess/fetch-tor.sh</translation>
     </message>
     <message>
         <source>Copy &amp;Clean Link</source>
-        <translation type="unfinished"></translation>
+        <translation>Копирај &amp;очишћену везу</translation>
     </message>
     <message>
         <source>Open Image in New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори слику у новом &amp;приватном језичку</translation>
     </message>
     <message>
         <source>Open Image in New Pri&amp;vate Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори слику у новом при&amp;ватном прозору</translation>
     </message>
     <message>
         <source>Open Image in New T&amp;or Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори слику у новом T&amp;or прозору</translation>
     </message>
     <message>
         <source>&amp;Save Image</source>
@@ -6168,31 +6196,31 @@ Allow it?</source>
     </message>
     <message>
         <source>Search Image with %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи слику помоћу %1</translation>
     </message>
     <message>
         <source>Could not decode the canvas image.</source>
-        <translation type="unfinished"></translation>
+        <translation>Не могу да декодирам слику canvas-а.</translation>
     </message>
     <message>
         <source>Picture-in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Слика у слици</translation>
     </message>
     <message>
         <source>Open &amp;Poster in New Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори &amp;постер у новом прозору</translation>
     </message>
     <message>
         <source>Open Poster in New &amp;Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори постер у новом &amp;језичку</translation>
     </message>
     <message>
         <source>Search with</source>
-        <translation type="unfinished"></translation>
+        <translation>Претражи помоћу</translation>
     </message>
     <message>
         <source>Show &amp;QR Code for This Page</source>
-        <translation type="unfinished"></translation>
+        <translation>Прикажи &amp;QR код ове странице</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -6200,15 +6228,15 @@ Allow it?</source>
     </message>
     <message>
         <source>This canvas cannot be read — it is tainted by cross-origin content.</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај canvas се не може прочитати — загађен је садржајем другог порекла.</translation>
     </message>
     <message>
         <source>No image found at that position.</source>
-        <translation type="unfinished"></translation>
+        <translation>На том положају слика није пронађена.</translation>
     </message>
     <message>
         <source>This video has no poster image.</source>
-        <translation type="unfinished"></translation>
+        <translation>Овај видео нема постер слику.</translation>
     </message>
     <message>
         <source>Search with...</source>
@@ -6251,7 +6279,7 @@ Allow it?</source>
     <name>WebViewSearch</name>
     <message>
         <source>%1/%2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1/%2</translation>
     </message>
     <message>
         <source>Not Found</source>
@@ -6262,46 +6290,46 @@ Allow it?</source>
     <name>ZoomControl</name>
     <message>
         <source>Zoom Out</source>
-        <translation type="unfinished"></translation>
+        <translation>Умањи</translation>
     </message>
     <message>
         <source>Reset Zoom</source>
-        <translation type="unfinished"></translation>
+        <translation>Врати увећање</translation>
     </message>
     <message>
         <source>Zoom In</source>
-        <translation type="unfinished"></translation>
+        <translation>Увећај</translation>
     </message>
     <message>
         <source>%1%</source>
-        <translation type="unfinished"></translation>
+        <translation>%1%</translation>
     </message>
 </context>
 <context>
     <name>main</name>
     <message>
         <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation type="unfinished"></translation>
+        <translation>Арора — лаки вишеплатформски веб прегледач.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
-        <translation type="unfinished"></translation>
+        <translation>УРЛ који се отвара при покретању.</translation>
     </message>
     <message>
         <source>Open a Tor window: a separate process that routes all traffic through a managed tor daemon&apos;s SOCKS5 listener on a dedicated off-the-record profile.</source>
-        <translation type="unfinished"></translation>
+        <translation>Отвори Tor прозор: засебан процес који усмерава сав саобраћај кроз SOCKS5 ослушник управљаног tor демона на наменском профилу ван евиденције.</translation>
     </message>
     <message>
         <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Покрени без сендбокса фајл система (исто као ARORA_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Испиши бекенд сендбокса, стање и активну политику, па изађи.</translation>
     </message>
     <message>
         <source>Internal: filesystem probe executed inside the sandbox (spawned by --sandbox-smoke).</source>
-        <translation type="unfinished"></translation>
+        <translation>Интерно: сонда фајл система извршена унутар сендбокса (покреће је --sandbox-smoke).</translation>
     </message>
 </context>
 </TS>
