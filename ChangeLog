@@ -86,6 +86,9 @@ UI:
 - Slimmer tab strip: per-tab close buttons no longer inflate the row
   and tab height is bounded to icon+text height, bringing the strip
   back to normal browser-tab size (TABS07).
+- Tor window tab strip: the masked private-browsing favicon on tor
+  tabs no longer renders clipped to a sliver — the page-icon widget is
+  pinned to the icon box so the badge is fully visible (TOR06).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) now raises the
   sidebar dock focused on the Bookmarks rail instead of opening a

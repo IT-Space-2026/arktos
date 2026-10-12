@@ -2557,6 +2557,15 @@ QLabel *TabWidget::animationLabel(int index, bool addMovie)
         // The label alternates between the loading spinner and the
         // page favicon inside a tab; give assistive tools a name for it.
         loadingAnimation->setAccessibleName(tr("Page Icon"));
+        // TOR06: setTabButton() shows the label and QWidget's
+        // first-show adjustSize() snaps it to the *current* size hint
+        // — an empty label's 7x14 — and latches it: the private/tor
+        // path below installs it before any pixmap exists, so the
+        // 16px masked favicon then painted center-clipped (a "half-
+        // hidden" icon at the strip's left edge).  Pin it to the icon
+        // box; every payload is 16px (loading.gif, icon.pixmap(16),
+        // privateBadgedPixmap).
+        loadingAnimation->setFixedSize(16, 16);
     }
     if (addMovie && !loadingAnimation->movie()) {
         QMovie *movie = new QMovie(QLatin1String(":graphics/loading.gif"), QByteArray(), loadingAnimation);
