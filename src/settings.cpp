@@ -130,6 +130,7 @@
 #include <qpushbutton.h>
 #include <qregularexpression.h>
 #include <qtreewidget.h>
+#include <qtoolbutton.h>
 #include <qboxlayout.h>
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
@@ -325,8 +326,11 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     }
     // SIDE02: the Panels checklist mirrors SidebarPanel's registered
     // sections — a panel added through registerPanel() shows up here
-    // automatically.  Check states are applied in loadFromSettings.
-    for (const SidebarPanel::Panel &panel : SidebarPanel::panels()) {
+    // automatically.  SIDE09: rows follow the persisted rail order
+    // (sidebar/panelOrder; registry order + appended newcomers when
+    // the key is absent).  Check states are applied in
+    // loadFromSettings.
+    for (const SidebarPanel::Panel &panel : SidebarPanel::orderedPanels()) {
         QListWidgetItem *item = new QListWidgetItem(
             AroraIcon::get(QLatin1String(panel.iconName)), panel.title,
             sidebarPanelsList);
@@ -334,6 +338,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }
+    // SIDE09: Vivaldi-style ▲▼ reorder buttons beside the list — the
+    // order is committed to sidebar/panelOrder on save.
+    connect(sidebarPanelsList, &QListWidget::currentRowChanged,
+            this, [this](int) { updateSidebarPanelButtonStates(); });
+    connect(sidebarPanelUpButton, &QToolButton::clicked,
+            this, [this]() { sidebarPanelMove(-1); });
+    connect(sidebarPanelDownButton, &QToolButton::clicked,
+            this, [this]() { sidebarPanelMove(1); });
+    updateSidebarPanelButtonStates();
     // PREFUI08: same icon+label list family as the nav — match its
     // enlarged font and extent for visual parity.
     sidebarPanelsList->setFont(navFont);
@@ -994,6 +1007,23 @@ void SettingsDialog::loadFromSettings()
         settings.value(QLatin1String("sidebarDockArea"),
                        int(Qt::LeftDockWidgetArea)).toInt()
             == int(Qt::RightDockWidgetArea) ? 1 : 0);
+    // SIDE09: re-sync the row order to the persisted panel order so
+    // a discarded reorder (or another instance's save) can't linger —
+    // rows just takeItem/insertItem into sidebar/panelOrder sequence.
+    const QList<SidebarPanel::Panel> orderedPanels =
+        SidebarPanel::orderedPanels();
+    for (int want = 0; want < orderedPanels.size(); ++want) {
+        for (int row = want; row < sidebarPanelsList->count(); ++row) {
+            if (sidebarPanelsList->item(row)
+                    ->data(Qt::UserRole).toByteArray()
+                == orderedPanels.at(want).id) {
+                if (row != want)
+                    sidebarPanelsList->insertItem(
+                        want, sidebarPanelsList->takeItem(row));
+                break;
+            }
+        }
+    }
     // SIDE02: which panels the rail offers — default on, keyed under
     // sidebar/panels/<id> by the registered id in each row's UserRole.
     for (int row = 0; row < sidebarPanelsList->count(); ++row) {
@@ -1009,6 +1039,25 @@ void SettingsDialog::loadFromSettings()
     const int iconThemeIndex = iconThemeCombo->findData(iconTheme);
     iconThemeCombo->setCurrentIndex(iconThemeIndex < 0 ? 0 : iconThemeIndex);
     settings.endGroup();
+
+    // SIDE09: the working panel options live under sidebar/ (outside
+    // the MainWindow group like sidebar/panels and sidebar/panelOrder)
+    // and apply live through each window's applySidebarSettings().
+    sidebarShowToggleCheck->setChecked(
+        settings.value(QLatin1String("sidebar/showPanelToggle"), true)
+            .toBool());
+    sidebarShowCloseCheck->setChecked(
+        settings.value(QLatin1String("sidebar/showCloseButton"), true)
+            .toBool());
+    sidebarAutoCloseCheck->setChecked(
+        settings.value(QLatin1String("sidebar/autoCloseInactive"), false)
+            .toBool());
+    sidebarFolderCountersCheck->setChecked(
+        settings.value(QLatin1String("sidebar/folderCounters"), true)
+            .toBool());
+    sidebarLazyLoadCheck->setChecked(
+        settings.value(QLatin1String("sidebar/lazyLoad"), false)
+            .toBool());
 
     settings.beginGroup(QLatin1String("history"));
     int historyExpire = settings.value(QLatin1String("historyLimit")).toInt();
@@ -1423,16 +1472,36 @@ void SettingsDialog::saveToSettings()
     // under sidebar/panels/, not this group — write through the
     // panel's own helpers).  Live application happens below via each
     // window's applySidebarSettings().
+    QStringList panelOrder;
     for (int row = 0; row < sidebarPanelsList->count(); ++row) {
         QListWidgetItem *item = sidebarPanelsList->item(row);
-        if (item)
-            SidebarPanel::setPanelVisible(
-                item->data(Qt::UserRole).toByteArray(),
-                item->checkState() == Qt::Checked);
+        if (!item)
+            continue;
+        SidebarPanel::setPanelVisible(
+            item->data(Qt::UserRole).toByteArray(),
+            item->checkState() == Qt::Checked);
+        // SIDE09: the row order is the rail order.
+        panelOrder.append(QString::fromLatin1(
+            item->data(Qt::UserRole).toByteArray()));
     }
     const QString iconTheme = iconThemeCombo->currentData().toString();
     settings.setValue(QLatin1String("iconTheme"), iconTheme);
     settings.endGroup();
+
+    // SIDE09: sidebar/* keys — the rail order and the working panel
+    // options.  Each window's applySidebarSettings() in the fan-out
+    // below re-reads them and reorders/hides/shows live.
+    SidebarPanel::setPanelOrder(panelOrder);
+    settings.setValue(QLatin1String("sidebar/showPanelToggle"),
+                      sidebarShowToggleCheck->isChecked());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"),
+                      sidebarShowCloseCheck->isChecked());
+    settings.setValue(QLatin1String("sidebar/autoCloseInactive"),
+                      sidebarAutoCloseCheck->isChecked());
+    settings.setValue(QLatin1String("sidebar/folderCounters"),
+                      sidebarFolderCountersCheck->isChecked());
+    settings.setValue(QLatin1String("sidebar/lazyLoad"),
+                      sidebarLazyLoadCheck->isChecked());
     // Applies to existing icons live — QIcon theme lookups re-resolve
     // on setThemeName, no widget rewiring needed.
     AroraIcon::setTheme(iconTheme);
@@ -1843,6 +1912,29 @@ void SettingsDialog::openPage(QWidget *context, Page page)
                      dialog, &QWidget::close);
     dialog->openAtPage(page);
     dialog->show();
+}
+
+// SIDE09: ▲▼ — moves the selected Panels row by offset slots, keeping
+// it selected.  The list row order is what saveToSettings writes to
+// sidebar/panelOrder.
+void SettingsDialog::sidebarPanelMove(int offset)
+{
+    const int row = sidebarPanelsList->currentRow();
+    const int target = row + offset;
+    if (row < 0 || target < 0 || target >= sidebarPanelsList->count())
+        return;
+    sidebarPanelsList->insertItem(target,
+                                  sidebarPanelsList->takeItem(row));
+    sidebarPanelsList->setCurrentRow(target);
+    updateSidebarPanelButtonStates();
+}
+
+void SettingsDialog::updateSidebarPanelButtonStates()
+{
+    const int row = sidebarPanelsList->currentRow();
+    sidebarPanelUpButton->setEnabled(row > 0);
+    sidebarPanelDownButton->setEnabled(
+        row >= 0 && row < sidebarPanelsList->count() - 1);
 }
 
 void SettingsDialog::resetSearchSettings()

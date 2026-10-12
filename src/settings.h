@@ -224,6 +224,11 @@ private slots:
     // title or control labels match the typed terms.
     void filterPages(const QString &text);
 
+    // SIDE09: ▲▼ reorder for the Appearance > Sidebar Panels list —
+    // the committed order lands in sidebar/panelOrder on save.
+    void sidebarPanelMove(int offset);
+    void updateSidebarPanelButtonStates();
+
     // THEME02: the Appearance Theme combo previews instantly — the
     // palette flips on index change without touching the persisted
     // key; closing the page un-committed undoes the preview.

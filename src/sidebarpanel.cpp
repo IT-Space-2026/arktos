@@ -36,6 +36,7 @@
 #include <qcombobox.h>
 #include <qcursor.h>
 #include <qdesktopservices.h>
+#include <qevent.h>
 #include <qfileinfo.h>
 #include <qheaderview.h>
 #include <qlabel.h>
@@ -46,6 +47,7 @@
 #include <qpushbutton.h>
 #include <qsettings.h>
 #include <qshortcut.h>
+#include <QSignalBlocker>
 #include <qsortfilterproxymodel.h>
 #include <qstyleditemdelegate.h>
 #include <qstyle.h>
@@ -187,6 +189,43 @@ public:
     }
 };
 
+// SIDE09 'Show Folder Counters': real folder rows carry their child
+// count as a " (n)" suffix on DisplayRole only — EditRole stays the
+// clean title so the rename editor never sees the suffix, the flag
+// is consulted at call time so toggling the option only needs a
+// repaint (applyOptions pokes the viewport), and the two structural
+// root rows (Bookmarks Menu/Toolbar, children of the invisible root)
+// stay untagged.
+class SidebarBookmarksModel : public TreeSortFilterProxyModel
+{
+public:
+    explicit SidebarBookmarksModel(QObject *parent = nullptr)
+        : TreeSortFilterProxyModel(parent)
+    {
+    }
+
+    QVariant data(const QModelIndex &index, int role) const override
+    {
+        const QVariant value =
+            TreeSortFilterProxyModel::data(index, role);
+        if (role != Qt::DisplayRole || index.column() != 0
+            || !SidebarPanel::showsFolderCounters())
+            return value;
+        QAbstractItemModel *model = sourceModel();
+        if (!model)
+            return value;
+        const BookmarkNode *node = static_cast<BookmarksModel *>(model)
+            ->node(mapToSource(index));
+        if (node && node->type() == BookmarkNode::Folder
+            && node->parent()
+            && node->parent()->type() != BookmarkNode::Root
+            && !node->children().isEmpty())
+            return value.toString()
+                + QStringLiteral(" (%1)").arg(node->children().count());
+        return value;
+    }
+};
+
 // SIDE02: the dock's section switcher — a vertical icon rail like
 // Vivaldi's.  A stock West-shaped QTabBar would rotate each entry's
 // text AND icon; this bar keeps the tab text (tooltips and the a11y
@@ -197,6 +236,7 @@ class SidebarRail : public QTabBar
 public:
     explicit SidebarRail(QWidget *parent = nullptr)
         : QTabBar(parent)
+        , m_toggle(new QToolButton(this))
     {
         setShape(RoundedWest);
         setExpanding(false);
@@ -204,6 +244,26 @@ public:
         const int extent =
             style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
         setIconSize(QSize(extent, extent));
+
+        // SIDE09 'Show Panel Toggle': the fold button at the rail's
+        // foot, like Vivaldi's panel toggle — clicking it closes the
+        // sidebar (the rail only exists while the dock is up).
+        m_toggle->setObjectName(QLatin1String("sidebarPanelToggle"));
+        m_toggle->setAutoRaise(true);
+        m_toggle->setIcon(SidebarPanel::icon(this));
+        m_toggle->setToolTip(SidebarPanel::tr("Hide sidebar"));
+        m_toggle->setAccessibleName(SidebarPanel::tr("Hide sidebar"));
+        m_toggle->setFixedSize(extent + 8, extent + 8);
+    }
+
+    QToolButton *toggleButton() const
+    {
+        return m_toggle;
+    }
+
+    void setToggleVisible(bool visible)
+    {
+        m_toggle->setVisible(visible);
     }
 
     QSize tabSizeHint(int index) const override
@@ -217,6 +277,19 @@ public:
     {
         return tabSizeHint(index);
     }
+
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QTabBar::resizeEvent(event);
+        // The cells are top-packed (setExpanding false), so the rail's
+        // dead bottom band hosts the toggle — centered across the
+        // strip whichever edge it sits on.
+        m_toggle->move(qMax(0, (width() - m_toggle->width()) / 2),
+                       qMax(0, height() - m_toggle->height() - 2));
+    }
+
+private:
+    QToolButton *m_toggle;
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -267,6 +340,13 @@ public:
     }
 };
 
+bool SidebarPanel::s_folderCounters = true;
+
+bool SidebarPanel::showsFolderCounters()
+{
+    return s_folderCounters;
+}
+
 SidebarPanel::SidebarPanel(QWidget *parent)
     : QWidget(parent)
     , m_tabs(new SidebarTabWidget(this))
@@ -282,10 +362,30 @@ SidebarPanel::SidebarPanel(QWidget *parent)
 
     // Every rail entry is an icon-only tab — the title rides the
     // tooltip + accessible name instead of rendering as rotated text.
-    applyPanelVisibility();
+    // The option reads run before the population so lazy load can
+    // park placeholders (s_folderCounters syncs for the model's
+    // first fetch too).
+    const QSettings bootSettings;
+    m_lazyLoad = bootSettings.value(QLatin1String("sidebar/lazyLoad"),
+                                    false).toBool();
+    s_folderCounters = bootSettings.value(
+        QLatin1String("sidebar/folderCounters"), true).toBool();
+    {
+        // Blocked so inserting the first page can't select (and under
+        // lazy load eagerly build) index 0 ahead of the stored
+        // currentTab restore below.
+        const QSignalBlocker blocker(m_tabs);
+        applyPanelVisibility();
+    }
 
     connect(m_tabs, &QTabWidget::currentChanged,
+            this, [this](int index) { buildPendingTab(index); });
+    connect(m_tabs, &QTabWidget::currentChanged,
             m_autoSaver, &AutoSaver::changeOccurred);
+    // The rail's fold button lands on the same signal as the page
+    // header's close X — the host folds the dock.
+    connect(static_cast<SidebarRail *>(m_tabs->tabBar())->toggleButton(),
+            &QToolButton::clicked, this, &SidebarPanel::closeRequested);
 
     QSettings settings;
     if (m_notes)
@@ -295,6 +395,11 @@ SidebarPanel::SidebarPanel(QWidget *parent)
                         .toInt();
     if (tab >= 0 && tab < m_tabs->count())
         m_tabs->setCurrentIndex(tab);
+    // Lazy load: the restored (or first) page materializes on demand —
+    // when the stored index already is current nothing emitted, so
+    // kick the swap explicitly.
+    buildPendingTab(m_tabs->currentIndex());
+    applyOptions();
 }
 
 // The registered rail entries, in display order.  Built-ins resolve
@@ -352,6 +457,37 @@ void SidebarPanel::setPanelVisible(const QByteArray &id, bool visible)
     QSettings().setValue(sidebarPanelKey(id), visible);
 }
 
+QStringList SidebarPanel::panelOrder()
+{
+    return QSettings().value(QLatin1String("sidebar/panelOrder"))
+        .toStringList();
+}
+
+void SidebarPanel::setPanelOrder(const QStringList &order)
+{
+    QSettings().setValue(QLatin1String("sidebar/panelOrder"), order);
+}
+
+// Registered panels re-sequenced by the persisted order — the rail
+// and the Preferences checklist both read this, and registry() order
+// remains the fallback for anything the key doesn't mention.
+QList<SidebarPanel::Panel> SidebarPanel::orderedPanels()
+{
+    QList<Panel> rest = registry();
+    QList<Panel> ordered;
+    for (const QString &id : panelOrder()) {
+        const QByteArray key = id.toLatin1();
+        for (int i = 0; i < rest.size(); ++i) {
+            if (rest.at(i).id == key) {
+                ordered.append(rest.takeAt(i));
+                break;
+            }
+        }
+    }
+    ordered += rest;
+    return ordered;
+}
+
 int SidebarPanel::indexOfPanel(const QByteArray &id) const
 {
     for (int i = 0; i < m_tabs->count(); ++i) {
@@ -364,20 +500,31 @@ int SidebarPanel::indexOfPanel(const QByteArray &id) const
 
 void SidebarPanel::applyPanelVisibility()
 {
-    const QList<Panel> available = panels();
-    for (const Panel &panel : available) {
+    // SIDE09: the persisted order (sidebar/panelOrder) is the rail
+    // order — the registry only seeds it.
+    const QList<Panel> ordered = orderedPanels();
+    for (const Panel &panel : ordered) {
         const int index = indexOfPanel(panel.id);
         if (isPanelVisible(panel.id)) {
             if (index >= 0)
                 continue;
-            QWidget *page = panel.create ? panel.create(this) : nullptr;
+            QWidget *page = nullptr;
+            // SIDE09 lazy load: a placeholder holds the rail slot
+            // until the section is first selected (buildPendingTab
+            // swaps the real page in on currentChanged).
+            if (m_lazyLoad) {
+                page = new QWidget(m_tabs);
+                page->setProperty("sidebarPanelPending", true);
+            } else if (panel.create) {
+                page = panel.create(this);
+            }
             if (!page)
                 continue;
             page->setProperty("sidebarPanelId", panel.id);
-            // Registry order is the rail order — slot the page behind
-            // the enabled panels registered before it.
+            // Persisted order is the rail order — slot the page
+            // behind the enabled panels listed before it.
             int position = 0;
-            for (const Panel &earlier : available) {
+            for (const Panel &earlier : ordered) {
                 if (earlier.id == panel.id)
                     break;
                 if (indexOfPanel(earlier.id) >= 0)
@@ -400,6 +547,93 @@ void SidebarPanel::applyPanelVisibility()
             page->deleteLater();
         }
     }
+    // Reorder pass — moveTab fix-ups for entries that moved relative
+    // to the persisted order; a no-op when the rail already matches.
+    int want = 0;
+    for (const Panel &panel : ordered) {
+        const int at = indexOfPanel(panel.id);
+        if (at < 0)
+            continue;
+        if (at != want)
+            m_tabs->tabBar()->moveTab(at, want);
+        ++want;
+    }
+}
+
+// SIDE09 lazy load — the placeholder carries the rail slot until the
+// page is first selected; the real page swaps in at the same index,
+// keeping the icon, title and tooltip the slot already had.
+void SidebarPanel::buildPendingTab(int index)
+{
+    QWidget *pending = index >= 0 ? m_tabs->widget(index) : nullptr;
+    if (!pending || !pending->property("sidebarPanelPending").toBool())
+        return;
+    const QByteArray id =
+        pending->property("sidebarPanelId").toByteArray();
+    const Panel *desc = nullptr;
+    const QList<Panel> all = panels();
+    for (const Panel &panel : all) {
+        if (panel.id == id) {
+            desc = &panel;
+            break;
+        }
+    }
+    if (!desc || !desc->create)
+        return;
+    QWidget *page = desc->create(this);
+    if (!page)
+        return;
+    page->setProperty("sidebarPanelId", id);
+    const QIcon icon = m_tabs->tabIcon(index);
+    // Blocked: the remove/insert swap shouldn't fire currentChanged
+    // (and the autosaver) for a purely mechanical page swap.  Only
+    // re-point the current index when the placeholder itself was
+    // current — building a background slot must not steal selection.
+    const bool wasCurrent = m_tabs->currentIndex() == index;
+    const QSignalBlocker blocker(m_tabs);
+    m_tabs->removeTab(index);
+    pending->deleteLater();
+    const int at = m_tabs->insertTab(index, page, icon, desc->title);
+    m_tabs->setTabToolTip(at, desc->title);
+    if (wasCurrent)
+        m_tabs->setCurrentIndex(at);
+}
+
+// SIDE09: apply the working panel options — every checkbox in the
+// Preferences Sidebar group maps to one of these switches (the dock
+// title-bar close button and auto-close live in BrowserMainWindow's
+// applySidebarSettings, which calls this).
+void SidebarPanel::applyOptions()
+{
+    const QSettings settings;
+    // 'Show Panel Toggle' — the rail's fold button.
+    static_cast<SidebarRail *>(m_tabs->tabBar())->setToggleVisible(
+        settings.value(QLatin1String("sidebar/showPanelToggle"), true)
+            .toBool());
+    // 'Show Close Button' — the page-header X (Downloads is the one
+    // page that carries a header).
+    if (m_downloadsPage) {
+        if (QWidget *closeX = m_downloadsPage->findChild<QWidget *>(
+                QLatin1String("sidebarCloseButton")))
+            closeX->setVisible(settings.value(
+                QLatin1String("sidebar/showCloseButton"), true).toBool());
+    }
+    // 'Show Folder Counters' — flag only; the bookmarks model
+    // consults it on fetch, so a repaint is the whole apply.
+    s_folderCounters = settings.value(
+        QLatin1String("sidebar/folderCounters"), true).toBool();
+    if (m_bookmarksView)
+        m_bookmarksView->viewport()->update();
+    // 'Lazy Load' — affects what applyPanelVisibility inserts.
+    // Turning it off materializes every still-pending page at once.
+    const bool lazy = settings.value(QLatin1String("sidebar/lazyLoad"),
+                                     false).toBool();
+    if (m_lazyLoad && !lazy) {
+        m_lazyLoad = false;
+        for (int i = 0; i < m_tabs->count(); ++i)
+            buildPendingTab(i);
+    }
+    m_lazyLoad = lazy;
 }
 
 // Bookmarks — the shared model behind the dialog/toolbar, with the
@@ -414,7 +648,9 @@ QWidget *SidebarPanel::buildBookmarksPage()
     SearchLineEdit *bookmarksSearch = new SearchLineEdit(bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
     m_bookmarksView = new EditTreeView(bookmarksPage);
-    m_bookmarksProxy = new TreeSortFilterProxyModel(m_bookmarksView);
+    // SIDE09: 'Show Folder Counters' — a proxy that appends " (n)"
+    // to folder rows on DisplayRole only.
+    m_bookmarksProxy = new SidebarBookmarksModel(m_bookmarksView);
     m_bookmarksView->setObjectName(QLatin1String("sidebarBookmarksView"));
     m_bookmarksView->setAccessibleName(tr("Bookmarks"));
     m_bookmarksView->setUniformRowHeights(true);
@@ -810,12 +1046,21 @@ QWidget *SidebarPanel::bookmarksPage() const
     return m_bookmarksPage;
 }
 
+// SIDE09: id-keyed select — a lazy placeholder materializes first,
+// and a panel unchecked in Preferences simply isn't on the rail (the
+// dock still raises, nothing selects).
+void SidebarPanel::showPanel(const QByteArray &id)
+{
+    const int index = indexOfPanel(id);
+    if (index < 0)
+        return;
+    buildPendingTab(index);
+    m_tabs->setCurrentIndex(index);
+}
+
 void SidebarPanel::showDownloads()
 {
-    // The user may have unchecked Downloads in Preferences — then the
-    // dock still raises (the caller shows it) but nothing selects.
-    if (m_downloadsPage && m_tabs->indexOf(m_downloadsPage) >= 0)
-        m_tabs->setCurrentWidget(m_downloadsPage);
+    showPanel(QByteArrayLiteral("downloads"));
 }
 
 // SIDE06: the rail hugs the dock's outer edge — icons on the left
@@ -829,10 +1074,7 @@ void SidebarPanel::setDockSide(Qt::DockWidgetArea area)
 
 void SidebarPanel::showBookmarks()
 {
-    // Same hidden-panel degrade as showDownloads(): the dock still
-    // raises even when the user unchecked Bookmarks in Preferences.
-    if (m_bookmarksPage && m_tabs->indexOf(m_bookmarksPage) >= 0)
-        m_tabs->setCurrentWidget(m_bookmarksPage);
+    showPanel(QByteArrayLiteral("bookmarks"));
 }
 
 void SidebarPanel::applyDownloadSort()

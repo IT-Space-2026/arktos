@@ -87,6 +87,8 @@ private slots:
     void sidebarSettings();
     void sidebarPositionPicker();
     void sidebarPanelsListGeometry();
+    void sidebarPanelReorder();
+    void sidebarPanelOptions();
     void settingsFilter();
     void iconThemeSelector();
     void themeSelector();
@@ -1056,6 +1058,143 @@ void tst_SettingsDialog::sidebarPanelsListGeometry()
     QVERIFY(list->width() < dialog.sidebarGroupBox->width() / 2);
 
     dialog.close();
+}
+
+// SIDE09: the Panels checklist carries Vivaldi-style ▲▼ reorder
+// buttons — edge rows disable the matching arrow, the committed row
+// order persists to sidebar/panelOrder (which drives the rail), a
+// reopened dialog shows it, and Cancel leaves the key alone.
+void tst_SettingsDialog::sidebarPanelReorder()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+
+    {
+        SettingsDialog dialog;
+        QListWidget *list = dialog.sidebarPanelsList;
+        const int count = list->count();
+        QVERIFY(count >= 3);
+
+        // Edge states — nothing selected, top row, bottom row.
+        QVERIFY(!dialog.sidebarPanelUpButton->isEnabled());
+        QVERIFY(!dialog.sidebarPanelDownButton->isEnabled());
+        list->setCurrentRow(0);
+        QVERIFY(!dialog.sidebarPanelUpButton->isEnabled());
+        QVERIFY(dialog.sidebarPanelDownButton->isEnabled());
+        list->setCurrentRow(count - 1);
+        QVERIFY(dialog.sidebarPanelUpButton->isEnabled());
+        QVERIFY(!dialog.sidebarPanelDownButton->isEnabled());
+        list->setCurrentRow(0);
+
+        const QByteArray first =
+            list->item(0)->data(Qt::UserRole).toByteArray();
+        const QByteArray second =
+            list->item(1)->data(Qt::UserRole).toByteArray();
+        dialog.sidebarPanelDownButton->click();
+        QCOMPARE(list->item(0)->data(Qt::UserRole).toByteArray(),
+                 second);
+        QCOMPARE(list->item(1)->data(Qt::UserRole).toByteArray(),
+                 first);
+        // The moved row keeps the selection.
+        QCOMPARE(list->currentRow(), 1);
+        dialog.sidebarPanelUpButton->click();
+        QCOMPARE(list->item(0)->data(Qt::UserRole).toByteArray(),
+                 first);
+        QCOMPARE(list->currentRow(), 0);
+
+        // Commit: the bottom panel moves up one slot and the row
+        // order lands in sidebar/panelOrder.
+        const QByteArray last =
+            list->item(count - 1)->data(Qt::UserRole).toByteArray();
+        const QByteArray above =
+            list->item(count - 2)->data(Qt::UserRole).toByteArray();
+        list->setCurrentRow(count - 1);
+        dialog.sidebarPanelUpButton->click();
+        dialog.accept();
+        const QStringList saved = SidebarPanel::panelOrder();
+        QCOMPARE(saved.size(), count);
+        QCOMPARE(saved.at(count - 2).toLatin1(), last);
+        QCOMPARE(saved.at(count - 1).toLatin1(), above);
+    }
+    // A reopened dialog lists rows in the persisted order, and a
+    // reorder cancelled out never touches the key.
+    {
+        const QStringList saved = SidebarPanel::panelOrder();
+        SettingsDialog reload;
+        for (int row = 0; row < reload.sidebarPanelsList->count();
+                ++row)
+            QCOMPARE(reload.sidebarPanelsList->item(row)
+                         ->data(Qt::UserRole).toByteArray(),
+                     saved.at(row).toLatin1());
+        reload.sidebarPanelsList->setCurrentRow(0);
+        reload.sidebarPanelDownButton->click();
+        reload.reject();
+        QCOMPARE(SidebarPanel::panelOrder(), saved);
+    }
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+}
+
+// SIDE09: the Sidebar group hosts five working panel options — every
+// rendered checkbox maps to a sidebar/* key (defaults and the accept
+// round-trip verified here; the rail/dock effects live in
+// tst_BrowserMainWindow::sidebarPanelOptions).
+void tst_SettingsDialog::sidebarPanelOptions()
+{
+    QSettings settings;
+    const char *const keys[] = {
+        "sidebar/showPanelToggle", "sidebar/showCloseButton",
+        "sidebar/autoCloseInactive", "sidebar/folderCounters",
+        "sidebar/lazyLoad"
+    };
+    for (const char *key : keys)
+        settings.remove(QLatin1String(key));
+
+    {
+        SettingsDialog dialog;
+        // Compiled defaults: both affordances + counters on,
+        // auto-close + lazy load off.
+        QVERIFY(dialog.sidebarShowToggleCheck->isChecked());
+        QVERIFY(dialog.sidebarShowCloseCheck->isChecked());
+        QVERIFY(!dialog.sidebarAutoCloseCheck->isChecked());
+        QVERIFY(dialog.sidebarFolderCountersCheck->isChecked());
+        QVERIFY(!dialog.sidebarLazyLoadCheck->isChecked());
+        // All five live inside the Appearance page's Sidebar group —
+        // no dead controls elsewhere.
+        for (QWidget *box : { static_cast<QWidget *>(dialog.sidebarShowToggleCheck),
+                              static_cast<QWidget *>(dialog.sidebarShowCloseCheck),
+                              static_cast<QWidget *>(dialog.sidebarAutoCloseCheck),
+                              static_cast<QWidget *>(dialog.sidebarFolderCountersCheck),
+                              static_cast<QWidget *>(dialog.sidebarLazyLoadCheck) })
+            QCOMPARE(box->parentWidget(),
+                     static_cast<QWidget *>(dialog.sidebarGroupBox));
+
+        dialog.sidebarAutoCloseCheck->setChecked(true);
+        dialog.sidebarLazyLoadCheck->setChecked(true);
+        dialog.sidebarShowCloseCheck->setChecked(false);
+        dialog.sidebarFolderCountersCheck->setChecked(false);
+        dialog.accept();
+    }
+    for (const char *key : keys)
+        QVERIFY(settings.contains(QLatin1String(key)));
+    QCOMPARE(settings.value(QLatin1String("sidebar/autoCloseInactive"))
+                 .toBool(), true);
+    QCOMPARE(settings.value(QLatin1String("sidebar/lazyLoad")).toBool(),
+             true);
+    QCOMPARE(settings.value(QLatin1String("sidebar/showCloseButton"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("sidebar/folderCounters"))
+                 .toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("sidebar/showPanelToggle"))
+                 .toBool(), true);
+    {
+        SettingsDialog reload;
+        QVERIFY(reload.sidebarAutoCloseCheck->isChecked());
+        QVERIFY(reload.sidebarLazyLoadCheck->isChecked());
+        QVERIFY(!reload.sidebarShowCloseCheck->isChecked());
+        QVERIFY(!reload.sidebarFolderCountersCheck->isChecked());
+    }
+    for (const char *key : keys)
+        settings.remove(QLatin1String(key));
 }
 
 // PREFUI03: the nav filter field narrows the sidebar by page title

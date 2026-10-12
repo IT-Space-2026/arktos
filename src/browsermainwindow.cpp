@@ -201,6 +201,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_sidebarWidthTimer(new QTimer(this))
     , m_applyingSidebarWidth(false)
     , m_sidebarWidthApplied(false)
+    , m_sidebarAutoClose(false)
     , m_navigationBar(nullptr)
     , m_navigationSplitter(nullptr)
     , m_readerModeButton(nullptr)
@@ -521,6 +522,21 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     // the grip hides while it floats.
     connect(m_sidebarDock, &QDockWidget::topLevelChanged,
             this, [this](bool) { updateSidebarGripPlacement(); });
+    // SIDE09: 'Auto-Close Inactive Panel' — fold the dock when focus
+    // lands on a widget in this window outside the sidebar (the page,
+    // the location bar, a menu's parent...).  Menus/popups raised
+    // from the panel itself don't count, focus leaving the window
+    // entirely keeps the dock up, and a floating dock never folds.
+    connect(qApp, &QApplication::focusChanged,
+            this, [this](QWidget *, QWidget *now) {
+        if (!m_sidebarAutoClose || !m_sidebarDock->isVisible()
+            || m_sidebarDock->isFloating() || !now
+            || now->window() != this || m_sidebarDock->isAncestorOf(now)
+            || QApplication::activePopupWidget()
+            || QApplication::activeModalWidget())
+            return;
+        m_sidebarDock->hide();
+    });
     // RSZ02: debounce for dock width persistence — a native edge
     // drag emits a Resize per pixel; the write lands once the drag
     // ends.
@@ -1826,7 +1842,23 @@ void BrowserMainWindow::applySidebarSettings()
         // SIDE06: keep the rail on the outer edge after a
         // settings-driven dock move.
         m_sidebarPanel->setDockSide(area);
+        // SIDE09: the working panel options (rail toggle, page-header
+        // X, folder counters, lazy load) re-read their keys here.
+        m_sidebarPanel->applyOptions();
     }
+    // SIDE09: 'Auto-Close Inactive Panel' — the focusChanged hook.
+    m_sidebarAutoClose = settings.value(
+        QLatin1String("sidebar/autoCloseInactive"), false).toBool();
+    // SIDE09: 'Show Close Button' — the dock's title-bar X joins the
+    // per-panel header X the panel itself gates.
+    QDockWidget::DockWidgetFeatures features = m_sidebarDock->features();
+    if (settings.value(QLatin1String("sidebar/showCloseButton"), true)
+            .toBool())
+        features |= QDockWidget::DockWidgetClosable;
+    else
+        features &= ~QDockWidget::DockWidgetClosable;
+    if (features != m_sidebarDock->features())
+        m_sidebarDock->setFeatures(features);
     // RSZ02: the stored width lands before the dock shows; the
     // dock's first Show re-applies it via the event filter.
     applySidebarWidth();

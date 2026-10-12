@@ -150,6 +150,8 @@ private slots:
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
+    void sidebarPanelOrder();
+    void sidebarPanelOptions();
     void sidebarGripResize();
     void downloadsSidebarPanel();
     void downloadsSidebarFinishedRows();
@@ -3147,6 +3149,224 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
     settings.remove(QLatin1String("sidebar/panels"));
+    closeWindow(window);
+}
+
+// SIDE09: the rail follows sidebar/panelOrder — written by the prefs
+// ▲▼ buttons — applied live by applySidebarSettings (no rebuild),
+// composed with per-panel visibility, and carried into a fresh
+// window.  Ids the key doesn't mention append in registry order.
+void tst_BrowserMainWindow::sidebarPanelOrder()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.remove(QLatin1String("sidebar/panels"));
+
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+    SubWindow *window = new SubWindow;
+    window->show();
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
+
+    // A full reorder re-sequences the rail live.
+    SidebarPanel::setPanelOrder(
+        QStringList{ QLatin1String("notes"), QLatin1String("bookmarks"),
+                     QLatin1String("history"),
+                     QLatin1String("downloads") });
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Notes"));
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
+    QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Downloads"));
+
+    // A partial order keeps the named ids up front and appends the
+    // rest in registry order.
+    SidebarPanel::setPanelOrder(
+        QStringList{ QLatin1String("downloads"),
+                     QLatin1String("bookmarks") });
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
+    QCOMPARE(panel->tabs()->tabText(1), QLatin1String("Bookmarks"));
+    QCOMPARE(panel->tabs()->tabText(2), QLatin1String("History"));
+    QCOMPARE(panel->tabs()->tabText(3), QLatin1String("Notes"));
+
+    // Order and visibility compose — hiding the front entry pulls the
+    // next one up, restoring lands it back in its ordered slot.
+    SidebarPanel::setPanelVisible("downloads", false);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 3);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Bookmarks"));
+    SidebarPanel::setPanelVisible("downloads", true);
+    window->applySidebarSettings();
+    QCOMPARE(panel->tabs()->count(), 4);
+    QCOMPARE(panel->tabs()->tabText(0), QLatin1String("Downloads"));
+
+    // The order survives a fresh window's construction.
+    SubWindow *window2 = new SubWindow;
+    window2->show();
+    QVERIFY(window2->sidebarPanel());
+    QCOMPARE(window2->sidebarPanel()->tabs()->tabText(0),
+             QLatin1String("Downloads"));
+    QCOMPARE(window2->sidebarPanel()->tabs()->tabText(1),
+             QLatin1String("Bookmarks"));
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
+}
+
+// SIDE09: every option rendered in the prefs Sidebar group does
+// something real — the rail's fold button, the close-button pair,
+// focus-loss auto-close, lazy panel construction and bookmark folder
+// counters all flip live through applySidebarSettings.
+void tst_BrowserMainWindow::sidebarPanelOptions()
+{
+    QSettings settings;
+    const char *const optionKeys[] = {
+        "sidebar/showPanelToggle", "sidebar/showCloseButton",
+        "sidebar/autoCloseInactive", "sidebar/folderCounters",
+        "sidebar/lazyLoad"
+    };
+    for (const char *key : optionKeys)
+        settings.remove(QLatin1String(key));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.setValue(QLatin1String("MainWindow/showSidebar"), true);
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->activateWindow();
+    QDockWidget *dock = window->sidebarDock();
+    QTRY_VERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+
+    // 'Show Panel Toggle' — the fold button at the rail's foot hides
+    // the dock like the page-header X.
+    QToolButton *toggle = panel->findChild<QToolButton *>(
+        QLatin1String("sidebarPanelToggle"));
+    QVERIFY(toggle);
+    QVERIFY(toggle->isVisible());
+    toggle->click();
+    QTRY_VERIFY(!dock->isVisible());
+    dock->setVisible(true);
+    QTRY_VERIFY(dock->isVisible());
+    settings.setValue(QLatin1String("sidebar/showPanelToggle"), false);
+    window->applySidebarSettings();
+    QVERIFY(toggle->isHidden());
+    settings.setValue(QLatin1String("sidebar/showPanelToggle"), true);
+    window->applySidebarSettings();
+    QVERIFY(toggle->isVisible());
+
+    // 'Show Close Button' — the dock's title-bar X and the Downloads
+    // header X share the switch.
+    QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QWidget *headerX = panel->findChild<QWidget *>(
+        QLatin1String("sidebarCloseButton"));
+    QVERIFY(headerX);
+    // The Downloads page isn't current, so assert the flag the option
+    // drives (isHidden), not isVisible() which also needs a shown tab.
+    QVERIFY(!headerX->isHidden());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), false);
+    window->applySidebarSettings();
+    QVERIFY(!(dock->features() & QDockWidget::DockWidgetClosable));
+    QVERIFY(headerX->isHidden());
+    settings.setValue(QLatin1String("sidebar/showCloseButton"), true);
+    window->applySidebarSettings();
+    QVERIFY(dock->features() & QDockWidget::DockWidgetClosable);
+    QVERIFY(!headerX->isHidden());
+
+    // 'Auto-Close Inactive Panel' — focus inside the dock keeps it
+    // up; focus landing on a window widget outside it folds it.
+    settings.setValue(QLatin1String("sidebar/autoCloseInactive"), true);
+    window->applySidebarSettings();
+    QVERIFY(dock->isVisible());
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    panel->tabs()->tabBar()->setFocus();
+    QVERIFY(QApplication::focusWidget()
+            && dock->isAncestorOf(QApplication::focusWidget()));
+    QVERIFY(dock->isVisible());
+    window->tabWidget()->currentLocationBar()->setFocus();
+    QTRY_VERIFY(!dock->isVisible());
+    settings.setValue(QLatin1String("sidebar/autoCloseInactive"), false);
+    window->applySidebarSettings();
+    dock->setVisible(true);
+    QTRY_VERIFY(dock->isVisible());
+
+    // 'Lazy Load' — the rail keeps its entries but the unopened pages
+    // stay placeholders until selected; showDownloads materializes
+    // its page on the way through.
+    settings.setValue(QLatin1String("sidebar/lazyLoad"), true);
+    SubWindow *lazyWindow = new SubWindow;
+    lazyWindow->show();
+    QVERIFY(lazyWindow->sidebarPanel());
+    SidebarPanel *lazyPanel = lazyWindow->sidebarPanel();
+    QCOMPARE(lazyPanel->tabs()->count(), 4);
+    QVERIFY(!lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarDownloadsView")));
+    lazyPanel->showDownloads();
+    QVERIFY(lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarDownloadsView")));
+    QCOMPARE(lazyPanel->tabs()->currentWidget(),
+             static_cast<QWidget *>(lazyPanel->downloadsPage()));
+    // Turning the option back off materializes every pending page.
+    settings.setValue(QLatin1String("sidebar/lazyLoad"), false);
+    lazyWindow->applySidebarSettings();
+    QVERIFY(lazyPanel->findChild<QWidget *>(
+                QLatin1String("sidebarHistoryView")));
+    closeWindow(lazyWindow);
+
+    // 'Show Folder Counters' — bookmark folders carry a " (n)"
+    // suffix on the display text while the switch is on.
+    QTreeView *bookmarksView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QVERIFY(bookmarksView);
+    BookmarksManager *bookmarksManager = BookmarksManager::instance();
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder);
+    folder->title = QLatin1String("Counted Folder");
+    bookmarksManager->addBookmark(bookmarksManager->menu(), folder);
+    BookmarkNode *childA = new BookmarkNode(BookmarkNode::Bookmark);
+    childA->title = QLatin1String("child-a");
+    childA->url = QLatin1String("https://example.com/a");
+    bookmarksManager->addBookmark(folder, childA);
+    BookmarkNode *childB = new BookmarkNode(BookmarkNode::Bookmark);
+    childB->title = QLatin1String("child-b");
+    childB->url = QLatin1String("https://example.com/b");
+    bookmarksManager->addBookmark(folder, childB);
+    QAbstractItemModel *bmModel = bookmarksView->model();
+    QModelIndex menuIndex;
+    for (int row = 0; row < bmModel->rowCount(); ++row) {
+        const QModelIndex candidate = bmModel->index(row, 0);
+        if (candidate.data(Qt::DisplayRole).toString()
+            == bookmarksManager->menu()->title) {
+            menuIndex = candidate;
+            break;
+        }
+    }
+    QVERIFY(menuIndex.isValid());
+    const QModelIndex folderIndex =
+        bmModel->index(bmModel->rowCount(menuIndex) - 1, 0, menuIndex);
+    QVERIFY(folderIndex.isValid());
+    QCOMPARE(folderIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("Counted Folder (2)"));
+    settings.setValue(QLatin1String("sidebar/folderCounters"), false);
+    window->applySidebarSettings();
+    QCOMPARE(folderIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("Counted Folder"));
+    bmModel->removeRow(folderIndex.row(), menuIndex);
+
+    for (const char *key : optionKeys)
+        settings.remove(QLatin1String(key));
+    settings.remove(QLatin1String("sidebar/panels"));
+    settings.remove(QLatin1String("sidebar/panelOrder"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
     closeWindow(window);
 }
 

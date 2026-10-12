@@ -369,6 +369,12 @@ UI:
   shows all its entries without scrolling and only takes the width
   its rows need — it used to render as a cramped box with a
   scrollbar while stretching the full page width (SIDE08).
+- Preferences → Appearance → Sidebar: ▲▼ buttons next to the
+  "Panels" checklist reorder the sidebar rail, and the order is
+  remembered across restarts.  The section also gains working
+  options: show/hide the panel toggle and close buttons,
+  auto-close the panel when it loses focus, folder counters on
+  bookmark folders, and lazy loading of panel contents (SIDE09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -290,6 +290,10 @@ private:
     QTimer *m_sidebarWidthTimer;
     bool m_applyingSidebarWidth;
     bool m_sidebarWidthApplied;
+    // SIDE09: 'Auto-Close Inactive Panel' (sidebar/autoCloseInactive)
+    // — the focusChanged hook folds the dock when focus lands outside
+    // it in this window.
+    bool m_sidebarAutoClose;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;

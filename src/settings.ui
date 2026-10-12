@@ -1510,21 +1510,130 @@
            </widget>
           </item>
           <item row="2" column="1" colspan="2">
-           <widget class="QListWidget" name="sidebarPanelsList">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="sizeAdjustPolicy">
-             <enum>QAbstractScrollArea::AdjustToContents</enum>
-            </property>
+           <layout class="QHBoxLayout" name="sidebarPanelsRow">
+            <item>
+             <widget class="QListWidget" name="sidebarPanelsList">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="sizeAdjustPolicy">
+               <enum>QAbstractScrollArea::AdjustToContents</enum>
+              </property>
+              <property name="toolTip">
+               <string>Which panels appear in the sidebar rail. Hidden panels are not loaded.</string>
+              </property>
+              <property name="accessibleName">
+               <string>Sidebar panels</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <layout class="QVBoxLayout" name="sidebarPanelOrderLayout">
+              <item>
+               <widget class="QToolButton" name="sidebarPanelUpButton">
+                <property name="enabled">
+                 <bool>false</bool>
+                </property>
+                <property name="toolTip">
+                 <string>Move the selected panel up in the sidebar rail.</string>
+                </property>
+                <property name="accessibleName">
+                 <string>Move panel up</string>
+                </property>
+                <property name="arrowType">
+                 <enum>Qt::UpArrow</enum>
+                </property>
+                <property name="autoRaise">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QToolButton" name="sidebarPanelDownButton">
+                <property name="enabled">
+                 <bool>false</bool>
+                </property>
+                <property name="toolTip">
+                 <string>Move the selected panel down in the sidebar rail.</string>
+                </property>
+                <property name="accessibleName">
+                 <string>Move panel down</string>
+                </property>
+                <property name="arrowType">
+                 <enum>Qt::DownArrow</enum>
+                </property>
+                <property name="autoRaise">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="sidebarPanelOrderSpacer">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>0</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </item>
+          <item row="3" column="0" colspan="3">
+           <widget class="QCheckBox" name="sidebarShowToggleCheck">
             <property name="toolTip">
-             <string>Which panels appear in the sidebar rail. Hidden panels are not loaded.</string>
+             <string>Show the small fold button at the bottom of the sidebar rail that hides the panel.</string>
             </property>
-            <property name="accessibleName">
-             <string>Sidebar panels</string>
+            <property name="text">
+             <string>Show panel toggle button</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="0" colspan="3">
+           <widget class="QCheckBox" name="sidebarShowCloseCheck">
+            <property name="toolTip">
+             <string>Show the close (X) buttons on the sidebar title bar and panel headers.</string>
+            </property>
+            <property name="text">
+             <string>Show panel close button</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="0" colspan="3">
+           <widget class="QCheckBox" name="sidebarAutoCloseCheck">
+            <property name="toolTip">
+             <string>Hide the sidebar automatically when you move focus back to the page or another part of the window.</string>
+            </property>
+            <property name="text">
+             <string>Auto-close inactive panel</string>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="0" colspan="3">
+           <widget class="QCheckBox" name="sidebarFolderCountersCheck">
+            <property name="toolTip">
+             <string>Show the number of bookmarks inside each folder in the sidebar's Bookmarks panel.</string>
+            </property>
+            <property name="text">
+             <string>Show folder counters</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="0" colspan="3">
+           <widget class="QCheckBox" name="sidebarLazyLoadCheck">
+            <property name="toolTip">
+             <string>Build each panel only the first time it is opened, so showing the sidebar does less work up front.</string>
+            </property>
+            <property name="text">
+             <string>Lazy load panels</string>
             </property>
            </widget>
           </item>
