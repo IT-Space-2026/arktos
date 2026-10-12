@@ -1589,6 +1589,23 @@ void tst_BrowserMainWindow::torStartPage()
     WebView *privTab = window->currentTab();
     const QUrl privTabUrl = privTab ? privTab->url() : QUrl();
 
+    // ENG17: the user-facing New Tab command — Ctrl+T, the strip's
+    // "+" button, File > New Tab — lands on the tor start page too,
+    // not a blank Untitled.  url() alone only proves the load was
+    // issued (m_initialUrl answers early), so the committed title is
+    // the real check.
+    window->tabWidget()->newTabPage();
+    WebView *cmdTab = window->currentTab();
+    const QUrl cmdTabUrl = cmdTab ? cmdTab->url() : QUrl();
+    QString cmdTitle;
+    if (cmdTab) {
+        QSignalSpy spy(cmdTab->enginePage(), &Engine::Page::loadFinished);
+        const int mark = spy.count();
+        for (int i = 0; i < 300 && spy.count() == mark; ++i)
+            QTest::qWait(50);
+        cmdTitle = cmdTab->title();
+    }
+
     // The qrc commit registers "arora" on the channel and the page's
     // own translate() run fills the header text — the DOM probe below
     // is the proof the whole handshake completed in tor mode.
@@ -1644,6 +1661,8 @@ void tst_BrowserMainWindow::torStartPage()
     QCOMPARE(firstUrl, torStart);
     QCOMPARE(torTabUrl, torStart);
     QCOMPARE(privTabUrl, torStart);
+    QCOMPARE(cmdTabUrl, torStart);
+    QCOMPARE(cmdTitle, QStringLiteral("Welcome to Arora!"));
     QVERIFY(channel);
     QVERIFY(bareChannel);
     QVERIFY(aroraRegistered);

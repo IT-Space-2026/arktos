@@ -293,7 +293,8 @@ network; a configured custom homepage still takes precedence.
 
 The download manager drives QWebEngineDownloadRequest: progress, speed
 and ETA per item, Try Again (re-issues through the page or a hidden
-page), open-folder/open-with actions, server-suggested names sanitized
+page), reveal-in-file-manager (with the file selected where the DE
+supports it) and open-with actions, server-suggested names sanitized
 and de-duplicated, and an external download-program handoff. Downloads
 surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, and each selected row expands into a

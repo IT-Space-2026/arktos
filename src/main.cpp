@@ -3607,7 +3607,8 @@ int main(int argc, char **argv)
     // scan sets the same flag again (idempotent).
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
-        if (arg == "--tor" || arg == "--tor-window-smoke") {
+        if (arg == "--tor" || arg == "--tor-window-smoke"
+            || arg == "--tor-newtab-smoke") {
             BrowserApplication::setTorMode(true);
             break;
         }
@@ -3714,7 +3715,7 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
-        "tor-window-smoke", "tor-circuit-click-smoke",
+        "tor-window-smoke", "tor-circuit-click-smoke", "tor-newtab-smoke",
         "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
@@ -3829,7 +3830,8 @@ int main(int argc, char **argv)
     if (BrowserApplication::isTorMode()
             && !args.contains(QLatin1String("--tor-window-smoke"))
             && !args.contains(
-                   QLatin1String("--tor-circuit-click-smoke"))) {
+                   QLatin1String("--tor-circuit-click-smoke"))
+            && !args.contains(QLatin1String("--tor-newtab-smoke"))) {
         application.newMainWindow();
         return application.exec();
     }
@@ -11351,6 +11353,42 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: tor start page on first tab";
 
+        // ENG17: the user-facing New Tab command — Ctrl+T, the
+        // strip's "+" corner button, File > New Tab — must land on
+        // the same tor start page, not a blank Untitled.  Every one
+        // of those surfaces shares newTabPage(); asserting the
+        // committed title (not just the requested url) proves the
+        // qrc load actually finished on the real tor profile.
+        torWindow->tabWidget()->newTabPage();
+        WebView *newTabPageTab = torWindow->currentTab();
+        if (!newTabPageTab || newTabPageTab == torStartTab) {
+            torWinFail(QLatin1String(
+                "tor window's New Tab command made no tab"));
+            return application.exec();
+        }
+        bool newTabCommitted = false;
+        QObject::connect(newTabPageTab, &QWebEngineView::loadFinished,
+                         &application,
+                         [&newTabCommitted](bool ok) {
+            newTabCommitted = ok;
+        });
+        QElapsedTimer newTabDeadline;
+        newTabDeadline.start();
+        while (!newTabCommitted && newTabDeadline.elapsed() < 15000)
+            application.processEvents(QEventLoop::AllEvents, 50);
+        if (newTabPageTab->url() != QUrl(
+                QLatin1String("qrc:/startpage-tor.html"))) {
+            torWinFail(QLatin1String(
+                "tor window's New Tab did not open the tor start page"));
+            return application.exec();
+        }
+        if (newTabPageTab->title() != QLatin1String("Welcome to Arora!")) {
+            torWinFail(QLatin1String(
+                "tor start page on a New Tab never committed"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: New Tab lands on the tor start page";
+
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
         // tor profile is not even registered for user scripts and
@@ -11568,6 +11606,114 @@ int main(int argc, char **argv)
         // Bootstrap + two tor round-trips can take a while.
         QTimer::singleShot(240000, &application, [torWinFail]() {
             torWinFail(QLatin1String("timeout waiting for bootstrap/probe"));
+        });
+    }
+
+    // Headless verification for ENG17: a fresh user-facing tab in a
+    // real --tor process must land on the start page — the tor-branded
+    // qrc page while TOR09 stands — never a blank tab.  Drives the
+    // exact chain the "+" button and Ctrl+T fire — newTabAction ->
+    // TabWidget::newTabPage -> loadNewTabPageUrl -> about:home ->
+    // BrowserApplication::startPageUrl — on a real BrowserMainWindow
+    // with the fail-closed proxy and TorRequestInterceptor armed.
+    // qrc loads need no network, so the daemon is optional:
+    // ARORA_TOR_BINARY=faketor.py bootstraps the manager for a fully
+    // live run, but the leg passes either way.  Invoke as
+    // `arora --tor --tor-newtab-smoke`; exits 0 on PASS.
+    if (args.contains(QLatin1String("--tor-newtab-smoke"))) {
+        auto newtabFail = [&application](const QString &why) {
+            qInfo() << "tor-newtab-smoke: FAIL" << why;
+            application.exit(1);
+        };
+        if (!BrowserApplication::isTorMode() || !application.torManager()) {
+            newtabFail(QLatin1String(
+                "tor mode not armed — run `arora --tor --tor-newtab-smoke`"));
+            return application.exec();
+        }
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        torWindow->show();
+        TabWidget *tabWidget = torWindow->tabWidget();
+        const QUrl expected = BrowserApplication::startPageUrl();
+        if (!tabWidget || tabWidget->count() != 1
+                || expected != QUrl(QStringLiteral("qrc:/startpage-tor.html"))) {
+            newtabFail(QLatin1String(
+                "window/startPageUrl not on the tor start page"));
+            return application.exec();
+        }
+        WebView *firstTab = torWindow->currentTab();
+        if (!firstTab || firstTab->url() != expected) {
+            newtabFail(QLatin1String("first tab is not on the tor start page"));
+            return application.exec();
+        }
+        qInfo() << "tor-newtab-smoke: first tab on tor start page";
+
+        // The user-facing path — identical to clicking "+" or Ctrl+T.
+        tabWidget->newTabAction()->trigger();
+        if (tabWidget->count() != 2) {
+            newtabFail(QStringLiteral("newTabAction made %1 tabs")
+                       .arg(tabWidget->count()));
+            return application.exec();
+        }
+        WebView *newTab = torWindow->currentTab();
+        if (!newTab || newTab == firstTab) {
+            newtabFail(QLatin1String("no fresh tab after newTabAction"));
+            return application.exec();
+        }
+        // The blank-tab regression: the start url must be assigned at
+        // trigger time — a WebView that stayed about:blank is the bug.
+        if (newTab->url() != expected) {
+            newtabFail(QLatin1String("new tab did not get the start url: ")
+                       + newTab->url().toString());
+            return application.exec();
+        }
+        qInfo() << "tor-newtab-smoke: new tab navigated to" << expected;
+
+        // …and it must actually COMMIT on the tor profile: the qrc
+        // document loads, the channel registers "arora", and the
+        // page's own translate() fills the title.  The qrc commit and
+        // the channel handshake resolve on separate turns, so the DOM
+        // probe re-issues until the page answers or the deadline
+        // below trips — a failed load never commits, never registers
+        // "arora", and times out into FAIL.  Same probe TOR09's
+        // window smoke runs on the first tab.
+        QTimer *probeTimer = new QTimer(&application);
+        probeTimer->setInterval(250);
+        QObject::connect(probeTimer, &QTimer::timeout, &application,
+                         [&application, newTab, expected, probeTimer]() {
+            if (newTab->url() != expected)
+                return;
+            QWebEnginePage *page = newTab->page();
+            if (!page || !page->webChannel()
+                    || !page->webChannel()->registeredObjects().contains(
+                            QLatin1String("arora")))
+                return;
+            probeTimer->stop();
+            newTab->enginePage()->runJavaScript(
+                QStringLiteral(
+                    "(function(){"
+                    "var h=document.getElementById('headerTitle');"
+                    "return document.title+'|'+(h?h.textContent:'');})()"),
+                [&application, probeTimer](const QVariant &result) {
+                    const QString probe = result.toString();
+                    const QStringList parts = probe.split(QLatin1Char('|'));
+                    if (parts.size() != 2
+                            || parts.at(0)
+                                    != QLatin1String("Welcome to Arora!")
+                            || parts.at(1).isEmpty()) {
+                        // translate() still resolving — retry.
+                        probeTimer->start();
+                        return;
+                    }
+                    qInfo() << "tor-newtab-smoke: new tab page:" << probe;
+                    qInfo() << "tor-newtab-smoke: PASS"
+                            << "(new tab committed the tor start page)";
+                    application.exit(0);
+                });
+        });
+        probeTimer->start();
+        QTimer::singleShot(60000, &application, [newtabFail]() {
+            newtabFail(QLatin1String(
+                "timeout waiting for the new tab to commit"));
         });
     }
 

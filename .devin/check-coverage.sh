@@ -105,7 +105,7 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --doh-smoke --seclvl-smoke --privacy-smoke --referer-smoke
 --resourceblock-smoke --reader-smoke --sorry-smoke --perf-smoke
 --sleep-smoke --session-smoke --restore-smoke --tor-smoke
---tor-window-smoke --startpage-smoke --sandbox-smoke --sandbox-status
+--tor-window-smoke --tor-newtab-smoke --startpage-smoke --sandbox-smoke --sandbox-status
 --bidi-smoke --parallel-download-smoke --parallel-download-off-smoke
 --ingress-smoke --engine-list --engine-smoke"
 for flag in $SMOKE_FLAGS; do
