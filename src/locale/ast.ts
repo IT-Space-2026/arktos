@@ -9,7 +9,7 @@
     </message>
     <message>
         <source>Lightweight WebEngine-based web browser</source>
-        <translation type="unfinished"></translation>
+        <translation>Restolador llixeru basáu en WebEngine</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -17,7 +17,11 @@
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
@@ -41,7 +45,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Qt version: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Versión de Qt: %1</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -87,61 +91,62 @@ p, li { white-space: pre-wrap; }
     <name>AdBlockDialog</name>
     <message>
         <source>Add Custom Rule</source>
-        <translation type="unfinished"></translation>
+        <translation>Amestar regla personalizada</translation>
     </message>
     <message>
         <source>Learn more about writing rules...</source>
-        <translation type="unfinished"></translation>
+        <translation>Deprendi más tocante a cómo escribir regles...</translation>
     </message>
     <message>
         <source>Update Subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizar soscripción</translation>
     </message>
     <message>
         <source>Browse Subscriptions...</source>
-        <translation type="unfinished"></translation>
+        <translation>Restolar soscripciones...</translation>
     </message>
     <message>
         <source>Remove Subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Desaniciar soscripción</translation>
     </message>
     <message>
         <source>AdBlock Configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración d&apos;AdBlock</translation>
     </message>
     <message>
         <source>Enable AdBlock</source>
-        <translation type="unfinished"></translation>
+        <translation>Activar AdBlock</translation>
     </message>
     <message>
         <source>Action</source>
-        <translation type="unfinished"></translation>
+        <translation>Acción</translation>
     </message>
 </context>
 <context>
     <name>AdBlockManager</name>
     <message>
         <source>Custom Rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Regles personalizaes</translation>
     </message>
 </context>
 <context>
     <name>AdBlockModel</name>
     <message>
         <source>Rule</source>
-        <translation type="unfinished">Regla</translation>
+        <translation>Regla</translation>
     </message>
 </context>
 <context>
     <name>AdBlockSchemeAccessHandler</name>
     <message>
         <source>Subscribe?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Soscribise?</translation>
     </message>
     <message>
         <source>Subscribe to this AdBlock subscription?
 %1</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Quiés soscribite a esta soscripción d&apos;AdBlock?
+%1</translation>
     </message>
 </context>
 <context>
@@ -171,41 +176,41 @@ p, li { white-space: pre-wrap; }
     <name>AutoFillDialog</name>
     <message>
         <source>Form Passwords</source>
-        <translation type="unfinished"></translation>
+        <translation>Contraseñes de formularios</translation>
     </message>
     <message>
         <source>Remove</source>
-        <translation type="unfinished">Desaniciar</translation>
+        <translation>Desaniciar</translation>
     </message>
     <message>
         <source>Remove All</source>
-        <translation type="unfinished"></translation>
+        <translation>Desaniciar toes</translation>
     </message>
 </context>
 <context>
     <name>AutoFillManager</name>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;¿Quiés guardar esta contraseña?&lt;/b&gt;&lt;br&gt;     Pa revisar les contraseñes que guardasti y desaniciales, abri&apos;l panel de rellenu automáticu nes preferencies.</translation>
     </message>
     <message>
         <source>Never for this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Enxamás pa esti sitiu</translation>
     </message>
     <message>
         <source>Not now</source>
-        <translation type="unfinished"></translation>
+        <translation>Agora non</translation>
     </message>
 </context>
 <context>
     <name>AutoFillModel</name>
     <message>
         <source>WebSite</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitiu web</translation>
     </message>
     <message>
         <source>User Name</source>
-        <translation type="unfinished"></translation>
+        <translation>Nome d&apos;usuariu</translation>
     </message>
 </context>
 <context>
@@ -329,28 +334,29 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>XBEL bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Marcadores XBEL</translation>
     </message>
     <message>
         <source>HTML Netscape bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Marcadores HTML de Netscape</translation>
     </message>
     <message>
         <source>htmlToXBel tool required</source>
-        <translation type="unfinished"></translation>
+        <translation>Riques la ferramienta htmlToXBel</translation>
     </message>
     <message>
         <source>htmlToXBel tool, which is shipped with Arora and is needed to import HTML bookmarks, is not installed or not available in the search paths.</source>
-        <translation type="unfinished"></translation>
+        <translation>La ferramienta htmlToXBel, que vien con Arora y ye necesaria pa importar marcadores HTML, nun ta instalada o nun ta disponible nes rutes de gueta.</translation>
     </message>
     <message>
         <source>Loading Bookmark</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargando marcador</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: %1
 </source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores HTML: %1
+</translation>
     </message>
 </context>
 <context>
@@ -424,14 +430,14 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Arora crashed while trying to restore this session.  Should I try again?</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora falló tentando de recuperar esta sesión.  ¿Vuelvo intentalo?</translation>
     </message>
 </context>
 <context>
     <name>BrowserMainWindow</name>
     <message>
         <source>&amp;File</source>
-        <translation type="unfinished">&amp;Ficheru</translation>
+        <translation>&amp;Ficheru</translation>
     </message>
     <message>
         <source>&amp;New Window</source>
@@ -439,7 +445,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>&amp;Open File...</source>
-        <translation type="unfinished">&amp;Abrir Ficheru...</translation>
+        <translation>&amp;Abrir Ficheru...</translation>
     </message>
     <message>
         <source>Open &amp;Location...</source>
@@ -759,116 +765,116 @@ Download Manager
     </message>
     <message>
         <source>Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Predetermináu</translation>
     </message>
     <message>
         <source>Select &amp;All</source>
-        <translation type="unfinished"></translation>
+        <translation>Seleicionar &amp;too</translation>
     </message>
     <message>
         <source>Alt+Ctrl+B</source>
-        <translation type="unfinished"></translation>
+        <translation>Alt+Ctrl+B</translation>
     </message>
     <message>
         <source>Text Encoding</source>
-        <translation type="unfinished"></translation>
+        <translation>Codificación del testu</translation>
     </message>
     <message>
         <source>Ctrl+K</source>
         <comment>Web Search</comment>
-        <translation type="unfinished">Ctrl+K</translation>
+        <translation>Ctrl+K</translation>
     </message>
     <message>
         <source>Ctrl+Shift+Delete</source>
         <comment>Clear Private Data</comment>
-        <translation type="unfinished">Ctrl+Shift+Delete</translation>
+        <translation>Ctrl+Shift+Delete</translation>
     </message>
     <message>
         <source>About &amp;%1</source>
         <comment>About Browser</comment>
-        <translation type="unfinished">Tocante a &amp;%1</translation>
+        <translation>Tocante a &amp;%1</translation>
     </message>
     <message>
         <source>%1 - Arora</source>
         <comment>Page title and Browser name</comment>
-        <translation type="unfinished">%1 - Arora</translation>
+        <translation>%1 - Arora</translation>
     </message>
     <message>
         <source>Stop</source>
-        <translation type="unfinished">Parar</translation>
+        <translation>Parar</translation>
     </message>
     <message>
         <source>Reload</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar</translation>
     </message>
     <message>
         <source>Ctrl+Y</source>
         <comment>Download Manager</comment>
-        <translation type="unfinished">Ctrl+Y</translation>
+        <translation>Ctrl+Y</translation>
     </message>
     <message>
         <source>Options...</source>
-        <translation type="unfinished"></translation>
+        <translation>Opciones...</translation>
     </message>
     <message>
         <source>Web &amp;Inspector</source>
-        <translation type="unfinished"></translation>
+        <translation>Inspector &amp;web</translation>
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="unfinished">Configurar motores de gueta...</translation>
+        <translation>Configurar motores de gueta...</translation>
     </message>
     <message>
         <source>User Agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Axente d&apos;usuariu</translation>
     </message>
     <message>
         <source>&amp;Ad Block...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;AdBlock...</translation>
     </message>
     <message>
         <source>Reload / Stop</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar / Parar</translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
-        <translation type="unfinished"></translation>
+        <translation>Al activar la restolación privao, desactivaránse delles midíes relatives a la to privacidá:</translation>
     </message>
     <message>
         <source>Webpages are not added to the history.</source>
-        <translation type="unfinished"></translation>
+        <translation>Les páxines web nun van amestase al hestorial.</translation>
     </message>
     <message>
         <source>Items are automatically removed from the Downloads window.</source>
-        <translation type="unfinished"></translation>
+        <translation>Desaniciaránse automáticamente los elementos de la ventana de descargues.</translation>
     </message>
     <message>
         <source>New cookies are not stored, current cookies can&apos;t be accessed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Nun s&apos;atroxarán nueves galletes y les actuales nun sedrán accesibles.</translation>
     </message>
     <message>
         <source>Site icons won&apos;t be stored.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los iconos de los sitios nun s&apos;atroxarán.</translation>
     </message>
     <message>
         <source>Session won&apos;t be saved.</source>
-        <translation type="unfinished"></translation>
+        <translation>La sesión nun se guardará.</translation>
     </message>
     <message>
         <source>Searches are not added to the pop-up menu in the search box.</source>
-        <translation type="unfinished"></translation>
+        <translation>Les guetes nun s&apos;amestarán al menú emerxente nel cuadru de gueta.</translation>
     </message>
     <message>
         <source>No new network cache is written to disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Nun s&apos;escribe nueva caché de rede nel discu.</translation>
     </message>
     <message>
         <source>Until you close the window, you can still click the Back and Forward buttons to return to the webpages you have opened.</source>
-        <translation type="unfinished"></translation>
+        <translation>Podrás facer clic nos botones Atrás y Alantre pa volver a les páxines web qu&apos;abristi fasta que zarres la ventana.</translation>
     </message>
     <message>
         <source>Private Browsing</source>
-        <translation type="unfinished"></translation>
+        <translation>Restolación privao</translation>
     </message>
 </context>
 <context>
@@ -1092,11 +1098,11 @@ Download Manager
     </message>
     <message>
         <source>Download interrupted: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Descarga interrumpida: %1</translation>
     </message>
     <message>
         <source>%1 of %2 - Download Complete</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 de %2 - Descarga completada</translation>
     </message>
     <message>
         <source>Error opening output file: %1</source>
@@ -1124,19 +1130,15 @@ Download Manager
     </message>
     <message>
         <source>Download directory (%1) couldn&apos;t be created.</source>
-        <translation type="unfinished"></translation>
+        <translation>Nun pudo criase&apos;l direutoriu de descargues (%1).</translation>
     </message>
 </context>
 <context>
     <name>DownloadManager</name>
     <message numerus="yes">
         <source>%n Download(s)</source>
-        <translation type="unfinished">
-            <numerusform>%n Descarga(ues)
-        
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n descarga(ues)</numerusform>
         </translation>
     </message>
     <message>
@@ -1147,28 +1149,22 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Downloading %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargando %1</translation>
     </message>
     <message>
         <source>Downloads</source>
-        <translation type="unfinished">Descargues</translation>
+        <translation>Descargues</translation>
     </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
-        <translation type="unfinished">
-            <numerusform>Falten %n minutos
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Falten %n minutos</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n seconds remaining</source>
-        <translation type="unfinished">
-            <numerusform>Falten %n segundos
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Falten %n segundos</numerusform>
         </translation>
     </message>
     <message>
@@ -1185,22 +1181,22 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>GB</source>
-        <translation type="unfinished"></translation>
+        <translation>GB</translation>
     </message>
 </context>
 <context>
     <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteníu de %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 KB</translation>
     </message>
     <message>
         <source>Show Hidden Files</source>
-        <translation type="unfinished"></translation>
+        <translation>Amosar ficheros anubríos</translation>
     </message>
 </context>
 <context>
@@ -1268,12 +1264,8 @@ Do you want to quit anyway?</source>
     </message>
     <message numerus="yes">
         <source>%n item(s)</source>
-        <translation type="unfinished">
-            <numerusform>%n elementu(os)
-        
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n elementu(os)</numerusform>
         </translation>
     </message>
 </context>
@@ -1281,23 +1273,23 @@ Do you want to quit anyway?</source>
     <name>JavaScriptAroraObject</name>
     <message>
         <source>Welcome to Arora!</source>
-        <translation type="unfinished"></translation>
+        <translation>¡Benvida a Arora!</translation>
     </message>
     <message>
         <source>Arora Start</source>
-        <translation type="unfinished"></translation>
+        <translation>Aniciu d&apos;Arora</translation>
     </message>
     <message>
         <source>Search!</source>
-        <translation type="unfinished"></translation>
+        <translation>¡Gueta!</translation>
     </message>
     <message>
         <source>Search results provided by</source>
-        <translation type="unfinished"></translation>
+        <translation>Resultaos de la gueta dafechos por</translation>
     </message>
     <message>
         <source>About Arora</source>
-        <translation type="unfinished"></translation>
+        <translation>Tocante a Arora</translation>
     </message>
 </context>
 <context>
@@ -1316,7 +1308,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>No translation files are installed at %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los archivos de torna nun tan instalaos en %1.</translation>
     </message>
 </context>
 <context>
@@ -1347,19 +1339,19 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Issuer: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Emisor: %1</translation>
     </message>
     <message>
         <source>Not valid before: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Non válidu enantes de: %1</translation>
     </message>
     <message>
         <source>Valid until: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Válidu fasta: %1</translation>
     </message>
     <message>
         <source>Alternate Names:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nomes alternativos:</translation>
     </message>
 </context>
 <context>
@@ -1455,15 +1447,15 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Comma-separated list of keywords that may be entered in the location barfollowed by search terms to search with this engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Llista de pallabres clave separtaes por comes que puen escribise na barra de direición, siguíes polos términos de gueta, pa guetar con esti motor</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Nome</translation>
+        <translation>Nome</translation>
     </message>
     <message>
         <source>Keywords</source>
-        <translation type="unfinished"></translation>
+        <translation>Pallabres clave</translation>
     </message>
 </context>
 <context>
@@ -1580,7 +1572,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Highlight All</source>
-        <translation type="unfinished"></translation>
+        <translation>Resaltar too</translation>
     </message>
 </context>
 <context>
@@ -1678,11 +1670,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Use this external download program:</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar esti programa de descargues esternu:</translation>
     </message>
     <message>
         <source>Choose Program...</source>
-        <translation type="unfinished"></translation>
+        <translation>Escoyer programa...</translation>
     </message>
     <message>
         <source>Appearance</source>
@@ -1702,7 +1694,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Minimum Font size:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tamañu mínimu de tipografía:</translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -1726,7 +1718,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Persistent Data Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Atroxamientu persistente de datos</translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -1886,59 +1878,59 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Use the default search engine as fallback when the URL given by the user is invalid</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar el motor de gueta predetermináu como alternativa cuando la URL qu&apos;escriba l&apos;usuariu nun seya válida</translation>
     </message>
     <message>
         <source>Choose Directory...</source>
-        <translation type="unfinished"></translation>
+        <translation>Escoyer direutoriu...</translation>
     </message>
     <message>
         <source>A cookie session ends:</source>
-        <translation type="unfinished"></translation>
+        <translation>Una sesión de galleta fina:</translation>
     </message>
     <message>
         <source>When I exit the application</source>
-        <translation type="unfinished"></translation>
+        <translation>Cuando zarre l&apos;aplicación</translation>
     </message>
     <message>
         <source>1 day</source>
-        <translation type="unfinished"></translation>
+        <translation>1 día</translation>
     </message>
     <message>
         <source>2 days</source>
-        <translation type="unfinished"></translation>
+        <translation>2 díes</translation>
     </message>
     <message>
         <source>3 days</source>
-        <translation type="unfinished"></translation>
+        <translation>3 díes</translation>
     </message>
     <message>
         <source>7 days</source>
-        <translation type="unfinished"></translation>
+        <translation>7 díes</translation>
     </message>
     <message>
         <source>30 days</source>
-        <translation type="unfinished"></translation>
+        <translation>30 díes</translation>
     </message>
     <message>
         <source>AutoFill</source>
-        <translation type="unfinished"></translation>
+        <translation>Rellenu automáticu</translation>
     </message>
     <message>
         <source>AutoFill web forms:</source>
-        <translation type="unfinished"></translation>
+        <translation>Rellenu automáticu de formularios web:</translation>
     </message>
     <message>
         <source>User names and passwords</source>
-        <translation type="unfinished"></translation>
+        <translation>Nomes d&apos;usuariu y contraseñes</translation>
     </message>
     <message>
         <source>Edit...</source>
-        <translation type="unfinished"></translation>
+        <translation>Editar...</translation>
     </message>
     <message>
         <source>Browse...</source>
-        <translation type="unfinished"></translation>
+        <translation>Restolar...</translation>
     </message>
 </context>
 <context>
@@ -1953,15 +1945,15 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Choose Directory</source>
-        <translation type="unfinished"></translation>
+        <translation>Escoyer direutoriu</translation>
     </message>
     <message>
         <source>Choose Program</source>
-        <translation type="unfinished"></translation>
+        <translation>Escoyer programa</translation>
     </message>
     <message>
         <source>Choose CSS File</source>
-        <translation type="unfinished"></translation>
+        <translation>Escoyer ficheru CSS</translation>
     </message>
 </context>
 <context>
@@ -1992,7 +1984,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Source of Page %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Códigu fonte de la páxina %1</translation>
     </message>
 </context>
 <context>
@@ -2042,7 +2034,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Loading %1%...</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargando %1%...</translation>
     </message>
     <message>
         <source>Show Previous Tab</source>
@@ -2125,26 +2117,26 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="unfinished">Configurar motores de gueta...</translation>
+        <translation>Configurar motores de gueta...</translation>
     </message>
 </context>
 <context>
     <name>UserAgentMenu</name>
     <message>
         <source>Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Predetermináu</translation>
     </message>
     <message>
         <source>Other...</source>
-        <translation type="unfinished"></translation>
+        <translation>Otru...</translation>
     </message>
     <message>
         <source>Custom user agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Axente d&apos;usuariu personalizáu</translation>
     </message>
     <message>
         <source>User agent:</source>
-        <translation type="unfinished"></translation>
+        <translation>Axente d&apos;usuariu:</translation>
     </message>
 </context>
 <context>
@@ -2214,7 +2206,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Search with</source>
-        <translation type="unfinished"></translation>
+        <translation>Guetar con</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -2226,7 +2218,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Block Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquiar imaxe</translation>
     </message>
 </context>
 <context>
@@ -2240,11 +2232,11 @@ Do you really want to close this page?
     <name>main</name>
     <message>
         <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora — un restolador web llixeru multiplataforma.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
-        <translation type="unfinished"></translation>
+        <translation>Url a abrir nel aniciu.</translation>
     </message>
 </context>
 </TS>

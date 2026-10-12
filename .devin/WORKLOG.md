@@ -520,3 +520,20 @@
 - 2026-10-12 MERGEWATCH: rust-work SKIPPED (7 ahead: START02 start-page-on-new-tab + TRUST10 block + master sync + DLUX03/04 card + TRUST10 in_progress) — merge refused: dirty .devin/COVERAGE.md in this tree overlaps lane files (mid-run coverage agent); no merges, build n/a
 - 2026-10-12 DLUX03: download detail card skin resolved from live app palette — stylesheet palette(role) resolved once at parse so cards kept creation-theme fill across theme flips; applyDetailsCardStyle() + deferred palette-event re-apply + showEvent re-check, sidebar detail pane Minimum vertical (no row clipping) — verified: tst_downloadmanager 44/44 incl. new detailsCardTracksTheme both flip directions, offscreen grabs clean, make check rc=0 (78 programs 0 failed) offscreen --disable-gpu
 - 2026-10-12 DLUX04: download details card flattened — dropped AlternateBase tint + Midlight box border (transparent surface, palette-Mid hairline border-top only), inner card margins 8px->0/6/0/0 flush with compact rows; graph untouched (no fill) — verified: tst_downloadmanager 44/44, offscreen grabs clean day+night both flip directions, make check rc=0 (78 programs 0 failed, gates PASS) offscreen --disable-gpu
+- 2026-10-12 TRANS02: ast catalog completed — 118 unfinished entries translated, 0 left, lrelease PASS
+- 2026-10-12 TRANS03: ca catalog completed — 1092 unfinished entries translated, 0 left, lrelease PASS
+- 2026-10-12 TRANS04: cs_CZ catalog completed — 1033 entries translated (incl. 1 numerusform), lrelease PASS
+- 2026-10-12 TRANS05: da_DK catalog completed — 1212 entries translated (4 numerusform), lrelease PASS
+- 2026-10-12 TRANS06: de_DE catalog completed — 1033 entries translated (1 numerusform), lrelease PASS
+- 2026-10-12 TRANS07: el_GR catalog completed — 1120 entries translated (1 numerusform), lrelease PASS
+- 2026-10-12 TRANS08: es catalog completed — 1036 entries translated (4 numerusform), lrelease PASS
+- 2026-10-12 TRANS09: et_EE catalog completed — 1210 entries translated (3 numerusform), lrelease PASS
+- 2026-10-12 TRANS10: fi_FI catalog completed — 1120 unfinished translated, lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS11: fr_FR catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS12: gl catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS13: it_IT catalog completed — 1066 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS14: ja_JP catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS15: nb_NO catalog completed — 1035 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS16: nl catalog completed — 1035 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS17: pl_PL catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS18: pt_PT catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).

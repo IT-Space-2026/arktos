@@ -16,6 +16,11 @@ Your job in THIS run:
 
 1. Read `.devin/Arora-Task-Lang.md`. It contains a markdown table of
    tasks with a Status column (pending / in_progress / done / blocked).
+   The Task column holds a short summary only — the FULL task
+   specification lives in the `### <ID>` section under `## Task details`
+   at the bottom of the file. Read it for your assigned row before
+   starting. Keep Notes to one line; long evidence goes in the details
+   section.
 2. Pick the FIRST row whose Status is `pending` or `in_progress`
    (in_progress means a previous run was interrupted — inspect the file's
    remaining `type="unfinished"` entries and CONTINUE where it stopped,
