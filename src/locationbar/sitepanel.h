@@ -47,7 +47,10 @@ class WebView;
 //     informative get a line; the whole section hides on pages with
 //     nothing to say, and TRUST03's trust/* switches gate the lookup
 //     itself (master off -> no FFI call, the per-signal switches
-//     ride the request as a probe mask),
+//     ride the request as a probe mask).  TRUST10 heads the section
+//     with a divider rule and a bold "Trust" label colored by the
+//     verdict level — green on trusted, amber on unknown, red on
+//     not-trustable — re-derived on every refresh,
 //   - cookie tri-state writing into CookieJar's per-site exception
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an

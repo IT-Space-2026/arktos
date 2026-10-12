@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "engineinterface.h"
@@ -824,11 +825,11 @@ void SitePanel::rebuildTrustRows()
     const QString site = host();
     const QString scheme = m_webView ? m_webView->url().scheme()
                                      : QString();
+    const bool isHttps = scheme == QLatin1String("https");
     const bool webSite = !site.isEmpty()
-        && (scheme == QLatin1String("http")
-            || scheme == QLatin1String("https"));
+        && (scheme == QLatin1String("http") || isHttps);
     const QList<TrustLine> lines = webSite
-        ? trustSignals(site, scheme == QLatin1String("https"))
+        ? trustSignals(site, isHttps)
         : QList<TrustLine>();
 
     const QPalette warning = [this]() {

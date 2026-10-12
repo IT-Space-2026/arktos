@@ -1071,16 +1071,17 @@ void tst_TabWidget::tabThumbnailStaleness()
 // through loadString) must search for text that is not address-shaped
 // instead of guessing http://, while address-shaped input still
 // navigates.  'keyword terms' shortcuts keep first priority and the
-// searchEngineFallback opt-out restores the historic bare-http guess.
+// searchInAddressField opt-out restores the historic bare-http guess.
 void tst_TabWidget::omnibox()
 {
     QSettings settings;
     // SRCH09: this key used to leak — the test disabled it below and
     // never restored it, which broke search for the real profile when
-    // the test ran against the live config.
+    // the test ran against the live config.  SRCH12 renamed it to
+    // searchInAddressField for exactly that reason.
     const QVariant savedSearchFallback =
-        settings.value(QLatin1String("urlloading/searchEngineFallback"));
-    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+        settings.value(QLatin1String("urlloading/searchInAddressField"));
+    settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
 
     // PRIV01/SAFE01: the profile interceptor upgrades http:
     // navigations to https: and HTTPS-Only swaps surviving http:
@@ -1169,7 +1170,7 @@ void tst_TabWidget::omnibox()
     engine->setSearchUrlTemplate(savedTemplate);
 
     // Opt-out restores the old bare-http guess for non-address input.
-    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+    settings.setValue(QLatin1String("urlloading/searchInAddressField"), false);
     check(QLatin1String("word"), QUrl(QLatin1String("http://word/")));
 
     // SRCH09/SRCH11: under the opt-out a guess that cannot parse
@@ -1177,13 +1178,21 @@ void tst_TabWidget::omnibox()
     // an invalid url and die silently (dead Enter).
     check(QLatin1String("two words"),
           engine->searchUrl(QLatin1String("two words")));
+    settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
+
+    // SRCH12: a stored legacy "searchEngineFallback" is untrusted
+    // residue — it must not gate search, and the resolver drops the
+    // key on sight.
+    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+    check(QLatin1String("word"), engine->searchUrl(QLatin1String("word")));
+    QVERIFY(!settings.contains(QLatin1String("urlloading/searchEngineFallback")));
 
     if (savedSearchFallback.isValid())
         settings.setValue(
-            QLatin1String("urlloading/searchEngineFallback"),
+            QLatin1String("urlloading/searchInAddressField"),
             savedSearchFallback);
     else
-        settings.remove(QLatin1String("urlloading/searchEngineFallback"));
+        settings.remove(QLatin1String("urlloading/searchInAddressField"));
 
     manager->setEngineForKeyword(QLatin1String("ot"), nullptr);
     manager->setCurrentEngineName(previousEngine);
@@ -1208,7 +1217,7 @@ void tst_TabWidget::omnibox()
 void tst_TabWidget::omniboxEnterDispatch()
 {
     QSettings settings;
-    settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+    settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
     settings.setValue(QLatin1String("privacy/httpsFirst"), false);
     settings.setValue(QLatin1String("privacy/httpsOnly"), false);
     PrivacyRequestInterceptor::loadSettings();
@@ -1282,7 +1291,7 @@ void tst_TabWidget::omniboxEnterDispatch()
     manager->setCurrentEngineName(previousEngine);
     manager->removeEngine(engine->name());
     widget.closeTab();
-    settings.remove(QLatin1String("urlloading/searchEngineFallback"));
+    settings.remove(QLatin1String("urlloading/searchInAddressField"));
 }
 
 // SRCH06: typing the "@tabs" nickname lists this widget's open tabs

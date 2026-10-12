@@ -24,7 +24,7 @@
 //!      the prepended scheme to ftp like Qt does.
 //!   3. Input with whitespace, or no usable guess at all, falls back:
 //!      search-engine verdict when `search_fallback` is set, else the
-//!      historic bare-"http://" guess (the searchEngineFallback opt-out
+//!      historic bare-"http://" guess (the searchInAddressField opt-out
 //!      semantics) — but only when that guess is itself a usable url;
 //!      an unparsable guess still resolves to search (SRCH09).
 //!   4. A guessed http(s) url — one whose scheme the user did not
@@ -382,7 +382,7 @@ fn fallback_verdict(trimmed: &str, search_fallback: bool) -> Value {
     if search_fallback {
         return search_verdict(None, trimmed);
     }
-    // SRCH09: the searchEngineFallback opt-out restores the historic
+    // SRCH09: the searchInAddressField opt-out restores the historic
     // bare-http guess — but only where the guess produces a usable
     // url.  A guess that cannot parse (multi-word input, host-less or
     // otherwise malformed text) has no address reading, so it

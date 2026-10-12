@@ -882,6 +882,9 @@ void tst_SettingsDialog::resetSearchSettings()
     ScopeShortcuts::setEnabled(ScopeShortcuts::TabsScope, false);
 
     QSettings settings;
+    settings.setValue(QLatin1String("urlloading/searchInAddressField"), false);
+    // SRCH12: legacy residue — the reset must clear the retired key
+    // alongside the live one.
     settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
     settings.setValue(QLatin1String("toolbarsearch/alwaysNewTab"), true);
     settings.setValue(QLatin1String("MainWindow/showSearchBox"), true);
@@ -936,9 +939,11 @@ void tst_SettingsDialog::resetSearchSettings()
         QCOMPARE(dialog.shortcutHistoryToken->text(),
                  QLatin1String("@history"));
         QCOMPARE(settings.value(
-                     QLatin1String("urlloading/searchEngineFallback"))
+                     QLatin1String("urlloading/searchInAddressField"))
                      .toBool(),
                  true);
+        QVERIFY(!settings.contains(
+            QLatin1String("urlloading/searchEngineFallback")));
         QCOMPARE(settings.value(
                      QLatin1String("toolbarsearch/alwaysNewTab")).toBool(),
                  false);

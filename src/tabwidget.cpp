@@ -3030,6 +3030,25 @@ static bool looksLikeAddress(const QString &text)
     return dot > 0;
 }
 
+// SRCH12: the opt-out's stored key is renamed — a persisted
+// "searchEngineFallback" value can no longer be trusted: Qt4-era
+// Preferences saves wrote it unconditionally under the old
+// off-by-default checkbox, and pre-isolation test runs polluted real
+// profiles with "false" (the recurring dead-Enter the user kept
+// hitting).  The new "searchInAddressField" key carries the live
+// opt-out; the legacy key is dropped on sight so a stale value can
+// never gate search again — anyone who genuinely wants the bare-http
+// guess re-unchecks the box once.
+static bool searchInAddressFieldEnabled()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("urlloading"));
+    if (settings.contains(QLatin1String("searchEngineFallback")))
+        settings.remove(QLatin1String("searchEngineFallback"));
+    return settings.value(QLatin1String("searchInAddressField"), true)
+        .toBool();
+}
+
 #ifdef ARORA_RUSTCORE
 // OMNI01: rc_classify_input() owns the url-or-search decision; this
 // resolves its verdict against the Qt-owned engine table and the
@@ -3040,11 +3059,7 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
     const QString trimmed = string.trimmed();
     OpenSearchManager *manager = ToolbarSearch::openSearchManager();
 
-    QSettings settings;
-    settings.beginGroup(QLatin1String("urlloading"));
-    const bool searchFallback =
-        settings.value(QLatin1String("searchEngineFallback"), true)
-            .toBool();
+    const bool searchFallback = searchInAddressFieldEnabled();
 
     QJsonObject options;
     options.insert(QLatin1String("search_fallback"), searchFallback);
@@ -3146,12 +3161,9 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
         && url.path() == QLatin1String("home"))
         url = QUrl(QLatin1String("qrc:/startpage.html"));
 
-    QSettings settings;
-    settings.beginGroup(QLatin1String("urlloading"));
     // SRCH01: the omnibox searches by default — the checkbox is now an
     // opt-out that restores the historic bare-http guess.
-    const bool search =
-        settings.value(QLatin1String("searchEngineFallback"), true).toBool();
+    const bool search = searchInAddressFieldEnabled();
     // SRCH04/PTAB01: private contexts (the app-global flag, tor mode
     // and per-tab private browsing) search through the configured
     // private engine.
