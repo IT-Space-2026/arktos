@@ -122,6 +122,7 @@ private slots:
     void historyTab();
     void toolsMenuDedup();
     void fileMenuOrder();
+    void appMenuButton();
     void downloadsMenuHome();
     void devToolsSubmenu();
     void iconOnlyTabsMenu();
@@ -531,6 +532,169 @@ void tst_BrowserMainWindow::fileMenuOrder()
     QCOMPARE(privateAction->shortcut(),
              QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
                           | Qt::Key_N));
+    closeWindow(window);
+}
+
+// MENU06: Vivaldi-style application menu — an Arora logo + name
+// button leads the navigation bar and drops down every real
+// top-level menu (shared QMenu objects in menubar order, so dynamic
+// menus stay live).  The menubar hides by default and View > Show
+// Menu Bar restores it; the same button is on private and tor
+// windows — on tor the menu row is the drawn frameless title bar
+// (TOR11), so it stays up and sheds its items instead of hiding.
+void tst_BrowserMainWindow::appMenuButton()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    QVERIFY(button);
+    QVERIFY(button->autoRaise());
+    QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+    QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
+    QCOMPARE(button->text(), QLatin1String("Arora"));
+    QVERIFY(!button->icon().isNull());
+    QVERIFY(!button->toolTip().isEmpty());
+    QVERIFY(!button->accessibleName().isEmpty());
+
+    // First item on the nav bar, ahead of Back.
+    QVERIFY(!navBar->actions().isEmpty());
+    QCOMPARE(navBar->widgetForAction(navBar->actions().first()),
+             static_cast<QWidget *>(button));
+
+    // The dropdown lists the real top-level menus in menubar order —
+    // the same QMenu objects the menubar holds, not clones.
+    QMenu *appMenu = window->appMenu();
+    QVERIFY(appMenu);
+    QCOMPARE(button->menu(), appMenu);
+    QStringList titles;
+    for (QAction *menuAction : appMenu->actions()) {
+        QVERIFY(menuAction->menu());
+        titles << menuAction->text().remove(QLatin1Char('&'));
+    }
+    QCOMPARE(titles, QStringList()
+             << QLatin1String("File") << QLatin1String("Edit")
+             << QLatin1String("View") << QLatin1String("History")
+             << QLatin1String("Bookmarks") << QLatin1String("Window")
+             << QLatin1String("Tools") << QLatin1String("Help"));
+    const QList<QAction *> barMenus = window->menuBar()->actions();
+    QCOMPARE(barMenus.count(), appMenu->actions().count());
+    for (int i = 0; i < barMenus.count(); ++i)
+        QCOMPARE(barMenus.at(i)->menu(),
+                 appMenu->actions().at(i)->menu());
+
+    // The menubar is hidden by default; the toggle rides in the
+    // dropdown's View submenu and restores the classic bar.
+    QVERIFY(!window->menuBar()->isVisible());
+    QAction *showBar = window->showMenuBarAction();
+    QVERIFY(showBar);
+    QMenu *viewMenu = appMenu->actions().at(2)->menu();
+    QVERIFY(viewMenu->actions().contains(showBar));
+    showBar->trigger();
+    QVERIFY(window->menuBar()->isVisible());
+    QCOMPARE(showBar->text(), QLatin1String("Hide Menu Bar"));
+    showBar->trigger();
+    QVERIFY(!window->menuBar()->isVisible());
+    QCOMPARE(showBar->text(), QLatin1String("Show Menu Bar"));
+
+    // A File-menu action fires through the shared menu — New Tab is
+    // the same QAction the menubar and Ctrl+T use.
+    QMenu *fileMenu = appMenu->actions().first()->menu();
+    QAction *newTab = window->tabWidget()->newTabAction();
+    QVERIFY(fileMenu->actions().contains(newTab));
+    const int tabs = window->tabWidget()->count();
+    newTab->trigger();
+    QCOMPARE(window->tabWidget()->count(), tabs + 1);
+
+    // The window-state blob round-trips the flag both ways — hidden
+    // stays hidden, an explicit show survives restore too.
+    const QByteArray hiddenState = window->saveState();
+    showBar->trigger();
+    const QByteArray shownState = window->saveState();
+    SubWindow *restoredHidden = new SubWindow;
+    QVERIFY(restoredHidden->restoreState(hiddenState));
+    restoredHidden->show();
+    SubWindow *restoredShown = new SubWindow;
+    QVERIFY(restoredShown->restoreState(shownState));
+    restoredShown->show();
+    const bool hiddenStayed = !restoredHidden->menuBar()->isVisible();
+    const bool shownRestored = restoredShown->menuBar()->isVisible();
+    // A closing window writes its chrome state as the next window's
+    // default — close the hidden one last so the private window below
+    // inherits the hidden menubar, not the shown one.
+    closeWindow(restoredShown);
+    closeWindow(restoredHidden);
+    QVERIFY(hiddenStayed);
+    QVERIFY(shownRestored);
+    showBar->trigger(); // back to the hidden default before closing
+
+    // Private window — same button, same dropdown, hidden menubar.
+    BrowserApplication::setPrivate(true);
+    SubWindow *privateWindow = new SubWindow;
+    privateWindow->show();
+    QToolButton *privateButton =
+        privateWindow->findChild<QToolButton *>(
+            QLatin1String("appMenuButton"));
+    const bool privateMenuFull = privateButton
+        && privateButton->menu()
+        && privateButton->menu()->actions().count() >= 8;
+    const bool privateBarHidden =
+        !privateWindow->menuBar()->isVisible();
+    closeWindow(privateWindow);
+    BrowserApplication::setPrivate(false);
+    QVERIFY(privateButton);
+    QVERIFY(privateMenuFull);
+    QVERIFY(privateBarHidden);
+
+    // Tor window — collect state first so a mid-leg failure cannot
+    // leave tor mode armed.  The violet menu row is the drawn
+    // frameless title bar: it stays visible but carries no items —
+    // the menus are in the dropdown, and the toggle re-adds them.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1000, 600);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolButton *torButton = torWindow->findChild<QToolButton *>(
+        QLatin1String("appMenuButton"));
+    const bool torRowVisible = torWindow->menuBar()->isVisible();
+    const bool torRowBare = torWindow->menuBar()->actions().isEmpty();
+    const int torMenuCount = torWindow->appMenu()
+        ? torWindow->appMenu()->actions().count() : -1;
+    // Grabbed-pixel proof the "Arora" label reads light on violet.
+    int lightPixels = 0;
+    if (torButton) {
+        const QImage grab = torButton->grab().toImage();
+        for (int y = 0; y < grab.height(); ++y)
+            for (int x = 0; x < grab.width(); ++x) {
+                const QColor color = grab.pixelColor(x, y);
+                if (color.alpha() > 200 && color.lightness() > 180)
+                    ++lightPixels;
+            }
+    }
+    torWindow->showMenuBarAction()->trigger();
+    QApplication::processEvents();
+    const bool torRowRepopulated =
+        !torWindow->menuBar()->actions().isEmpty();
+    torWindow->showMenuBarAction()->trigger();
+    QApplication::processEvents();
+    const bool torRowBareAgain =
+        torWindow->menuBar()->actions().isEmpty()
+        && torWindow->menuBar()->isVisible();
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+    QVERIFY(torButton);
+    QVERIFY(torRowVisible);
+    QVERIFY(torRowBare);
+    QCOMPARE(torMenuCount, 8);
+    QVERIFY(lightPixels > 0);
+    QVERIFY(torRowRepopulated);
+    QVERIFY(torRowBareAgain);
+
     closeWindow(window);
 }
 
@@ -1339,11 +1503,12 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     SubWindow *plain = new SubWindow;
     QToolBar *plainBar = plain->findChild<QToolBar *>(
         QLatin1String("NavigationToolBar"));
-    QVERIFY(plainBar && plainBar->actions().count() >= 3);
+    // MENU06: the app-menu button leads the bar — Back sits at 1.
+    QVERIFY(plainBar && plainBar->actions().count() >= 4);
     const qlonglong plainBack =
-        luminance(plainBar->actions().at(0)->icon());
+        luminance(plainBar->actions().at(1)->icon());
     const qlonglong plainReload =
-        luminance(plainBar->actions().at(2)->icon());
+        luminance(plainBar->actions().at(3)->icon());
     closeWindow(plain);
 
     BrowserApplication::setTorMode(true);
@@ -1353,15 +1518,17 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QApplication::processEvents();
     QToolBar *navBar = window->findChild<QToolBar *>(
         QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 3);
+    QVERIFY(navBar && navBar->actions().count() >= 4);
     const qlonglong torBack =
-        luminance(navBar->actions().at(0)->icon());
-    const qlonglong torForward =
         luminance(navBar->actions().at(1)->icon());
-    const qlonglong torReload =
+    const qlonglong torForward =
         luminance(navBar->actions().at(2)->icon());
+    const qlonglong torReload =
+        luminance(navBar->actions().at(3)->icon());
     qlonglong menuReload = -1;
-    for (QAction *menuAction : window->menuBar()->actions()) {
+    // MENU06: a tor window's menubar row is the bare title bar — the
+    // menus live in the app-menu dropdown (same shared QMenu objects).
+    for (QAction *menuAction : window->appMenu()->actions()) {
         if (!menuAction->menu()
             || !menuAction->text().contains(QLatin1String("View")))
             continue;
@@ -1438,7 +1605,8 @@ void tst_BrowserMainWindow::darkChromeIcons()
     QApplication::processEvents();
     QToolBar *navBar = window->findChild<QToolBar *>(
         QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 3);
+    // MENU06: the app-menu button leads the bar — Back sits at 1.
+    QVERIFY(navBar && navBar->actions().count() >= 4);
     QToolButton *zoomOut = window->findChild<QToolButton *>(
         QLatin1String("zoomOutButton"));
     QVERIFY(zoomOut);
@@ -1449,20 +1617,20 @@ void tst_BrowserMainWindow::darkChromeIcons()
     }
     QVERIFY(sidebarAction);
 
-    const QImage lightBackImage = navBar->actions().at(0)->icon()
+    const QImage lightBackImage = navBar->actions().at(1)->icon()
         .pixmap(QSize(18, 18)).toImage();
 
     BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
     QApplication::processEvents();
 
-    const QImage darkBackImage = navBar->actions().at(0)->icon()
+    const QImage darkBackImage = navBar->actions().at(1)->icon()
         .pixmap(QSize(18, 18)).toImage();
     const qlonglong darkBack =
-        luminance(navBar->actions().at(0)->icon());
-    const qlonglong darkForward =
         luminance(navBar->actions().at(1)->icon());
-    const qlonglong darkReload =
+    const qlonglong darkForward =
         luminance(navBar->actions().at(2)->icon());
+    const qlonglong darkReload =
+        luminance(navBar->actions().at(3)->icon());
     const qlonglong darkZoomOut = luminance(zoomOut->icon());
     const qlonglong darkSidebar = luminance(sidebarAction->icon());
 
@@ -1482,7 +1650,7 @@ void tst_BrowserMainWindow::darkChromeIcons()
     // chrome, and live theme icons must actually swap pixels.
     BrowserTheme::applyColorScheme();
     QApplication::processEvents();
-    const QImage backImage = navBar->actions().at(0)->icon()
+    const QImage backImage = navBar->actions().at(1)->icon()
         .pixmap(QSize(18, 18)).toImage();
 
     closeWindow(window);
@@ -1636,8 +1804,10 @@ void tst_BrowserMainWindow::torCircuitDropdown()
 
     QVERIFY(button);
     QVERIFY(dropMenu);
-    QCOMPARE(readerIndex, 3);             // back, forward, reload, reader
-    QCOMPARE(circuitIndex, 4);            // onion right next to it
+    // MENU06: the app-menu button leads the bar — the nav cluster
+    // shifts one slot right.
+    QCOMPARE(readerIndex, 4);             // app menu, back, forward, reload, reader
+    QCOMPARE(circuitIndex, 5);            // onion right next to it
     QVERIFY(greyed);
     QCOMPARE(stateTexts.count(), 1);
     QVERIFY(stateTexts.at(0).contains(
@@ -1914,9 +2084,11 @@ void tst_BrowserMainWindow::torTitleBar()
         minimized = window->isMinimized();
     }
 
-    // The menus still live in the real menubar — the bar's pieces are
-    // corner widgets on it, so every action survives.
-    const bool menuAlive = !window->menuBar()->actions().isEmpty();
+    // The menus outlive the menubar — under MENU06 the tor row is a
+    // pure title bar (no items) and the same menus ride the app-menu
+    // dropdown instead.  The bar's pieces stay corner widgets on it.
+    const bool menuAlive = window->appMenu()
+        && !window->appMenu()->actions().isEmpty();
     const bool cornerHosted = bar && window->menuBar()
         && bar->parentWidget()
                == static_cast<QWidget *>(window->menuBar());
@@ -1991,6 +2163,11 @@ void tst_BrowserMainWindow::torTitleBarTitle()
     // A title past the cap elides at the cap — the corner still gets
     // the capped room instead of collapsing to a sliver, the menus
     // still sit after it, and the full title survives on the tooltip.
+    // MENU06: the tor title row carries no menu items by default —
+    // the View-menu toggle brings them back, which is what this leg
+    // measures against.
+    window->showMenuBarAction()->trigger();
+    QApplication::processEvents();
     window->setWindowTitle(longTitle);
     QApplication::processEvents();
     const int longCornerWidth = bar->width();
@@ -2334,8 +2511,9 @@ void tst_BrowserMainWindow::readerModeButton()
     QVERIFY(!reader->isChecked());
     QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
 
-    // Slot order in the toolbar's action list: Back, Forward,
-    // Stop/Reload, the reader button, then the location-bar splitter.
+    // Slot order in the toolbar's action list: the MENU06 app-menu
+    // button leads, then Back, Forward, Stop/Reload, the reader
+    // button, then the location-bar splitter.
     const QList<QAction *> barActions = navBar->actions();
     int readerIndex = -1;
     int splitterIndex = -1;
@@ -2346,7 +2524,7 @@ void tst_BrowserMainWindow::readerModeButton()
         else if (widget && qobject_cast<QSplitter *>(widget))
             splitterIndex = i;
     }
-    QCOMPARE(readerIndex, 3);
+    QCOMPARE(readerIndex, 4);
     QCOMPARE(splitterIndex, readerIndex + 1);
 
     // The View-menu action shares the same ReaderMode state.

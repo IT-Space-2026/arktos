@@ -120,6 +120,7 @@
 #include <qmessagebox.h>
 #include <qstatusbar.h>
 #include <qtoolbar.h>
+#include <qtoolbutton.h>
 #include <qinputdialog.h>
 #include <qlineedit.h>
 #include <qsplitter.h>
@@ -539,9 +540,11 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     m_tabWidget->newTab();
     m_tabWidget->currentLocationBar()->setFocus();
 
-    // Add each item in the menu bar to the main window so
-    // if the menu bar is hidden the shortcuts still work.
-    QList<QAction*> actions = menuBar()->actions();
+    // Add each top-level menu's actions to the main window so
+    // shortcuts keep working while the menubar is hidden (MENU06 —
+    // the app menu is the reliable source on every window type; a
+    // tor window's menubar carries no items at all).
+    QList<QAction*> actions = m_appMenu->actions();
     for (int i = 0; i < actions.count(); ++i) {
         QAction *action = actions.at(i);
         if (action->menu())
@@ -637,7 +640,11 @@ static const qint32 BrowserMainWindowMagic = 0xba;
 
 QByteArray BrowserMainWindow::saveState(bool withTabs) const
 {
-    int version = 3;
+    // Version 4: MENU06 — the menubar defaults hidden under the
+    // app-menu button, so pre-v4 blobs cannot tell "user chose the
+    // menubar" from "it was always on"; restoreState treats their
+    // saved flag as unset and opens Vivaldi-style.
+    int version = 4;
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -682,7 +689,7 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
     qint32 version;
     stream >> marker;
     stream >> version;
-    if (marker != BrowserMainWindowMagic || !(version == 2 || version == 3))
+    if (marker != BrowserMainWindowMagic || version < 2 || version > 4)
         return false;
 
     QSize size;
@@ -723,6 +730,12 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
         m_statusBarVisible = showStatusbar;
     }
 
+    // MENU06: pre-v4 blobs saved "was the menubar up" — always true
+    // under the old default — not a real choice.  Migrate to the new
+    // hidden-by-default; v4+ carries the explicit toggle.
+    if (version < 4)
+        showMenuBar = false;
+
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -736,8 +749,8 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
         m_viewFullScreenAction->setChecked(true);
     }
 
-    menuBar()->setVisible(showMenuBar);
     m_menuBarVisible = showMenuBar;
+    applyMenuBarVisibility();
 
     statusBar()->setVisible(showStatusbar);
 
@@ -786,7 +799,10 @@ QAction *BrowserMainWindow::showMenuBarAction() const
 
 void BrowserMainWindow::setupMenu()
 {
-    m_menuBarVisible = true;
+    // MENU06: the menubar defaults hidden — the app-menu button on
+    // the navigation bar carries the same menus.  The toggle in the
+    // View menu (or Ctrl+M) still restores the classic bar.
+    m_menuBarVisible = false;
 
     new QShortcut(QKeySequence(Qt::Key_F6), this, [this]() { swapFocus(); });
 
@@ -986,7 +1002,12 @@ void BrowserMainWindow::setupMenu()
     m_viewShowMenuBarAction = new QAction(m_viewMenu);
     m_viewShowMenuBarAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_M));
     connect(m_viewShowMenuBarAction, &QAction::triggered, this, &BrowserMainWindow::viewMenuBar);
+    // MENU06: reachable from the app-menu dropdown's View submenu now
+    // that the menubar is hidden by default; the window-level
+    // addAction keeps the Ctrl+M shortcut and the page context
+    // menu's hidden-menubar entry working.
     addAction(m_viewShowMenuBarAction);
+    m_viewMenu->addAction(m_viewShowMenuBarAction);
 
     m_viewToolbarAction = new QAction(this);
     connect(m_viewToolbarAction, &QAction::triggered, this, &BrowserMainWindow::viewToolbar);
@@ -1372,10 +1393,21 @@ void BrowserMainWindow::setupMenu()
     m_helpAboutQtAction->setIcon(QPixmap(QLatin1String(":/qt-project.org/qmessagebox/images/qtlogo-64.png")));
     m_helpAboutApplicationAction->setIcon(windowIcon());
 #endif
+
+    // MENU06: record the top-level menus in menubar order — the
+    // app-menu dropdown shares these QMenu objects, and on tor
+    // windows applyMenuBarVisibility() strips/re-adds them on the
+    // title-bar row.
+    for (QAction *menuAction : menuBar()->actions()) {
+        if (menuAction->menu())
+            m_topMenus.append(menuAction->menu());
+    }
+    applyMenuBarVisibility();
 }
 
 void BrowserMainWindow::aboutToShowViewMenu()
 {
+    m_viewShowMenuBarAction->setText(m_menuBarVisible ? tr("Hide Menu Bar") : tr("Show Menu Bar"));
     m_viewToolbarAction->setText(m_navigationBar->isVisible() ? tr("Hide Toolbar") : tr("Show Toolbar"));
     m_viewBookmarkBarAction->setText(m_bookmarksToolbar->isVisible() ? tr("Hide Bookmarks Bar") : tr("Show Bookmarks Bar"));
     m_viewStatusbarAction->setText(statusBar()->isVisible() ? tr("Hide Status Bar") : tr("Show Status Bar"));
@@ -1505,7 +1537,7 @@ void BrowserMainWindow::retranslate()
     m_viewToolbarAction->setShortcut(tr("Ctrl+|"));
     m_viewBookmarkBarAction->setShortcut(tr("Alt+Ctrl+B"));
     m_viewStatusbarAction->setShortcut(tr("Ctrl+/"));
-    m_viewShowMenuBarAction->setText(tr("Show Menu Bar"));
+    m_viewShowMenuBarAction->setText(m_menuBarVisible ? tr("Hide Menu Bar") : tr("Show Menu Bar"));
     m_viewReloadAction->setText(tr("&Reload Page"));
     m_viewStopAction->setText(tr("&Stop"));
     m_viewZoomInAction->setText(tr("Zoom &In"));
@@ -1561,6 +1593,10 @@ void BrowserMainWindow::retranslate()
     m_navigationBar->setWindowTitle(tr("Navigation"));
     m_bookmarksToolbar->setWindowTitle(tr("&Bookmarks"));
 
+    m_appMenuButton->setText(tr("Arora"));
+    m_appMenuButton->setToolTip(tr("Arora menu"));
+    m_appMenuButton->setAccessibleName(tr("Arora menu"));
+
     m_stopReloadAction->setText(tr("Reload / Stop"));
     updateStopReloadActionText(false);
 }
@@ -1580,6 +1616,26 @@ void BrowserMainWindow::setupToolBar()
     // larger default and the row looked uneven.
     m_navigationBar->setIconSize(QSize(18, 18));
     addToolBar(m_navigationBar);
+
+    // MENU06: Vivaldi-style application menu — an Arora logo + name
+    // button leading the navigation bar whose dropdown lists every
+    // real top-level menu.  The QMenu objects are shared, not cloned,
+    // so dynamic menus (History/Bookmarks/Window) stay live and the
+    // menubar can hide without losing anything.  First widget added,
+    // so it anchors the bar ahead of Back on every window type.
+    m_appMenu = new QMenu(this);
+    for (QMenu *menu : m_topMenus)
+        m_appMenu->addMenu(menu);
+
+    m_appMenuButton = new QToolButton(m_navigationBar);
+    m_appMenuButton->setObjectName(QLatin1String("appMenuButton"));
+    m_appMenuButton->setAutoRaise(true);
+    m_appMenuButton->setIcon(
+        QIcon(QLatin1String(":128x128/arora.png")));
+    m_appMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_appMenuButton->setPopupMode(QToolButton::InstantPopup);
+    m_appMenuButton->setMenu(m_appMenu);
+    m_navigationBar->addWidget(m_appMenuButton);
 
     m_historyBackAction->setIcon(AroraIcon::get(QLatin1String("go-previous")));
     m_historyBackMenu = new QMenu(this);
@@ -1879,12 +1935,38 @@ void BrowserMainWindow::addBookmarkFolder()
     dialog.exec();
 }
 
+QMenu *BrowserMainWindow::appMenu() const
+{
+    return m_appMenu;
+}
+
 void BrowserMainWindow::viewMenuBar()
 {
-    menuBar()->setVisible(!menuBar()->isVisible());
-
-    m_menuBarVisible = menuBar()->isVisible();
+    m_menuBarVisible = !m_menuBarVisible;
+    applyMenuBarVisibility();
     m_autoSaver->changeOccurred();
+}
+
+// MENU06: the menubar flag applied.  On a tor window the menu row is
+// the frameless drawn title bar (TOR11) — hiding it would take the
+// window controls with it, so the row stays up and the toggle adds
+// or strips the top-level menu items instead.  Everywhere else it
+// is a plain visibility flip.
+void BrowserMainWindow::applyMenuBarVisibility()
+{
+    if (BrowserApplication::isTorMode()) {
+        for (QMenu *menu : m_topMenus)
+            menuBar()->removeAction(menu->menuAction());
+        if (m_menuBarVisible) {
+            for (QMenu *menu : m_topMenus)
+                menuBar()->addMenu(menu);
+        }
+        menuBar()->setVisible(true);
+    } else {
+        menuBar()->setVisible(m_menuBarVisible);
+    }
+    m_viewShowMenuBarAction->setText(
+        m_menuBarVisible ? tr("Hide Menu Bar") : tr("Show Menu Bar"));
 }
 
 void BrowserMainWindow::viewToolbar()
@@ -2338,7 +2420,7 @@ void BrowserMainWindow::viewFullScreen(bool makeFullScreen)
         setWindowState(windowState() & ~Qt::WindowFullScreen);
 
         setUnifiedTitleAndToolBarOnMac(true);
-        menuBar()->setVisible(m_menuBarVisible);
+        applyMenuBarVisibility();
         statusBar()->setVisible(m_statusBarVisible);
     }
 }

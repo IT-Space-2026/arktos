@@ -78,6 +78,7 @@ class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
+class QToolButton;
 class TorCircuitButton;
 class WebView;
 class QSplitter;
@@ -119,6 +120,9 @@ public:
     QByteArray saveState(bool withTabs = true) const;
     bool restoreState(const QByteArray &state);
     QAction *showMenuBarAction() const;
+    // MENU06: the app-menu button's dropdown — it shares the real
+    // top-level menus (same QMenu objects as the menubar).
+    QMenu *appMenu() const;
     // CMD01: lazily created Ctrl+Shift+P command palette bound to this
     // window.
     CommandPalette *commandPalette();
@@ -218,6 +222,11 @@ private:
     void persistSidebarWidth(int width);
     void updateSidebarGripPlacement();
     void updateStopReloadActionText(bool loading);
+    // MENU06: applies m_menuBarVisible — a plain visibility flip on
+    // normal windows, but on tor windows the menu row doubles as the
+    // drawn title bar (TOR11) so it stays put and the top-level menu
+    // items are added/removed instead.
+    void applyMenuBarVisibility();
 
 private:
     QMenu *m_fileMenu;
@@ -311,6 +320,13 @@ private:
 
     // Toolbar
     QToolBar *m_navigationBar;
+    // MENU06: Vivaldi-style application menu — a logo+name button
+    // leading the navigation bar; m_appMenu lists the real top-level
+    // menus (m_topMenus records their menubar order) so the menubar
+    // itself can hide while every menu stays reachable.
+    QToolButton *m_appMenuButton = nullptr;
+    QMenu *m_appMenu = nullptr;
+    QList<QMenu *> m_topMenus;
     QMenu *m_historyBackMenu;
     QMenu *m_historyForwardMenu;
     QAction *m_stopReloadAction;
@@ -344,7 +360,9 @@ private:
 
     // These store if the user requested the menu/status bars visible. They are
     // used to determine if these bars should be reshown when leaving fullscreen.
-    bool m_menuBarVisible = true;
+    // MENU06: the menubar defaults off — the app-menu button is the
+    // menu path; the View-menu toggle restores the classic bar.
+    bool m_menuBarVisible = false;
     bool m_statusBarVisible = true;
 
     friend class BrowserApplication;

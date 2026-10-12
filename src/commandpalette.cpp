@@ -311,7 +311,14 @@ void CommandPalette::collectCommands()
     // Menubar tree first (carries the menu path), then the actions the
     // window itself registered — those without a menu entry (Web
     // Search, Show Menu Bar) only exist on the window's action list.
+    // MENU06: the app-menu dropdown shares the same menus and is the
+    // only place they still sit on a tor window (its menubar row is
+    // the drawn title bar and carries no items); the `seen` set keeps
+    // this a no-op where the menubar pass already covered them.
     collectMenuActions(m_window->menuBar()->actions(), QString(), &seen);
+    if (m_window->appMenu())
+        collectMenuActions(m_window->appMenu()->actions(),
+                           QString(), &seen);
     collectMenuActions(m_window->actions(), QString(), &seen);
 }
 
