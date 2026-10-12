@@ -160,6 +160,9 @@ fn load_from_disk(dir: Option<&Path>) -> RcResult<RuleSet> {
 /// A malformed document keeps the previous set (RC_CORRUPT).
 pub fn load_rules(json: &str) -> RcResult<()> {
     RULES.replace(parse_rules(json)?);
+    // PERF01: the request-policy strip stage reads this ruleset —
+    // cached verdicts computed against the old one must die.
+    crate::policy::bump_eval_generation();
     Ok(())
 }
 
@@ -167,6 +170,7 @@ pub fn load_rules(json: &str) -> RcResult<()> {
 /// after a rules update lands in the data dir.
 pub fn reload() -> RcResult<()> {
     RULES.replace(load_from_disk(data_dir().as_deref())?);
+    crate::policy::bump_eval_generation();
     Ok(())
 }
 

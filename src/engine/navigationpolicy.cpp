@@ -19,6 +19,12 @@
 
 #include "navigationpolicy.h"
 
+#include <qatomic.h>
+#include <qelapsedtimer.h>
+#include <qhash.h>
+#include <qmutex.h>
+#include <qtenvironmentvariables.h>
+
 #if defined(ARORA_RUSTCORE)
 
 // ============================================================
@@ -101,7 +107,9 @@ static QJsonObject hostScopeArgs(const QString &host, const QString &scope)
     return a;
 }
 
-PolicyVerdict NavigationPolicy::evaluate(const PolicyRequest &request)
+// PERF01: renamed from NavigationPolicy::evaluate — the memoizing
+// public wrapper lives below the #endif, shared by both builds.
+static PolicyVerdict evaluateUncached(const PolicyRequest &request)
 {
     QJsonObject manifest;
     manifest[QStringLiteral("url")] = QString::fromUtf8(request.url.toEncoded());
@@ -568,6 +576,18 @@ static QMutex s_blockedNavLock;
 static QSet<QString> s_blockedHttpNavs;
 static const int maxBlockedHttpNavs = 64;
 
+// PERF01: the no-rust build keeps its own verdict-state generation —
+// bumped by every mutator below (the same set the rustcore policy
+// bumps internally), AFTER the write commits: bumping first would
+// let a concurrent evaluate stamp the new generation with a
+// pre-write verdict.  The shared cache wrapper reads it via
+// evalGeneration(); a stamped entry is never served past a bump.
+static QAtomicInteger<quint64> s_evalGeneration{1};
+static void bumpEvalGeneration()
+{
+    s_evalGeneration.fetchAndAddRelaxed(1);
+}
+
 // Resource-type ordinals (QWebEngineUrlRequestInfo::ResourceType).
 static const int RT_MAIN_FRAME = 0;
 static const int RT_SCRIPT = 3;
@@ -603,6 +623,7 @@ void NavigationPolicy::loadSnapshot(const Snapshot &snap)
     }
     const QMutexLocker lock(&s_httpAllowLock);
     s_persistedHttpAllowed = persisted;
+    bumpEvalGeneration();
 }
 
 bool NavigationPolicy::httpsFirstEnabled()
@@ -801,11 +822,13 @@ static bool markHostDowngraded(const QString &scope, const QString &host)
     const auto it = marks.find(host);
     if (it != marks.end()) {
         it.value() = QDateTime::currentMSecsSinceEpoch();
+        bumpEvalGeneration();   // a refresh extends the re-probe window
         return false;
     }
     if (marks.size() >= maxDowngradedHosts)
         return false;
     marks.insert(host, QDateTime::currentMSecsSinceEpoch());
+    bumpEvalGeneration();
     return true;
 }
 
@@ -877,12 +900,14 @@ void NavigationPolicy::clearDowngradedHost(const QString &host,
     const auto scopeIt = s_downgradedHosts.find(scope);
     if (scopeIt != s_downgradedHosts.end())
         scopeIt->remove(host.toLower());
+    bumpEvalGeneration();
 }
 
 void NavigationPolicy::clearDowngradedHosts()
 {
     const QMutexLocker lock(&s_downgradeLock);
     s_downgradedHosts.clear();
+    bumpEvalGeneration();
 }
 
 qint64 NavigationPolicy::downgradeTtlMs()
@@ -895,6 +920,7 @@ void NavigationPolicy::setDowngradeTtlMs(qint64 ms)
 {
     const QMutexLocker lock(&s_downgradeLock);
     s_downgradeTtlMs = ms;
+    bumpEvalGeneration();
 }
 
 bool NavigationPolicy::shouldWarnHttp(const QUrl &url, const QString &scope)
@@ -934,23 +960,29 @@ bool NavigationPolicy::allowHttpForHost(const QString &host, bool persistent)
     const QString lowered = host.toLower();
     if (lowered.isEmpty())
         return false;
-    const QMutexLocker lock(&s_httpAllowLock);
-    if (s_sessionHttpAllowed.size() < maxHttpAllowedHosts)
-        s_sessionHttpAllowed.insert(lowered);
-    if (!persistent)
-        return false;
-    if (s_persistedHttpAllowed.contains(lowered))
-        return false;
-    s_persistedHttpAllowed.insert(lowered);
-    return true;   // caller persists to QSettings
+    bool persistNeeded = false;
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        if (s_sessionHttpAllowed.size() < maxHttpAllowedHosts)
+            s_sessionHttpAllowed.insert(lowered);
+        if (persistent && !s_persistedHttpAllowed.contains(lowered)) {
+            s_persistedHttpAllowed.insert(lowered);
+            persistNeeded = true;
+        }
+    }
+    bumpEvalGeneration();
+    return persistNeeded;   // caller persists to QSettings
 }
 
 void NavigationPolicy::clearHttpAllowance(const QString &host)
 {
     const QString lowered = host.toLower();
-    const QMutexLocker lock(&s_httpAllowLock);
-    s_sessionHttpAllowed.remove(lowered);
-    s_persistedHttpAllowed.remove(lowered);
+    {
+        const QMutexLocker lock(&s_httpAllowLock);
+        s_sessionHttpAllowed.remove(lowered);
+        s_persistedHttpAllowed.remove(lowered);
+    }
+    bumpEvalGeneration();
 }
 
 QStringList NavigationPolicy::httpExceptionHosts()
@@ -1128,22 +1160,31 @@ void NavigationPolicy::allowBlockedDomain(const QString &host)
     const QString lowered = host.toLower();
     if (lowered.isEmpty())
         return;
-    const QMutexLocker lock(&s_domainBlockLock);
-    if (s_sessionBlockedAllowed.size() < maxBlockedAllowedHosts)
-        s_sessionBlockedAllowed.insert(lowered);
+    {
+        const QMutexLocker lock(&s_domainBlockLock);
+        if (s_sessionBlockedAllowed.size() < maxBlockedAllowedHosts)
+            s_sessionBlockedAllowed.insert(lowered);
+    }
+    bumpEvalGeneration();
 }
 
 void NavigationPolicy::clearBlockedDomainAllowance(const QString &host)
 {
-    const QMutexLocker lock(&s_domainBlockLock);
-    s_sessionBlockedAllowed.remove(host.toLower());
+    {
+        const QMutexLocker lock(&s_domainBlockLock);
+        s_sessionBlockedAllowed.remove(host.toLower());
+    }
+    bumpEvalGeneration();
 }
 
 void NavigationPolicy::clearBlockedDomainAllowances()
 {
-    const QMutexLocker lock(&s_domainBlockLock);
-    s_sessionBlockedAllowed.clear();
-    s_blockedDomainNavs.clear();
+    {
+        const QMutexLocker lock(&s_domainBlockLock);
+        s_sessionBlockedAllowed.clear();
+        s_blockedDomainNavs.clear();
+    }
+    bumpEvalGeneration();
 }
 
 QUrl NavigationPolicy::strippedUrl(const QUrl &url)
@@ -1323,7 +1364,9 @@ static PolicyVerdict evaluateTor(const PolicyRequest &req)
     return v;
 }
 
-PolicyVerdict NavigationPolicy::evaluate(const PolicyRequest &request)
+// PERF01: renamed from NavigationPolicy::evaluate — the memoizing
+// public wrapper lives below the #endif, shared by both builds.
+static PolicyVerdict evaluateUncached(const PolicyRequest &request)
 {
     PolicyVerdict v;
     const QString scheme = request.url.scheme();
@@ -1376,3 +1419,177 @@ bool NavigationPolicy::cookieFilter(const CookieGateInput &input)
 } // namespace Engine
 
 #endif // ARORA_RUSTCORE
+
+// ============================================================
+// PERF01 — per-request verdict memoization (shared, both builds).
+// ============================================================
+//
+// The interceptors call evaluate() once per outgoing request on the
+// engine's IO thread — tens of calls per page load — and each one
+// paid the full marshal→(FFI)→parse round trip in the rust build.
+// But the inputs that actually vary between a page's subrequests are
+// few: the manifest fields, the loaded Snapshot, the urlstrip
+// ruleset and the main-frame-only mutable state (downgrade marks,
+// http + blocked-domain allowances, the domain blocklist).
+//
+// So evaluate() memoizes non-main-frame verdicts:
+//
+//   * KEY — every manifest field (url, firstPartyUrl, resourceType,
+//     method, scope, torMode, scriptAllowed, minRefererLevel) plus a
+//     length-prefixed fingerprint of ALL headers.  Referer,
+//     Sec-Fetch-Dest and Purpose/Sec-Purpose feed verdicts today;
+//     hashing the whole list keeps any future header-dependent stage
+//     correct.  The scope string ("otr:<ptr>" for off-the-record
+//     profiles) and the tor flag sit in the key, so OTR/tor verdicts
+//     can never alias clearnet ones, and identical URLs under
+//     different first-party pages stay distinct entries.
+//   * FRESHNESS — a monotonic verdict-state generation bumped by
+//     every mutation that could change a verdict: rc_policy_
+//     eval_generation() in the rust build (bumped by snapshot loads,
+//     policy-state writes, urlstrip/blocklist swaps and data-dir
+//     switches), a Qt-side atomic bumped by the same mutators in the
+//     fallback.  Entries carry the generation read BEFORE their
+//     evaluation ran, so a stamp can never outlive the state the
+//     verdict was computed from — a mid-evaluate mutation simply
+//     stillborns the entry.  The re-read is one trivial FFI call per
+//     request versus a full JSON round trip on a miss.
+//   * Main frames are EXCLUDED (resourceType 0): they consult the
+//     mutable downgrade/allowance state — including a wall-clock TTL
+//     the generation cannot observe — and carry consume-once
+//     blocked-navigation side effects that must not replay.  They
+//     also run ~once per navigation, so memoizing them buys nothing.
+//     Subframe navigations read only snapshot + ruleset state, like
+//     every other subresource.
+//   * Bounded at maxVerdictCacheEntries; the map clears on overflow
+//     and re-populates — a hostile page cannot grow it without
+//     limit.
+//
+// ARORA_POLICY_CACHE_OFF=1 disables memoization (diagnostic escape
+// hatch — the per-request path is then the pre-PERF01 pipeline,
+// still timed for the stats counters).
+
+namespace Engine {
+
+namespace {
+
+struct CachedVerdict {
+    PolicyVerdict verdict;
+    quint64 generation;
+};
+
+QMutex s_verdictCacheLock;
+QHash<QByteArray, CachedVerdict> s_verdictCache;
+const int maxVerdictCacheEntries = 4096;
+
+QAtomicInteger<qint64> s_policyEvalCalls;
+QAtomicInteger<qint64> s_policyCacheHits;
+QAtomicInteger<qint64> s_policyCacheMisses;
+QAtomicInteger<qint64> s_policyEvalNs;
+
+void addKeyField(QByteArray &key, const QByteArray &field)
+{
+    // Length-prefixing keeps the concatenation unambiguous — no
+    // field pair can shift a boundary and forge a key.
+    key += QByteArray::number(field.size());
+    key += ':';
+    key += field;
+    key += ';';
+}
+
+QByteArray verdictKey(const PolicyRequest &req)
+{
+    QByteArray key;
+    key.reserve(192);
+    addKeyField(key, req.url.toEncoded());
+    addKeyField(key, req.firstPartyUrl.toEncoded());
+    addKeyField(key, req.method);
+    addKeyField(key, req.scope.toUtf8());
+    addKeyField(key, QByteArray::number(req.resourceType));
+    addKeyField(key, QByteArray::number(int(req.torMode)));
+    addKeyField(key, QByteArray::number(int(req.scriptAllowed)));
+    addKeyField(key, QByteArray::number(req.minRefererLevel));
+    for (const auto &pair : req.headers) {
+        addKeyField(key, pair.first);
+        addKeyField(key, pair.second);
+    }
+    return key;
+}
+
+quint64 evalGeneration()
+{
+#if defined(ARORA_RUSTCORE)
+    return rc_policy_eval_generation();
+#else
+    return s_evalGeneration.loadRelaxed();
+#endif
+}
+
+PolicyVerdict evaluateTimed(const PolicyRequest &request)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const PolicyVerdict verdict = evaluateUncached(request);
+    s_policyEvalNs.fetchAndAddRelaxed(timer.nsecsElapsed());
+    return verdict;
+}
+
+} // namespace
+
+PolicyVerdict NavigationPolicy::evaluate(const PolicyRequest &request)
+{
+    static const bool cacheEnabled =
+        !qEnvironmentVariableIsSet("ARORA_POLICY_CACHE_OFF");
+    // 0 == QWebEngineUrlRequestInfo::ResourceTypeMainFrame /
+    // Engine::ResourceType::MainFrame — never memoized (see above).
+    if (!cacheEnabled || request.resourceType == 0) {
+        s_policyEvalCalls.fetchAndAddRelaxed(1);
+        return evaluateTimed(request);
+    }
+    const QByteArray key = verdictKey(request);
+    const quint64 generation = evalGeneration();
+    {
+        const QMutexLocker locker(&s_verdictCacheLock);
+        const auto it = s_verdictCache.constFind(key);
+        if (it != s_verdictCache.constEnd()
+            && it->generation == generation) {
+            s_policyCacheHits.fetchAndAddRelaxed(1);
+            return it->verdict;
+        }
+    }
+    s_policyCacheMisses.fetchAndAddRelaxed(1);
+    s_policyEvalCalls.fetchAndAddRelaxed(1);
+    const PolicyVerdict verdict = evaluateTimed(request);
+    {
+        const QMutexLocker locker(&s_verdictCacheLock);
+        if (s_verdictCache.size() >= maxVerdictCacheEntries)
+            s_verdictCache.clear();
+        s_verdictCache.insert(key, { verdict, generation });
+    }
+    return verdict;
+}
+
+NavigationPolicy::PolicyCacheStats NavigationPolicy::policyCacheStats()
+{
+    PolicyCacheStats s;
+    s.evaluateCalls = s_policyEvalCalls.loadRelaxed();
+    s.cacheHits = s_policyCacheHits.loadRelaxed();
+    s.cacheMisses = s_policyCacheMisses.loadRelaxed();
+    s.evaluateNs = s_policyEvalNs.loadRelaxed();
+    return s;
+}
+
+void NavigationPolicy::resetPolicyCacheStats()
+{
+    s_policyEvalCalls.storeRelaxed(0);
+    s_policyCacheHits.storeRelaxed(0);
+    s_policyCacheMisses.storeRelaxed(0);
+    s_policyEvalNs.storeRelaxed(0);
+}
+
+void NavigationPolicy::clearPolicyCache()
+{
+    const QMutexLocker locker(&s_verdictCacheLock);
+    s_verdictCache.clear();
+}
+
+} // namespace Engine

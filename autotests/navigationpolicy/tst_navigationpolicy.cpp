@@ -87,6 +87,7 @@ private slots:
     void cookieGateMatrix();
     void granularApiMatchesInterceptors();
     void failureImpliesDowngradeTable();
+    void verdictCache();
 };
 
 void tst_NavigationPolicy::initTestCase()
@@ -453,6 +454,78 @@ void tst_NavigationPolicy::failureImpliesDowngradeTable()
     QVERIFY(NavigationPolicy::failureImpliesDowngrade(2, -101));
     QVERIFY(NavigationPolicy::failureImpliesDowngrade(2, -102));
     QVERIFY(NavigationPolicy::failureImpliesDowngrade(2, -118));
+}
+
+// PERF01: the verdict memoization — hits skip the backend entirely,
+// any verdict-relevant mutation (snapshot or policy-state write)
+// invalidates every stamped entry, and main frames never memoize.
+void tst_NavigationPolicy::verdictCache()
+{
+    NavigationPolicy::clearPolicyCache();
+    NavigationPolicy::resetPolicyCacheStats();
+
+    // A repeated identical subresource request is served from the
+    // cache — the second call runs no backend evaluation.
+    const auto img = makeRequest(QStringLiteral("https://t.example/i.png"), 4);
+    QCOMPARE(NavigationPolicy::evaluate(img).action,
+             PolicyVerdict::Action::Allow);
+    QCOMPARE(NavigationPolicy::evaluate(img).action,
+             PolicyVerdict::Action::Allow);
+    auto stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.evaluateCalls, 1);
+    QCOMPARE(stats.cacheMisses, 1);
+    QCOMPARE(stats.cacheHits, 1);
+
+    // The referer header and the scope string are both key inputs —
+    // same URL under either a different header or an OTR scope is a
+    // separate entry (OTR/tor can never alias clearnet verdicts).
+    auto req2 = img;
+    req2.headers.append(qMakePair(QByteArray("Referer"),
+                                  QByteArray("https://src.example/p")));
+    QCOMPARE(NavigationPolicy::evaluate(req2).action,
+             PolicyVerdict::Action::Allow);
+    auto req3 = img;
+    req3.scope = QStringLiteral("otr:1");
+    QCOMPARE(NavigationPolicy::evaluate(req3).action,
+             PolicyVerdict::Action::Allow);
+    stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.evaluateCalls, 3);
+    QCOMPARE(stats.cacheHits, 1);
+
+    // A snapshot flip invalidates — the same-key request re-evaluates
+    // against the new state instead of serving the stamped verdict.
+    auto snap = defaultSnapshot();
+    snap.refererPolicy = 3;   // RefererNever
+    NavigationPolicy::loadSnapshot(snap);
+    const auto v = NavigationPolicy::evaluate(req2);
+    QVERIFY(v.refererSet);
+    QCOMPARE(v.refererValue, QByteArray());  // header removal
+    stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.cacheMisses, 4);
+    QCOMPARE(stats.evaluateCalls, 4);
+
+    // Main frames are never memoized — both identical requests reach
+    // the backend (downgrade state + blocked-nav side effects live
+    // there).
+    const auto nav = makeRequest(QStringLiteral("https://t.example/"), 0);
+    NavigationPolicy::evaluate(nav);
+    NavigationPolicy::evaluate(nav);
+    stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.evaluateCalls, 6);
+    QCOMPARE(stats.cacheHits, 1);
+
+    // Policy-state writes invalidate too — a downgrade mark for an
+    // unrelated host still bumps the generation (verdict stays
+    // Allow; the point is the re-evaluation happened).
+    NavigationPolicy::markDowngraded(QStringLiteral("other.example"),
+                                     QStringLiteral("test"));
+    NavigationPolicy::evaluate(img);
+    stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.cacheMisses, 5);
+    // ...and the freshly stamped entry hits again.
+    NavigationPolicy::evaluate(img);
+    stats = NavigationPolicy::policyCacheStats();
+    QCOMPARE(stats.cacheHits, 2);
 }
 
 QTEST_MAIN(tst_NavigationPolicy)

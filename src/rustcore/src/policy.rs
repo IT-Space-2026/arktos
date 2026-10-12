@@ -41,6 +41,7 @@
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -201,6 +202,40 @@ impl Policy {
 
 fn policy() -> &'static Policy {
     POLICY.get_or_init(Policy::new)
+}
+
+// ---- verdict-generation counter (PERF01) --------------------------------
+//
+// The Qt adapter memoizes per-request verdicts on the engine's IO
+// thread (see NavigationPolicy::evaluate).  Every entry is stamped
+// with the generation it was computed under; any mutation that could
+// change a verdict must bump this counter so a stamped entry can
+// never outlive the state it was computed from.  Bump sites cover the
+// whole mutable surface the pipeline reads:
+//   * the Snapshot (load_snapshot_json);
+//   * PolicyState writes reachable through call_json ops (downgrade
+//     marks + TTL, http allowances, blocked-domain allowances);
+//   * the urlstrip ruleset (load_rules/reload and the DirCache
+//     rebuild a late rc_set_data_dir triggers — bumped in
+//     store::set_data_dir);
+//   * the domain blocklist (load/reload, same set_data_dir rebuild).
+// Bookkeeping-only writes that cannot change a verdict (the
+// consume-once blocked-navigation registries, expiry sweeps inside
+// is_marked_downgraded — main-frame-only inputs the cache never
+// serves) do not bump.  Bumps land AFTER the mutation commits:
+// bumping first would let a concurrent evaluate stamp the new
+// generation with a pre-write verdict and keep serving it.  An
+// unneeded bump is always safe; a missing one would serve a stale
+// verdict, so callers err toward bumping.
+static EVAL_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn bump_eval_generation() {
+    EVAL_GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// rc_policy_eval_generation — the current verdict-state generation.
+pub fn eval_generation() -> u64 {
+    EVAL_GENERATION.load(Ordering::Acquire)
 }
 
 // ---- minimal URL decomposition ----------------------------------------
@@ -1086,6 +1121,7 @@ pub fn load_snapshot_json(v: &Value) -> RcResult<()> {
             .filter(|h| !h.is_empty())
             .collect();
     }
+    bump_eval_generation();
     Ok(())
 }
 
@@ -1184,22 +1220,28 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
                 return Ok(json!({"persist_needed": false}));
             }
             let persistent = arg_bool("persistent");
-            let mut state = policy().state();
-            if state.session_http_allowed.len() < MAX_HTTP_ALLOWED_HOSTS {
-                state.session_http_allowed.insert(host.clone());
-            }
-            if !persistent {
-                return Ok(json!({"persist_needed": false}));
-            }
-            let already = state.persisted_http_allowed.contains(&host);
-            state.persisted_http_allowed.insert(host);
-            Ok(json!({"persist_needed": !already}))
+            let persist_needed = {
+                let mut state = policy().state();
+                if state.session_http_allowed.len() < MAX_HTTP_ALLOWED_HOSTS {
+                    state.session_http_allowed.insert(host.clone());
+                }
+                persistent && {
+                    let already = state.persisted_http_allowed.contains(&host);
+                    state.persisted_http_allowed.insert(host);
+                    !already
+                }
+            };
+            bump_eval_generation();
+            Ok(json!({"persist_needed": persist_needed}))
         }
         "clear_http_allowance" => {
             let host = arg_str("host").to_lowercase();
-            let mut state = policy().state();
-            state.session_http_allowed.remove(&host);
-            state.persisted_http_allowed.remove(&host);
+            {
+                let mut state = policy().state();
+                state.session_http_allowed.remove(&host);
+                state.persisted_http_allowed.remove(&host);
+            }
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "http_exceptions" => {
@@ -1221,24 +1263,31 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
             if !host.is_empty() && !is_private_or_local_host(&host) {
                 let mut state = policy().state();
                 mark_host_downgraded(&mut state, &arg_str("scope"), &host);
+                drop(state);
+                bump_eval_generation();
             }
             Ok(Value::Null)
         }
         "clear_downgraded" => {
             let host = arg_str("host").to_lowercase();
-            let mut state = policy().state();
-            if let Some(marks) = state.downgraded.get_mut(&arg_str("scope")) {
-                marks.remove(&host);
+            {
+                let mut state = policy().state();
+                if let Some(marks) = state.downgraded.get_mut(&arg_str("scope")) {
+                    marks.remove(&host);
+                }
             }
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "clear_all_downgraded" => {
             policy().state().downgraded.clear();
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "ttl_get" => Ok(json!(policy().state().downgrade_ttl_ms)),
         "ttl_set" => {
             policy().state().downgrade_ttl_ms = arg_i64("ms");
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "failure_implies_downgrade" => Ok(json!(failure_implies_downgrade(
@@ -1260,8 +1309,12 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
             if host.is_empty() || is_private_or_local_host(&host) {
                 return Ok(json!(false));
             }
-            let mut state = policy().state();
-            Ok(json!(mark_host_downgraded(&mut state, &scope, &host)))
+            let marked = {
+                let mut state = policy().state();
+                mark_host_downgraded(&mut state, &scope, &host)
+            };
+            bump_eval_generation();
+            Ok(json!(marked))
         }
         "record_blocked_nav" => {
             let mut state = policy().state();
@@ -1296,6 +1349,8 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
                 if state.session_blocked_allowed.len() < MAX_BLOCKED_ALLOWED_HOSTS {
                     state.session_blocked_allowed.insert(host);
                 }
+                drop(state);
+                bump_eval_generation();
             }
             Ok(Value::Null)
         }
@@ -1304,12 +1359,16 @@ pub fn call_json(v: &Value) -> RcResult<Value> {
                 .state()
                 .session_blocked_allowed
                 .remove(&arg_str("host").to_lowercase());
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "clear_all_blocked_domain" => {
-            let mut state = policy().state();
-            state.session_blocked_allowed.clear();
-            state.blocked_domain_navs.clear();
+            {
+                let mut state = policy().state();
+                state.session_blocked_allowed.clear();
+                state.blocked_domain_navs.clear();
+            }
+            bump_eval_generation();
             Ok(Value::Null)
         }
         "is_ping" => Ok(json!(is_ping_telemetry(
@@ -1383,6 +1442,77 @@ mod tests {
             "headers": [],
             "scope": "test",
         })
+    }
+
+    // PERF01: every verdict-relevant mutation advances the generation
+    // counter the Qt-side verdict cache stamps entries with.  Holds
+    // BOTH serialization locks: the policy TEST_LOCK keeps sibling
+    // policy tests from bumping (snapshot loads), the store lock keeps
+    // urlstrip/blocklist/set_data_dir tests from bumping — either
+    // would mask a missing bump or trip the no-bump assertion.
+    #[test]
+    fn eval_generation_bumps_on_mutations() {
+        let _g = guard();
+        let _gs = crate::store::test_lock();
+        let mut prev = eval_generation();
+        reset();
+        let mut bumped = |label: &str| {
+            let now = eval_generation();
+            assert!(now > prev, "{label} did not bump the generation");
+            prev = now;
+        };
+        bumped("reset's snapshot load");
+        load_snapshot_json(&json!({"block_pings": false})).unwrap();
+        bumped("load_snapshot_json");
+        call_json(&json!({"op": "mark_downgraded",
+                          "host": "a.example", "scope": "test"}))
+            .unwrap();
+        bumped("mark_downgraded");
+        call_json(&json!({"op": "note_nav_failure",
+                          "url": "https://b.example/",
+                          "domain": 2, "code": -101, "scope": "test"}))
+            .unwrap();
+        bumped("note_nav_failure");
+        call_json(&json!({"op": "ttl_set", "ms": 1000})).unwrap();
+        bumped("ttl_set");
+        call_json(&json!({"op": "allow_http",
+                          "host": "a.example", "persistent": false}))
+            .unwrap();
+        bumped("allow_http");
+        call_json(&json!({"op": "clear_http_allowance",
+                          "host": "a.example"}))
+            .unwrap();
+        bumped("clear_http_allowance");
+        call_json(&json!({"op": "allow_blocked_domain",
+                          "host": "a.example"}))
+            .unwrap();
+        bumped("allow_blocked_domain");
+        call_json(&json!({"op": "clear_blocked_domain_allowance",
+                          "host": "a.example"}))
+            .unwrap();
+        bumped("clear_blocked_domain_allowance");
+        call_json(&json!({"op": "clear_all_blocked_domain"})).unwrap();
+        bumped("clear_all_blocked_domain");
+        call_json(&json!({"op": "clear_downgraded",
+                          "host": "a.example", "scope": "test"}))
+            .unwrap();
+        bumped("clear_downgraded");
+        call_json(&json!({"op": "clear_all_downgraded"})).unwrap();
+        bumped("clear_all_downgraded");
+        // Bookkeeping ops and reads must NOT bump — they cannot
+        // change a verdict.
+        call_json(&json!({"op": "record_blocked_nav",
+                          "kind": "http", "url": "http://x.example/"}))
+            .unwrap();
+        call_json(&json!({"op": "take_blocked_nav",
+                          "kind": "http", "url": "http://x.example/"}))
+            .unwrap();
+        call_json(&json!({"op": "is_downgraded",
+                          "host": "a.example", "scope": "test"}))
+            .unwrap();
+        call_json(&json!({"op": "flag", "name": "block_pings"})).unwrap();
+        assert_eq!(eval_generation(), prev,
+                   "read/bookkeeping ops bumped the generation");
     }
 
     #[test]

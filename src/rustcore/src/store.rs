@@ -169,6 +169,11 @@ impl Store {
             self.derived_key = None;
             self.creds = None;
             self.autofill = None;
+            // PERF01: a different dir re-stamps every DirCache — the
+            // lazy rebuilds swap the urlstrip ruleset and the domain
+            // blocklist the request policy reads, so memoized verdicts
+            // must re-evaluate against the new data.
+            crate::policy::bump_eval_generation();
         }
         Ok(())
     }

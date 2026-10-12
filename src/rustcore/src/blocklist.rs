@@ -222,6 +222,8 @@ pub fn load(text: &str) -> RcResult<()> {
         );
     }
     LIST.replace(BlockList { domains });
+    // PERF01: verdicts computed against the old list must die.
+    crate::policy::bump_eval_generation();
     Ok(())
 }
 
@@ -242,6 +244,7 @@ pub fn reload() -> RcResult<()> {
         }
     }
     LIST.replace(load_from_disk(dir.as_deref()));
+    crate::policy::bump_eval_generation();
     Ok(())
 }
 

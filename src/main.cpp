@@ -61,6 +61,7 @@
 #include "pictureinpicture.h"
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
+#include "navigationpolicy.h"
 #include "privacyrequestinterceptor.h"
 #include "readermode.h"
 #include "sandboxmanager.h"
@@ -4581,13 +4582,30 @@ int main(int argc, char **argv)
                             line.mid(9).trimmed();
                     }
                 }
-                (*observed)[QLatin1String("path:") + path] = "1";
+                const QString pkey = QLatin1String("path:") + path;
+                (*observed)[pkey] = QByteArray::number(
+                    observed->value(pkey).toInt() + 1);
                 QByteArray body;
                 QByteArray extra;
                 if (path == QLatin1String("/page")) {
                     extra = "Set-Cookie: arora_priv_first=1\r\n";
+                    // PERF01: the two sequential identical fetches are
+                    // the repeated-subresource workload the verdict
+                    // cache exists for — the second /i request is the
+                    // same interceptor manifest as the first, so it is
+                    // served from the cache (see the stats line).
+                    // 'no-store' keeps Blink from answering the second
+                    // fetch out of the HTTP cache without a wire hit;
+                    // the chain then navigates cross-site for the
+                    // nav-referer probe (replaces the old loadFinished
+                    // JS hook).
                     body = "<html><body><img src=\"http://127.0.0.2:"
-                        + QByteArray::number(port) + "/img\"></body></html>";
+                        + QByteArray::number(port) + "/img\">"
+                        + "<script>fetch('/i',{cache:'no-store'})"
+                        + ".then(()=>fetch('/i',{cache:'no-store'}))"
+                        + ".then(()=>{location.href='http://127.0.0.2:"
+                        + QByteArray::number(port) + "/nav'})</script>"
+                        + "</body></html>";
                 } else {
                     extra = "Set-Cookie: arora_priv_third=1\r\n";
                     body = QByteArrayLiteral(
@@ -4613,7 +4631,6 @@ int main(int argc, char **argv)
 
         QTimer *poll = new QTimer(&application);
         auto ticks = std::make_shared<int>(0);
-        const QUrl pageUrl(QStringLiteral("http://127.0.0.1:%1/page").arg(port));
         const QUrl thirdUrl(QStringLiteral("http://127.0.0.2:%1/").arg(port));
         QObject::connect(poll, &QTimer::timeout, &application,
                          [&application, cookieJar, poll, ticks, observed,
@@ -4631,7 +4648,11 @@ int main(int argc, char **argv)
             bool third = false;
             for (const QNetworkCookie &c : cookieJar->cookiesForUrl(thirdUrl))
                 third |= (c.name() == "arora_priv_third");
-            const bool done = sawImg && !navReferer.isEmpty() && first;
+            // PERF01: both identical /i fetches must hit the wire —
+            // only then is the repeat request's cache hit certain to
+            // have happened.
+            const bool done = sawImg && !navReferer.isEmpty() && first
+                && observed->value(QLatin1String("path:/i")).toInt() >= 2;
             if (!done && ++*ticks <= 40)
                 return; // retry for ~20s
             // Navigation referer carries the *source's* bare origin
@@ -4648,21 +4669,25 @@ int main(int argc, char **argv)
                     << "navReferer:" << navReferer << "navTrimmed:" << navTrimmed
                     << "firstPartyCookie:" << first
                     << "thirdPartyCookie:" << third;
+            // PERF01 measurement surface — evaluate() calls that
+            // actually reached the backend vs. requests the
+            // interceptor saw; the gap is served by the verdict cache.
+            const auto pstats = Engine::NavigationPolicy::policyCacheStats();
+            qInfo() << "privacy-smoke: requestsSeen:"
+                    << PrivacyRequestInterceptor::requestsSeen()
+                    << "policyEvals:" << pstats.evaluateCalls
+                    << "cacheHits:" << pstats.cacheHits
+                    << "cacheMisses:" << pstats.cacheMisses
+                    << "evalUs:" << (pstats.evaluateNs / 1000);
             poll->stop();
             application.exit(pass ? 0 : 1);
         });
         poll->start(500);
-        view->loadUrl(pageUrl);
-        // Second probe: a renderer-initiated cross-site navigation —
-        // does setHttpHeader("Referer") take effect there?
-        QObject::connect(view, &QWebEngineView::loadFinished, &application,
-                         [view, port](bool ok) {
-            if (!ok)
-                return;
-            if (view->url().path() == QLatin1String("/page"))
-                view->enginePage()->runJavaScript(QStringLiteral(
-                    "location.href='http://127.0.0.2:%1/nav'").arg(port));
-        });
+        view->loadUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/page")
+                           .arg(port)));
+        // The page's own script drives the renderer-initiated
+        // cross-site navigation to /nav (the referer probe) after the
+        // duplicate subresource fetches complete — see the fixture.
     }
 
     // REF01: deterministic referer matrix over the two loopback

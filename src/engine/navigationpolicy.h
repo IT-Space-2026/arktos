@@ -175,6 +175,23 @@ public:
                                   int resourceType, bool scriptAllowed);
     static bool isPrivateOrLocalHost(const QString &host);
     static QUrl strippedUrl(const QUrl &url);
+
+    // PERF01: verdict-cache introspection — test/diagnostic seams.
+    // evaluate() memoizes non-main-frame verdicts keyed on the whole
+    // manifest (scope + tor flag included, so OTR/tor never alias) and
+    // stamps each entry with the verdict-state generation; a mutation
+    // bumps the generation and the stale stamp is never served.
+    // evaluateCalls counts real backend evaluations — on a cache hit
+    // the whole marshal→(FFI)→parse round trip is skipped.
+    struct PolicyCacheStats {
+        qint64 evaluateCalls = 0;   // uncached evaluations actually run
+        qint64 cacheHits = 0;       // requests served from the cache
+        qint64 cacheMisses = 0;     // cacheable requests fully evaluated
+        qint64 evaluateNs = 0;      // wall time inside uncached evals
+    };
+    static PolicyCacheStats policyCacheStats();
+    static void resetPolicyCacheStats();
+    static void clearPolicyCache();
 };
 
 } // namespace Engine

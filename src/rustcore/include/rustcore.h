@@ -252,6 +252,13 @@ char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
 int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
 char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
 
+/* PERF01: monotonic verdict-state generation — bumped by every
+ * mutation that could change an evaluate() verdict (snapshot loads,
+ * downgrade/allowance writes, urlstrip + blocklist swaps, data-dir
+ * switches).  The Qt-side verdict cache stamps entries with it; a
+ * stale stamp is never served. */
+uint64_t rc_policy_eval_generation(void);
+
 /* --- Tranco rank table (TRUST04) ------------------------------------
  * The Tranco top-site rank table the site-trust signals consult —
  * a lookup never leaves the machine.  The active table is the

@@ -249,6 +249,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         QScrollArea *area = new QScrollArea;
         area->setFrameShape(QFrame::NoFrame);
         area->setWidgetResizable(true);
+        if (page->layout())
+            page->layout()->setSizeConstraint(QLayout::SetMinimumSize);
         area->setWidget(page);
         tabWidget->insertWidget(i, area);
     }

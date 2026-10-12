@@ -1050,6 +1050,19 @@ pub unsafe extern "C" fn rc_policy_evaluate(
     .unwrap_or(ptr::null_mut())
 }
 
+/// PERF01: the verdict-state generation counter.  Bumped by every
+/// mutation that could change an evaluate() verdict — snapshot loads,
+/// downgrade-mark/allowance writes, urlstrip ruleset and domain
+/// blocklist swaps, and the data-dir switch that rebuilds them.  The
+/// Qt-side verdict cache stamps each entry with the generation it was
+/// computed under and re-reads this once per request — a trivial FFI
+/// call that replaces the whole marshal→evaluate→parse round trip on
+/// a hit.
+#[no_mangle]
+pub extern "C" fn rc_policy_eval_generation() -> u64 {
+    policy::eval_generation()
+}
+
 /// Cookie-gate decision: 1 = accept the cookie, 0 = reject,
 /// -1 on malformed input (adapter fails open → accept).
 ///

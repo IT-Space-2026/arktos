@@ -914,11 +914,13 @@ void tst_ContainerManager::containerChipIndicator()
     WebView *containerTab = widget.makeNewTabInContainer(id, false);
     QVERIFY(containerTab);
 
-    // QTabBar lays out every tab at the strip's max height, so the
-    // chip reservation shows as the whole strip growing taller once
-    // the container tab lands.
+    // TABS06: the chip lives inside the strip's thickness — the
+    // reserve is width-only, so a container tab is exactly as tall
+    // as a plain one and wider by the name-pill reserve (both tabs
+    // carry the same "Untitled" title here).
     QVERIFY(bar->tabRect(1).isValid());
-    QVERIFY(bar->tabRect(1).height() > plainHeight);
+    QCOMPARE(bar->tabRect(1).height(), plainHeight);
+    QVERIFY(bar->tabRect(1).width() > bar->tabRect(0).width());
     QCOMPARE(bar->sizeHint().height(), bar->tabRect(1).height());
 
     // The accent strip lands in the painted output.
