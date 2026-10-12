@@ -346,6 +346,11 @@ UI:
   History, Bookmarks, Window, Tools and Help — the classic menubar is
   hidden by default on every window type, and View → Show Menu Bar
   (Ctrl+M) brings it back whenever wanted (MENU06).
+- Preferences → Privacy: the Cookies section's right-aligned labels
+  floated the accept/keep/session rows off the group's left edge and
+  looked ragged next to the checkbox rows; labels are now left-aligned
+  so every row shares the page's left margin like the sibling groups
+  (PREFUI12).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

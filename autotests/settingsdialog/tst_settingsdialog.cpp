@@ -3000,6 +3000,13 @@ void tst_SettingsDialog::privacyGroupAlignment()
              dialog.label_2->x());
     QCOMPARE(dialog.blockThirdPartyCookies->x(),
              dialog.label_2->x());
+    // PREFUI12: labels left-align so their text shares the left edge
+    // with the checkbox rows — right-aligned labels inside the form
+    // column left a ragged, indented text edge per row.
+    for (QLabel *l : {dialog.label_2, dialog.label,
+                      dialog.cookieSessionLabel})
+        QVERIFY2(l->alignment().testFlag(Qt::AlignLeft),
+                 qPrintable(l->objectName()));
     // Combos share the field column's left edge; buttons share the
     // action column's left edge — no centered/floating cells.
     QCOMPARE(dialog.keepUntilCombo->x(), dialog.acceptCombo->x());
