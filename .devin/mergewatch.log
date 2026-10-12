@@ -1977,3 +1977,52 @@ Notes:
 
 Pass complete — stopping.
 [2026-10-12 15:32:05] merge run exited rc=0
+[2026-10-12 15:37:06] merge due: lang-work(1) — spawning devin merge run
+Starting the merge run. First, check the current tree state and fetch.The tree has uncommitted changes (likely an agent mid-run on `src/downloadmanager.*` and related files). I'll check which lanes are ahead and whether their merges would touch those dirty files.Both lanes are at 0 commits ahead of master — nothing to merge this pass. Let me quickly verify there's no remote drift to note.No work this pass — the repository is fully in sync:
+
+- `rust-work`: 0 commits ahead of master
+- `ui-work`: 0 commits ahead of master
+- `master` == `origin/master` (nothing to push)
+
+No merges performed, so no WORKLOG entries needed. The dirty files in this tree (`src/downloadmanager.*`, `.devin/Arora-Task.md`, etc.) belong to an agent mid-run and were left untouched. Stopping after this one pass as instructed.
+[2026-10-12 15:37:25] merge run exited rc=0
+[2026-10-12 15:42:26] merge due: lang-work(1) — spawning devin merge run
+Both lanes are at 0 commits ahead of master locally. Let me also check the remote-tracking versions since I fetched, in case lanes pushed to origin.Nothing to merge this run.
+
+- `rust-work`: 0 commits ahead of master (local and `origin/rust-work`)
+- `ui-work`: 0 commits ahead of master (local and `origin/ui-work`)
+- `master` is in sync with `origin/master` — nothing to push
+
+Working tree has unrelated dirty files (`.devin/Arora-Task.md`, `src/downloadmanager.*`, etc.) — left untouched per the rules. No merges, so no build verification needed. Pass complete.
+[2026-10-12 15:42:45] merge run exited rc=0
+[2026-10-12 15:47:45] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely another agent mid-run). Checking lane ahead-counts now.rust-work is up to date. ui-work is 1 commit ahead — checking what it touches before merging.Clean merge — no conflicts. Now verifying the build.Build succeeded. Checking how previous mergewatch entries were handled (committed vs left dirty).Build is green. Prior runs commit the MERGEWATCH line separately — I'll do the same. Appending the log line now.Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 1 commit ahead (TOR11 tor title bar). Merged cleanly — `ort` auto-merged `WORKLOG.md`, `ChangeLog`, `main.cpp`, `browsermainwindow.cpp`, and the task-table/log files with zero conflicts.
+- **Build**: `make -C src -j2` succeeded — `tortitlebar.o`/`moc_tortitlebar.o` compiled and `../arora` linked.
+- **Pushed**: merge commit `66d0bd2` plus `bd89a2d` (MERGEWATCH log line) to `origin/master`.
+
+Note: a concurrent agent committed its `DOWN03` work (`a870c28`) mid-run; its remaining dirty `.devin/` files were left untouched per the rules. Stopping after this one pass.
+[2026-10-12 15:48:58] merge run exited rc=0
+[2026-10-12 15:53:59] merge due: lang-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Working tree has dirty log files (likely watchdog logs). Fetching and computing lane counts.Both lanes are at 0 commits ahead of `master` — nothing to merge this pass.
+
+- `rust-work`: 0 commits ahead — skipped
+- `ui-work`: 0 commits ahead — skipped
+
+No merges performed, so no build verification or push needed, and no WORKLOG lines appended (the rule is one line per merge). The dirty files in this tree (`.devin/COVERAGE.md`, `mergewatch.log`, `taskloop.log`) are unrelated watchdog logs and were left untouched.
+
+Stopping after this pass as instructed.
+[2026-10-12 15:54:06] merge run exited rc=0
+[2026-10-12 15:59:07] merge due: lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.Working tree has uncommitted changes — I'll be careful not to revert them. Now checking lane aheadness.Both lanes are at 0 commits ahead — nothing to merge. Let me verify the local vs remote master state anyway.Pass complete — nothing to do this run:
+
+- `git fetch origin`: done, no updates
+- `rust-work`: 0 commits ahead of master — skipped
+- `ui-work`: 0 commits ahead of master — skipped
+- `master` is fully in sync with `origin/master` (0/0)
+
+No merges were performed, so no build verification, push, or WORKLOG entries were needed. Note the working tree has unrelated uncommitted changes (`.devin/` files, `ChangeLog`, `README.md`) — left untouched per the rules. Stopping after this one pass as instructed.
+[2026-10-12 15:59:29] merge run exited rc=0
+[2026-10-12 16:04:30] merge due: lang-work(1) — spawning devin merge run
