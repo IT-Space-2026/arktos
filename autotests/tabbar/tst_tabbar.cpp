@@ -804,6 +804,14 @@ void tst_TabBar::contextMenuContainerEntries()
 // sends expose events but explicit rendering still runs the painter.
 void tst_TabBar::chipsPaint()
 {
+    // The CONT06 two-level strip (default on) filters the container
+    // tab into its own level — pin inline mode so the chip-bearing
+    // tab is what paintEvent draws.
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+
     TabWidget widget;
     widget.resize(720, 320);
     widget.show();
@@ -844,17 +852,43 @@ void tst_TabBar::chipsPaint()
     QTRY_VERIFY_WITH_TIMEOUT(widget.isTabSleeping(1), 15000);
 
     TabBar *bar = widget.tabBar();
+    int containerIndex = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.containerIdForTab(i) == container.id)
+            containerIndex = i;
+    }
+    QVERIFY(containerIndex >= 0);
     // Every shape paints a different chip arm (strip edge, pill and
     // badge placement); grab() forces a real paintEvent each time.
+    // TABS06: the container chip borrows title space INSIDE the row —
+    // a container tab is exactly as tall as a plain tab on every
+    // shape and the strip stays near a native QTabBar's height.
     const QTabWidget::TabPosition positions[] = {
         QTabWidget::North, QTabWidget::South,
         QTabWidget::West, QTabWidget::East
     };
-    for (QTabWidget::TabPosition position : positions) {
-        widget.setTabPosition(position);
+    const QStringList shapeNames = {
+        QLatin1String("north"), QLatin1String("south"),
+        QLatin1String("west"), QLatin1String("east")
+    };
+    int worstHeight = 0;
+    for (int shapeIndex = 0; shapeIndex < 4; ++shapeIndex) {
+        widget.setTabPosition(positions[shapeIndex]);
         QApplication::processEvents();
-        QVERIFY(!bar->grab().isNull());
+        const QPixmap strip = bar->grab();
+        QVERIFY(!strip.isNull());
+        const QByteArray prefix = qgetenv("TABSHOT_PREFIX");
+        if (!prefix.isEmpty())
+            strip.toImage().save(QString::fromLatin1(
+                "/tmp/arora-tabs-%1-%2.png")
+                .arg(QString::fromLatin1(prefix),
+                     shapeNames.at(shapeIndex)));
+        QCOMPARE(bar->tabRect(containerIndex).height(),
+                 bar->tabRect(0).height());
+        worstHeight = qMax(worstHeight,
+                           bar->tabRect(containerIndex).height());
     }
+    QVERIFY(worstHeight <= 36);
     widget.setTabPosition(QTabWidget::North);
     QApplication::processEvents();
 
@@ -866,6 +900,12 @@ void tst_TabBar::chipsPaint()
     widget.setTabGroupCollapsed(collapsed, false);
     widget.ungroupTabs(collapsed);
     manager->deleteContainer(container.id);
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 // The mouse/drag/wheel/leave handlers on a real strip: drop-stacking,

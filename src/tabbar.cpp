@@ -1142,23 +1142,47 @@ QFont TabBar::containerChipFont() const
     return chipFont;
 }
 
-// The extra size a container chip reserves for the tab at index —
-// the values match the geometry paintEvent() draws: the 3px outer-edge
-// strip plus the name chip's height (vertical bars grow wider for the
-// side strip and taller for the chip across the tab's top).
+// The extra size a container chip reserves for the tab at index.
+// TABS06: the chip lives INSIDE the strip's thickness — the accent
+// line paints inside the tab rect and the name pill borrows title
+// width at the trailing edge — so the reserve is width-only and a
+// container tab is exactly as tall as a plain one (the old top band
+// added ~17px and nearly doubled the strip).
 QSize TabBar::containerChipSize(int index) const
 {
     // CONT06: no chips inside a filtered level — the header already
     // names the container.
     if (containerStripHeight() > 0)
         return QSize();
-    const ContainerManager::Container c = containerForTab(index);
-    if (c.id.isEmpty())
+    if (containerForTab(index).id.isEmpty())
         return QSize();
-    const int chipHeight = QFontMetrics(containerChipFont()).height() + 4;
+    // Vertical strips: the accent line on the row's outer edge asks
+    // for 3px of strip width; the name pill borrows row width, never
+    // row height.
     if (verticalTabShape(shape()))
-        return QSize(3, chipHeight + 2);
-    return QSize(0, chipHeight + 3);
+        return QSize(3, 0);
+    return QSize(containerPillReserve(index), 0);
+}
+
+// The width the name pill borrows from the title for the tab at
+// index — zero for pinned tabs and collapsed-group chips (they carry
+// no title to shave), nameless containers, and when the two-level
+// band already names the container.
+int TabBar::containerPillReserve(int index) const
+{
+    if (containerStripHeight() > 0)
+        return 0;
+    const ContainerManager::Container c = containerForTab(index);
+    if (c.id.isEmpty() || c.name.isEmpty())
+        return 0;
+    const TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+    if (tabWidget && (tabWidget->isTabPinned(index)
+            || tabWidget->isTabGroupChip(index)))
+        return 0;
+    const int pillWidth = qMin(
+        120, QFontMetrics(containerChipFont())
+                 .horizontalAdvance(c.name) + 10);
+    return pillWidth + 6;
 }
 
 // CONT06 — level-1 container-header band ------------------------------
@@ -1546,8 +1570,16 @@ void TabBar::paintEvent(QPaintEvent *event)
             if (!iconOnly) {
                 const QRect textRect = style()->subElementRect(
                     QStyle::SE_TabBarTabText, &option, this);
+                // The container name pill borrows the title's
+                // trailing width — only while the row still leaves a
+                // readable title stub, or the pill is dropped and the
+                // title keeps the full width.
+                const int reserve = containerPillReserve(index);
+                const int pillWidth =
+                    textRect.width() - reserve > 24 ? reserve : 0;
                 option.text = fontMetrics().elidedText(
-                    tabText(index), elideMode(), textRect.width(),
+                    tabText(index), elideMode(),
+                    textRect.width() - pillWidth,
                     Qt::TextShowMnemonic);
             }
             if (!(option.state & QStyle::State_Enabled))
@@ -1572,9 +1604,14 @@ void TabBar::paintEvent(QPaintEvent *event)
             if (!iconOnly) {
                 const QRect textRect = style()->subElementRect(
                     QStyle::SE_TabBarTabText, &option, this);
+                const int reserve =
+                    containerPillReserve(m_pressedTabIndex);
+                const int pillWidth =
+                    textRect.width() - reserve > 24 ? reserve : 0;
                 option.text = fontMetrics().elidedText(
                     tabText(m_pressedTabIndex), elideMode(),
-                    textRect.width(), Qt::TextShowMnemonic);
+                    textRect.width() - pillWidth,
+                    Qt::TextShowMnemonic);
             }
             style()->drawControl(QStyle::CE_TabBarTab, &option,
                                  &painter, this);
@@ -1623,53 +1660,73 @@ void TabBar::paintEvent(QPaintEvent *event)
             ? container.color : palette().color(QPalette::Highlight);
         const QRect rect = tabRect(index);
 
-        QRect chip;
+        QRect accentRect;
         switch (shape()) {
         case QTabBar::RoundedSouth:
         case QTabBar::TriangularSouth:
-            painter.fillRect(rect.left(), rect.bottom() - strip + 1,
-                             rect.width(), strip, accent);
-            chip = QRect(rect.left() + 4, rect.bottom() - chipHeight - strip,
-                         rect.width() - 8, chipHeight);
+            accentRect = QRect(rect.left(), rect.bottom() - strip + 1,
+                               rect.width(), strip);
             break;
         case QTabBar::RoundedWest:
         case QTabBar::TriangularWest:
-            painter.fillRect(rect.left(), rect.top(),
-                             strip, rect.height(), accent);
-            chip = QRect(rect.left() + strip + 2, rect.top() + 2,
-                         rect.width() - strip - 4, chipHeight);
+            accentRect = QRect(rect.left(), rect.top(),
+                               strip, rect.height());
             break;
         case QTabBar::RoundedEast:
         case QTabBar::TriangularEast:
-            painter.fillRect(rect.right() - strip + 1, rect.top(),
-                             strip, rect.height(), accent);
-            chip = QRect(rect.left() + 2, rect.top() + 2,
-                         rect.width() - strip - 4, chipHeight);
+            accentRect = QRect(rect.right() - strip + 1, rect.top(),
+                               strip, rect.height());
             break;
         default:
-            painter.fillRect(rect.left(), rect.top(),
-                             rect.width(), strip, accent);
-            chip = QRect(rect.left() + 4, rect.top() + strip,
-                         rect.width() - 8, chipHeight);
+            accentRect = QRect(rect.left(), rect.top(),
+                               rect.width(), strip);
             break;
         }
+        painter.fillRect(accentRect, accent);
 
-        // The name chip — a rounded pill in the container color.  On a
-        // very narrow tab only the strip shows (the accent still
-        // identifies the container).
-        if (chip.width() >= 24 && !container.name.isEmpty()) {
-            painter.save();
-            painter.setRenderHint(QPainter::Antialiasing);
-            painter.setBrush(accent);
-            painter.setPen(accent.darker(130));
-            painter.drawRoundedRect(chip, 3, 3);
-            painter.setFont(chipFont);
-            painter.setPen(accent.lightness() > 140 ? Qt::black : Qt::white);
-            const QString elided = painter.fontMetrics().elidedText(
-                container.name, Qt::ElideRight, chip.width() - 8);
-            painter.drawText(chip.adjusted(4, 0, -4, 0),
-                             Qt::AlignCenter | Qt::AlignVCenter, elided);
-            painter.restore();
+        // TABS06: the name pill is a rounded chip in the container
+        // color anchored at the title's trailing edge — its width was
+        // shaved off the title's elision so the two never overlap and
+        // the tab keeps a plain tab's height.  On a very narrow tab
+        // only the accent line shows (it still identifies the
+        // container).
+        const int reserve = containerPillReserve(index);
+        if (reserve > 0) {
+            QStyleOptionTab option;
+            initStyleOption(&option, index);
+            if (verticalTabShape(shape()))
+                option.shape = QTabBar::RoundedNorth;
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, &option, this);
+            const QRect rightButton = style()->subElementRect(
+                QStyle::SE_TabBarTabRightButton, &option, this);
+            int right = textRect.right();
+            if (rightButton.isValid())
+                right = qMin(right, rightButton.left() - 2);
+            const QRect chip(right - reserve + 4,
+                             rect.top()
+                                 + (rect.height() - chipHeight) / 2,
+                             reserve - 6, chipHeight);
+            // The pill only draws where initStyleOption()/the row's
+            // own re-elide actually shaved the title — narrower tabs
+            // keep their title and fall back to the accent line.
+            if (textRect.width() - reserve > 24
+                    && chip.width() >= 24) {
+                painter.save();
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.setBrush(accent);
+                painter.setPen(accent.darker(130));
+                painter.drawRoundedRect(chip, 3, 3);
+                painter.setFont(chipFont);
+                painter.setPen(accent.lightness() > 140
+                               ? Qt::black : Qt::white);
+                const QString elided = painter.fontMetrics().elidedText(
+                    container.name, Qt::ElideRight, chip.width() - 8);
+                painter.drawText(chip.adjusted(4, 0, -4, 0),
+                                 Qt::AlignCenter | Qt::AlignVCenter,
+                                 elided);
+                painter.restore();
+            }
         }
     }
 
@@ -1770,21 +1827,13 @@ void TabBar::paintEvent(QPaintEvent *event)
             switch (shape()) {
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest: {
-                // A container chip may already own the top band —
-                // the group pill slides under it.
-                const int top = rect.top() + 2
-                    + (containerForTab(index).id.isEmpty()
-                       ? 0 : chipHeight + 2);
-                pill = QRect(rect.left() + 2, top,
+                pill = QRect(rect.left() + 2, rect.top() + 2,
                              rect.width() - strip - 4, chipHeight);
                 break;
             }
             case QTabBar::RoundedEast:
             case QTabBar::TriangularEast: {
-                const int top = rect.top() + 2
-                    + (containerForTab(index).id.isEmpty()
-                       ? 0 : chipHeight + 2);
-                pill = QRect(rect.left() + strip + 2, top,
+                pill = QRect(rect.left() + strip + 2, rect.top() + 2,
                              rect.width() - strip - 4, chipHeight);
                 break;
             }
@@ -1830,6 +1879,23 @@ void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
     if (tabWidget && tabWidget->isTabPinned(tabIndex)
             && !tabWidget->isTabGroupChip(tabIndex))
         option->text.clear();
+    // TABS06: on horizontal bars the container name pill borrows the
+    // title's trailing width — elide the title short of the pill so
+    // the two never paint over each other.  Vertical rows re-elide
+    // themselves in paintEvent() against the row's real text rect.
+    if (!verticalTabShape(shape()) && !option->text.isEmpty()) {
+        const int reserve = containerPillReserve(tabIndex);
+        if (reserve > 0) {
+            const QRect textRect = style()->subElementRect(
+                QStyle::SE_TabBarTabText, option, this);
+            if (textRect.width() - reserve > 24) {
+                option->text = fontMetrics().elidedText(
+                    tabText(tabIndex), elideMode(),
+                    textRect.width() - reserve,
+                    Qt::TextShowMnemonic);
+            }
+        }
+    }
 }
 
 QSize TabBar::tabSizeHint(int index) const
@@ -1840,17 +1906,17 @@ QSize TabBar::tabSizeHint(int index) const
     // QTabBar::tabSizeHint returns a transposed size for vertical
     // shapes — bound the tab's long axis either way so a long title
     // can't stretch the whole strip, and floor the strip's thickness so
-    // tabs keep modern breathing room (UIP01).  CONT02: container tabs
-    // reserve their chip's extent on top of that.
+    // tabs keep modern breathing room (UIP01).  TABS06: a container
+    // chip only borrows long-axis extent (accent line + name pill
+    // inside the title's zone) — it never makes the strip thicker.
     const int thickness = fm.height() + 10;
     const QSize chip = containerChipSize(index);
     const QString gid = groupIdForTab(index);
     // TABS02: vertical strips lay out as horizontal rows — the
     // strip's width is the persisted drag-resizable width and each
-    // row is a single text line tall.  Container tabs keep their
-    // outer-edge strip + top chip band (containerChipSize already
-    // carries them); a group run's first member keeps the band the
-    // name pill paints into.
+    // row is a single text line tall.  Container tabs widen the strip
+    // by the accent line (containerChipSize carries it); a group
+    // run's first member keeps the band the name pill paints into.
     if (verticalTabShape(shape())) {
         int rowHeight = thickness;
         if (!gid.isEmpty()) {
@@ -1892,7 +1958,7 @@ QSize TabBar::tabSizeHint(int index) const
             }
         }
     }
-    return QSize(qMin(sizeHint.width(), extent),
+    return QSize(qMin(sizeHint.width() + chip.width(), extent),
                  qMax(sizeHint.height(), thickness) + chip.height());
 }
 

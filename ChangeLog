@@ -65,6 +65,11 @@ UI:
   dragging a tab across the boundary pins or unpins it, and pin state
   is restored with the session (TABS04).
 - Named, color-coded tab groups (TABGRP01).
+- Compact tab strip: a container tab no longer inflates the whole
+  bar — the container's accent line and name chip now paint inside a
+  standard-height tab row instead of stacking a chip band on top of
+  it, so the strip stays at normal browser-tab height even when
+  container tabs are open (TABS06).
 - Undo closed tab: Ctrl+Shift+T (or the tab context menu's Reopen
   Closed Tab, plus a titled/icon'd submenu of recent entries) reopens
   the last closed tab at its original index with history, scroll

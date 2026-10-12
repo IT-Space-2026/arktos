@@ -187,10 +187,14 @@ private:
     // CONT02: the container chip — resolves the registry entry behind
     // the tab at index (empty id when the tab is in the default
     // container), the font the chip text uses, and the extra size the
-    // chip needs in this bar's shape.
+    // chip needs in this bar's shape.  TABS06: the chip lives inside
+    // the strip's thickness — the reserve is width-only (accent edge
+    // + name pill borrowed from the title's trailing width), never
+    // height.
     ContainerManager::Container containerForTab(int index) const;
     QFont containerChipFont() const;
     QSize containerChipSize(int index) const;
+    int containerPillReserve(int index) const;
     // TABGRP01: group chip helpers — the tab's group id, whether the
     // tab opens a contiguous run of its group (the pill anchors there),
     // and the group label shown on a collapsed group's chip.
