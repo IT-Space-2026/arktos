@@ -275,6 +275,9 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | ENG15 | Double standard icon when servo selected — details below | pending | 0 | user report post-merge build |
 | ENG16 | Servo reload does nothing on a loaded page — details below | pending | 0 | user report post-merge build |
 
+| DOWN03 | Downloads sidebar 'Open in File Manager' dead — all platforms — details below | pending | 0 | user report post-merge build |
+| ENG17 | Tor window new tab shows no start page — details below | pending | 0 | user report; TOR09 (branding) is separate on UI lane |
+
 ## Task details
 
 Full task specifications, keyed by row id.
@@ -1190,3 +1193,11 @@ Double standard icon visible when the servo engine is selected — user report: 
 ### ENG16
 
 Servo reload does nothing on a loaded page — user report: with a page open on a servo tab, reload has no effect (ENG12 fixed the empty-tab reload crash; this is the live reload path). Trace reloadTab/currentTab reload -> servo backend: is there a reload implementation or does it fall into a webengine-only path that no-ops on servo? Verify: reload on a loaded servo tab re-fetches/re-renders the page; reload on an empty servo tab stays crash-free; make check PASS.
+
+### DOWN03
+
+Downloads sidebar 'Open in File Manager' does nothing — user report, post-merge build. The reveal action lives in src/downloadmanager.{h,cpp} (openInFileManager/showInFolder area). Spec: (a) reproduce and trace the click path to the actual reveal call — dead signal, unimplemented slot, or a call that silently fails (e.g. QDesktopServices::openUrl(file://dir) opening nothing under this DE); (b) make reveal work on ALL platforms with file-selected behavior where the DE supports it: Linux via the org.freedesktop.FileManager1 D-Bus ShowItems method (selects the file — plain xdg-open of the folder only opens it), Windows via explorer /select,<path>, macOS via Finder/NSWorkspace reveal (or `open -R`); keep a folder-open fallback where ShowItems is unavailable; (c) handle deleted/moved files gracefully (reveal parent or disable, no crash). Verify: 'Open in File Manager' on a completed download opens the FM with the file selected on Linux; code paths for win/mac reviewed and correct-by-construction (flag any that cannot be verified on this host); no-op/crash impossible on missing file; make check PASS.
+
+### ENG17
+
+Tor windows show no start page on new tabs — user report: 'No Tor start page.' Separate from TOR09 (UI lane: tor-BRANDED page). This is the functional gap: a fresh tab in a tor window renders blank instead of the start page. START02 added newTabPage()/loadNewTabPageUrl for user-facing new-tab surfaces — check whether the tor window's new-tab path goes through the same entry points or its own (tor profile/window spawns tabs differently; the start-page URL may also need tor awareness — TOR09's tor page will want this same hook). Fix so a tor window's new tab lands on the (current, normal) start page; if TOR09 lands first the tor-branded page should appear via the same path. Verify: new tab in tor window shows the start page, not blank; make check PASS.
