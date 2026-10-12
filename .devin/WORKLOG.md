@@ -543,3 +543,5 @@
 - 2026-10-12 MERGEWATCH: ui-work merged — 1 conflict: autotests/browsermainwindow/tst_browsermainwindow.cpp (union — kept lane's TOR08 torCircuitDropdown test + master's newer READ02/READ04 reader-button comment), build ok
 - 2026-10-12 MERGEWATCH: lang-work merged — clean (WORKLOG.md auto-union; sr_RS + sr_RS@latin catalogs, TRANS19/TRANS20 rows), build ok
 - 2026-10-12 MERGEWATCH: rust-work at 0 ahead — no merge needed
+- 2026-10-12 MERGEWATCH: ui-work merged — clean (.devin/Arora-Task-UI.md only), build ok
+- 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (sitepanel.cpp/.h, tst_sitepanel.cpp modified mid-run by another agent)
