@@ -83,6 +83,9 @@ UI:
   double-click reset on their existing grip, and horizontal tab
   strips get Minimum/Maximum tab-width controls in Preferences so
   tabs neither collapse nor balloon (RSZ01).
+- Slimmer tab strip: per-tab close buttons no longer inflate the row
+  and tab height is bounded to icon+text height, bringing the strip
+  back to normal browser-tab size (TABS07).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) now raises the
   sidebar dock focused on the Bookmarks rail instead of opening a
@@ -320,7 +323,7 @@ UI:
   offers to save it through the address editor, pre-filled with
   what was entered. Private browsing pages are never filled and
   never offered the save prompt (ADDR02).
-- Preferences → Appearance gains "Show tab previews on hover" —
+- Preferences → Tab Settings gains "Show tab previews on hover" —
   unchecking it turns the tab-strip preview card off entirely,
   applies live to every window, and drops a card that is already
   up (TPREV01).
@@ -387,6 +390,9 @@ UI:
   to a hover tooltip; Edit Address still works), and the icon rail
   hugs the window's outer edge, flipping sides when the sidebar is
   docked on the right (SIDE06).
+- "Show tab previews on hover" moved from Preferences → Appearance
+  to Preferences → Tab Settings, with the other tab-behavior
+  options (PREFUI11).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

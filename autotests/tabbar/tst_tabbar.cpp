@@ -55,6 +55,8 @@ private slots:
 
     void perTabCloseButtons();
 
+    void tabStripHeight();
+
     void middleClickPaste();
 
     void verticalTabRows();
@@ -119,6 +121,9 @@ public:
 
     QSize call_minimumTabSizeHint(int index) const
         { return SubTabBar::minimumTabSizeHint(index); }
+
+    QSize call_baseTabSizeHint(int index) const
+        { return QTabBar::tabSizeHint(index); }
 };
 
 // This will be called before the first test function is executed.
@@ -278,6 +283,54 @@ void tst_TabBar::perTabCloseButtons()
     QVERIFY(!bar.perTabCloseButtons());
     for (int i = 0; i < bar.count(); ++i)
         QVERIFY(!bar.tabButton(i, side));
+}
+
+// TABS07: the strip stays at browser-normal icon+text height — per-tab
+// button widgets (favicon label, close button) and generous style
+// padding must not stretch it.  The thickness is floored at one text
+// line plus breathing room and capped at the content line plus modest
+// padding.
+void tst_TabBar::tabStripHeight()
+{
+    SubTabBar bar;
+    bar.setDocumentMode(true);
+    bar.setExpanding(false);
+    bar.setPerTabCloseButtons(true);
+    bar.addTab(QLatin1String("Untitled"));
+
+    // Production installs a favicon QLabel on the free side too.
+    QLabel *favicon = new QLabel(&bar);
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::red);
+    favicon->setPixmap(pixmap);
+    bar.setTabButton(0, bar.freeSide(), favicon);
+
+    const int fmH = bar.fontMetrics().height();
+    const int floorH = fmH + 10;
+    const int capH = qMax(fmH, bar.iconSize().height()) + 12;
+    const QSize natural = bar.call_baseTabSizeHint(0);
+    const QSize hint = bar.call_tabSizeHint(0);
+    QCOMPARE(hint.height(), qBound(floorH, natural.height(), capH));
+    QVERIFY2(hint.height() <= capH,
+             qPrintable(QStringLiteral(
+                 "tab height %1 exceeds the icon+text cap %2")
+                .arg(hint.height()).arg(capH)));
+
+    // The installed close button is bounded to the text line and both
+    // buttons stay vertically centered inside the tab rect.
+    const QTabBar::ButtonPosition closeSide =
+        (bar.freeSide() == QTabBar::RightSide)
+            ? QTabBar::LeftSide : QTabBar::RightSide;
+    QWidget *close = bar.tabButton(0, closeSide);
+    QVERIFY(close);
+    QVERIFY(close->height() <= qBound(12, fmH, 16));
+
+    bar.show();
+    bar.resize(400, bar.sizeHint().height());
+    QApplication::processEvents();
+    const QRect rect = bar.tabRect(0);
+    QVERIFY(qAbs(close->geometry().center().y() - rect.center().y()) <= 2);
+    QVERIFY(qAbs(favicon->geometry().center().y() - rect.center().y()) <= 2);
 }
 
 // SEC02: middle-click paste loads the PRIMARY selection as a url in a
