@@ -18,10 +18,13 @@
 # the end when the markers are absent).
 #
 # Env:
-#   ARORA_RUSTCOV_MIN=N   per-crate line-coverage gate (default 85;
-#                        set 0 for report-only)
-#   ARORA_RUSTCOV_JOBS=N cargo build jobs for the instrumented build
-#                        (default 2 — the loop's memory watchdog)
+#   ARORA_RUST_COVERAGE_MIN=N  per-crate line-coverage gate (default 85;
+#                               set 0 for report-only)
+#   ARORA_RUSTCOV_MIN=N        legacy alias for the gate (kept for
+#                               existing docs/CI invocations)
+#   ARORA_RUSTCOV_JOBS=N       cargo build jobs for the instrumented
+#                               build (default 2 — the loop's memory
+#                               watchdog)
 #
 # Exit status: 0 when every crate meets the gate, or when the Rust
 # tools themselves are absent (the Rust surface is optional — a
@@ -32,7 +35,7 @@ set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPORT_MD="$ROOT/.devin/COVERAGE.md"
-MIN=${ARORA_RUSTCOV_MIN:-85}
+MIN=${ARORA_RUST_COVERAGE_MIN:-${ARORA_RUSTCOV_MIN:-85}}
 JOBS=${ARORA_RUSTCOV_JOBS:-2}
 
 note() { echo "check-rustcoverage: $*"; }
@@ -55,7 +58,9 @@ export PATH
 
 if ! "$CARGO" llvm-cov --version >/dev/null 2>&1; then
     note "SKIP — cargo-llvm-cov not installed for this toolchain"
-    note "  install user-local: cargo install cargo-llvm-cov"
+    note "  install user-local, pinned like the SEC21 tools (musl prebuilt"
+    note "  with sha256 verification) or:"
+    note "    cargo install cargo-llvm-cov --locked --version 0.9.1"
     exit 0
 fi
 
@@ -113,7 +118,7 @@ body = [start, "", "## Rust crates (COV05)", "",
         " `cargo llvm-cov --workspace --json --summary-only`,"
         f" gated at {gate}% minimum per crate by"
         " `make check` (.devin/check-rustcoverage.sh;"
-        " `ARORA_RUSTCOV_MIN` overrides).", "",
+        " `ARORA_RUST_COVERAGE_MIN` overrides).", "",
         "| Crate | Lines |", "|-------|-------|"]
 for d, p in rows:
     body.append(f"| {d} | {p}% |")

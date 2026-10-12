@@ -609,3 +609,4 @@
 - 2026-10-12 MERGEWATCH: rust-work merged — no conflicts (ort auto-merged .devin/Arora-Task-Rust.md: COV05 split A/B/C + TRUST10 flip); ui-work at 0, skipped; build ok
 - 2026-10-12 MERGEWATCH: rust-work merged — no conflicts (task-ID renames in .devin/Arora-Task-Rust.md), build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — one conflict in .devin/Arora-Task-UI.md (TABS10 status flip, lane's row kept: in_progress/1), build ok
+- 2026-10-12 COV06: audited the rust coverage harness that landed in COV05 wip 7c390ed — ARORA_RUST_COVERAGE_MIN made primary env (ARORA_RUSTCOV_MIN kept alias), SKIP hint pins cargo-llvm-cov 0.9.1, arora.pro/COVERAGE.md/README/ChangeLog docs synced; gate kept REAL at 85 (green: rustcore 86.87/rustdl 89.25/adblock 90.50) — verified SKIP both ways, fixture uncovered module tripped gate 89.25->78.23 FAIL then reverted->PASS, make check rc=0 (all 4 gate deps PASS, 78 programs 0 failed) offscreen --disable-gpu
