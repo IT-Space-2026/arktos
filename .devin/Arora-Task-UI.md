@@ -63,10 +63,15 @@ This file is the task queue for the Devin CLI task loop
 | PREFUI08 | Preferences nav list: bigger text + bigger icons, aligned — details below | done | 0 | pagesList font x1.3 (relative, pt-or-px safe) + navIconExtent=qRound(QFontMetricsF.height()*1.1) replaces the PM_SmallIconSize pin — ICONS02 uniform pinning + uniformItemSizes kept, fixed column width re-measured after the bump; sidebarPanelsList gets the same font/extent for parity; tst uniformSidebarIcons updated (font >1.2x app metrics, extent > small, row height >= extent, width re-derivation, per-theme re-resolve stable) — 39/39, offscreen grabs reviewed (nav + Panels visibly larger, icons centered), make check rc=0 (check-warnings PASS) offscreen --disable-gpu |
 | LANG01 | UI language selector in Preferences — details below | done | 0 | languageLabel + languageCombo on General page (row 4, before showSearchBox): leading "System default" (data "system" sentinel -> follows OS + persists as "system" so a later OS-locale change wins), installed translations in chooseNewLanguage's "Language, Territory (code)"+LRM format with locale code in userData, trailing "English (en_US)" fallback; immediate apply via setCurrentLanguage on currentIndexChanged, init from currentLanguage(); empty-languages -> row disabled w/ tooltip (no QMessageBox); changeEvent(LanguageChange) retranslates combo strings; LanguageManager: "system" sentinel persisted + m_followsSystem resolution, addLocaleDirectory invalidates scan cache (late dir registration); Help>Change Language popup kept as second entry point; new tst_settingsdialog::languageSelector leg — 40/40, tst_languagemanager 11/11; make check: check-warnings PASS + all suites green except 1 unrelated flake webview/linkOpenRefererDiscipline (PASS standalone) offscreen --disable-gpu |
 | UIAUDIT03 | Post-queue code-quality sweep on ui-work — details below | done | 1 | report at .devin/UIAUDIT03-report.md — dead code clean; shared PositionPicker base extracted for the two visual pickers (-218 net lines, API/index semantics unchanged); TabBar double parent-cast hoisted out of the per-tab paint path; security verified (BKEX01 escaping, ADBLK01 no-rust fallback, ADDR02 injection/prompt gates) + documented inert-by-design TRUST toggles pending main-lane TRUST03; tst_settingsdialog picker legs PASS; make check: check-warnings PASS + all programs green except known flake adblockAppliesOnContainerProfile (PASS standalone) offscreen --disable-gpu needs:task:TRUST02 |
-| DEVT05 | BiDi entry into Development Tools submenu, drop dead placeholder + top-level checkbox — details below | pending | 0 | |
-| SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | pending | 0 | |
+| DEVT05 | BiDi entry into Development Tools submenu, drop dead placeholder + top-level checkbox — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/BidiClient/rc_bidi_* and the m_toolsMenu toggle live on master only (DEVT02-04, never merged to ui-work); this tree has no checkable BiDi action to move, only DEVT01's View-submenu placeholder; fix targets master's browsermainwindow.cpp ~1154-1190 — re-file on main lane or sync master->ui-work first |
+| SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/rc_bidi_* live on master only (DEVT02-04 never merged to ui-work; same blocker as DEVT05); this tree's only dock is the 'Sidebar' — no duplicate Dev Tools title exists here to fix; re-file on main lane or sync master->ui-work first |
 | PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
+| PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
+| DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
+| SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
+| TABS07 | Default tab height still too tall — details below | pending | 0 | |
+| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |
 
 
 ## Task details
@@ -315,6 +320,8 @@ Current state: m_bidiPanelDock->setWindowTitle(tr("Development Tools")) (browser
 
 Verify: show the dock — exactly one 'Development Tools' title visible in the sidebar area; hide/show repeatedly still consistent; make check PASS.
 
+BLOCKED on ui-work (2026-10-12): the entire BiDi surface is master-only — no bidipanel.* / bidiclient.* files, no m_bidiPanelDock in browsermainwindow.{h,cpp} (line ~1369 here is the nav-toolbar icon-size pin, not a dock title), no rc_bidi_* in src/rustcore. The only dock in this tree is m_sidebarDock titled 'Sidebar' (panels: bookmarks/history/downloads/notes — none is a Dev Tools panel). The user's 'side panel' is master's BiDi QDockWidget; this fix must run on the main lane or after a master->ui-work sync (identical blocker to DEVT05).
+
 ### PREFUI09
 
 Privacy page group alignment — user screenshot: inside Preferences > Privacy, the Cookies group shows its label+combo+button rows pushed to the RIGHT side of the group while the 'Filter Tracking Cookies' and 'Block third-party cookies' checkboxes sit flush LEFT — the group's controls are not aligned. Same misalignment reported for the 'Site Permissions' and 'Saved Passwords' groups on the same page.
@@ -332,3 +339,51 @@ Show the current Servo version in the rendering-engine dropdown — user request
 Find the engine/backend selector that displays the engine name + version (the combo/dropdown where 'Chromium <version>' is shown — likely Preferences engine page or the --engine-list/Engine adapter surface wired by the ENG lane). Chromium already displays its version; the Servo backend entry must show the actual Servo version the same way — query it from the servo adapter/embedding API (spikes/servo/servo-embed) rather than hardcoding; if the servo build exposes no version call, fall back honestly (e.g. 'Servo (version unknown)') and note it. Keep the display consistent: same format pattern as the Chromium entry.
 
 Verify: engine dropdown shows 'Servo <version>' matching the real linked servo build; Chromium entry unchanged; entry updates if servo version changes (rebuild), make check PASS.
+
+### PREFUI10
+
+Appearance page fields too wide — user screenshot: Preferences > Appearance shows the font rows ('Standard font', 'Fixed width font') stretching the full page width with their 'Select...' buttons pushed to the far right edge, and 'Preferred languages for viewing webpages' as an oversized full-width multi-line box. PREFUI07's field-sizing sweep apparently missed or regressed this page.
+
+Spec: (a) font fields — the read-only font display + 'Select...' button should size to content/a reasonable field width, not absorb the whole page; use a fixed or maximum field width with the button adjacent (match how Firefox/other pages group a value + picker button); (b) 'Preferred languages' box — cap its width/height to a sensible size (the field does not need the full page); (c) icons combo row — same check (it also looks stretched); (d) keep the page's left-anchored alignment consistent with the other Preferences pages after PREFUI06; (e) re-sweep Appearance page rows for any other full-width field defect.
+
+Verify: Appearance page fields have bounded width (buttons sit next to their fields, not at the page edge), layout still scales on window resize without ugly stretch, make check PASS.
+
+### DLUX03
+
+Downloads sidebar details card is broken — user screenshot: the sidebar Downloads panel shows 'qwe_download.txt' selected, and its expanded details card at the bottom renders as a dark/black box with cramped, partially clipped text rows (source URL line and info rows unreadable against the dark background) and an 'Open' / 'Restart' / 'Show in File Manager' button row squeezed under it, plus a 'Download Settings...' link below that.
+
+Diagnosis hints: the card likely uses a hardcoded dark palette/stylesheet (breaks on the light theme — same class of bug THEME01 flagged: 'anything hardcoded-light that reads broken on dark' — here hardcoded-DARK on light); rows may use fixed heights that clip text; the button row may be unstyled/margined.
+
+Spec: (a) the details card follows the application palette — readable text on the theme's base/alternate-base color in BOTH day and night themes, no hardcoded background colors; (b) info rows (filename, source URL, size/progress/path) lay out without clipping — elide long URLs middle-out, wrap or tooltip the rest; (c) the button row (Open / Restart / Show in File Manager) aligns cleanly inside the card with sane spacing; (d) 'Download Settings...' placement reviewed — consistent with the panel footer style or moved into the card sensibly; (e) collapsed vs expanded states both render cleanly.
+
+Verify: select a finished + an in-progress download in the sidebar — details card is readable and unclipped in day AND night theme, long URLs elide with full text on tooltip, buttons aligned, make check PASS.
+
+### SIDE06
+
+Sidebar polish — two user-reported issues on the right-docked sidebar:
+
+(a) TREE TEXT ELIDES TOO EARLY — screenshot: the Bookmarks panel shows 'Bo...ar', 'A...a', 'Bo...nu' truncated with '...' even though the panel has plenty of free horizontal space. USER FOLLOW-UP: same defect on the HISTORY panel — fix the elision for EVERY sidebar tree (bookmarks, history, downloads, notes — all panels), not just bookmarks. Diagnosis hints: the QTreeView/model in sidebarpanel (or the bookmarks/history trees) is eliding because the first column's width is fixed or not stretched — check column resize mode (should be ResizeToContents or Stretch with the URL column taking slack), textElideMode on the item delegate, or a fixed setColumnWidth(0). Text should elide only when genuinely out of space (viewport edge), keeping full names visible whenever they fit.
+
+(b) RAIL ICONS ON THE WRONG SIDE — the vertical icon rail (bookmarks/history/downloads/notes toggle strip, SidebarPanel's QTabWidget rail from TABS02) sits on the LEFT edge of the sidebar even when the whole sidebar is docked on the RIGHT side of the window — the rail should hug the outer edge: left rail when docked left, right rail when docked right. Mirror the rail position to the dock area (Qt::LeftDockWidgetArea vs RightDockWidgetArea) — either reorder the layout (rail widget after the panel content) or setTabPosition on the rail tab widget. Verify the mirror follows a live dock move (drag sidebar to other side, or the SIDE03 position picker).
+
+Verify: bookmark/folder/history-entry names show fully while space allows on EVERY sidebar panel, still elide correctly on a narrow panel; rail sits on the outer edge for both dock positions and flips on dock move; make check PASS.
+
+### TABS07
+
+Default tab strip height is too big — user screenshot: a normal 'Untitled' tab renders with excessive vertical padding, making the tab strip noticeably taller than a standard browser tab bar (compare Firefox/Chrome ~30-32px). TABS06 already fixed the container-chip inflation case, but the BASE tab height is still too tall.
+
+Diagnosis hints: check tabbar.cpp/tabwidget.cpp tabSizeHint + initStyleOption — possible causes: style option padding, icon size forcing height, minimum sizeHint on the QTabBar subclass, container/group chip rows reserving height even when empty, or the tab widget's contentsMargins. Measure the rendered strip height vs the style's default and vs text+icon natural height.
+
+Spec: (a) default tab height reduced to a normal browser-tab height (~style-default, icon+text sized — target roughly 30-34px unless the style says otherwise); (b) pinned/group/container variants still render correctly at the new height (icons only on pinned, chips still legible); (c) tab close button + favicon stay vertically centered; (d) vertical tab mode unaffected or adjusted consistently.
+
+Verify: new-window default tab strip measures noticeably shorter and matches platform/browser norms; pinned+container+grouped tabs still look right; make check PASS.
+
+### SRCH11
+
+URL-bar search still does not work — user report after SRCH09's fix: 'URL search bar still not works, the default is that I can search from the URL bar.' Expected behavior: typing a non-URL string into the location bar and pressing Enter performs a web search with the configured default search engine — the standard browser omnibox contract.
+
+SRCH09 is marked done but the regression persists — start by reproducing exactly: type 'test query' + Enter in the location bar and observe what happens (loads garbage URL, does nothing, error page?). Then trace the routing: locationbar returnPressed -> the omni classifier (OMNI01 verdict table / rc_classify_omni in rustcore when ARORA_RUSTCORE, else the C++ fallback in locationbar) -> search-engine URL construction via opensearchmanager/default engine. Suspects: (a) the classifier returns 'url' for bare words (SRCH09 fixed a related path — check what it actually changed and whether the rust classifier path now disagrees); (b) the search URL is built but the engine query template is empty/misconfigured (DENG01 switched default to DuckDuckGo — check the template); (c) Enter is swallowed by the completer/suggestions popup accepting an item instead of searching; (d) the rust FFI verdict path silently fails and no fallback fires.
+
+Also verify suggestion path: picking 'Search for X' from the dropdown should search too.
+
+Verify: 'foo bar' + Enter -> default engine results page loads; 'singleterm' + Enter -> search (not a bogus http://singleterm navigation); real URLs still navigate directly; search-engine change in Preferences is honored; make check PASS.
