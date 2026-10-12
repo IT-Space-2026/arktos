@@ -586,6 +586,9 @@ Rust core quality sweep (RAUDIT01):
 Rust core lazy-list dedup (RAUDIT02):
     The "seed list plus data-dir override" machinery the blocklist, Tranco table and url-strip ruleset each carried as a private copy now lives in one shared helper (store::DirCache): a poison-tolerant RwLock slot holding an Arc'd value stamped with the data dir it was resolved against, rebuilt once when the dir arrives late. Each module keeps its own load/merge logic as the injected closure, and the url-strip ruleset picks up the same reload-on-dir-change behavior the other two lists already had — an override file dropped in after first use is no longer ignored. No behavior or ABI change otherwise.
 
+URL-bar search always dispatches (SRCH11):
+    Typing a non-URL string in the location bar and pressing Enter now always performs a web search with the configured default engine — a missing or broken engine descriptor no longer turns Enter into a dead key. The omnibox (Rust and C++ paths) and the dedicated search box share a searchUrlForEngine() rescue that degrades a null engine to the bundled DuckDuckGo descriptor and an unusable template to the DuckDuckGo endpoint directly, and the "Search engine fallback" opt-out only restores the bare-http guess when that guess actually parses — multi-word input searches instead of producing an invalid url loadUrl() silently dropped. Invalid navigation targets now log a warning instead of vanishing, and test binaries write their settings under their own application name so test runs no longer leave searchEngineFallback=false behind in the real user configuration — the recurring trigger behind the "search bar does nothing" report.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -25,6 +25,7 @@
 #include <QtGui/QtGui>
 #include <qstandarditemmodel.h>
 #include <qcompleter.h>
+#include <qurlquery.h>
 #include <qwebengineprofile.h>
 
 #include "toolbarsearch.h"
@@ -59,6 +60,7 @@ private slots:
     void initTestCase();
 
     void searchEmitsUrl();
+    void searchEmitsUrlWithBrokenEngine();
     void recentSearches();
     void completerPaths();
     void enginesMenu();
@@ -90,6 +92,42 @@ void tst_ToolbarSearch::searchEmitsUrl()
     QVERIFY(url.toString().contains(QLatin1String("cov04")));
     QCOMPARE(spy.first().at(1).value<TabWidget::OpenUrlIn>(),
              TabWidget::CurrentTab);
+}
+
+// SRCH11: a broken selected engine (descriptor that yields no usable
+// search url) used to turn Enter into a dead key — searchNow()
+// early-returned on the null url.  The shared rescue must still emit
+// a loadable address (bundled DuckDuckGo descriptor, else its
+// hardcoded endpoint).
+void tst_ToolbarSearch::searchEmitsUrlWithBrokenEngine()
+{
+    OpenSearchManager *manager = ToolbarSearch::openSearchManager();
+    OpenSearchEngine *engine = new OpenSearchEngine;
+    engine->setName(QLatin1String("broken-engine"));
+    engine->setSearchUrlTemplate(
+        QLatin1String("http://broken.invalid/s?q={searchTerms}"));
+    if (manager->engineExists(engine->name()))
+        manager->removeEngine(engine->name());
+    QVERIFY(manager->addEngine(engine));
+    const QString previousEngine = manager->currentEngineName();
+    manager->setCurrentEngineName(engine->name());
+    // The descriptor broke after install — no expansion is possible.
+    engine->setSearchUrlTemplate(QString());
+
+    ToolbarSearch search;
+    search.setText(QLatin1String("rescue me"));
+    QSignalSpy spy(&search, &ToolbarSearch::search);
+    QTest::keyClick(&search, Qt::Key_Return);
+    QCOMPARE(spy.count(), 1);
+    const QUrl url = spy.first().at(0).toUrl();
+    QVERIFY(url.isValid());
+    QVERIFY(!url.isEmpty());
+    QCOMPARE(url.host(), QLatin1String("duckduckgo.com"));
+    QCOMPARE(QUrlQuery(url).queryItemValue(QLatin1String("q")),
+             QLatin1String("rescue me"));
+
+    manager->setCurrentEngineName(previousEngine);
+    manager->removeEngine(engine->name());
 }
 
 // Successful searches are remembered; clear() empties the list and

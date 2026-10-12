@@ -38,6 +38,7 @@
 #include <qnetworkrequest.h>
 #include <qsettings.h>
 #include <qstringlist.h>
+#include <qurlquery.h>
 
 #if defined(ARORA_RUSTCORE)
 #include "rustcore.h"
@@ -263,6 +264,36 @@ OpenSearchEngine *OpenSearchManager::imageSearchEngine() const
     OpenSearchEngine *fallback = currentEngine();
     return (fallback && fallback->providesImageSearch()) ? fallback
                                                        : nullptr;
+}
+
+// SRCH09/SRCH11: shared by the omnibox fallback and the dedicated
+// search box — either surface could previously dead-end on a null or
+// broken engine (dead Enter, or an invalid url loadUrl() silently
+// dropped).
+QUrl OpenSearchManager::searchUrlForEngine(OpenSearchEngine *engine,
+                                         const QString &terms)
+{
+    // A stale saved engine name or a descriptor that failed to load
+    // leaves the caller with nothing — degrade to the bundled
+    // DuckDuckGo descriptor before giving up on search entirely.
+    if (!engine)
+        engine = this->engine(QLatin1String("DuckDuckGo"));
+    if (engine) {
+        const QUrl searchUrl = engine->searchUrl(terms);
+        if (!searchUrl.isEmpty() && searchUrl.isValid())
+            return searchUrl;
+    }
+    // Last resort: emit the default engine's endpoint directly.  A
+    // bare http://<term> could only DNS-fail — after the HTTPS-first
+    // upgrade the user saw the exact https://<term> error page this
+    // guards against.
+    QUrl lastResort(QLatin1String("https://duckduckgo.com/"));
+    QUrlQuery query;
+    query.addQueryItem(QLatin1String("q"), terms);
+    lastResort.setQuery(query);
+    qWarning() << "OpenSearchManager: no usable search engine for"
+               << terms << "— falling back to" << lastResort;
+    return lastResort;
 }
 
 bool OpenSearchManager::engineExists(const QString &name)

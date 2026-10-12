@@ -25,6 +25,8 @@
 #include <browserapplication.h>
 
 #include <qapplication.h>
+#include <qcoreapplication.h>
+#include <qfileinfo.h>
 #include <qabstractbutton.h>
 #include <qdialog.h>
 #include <qmessagebox.h>
@@ -97,6 +99,19 @@ int main(int argc, char *argv[]) \
     Q_INIT_RESOURCE(htmls); \
     Q_INIT_RESOURCE(data); \
     BrowserApplication app(argc, argv); \
+    /* SRCH09/SRCH11: the BrowserApplication ctor resets the \
+       application name to "Arora", so a test that never calls \
+       setApplicationName() wrote its QSettings into the user's real \
+       ~/.config/Arora/Arora.conf — tst_tabwidget's opt-out leg \
+       leaked urlloading/searchEngineFallback=false into the live \
+       config every `make check` (the recurring "search bar doesn't \
+       work" report).  Rename to the test binary's basename so every \
+       test gets its own isolated scope; tests that want a custom \
+       name still call setApplicationName() inside initTestCase, \
+       which runs after this. */ \
+    QCoreApplication::setApplicationName( \
+        QFileInfo(QCoreApplication::applicationFilePath()) \
+            .baseName()); \
     TestObject tc; \
     return QTest::qExec(&tc, argc, argv); \
 }
