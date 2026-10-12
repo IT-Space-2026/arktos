@@ -3549,6 +3549,27 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
                  .arg(bar->tabRect(0).height())
                  .arg(bar->fontMetrics().height() + 12)));
     QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+
+    // TABS11: the selected row must not paint below its rect —
+    // Fusion's selected-tab fillRect is sized by the rect's bottom
+    // coordinate, so on a tall rail a ghost band (bottom-1)px deep
+    // appeared under the selected row and read as "the row is too
+    // tall".  Needs the real TabWidget parent — the tab-frame color
+    // (vs plain window color) only applies to HasFrame tabs.
+    bar->setCurrentIndex(bar->count() - 1);
+    QApplication::processEvents();
+    {
+        const QImage image = bar->grab().toImage();
+        const QRect last = bar->tabRect(bar->count() - 1);
+        const int probeY = qMin(last.bottom() + 6, bar->height() - 1);
+        const QRgb below = image.pixel(bar->width() / 2, probeY);
+        const QRgb tail = image.pixel(bar->width() / 2,
+                                      bar->height() - 4);
+        QVERIFY2(qAbs(qGray(below) - qGray(tail)) <= 2,
+                 qPrintable(QStringLiteral(
+                     "ghost fill below the selected row: pixel %1 vs "
+                     "strip tail %2").arg(below, 0, 16).arg(tail, 0, 16)));
+    }
     if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
         const QString dir =
             qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");

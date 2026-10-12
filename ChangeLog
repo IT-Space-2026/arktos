@@ -329,6 +329,11 @@ UI:
   180px. A saved width that still holds the old default migrates to
   the new one, while a width you dragged to yourself is kept — and
   the edge drag and double-click reset work as before (TABS10).
+- Vertical tab rows are compact again: on a Left/Right strip the
+  selected row painted a ghost block several times its own height
+  below itself (a Qt 6.12 style quirk that only shows on a tall
+  strip), making the row look oversized. The draw is now clipped to
+  the row's real height, matching the horizontal strip (TABS11).
 - Dark theme readability: toolbar, menu, tab-strip, location-bar,
   status-bar and Preferences sidebar icons now switch to the bundled
   light-glyph variants when the app theme is Dark — previously the

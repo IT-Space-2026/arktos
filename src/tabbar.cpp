@@ -1619,6 +1619,14 @@ void TabBar::paintEvent(QPaintEvent *event)
             if (option.rect.bottom() < 0 || option.rect.top() > height())
                 continue;   // scrolled out of the strip
             option.shape = QTabBar::RoundedNorth;
+            // TABS11: clip the row draw to its own rect — Fusion's
+            // selected-tab paint issues a fillRect whose height is the
+            // rect's bottom coordinate, so on a tall strip the
+            // selected row grows a ghost band reaching (bottom-1) px
+            // below it.  Harmless inside a ~26px horizontal strip
+            // (the widget bounds clip it), catastrophic on a 600px
+            // vertical rail.
+            painter.setClipRect(option.rect);
             // initStyleOption already elided the text against the
             // vertical shape's narrow text rect — redo it for the
             // row's width.  A pinned tab — or every tab under the
@@ -1639,6 +1647,7 @@ void TabBar::paintEvent(QPaintEvent *event)
                 option.palette.setCurrentColorGroup(QPalette::Disabled);
             style()->drawControl(QStyle::CE_TabBarTab, &option,
                                  &painter, this);
+            painter.setClipping(false);
         }
         // The tab under a move drag floats with the cursor; Qt's own
         // moving-tab pixmap (painted rotated) is hidden.
@@ -1662,8 +1671,10 @@ void TabBar::paintEvent(QPaintEvent *event)
                     tabText(m_pressedTabIndex), elideMode(),
                     textRect.width(), Qt::TextShowMnemonic);
             }
+            painter.setClipRect(option.rect);
             style()->drawControl(QStyle::CE_TabBarTab, &option,
                                  &painter, this);
+            painter.setClipping(false);
         }
     } else if (band > 0) {
         // CONT06: horizontal shapes hand-paint each tab under the
