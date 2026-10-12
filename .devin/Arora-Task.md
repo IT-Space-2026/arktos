@@ -267,6 +267,14 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | DEVT04 | Move Development Tools under Tools menu + remove click-to-inspect entry — details below | done | 1 | Development Tools submenu moved View→Tools (now m_toolsDevToolsMenu + m_tools{Chromium,Bidi}DevToolAction, built after Lock Credential Store / before the BiDi dock action + User Agent; View keeps Page Source + separator + Text Encoding). webview.cpp context menu lost the click-position Inspect entry + its separator entirely; the createStandardContextMenu fallback still strips the stock no-op InspectElement action so no Inspect entry survives anywhere. devtoolswindow.h doc updated; DEVT01 comments reworded; include dropped. Verified: rewritten tst_BrowserMainWindow::devToolsSubmenu (View has no dev-tools entry — Page Source→Text Encoding direct; submenu sits between Clear Private Data and User Agent with both entries) PASS; tst_DevTools::devToolsMenuOpensInspector triggers the Tools-menu action and binds the inspector to the current page; tst_WebView::contextMenuPageActions now asserts no Inspect entry on a real right-click — all PASS; make check rc=0 (check-warnings/supplychain/engine-audit/rustcoverage PASS, 78 programs 0 failed) offscreen LIBGL_ALWAYS_SOFTWARE=1. No shortcut was bound (no F12) so nothing to preserve there; command-palette alias keyed on unchanged action text still resolves |
 
 
+| TRUST11 | TRUST10 continuation — separator + verdict-colored bold Trust label — details below | pending | 0 | TRUST10 capped at 5 restarts on rust lane; Trust section is on master now |
+| DEVT05 | BiDi into Development Tools submenu, drop dead placeholder — details below | pending | 0 | re-adopted from UI lane — BiDi surface is master-only |
+| SIDE05 | Duplicate Development Tools title in dock area — details below | pending | 0 | re-adopted from UI lane — BiDi surface is master-only |
+| ENG11 | Show Servo version in engine dropdown like Chromium — details below | pending | 0 | re-adopted from UI lane — ENG05 surface is master-only |
+| ENG14 | URL bar dead on servo backend — details below | pending | 0 | user report post-merge build |
+| ENG15 | Double standard icon when servo selected — details below | pending | 0 | user report post-merge build |
+| ENG16 | Servo reload does nothing on a loaded page — details below | pending | 0 | user report post-merge build |
+
 ## Task details
 
 Full task specifications, keyed by row id.
@@ -1150,3 +1158,35 @@ Verify: open the lock popover on a green verdict -> separator + bold green 'Trus
 ### PERF01
 
 Per-request JSON policy verdict on the IO thread — memoize within a page load (filed by AUDIT02). `PrivacyRequestInterceptor::interceptRequest` calls `NavigationPolicy::evaluate` for EVERY interceptor-visible request: it marshals a JSON manifest (url, firstParty, resourceType, method, headers, scope, tor flag, min referer level) and parses a JSON verdict via `rc_policy_evaluate` on the WebEngine IO thread — tens of calls per page load on a busy site. That's the ENG02 architecture working as designed, not a bug, but the serialize→FFI→parse cost is paid per subresource. Task: design and ship a bounded memoization layer — e.g. a per-(url, firstParty, resourceType, headers-fingerprint) verdict cache scoped to the navigation's first-party page, or hoist the decision surface that varies per request (only a handful of inputs actually change between subrequests of the same page). Constraints: the IO-thread lock rules still hold (cache must be populated/served without crossing to GUI), a verdict must never go stale across a settings/snapshot flip (key on the snapshot generation), OTR/tor scopes must never share entries with normal scope, and referer/cookie-relevant headers must be part of the key. Measure first: instrument a page load to count evaluate() calls and wall time before choosing the cache shape. Verify: fewer FFI calls per page load under --adblock-smoke/--privacy-smoke workloads, no verdict regression in tst_navigationpolicy + interceptor tests, make check PASS.
+
+### TRUST11
+
+Continuation of TRUST10 (capped at 5 restarts on the rust lane before the branch sync landed — the Trust section it styles is now on this tree). User direction: 'Above the Trust there should be a separator line and the Trust text should be bold with the right color (green if trust, yellow if unknown, red is not trustable).'
+
+TRUST08's Trust section and TRUST09's verdict-badge plumbing are on master (src/locationbar/sitepanel.cpp + lock icon verdict cache). Style the section header: (a) separator line (QFrame HLine or styled border) above the Trust section; (b) 'Trust' label bold; (c) color = the same verdict the lock icon shows — green/amber/red, theme-aware tones that stay readable in day AND night themes; (d) updates live when the cached verdict changes. Verify: green verdict -> separator + bold green; amber -> bold yellow; red -> bold red; both themes readable; make check PASS.
+
+### DEVT05
+
+Wire the BiDi Dev Tools entry into the 'Development Tools' submenu and remove the dead duplicates — user report: two Development Tools menus, the tickbox works but the BiDi item in the right submenu is dead; connect BiDi to the right menu, remove the other.
+
+Current state (browsermainwindow.cpp ~1150-1190 on master): (a) the Development Tools submenu (m_toolsDevToolsMenu) holds the working Chromium DevTools action + m_toolsBidiDevToolAction, a hardcoded setEnabled(false) placeholder never wired; (b) a SEPARATE checkable 'BiDi Dev &Tools' action (m_bidiPanelDock->toggleViewAction()) sits directly in the Tools menu under ARORA_RUSTCORE — that is the working tickbox. Spec: (a) DELETE the placeholder action entirely (action + member + retranslateUi text); (b) MOVE the dock toggleViewAction INTO the Development Tools submenu, keep the tor-mode disabled+tooltip branch; (c) the BiDi entry inside the submenu is then the working checkable one; (d) no leftover separators or empty entries in either menu. Verify: exactly one Development Tools surface — submenu with Chromium DevTools + working checkable BiDi entry; tick opens/untick closes the BiDi dock; tor keeps it disabled with tooltip; make check PASS.
+
+### SIDE05
+
+Duplicate 'Development Tools' title in the dock/sidebar area when the BiDi dock is shown — user sees the title twice (dock frame title + in-panel header). On master: m_bidiPanelDock->setWindowTitle(tr("Development Tools")) (browsermainwindow.cpp ~1369) and BidiPanel likely renders its own header/label — keep exactly ONE visible title (dock window title OR panel header, gate on dock context if the panel is used elsewhere; if always docked, remove the inner one). Align the action text and dock title sensibly ('BiDi Dev Tools' vs 'Development Tools' — document the choice). Verify: show dock -> exactly one title; repeat show/hide consistent; make check PASS.
+
+### ENG11
+
+Show the current Servo version in the rendering-engine dropdown like the Chromium entry does. On master: ServoBackend::displayName() at src/engine/servobackend.cpp:754 is hardcoded 'Servo (experimental)'; the combo (settings.cpp renderEngineGroup/renderEngineCombo from EngineRegistry::backends()) shows it as-is. The servo-embed C ABI (spikes/servo/servo-embed rust crate) exposes no version call today — add a servo_embed_version() (or LIBSERVO_VERSION) export returning the libservo version, call it from displayName(), format matching the Chromium entry ('Servo <version>'); honest fallback if unavailable ('Servo (version unknown)'). Verify: dropdown shows real servo version, Chromium entry unchanged, make check PASS.
+
+### ENG14
+
+URL bar does nothing when the servo backend is selected — user report on the post-merge build: type an address/search into the location bar on a servo tab and Enter is dead. Same defect family as ENG12's reload crash: the location-bar dispatch likely routes through WebEngine-specific plumbing the servo backend never implements. Trace: lineEditReturnPressed -> loadString/loadUrl -> the tab's engine dispatch on a servo-backed tab — where does the request die (no enginePage? unhandled scheme? silently dropped backend id)? Fix so URL navigation works on servo tabs (and plain-text falls through to the same search path as webengine — do not fork behavior). Verify: servo tab + typed URL navigates; text searches via default engine; make check PASS.
+
+### ENG15
+
+Double standard icon visible when the servo engine is selected — user report: switching to servo shows two icons where one should be (likely the engine indicator + a fallback site icon overlapping, or a duplicated icon slot on servo tabs). Reproduce the engine switch and inspect the icon widgets on the affected surface (location bar left-side icons / tab icon / engine indicator) — the servo path probably adds a second icon instead of swapping. Verify: one icon shown on servo selection, toggling engines back and forth stays single-icon; make check PASS.
+
+### ENG16
+
+Servo reload does nothing on a loaded page — user report: with a page open on a servo tab, reload has no effect (ENG12 fixed the empty-tab reload crash; this is the live reload path). Trace reloadTab/currentTab reload -> servo backend: is there a reload implementation or does it fall into a webengine-only path that no-ops on servo? Verify: reload on a loaded servo tab re-fetches/re-renders the page; reload on an empty servo tab stays crash-free; make check PASS.
