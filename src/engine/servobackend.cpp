@@ -164,26 +164,55 @@ void ServoView::cbWake(void *userdata)
 
 void ServoView::cbFrameReady(void *userdata)
 {
+    // Same live-view gate as cbWake — a frame_ready racing se_destroy
+    // would otherwise grabFrame/update on a view being torn down, and
+    // running the frame copy on the GUI thread also closes the
+    // m_image write-vs-paintEvent race.
+    QMutexLocker lock(&servoMutex());
     ServoView *view = static_cast<ServoView *>(userdata);
-    view->grabFrame();
-    view->update();
+    if (!view || g_liveView != view)
+        return;
+    QMetaObject::invokeMethod(view, [view]() {
+        view->grabFrame();
+        view->update();
+    }, Qt::QueuedConnection);
 }
 
 void ServoView::cbUrlChanged(void *userdata, const char *url)
 {
-    static_cast<ServoView *>(userdata)->setUrl(
-        QUrl(QString::fromUtf8(url)));
+    // setUrl writes m_url and emits — both belong on the GUI thread,
+    // and the live-view gate keeps a late callback off a dying view.
+    QMutexLocker lock(&servoMutex());
+    ServoView *view = static_cast<ServoView *>(userdata);
+    if (!view || g_liveView != view)
+        return;
+    const QUrl qurl(QString::fromUtf8(url));
+    QMetaObject::invokeMethod(view, [view, qurl]() {
+        view->setUrl(qurl);
+    }, Qt::QueuedConnection);
 }
 
 void ServoView::cbTitleChanged(void *userdata, const char *title)
 {
-    static_cast<ServoView *>(userdata)->setTitle(
-        QString::fromUtf8(title));
+    QMutexLocker lock(&servoMutex());
+    ServoView *view = static_cast<ServoView *>(userdata);
+    if (!view || g_liveView != view)
+        return;
+    const QString text(QString::fromUtf8(title));
+    QMetaObject::invokeMethod(view, [view, text]() {
+        view->setTitle(text);
+    }, Qt::QueuedConnection);
 }
 
 void ServoView::cbLoadStatus(void *userdata, int status)
 {
-    static_cast<ServoView *>(userdata)->onLoadStatus(status);
+    QMutexLocker lock(&servoMutex());
+    ServoView *view = static_cast<ServoView *>(userdata);
+    if (!view || g_liveView != view)
+        return;
+    QMetaObject::invokeMethod(view, [view, status]() {
+        view->onLoadStatus(status);
+    }, Qt::QueuedConnection);
 }
 
 void ServoView::cbConsole(void *, int level, const char *message)
