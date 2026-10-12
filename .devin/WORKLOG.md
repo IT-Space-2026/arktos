@@ -398,3 +398,4 @@
 - 2026-10-11 TRANS01: hu_HU catalog completed — 1081 unfinished entries translated, 0 left, lrelease PASS
 - 2026-10-12 TRANS02: ast catalog completed — 118 unfinished entries translated, 0 left, lrelease PASS
 - 2026-10-12 TRANS03: ca catalog completed — 1092 unfinished entries translated, 0 left, lrelease PASS
+- 2026-10-12 TRANS04: cs_CZ catalog completed — 1033 entries translated (incl. 1 numerusform), lrelease PASS
