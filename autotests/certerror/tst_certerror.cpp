@@ -405,7 +405,9 @@ void tst_CertError::backFallsBackToStartPage()
     LocalTlsServer server;
     QVERIFY(server.start());
 
-    // No prior history — "Back to safety" falls back to the start page.
+    // No prior history — "Back to safety" falls back to the start
+    // page.  The scratch profile is off-the-record, so the
+    // context-aware pick resolves the private start page (PTAB02).
     QWebEngineProfile profile;
     WebView view(&profile);
     view.resize(800, 600);
@@ -420,7 +422,8 @@ void tst_CertError::backFallsBackToStartPage()
 
     QVERIFY(clickElement(&view, QLatin1String("back")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        page->url() == QUrl(QLatin1String("qrc:/startpage.html")), 15000);
+        page->url() == QUrl(QLatin1String("qrc:/startpage-private.html")),
+        15000);
 }
 
 void tst_CertError::forgedProceedLinkIgnored()

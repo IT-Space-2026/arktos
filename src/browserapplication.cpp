@@ -1098,13 +1098,16 @@ void BrowserApplication::setTorMode(bool torMode)
 
 QUrl BrowserApplication::startPageUrl()
 {
-    return startPageUrl(defaultEngineId());
+    return startPageUrl(defaultEngineId(), isPrivate());
 }
 
-QUrl BrowserApplication::startPageUrl(const QString &engineId)
+QUrl BrowserApplication::startPageUrl(const QString &engineId,
+                                      bool privateContext)
 {
     if (s_torMode)
         return QUrl(QLatin1String("qrc:/startpage-tor.html"));
+    if (privateContext)
+        return QUrl(QLatin1String("qrc:/startpage-private.html"));
     if (engineId == QLatin1String("servo"))
         return QUrl(QLatin1String("qrc:/startpage-servo.html"));
     return QUrl(QLatin1String("qrc:/startpage.html"));

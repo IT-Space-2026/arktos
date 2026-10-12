@@ -152,12 +152,19 @@ public:
     // TOR09: the bundled start page url — the tor-branded variant in
     // a tor process, the standard one elsewhere.  Only the DEFAULT
     // home (about:home) resolves through here; a custom homepage
-    // setting is always loaded as configured.
+    // setting is always loaded as configured.  The no-arg pick uses
+    // the ambient context — the default engine id and the app
+    // privacy flag.
     static QUrl startPageUrl();
-    // ENG13: the engine-keyed pick — "servo" selects the servo-
-    // branded variant.  Tor still wins: it is locked to Chromium
-    // (servo has no SOCKS5), so no engine id may rebrand a tor page.
-    static QUrl startPageUrl(const QString &engineId);
+    // ENG13/PTAB02: the fully keyed pick — precedence
+    // tor > private > servo > standard.  Tor still wins over every
+    // other dimension: it is locked to Chromium (servo has no
+    // SOCKS5) and a tor process never hosts clearnet private tabs,
+    // so no flag may rebrand a tor page.  Private outranks servo —
+    // a private tab must show SOMETHING branded even while the
+    // servo backend cannot render qrc (ENG18 covers that).
+    static QUrl startPageUrl(const QString &engineId,
+                             bool privateContext = false);
     // ENG13: the engine a new tab would run — ENG05's
     // MainWindow/defaultEngine key ("webengine" when unset).  This
     // branch has no EngineRegistry yet, so a non-webengine pick only

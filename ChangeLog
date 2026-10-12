@@ -447,6 +447,12 @@ Tor:
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search
   field — bundled locally like the other start pages (ENG13).
+- Private tabs now open on their own start page instead of a blank
+  one: the usual Arora header and working search box on a deep
+  midnight-blue background with a sunglasses mark under the search
+  field — bundled locally, nothing fetched.  about:home typed in a
+  private tab resolves to it too; a Tor window's tabs keep the Tor
+  page (PTAB02).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

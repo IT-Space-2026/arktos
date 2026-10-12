@@ -1376,7 +1376,9 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl());
+            page->load(BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(),
+                page->profile()->isOffTheRecord()));
     });
 }
 
@@ -1560,7 +1562,9 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl());
+            page->load(BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(),
+                page->profile()->isOffTheRecord()));
     });
 }
 
@@ -1669,7 +1673,9 @@ void WebPage::resolveDomainBlockLink(const QUrl &command)
         if (page->history()->canGoBack())
             page->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl());
+            page->load(BrowserApplication::startPageUrl(
+                BrowserApplication::defaultEngineId(),
+                page->profile()->isOffTheRecord()));
     });
 }
 

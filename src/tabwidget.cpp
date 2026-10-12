@@ -471,23 +471,31 @@ int TabWidget::webViewIndex(WebView *webView) const
     return -1;
 }
 
+// TOR09/ENG13/PTAB02: a fresh tab lands on the branded start page at
+// once — tor's about:tor parity, the private variant when the new
+// tab's page is off-the-record (an explicit private tab, or one
+// inheriting privacy from its source tab), or the servo variant when
+// the default engine pick is servo.  Standard-mode tabs stay blank.
+static void loadBrandedStartPage(WebView *view)
+{
+    if (!view)
+        return;
+    const bool privateContext = view->enginePage()
+        && view->enginePage()->isOffTheRecord();
+    const QUrl startPage = BrowserApplication::startPageUrl(
+        BrowserApplication::defaultEngineId(), privateContext);
+    if (startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+        view->loadUrl(startPage);
+}
+
 void TabWidget::newTab()
 {
-    WebView *view = makeNewTab(true);
-    // TOR09/ENG13: a fresh tab lands on the branded start page at
-    // once — tor's about:tor parity, or the servo variant when the
-    // default engine pick is servo.  Standard-mode tabs stay blank.
-    const QUrl startPage = BrowserApplication::startPageUrl();
-    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
-        view->loadUrl(startPage);
+    loadBrandedStartPage(makeNewTab(true));
 }
 
 void TabWidget::newPrivateTab()
 {
-    WebView *view = makeNewPrivateTab(true);
-    const QUrl startPage = BrowserApplication::startPageUrl();
-    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
-        view->loadUrl(startPage);
+    loadBrandedStartPage(makeNewPrivateTab(true));
 }
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)
@@ -2759,7 +2767,8 @@ QUrl TabWidget::guessUrlFromString(const QString &string, bool privateContext)
 
     if (url.scheme() == QLatin1String("about")
         && url.path() == QLatin1String("home"))
-        url = BrowserApplication::startPageUrl();
+        url = BrowserApplication::startPageUrl(
+            BrowserApplication::defaultEngineId(), privateContext);
 
     QSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));
