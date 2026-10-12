@@ -579,3 +579,5 @@
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 9th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 10th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 11th consecutive skip)
+- 2026-10-12 ENG14: engine-tab URL bar is a real omnibox — editable LineEdit wired through shared wireLocationBar, CurrentTab loadUrl dispatches to the tab Engine::Page — tst_engineswitch 21/21 + --servo-smoke PASS (typed url/search same-tab on real servo), make check rc=0
+- 2026-10-12 ENG14: engine-tab location bar is a real omnibox — extracted shared wireLocationBar()/ensureLineEditCompleter(), loadUrl(CurrentTab) on EngineTab dispatches to EngineTab::load instead of spawning a WebEngine tab — tst_engineswitch 21/21 + servo smoke legs PASS, make check rc=0 (80 programs 0 failed) offscreen

@@ -129,6 +129,7 @@ private slots:
     void swapProbe();
     void swapMidLoad();
     void closeForeignTab();
+    void engineTabLocationBar();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -795,6 +796,54 @@ void tst_EngineSwitch::closeForeignTab()
     QCOMPARE(widget.count(), 0);
     QCOMPARE(lastSpy.count(), 1);
     QCOMPARE(barStackCount(&widget), 0);
+}
+
+// ENG14 — the foreign tab's location bar is a real omnibox: Enter
+// dispatches to the tab's own page, a bare phrase resolves through
+// the shared search fallback, and neither spawns a fresh WebEngine
+// tab (the pre-fix bar was a read-only echo and loadUrl() resolved
+// through currentWebView(), which is null on an engine tab).
+void tst_EngineSwitch::engineTabLocationBar()
+{
+    TabWidget widget;
+    widget.newTab();
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    EngineTab *foreign = widget.engineTab(0);
+    QVERIFY(foreign);
+    FakeEnginePage *page =
+        qobject_cast<FakeEnginePage*>(foreign->page());
+    QVERIFY(page);
+
+    QLineEdit *bar = widget.locationBar(0);
+    QVERIFY(bar);
+    QVERIFY(!bar->isReadOnly());
+
+    // A typed url navigates the SAME engine tab.
+    const QUrl url(QStringLiteral("file:///tmp/eng14-typed-url.html"));
+    bar->setText(url.toString());
+    emit bar->returnPressed();
+    QCOMPARE(page->loads, 1);
+    QCOMPARE(page->url(), url);
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.engineTab(0), foreign);
+    QCOMPARE(bar->text(), QString::fromUtf8(url.toEncoded()));
+
+    // Plain text resolves through the identical search fallback a
+    // WebEngine tab would use — no forked behavior.
+    const QUrl search = TabWidget::guessUrlFromString(
+        QStringLiteral("hello engine search"));
+    QVERIFY(search.isValid());
+    bar->setText(QStringLiteral("hello engine search"));
+    emit bar->returnPressed();
+    QCOMPARE(page->loads, 2);
+    QCOMPARE(page->url(), search);
+    QCOMPARE(widget.count(), 1);
+    QCOMPARE(widget.engineTab(0), foreign);
+
+    // The swap-back path is untouched: the restored WebEngine tab
+    // still loads through its own WebView.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("webengine")));
+    QVERIFY(widget.webView(0));
 }
 
 QTEST_MAIN(tst_EngineSwitch)

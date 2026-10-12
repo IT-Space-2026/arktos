@@ -138,10 +138,22 @@ UI:
   aborted the browser. The backend now allows a single Servo view and
   refuses further engine tabs with a status-bar message instead of
   crashing; sibling actions on an empty Servo tab are no-ops (ENG12).
+- The location bar on a foreign-engine (Servo) tab is a real omnibox
+  again: it was a read-only URL echo, so Enter did nothing. Typed
+  addresses and plain-text searches now navigate the engine tab itself
+  through the same url-or-search resolution as a Chromium tab, and
+  "open here" callers (bookmarks, history, home button) land on the
+  engine page instead of silently spawning a WebEngine tab (ENG14).
 - Servo backend hardening: engine callbacks for url, title, load status
   and frames now run on the GUI thread and are ignored once the Servo
   view is being torn down, closing a use-after-free window during tab
   close (AUDIT02).
+- The URL bar works on Servo tabs: it was a read-only echo, so typing
+  an address or a search and pressing Enter did nothing. Engine tabs
+  now get the same editable omnibox as every other tab — shared
+  history/search completion included — and Enter navigates that tab's
+  own engine page instead of dying on a WebEngine-only dispatch path
+  (ENG14).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

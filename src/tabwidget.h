@@ -416,9 +416,18 @@ private:
     // The shared body of makeNewTabInContainer()/makeNewPrivateTab():
     // a location bar plus a WebView bound to the resolved profile.
     WebView *makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent);
+    // The lazily built omnibox completer + suggestions overlay shared
+    // by every bar in m_locationBars — engine-tab bars attach through
+    // the same helper, so a servo-first window still gets history and
+    // search completion (ENG14).
+    void ensureLineEditCompleter();
+    // Completer + suggestions + Enter dispatch wiring shared by the
+    // LocationBar of a webengine tab and the plain bar of an engine
+    // tab.
+    void wireLocationBar(QLineEdit *bar);
     // ENG05: the engine-tab half of newTab()/reloadTabInEngine() —
-    // an EngineTab on the backend's profile plus a read-only location
-    // bar carrying the engine indicator, inserted like addWidgetTab.
+    // an EngineTab on the backend's profile plus an editable location
+    // bar wired like every other tab's, inserted like addWidgetTab.
     EngineTab *addEngineTab(Engine::Backend *backend, bool makeCurrent);
     // Child-tab inheritance for the container AND the private context
     // of source (the current tab for Ctrl+T, the opener page for

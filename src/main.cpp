@@ -3162,6 +3162,47 @@ static int servoLifecycleSmoke()
             pumpUntil([&finished]() { return finished; }, 30000);
             report(QStringLiteral("reload-loaded"), finished);
         }
+        // ENG14: the typed-navigation repro — the engine tab's
+        // location bar used to be a read-only echo, so Enter died
+        // before dispatch ever ran.  It is a real omnibox now: a
+        // typed url loads THIS servo tab (no spawned tab) and
+        // non-address text resolves through guessUrlFromString's
+        // shared search fallback to the same url a WebEngine bar
+        // would dispatch.
+        if (engineTab && engineTab->page()) {
+            bool finished = false;
+            QObject::connect(engineTab, &EngineTab::loadFinished,
+                             engineTab,
+                             [&finished](bool) { finished = true; });
+            QLineEdit *bar = tabs.locationBar(0);
+            report(QStringLiteral("bar-editable"),
+                   bar && !bar->isReadOnly());
+            if (bar) {
+                const int tabsBefore = tabs.count();
+                bar->setText(probe.toString());
+                emit bar->returnPressed();
+                pumpUntil([&finished]() { return finished; }, 30000);
+                report(QStringLiteral("typed-url-load"), finished);
+                report(QStringLiteral("typed-url-same-tab"),
+                       tabs.count() == tabsBefore
+                       && tabs.engineTab(0) == engineTab);
+
+                // A bare phrase resolves to the context engine's
+                // search url — the dispatch echoes it into the bar
+                // synchronously (the remote fetch itself is
+                // network-dependent and not asserted here).
+                const QUrl searchUrl = TabWidget::guessUrlFromString(
+                    QStringLiteral("hello servo search"));
+                bar->setText(QStringLiteral("hello servo search"));
+                emit bar->returnPressed();
+                report(QStringLiteral("typed-search-resolved"),
+                       bar->text()
+                           == QString::fromUtf8(searchUrl.toEncoded()));
+                report(QStringLiteral("typed-search-same-tab"),
+                       tabs.count() == tabsBefore
+                       && tabs.engineTab(0) == engineTab);
+            }
+        }
         // (c) mid-tab backend switching stays stable: back to
         // webengine destroys the only ServoView, and a second
         // servo tab must be refused — not manufactured into an abort.

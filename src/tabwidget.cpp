@@ -711,92 +711,110 @@ WebView *TabWidget::makeNewTabInContainer(const QString &containerId, bool makeC
     return makeNewTabOnProfile(profile, makeCurrent);
 }
 
+// The shared omnibox completer + suggestions overlay, built on first
+// use.  Every bar in the parallel stack attaches through
+// wireLocationBar() — engine-tab bars included (ENG14) — so the pair
+// must come up no matter which tab kind lands first.
+void TabWidget::ensureLineEditCompleter()
+{
+    if (m_lineEditCompleter)
+        return;
+    HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
+#ifdef ARORA_RUSTCORE
+    // OMNI01: the rustcore store serves the ranked completion rows
+    // — a thin model in front of rc_history_suggest().  The no-rust
+    // build keeps the in-memory filter model.  (Touch the manager
+    // so its load() has opened the store before the first query.)
+    BrowserApplication::historyManager();
+    completionModel->setSourceModel(
+        new RustHistorySuggestModel(completionModel));
+#else
+    completionModel->setSourceModel(BrowserApplication::historyManager()->historyFilterModel());
+#endif
+    // SRCH01: search suggestions sit above the history matches in
+    // the same dropdown — the merged model keeps the completer
+    // hack in HistoryCompleter unaware of the extra rows.
+    OmniboxCompletionModel *omniboxModel =
+        new OmniboxCompletionModel(completionModel, this);
+    // SRCH06: the "@tabs" scope lists this widget's open tabs —
+    // supplied as a provider so the shared completion model never
+    // depends on TabWidget.
+    omniboxModel->setTabEntryProvider(
+        [this]() -> QList<OmniboxCompletionModel::TabEntry> {
+        QList<OmniboxCompletionModel::TabEntry> entries;
+        for (int i = 0; i < count(); ++i) {
+            OmniboxCompletionModel::TabEntry entry;
+            entry.index = i;
+            entry.title = tabText(i);
+            if (WebView *view = webView(i))
+                entry.url = QString::fromUtf8(view->url().toEncoded());
+            entry.icon = tabIcon(i);
+            entries.append(entry);
+        }
+        return entries;
+    });
+    m_lineEditCompleter = new HistoryCompleter(omniboxModel, this);
+    // activated(QModelIndex) carries an index into the completer's
+    // private completion proxy — map it back so @tabs rows can
+    // switch to their tab instead of navigating.
+    connect(m_lineEditCompleter,
+            QOverload<const QModelIndex &>::of(&QCompleter::activated),
+            this,
+            [this, omniboxModel](const QModelIndex &activatedIndex) {
+        QModelIndex index = activatedIndex;
+        if (index.model() != omniboxModel) {
+            if (QAbstractProxyModel *proxy =
+                    qobject_cast<QAbstractProxyModel *>(
+                        m_lineEditCompleter->completionModel()))
+                index = proxy->mapToSource(index);
+        }
+        const QVariant tabIndex =
+            index.data(OmniboxCompletionModel::TabIndexRole);
+        if (tabIndex.isValid()) {
+            const int target = tabIndex.toInt();
+            if (target >= 0 && target < count()) {
+                setCurrentIndex(target);
+                if (WebView *view = currentWebView())
+                    view->setFocus();
+            }
+            return;
+        }
+        loadString(index.data(HistoryModel::UrlStringRole).toString());
+    });
+    m_omniboxSuggestions = new OmniboxSuggestions(
+        omniboxModel, m_lineEditCompleter, this);
+    // PTAB01: the private context is per-tab — suggestions for a
+    // private tab's omnibox resolve to the private engine.
+    m_omniboxSuggestions->setPrivateContextProvider(
+        [this]() { return isTabPrivate(currentIndex()); });
+    // Should this be in Qt by default?
+    QAbstractItemView *popup = m_lineEditCompleter->popup();
+    QListView *listView = qobject_cast<QListView*>(popup);
+    if (listView) {
+        // Urls are always LeftToRight
+        listView->setLayoutDirection(Qt::LeftToRight);
+        listView->setUniformItemSizes(true);
+    }
+}
+
+// The wiring every location-bar slot shares: the shared completer, the
+// suggestions feeder, and Enter -> lineEditReturnPressed -> loadString.
+// Both the LocationBar of a webengine tab and the plain bar of an
+// engine tab attach here so omnibox behavior never forks (ENG14).
+void TabWidget::wireLocationBar(QLineEdit *bar)
+{
+    ensureLineEditCompleter();
+    bar->setCompleter(m_lineEditCompleter);
+    connect(bar, &QLineEdit::textEdited,
+            m_omniboxSuggestions, &OmniboxSuggestions::scheduleSuggestions);
+    connect(bar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
+}
+
 WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurrent)
 {
     // line edit
     LocationBar *locationBar = new LocationBar;
-    if (!m_lineEditCompleter) {
-        HistoryCompletionModel *completionModel = new HistoryCompletionModel(this);
-#ifdef ARORA_RUSTCORE
-        // OMNI01: the rustcore store serves the ranked completion rows
-        // — a thin model in front of rc_history_suggest().  The no-rust
-        // build keeps the in-memory filter model.  (Touch the manager
-        // so its load() has opened the store before the first query.)
-        BrowserApplication::historyManager();
-        completionModel->setSourceModel(
-            new RustHistorySuggestModel(completionModel));
-#else
-        completionModel->setSourceModel(BrowserApplication::historyManager()->historyFilterModel());
-#endif
-        // SRCH01: search suggestions sit above the history matches in
-        // the same dropdown — the merged model keeps the completer
-        // hack in HistoryCompleter unaware of the extra rows.
-        OmniboxCompletionModel *omniboxModel =
-            new OmniboxCompletionModel(completionModel, this);
-        // SRCH06: the "@tabs" scope lists this widget's open tabs —
-        // supplied as a provider so the shared completion model never
-        // depends on TabWidget.
-        omniboxModel->setTabEntryProvider(
-            [this]() -> QList<OmniboxCompletionModel::TabEntry> {
-            QList<OmniboxCompletionModel::TabEntry> entries;
-            for (int i = 0; i < count(); ++i) {
-                OmniboxCompletionModel::TabEntry entry;
-                entry.index = i;
-                entry.title = tabText(i);
-                if (WebView *view = webView(i))
-                    entry.url = QString::fromUtf8(view->url().toEncoded());
-                entry.icon = tabIcon(i);
-                entries.append(entry);
-            }
-            return entries;
-        });
-        m_lineEditCompleter = new HistoryCompleter(omniboxModel, this);
-        // activated(QModelIndex) carries an index into the completer's
-        // private completion proxy — map it back so @tabs rows can
-        // switch to their tab instead of navigating.
-        connect(m_lineEditCompleter,
-                QOverload<const QModelIndex &>::of(&QCompleter::activated),
-                this,
-                [this, omniboxModel](const QModelIndex &activatedIndex) {
-            QModelIndex index = activatedIndex;
-            if (index.model() != omniboxModel) {
-                if (QAbstractProxyModel *proxy =
-                        qobject_cast<QAbstractProxyModel *>(
-                            m_lineEditCompleter->completionModel()))
-                    index = proxy->mapToSource(index);
-            }
-            const QVariant tabIndex =
-                index.data(OmniboxCompletionModel::TabIndexRole);
-            if (tabIndex.isValid()) {
-                const int target = tabIndex.toInt();
-                if (target >= 0 && target < count()) {
-                    setCurrentIndex(target);
-                    if (WebView *view = currentWebView())
-                        view->setFocus();
-                }
-                return;
-            }
-            loadString(index.data(HistoryModel::UrlStringRole).toString());
-        });
-        m_omniboxSuggestions = new OmniboxSuggestions(
-            omniboxModel, m_lineEditCompleter, this);
-        // PTAB01: the private context is per-tab — suggestions for a
-        // private tab's omnibox resolve to the private engine.
-        m_omniboxSuggestions->setPrivateContextProvider(
-            [this]() { return isTabPrivate(currentIndex()); });
-        // Should this be in Qt by default?
-        QAbstractItemView *popup = m_lineEditCompleter->popup();
-        QListView *listView = qobject_cast<QListView*>(popup);
-        if (listView) {
-            // Urls are always LeftToRight
-            listView->setLayoutDirection(Qt::LeftToRight);
-            listView->setUniformItemSizes(true);
-        }
-    }
-    locationBar->setCompleter(m_lineEditCompleter);
-    connect(locationBar, &QLineEdit::textEdited,
-            m_omniboxSuggestions, &OmniboxSuggestions::scheduleSuggestions);
-    connect(locationBar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
+    wireLocationBar(locationBar);
     // TABS04: a new tab lands right after the pinned block — the
     // pinned prefix never gains a straggler at its far side.  With
     // nothing pinned (or while restoreState() rebuilds the saved
@@ -973,14 +991,19 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     }
 
     // The parallel location-bar stack needs one widget per tab.  An
-    // engine tab's bar is a read-only url echo — the degraded page
-    // cannot take typed navigations through loadUrl (loadUrl resolves
-    // through currentWebView(), which is null here).  ENG08: the swap
-    // affordance lives on the chrome's shared toolbar indicator now,
-    // which tracks the ACTIVE tab — it offers "Reload in Chromium"
-    // while this tab is current, which is the swap-back path.
+    // engine tab's bar is a plain LineEdit — LocationBar's
+    // site-icon/shield cluster is WebView-bound — but fully editable
+    // like every other tab's (ENG14): Enter routes through
+    // lineEditReturnPressed -> loadString -> loadUrl, which dispatches
+    // a current-tab load to this tab's Engine::Page, and non-address
+    // text resolves through guessUrlFromString's shared search
+    // fallback — the engine split never forks omnibox behavior.
+    // ENG08: the swap affordance lives on the chrome's shared toolbar
+    // indicator, which tracks the ACTIVE tab — it offers "Reload in
+    // Chromium" while this tab is current, which is the swap-back
+    // path.
     LineEdit *bar = new LineEdit(this);
-    bar->setReadOnly(true);
+    wireLocationBar(bar);
     m_locationBars->addWidget(bar);
 
     // Tab-strip plumbing mirroring the WebView wiring in
@@ -2404,9 +2427,15 @@ void TabWidget::lineEditReturnPressed()
 
         loadString(lineEdit->text(), tab);
         if (m_locationBars->currentWidget() == lineEdit) {
-            // A widget tab (PREFS01) has no view to focus.
-            if (WebView *view = currentWebView())
+            // A widget tab (PREFS01) has no view to focus; on an
+            // engine tab the backend's view takes it so key input
+            // reaches the foreign page (ENG14).
+            if (WebView *view = currentWebView()) {
                 view->setFocus();
+            } else if (EngineTab *foreign = engineTab(currentIndex())) {
+                if (foreign->page() && foreign->page()->view())
+                    foreign->page()->view()->setFocus();
+            }
         }
     }
 }
@@ -3367,6 +3396,23 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
         qWarning() << "TabWidget::loadUrl: refusing to load invalid"
                       "url" << url;
         return;
+    }
+    // ENG14: a current-tab open on a foreign-engine tab navigates
+    // THAT tab's page — the parallel bar is editable now, so typed
+    // urls/searches and every "open here" caller (bookmarks, history,
+    // the home button) land on the engine page instead of silently
+    // spawning a WebEngine tab.  A page-less engine tab (the backend
+    // refused the page after the tab landed) cannot navigate — fall
+    // through to the widget-tab fallback below.
+    if (tab == CurrentTab) {
+        if (EngineTab *foreign = engineTab(currentIndex())) {
+            if (foreign->page()) {
+                if (QLineEdit *bar = locationBar(currentIndex()))
+                    bar->setText(QString::fromUtf8(url.toEncoded()));
+                foreign->load(url);
+                return;
+            }
+        }
     }
     // PREFS01: a widget tab (Preferences, History) has no page to
     // navigate — a "current tab" open (bookmark, history entry, home
