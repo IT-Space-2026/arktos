@@ -34,6 +34,11 @@ public:
     void accept() override;
     static QByteArray httpString(const QStringList &list);
     static QStringList defaultAcceptList();
+    // The list the editor itself works on: the stored preference, or
+    // the UI-language default when nothing was saved.  Unlike
+    // acceptLanguages() this is NOT overridden by the
+    // privacy/normalizeAcceptLanguage anonymity-set toggle.
+    static QStringList storedAcceptLanguages();
     // The effective Accept-Language list: the stored preference, else
     // the UI-language default, else the system locale's languages.
     // Shared with NetworkAccessManager::acceptLanguage() and

@@ -999,6 +999,7 @@ void SettingsDialog::loadDefaults()
     autoFillPasswordFormsCheckBox->setChecked(false);
     minimFontSizeCheckBox->setChecked(false);
     minimumFontSizeSpinBox->setValue(9);
+    refreshAcceptLanguages();
 }
 
 void SettingsDialog::loadFromSettings()
@@ -1205,6 +1206,10 @@ void SettingsDialog::loadFromSettings()
     if (minimumFontSize != 0)
         minimumFontSizeSpinBox->setValue(minimumFontSize);
     settings.endGroup();
+
+    // The Appearance page's language field mirrors the editor's own
+    // network/acceptLanguages key (the sub-dialog owns it).
+    refreshAcceptLanguages();
 
     // Privacy
     settings.beginGroup(QLatin1String("cookies"));
@@ -2076,10 +2081,25 @@ void SettingsDialog::setHomeToCurrentPage()
     }
 }
 
+void SettingsDialog::refreshAcceptLanguages()
+{
+    // Display the stored editor list, not acceptLanguages() — the
+    // privacy/normalizeAcceptLanguage toggle swaps the wire value for
+    // the anonymity-set list while leaving the stored list editable.
+    const QStringList stored = AcceptLanguageDialog::storedAcceptLanguages();
+    QStringList names;
+    names.reserve(stored.size());
+    for (const QString &entry : stored)
+        names << entry.section(QLatin1String(" ["), 0, 0);
+    acceptLanguagesLabel->setText(names.join(QLatin1String(", ")));
+    acceptLanguagesLabel->setToolTip(stored.join(QLatin1String("\n")));
+}
+
 void SettingsDialog::chooseAcceptLanguage()
 {
     AcceptLanguageDialog dialog(this);
     dialog.exec();
+    refreshAcceptLanguages();
 }
 
 void SettingsDialog::chooseStyleSheet()
