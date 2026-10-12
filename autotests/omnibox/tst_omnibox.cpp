@@ -41,7 +41,7 @@
 // OMNI01: the rustcore classifier must route every input exactly like
 // the in-tree heuristic it replaced — the corpus test runs the same
 // input set through both paths and diffs the resolved urls, for both
-// values of urlloading/searchEngineFallback.  The suggest test diffs
+// values of urlloading/searchInAddressField.  The suggest test diffs
 // rc_history_suggest()'s ranked rows against the legacy
 // HistoryFilterModel + HistoryCompletionModel pipeline on a seeded
 // store.
@@ -115,7 +115,7 @@ void tst_Omnibox::cleanupTestCase()
 
 void tst_Omnibox::init()
 {
-    QSettings().setValue(QStringLiteral("urlloading/searchEngineFallback"),
+    QSettings().setValue(QStringLiteral("urlloading/searchInAddressField"),
                          true);
 }
 
@@ -159,7 +159,7 @@ void tst_Omnibox::classifyCorpus()
 #ifdef ARORA_RUSTCORE
     for (bool fallback : {true, false}) {
         QSettings().setValue(
-            QStringLiteral("urlloading/searchEngineFallback"), fallback);
+            QStringLiteral("urlloading/searchInAddressField"), fallback);
         const QUrl expected = SubTabWidget::reference(input);
         const QUrl actual = SubTabWidget::rust(input);
         QVERIFY2(!actual.isEmpty(),

@@ -3765,7 +3765,7 @@ int main(int argc, char **argv)
     // Headless verification for SRCH07: the omnibox resolver.  Single
     // words and multi-word input must route to the configured search
     // engine, address-shaped input must still navigate, engine
-    // keywords keep first priority, the urlloading/searchEngineFallback
+    // keywords keep first priority, the urlloading/searchInAddressField
     // opt-out restores the bare-http guess, and a stale saved engine
     // name must degrade to the built-in default endpoint instead of a
     // bogus http://<term> navigation.  Runs before the stub WebView is
@@ -3870,8 +3870,12 @@ int main(int argc, char **argv)
         }
 
         // Phase 4 — the opt-out still emits the bare-http guess, and
-        // the key round-trips the settings store.
-        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+        // the key round-trips the settings store.  SRCH12: the stored
+        // key is "searchInAddressField" now; a legacy
+        // "searchEngineFallback" is untrusted residue and must be
+        // ignored (and dropped) — it is what kept the user's real
+        // profile dead for single words.
+        settings.setValue(QLatin1String("urlloading/searchInAddressField"), false);
         const QUrl optedOut =
             TabWidget::guessUrlFromString(QLatin1String("hup"));
         check(QLatin1String("opt-out 'hup' -> bare http guess"),
@@ -3888,11 +3892,11 @@ int main(int argc, char **argv)
               optedOutMulti.isValid() && !optedOutMulti.isEmpty()
                   && optedOutMulti.host() != QLatin1String("two"),
               optedOutMulti);
-        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), true);
+        settings.setValue(QLatin1String("urlloading/searchInAddressField"), true);
         settings.sync();
         QSettings verify;
-        check(QLatin1String("searchEngineFallback persists"),
-              verify.value(QLatin1String("urlloading/searchEngineFallback"))
+        check(QLatin1String("searchInAddressField persists"),
+              verify.value(QLatin1String("urlloading/searchInAddressField"))
                       .toBool() == true);
         const QUrl reenabled =
             TabWidget::guessUrlFromString(QLatin1String("hup"));
@@ -3900,6 +3904,22 @@ int main(int argc, char **argv)
               isHttp(reenabled)
                   && reenabled.host() != QLatin1String("hup"),
               reenabled);
+        settings.remove(QLatin1String("urlloading/searchInAddressField"));
+
+        // Phase 5 — SRCH12: a stored legacy
+        // "searchEngineFallback=false" (Qt4-era default saves +
+        // pre-isolation test pollution) must not gate search, and the
+        // resolver drops the key on sight.
+        settings.setValue(QLatin1String("urlloading/searchEngineFallback"), false);
+        const QUrl legacyHup =
+            TabWidget::guessUrlFromString(QLatin1String("hup"));
+        check(QLatin1String("legacy-residue 'hup' -> search, not http://hup"),
+              isHttp(legacyHup)
+                  && legacyHup.host() != QLatin1String("hup"),
+              legacyHup);
+        check(QLatin1String("legacy key dropped on sight"),
+              !verify.contains(
+                  QLatin1String("urlloading/searchEngineFallback")));
         settings.remove(QLatin1String("urlloading/searchEngineFallback"));
 
         qInfo() << "search-guess-smoke:" << (ok ? "PASS" : "FAIL");

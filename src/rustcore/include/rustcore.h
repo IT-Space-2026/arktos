@@ -654,7 +654,7 @@ void rc_bidi_free(RcBidiClient *client);
  *     "query":...}                          resolve through the context
  *                                           engine, or keyword kw's
  * optionsJson: {"keywords":[...],"search_fallback":bool} — the live
- * keyword set and the urlloading/searchEngineFallback opt-in.
+ * keyword set and the urlloading/searchInAddressField opt-in.
  * NULL return is an argument error, not an empty verdict.
  *
  * rc_frecency_score(json, out) — pure scoring seam:

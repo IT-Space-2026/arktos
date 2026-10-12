@@ -65,7 +65,7 @@ Rules for the agent working this file:
 | START02 | No start page on new tab — blank Untitled (check servo vs chromium path) — details below | done | 1 | newTabPage()/newTabPageInContainer() load MainWindow/home (default about:home → qrc:/startpage.html) on user-facing new-tab surfaces; newTab() stays bare — make check PASS 2026-10-12 |
 | TRUST10 | Trust popover header styling: separator + verdict-colored bold Trust label — details below | blocked | 5 | blocked:exceeded 5 restarts |  [user-directed UI task — parallel lane work, Qt files allowed] |
 
-| SRCH12 | URL-bar default search still broken — details below | pending | 0 | user report persists after SRCH11 [user-directed UI task — parallel lane work, Qt files allowed] |
+| SRCH12 | URL-bar default search still broken — details below | done | 3 | root cause confirmed on the real profile: ~/.config/Arora/Arora.conf still carried urlloading/searchEngineFallback=false (Qt4-era unconditional saves + pre-isolation test pollution — SRCH11 isolated tests but the stored poison kept gating search); opt-out re-keyed to urlloading/searchInAddressField via shared searchInAddressFieldEnabled() feeding both Rust and C++ guess paths, legacy key dropped on sight so a stale false can never gate search again; settings load/save/reset migrated, --search-guess-smoke Phase 5 pins residue->search + key-dropped — verified: smoke PASS 13/13, tst_tabwidget 24/0, tst_settingsdialog resetSearchSettings PASS, tst_omnibox 87/87, make check rc=0 (check-warnings + supply-chain + rustcoverage PASS, 78 programs 0 failed) offscreen --disable-gpu [user-directed UI task — parallel lane work, Qt files allowed] |
 
 ## Task details
 

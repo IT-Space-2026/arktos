@@ -1065,8 +1065,12 @@ void SettingsDialog::loadFromSettings()
 
     settings.beginGroup(QLatin1String("urlloading"));
     // SRCH01: the omnibox searches by default — the stored value only
-    // exists once the user touches the checkbox.
-    bool search = settings.value(QLatin1String("searchEngineFallback"), true).toBool();
+    // exists once the user touches the checkbox.  SRCH12: the key was
+    // renamed — a stored "searchEngineFallback" is untrusted residue
+    // (legacy off-by-default saves + test pollution), so it is dropped
+    // here too and the box binds "searchInAddressField".
+    settings.remove(QLatin1String("searchEngineFallback"));
+    bool search = settings.value(QLatin1String("searchInAddressField"), true).toBool();
     searchEngineFallback->setChecked(search);
     // SRCH04: "Search with" context-menu results open unfocused.
     selectionSearchBackgroundCheck->setChecked(
@@ -1553,7 +1557,7 @@ void SettingsDialog::saveToSettings()
     settings.endGroup();
 
     settings.beginGroup(QLatin1String("urlloading"));
-    settings.setValue(QLatin1String("searchEngineFallback"), searchEngineFallback->isChecked());
+    settings.setValue(QLatin1String("searchInAddressField"), searchEngineFallback->isChecked());
     settings.setValue(QLatin1String("selectionSearchInBackground"),
                       selectionSearchBackgroundCheck->isChecked());
     settings.endGroup();
@@ -1942,6 +1946,7 @@ void SettingsDialog::resetSearchSettings()
     QSettings settings;
     settings.beginGroup(QLatin1String("urlloading"));
     settings.remove(QLatin1String("searchEngineFallback"));
+    settings.remove(QLatin1String("searchInAddressField"));
     settings.remove(QLatin1String("selectionSearchInBackground"));
     settings.endGroup();
     settings.beginGroup(QLatin1String("toolbarsearch"));
