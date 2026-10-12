@@ -70,6 +70,7 @@ This file is the task queue for the Devin CLI task loop
 | PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
 | DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
 | SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
+| TABS07 | Default tab height still too tall — details below | pending | 0 | |
 
 
 ## Task details
@@ -365,3 +366,13 @@ Sidebar polish — two user-reported issues on the right-docked sidebar:
 (b) RAIL ICONS ON THE WRONG SIDE — the vertical icon rail (bookmarks/history/downloads/notes toggle strip, SidebarPanel's QTabWidget rail from TABS02) sits on the LEFT edge of the sidebar even when the whole sidebar is docked on the RIGHT side of the window — the rail should hug the outer edge: left rail when docked left, right rail when docked right. Mirror the rail position to the dock area (Qt::LeftDockWidgetArea vs RightDockWidgetArea) — either reorder the layout (rail widget after the panel content) or setTabPosition on the rail tab widget. Verify the mirror follows a live dock move (drag sidebar to other side, or the SIDE03 position picker).
 
 Verify: bookmark/folder/history-entry names show fully while space allows on EVERY sidebar panel, still elide correctly on a narrow panel; rail sits on the outer edge for both dock positions and flips on dock move; make check PASS.
+
+### TABS07
+
+Default tab strip height is too big — user screenshot: a normal 'Untitled' tab renders with excessive vertical padding, making the tab strip noticeably taller than a standard browser tab bar (compare Firefox/Chrome ~30-32px). TABS06 already fixed the container-chip inflation case, but the BASE tab height is still too tall.
+
+Diagnosis hints: check tabbar.cpp/tabwidget.cpp tabSizeHint + initStyleOption — possible causes: style option padding, icon size forcing height, minimum sizeHint on the QTabBar subclass, container/group chip rows reserving height even when empty, or the tab widget's contentsMargins. Measure the rendered strip height vs the style's default and vs text+icon natural height.
+
+Spec: (a) default tab height reduced to a normal browser-tab height (~style-default, icon+text sized — target roughly 30-34px unless the style says otherwise); (b) pinned/group/container variants still render correctly at the new height (icons only on pinned, chips still legible); (c) tab close button + favicon stay vertically centered; (d) vertical tab mode unaffected or adjusted consistently.
+
+Verify: new-window default tab strip measures noticeably shorter and matches platform/browser norms; pinned+container+grouped tabs still look right; make check PASS.
