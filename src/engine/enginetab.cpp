@@ -20,8 +20,9 @@
 #include "enginetab.h"
 
 #include "engineinterface.h"
+#include "pdfview.h"
 
-#include <QVBoxLayout>
+#include <QStackedLayout>
 
 EngineTab::EngineTab(Engine::Backend *backend, Engine::Profile *profile,
                      QWidget *parent)
@@ -30,9 +31,10 @@ EngineTab::EngineTab(Engine::Backend *backend, Engine::Profile *profile,
     , m_page(nullptr)
     , m_progress(0)
 {
-    QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    // Stacked so PDF02's document view can cover the backend view —
+    // same shape WebViewWithSearch uses for WebEngine tabs.
+    m_layout = new QStackedLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
 
     if (!backend)
         return;
@@ -42,7 +44,7 @@ EngineTab::EngineTab(Engine::Backend *backend, Engine::Profile *profile,
         return;
 
     if (QWidget *view = backend->createView(m_page, this))
-        layout->addWidget(view);
+        m_layout->addWidget(view);
 
     connect(m_page, &Engine::Page::titleChanged,
             this, [this](const QString &title) {
@@ -96,4 +98,19 @@ void EngineTab::reload()
 {
     if (m_page)
         m_page->reload();
+}
+
+void EngineTab::showPdfDocument(const QString &localPath,
+                                const QUrl &sourceUrl)
+{
+    if (!m_pdfView) {
+        m_pdfView = new PdfView(this);
+        m_layout->addWidget(m_pdfView);
+        connect(m_pdfView, &PdfView::reloadRequested, this,
+                [this](const QUrl &url) { load(url); });
+        connect(m_pdfView, &PdfView::titleChanged,
+                this, &EngineTab::titleChanged);
+    }
+    m_pdfView->setDocument(localPath, sourceUrl);
+    m_layout->setCurrentWidget(m_pdfView);
 }

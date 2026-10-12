@@ -57,3 +57,10 @@ dom_query = "=0.28.0"
 # the module matrix is bit-identical.  Exact-pinned like the rest of
 # the reviewed tree.
 qrcodegen = "=1.8.0"
+# PDF page rasterization (PDF02): hayro is a pure-Rust PDF renderer —
+# `#![forbid(unsafe_code)]` end to end, Apache-2.0/MIT, no C++ blob to
+# audit (pdfium-render would drag a downloaded libpdfium.so into the
+# confined worker instead).  `embed-fonts` bundles the 14 base-font
+# substitutes so the renderer needs no font filesystem inside the
+# sandbox.  Exact-pinned like the rest of the reviewed tree.
+hayro = { version = "=0.8.0", features = ["embed-fonts"] }

@@ -519,9 +519,12 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(secureDnsMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) { secureDnsServer->setEnabled(index >= 2); });
     // PDF01: the sanitize pass only applies to the in-browser viewing
-    // path — without the viewer it is inert.
+    // path — without the viewer it is inert.  PDF02's shell view is
+    // gated on top of it: it only ever renders sanitized bytes.
     connect(pdfViewer, &QCheckBox::toggled,
             pdfSanitize, &QWidget::setEnabled);
+    connect(pdfSanitize, &QCheckBox::toggled,
+            pdfShellView, &QWidget::setEnabled);
     if (BrowserApplication::isTorMode()) {
         // SEC20: a tor process never resolves names locally — the
         // stored DoH mode is ignored here regardless of the controls.
@@ -1305,6 +1308,8 @@ void SettingsDialog::loadFromSettings()
     pdfViewer->setChecked(settings.value(QLatin1String("pdfViewer"), true).toBool());
     pdfSanitize->setChecked(settings.value(QLatin1String("pdfSanitize"), true).toBool());
     pdfSanitize->setEnabled(pdfViewer->isChecked());
+    pdfShellView->setChecked(settings.value(QLatin1String("pdfShellView"), true).toBool());
+    pdfShellView->setEnabled(pdfSanitize->isChecked() && pdfSanitize->isEnabled());
     clearOnExit->setChecked(settings.value(QLatin1String("clearOnExit"), false).toBool());
     // PRIV02 fingerprint normalization.
     reportUtcTimezone->setChecked(settings.value(QLatin1String("reportUtcTimezone"), false).toBool());
@@ -1679,6 +1684,7 @@ void SettingsDialog::saveToSettings()
     // PDF01: viewer enable + pre-view sanitize pass.
     settings.setValue(QLatin1String("pdfViewer"), pdfViewer->isChecked());
     settings.setValue(QLatin1String("pdfSanitize"), pdfSanitize->isChecked());
+    settings.setValue(QLatin1String("pdfShellView"), pdfShellView->isChecked());
     settings.setValue(QLatin1String("clearOnExit"), clearOnExit->isChecked());
     settings.setValue(QLatin1String("reportUtcTimezone"), reportUtcTimezone->isChecked());
     settings.setValue(QLatin1String("normalizeAcceptLanguage"), normalizeAcceptLanguage->isChecked());

@@ -56,6 +56,8 @@
 #include "opensearchreader.h"
 #include "opensearchwriter.h"
 #include "pdfsupport.h"
+#include "pdfview.h"
+#include "pdfworker.h"
 #include "pictureinpicture.h"
 #include "pipwindow.h"
 #include "plaintexteditsearch.h"
@@ -91,6 +93,9 @@
 
 #ifdef ARORA_RUSTDL
 #include "downloadworker.h"
+#endif
+#ifdef ARORA_RUSTCORE
+#include "enginetab.h"
 #endif
 
 #include <QtCore/QBuffer>
@@ -162,6 +167,7 @@
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
+#include <QtPrintSupport/QPrinter>
 #include <QtGui/QAction>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
@@ -3090,6 +3096,15 @@ int main(int argc, char **argv)
     }
 #endif
 
+    // PDF02: `arora --pdf-worker` is the confined rasterization
+    // subprocess PdfDocumentClient spawns under bwrap — same
+    // early-dispatch discipline as --download-worker: no GUI app, no
+    // profile, just the stdio protocol in pdfworker.h.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--pdf-worker") == 0)
+            return pdfWorkerMain();
+    }
+
     // Zero-cost wall clock for --perf-smoke's cold-start checkpoints.
     QElapsedTimer perfTimer;
     perfTimer.start();
@@ -3537,7 +3552,7 @@ int main(int argc, char **argv)
         "sleep-smoke", "palette-smoke", "pip-smoke", "tabstrip-smoke",
         "startpage-smoke", "crash-smoke",
         "sandbox-smoke", "write-sandbox-launcher",
-        "bidi-smoke", "pdf-smoke",
+        "bidi-smoke", "pdf-smoke", "pdfview-smoke",
         "parallel-download-smoke", "parallel-download-off-smoke",
         "ingress-smoke",
         "engine-list", "engine-smoke",
@@ -12126,6 +12141,10 @@ int main(int argc, char **argv)
     // to the raw viewer; a non-PDF body on a .pdf url falls back to
     // the real response.  Exits 0 on PASS.
     if (args.contains(QLatin1String("--pdf-smoke"))) {
+        // PDF01's assertions cover the engine-viewer hand-off —
+        // PDF02's shell view is pinned off here so the staged
+        // file:// path stays what this smoke measures.
+        QSettings().setValue(QLatin1String("privacy/pdfShellView"), false);
         bool ok = true;
         const auto check = [&ok](const QString &what, bool pass) {
             qInfo() << "pdf-smoke:" << (pass ? "PASS" : "FAIL") << what;
@@ -12252,12 +12271,28 @@ int main(int argc, char **argv)
         QObject::connect(server, &QTcpServer::newConnection,
                          &application, [server, hits, pdfBytes]() {
             QTcpSocket *client = server->nextPendingConnection();
+            auto *buffer = new QByteArray;
             QObject::connect(client, &QTcpSocket::readyRead, client,
-                             [client, hits, pdfBytes]() {
-                const QByteArray request = client->readAll();
-                QByteArray path = request.mid(4);
-                const int end = path.indexOf(" HTTP/");
-                path = end < 0 ? path : path.left(end);
+                             [client, hits, pdfBytes, buffer]() {
+                *buffer += client->readAll();
+                // The request head must arrive whole before the
+                // path is parsed — TCP may deliver the header in
+                // fragments (the rustdl engine's several small
+                // writes hit this where Chromium's single write
+                // did not), and answering off a truncated line
+                // serves the wrong body to the segmented download.
+                const int headEnd = buffer->indexOf("\r\n\r\n");
+                if (headEnd < 0)
+                    return;
+                // The request target is the request line's second
+                // token — the method is variable length (the rustdl
+                // engine's HEAD probe was parsed as " /doc.pdf" by a
+                // fixed "GET " skip and answered the wrong body).
+                const QByteArray line =
+                    buffer->left(buffer->indexOf("\r\n"));
+                const QList<QByteArray> tokens = line.split(' ');
+                QByteArray path = tokens.size() > 1
+                    ? tokens.at(1) : QByteArray();
                 (*hits)[QString::fromLatin1(path)] += 1;
                 QByteArray body, mime;
                 if (path == "/doc.pdf") {
@@ -12273,6 +12308,8 @@ int main(int argc, char **argv)
                     + "\r\nConnection: close\r\n\r\n" + body);
                 client->disconnectFromHost();
             });
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [buffer]() { delete buffer; });
         });
         const QUrl pdfUrl(QStringLiteral("http://127.0.0.1:%1/doc.pdf").arg(port));
         const QUrl fakeUrl(QStringLiteral("http://127.0.0.1:%1/fake.pdf").arg(port));
@@ -12423,6 +12460,329 @@ int main(int argc, char **argv)
             QDir(downloadDir).removeRecursively();
         });
     }
+
+#ifdef ARORA_RUSTCORE
+    // PDF02: the shell-owned, engine-neutral document view.  Covers:
+    //   (a) the document client — open/geometry/raster/find through
+    //       whichever backend launched (bwrap-worker when a sandbox
+    //       exists, in-process otherwise);
+    //   (b) the canvas — page nav, zoom, page-granular find, and the
+    //       engine-free print handoff (rasters painted into a
+    //       QPrinter, verified as a real pdf on disk);
+    //   (c) engine neutrality — the identical PdfView hosted inside
+    //       an EngineTab with no WebEngine backend at all;
+    //   (d) the worker sandbox itself — probe_paths report $HOME and
+    //       the host data dir as invisible inside the namespace;
+    //   (e) end-to-end — a .pdf nav is refused, fetched through the
+    //       profile, sanitized, staged, and shown by the shell view
+    //       while the engine page never touches the staged file.
+    // Exits 0 on PASS.
+    if (args.contains(QLatin1String("--pdfview-smoke"))) {
+        bool ok = true;
+        const auto check = [&ok](const QString &what, bool pass) {
+            qInfo() << "pdfview-smoke:" << (pass ? "PASS" : "FAIL")
+                    << what;
+            ok = ok && pass;
+        };
+
+        // Two-page fixture: text extracts page-granular ("hello" on
+        // p1, "goodbye" on p2) and the catalog carries the hostile
+        // keys PDF01's sanitizer strips.
+        const QByteArray pdfBytes = []() {
+            const QByteArray stream1 =
+                "BT /F1 24 Tf 50 150 Td (hello world) Tj ET";
+            const QByteArray stream2 =
+                "BT /F1 24 Tf 50 150 Td (goodbye) Tj ET";
+            const QList<QByteArray> objs = {
+                "<< /Type /Catalog /Pages 2 0 R /OpenAction 6 0 R"
+                " /Names << /EmbeddedFiles 7 0 R >> >>",
+                "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 5 0 R >> >>"
+                " /Contents 8 0 R >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200]"
+                " /Resources << /Font << /F1 5 0 R >> >>"
+                " /Contents 9 0 R >>",
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                "<< /Type /Action /S /JavaScript /JS (app.alert('pwned')) >>",
+                "<< /Names [(a) << /EF << /F 10 0 R >> /F (a) >>] >>",
+                QByteArray("<< /Length ") + QByteArray::number(stream1.size())
+                    + " >>\nstream\n" + stream1 + "\nendstream",
+                QByteArray("<< /Length ") + QByteArray::number(stream2.size())
+                    + " >>\nstream\n" + stream2 + "\nendstream",
+                "<< /Type /EmbeddedFile /Length 4 >>\nstream\nevil\nendstream",
+            };
+            QByteArray out("%PDF-1.4\n");
+            QList<int> offsets;
+            for (int i = 0; i < objs.count(); ++i) {
+                offsets << out.size();
+                out += QByteArray::number(i + 1) + " 0 obj\n"
+                    + objs.at(i) + "\nendobj\n";
+            }
+            const int xref = out.size();
+            out += "xref\n0 " + QByteArray::number(objs.count() + 1)
+                + "\n0000000000 65535 f \n";
+            for (const int off : offsets)
+                out += QByteArray::number(off).rightJustified(10, '0')
+                    + " 00000 n \n";
+            out += "trailer\n<</Size " + QByteArray::number(objs.count() + 1)
+                + " /Root 1 0 R>>\nstartxref\n"
+                + QByteArray::number(xref) + "\n%%EOF\n";
+            return out;
+        }();
+        const QList<QByteArray> dangerNeedles = {
+            "JavaScript", "OpenAction", "EmbeddedFiles", "app.alert",
+        };
+
+        // Stage the sanitized bytes the way the pipeline would.
+        const QString staged = PdfSupport::tempDirPath()
+            + QLatin1String("/pdfview-smoke.pdf");
+        {
+            const QByteArray cleaned = PdfSupport::sanitize(pdfBytes);
+            check(QStringLiteral("fixture sanitizes to a pdf"),
+                  cleaned.startsWith("%PDF-"));
+            for (const QByteArray &needle : dangerNeedles)
+                check(QStringLiteral("staged strips ")
+                          + QString::fromLatin1(needle),
+                      !cleaned.contains(needle));
+            QFile out(staged);
+            check(QStringLiteral("staged write"),
+                  out.open(QIODevice::WriteOnly)
+                      && out.write(cleaned) == cleaned.size());
+            out.close();
+            QFile::setPermissions(staged,
+                QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        }
+
+        // (a)+(b): direct widget checks.
+        {
+            PdfView *pdf = new PdfView;
+            pdf->resize(800, 600);
+            pdf->show();
+            {
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf, &PdfView::documentReady,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf, &PdfView::documentFailed,
+                                 &loop, [&loop](const QString &msg) {
+                    qInfo() << "pdfview-smoke: open failed:" << msg;
+                    loop.quit();
+                });
+                pdf->setDocument(staged,
+                    QUrl(QLatin1String("http://h/doc.pdf")));
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("document opens"),
+                  pdf->isReady());
+            qInfo() << "pdfview-smoke: raster backend:"
+                    << pdf->backendName();
+            check(QStringLiteral("two pages"),
+                  pdf->client()
+                      && pdf->client()->pageCount() == 2);
+            check(QStringLiteral("page geometry"),
+                  pdf->client()
+                      && pdf->client()->pageSize(0).width() > 0);
+            check(QStringLiteral("page rasters to an image"),
+                  pdf->client()
+                      && !pdf->client()->renderPageSync(0, 1.5).isNull());
+            check(QStringLiteral("canvas page nav"),
+                  pdf->canvas()->pageCount() == 2
+                      && (pdf->canvas()->goToPage(1),
+                          pdf->canvas()->currentPage() == 1));
+            check(QStringLiteral("zoom applies"),
+                  (pdf->canvas()->setZoom(2.0),
+                   qAbs(pdf->canvas()->zoom() - 2.0) < 0.001));
+
+            int hitPage = -2;
+            int hitTotal = 0;
+            {
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(pdf->client(),
+                    &PdfDocumentClient::findResult,
+                    &loop, [&](qint64, int page, int total) {
+                    hitPage = page;
+                    hitTotal = total;
+                    loop.quit();
+                });
+                pdf->client()->findText(
+                    QStringLiteral("goodbye"), 0, 1);
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("find lands on page 2"),
+                  hitPage == 1 && hitTotal == 1);
+
+            // Print handoff: rasters painted through the client into
+            // a QPrinter — no engine involved anywhere.
+            const QString printPath = QDir::temp().filePath(
+                QStringLiteral("arora-pdfview-print-%1.pdf")
+                    .arg(QCoreApplication::applicationPid()));
+            QPrinter printer;
+            printer.setOutputFormat(QPrinter::PdfFormat);
+            printer.setOutputFileName(printPath);
+            QString printError;
+            check(QStringLiteral("print handoff paints"),
+                  pdf->canvas()->printPages(&printer, &printError));
+            QFile printed(printPath);
+            check(QStringLiteral("print output is a pdf"),
+                  printed.open(QIODevice::ReadOnly)
+                      && printed.read(5) == "%PDF-"
+                      && printed.size() > 200);
+            printed.close();
+            QFile::remove(printPath);
+            delete pdf;
+        }
+
+        // (c) engine-neutral hosting: an EngineTab with no backend
+        // still shows the same widget — servo's tab never needs a
+        // pdf renderer of its own.
+        {
+            EngineTab tab(nullptr, nullptr);
+            tab.resize(640, 480);
+            tab.show();
+            tab.showPdfDocument(staged,
+                QUrl(QLatin1String("http://h/doc.pdf")));
+            check(QStringLiteral("enginetab hosts the pdf view"),
+                  tab.pdfView() != nullptr);
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            QObject::connect(&timeout, &QTimer::timeout,
+                             &loop, &QEventLoop::quit);
+            if (tab.pdfView()) {
+                QObject::connect(tab.pdfView(), &PdfView::documentReady,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(tab.pdfView(), &PdfView::documentFailed,
+                                 &loop, [&loop](const QString &msg) {
+                    qInfo() << "pdfview-smoke: enginetab failed:" << msg;
+                    loop.quit();
+                });
+                timeout.start(30000);
+                loop.exec();
+            }
+            check(QStringLiteral("enginetab document ready"),
+                  tab.pdfView() && tab.pdfView()->isReady());
+        }
+
+        // (d) the worker sandbox sees no $HOME and none of the host
+        // data dir — only /arora-rt mounts and system roots.
+        if (!SandboxManager::bwrapPath().isEmpty()) {
+            QHash<QString, bool> probes;
+            QString probeError;
+            const QStringList paths = {
+                QDir::homePath(),
+                PdfSupport::tempDirPath(),
+                QStringLiteral("/usr"),
+                BwrapGenerator::pdfWorkDirPath(),
+                BwrapGenerator::pdfDocumentPath(),
+            };
+            const bool probed = PdfDocumentClient::probeWorker(
+                paths, &probes, &probeError);
+            check(QStringLiteral("worker probe ran"),
+                  probed);
+            if (probed) {
+                check(QStringLiteral("$HOME hidden inside worker"),
+                      !probes.value(QDir::homePath(), true));
+                check(QStringLiteral("data dir hidden inside worker"),
+                      !probes.value(PdfSupport::tempDirPath(), true));
+                check(QStringLiteral("system root readable"),
+                      probes.value(QStringLiteral("/usr"), false));
+                check(QStringLiteral("work dir mounted"),
+                      probes.value(BwrapGenerator::pdfWorkDirPath(),
+                                   false));
+            }
+        } else {
+            qInfo() << "pdfview-smoke: SKIP sandbox probes (no bwrap)";
+        }
+
+        // (e) end-to-end over loopback: the nav is refused, the
+        // profile fetches + sanitizes + stages, and the SHELL view
+        // opens — the engine page never navigates to the staged file.
+        QTcpServer *server = new QTcpServer(&application);
+        if (!server->listen(QHostAddress::LocalHost)) {
+            qInfo() << "pdfview-smoke: FAIL (listen)"
+                    << server->errorString();
+            return 1;
+        }
+        const quint16 port = server->serverPort();
+        QObject::connect(server, &QTcpServer::newConnection,
+                         &application, [server, pdfBytes]() {
+            QTcpSocket *client = server->nextPendingConnection();
+            auto *buffer = new QByteArray;
+            QObject::connect(client, &QTcpSocket::readyRead, client,
+                             [client, pdfBytes, buffer]() {
+                *buffer += client->readAll();
+                // Answer once the request head is complete —
+                // fragmented TCP delivery would otherwise get one
+                // reply per segment.
+                if (buffer->indexOf("\r\n\r\n") < 0)
+                    return;
+                client->write("HTTP/1.1 200 OK\r\nContent-Type: "
+                    "application/pdf\r\nContent-Length: "
+                    + QByteArray::number(pdfBytes.size())
+                    + "\r\nConnection: close\r\n\r\n" + pdfBytes);
+                client->disconnectFromHost();
+            });
+            QObject::connect(client, &QTcpSocket::disconnected, client,
+                             [buffer]() { delete buffer; });
+        });
+        const QUrl pdfUrl(QStringLiteral(
+            "http://127.0.0.1:%1/doc.pdf").arg(port));
+
+        auto ticks = std::make_shared<int>(0);
+        QTimer *poll = new QTimer(&application);
+        const auto finish = [&application, poll, &ok](bool pass) {
+            poll->stop();
+            qInfo() << "pdfview-smoke:" << (pass && ok ? "PASS" : "FAIL");
+            application.exit(pass && ok ? 0 : 1);
+        };
+        QObject::connect(poll, &QTimer::timeout, &application,
+            [&, ticks, dangerNeedles]() {
+            if (++*ticks > 200) {   // ~60s ceiling
+                qInfo() << "pdfview-smoke: FAIL (timeout)";
+                finish(false);
+                return;
+            }
+            PdfView *pdf = view->pdfView();
+            if (!pdf || !pdf->isReady())
+                return;
+            // The shell view opened the staged copy — the engine
+            // page under it never committed a pdf navigation.
+            check(QStringLiteral("engine page kept off the pdf"),
+                  !view->url().isLocalFile());
+            QFile stagedFile(pdf->localPath());
+            check(QStringLiteral("view shows a managed staged file"),
+                  PdfSupport::isManagedPath(pdf->localPath())
+                      && stagedFile.open(QIODevice::ReadOnly));
+            if (stagedFile.isOpen()) {
+                const QByteArray bytes = stagedFile.readAll();
+                stagedFile.close();
+                check(QStringLiteral("viewed pdf is sanitized"),
+                      bytes.startsWith("%PDF-"));
+                for (const QByteArray &needle : dangerNeedles)
+                    check(QStringLiteral("viewed strips ")
+                              + QString::fromLatin1(needle),
+                          !bytes.contains(needle));
+            }
+            check(QStringLiteral("e2e page count"),
+                  pdf->client()
+                      && pdf->client()->pageCount() == 2);
+            finish(true);
+        });
+        poll->start(300);
+        view->loadUrl(pdfUrl);
+        return application.exec();
+    }
+#endif
 
     // TELEM02: child half of the DNS-prefetch probe — boots with
     // privacy/dnsPrefetch pre-pinned by the parent and a netlog path

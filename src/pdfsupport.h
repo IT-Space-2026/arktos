@@ -26,6 +26,7 @@
 #include <qurl.h>
 #include <qwebenginepage.h>
 
+class QDateTime;
 class QWebEngineDownloadRequest;
 class WebPage;
 
@@ -61,6 +62,15 @@ bool viewerEnabled();
 // without the rust core have no sanitizer; the toggle reads false
 // there and viewing falls back to the raw viewer path.
 bool sanitizeEnabled();
+// privacy/pdfShellView — PDF02's engine-neutral document view,
+// default on.  Sanitized bytes are rasterized by the confined
+// rustcore pdf-worker and painted by the shell widget (PdfView)
+// instead of Chromium's embedded PDFium viewer — the same surface a
+// Servo tab uses, since libservo has no viewer.  False keeps the
+// PDF01 behavior: sanitized pdf loads file:// into the engine's own
+// viewer.  Only meaningful while the sanitize pipeline is active —
+// sanitize off always means the raw engine viewer.
+bool shellViewEnabled();
 // The url's decoded path ends in ".pdf" (query/fragment ignored).
 bool looksLikePdfUrl(const QUrl &url);
 // Whether this main-frame navigation should divert into the
@@ -73,6 +83,9 @@ bool consumeBypass(WebPage *page, const QUrl &url);
 QByteArray sanitize(const QByteArray &input);
 // <data dir>/pdf-view — 0700, swept at startup.
 QString tempDirPath();
+// First tempDirPath() call of the session — the sweep's cutoff for
+// telling this-session staged files from previous-run leftovers.
+const QDateTime &sessionStart();
 void sweepTempDir();
 // localPath lives inside the managed temp dir.
 bool isManagedPath(const QString &localPath);

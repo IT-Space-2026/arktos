@@ -363,6 +363,38 @@ RcStatus rc_suggest_parse(const uint8_t *jsonUtf8, size_t len,
 RcStatus rc_pdf_sanitize(const uint8_t *data, size_t len,
                          RcBuffer *out);
 
+/* --- pdf document rasterization (PDF02) -----------------------------
+ * The shell-owned document view renders pages through this surface,
+ * normally inside the `arora --pdf-worker` confined subprocess (one
+ * document per worker).  The same calls work in-process as the
+ * fallback when no sandbox backend exists.
+ *
+ * rc_pdfdoc_open returns an opaque handle (0 = failure, error text
+ * via rc_last_error_message).  The handle is single-threaded: one owner,
+ * rc_pdfdoc_close releases it. */
+uintptr_t rc_pdfdoc_open(const uint8_t *data, size_t len);
+/* Page count, 0 on a bad handle. */
+int32_t rc_pdfdoc_page_count(uintptr_t doc);
+/* Page dimensions in PDF points (1/72in); RC_INVALID_ARGUMENT when
+ * the handle or page index is bad. */
+RcStatus rc_pdfdoc_page_size(uintptr_t doc, int32_t page,
+                             double *w, double *h);
+/* Document /Title or NULL — rc_string_free the result. */
+char *rc_pdfdoc_title(uintptr_t doc);
+/* Page rasterized to PNG bytes (rc_buffer_free) — scale 1.0 = 72dpi.
+ * RC_CORRUPT on render failure, RC_INVALID_ARGUMENT on a bad
+ * handle/page/scale or a bitmap over the pixel cap. */
+RcStatus rc_pdfdoc_render_png(uintptr_t doc, int32_t page,
+                              double scale, RcBuffer *out);
+/* Page index holding the next/prev `needle` match from `from_page`
+ * (dir >= 0 forward, < 0 backward, wraps once), -1 on no match or a
+ * bad handle.  Text is page-granular.  out_total may be NULL; when
+ * given it receives the document-wide occurrence count. */
+int32_t rc_pdfdoc_find(uintptr_t doc, const char *needleUtf8,
+                       int32_t from_page, int32_t dir,
+                       int32_t *out_total);
+void rc_pdfdoc_close(uintptr_t doc);
+
 /* --- reader-mode extraction (RDR01) ----------------------------------
  * The article extraction that used to run as injected JS (vendored
  * Mozilla Readability.js + isProbablyReaderable) lives in the core —

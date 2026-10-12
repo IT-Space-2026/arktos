@@ -456,6 +456,21 @@ Security:
   links work; links to local files from the staged viewer document are
   refused. Saving a PDF still stores the original unsanitized bytes
   for the external reader — sanitization covers the viewing path only.
+- Shell-owned, engine-neutral PDF document view (PDF02): PDFs now
+  render in a Qt document widget owned by the shell instead of
+  Chromium's embedded PDFium viewer — the same surface every engine
+  backend can host, since libservo ships no viewer. Pages are
+  rasterized by `arora --pdf-worker`, a sandboxed subprocess running
+  the pure-Rust `hayro` renderer under a bubblewrap allowlist (staged
+  PDF read-only, one writable work dir, no network namespace, no
+  $HOME), with page bitmaps marshaled back over a single-purpose
+  JSONL protocol. The view provides continuous scrolling, zoom, page
+  navigation, find-in-document and print handoff; PDF01's sanitize
+  pass still always runs before the renderer sees a byte, and
+  Tor/private profiles get the identical in-browser view — no
+  external handoff. Preferences → Privacy → PDF Documents gains
+  "View PDFs with the sandboxed document view" (on by default);
+  unchecking it keeps the previous PDFium-viewer path as a fallback.
 - External-URL ingress audit (SEC23): every path an untrusted URL can
   enter a running process — positional argv, the single-instance
   socket, the QDesktopServices `http` handler and the `--tor` operand —

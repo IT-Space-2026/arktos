@@ -20,12 +20,15 @@
 #include "pdfsupport.h"
 
 #include "browserpaths.h"
+#include "webenginebackend.h"
 #include "webpage.h"
+#include "webview.h"
 
 #ifdef ARORA_RUSTCORE
 #include "rustcore.h"
 #endif
 
+#include <qdatetime.h>
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
@@ -57,6 +60,15 @@ bool sanitizeEnabled()
 {
 #ifdef ARORA_RUSTCORE
     return QSettings().value(QLatin1String("privacy/pdfSanitize"), true).toBool();
+#else
+    return false;
+#endif
+}
+
+bool shellViewEnabled()
+{
+#ifdef ARORA_RUSTCORE
+    return QSettings().value(QLatin1String("privacy/pdfShellView"), true).toBool();
 #else
     return false;
 #endif
@@ -118,6 +130,11 @@ QByteArray sanitize(const QByteArray &input)
 
 QString tempDirPath()
 {
+    // Captured on the first call of the session: every staged file
+    // this run is created via this path, so the startup sweep can
+    // tell this-session files apart from previous-run leftovers
+    // even when postLaunch() fires after a fetch already staged.
+    sessionStart();
     const QString path = BrowserPaths::dataFilePath(QLatin1String("pdf-view"));
     QDir dir;
     if (dir.mkpath(path)) {
@@ -128,12 +145,25 @@ QString tempDirPath()
     return path;
 }
 
+const QDateTime &sessionStart()
+{
+    static const QDateTime start = QDateTime::currentDateTime();
+    return start;
+}
+
 void sweepTempDir()
 {
     const QDir dir(tempDirPath());
-    const QStringList files = dir.entryList(QDir::Files | QDir::NoDotAndDotDot);
-    for (const QString &name : files)
-        QFile::remove(dir.filePath(name));
+    const QFileInfoList files = dir.entryInfoList(
+        QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &file : files) {
+        // A file written since the session began is a live pipeline
+        // stage, not a leftover — postLaunch() is deferred and can
+        // fire after a navigation already staged its document.
+        if (file.lastModified() >= sessionStart())
+            continue;
+        QFile::remove(file.absoluteFilePath());
+    }
 }
 
 bool isManagedPath(const QString &localPath)
@@ -279,8 +309,23 @@ void PdfSanitizeFetch::serveBytes(const QByteArray &raw)
                 out.close();
                 QFile::setPermissions(outPath,
                     QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-                if (m_page)
-                    m_page->load(QUrl::fromLocalFile(outPath));
+                if (m_page) {
+                    // PDF02: the shell-owned document view renders
+                    // the staged file through the confined
+                    // rasterizer — the engine never opens a pdf at
+                    // all.  Every backend hosts the same widget, so
+                    // this hand-off is the engine-neutral surface;
+                    // sanitize-off and shellView-off both keep the
+                    // PDF01 file:// viewer path.
+                    QWidget *pageView =
+                        WebEnginePageAdapter::forPage(m_page)->view();
+                    WebView *view = qobject_cast<WebView *>(pageView);
+                    if (PdfSupport::shellViewEnabled() && view) {
+                        view->showPdfDocument(outPath, m_url);
+                    } else {
+                        m_page->load(QUrl::fromLocalFile(outPath));
+                    }
+                }
                 dispose();
                 return;
             }

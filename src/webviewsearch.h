@@ -49,6 +49,9 @@ private:
 
 #include "webview.h"
 
+class PdfView;
+class QStackedWidget;
+
 class WebViewWithSearch : public QWidget
 {
     Q_OBJECT
@@ -57,6 +60,20 @@ public:
     WebViewWithSearch(WebView *webView, QWidget *parent = nullptr);
     WebView *m_webView;
     WebViewSearch *m_webViewSearch;
+
+    // PDF02: swap the tab's content surface for the shell-owned
+    // document view — the sanitize pipeline routes staged PDFs here
+    // instead of into the engine's built-in viewer.  The stack keeps
+    // the WebView alive underneath (the pdf navigation was refused,
+    // so the page's state stays intact for history-back), and a
+    // committed navigation away clears the overlay again.
+    void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
+    void clearPdfDocument();
+    PdfView *pdfView() const { return m_pdfView; }
+
+private:
+    QStackedWidget *m_stack;
+    PdfView *m_pdfView = nullptr;
 };
 
 

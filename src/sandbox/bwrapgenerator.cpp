@@ -117,44 +117,17 @@ QString launcherScript()
     return script;
 }
 
-QStringList downloadWorkerCommandLine(const QString &program,
-                                      const QStringList &programArgs,
-                                      const QString &workDir,
-                                      const QString &destDir)
-{
-    QStringList command;
-    command << QStringLiteral("bwrap")
-            << QStringLiteral("--die-with-parent")
-            // A clean environment: proxy, credential and session
-            // variables cannot ride in — the job's options carry the
-            // explicit proxy and PATH/HOME are replaced wholesale.
-            << QStringLiteral("--clearenv")
-            << QStringLiteral("--setenv") << QStringLiteral("PATH")
-            << QStringLiteral("/usr/local/bin:/usr/bin:/bin")
-            << QStringLiteral("--setenv") << QStringLiteral("TMPDIR")
-            << QStringLiteral("/tmp")
-            << QStringLiteral("--setenv") << QStringLiteral("HOME")
-            << QStringLiteral("/nonexistent")
-            << QStringLiteral("--setenv") << QStringLiteral("ARORA_SANDBOXED")
-            << QStringLiteral("bwrap-dl")
-            // Namespace tightening: pid/ipc/uts/cgroup are cheap
-            // isolation wins for a worker.  The network namespace
-            // deliberately stays SHARED — the worker must resolve and
-            // connect; proxies go through options, not netns tricks.
-            << QStringLiteral("--unshare-pid")
-            << QStringLiteral("--unshare-ipc")
-            << QStringLiteral("--unshare-uts")
-            << QStringLiteral("--unshare-cgroup-try")
-            // Minimal root view: fresh /dev and /proc, scratch /tmp,
-            // and the system roots read-only.  $HOME is never
-            // mounted — that is the entire point of this wrap.
-            // /arora-rt is a private tmpfs the mapped-bind targets
-            // below live under (see the bindRo lambda).
-            << QStringLiteral("--dev") << QStringLiteral("/dev")
-            << QStringLiteral("--proc") << QStringLiteral("/proc")
-            << QStringLiteral("--tmpfs") << QStringLiteral("/tmp")
-            << QStringLiteral("--tmpfs") << QStringLiteral("/arora-rt");
+namespace {
 
+// Shared prologue of the restrictive worker wraps: clean env,
+// pid/ipc/uts/cgroup namespaces, minimal root view, and every
+// $HOME-resident input (program, Qt prefix, LD_LIBRARY_PATH entries)
+// rebound below /arora-rt so no readable ~ skeleton materialises.
+// Returns the in-sandbox program path; the caller appends its own
+// document mounts, the trailing `-- program args...`, and any
+// extra unshare flags the worker can afford.
+QString appendWorkerRuntime(QStringList &command, const QString &program)
+{
     static const QStringList kSystemRoots = {
         QStringLiteral("/usr"), QStringLiteral("/lib"),
         QStringLiteral("/lib64"), QStringLiteral("/bin"),
@@ -184,40 +157,112 @@ QStringList downloadWorkerCommandLine(const QString &program,
         return target;
     };
 
-    // The Qt runtime has to be reachable: environment from a dev
-    // setup (qt-env.sh exports LD_LIBRARY_PATH), plus the prefix this
-    // binary was built against (covers ~/Qt user-local installs,
-    // system Qt and the bundled layout).  Each LD_LIBRARY_PATH entry
-    // is bound read-only and the variable is carried through
-    // --clearenv explicitly — rewritten to the mapped paths so the
-    // dynamic loader never references a hidden location.
+    // The Qt runtime has to be reachable: the prefix this binary was
+    // built against (covers ~/Qt user-local installs, system Qt and
+    // the bundled layout) plus any dev-setup LD_LIBRARY_PATH.
+    const QString qtPrefix =
+        QLibraryInfo::path(QLibraryInfo::PrefixPath);
+    const QString qtTarget = qtPrefix.isEmpty()
+        ? QString() : bindRo(qtPrefix);
+    const QByteArray qtDir = qgetenv("QTDIR");
+    const QString qtDirTarget =
+        !qtDir.isEmpty() && QString::fromLocal8Bit(qtDir) != qtPrefix
+            ? bindRo(QString::fromLocal8Bit(qtDir)) : QString();
+
+    // The binary's RUNPATH names the host Qt prefix — once $HOME is
+    // hidden that path no longer resolves, so the loader needs the
+    // mapped locations handed over explicitly.  Host env entries are
+    // carried through too (qt-env.sh sets LD_LIBRARY_PATH for a
+    // user-local Qt); the prefix lib dirs are added unconditionally
+    // because the worker must link even with a clean host env.
+    QStringList mappedEntries;
+    const auto addEntry = [&mappedEntries](const QString &entry) {
+        if (!entry.isEmpty() && !mappedEntries.contains(entry))
+            mappedEntries << entry;
+    };
     const QByteArray ldPath = qgetenv("LD_LIBRARY_PATH");
-    if (!ldPath.isEmpty()) {
-        QStringList mappedEntries;
-        const QList<QByteArray> entries = ldPath.split(':');
-        for (const QByteArray &entry : entries) {
-            if (entry.isEmpty())
-                continue;
-            mappedEntries << bindRo(QString::fromLocal8Bit(entry));
-        }
+    const QList<QByteArray> entries = ldPath.split(':');
+    for (const QByteArray &entry : entries) {
+        if (entry.isEmpty())
+            continue;
+        addEntry(bindRo(QString::fromLocal8Bit(entry)));
+    }
+    const QList<QPair<QString, QString> > prefixPairs = {
+        {qtPrefix, qtTarget},
+        {QString::fromLocal8Bit(qtDir), qtDirTarget},
+    };
+    for (const auto &pair : prefixPairs) {
+        if (pair.second.isEmpty())
+            continue;
+        addEntry(pair.second + QStringLiteral("/lib"));
+        // The existence test runs on the host path; the sandbox-side
+        // entry uses the mapped target.
+        if (QFileInfo(pair.first + QStringLiteral("/lib64")).isDir())
+            addEntry(pair.second + QStringLiteral("/lib64"));
+    }
+    if (!mappedEntries.isEmpty())
         command << QStringLiteral("--setenv")
                 << QStringLiteral("LD_LIBRARY_PATH")
                 << mappedEntries.join(QLatin1Char(':'));
-    }
-    const QString qtPrefix =
-        QLibraryInfo::path(QLibraryInfo::PrefixPath);
-    if (!qtPrefix.isEmpty())
-        bindRo(qtPrefix);
-    const QByteArray qtDir = qgetenv("QTDIR");
-    if (!qtDir.isEmpty() && QString::fromLocal8Bit(qtDir) != qtPrefix)
-        bindRo(QString::fromLocal8Bit(qtDir));
 
-    // The worker binary itself, plus its only writable surface: the
-    // per-download work dir (part files + scoped cookie export) and
-    // the destination directory.  workDir/destDir are the caller's
-    // deliberate grants and keep their own paths — callers pass a
-    // workDir outside $HOME (the engine nests it inside destDir).
-    const QString programTarget = bindRo(program);
+    return bindRo(program);
+}
+
+QStringList workerPrologue(const QString &sandboxTag, bool shareNet)
+{
+    QStringList command;
+    command << QStringLiteral("bwrap")
+            << QStringLiteral("--die-with-parent")
+            // A clean environment: proxy, credential and session
+            // variables cannot ride in — the job's options carry the
+            // explicit proxy and PATH/HOME are replaced wholesale.
+            << QStringLiteral("--clearenv")
+            << QStringLiteral("--setenv") << QStringLiteral("PATH")
+            << QStringLiteral("/usr/local/bin:/usr/bin:/bin")
+            << QStringLiteral("--setenv") << QStringLiteral("TMPDIR")
+            << QStringLiteral("/tmp")
+            << QStringLiteral("--setenv") << QStringLiteral("HOME")
+            << QStringLiteral("/nonexistent")
+            << QStringLiteral("--setenv") << QStringLiteral("ARORA_SANDBOXED")
+            << sandboxTag
+            // Namespace tightening: pid/ipc/uts/cgroup are cheap
+            // isolation wins for a worker.
+            << QStringLiteral("--unshare-pid")
+            << QStringLiteral("--unshare-ipc")
+            << QStringLiteral("--unshare-uts")
+            << QStringLiteral("--unshare-cgroup-try");
+    // The network namespace stays shared only for workers that must
+    // resolve and connect (the downloader); a pure file consumer
+    // like the pdf rasterizer drops it entirely.
+    if (!shareNet)
+        command << QStringLiteral("--unshare-net");
+    // Minimal root view: fresh /dev and /proc, scratch /tmp, and the
+    // system roots read-only (appended by appendWorkerRuntime).
+    // $HOME is never mounted — that is the entire point of this wrap.
+    // /arora-rt is a private tmpfs the mapped-bind targets live under.
+    command << QStringLiteral("--dev") << QStringLiteral("/dev")
+            << QStringLiteral("--proc") << QStringLiteral("/proc")
+            << QStringLiteral("--tmpfs") << QStringLiteral("/tmp")
+            << QStringLiteral("--tmpfs") << QStringLiteral("/arora-rt");
+    return command;
+}
+
+} // namespace
+
+QStringList downloadWorkerCommandLine(const QString &program,
+                                      const QStringList &programArgs,
+                                      const QString &workDir,
+                                      const QString &destDir)
+{
+    QStringList command = workerPrologue(
+        QStringLiteral("bwrap-dl"), /*shareNet*/ true);
+    const QString programTarget = appendWorkerRuntime(command, program);
+
+    // The worker's only writable surface: the per-download work dir
+    // (part files + scoped cookie export) and the destination
+    // directory.  workDir/destDir are the caller's deliberate grants
+    // and keep their own paths — callers pass a workDir outside
+    // $HOME (the engine nests it inside destDir).
     const QString w = workDir.endsWith(QLatin1Char('/'))
         ? workDir.chopped(1) : workDir;
     const QString d = destDir.endsWith(QLatin1Char('/'))
@@ -233,6 +278,41 @@ QStringList downloadWorkerCommandLine(const QString &program,
         command << QStringLiteral("--bind") << w << w
                 << QStringLiteral("--bind") << d << d;
     }
+
+    command << QStringLiteral("--chdir") << QStringLiteral("/tmp")
+            << QStringLiteral("--") << programTarget;
+    command << programArgs;
+    return command;
+}
+
+QString pdfWorkDirPath()
+{
+    return QStringLiteral("/arora-rt/work");
+}
+
+QString pdfDocumentPath()
+{
+    return QStringLiteral("/arora-rt/doc.pdf");
+}
+
+QStringList pdfWorkerCommandLine(const QString &program,
+                                 const QStringList &programArgs,
+                                 const QString &workDir,
+                                 const QString &pdfPath)
+{
+    QStringList command = workerPrologue(
+        QStringLiteral("bwrap-pdf"), /*shareNet*/ false);
+    const QString programTarget = appendWorkerRuntime(command, program);
+
+    // The staged PDF mounts read-only at the fixed sandbox path and
+    // the work dir read/write at its own — the parent addresses the
+    // sandbox-side names in the job JSON, so the worker never learns
+    // the host paths (they live under the data dir inside $HOME).
+    const QString w = workDir.endsWith(QLatin1Char('/'))
+        ? workDir.chopped(1) : workDir;
+    command << QStringLiteral("--bind-try") << w << pdfWorkDirPath()
+            << QStringLiteral("--ro-bind-try") << pdfPath
+            << pdfDocumentPath();
 
     command << QStringLiteral("--chdir") << QStringLiteral("/tmp")
             << QStringLiteral("--") << programTarget;

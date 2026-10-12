@@ -35,6 +35,9 @@
 #include <qpointer.h>
 #include <qwidget.h>
 
+class PdfView;
+class QStackedLayout;
+
 namespace Engine {
 class Backend;
 class Page;
@@ -60,6 +63,14 @@ public:
     void stop();
     void reload();
 
+    // PDF02: the shell-owned document view — the identical PdfView a
+    // WebViewWithSearch stacks over its WebView, hosted here for
+    // non-WebEngine backends whose pages can never render a PDF
+    // themselves (libservo has no viewer).  The backend's view stays
+    // underneath the stack, untouched.
+    void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
+    PdfView *pdfView() const { return m_pdfView; }
+
 signals:
     void titleChanged(const QString &title);
     void urlChanged(const QUrl &url);
@@ -71,6 +82,8 @@ signals:
 private:
     Engine::Backend *m_backend;
     Engine::Page *m_page;
+    QStackedLayout *m_layout;
+    PdfView *m_pdfView = nullptr;
     QString m_title;
     int m_progress;
 };

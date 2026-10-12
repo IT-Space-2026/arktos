@@ -2160,6 +2160,19 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QCheckBox" name="pdfShellView">
+            <property name="toolTip">
+             <string>Use the browser's own document view instead of Chromium's built-in PDFium viewer. Pages are rasterized by a sandboxed Rust worker subprocess (no network, no home directory, the document read-only) — the same view every engine backend can host. Only applies while sanitizing is on; with it off the sanitized file still loads in the engine's viewer.</string>
+            </property>
+            <property name="text">
+             <string>View PDFs with the sandboxed document view</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

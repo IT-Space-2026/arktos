@@ -113,6 +113,7 @@ mod omnibox;
 mod opensearch;
 mod palette;
 mod parsers;
+mod pdfdoc;
 mod pdfsanitize;
 mod policy;
 mod qrcode;
@@ -1373,6 +1374,177 @@ pub unsafe extern "C" fn rc_pdf_sanitize(
         buffer_out(out, cleaned);
         Ok(())
     })
+}
+
+// ---- pdf document rasterization (PDF02) -----------------------------
+
+/// Opaque handle for an open document — a heap `pdfdoc::PdfDocument`
+/// pointer.  0 is invalid.  One document lives per `--pdf-worker`
+/// process; the API is single-threaded by contract.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes.  The caller owns the
+/// returned handle and must release it with rc_pdfdoc_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_open(data: *const u8, len: usize) -> usize {
+    catch_unwind(AssertUnwindSafe(|| {
+        let input = match unsafe { util::bytes(data, len) } {
+            Some(b) => b.to_vec(),
+            None => return 0,
+        };
+        match pdfdoc::PdfDocument::open(input) {
+            Ok(doc) => Box::into_raw(Box::new(doc)) as usize,
+            Err(msg) => {
+                error::set_error(&msg);
+                0
+            }
+        }
+    }))
+    .unwrap_or(0)
+}
+
+fn pdfdoc_ref<'a>(handle: usize) -> Option<&'a mut pdfdoc::PdfDocument> {
+    if handle == 0 {
+        return None;
+    }
+    unsafe { (handle as *mut pdfdoc::PdfDocument).as_mut() }
+}
+
+/// Page count, or 0 on a bad handle.
+///
+/// # Safety
+/// `doc` must be a live handle from rc_pdfdoc_open().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_page_count(doc: usize) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        pdfdoc_ref(doc).map(|d| d.page_count() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// Page dimensions in PDF points (1/72 inch).
+///
+/// # Safety
+/// `doc` must be a live handle; `w`/`h` are writable out pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_page_size(
+    doc: usize,
+    page: i32,
+    w: *mut f64,
+    h: *mut f64,
+) -> RcStatus {
+    status_of(|| {
+        let d = pdfdoc_ref(doc).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad pdfdoc handle".into(),
+        })?;
+        let (pw, ph) = d.page_size(page.max(0) as usize).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "page out of range".into(),
+        })?;
+        if let Some(p) = unsafe { w.as_mut() } {
+            *p = pw;
+        }
+        if let Some(p) = unsafe { h.as_mut() } {
+            *p = ph;
+        }
+        Ok(())
+    })
+}
+
+/// Document /Title, or NULL.  rc_string_free the result.
+///
+/// # Safety
+/// `doc` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_title(doc: usize) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        pdfdoc_ref(doc)
+            .and_then(|d| d.title())
+            .map(util::to_c_string)
+            .unwrap_or(ptr::null_mut())
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Rasterize `page` at `scale` (1.0 = 72 dpi) into PNG bytes
+/// (rc_buffer_free).  RC_CORRUPT on render failure, RC_INVALID_ARGUMENT
+/// on a bad handle/page or a bitmap over the pixel cap.
+///
+/// # Safety
+/// `doc` must be a live handle; `out` receives a buffer to release
+/// with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_render_png(
+    doc: usize,
+    page: i32,
+    scale: f64,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let d = pdfdoc_ref(doc).ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad pdfdoc handle".into(),
+        })?;
+        if !(scale > 0.0 && scale.is_finite()) {
+            return error::fail(RcStatus::InvalidArgument, "bad scale");
+        }
+        let png = d
+            .render_png(page.max(0) as usize, scale)
+            .map_err(|msg| error::Fail {
+                status: RcStatus::Corrupt,
+                msg,
+            })?;
+        buffer_out(out, png);
+        Ok(())
+    })
+}
+
+/// Page index holding the next/prev `needle` match from `from_page`
+/// (dir >= 0 scans forward, < 0 backward, wraps once), or -1.  Text is
+/// page-granular — the view jumps to the page, it cannot paint hit
+/// rects.  `out_total` optionally receives the document-wide
+/// occurrence count.
+///
+/// # Safety
+/// `doc` must be a live handle; `needle` is a NUL-terminated UTF-8
+/// string; `out_total` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_find(
+    doc: usize,
+    needle: *const c_char,
+    from_page: i32,
+    dir: i32,
+    out_total: *mut i32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(d) = pdfdoc_ref(doc) else {
+            return -1;
+        };
+        let Some(text) = (unsafe { util::cstr(needle) }) else {
+            return -1;
+        };
+        if let Some(p) = unsafe { out_total.as_mut() } {
+            *p = d.count_occurrences(text) as i32;
+        }
+        d.find(text, i64::from(from_page), i64::from(dir))
+            .map(|p| p as i32)
+            .unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Releases a document handle.  NULL-tolerant (0 is a no-op).
+///
+/// # Safety
+/// `doc` must be a live handle or 0; after this call it is invalid.
+#[no_mangle]
+pub unsafe extern "C" fn rc_pdfdoc_close(doc: usize) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if doc != 0 {
+            drop(unsafe { Box::from_raw(doc as *mut pdfdoc::PdfDocument) });
+        }
+    }));
 }
 
 // ---- reader-mode extraction (RDR01) ---------------------------------

@@ -19,11 +19,14 @@
 
 #include "webviewsearch.h"
 
+#include "pdfview.h"
+
 #include <qevent.h>
 #include <qlayout.h>
 #include <qlineedit.h>
 #include <qpointer.h>
 #include <qshortcut.h>
+#include <qstackedwidget.h>
 #include <qtimeline.h>
 #include <qtoolbutton.h>
 
@@ -119,7 +122,51 @@ WebViewWithSearch::WebViewWithSearch(WebView *webView, QWidget *parent)
     layout->setSpacing(0);
     layout->setContentsMargins(0, 0, 0, 0);
     m_webViewSearch = new WebViewSearch(m_webView, this);
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_webView);
     layout->addWidget(m_webViewSearch);
-    layout->addWidget(m_webView);
+    layout->addWidget(m_stack);
     setLayout(layout);
+    // A committed navigation drops the pdf overlay — the refused pdf
+    // navigation itself never emits this, so the view survives the
+    // pipeline's own reload-and-restage cycle.
+    connect(m_webView, &QWebEngineView::urlChanged, this,
+            [this](const QUrl &) { clearPdfDocument(); });
+}
+
+void WebViewWithSearch::showPdfDocument(const QString &localPath,
+                                        const QUrl &sourceUrl)
+{
+    if (!m_pdfView) {
+        m_pdfView = new PdfView(this);
+        m_stack->addWidget(m_pdfView);
+        // The view's own reload re-enters the pipeline (refetch +
+        // re-sanitize + restage) through the tab's normal load path.
+        connect(m_pdfView, &PdfView::reloadRequested, this,
+                [this](const QUrl &url) { m_webView->loadUrl(url); });
+        // Tab chrome reads the view's signals — forward the document
+        // title so the strip shows the pdf's name, not the previous
+        // page's.
+        connect(m_pdfView, &PdfView::titleChanged, this,
+                [this](const QString &title) {
+            emit m_webView->titleChanged(title);
+        });
+        connect(m_pdfView, &PdfView::documentReady, this,
+                [this]() {
+            emit m_webView->titleChanged(m_pdfView->documentTitle());
+        });
+    }
+    m_pdfView->setDocument(localPath, sourceUrl);
+    m_stack->setCurrentWidget(m_pdfView);
+    // The engine page underneath still holds the previous document —
+    // loadFinished bookkeeping belongs to that navigation, not the
+    // overlay.
+}
+
+void WebViewWithSearch::clearPdfDocument()
+{
+    if (!m_pdfView)
+        return;
+    m_pdfView->clearDocument();
+    m_stack->setCurrentWidget(m_webView);
 }

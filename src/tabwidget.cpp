@@ -133,6 +133,21 @@
 // off-the-record pages (PTAB01).
 static QPixmap privateBadgedPixmap(const QIcon &icon);
 
+// The pin flag (and the group/container hidden stores) key on the
+// tab's page widget — the WebViewWithSearch.  PDF02's document
+// overlay wraps the WebView in a QStackedWidget inside that
+// container, so parentWidget() alone reaches the stack, not the
+// page: resolve the page by walking the ancestor chain.
+static QWidget *tabPageWidget(WebView *view)
+{
+    for (QWidget *p = view ? view->parentWidget() : nullptr;
+         p; p = p->parentWidget()) {
+        if (qobject_cast<WebViewWithSearch *>(p))
+            return p;
+    }
+    return nullptr;
+}
+
 TabWidget::TabWidget(QWidget *parent)
     : QTabWidget(parent)
     , m_recentlyClosedTabsAction(nullptr)
@@ -2774,7 +2789,7 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
     // TABS04: the pin flag keys on the page widget — the view's
     // WebViewWithSearch parent — so it reads the same on and off the
     // strip.
-    closed.pinned = m_pinnedTabs.contains(view->parentWidget());
+    closed.pinned = m_pinnedTabs.contains(tabPageWidget(view));
     if (view->enginePage()) {
         const QPointF scroll = view->enginePage()->scrollPosition();
         closed.scrollValid = true;
@@ -3496,7 +3511,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
         // TABS04: the pin flag keys on the page widget — the view's
         // WebViewWithSearch parent, which is also what the strip and
         // the hidden stores hold.
-        snap.pinned.append(m_pinnedTabs.contains(tab->parentWidget())
+        snap.pinned.append(m_pinnedTabs.contains(tabPageWidget(tab))
                            ? 1 : 0);
     }
 

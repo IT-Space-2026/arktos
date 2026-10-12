@@ -103,6 +103,8 @@ HEADERS += \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
     $$PWD/pdfsupport.h \
+    $$PWD/pdfview.h \
+    $$PWD/pdfworker.h \
     $$PWD/pictureinpicture.h \
     $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
@@ -175,6 +177,8 @@ SOURCES += \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
     $$PWD/pdfsupport.cpp \
+    $$PWD/pdfview.cpp \
+    $$PWD/pdfworker.cpp \
     $$PWD/pictureinpicture.cpp \
     $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \

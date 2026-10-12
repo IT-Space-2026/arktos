@@ -65,6 +65,7 @@
 #define WEBVIEW_H
 
 #include <qwebengineview.h>
+#include <qpointer.h>
 
 #include <functional>
 
@@ -73,6 +74,7 @@
 namespace Engine { class Page; class Profile; }
 class QWebEngineProfile;
 class BrowserMainWindow;
+class PdfView;
 class PictureInPicture;
 class ReaderMode;
 class ScriptBlockInfoBar;
@@ -132,6 +134,17 @@ public:
     // null).  QtWebEngine has no PiP delegate — the video pops out
     // into an app-side floating window.
     PictureInPicture *pictureInPicture() const { return m_pip; }
+
+    // PDF02: hand a staged (already-sanitized) PDF to the shell-owned
+    // document view.  Inside a WebViewWithSearch the PdfView stacks
+    // over this view; a standalone WebView (dev harnesses, future
+    // engine tabs) gets the same widget as a top-level window bound
+    // to this view's lifetime.
+    void showPdfDocument(const QString &localPath, const QUrl &sourceUrl);
+    // The live document view when this tab is showing one — resolves
+    // through the WebViewWithSearch stack on the tabbed path and the
+    // standalone window otherwise.
+    PdfView *pdfView() const;
 
 signals:
     void search(const QUrl &searchUrl, TabWidget::OpenUrlIn openIn);
@@ -226,6 +239,10 @@ private:
     ScriptBlockInfoBar *m_scriptBlockBar;
     ReaderMode *m_readerMode;
     PictureInPicture *m_pip;
+    // PDF02: shell document view — only populated on the standalone
+    // (no WebViewWithSearch parent) path; inside a tab the
+    // WebViewWithSearch owns it and pdfView() resolves up the chain.
+    QPointer<PdfView> m_pdfView;
 };
 
 #endif

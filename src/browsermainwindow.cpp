@@ -84,6 +84,7 @@
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
+#include "pdfview.h"
 #include "pictureinpicture.h"
 #include "readerbutton.h"
 #include "readermode.h"
@@ -2014,6 +2015,15 @@ void BrowserMainWindow::printRequested(WebView *view)
 {
     if (!view)
         return;
+    // PDF02: a tab showing the shell document view prints through
+    // the pdf raster path — engine printing has nothing to paint
+    // (the page underneath holds the previous document).
+    if (PdfView *pdfView = view->pdfView()) {
+        if (pdfView->isReady()) {
+            pdfView->printDocument();
+            return;
+        }
+    }
     // Engine printing is asynchronous — the printer must stay alive
     // until printFinished fires. The guard is a child of the view, so
     // the printer is also freed if the view is destroyed mid-print

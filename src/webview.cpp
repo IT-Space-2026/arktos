@@ -73,6 +73,7 @@
 #include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
+#include "pdfview.h"
 #include "pictureinpicture.h"
 #include "qrcodedialog.h"
 #include "readermode.h"
@@ -84,6 +85,7 @@
 #include "urlcleaner.h"
 #include "webenginebackend.h"
 #include "webpage.h"
+#include "webviewsearch.h"
 
 #include <qapplication.h>
 #include <qclipboard.h>
@@ -940,6 +942,47 @@ QUrl WebView::url() const
         return url;
 
     return m_initialUrl;
+}
+
+void WebView::showPdfDocument(const QString &localPath,
+                              const QUrl &sourceUrl)
+{
+    // Tabbed views delegate to the WebViewWithSearch stack — the
+    // WebView was reparented into its QStackedWidget, so the host is
+    // an ancestor, not necessarily the direct parent.
+    for (QWidget *p = parentWidget(); p; p = p->parentWidget()) {
+        if (WebViewWithSearch *container =
+                qobject_cast<WebViewWithSearch *>(p)) {
+            container->showPdfDocument(localPath, sourceUrl);
+            return;
+        }
+    }
+    // Standalone path (smoke harnesses, bare engine views): the same
+    // shell widget hosts the document as a top-level window — still
+    // engine-neutral, still confined-worker rasterized.
+    if (!m_pdfView) {
+        // Parented for lifetime but flagged as a window — the view
+        // floats over the desktop rather than embedding in the
+        // (already-busy) engine surface.
+        m_pdfView = new PdfView(this);
+        m_pdfView->setWindowFlag(Qt::Window, true);
+        m_pdfView->setAttribute(Qt::WA_DeleteOnClose, false);
+        connect(m_pdfView, &PdfView::reloadRequested, this,
+                [this](const QUrl &url) { loadUrl(url); });
+    }
+    m_pdfView->setDocument(localPath, sourceUrl);
+    m_pdfView->resize(size());
+    m_pdfView->show();
+}
+
+PdfView *WebView::pdfView() const
+{
+    for (QWidget *p = parentWidget(); p; p = p->parentWidget()) {
+        if (WebViewWithSearch *container =
+                qobject_cast<WebViewWithSearch *>(p))
+            return container->pdfView();
+    }
+    return m_pdfView;
 }
 
 void WebView::mousePressEvent(QMouseEvent *event)

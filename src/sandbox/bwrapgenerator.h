@@ -66,6 +66,24 @@ QStringList downloadWorkerCommandLine(const QString &program,
                                       const QString &workDir,
                                       const QString &destDir);
 
+// PDF02: restrictive allowlist wrap for the `--pdf-worker` subprocess
+// — tighter than the downloader's because a rasterizer needs NO
+// network at all: the job's PDF is bound read-only at the fixed
+// in-sandbox pdfDocumentPath(), the per-view work dir is bound
+// read/write at pdfWorkDirPath() (rendered PNGs come back through
+// it), and --unshare-net removes the network namespace outright.
+// The parent therefore always addresses the sandbox-side paths
+// below in the job JSON, never the host paths.  As with the
+// download worker, $HOME is absent: the program, the Qt prefix and
+// every LD_LIBRARY_PATH entry rebind under the private /arora-rt
+// tmpfs, and the two document mounts live under it too.
+QString pdfWorkDirPath();       // "/arora-rt/work"
+QString pdfDocumentPath();      // "/arora-rt/doc.pdf"
+QStringList pdfWorkerCommandLine(const QString &program,
+                                 const QStringList &programArgs,
+                                 const QString &workDir,
+                                 const QString &pdfPath);
+
 } // namespace BwrapGenerator
 
 #endif // BWRAPGENERATOR_H

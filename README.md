@@ -149,16 +149,24 @@ browsing profile:
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
-- **In-browser PDFs, sanitized before view** — PDFs open in Chromium's
-  built-in PDFium viewer (Preferences → Privacy → PDF Documents).
-  In rust-enabled builds the bytes are first fetched through the
-  page's own profile (cookies, Tor SOCKS routing and container
-  isolation ride along) and rewritten by a Rust policy pass that strips
+- **In-browser PDFs, sanitized before view** — PDFs open in a
+  shell-owned document view (Preferences → Privacy → PDF Documents):
+  pages are rasterized by a confined `arora --pdf-worker` subprocess
+  running the pure-Rust `hayro` renderer under a bubblewrap allowlist
+  (staged file read-only, one writable work dir, no network, no
+  $HOME) — the same widget every engine backend hosts, so the view
+  doesn't depend on WebEngine's embedded PDFium. The worker speaks a
+  single-purpose JSONL protocol and the Qt view provides
+  scroll/zoom/page-nav/find-in-document/print handoff. In
+  rust-enabled builds the bytes are first fetched through the page's
+  own profile (cookies, Tor SOCKS routing and container isolation
+  ride along) and rewritten by a Rust policy pass that strips
   JavaScript, /Launch and auto-actions, embedded files and
-  XFA/AcroForm submit remnants before the viewer ever sees them;
-  embedded links to local files are refused. Saving a PDF to disk
-  still stores the original, unsanitized bytes — sanitization applies
-  to in-browser viewing only.
+  XFA/AcroForm submit remnants before the renderer ever sees them;
+  embedded links to local files are refused. Chromium's built-in
+  PDFium viewer remains an opt-in Settings fallback. Saving a PDF to
+  disk still stores the original, unsanitized bytes — sanitization
+  applies to in-browser viewing only.
 - **Filesystem sandbox** — browsing sessions re-exec inside a
   permissive bubblewrap sandbox on Linux: credential stores (`~/.ssh`,
   `~/.gnupg`, keyrings, CLI/cloud config) and other browsers' profile
@@ -557,6 +565,8 @@ versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`)
 | tempfile | MIT / Apache-2.0 | https://github.com/Stebalien/tempfile |
 | base64 | MIT / Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
 | adblock — Brave adblock-rust (optional matcher) | MPL-2.0 | https://github.com/brave/adblock-rust |
+| hayro (PDF rasterizer for the shell document view) | Apache-2.0 / MIT | https://github.com/LaurenzV/hayro |
+| lopdf (PDF rewrite/text extraction) | MIT | https://github.com/J-F-Liu/lopdf |
 
 **Data feeds** (fetched at runtime, consent-gated)
 
@@ -567,11 +577,8 @@ versions pinned, vetted by `cargo deny` per `src/rustcore/deny.toml`)
 | Tranco top-site list (top-1M) | Tranco list terms | https://tranco-list.eu |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
-**Planned** (queued tasks, not shipped): PDFium +
-`pdfium-render` (BSD-3 / MIT-Apache — https://pdfium.googlesource.com,
-https://github.com/ajrcarey/pdfium-render) for the shell-owned PDF
-view, `lopdf` (MIT — https://github.com/J-F-Liu/lopdf) for the sanitize
-pass, libservo (MPL-2.0 — https://servo.org) as the selectable engine.
+**Planned** (queued tasks, not shipped): libservo (MPL-2.0 —
+https://servo.org) as the selectable engine.
 
 ## License
 
