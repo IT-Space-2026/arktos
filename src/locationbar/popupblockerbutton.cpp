@@ -20,6 +20,7 @@
 #include "popupblockerbutton.h"
 
 #include "aroraicon.h"
+#include "browsertheme.h"
 #include "popupblocker.h"
 #include "safetext.h"
 #include "settings.h"
@@ -53,6 +54,12 @@ PopupBlockerButton::PopupBlockerButton(QWidget *parent)
     setPopupMode(QToolButton::InstantPopup);
     connect(m_menu, &QMenu::aboutToShow,
             this, &PopupBlockerButton::rebuildMenu);
+    // ICONS05: the badge is baked into the icon pixmap — re-bake on a
+    // light<->dark flip so the themed art swaps to its -dark variant.
+    // Queued: the signal fires mid-flip, before palette propagation.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, &PopupBlockerButton::refresh, Qt::QueuedConnection);
 
     setVisible(false);
 }

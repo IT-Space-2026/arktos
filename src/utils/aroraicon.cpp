@@ -25,6 +25,8 @@
 #include <qdir.h>
 #include <qevent.h>
 #include <qfile.h>
+#include <qimage.h>
+#include <qpixmap.h>
 #include <qsettings.h>
 #include <qstylehints.h>
 
@@ -82,6 +84,57 @@ void init()
     }
 
     AroraIcon::applyFromSettings();
+}
+
+// ICONS05: does the captured system theme already serve
+// light-on-dark glyphs?  Name heuristics cannot answer this — some
+// "dark" desktops still ship dark-glyph sets Qt cannot
+// currentColor-recolor (stock Adwaita symbolics stay #222 even when
+// the desktop palette is dark), and a forced dark palette (THEME01)
+// is invisible to the OS icon theme entirely — so render a probe
+// icon through the system theme and measure it.  Cached: the system
+// theme name is itself captured once at init.
+bool systemThemeIsDarkAware()
+{
+    if (s_systemTheme.isEmpty())
+        return false;
+    static int aware = -1;
+    if (aware != -1)
+        return aware == 1;
+    const QString restore = QIcon::themeName();
+    QIcon::setThemeName(s_systemTheme);
+    const QImage probe = QIcon::fromTheme(QLatin1String("go-previous"))
+        .pixmap(QSize(16, 16)).toImage();
+    QIcon::setThemeName(restore);
+    qlonglong luminance = 0;
+    int opaque = 0;
+    for (int y = 0; y < probe.height(); ++y) {
+        for (int x = 0; x < probe.width(); ++x) {
+            const QColor color = probe.pixelColor(x, y);
+            if (color.alpha() > 128) {
+                luminance += qGray(color.rgb());
+                ++opaque;
+            }
+        }
+    }
+    aware = (opaque > 0 && luminance / opaque > 140) ? 1 : 0;
+    return aware == 1;
+}
+
+// The bundled -dark set closest to the captured system theme —
+// where "native" resolves under a dark palette when the real system
+// theme cannot serve light glyphs.  An empty/unknown system theme
+// lands on Adwaita, the same set the legacy fallback chain already
+// inherits, so the glyph family stays consistent.
+QString bundledDarkThemeName()
+{
+    const QString sys = s_systemTheme.toLower();
+    QString id = QLatin1String("adwaita");
+    if (sys.contains(QLatin1String("breeze")))
+        id = QLatin1String("breeze");
+    else if (sys.contains(QLatin1String("tabler")))
+        id = QLatin1String("tabler");
+    return QLatin1String("arora-") + id + QLatin1String("-dark");
 }
 
 } // namespace
@@ -145,10 +198,16 @@ QString AroraIcon::theme()
 QString AroraIcon::effectiveThemeName(const QString &id)
 {
     init();
-    if (id == s_nativeId)
-        return s_systemTheme;
-    QString name = QLatin1String("arora-") + id;
     const bool dark = qApp && BrowserTheme::isDarkPalette(qApp->palette());
+    if (id == s_nativeId) {
+        // A dark application palette cannot reach the OS icon theme —
+        // when it is provably still serving dark glyphs the bundled
+        // -dark art takes over so every chrome surface stays legible.
+        if (dark && !systemThemeIsDarkAware())
+            return bundledDarkThemeName();
+        return s_systemTheme;
+    }
+    QString name = QLatin1String("arora-") + id;
     if (dark
         && QFile::exists(s_resourcePrefix + QLatin1Char('/')
                          + name + QLatin1String("-dark/index.theme"))) {

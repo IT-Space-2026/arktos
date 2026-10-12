@@ -113,7 +113,9 @@ browsing profile:
   instead of a floating window; entries open in new tabs.
 - **Look & feel** — Theme selector (System default / Light / Dark,
   `ARORA_COLOR_SCHEME` override), selectable bundled icon sets
-  (Adwaita/Breeze/Tabler, light+dark variants), status-bar load
+  (Adwaita/Breeze/Tabler, light+dark variants — the Native desktop set
+  falls back to bundled dark glyphs when it can't serve
+  light-on-dark art), status-bar load
   indicator, zoom control and per-tab memory/bandwidth readouts
   (Linux), domain-emphasized anti-phishing address
   bar with IDN punycode display.

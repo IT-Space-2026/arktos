@@ -10120,6 +10120,28 @@ int main(int argc, char **argv)
         }
         check(QLatin1String("dark glyphs light"),
               opaque > 0 && luminance / opaque > 140);
+
+        // ICONS05: "native" under a dark palette must render light
+        // glyphs too — a forced dark palette is invisible to the OS
+        // icon theme, so it falls back to bundled -dark art unless
+        // the theme itself is dark-aware.  Outcome-only assertion so
+        // genuinely dark-aware desktops keep their own theme.
+        AroraIcon::setTheme(QLatin1String("native"));
+        const QImage nativeDark = AroraIcon::get(
+            QLatin1String("go-previous")).pixmap(QSize(24, 24)).toImage();
+        luminance = 0;
+        opaque = 0;
+        for (int y = 0; y < nativeDark.height(); ++y) {
+            for (int x = 0; x < nativeDark.width(); ++x) {
+                const QColor color = nativeDark.pixelColor(x, y);
+                if (color.alpha() > 128) {
+                    luminance += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        }
+        check(QLatin1String("native dark glyphs light"),
+              opaque > 0 && luminance / opaque > 140);
         qApp->setPalette(savedPalette);
 
         // The original 2009 artwork is the last resort: under a theme

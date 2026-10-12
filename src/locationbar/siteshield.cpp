@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "browsertheme.h"
 #include "sitepanel.h"
 #include "webview.h"
 
@@ -58,6 +59,13 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     connect(m_menu, &QMenu::aboutToShow, m_panel, &SitePanel::refresh);
     connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
             this, &SiteShieldButton::refreshIcon);
+    // ICONS05: the icon is baked to a pixmap while the badges are
+    // drawn — re-bake on a light<->dark flip so the themed shield art
+    // swaps to its -dark variant.  Queued: the signal fires mid-flip,
+    // before palette propagation finishes.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, &SiteShieldButton::refreshIcon, Qt::QueuedConnection);
 
     refreshIcon();
     setVisible(m_webView != nullptr);
