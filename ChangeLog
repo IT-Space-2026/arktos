@@ -51,6 +51,9 @@ UI:
   position, tab group, container and pinned state intact. The
   memory-only stack keeps 25 entries per window, never records
   private tabs and is wiped by Clear Private Data (TABS05).
+- Slimmer tab strip: per-tab close buttons no longer inflate the row
+  and tab height is bounded to icon+text height, bringing the strip
+  back to normal browser-tab size (TABS07).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Command palette, Ctrl+Shift+P (CMD01).
 - Tab search dropdown, Ctrl+Shift+A, with hover previews (POL02).

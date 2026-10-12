@@ -275,6 +275,12 @@ void TabBar::installCloseButton(int index)
     // original closetab.png as the last-resort fallback.
     button->setIcon(AroraIcon::get(QLatin1String("window-close")));
     button->setIconSize(QSize(12, 12));
+    // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
+    // stretches the strip to max(text, widget) + padding — the button
+    // alone added ~5px to every tab.  Bound it to the text line so it
+    // never contributes height; it stays centered in the tab rect.
+    const int buttonExtent = qBound(12, fontMetrics().height(), 16);
+    button->setFixedSize(buttonExtent, buttonExtent);
     button->setAccessibleName(tr("Close tab"));
     button->setToolTip(tr("Close Tab"));
     connect(button, &QToolButton::clicked, this, [this, button]() {
@@ -1149,12 +1155,14 @@ QFont TabBar::containerChipFont() const
 QSize TabBar::containerChipSize(int index) const
 {
     // CONT06: no chips inside a filtered level — the header already
-    // names the container.
+    // names the container.  QSize() is an invalid (-1,-1) size and
+    // silently subtracted a pixel at every + chip.height() site —
+    // return a valid empty size instead.
     if (containerStripHeight() > 0)
-        return QSize();
+        return QSize(0, 0);
     const ContainerManager::Container c = containerForTab(index);
     if (c.id.isEmpty())
-        return QSize();
+        return QSize(0, 0);
     const int chipHeight = QFontMetrics(containerChipFont()).height() + 4;
     if (verticalTabShape(shape()))
         return QSize(3, chipHeight + 2);
@@ -1839,10 +1847,16 @@ QSize TabBar::tabSizeHint(int index) const
     const int extent = fm.horizontalAdvance(QLatin1Char('M')) * 18;
     // QTabBar::tabSizeHint returns a transposed size for vertical
     // shapes — bound the tab's long axis either way so a long title
-    // can't stretch the whole strip, and floor the strip's thickness so
-    // tabs keep modern breathing room (UIP01).  CONT02: container tabs
+    // can't stretch the whole strip.  UIP01: floor the strip's
+    // thickness so tabs keep modern breathing room.  TABS07: cap it
+    // too — per-tab button widgets and styles with generous padding
+    // pushed a plain tab ~5px past icon+text height; keep the strip
+    // at browser-normal content+padding.  CONT02: container tabs
     // reserve their chip's extent on top of that.
-    const int thickness = fm.height() + 10;
+    const int minThickness = fm.height() + 10;
+    const int maxThickness = qMax(fm.height(), iconSize().height()) + 12;
+    const int thickness = qBound(minThickness, sizeHint.height(),
+                                 maxThickness);
     const QSize chip = containerChipSize(index);
     const QString gid = groupIdForTab(index);
     // TABS02: vertical strips lay out as horizontal rows — the
@@ -1852,7 +1866,10 @@ QSize TabBar::tabSizeHint(int index) const
     // carries them); a group run's first member keeps the band the
     // name pill paints into.
     if (verticalTabShape(shape())) {
-        int rowHeight = thickness;
+        // Rows stay one text line tall — the bounded thickness above
+        // is meaningless here since sizeHint.height() is the
+        // transposed row width for vertical shapes.
+        int rowHeight = minThickness;
         if (!gid.isEmpty()) {
             TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
             if (tabWidget && isFirstInGroupRun(index)
@@ -1871,8 +1888,7 @@ QSize TabBar::tabSizeHint(int index) const
     if (pinnedOwner && pinnedOwner->isTabPinned(index)
             && !pinnedOwner->isTabGroupChip(index)) {
         return QSize(iconSize().width() + 20,
-                     qMax(sizeHint.height(), thickness)
-                         + chip.height());
+                     thickness + chip.height());
     }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
     // of the member's title; the first member of a run widens to carry
@@ -1893,7 +1909,7 @@ QSize TabBar::tabSizeHint(int index) const
         }
     }
     return QSize(qMin(sizeHint.width(), extent),
-                 qMax(sizeHint.height(), thickness) + chip.height());
+                 thickness + chip.height());
 }
 
 QSize TabBar::minimumTabSizeHint(int index) const
