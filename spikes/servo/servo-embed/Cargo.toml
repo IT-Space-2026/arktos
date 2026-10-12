@@ -24,3 +24,6 @@ euclid = "=0.22.14"
 keyboard-types = "=0.8.3"
 rustls = { version = "=0.23.45", features = ["aws_lc_rs"] }
 log = "0.4"
+# ENG18: headers/status for WebResourceResponse built by the host
+# resource resolver — mirrors servo's own lockfile entry.
+http = "=1.5.0"

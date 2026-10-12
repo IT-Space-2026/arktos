@@ -3132,6 +3132,18 @@ static int servoLifecycleSmoke()
         TabWidget tabs;
         tabs.makeNewTab(true);       // empty Untitled, on webengine
         report(QStringLiteral("empty-tab"), tabs.count() == 1);
+        // ENG18: the user's repro shape — swap a tab that is SHOWING
+        // the start page onto Servo.  The swap carries the committed
+        // qrc: url, which Servo cannot fetch on its own; the shim's
+        // host resolver must answer it from the Qt resources.
+        if (WebView *view = tabs.webView(0)) {
+            bool webFinished = false;
+            QObject::connect(view, &QWebEngineView::loadFinished, view,
+                             [&webFinished](bool) { webFinished = true; });
+            view->loadUrl(QUrl(QLatin1String("qrc:/startpage.html")));
+            pumpUntil([&webFinished]() { return webFinished; }, 30000);
+            report(QStringLiteral("startpage-webengine"), webFinished);
+        }
         report(QStringLiteral("swap-to-servo"),
                tabs.reloadTabInEngine(0, QStringLiteral("servo")));
         EngineTab *engineTab = tabs.engineTab(0);
@@ -3154,6 +3166,26 @@ static int servoLifecycleSmoke()
             QObject::connect(engineTab, &EngineTab::loadFinished,
                              engineTab,
                              [&finished](bool) { finished = true; });
+            // ENG18: the swap's qrc: start page must commit on Servo —
+            // url preserved, real content rendered.  The title only
+            // reaches "Welcome to Arora!" if startpage.js loaded (a
+            // qrc: SUBresource fetch through the same resolver) AND
+            // the injected arora shim drove update() — one assert
+            // that covers the whole stack.
+            const QUrl startQrc(QLatin1String("qrc:/startpage.html"));
+            pumpUntil([page, &startQrc]() {
+                return page->url() == startQrc;
+            }, 30000);
+            pumpUntil([engineTab]() {
+                return engineTab->title()
+                        == QLatin1String("Welcome to Arora!");
+            }, 15000);
+            report(QStringLiteral("swap-startpage-commit"),
+                   page->url() == startQrc);
+            report(QStringLiteral("swap-startpage-title"),
+                   engineTab->title()
+                       == QLatin1String("Welcome to Arora!"));
+
             for (int i = 0; i < 10; ++i) {
                 engineTab->reload();
                 // Chrome path (ENG16): reaches the engine page — on
@@ -3185,6 +3217,41 @@ static int servoLifecycleSmoke()
             tabs.reloadTab(0);
             pumpUntil([&finished]() { return finished; }, 30000);
             report(QStringLiteral("chrome-reload-loaded"), finished);
+
+            // ENG18: every app-internal qrc page rides the same
+            // resolver — the servo-branded variant must show its own
+            // page, and the other internal pages must at least commit
+            // their content instead of the engine error page.
+            const struct {
+                const char *raw;
+                const char *title;
+            } qrcPages[] = {
+                {"qrc:/startpage-servo.html", "Welcome to Arora!"},
+                {"qrc:/startpage-tor.html", "Welcome to Arora!"},
+                {"qrc:/notfound.html", "%1"},
+            };
+            for (const auto &internal : qrcPages) {
+                const QUrl qrc(QLatin1String(internal.raw));
+                const QString name = QString::fromUtf8(
+                    internal.raw + 5);
+                finished = false;
+                engineTab->load(qrc);
+                pumpUntil([page, &qrc]() {
+                    return page->url() == qrc;
+                }, 30000);
+                pumpUntil([&finished]() { return finished; }, 30000);
+                if (internal.title)
+                    pumpUntil([engineTab, internal]() {
+                        return engineTab->title()
+                                == QLatin1String(internal.title);
+                    }, 15000);
+                report(QStringLiteral("qrc-commit-") + name,
+                       finished && page->url() == qrc);
+                if (internal.title)
+                    report(QStringLiteral("qrc-title-") + name,
+                           engineTab->title()
+                               == QLatin1String(internal.title));
+            }
         }
         // ENG14: the typed-navigation repro — the engine tab's
         // location bar used to be a read-only echo, so Enter died

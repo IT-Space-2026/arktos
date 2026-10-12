@@ -28,11 +28,15 @@
 #include <qcoreapplication.h>
 #include <qdir.h>
 #include <qevent.h>
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qlibrary.h>
 #include <qmetaobject.h>
+#include <qmimedatabase.h>
 #include <qmutex.h>
 #include <qpainter.h>
+
+#include <cstring>
 
 #include "servo_embed.h"
 
@@ -67,7 +71,60 @@ struct ServoApi {
     // back to a same-url se_load (which re-fetches but pushes a
     // duplicate servo-side history entry).
     void (*reload)(SeInstance) = nullptr;
+    // ENG18: optional — artifacts predating the host-resolver export
+    // leave qrc:/internal-scheme loads to Servo, which cannot fetch
+    // them (the reported "Error loading page" on swapped start-page
+    // tabs).  A missing symbol degrades to exactly that old behavior.
+    void (*setResourceResolver)(void *, SeResourceResolver) = nullptr;
 };
+
+// ENG18: serves the schemes libservo cannot fetch straight out of the
+// Qt resource system.  The shim's load_web_resource delegate runs
+// ahead of scheme dispatch and calls this synchronously from inside
+// se_spin() — the GUI thread — for EVERY resource load; anything that
+// is not a qrc: url declines and stays on Servo's own fetch path.
+int servoResourceResolve(void *, const char *url, SeHostReply *reply)
+{
+    const QUrl qurl = QUrl::fromEncoded(QByteArray(url));
+    if (qurl.scheme() != QLatin1String("qrc"))
+        return 0;
+    QString path = qurl.path();
+    // Qt resource names never contain ".." — keep the boundary honest
+    // anyway rather than trusting a page-supplied url.
+    if (path.contains(QLatin1String(".."))) {
+        reply->status = 403;
+        reply->mime[0] = '\0';
+        reply->body = nullptr;
+        reply->body_len = 0;
+        return 1;
+    }
+    if (!path.startsWith(QLatin1Char('/')))
+        path.prepend(QLatin1Char('/'));
+    QFile file(QLatin1Char(':') + path);
+    // The shim copies the body synchronously during this call — a
+    // function-static keeps the borrowed pointer valid that long.
+    static QByteArray body;
+    reply->mime[0] = '\0';
+    if (!file.open(QIODevice::ReadOnly)) {
+        // The host owns qrc: — a missing resource answers 404 here
+        // rather than falling back to Servo's own failing fetch.
+        reply->status = 404;
+        body.clear();
+        reply->body = nullptr;
+        reply->body_len = 0;
+        return 1;
+    }
+    body = file.readAll();
+    const QByteArray mime = QMimeDatabase()
+        .mimeTypeForFile(path, QMimeDatabase::MatchExtension)
+        .name().toUtf8();
+    reply->status = 200;
+    if (mime.size() < int(sizeof(reply->mime)))
+        memcpy(reply->mime, mime.constData(), size_t(mime.size()) + 1);
+    reply->body = reinterpret_cast<const unsigned char *>(body.constData());
+    reply->body_len = size_t(body.size());
+    return 1;
+}
 
 ServoApi &api()
 {
@@ -125,10 +182,20 @@ bool resolve()
     // a history-pushing same-url load, never to a broken backend.
     api().reload = reinterpret_cast<decltype(api().reload)>(
         library().resolve("se_reload"));
+    // Optional ENG18 addition — registers the Qt-side resolver that
+    // serves qrc: loads inside the shim's interception hook.  Absent
+    // on older artifacts: qrc: pages then keep failing inside Servo.
+    api().setResourceResolver =
+        reinterpret_cast<decltype(api().setResourceResolver)>(
+            library().resolve("se_set_resource_resolver"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
                  qPrintable(path));
+    // The resolver is a shim-side process global — registering it at
+    // resolve time covers the one SeInstance this process can host.
+    if (ok && api().setResourceResolver)
+        api().setResourceResolver(nullptr, &servoResourceResolve);
     return ok;
 }
 

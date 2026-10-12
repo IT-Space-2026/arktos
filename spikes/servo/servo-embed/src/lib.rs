@@ -16,12 +16,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use dpi::PhysicalSize;
+use http::{header, HeaderValue, StatusCode};
 use servo::{
     opts::Opts, ConsoleLogLevel, DeviceIntRect, DevicePoint, EventLoopWaker, InputEvent, Key,
     KeyState, KeyboardEvent, LoadStatus, MouseButton, MouseButtonAction, MouseButtonEvent,
     MouseMoveEvent, NavigationRequest, RenderingContext, RgbaImage, Servo, ServoBuilder,
-    SoftwareRenderingContext, UserAgentPlatform, WebResourceLoad, WebView, WebViewBuilder,
-    WebViewDelegate, WebViewPoint, WheelDelta, WheelEvent, WheelMode,
+    SoftwareRenderingContext, UserAgentPlatform, WebResourceLoad, WebResourceResponse, WebView,
+    WebViewBuilder, WebViewDelegate, WebViewPoint, WheelDelta, WheelEvent, WheelMode,
 };
 use url::Url;
 
@@ -107,11 +108,26 @@ impl WebViewDelegate for SeDelegate {
     }
 
     fn load_web_resource(&self, _webview: WebView, load: WebResourceLoad) {
-        // Observation only — drop() without intercept() sends DoNotIntercept.
         self.shared.intercepted.set(self.shared.intercepted.get() + 1);
         let line = format!("{} {}", load.request.method, load.request.url);
         self.shared.log_line(line.clone());
         self.emit_string(self.shared.cbs.resource_load, &line);
+
+        // ENG18: this delegate is consulted ahead of scheme dispatch
+        // (net/request_interceptor.rs), so it sees the schemes
+        // libservo cannot fetch — qrc:, the app's internal schemes.
+        // A host resolver answers those out of the Qt resource system;
+        // a miss returns the load to Servo's normal fetch path (the
+        // responder's drop() default is DoNotIntercept).
+        let Some(&(userdata, resolver)) = RESOURCE_RESOLVER.get() else {
+            return;
+        };
+        let url = cstr(&load.request.url.to_string());
+        let mut reply = SeHostReply::default();
+        if resolver(userdata as *mut c_void, url.as_ptr(), &mut reply) == 0 {
+            return;
+        }
+        serve_host_reply(load, reply);
     }
 
     fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
@@ -134,6 +150,81 @@ impl SeDelegate {
             .unwrap_or_else(|_| CString::new("<invalid utf8>").unwrap());
         cb(self.shared.cbs.userdata, cs.as_ptr());
     }
+}
+
+// ---- host resource resolver (ENG18) ---------------------------------
+//
+// The fetch pipeline routes every scheme through load_web_resource,
+// so a host callback can answer the loads libservo has no fetcher for
+// (Qt's qrc: resources, the app's internal schemes).  The resolver is
+// a plain process-global: the one SeInstance a process may host (see
+// se_init) shares it with any future instance.
+
+/// Host reply for a claimed resource load — mirrors SeHostReply in
+/// include/servo_embed.h. `body` borrows host memory read only for
+/// the duration of the resolver call.
+#[repr(C)]
+pub struct SeHostReply {
+    pub status: i32,
+    pub mime: [c_char; 128],
+    pub body: *const u8,
+    pub body_len: usize,
+}
+
+// Default is manual — [c_char; 128] has no Default impl.
+impl Default for SeHostReply {
+    fn default() -> Self {
+        SeHostReply {
+            status: 0,
+            mime: [0; 128],
+            body: std::ptr::null(),
+            body_len: 0,
+        }
+    }
+}
+
+type SeResourceResolver =
+    extern "C" fn(*mut c_void, *const c_char, *mut SeHostReply) -> i32;
+
+static RESOURCE_RESOLVER: OnceLock<(usize, SeResourceResolver)> = OnceLock::new();
+
+fn serve_host_reply(load: WebResourceLoad, reply: SeHostReply) {
+    let mut response = WebResourceResponse::new(load.request.url.clone());
+    if reply.status > 0 {
+        if let Ok(code) = StatusCode::from_u16(reply.status as u16) {
+            response = response.status_code(code);
+        }
+    }
+    let mime_len = reply
+        .mime
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(reply.mime.len());
+    if mime_len > 0 {
+        let bytes =
+            unsafe { std::slice::from_raw_parts(reply.mime.as_ptr().cast(), mime_len) };
+        if let Ok(value) = HeaderValue::from_bytes(bytes) {
+            response.headers.insert(header::CONTENT_TYPE, value);
+        }
+    }
+    let mut intercepted = load.intercept(response);
+    if !reply.body.is_null() && reply.body_len > 0 {
+        let body = unsafe { std::slice::from_raw_parts(reply.body, reply.body_len) };
+        intercepted.send_body_data(body.to_vec());
+    }
+    intercepted.finish();
+}
+
+/// Register the host's resource resolver — see servo_embed.h for the
+/// contract.  Optional from the host side: hosts built before ENG18
+/// simply never call this and unhandled schemes keep failing inside
+/// Servo as before.
+#[no_mangle]
+pub extern "C" fn se_set_resource_resolver(
+    userdata: *mut c_void,
+    resolver: SeResourceResolver,
+) {
+    let _ = RESOURCE_RESOLVER.set((userdata as usize, resolver));
 }
 
 // SeWaker must be Send + Sync (EventLoopWaker bound) — a raw c_void is

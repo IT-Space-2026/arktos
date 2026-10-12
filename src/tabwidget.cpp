@@ -69,6 +69,7 @@
 #include "bookmarksmodel.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browsertheme.h"
 #include "containermanager.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
@@ -989,6 +990,69 @@ QString TabWidget::tabEngineId(int index) const
     return QString();
 }
 
+// ENG18: foreign backends carry no QWebChannel, so the "arora" page
+// object that the internal qrc pages bind against (startpage.js'
+// init()) never materializes — a start page on a Servo tab renders
+// the bare skeleton: empty title and header, a dead search box.
+// After a qrc: commit on an engine tab, inject the equivalent
+// page-side shim: translate() answers from the same translation
+// domains webpage.cpp's JavaScriptAroraObject serves, searchUrl()
+// reuses the live context engine's template and darkChrome tracks
+// the real palette — the page gains every feature the transport
+// cannot carry.  A page that already defined arora is left alone.
+static QString engineTabAroraScript()
+{
+    const auto jsString = [](const QString &text) {
+        QJsonArray array;
+        array.append(text);
+        const QByteArray json =
+            QJsonDocument(array).toJson(QJsonDocument::Compact);
+        return QString::fromUtf8(json.mid(1, json.size() - 2));
+    };
+    static const char *keys[] = {
+        "Welcome to Arora!",
+        "Arora Start",
+        "Search!",
+        "Search results provided by",
+        "About Arora",
+        "QT_LAYOUT_DIRECTION"
+    };
+    QStringList entries;
+    for (const char *key : keys) {
+        QString translated = QCoreApplication::translate(
+            "JavaScriptAroraObject", key);
+        if (translated == QLatin1String(key))
+            translated = qApp->tr(key);
+        entries.append(jsString(QLatin1String(key)) + QLatin1Char(':')
+                       + jsString(translated));
+    }
+    QString engineName, engineTemplate;
+    if (OpenSearchEngine *engine = ToolbarSearch::openSearchManager()
+            ->engineForContext(false)) {
+        engineName = engine->name();
+        engineTemplate = engine->searchUrlTemplate();
+    }
+    const QString dark = QLatin1String(
+        qApp && BrowserTheme::isDarkPalette(qApp->palette())
+            ? "true" : "false");
+    return QStringLiteral(
+        "(function(){"
+        "if(window.arora)return;"
+        "var T={%1};"
+        "window.arora={"
+        "currentEngineName:%2,"
+        "darkChrome:%3,"
+        "darkChromeChanged:{connect:function(){}},"
+        "translate:function(s,cb){cb(Object.prototype.hasOwnProperty.call(T,s)?T[s]:s);},"
+        "searchUrl:function(q,cb){cb(%4.split('{searchTerms}').join(encodeURIComponent(q)));}"
+        "};"
+        "document.documentElement.classList.toggle('arora-dark',%3);"
+        "if(typeof update==='function')update();"
+        "})();")
+        .arg(entries.join(QLatin1Char(',')), jsString(engineName),
+             dark, jsString(engineTemplate));
+}
+
 EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
 {
     if (!backend)
@@ -1090,6 +1154,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         if (at == currentIndex())
             emit showStatusBarMessage(ok ? tr("Finished loading")
                                          : tr("Failed to load"));
+        // ENG18: arm the page-side "arora" shim — internal qrc pages
+        // get translated chrome text and a working search box even
+        // though a foreign backend has no QWebChannel to serve them.
+        if (ok && tab->page()
+            && tab->url().scheme() == QLatin1String("qrc"))
+            tab->page()->runJavaScript(engineTabAroraScript());
     });
 
     // webview actions — same wiring makeNewTabOnProfile applies to a

@@ -170,6 +170,18 @@ UI:
   same-URL reload), and chrome actions a foreign engine does not map
   read disabled instead of inheriting the previous tab's state
   (ENG16).
+- Fixed the start page showing "Error loading page" on Servo tabs:
+  qrc: is a Qt resource scheme libservo cannot fetch, so any tab
+  carrying a qrc: url — most visibly a swapped start-page tab —
+  rendered Servo's own error page. The servo-embed shim's
+  load_web_resource hook now consults a host resource resolver that
+  answers qrc: loads straight out of the Qt resource system (document
+  and subresources alike — css/js/images keep working, missing
+  resources get a real 404), and engine tabs inject a small page-side
+  "arora" bridge shim so the start page keeps its translated chrome
+  text and working search box despite having no QWebChannel. The
+  Tor-branded and Servo-branded start page variants and the bundled
+  error pages load through the same path (ENG18).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

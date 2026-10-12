@@ -51,6 +51,34 @@ const char *se_version(void);
 
 unsigned long se_request_count(SeInstance instance);
 long se_request_log(SeInstance instance, char *buf, unsigned long buf_len);
+
+/* ENG18: host resource resolver. The fetch pipeline consults the
+ * webview's load_web_resource delegate for EVERY scheme (the request
+ * interceptor runs ahead of scheme dispatch), so a host-registered
+ * resolver can answer the schemes libservo cannot fetch — qrc:, the
+ * app-internal schemes — without forking Servo.
+ *
+ * Registered once per process (before or after se_init — only one
+ * SeInstance can ever exist anyway). Called synchronously from inside
+ * se_spin() on the GUI thread for every resource load; the host
+ * returns non-zero to claim the request and fills `reply`:
+ *   status    HTTP status code (0 is treated as 200)
+ *   mime      utf8 Content-Type value; "" sends no header
+ *   body      borrowed pointer, read only during the call
+ *   body_len  byte count (0 = empty body is legal)
+ * Return 0 to leave the load on Servo's normal fetch path. */
+typedef struct SeHostReply {
+    int status;
+    char mime[128];
+    const unsigned char *body;
+    size_t body_len;
+} SeHostReply;
+
+typedef int (*SeResourceResolver)(void *userdata, const char *url,
+                                  SeHostReply *reply);
+
+void se_set_resource_resolver(void *userdata, SeResourceResolver resolver);
+
 void se_destroy(SeInstance instance);
 
 #ifdef __cplusplus
