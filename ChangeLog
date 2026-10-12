@@ -365,6 +365,10 @@ UI:
   button — clicking it loads your configured home page (the Arora
   start page by default) in the current tab, same as History → Home
   or Ctrl+Shift+H (HOME01).
+- Preferences → Appearance → Sidebar: the "Panels" checklist now
+  shows all its entries without scrolling and only takes the width
+  its rows need — it used to render as a cramped box with a
+  scrollbar while stretching the full page width (SIDE08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

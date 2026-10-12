@@ -86,6 +86,7 @@ private slots:
     void sidebarNavigation();
     void sidebarSettings();
     void sidebarPositionPicker();
+    void sidebarPanelsListGeometry();
     void settingsFilter();
     void iconThemeSelector();
     void themeSelector();
@@ -1017,6 +1018,44 @@ void tst_SettingsDialog::sidebarPositionPicker()
         QCOMPARE(clamped.sidebarDockArea->currentIndex(), 0);
     }
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+}
+
+// SIDE08: the Panels checklist is content-sized — user report: it
+// rendered as a ~4-row viewport with a vertical scrollbar while
+// stretching the full page width.  AdjustToContents + a Maximum
+// horizontal policy fit every registered row without an internal
+// scrollbar and hug content width like the tile picker above it.
+void tst_SettingsDialog::sidebarPanelsListGeometry()
+{
+    SettingsDialog dialog;
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AppearancePage));
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    qApp->processEvents();
+
+    QListWidget *list = dialog.sidebarPanelsList;
+    QCOMPARE(list->count(), SidebarPanel::panels().count());
+    QVERIFY(list->count() > 0);
+    QCOMPARE(list->sizeAdjustPolicy(),
+             QAbstractScrollArea::AdjustToContents);
+    QCOMPARE(list->sizePolicy().horizontalPolicy(), QSizePolicy::Maximum);
+
+    // Every registered row visible — no internal scrollbars.
+    QVERIFY(!list->verticalScrollBar()->isVisible());
+    QVERIFY(!list->horizontalScrollBar()->isVisible());
+    const QRect last =
+        list->visualItemRect(list->item(list->count() - 1));
+    QVERIFY(last.isValid());
+    QVERIFY(last.bottom() < list->viewport()->height());
+    const QRect first = list->visualItemRect(list->item(0));
+    QVERIFY(first.top() >= 0);
+
+    // Content width, not page width: the widget never exceeds its
+    // content sizeHint and stays well inside its group box.
+    QVERIFY(list->width() <= list->sizeHint().width() + 1);
+    QVERIFY(list->width() < dialog.sidebarGroupBox->width() / 2);
+
+    dialog.close();
 }
 
 // PREFUI03: the nav filter field narrows the sidebar by page title
