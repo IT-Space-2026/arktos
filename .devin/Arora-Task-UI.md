@@ -72,6 +72,7 @@ This file is the task queue for the Devin CLI task loop
 | SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
 | TABS07 | Default tab height still too tall — details below | pending | 0 | |
 | SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |
+| DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | pending | 0 | |
 
 
 ## Task details
@@ -387,3 +388,13 @@ SRCH09 is marked done but the regression persists — start by reproducing exact
 Also verify suggestion path: picking 'Search for X' from the dropdown should search too.
 
 Verify: 'foo bar' + Enter -> default engine results page loads; 'singleterm' + Enter -> search (not a bogus http://singleterm navigation); real URLs still navigate directly; search-engine change in Preferences is honored; make check PASS.
+
+### DLUX04
+
+Download details card polish — user feedback on the fixed card (DLUX03-class): 'The color is better with day mode, but there should not be a viewable color difference and do not leave that wide border around the information.'
+
+Screenshot shows the expanded card: an info block (Source/Destination/Started/Finished/Size/Speed rows + speed graph) sitting inside a visibly DIFFERENT light-tinted fill than the surrounding panel, plus a thick/wide border or frame padding around the info section — the card reads as a box-in-a-box.
+
+Spec: (a) NO visible color seam — the info block and graph area must use the same background as the card/panel surface (palette Base or the card's own fill — flatten the inner box so it blends; keep only the minimum chrome needed for readability, e.g. a hairline separator if any); (b) remove the wide border/padding around the info block — tighten margins to match the card's outer padding so content doesn't sit inside a thick frame; (c) verify BOTH themes — the same fix must not reintroduce a seam on dark (check what fill the block uses in dark mode — palette-driven, never hardcoded); (d) the graph keeps its fill but blends with the card (graph area may keep a subtle plot fill if it reads as 'chart', not 'box').
+
+Verify: expanded card shows no visible color difference between info block/graph and card background in day AND night themes; no thick border around the info section; make check PASS.
