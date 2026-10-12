@@ -134,6 +134,7 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QStatusBar>
@@ -9551,6 +9552,17 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: circuit label present:" 
                 << circuitLabel->text();
+
+        // TOR07: the whole header block shares the violet chrome —
+        // no default-palette menu row or tab strip survives.
+        if (!torWindow->menuBar()->styleSheet().contains(
+                QLatin1String("4a3372"))
+                || !torWindow->tabWidget()->tabBar()->styleSheet()
+                        .contains(QLatin1String("4a3372"))) {
+            torWinFail(QLatin1String("tor window chrome theme incomplete"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: violet chrome covers menu + tab strip";
 
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the

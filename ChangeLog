@@ -386,6 +386,11 @@ Tor:
 - Each Tor circuit hop now carries its exit-country code ("(DE)",
   "--" when unknown), resolved via the tor control port and cached
   per relay fingerprint (TOR05).
+- The Tor window's header block is one coherent violet scheme: the
+  menu bar, bookmarks toolbar and tab strip take the navigation bar's
+  treatment instead of staying on the default palette, and the
+  selected tab reads as the light "field" element like the location
+  bar (TOR07).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

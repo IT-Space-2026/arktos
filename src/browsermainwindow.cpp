@@ -74,6 +74,7 @@
 #include "bookmarksmodel.h"
 #include "bookmarkstoolbar.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "clearprivatedata.h"
 #include "commandpalette.h"
 #include "containermanager.h"
@@ -126,6 +127,48 @@
 
 #include <qdebug.h>
 
+// TOR02/TOR07: the tor window's violet chrome — one bar treatment
+// shared by the navigation and bookmarks toolbars so the header band
+// reads as a single surface.
+static QString torBarStyleSheet()
+{
+    return QLatin1String(
+        "QToolBar { background: #4a3372; border: none; }"
+        "QToolButton { color: #eee; background: transparent; }"
+        "QToolButton:hover { background: #5d4491; }"
+        "QToolButton:pressed { background: #3a2a5c; }");
+}
+
+// TOR07: the tab strip takes the same treatment as the rest of the
+// header: inactive tabs read as chrome (mid violet), the selected tab
+// is the light "field" element — the same inside-the-violet treatment
+// the location bar carries, resolved from the live palette so it
+// tracks the field in day and night schemes alike.  Re-applied on
+// chromeSchemeChanged so a live theme preview keeps it in sync.
+static QString torTabBarStyleSheet()
+{
+    const QPalette palette = qApp ? qApp->palette() : QPalette();
+    return QString::fromLatin1(
+        "QTabBar { background: #4a3372; }"
+        // 6px vertical padding pushes the stylesheet's natural tab
+        // hint past TabBar::tabSizeHint's TABS07 cap, so the bound
+        // clamps to exactly the same thickness a normal strip gets.
+        "QTabBar::tab { background: #5d4491; color: #eee;"
+        " border: 1px solid #3a2a5c; padding: 6px 8px; }"
+        "QTabBar::tab:top { border-bottom: none;"
+        " border-top-left-radius: 4px; border-top-right-radius: 4px; }"
+        "QTabBar::tab:bottom { border-top: none;"
+        " border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }"
+        "QTabBar::tab:left { border-right: none;"
+        " border-top-left-radius: 4px; border-bottom-left-radius: 4px; }"
+        "QTabBar::tab:right { border-left: none;"
+        " border-top-right-radius: 4px; border-bottom-right-radius: 4px; }"
+        "QTabBar::tab:selected { background: %1; color: %2; }"
+        "QTabBar::tab:!selected:hover { background: #6b4fa3; }")
+        .arg(palette.color(QPalette::Base).name(),
+             palette.color(QPalette::Text).name());
+}
+
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
     , m_navigationBar(nullptr)
@@ -162,11 +205,18 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window
         // is never mistaken for a normal one at a glance.
-        m_navigationBar->setStyleSheet(QLatin1String(
-            "QToolBar { background: #4a3372; border: none; }"
-            "QToolButton { color: #eee; background: transparent; }"
-            "QToolButton:hover { background: #5d4491; }"
-            "QToolButton:pressed { background: #3a2a5c; }"));
+        m_navigationBar->setStyleSheet(torBarStyleSheet());
+
+        // TOR07: the violet used to stop at the navigation bar, so
+        // the menu row stayed on the default palette — three
+        // unrelated shades in the header block.  The menu bar takes
+        // the same treatment; its popup menus are intentionally left
+        // on the platform palette.
+        menuBar()->setStyleSheet(QLatin1String(
+            "QMenuBar { background: #4a3372; }"
+            "QMenuBar::item { color: #eee; background: transparent; }"
+            "QMenuBar::item:selected { background: #5d4491; }"
+            "QMenuBar::item:pressed { background: #3a2a5c; }"));
         QLabel *badge = new QLabel(QLatin1String(" Tor "), m_navigationBar);
         badge->setStyleSheet(QLatin1String(
             "QLabel { color: white; background: #6b4fa3;"
@@ -273,6 +323,46 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     layout->addWidget(m_tabWidget);
     centralWidget->setLayout(layout);
     setCentralWidget(centralWidget);
+
+    if (BrowserApplication::isTorMode()) {
+        // TOR07: the rest of the header block joins the violet chrome
+        // — the bookmarks toolbar shares the navigation bar's sheet,
+        // and the tab strip gets its own rules (selected tab = the
+        // light "field" element, inactive tabs = violet chrome).
+        // The objectName scopes the pane rule so a QTabWidget hosted
+        // inside a widget tab never picks the chrome colors up.
+        m_bookmarksToolbar->setStyleSheet(torBarStyleSheet());
+        m_tabWidget->setObjectName(QLatin1String("mainTabWidget"));
+        m_tabWidget->setStyleSheet(QLatin1String(
+            "QTabWidget#mainTabWidget { background: #4a3372; }"
+            "QTabWidget#mainTabWidget::pane { border: none; }"));
+        // Manual strip paints (the vertical-row background fill, the
+        // edge divider, the sleeping-tab badge) take palette() colors
+        // — pull them into the same violet family.
+        QPalette stripPalette = m_tabWidget->tabBar()->palette();
+        stripPalette.setColor(QPalette::Window, QColor(0x4a, 0x33, 0x72));
+        stripPalette.setColor(QPalette::Button, QColor(0x4a, 0x33, 0x72));
+        stripPalette.setColor(QPalette::WindowText,
+                              QColor(0xee, 0xee, 0xee));
+        stripPalette.setColor(QPalette::ButtonText,
+                              QColor(0xee, 0xee, 0xee));
+        stripPalette.setColor(QPalette::Disabled, QPalette::WindowText,
+                              QColor(0xb9, 0xae, 0xcf));
+        stripPalette.setColor(QPalette::Disabled, QPalette::ButtonText,
+                              QColor(0xb9, 0xae, 0xcf));
+        stripPalette.setColor(QPalette::Mid, QColor(0x3a, 0x2a, 0x5c));
+        TabBar *tabBar = m_tabWidget->tabBar();
+        tabBar->setPalette(stripPalette);
+        tabBar->setStyleSheet(torTabBarStyleSheet());
+        // The selected tab borrows the palette's field colors — a
+        // live theme preview re-resolves them so the tab keeps
+        // matching the location bar.
+        connect(BrowserTheme::themeNotifier(),
+                &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+                tabBar, [tabBar]() {
+            tabBar->setStyleSheet(torTabBarStyleSheet());
+        });
+    }
 
     // The dock was created in setupMenu() (its toggle action lives in
     // the View menu); it joins the layout hidden — applySidebarSettings()

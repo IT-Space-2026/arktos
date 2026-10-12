@@ -55,6 +55,7 @@
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarknode.h"
@@ -124,6 +125,7 @@ private slots:
     void torSearchBoxHidden();
     void torCircuitStatusLabel();
     void torTabStripLayout();
+    void torChromeTheme();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -940,6 +942,130 @@ void tst_BrowserMainWindow::torTabStripLayout()
     QVERIFY(iconInsideTab);
     QVERIFY(torStripHeight <= cap);
     QCOMPARE(torStripHeight, normalStripHeight);
+}
+
+// TOR07: the tor header block is one coherent violet scheme — the
+// menu bar and tab strip used to stay on the default palette under
+// the violet navigation bar.  Now the whole chrome block shares the
+// treatment: violet surfaces, light text, and the selected tab
+// rendered as the light "field" element (the same inside-the-violet
+// look the location bar carries).  Normal windows keep the default
+// palette everywhere.
+void tst_BrowserMainWindow::torChromeTheme()
+{
+    const auto isViolet = [](const QColor &c) {
+        // #4a3372/#5d4491/#3a2a5c family — blue > red > green, dark.
+        return c.isValid() && c.blue() > c.red()
+            && c.red() > c.green() && c.lightness() < 160;
+    };
+
+    // Normal-window baseline: no tor stylesheet, no violet chrome.
+    SubWindow *plain = new SubWindow;
+    plain->resize(1000, 600);
+    plain->show();
+    QApplication::processEvents();
+    const bool plainMenuSheet = plain->menuBar()->styleSheet()
+        .contains(QLatin1String("4a3372"));
+    const bool plainTabSheet = plain->tabWidget()->tabBar()
+        ->styleSheet().contains(QLatin1String("4a3372"));
+    const QImage plainImage = plain->grab().toImage();
+    const QColor plainMenuColor = plainImage.pixelColor(
+        plain->menuBar()->mapTo(plain, QPoint(
+            plain->menuBar()->width() - 10,
+            plain->menuBar()->height() / 2)));
+    closeWindow(plain);
+
+    QVERIFY(!plainMenuSheet);
+    QVERIFY(!plainTabSheet);
+    QVERIFY(!isViolet(plainMenuColor));
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    const QString menuSheet = window->menuBar()->styleSheet();
+    const QToolBar *bookmarksBar = window->findChild<QToolBar *>(
+        QLatin1String("BookmarksToolbar"));
+    const QString bookmarksSheet =
+        bookmarksBar ? bookmarksBar->styleSheet() : QString();
+    TabBar *bar = window->tabWidget()->tabBar();
+    const QString tabSheet = bar->styleSheet();
+    QLineEdit *field = window->tabWidget()->currentLocationBar();
+
+    const QImage image = window->grab().toImage();
+    const QColor menuColor = image.pixelColor(window->menuBar()->mapTo(
+        window, QPoint(window->menuBar()->width() - 10,
+                       window->menuBar()->height() / 2)));
+    const QRect tabRect = bar->tabRect(0);
+    const QColor stripColor = image.pixelColor(bar->mapTo(
+        window, QPoint(qMin(tabRect.right() + 8, bar->width() - 4),
+                       tabRect.center().y())));
+    // Bottom-of-tab pixels dodge the favicon label and the title.
+    const QColor selectedTabColor = image.pixelColor(bar->mapTo(
+        window, QPoint(tabRect.center().x(), tabRect.bottom() - 3)));
+    const QColor fieldColor = field ? image.pixelColor(field->mapTo(
+        window, QPoint(field->width() - 30, field->height() / 2)))
+        : QColor();
+
+    // A second tab leaves tab 0 inactive — it must read as violet
+    // chrome while the new current tab stays the light field color.
+    window->tabWidget()->newTab();
+    QApplication::processEvents();
+    const QImage twoTabImage = window->grab().toImage();
+    const QRect inactiveRect = bar->tabRect(0);
+    const QColor inactiveTabColor = twoTabImage.pixelColor(bar->mapTo(
+        window, QPoint(inactiveRect.center().x(),
+                       inactiveRect.bottom() - 3)));
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the tor window lands there as tor-window.png.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        window->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/tor-window.png"));
+    }
+
+    // The selected tab borrows the palette's field colors, so a live
+    // dark-scheme flip re-tints it to the dark field while the chrome
+    // stays violet.
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+    const QImage darkImage = window->grab().toImage();
+    const QRect darkRect = bar->tabRect(bar->currentIndex());
+    const QColor darkTabColor = darkImage.pixelColor(bar->mapTo(
+        window, QPoint(darkRect.center().x(), darkRect.bottom() - 3)));
+    const QColor darkMenuColor = darkImage.pixelColor(
+        window->menuBar()->mapTo(window, QPoint(
+            window->menuBar()->width() - 10,
+            window->menuBar()->height() / 2)));
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(menuSheet.contains(QLatin1String("4a3372")));
+    QVERIFY(menuSheet.contains(QLatin1String("QMenuBar::item")));
+    QVERIFY(bookmarksSheet.contains(QLatin1String("4a3372")));
+    QVERIFY(tabSheet.contains(QLatin1String("4a3372")));
+    QVERIFY(tabSheet.contains(QLatin1String("QTabBar::tab")));
+    QVERIFY(field);
+    QVERIFY(isViolet(menuColor));
+    QVERIFY(isViolet(stripColor));
+    // The selected tab is the light "field" element — matching the
+    // location bar, which keeps its normal light treatment.
+    QVERIFY(selectedTabColor.lightness() > 180);
+    QVERIFY(fieldColor.lightness() > 170);
+    QVERIFY(isViolet(inactiveTabColor));
+    // Dark scheme: the field element tracks the dark palette while
+    // the chrome stays violet.
+    QVERIFY(darkTabColor.lightness() < 100);
+    QVERIFY(isViolet(darkMenuColor));
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between
