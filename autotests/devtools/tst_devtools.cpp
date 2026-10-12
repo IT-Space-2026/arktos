@@ -43,12 +43,19 @@
 #include "bidiclient.h"
 #include "bidipanel.h"
 
+#include <qabstractitemmodel.h>
+#include <qbuttongroup.h>
+#include <qcheckbox.h>
 #include <qcombobox.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qplaintextedit.h>
+#include <qsortfilterproxymodel.h>
 #include <qstackedwidget.h>
+#include <qtableview.h>
 #include <qtablewidget.h>
+#include <qtabwidget.h>
+#include <qtoolbutton.h>
 #include <qtreewidget.h>
 
 class tst_DevTools : public QObject
@@ -393,38 +400,239 @@ void tst_DevTools::bidiPanel()
         "{\"method\":\"unrelated.method\",\"params\":{}}"));
     panel.onEvent(QByteArray("{not json"));
 
-    panel.m_networkTable->setRowCount(0);
-    panel.m_requestRows.clear();
+    // DEVT06: the Network tab is now a model/proxy/view — drive the
+    // Chrome-style lifecycle through onEvent.
+    QAbstractTableModel *net = panel.m_networkModel;
+    QSortFilterProxyModel *netProxy = panel.m_networkProxy;
+    QVERIFY(net);
+    QVERIFY(netProxy);
+    QVERIFY(panel.m_networkView);
+    QVERIFY(panel.m_networkView->model() == netProxy);
+    QVERIFY(panel.m_networkView->parentWidget()->findChild<QWidget *>(
+                QStringLiteral("bidiNetworkToolbar")));
+    QVERIFY(panel.m_networkView->parentWidget()->findChild<QWidget *>(
+                QStringLiteral("bidiNetworkChips")));
+    // Header order matches Chrome: Name Status Type Initiator Size
+    // Time Waterfall.
+    QCOMPARE(net->columnCount(), 7);
+    QCOMPARE(net->headerData(0, Qt::Horizontal).toString(),
+             QStringLiteral("Name"));
+    QCOMPARE(net->headerData(6, Qt::Horizontal).toString(),
+             QStringLiteral("Waterfall"));
+
+    panel.clearNetworkLog();
+    // A document row: name from the URL tail, bucket + initiator from
+    // the event extras, "-" Time while pending.
     panel.onEvent(QByteArray(
-        "{\"method\":\"network.beforeRequestSent\",\"params\":{\"request\":"
-        "{\"request\":\"r1\",\"method\":\"GET\",\"url\":\"http://x/\"}}}"));
-    QCOMPARE(panel.m_networkTable->rowCount(), 1);
-    QCOMPARE(panel.m_networkTable->item(0, 2)->text(),
-             QStringLiteral("pending"));
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1000.0,\"initiator\":{\"type\":\"other\"},"
+        "\"request\":{\"request\":\"r1\",\"method\":\"GET\","
+        "\"url\":\"http://site/page.html\",\"type\":\"Document\"}}}"));
+    QCOMPARE(net->rowCount(), 1);
+    QCOMPARE(net->data(net->index(0, 0)).toString(),
+             QStringLiteral("page.html"));
+    QCOMPARE(net->data(net->index(0, 2)).toString(),
+             QStringLiteral("document"));
+    QCOMPARE(net->data(net->index(0, 5)).toString(),
+             QStringLiteral("-"));
     panel.onEvent(QByteArray(
-        "{\"method\":\"network.responseStarted\",\"params\":{\"request\":"
-        "{\"request\":\"r1\"},\"response\":{\"status\":200}}}"));
-    QCOMPARE(panel.m_networkTable->item(0, 1)->text(),
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":1020.0,\"type\":\"Document\",\"request\":{"
+        "\"request\":\"r1\"},\"response\":{\"status\":200}}}"));
+    QCOMPARE(net->data(net->index(0, 1)).toString(),
              QStringLiteral("200"));
-    QCOMPARE(panel.m_networkTable->item(0, 2)->text(),
-             QStringLiteral("receiving"));
     panel.onEvent(QByteArray(
-        "{\"method\":\"network.responseCompleted\",\"params\":{\"request\":"
-        "{\"request\":\"r1\"}}}"));
-    QCOMPARE(panel.m_networkTable->item(0, 2)->text(),
-             QStringLiteral("finished"));
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":1042.0,\"request\":{\"request\":\"r1\"},"
+        "\"response\":{\"encodedDataLength\":2048}}}"));
+    QCOMPARE(net->data(net->index(0, 4)).toString(),
+             QStringLiteral("2.0 kB"));
+    QCOMPARE(net->data(net->index(0, 5)).toString(),
+             QStringLiteral("42 ms"));
+    QVERIFY(!net->data(net->index(0, 0), Qt::ForegroundRole).isValid());
+
+    // A script with a parser initiator carrying url:line.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1010.0,\"initiator\":{\"type\":\"parser\","
+        "\"url\":\"http://site/page.html\",\"lineNumber\":7},"
+        "\"request\":{\"request\":\"r2\",\"method\":\"GET\","
+        "\"url\":\"http://site/app.js\",\"type\":\"Script\"}}}"));
+    QCOMPARE(net->data(net->index(1, 0)).toString(),
+             QStringLiteral("app.js"));
+    QCOMPARE(net->data(net->index(1, 3)).toString(),
+             QStringLiteral("page.html:7"));
+
+    // A 404 image row: the status is real but the row still goes red.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1015.0,\"request\":{\"request\":\"r3\","
+        "\"method\":\"GET\",\"url\":\"http://cdn/pic.png\","
+        "\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseStarted\",\"params\":{"
+        "\"timestamp\":1030.0,\"type\":\"Image\",\"request\":{"
+        "\"request\":\"r3\"},\"response\":{\"status\":404}}}"));
+    QCOMPARE(net->data(net->index(2, 1)).toString(),
+             QStringLiteral("404"));
+    QVERIFY(net->data(net->index(2, 0), Qt::ForegroundRole).isValid());
+
+    // A failed fetch: status cell shows the net::ERR text, row red.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1100.0,\"request\":{\"request\":\"r4\","
+        "\"method\":\"POST\",\"url\":\"http://site/api/data\","
+        "\"type\":\"Fetch\"}}}"));
     panel.onEvent(QByteArray(
         "{\"method\":\"network.fetchError\",\"params\":{\"request\":"
-        "{\"request\":\"r1\"},\"errorText\":\"dns\"}}"));
-    QVERIFY(panel.m_networkTable->item(0, 2)->text().contains(
-        QStringLiteral("dns")));
+        "{\"request\":\"r4\"},\"errorText\":\"net::ERR_REFUSED\","
+        "\"timestamp\":1150.0,\"type\":\"Fetch\"}}"));
+    QCOMPARE(net->data(net->index(3, 1)).toString(),
+             QStringLiteral("net::ERR_REFUSED"));
+    QVERIFY(net->data(net->index(3, 0), Qt::ForegroundRole).isValid());
+
+    // A websocket that stays pending.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":1200.0,\"request\":{\"request\":\"r5\","
+        "\"method\":\"GET\",\"url\":\"ws://site/socket\","
+        "\"type\":\"WebSocket\"}}}"));
+    QCOMPARE(net->rowCount(), 5);
+    QCOMPARE(netProxy->rowCount(), 5);
+
+    // Chips are an exclusive filtered view over the same rows.
+    const auto chip = [&panel](const QString &label) -> QAbstractButton * {
+        for (QAbstractButton *button : panel.m_typeChips->buttons()) {
+            if (button->text() == label)
+                return button;
+        }
+        return nullptr;
+    };
+    QCOMPARE(panel.m_typeChips->buttons().count(), 12);
+    chip(QStringLiteral("Doc"))->click();
+    QCOMPARE(netProxy->rowCount(), 1);
+    chip(QStringLiteral("Fetch/XHR"))->click();
+    QCOMPARE(netProxy->rowCount(), 1);
+    chip(QStringLiteral("Img"))->click();
+    QCOMPARE(netProxy->rowCount(), 1);
+    chip(QStringLiteral("JS"))->click();
+    QCOMPARE(netProxy->rowCount(), 1);
+    chip(QStringLiteral("Socket"))->click();
+    QCOMPARE(netProxy->rowCount(), 1);
+    chip(QStringLiteral("Other"))->click();
+    QCOMPARE(netProxy->rowCount(), 0);
+    chip(QStringLiteral("All"))->click();
+    QCOMPARE(netProxy->rowCount(), 5);
+
+    // The text filter matches name or URL; Invert flips it.
+    panel.m_networkFilter->setText(QStringLiteral("site"));
+    QCOMPARE(netProxy->rowCount(), 4); // cdn/pic.png falls out
+    panel.m_invertFilter->setChecked(true);
+    QCOMPARE(netProxy->rowCount(), 1);
+    panel.m_invertFilter->setChecked(false);
+    panel.m_networkFilter->clear();
+    QCOMPARE(netProxy->rowCount(), 5);
+
+    // Navigation clears the log unless Preserve log is ticked.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(net->rowCount(), 5); // ctx2 is selected — untouched
+    panel.m_contextCombo->setCurrentIndex(0);
+    QCOMPARE(panel.currentContext(), QStringLiteral("ctx1"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(net->rowCount(), 0);
+    panel.m_preserveLog->setChecked(true);
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":2000.0,\"request\":{\"request\":\"k1\","
+        "\"method\":\"GET\",\"url\":\"http://site/keep.html\","
+        "\"type\":\"Document\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"browsingContext.navigationStarted\",\"params\":"
+        "{\"context\":\"ctx1\"}}"));
+    QCOMPARE(net->rowCount(), 1);
+    panel.m_preserveLog->setChecked(false);
+
+    // The Clear button wipes rows regardless.
+    panel.m_clearRequests->click();
+    QCOMPARE(net->rowCount(), 0);
+
+    // Sorting runs through the proxy's raw values — numbers order as
+    // numbers, not as display text.
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"s1\","
+        "\"method\":\"GET\",\"url\":\"http://a/big\",\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":200.0,\"request\":{\"request\":\"s1\"},"
+        "\"response\":{\"encodedDataLength\":4096}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":110.0,\"request\":{\"request\":\"s2\","
+        "\"method\":\"GET\",\"url\":\"http://a/small\",\"type\":\"Image\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":150.0,\"request\":{\"request\":\"s2\"},"
+        "\"response\":{\"encodedDataLength\":512}}}"));
+    netProxy->sort(4, Qt::AscendingOrder);
+    QCOMPARE(netProxy->data(netProxy->index(0, 4)).toString(),
+             QStringLiteral("512 B"));
+    QCOMPARE(netProxy->data(netProxy->index(1, 4)).toString(),
+             QStringLiteral("4.0 kB"));
+
+    // The offscreen grab renders the red failed row — smoke for the
+    // Chrome look (palette-safe red pixels present in the view).
+    panel.clearNetworkLog();
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":100.0,\"request\":{\"request\":\"f0\","
+        "\"method\":\"GET\",\"url\":\"http://a/page.html\","
+        "\"type\":\"Document\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.responseCompleted\",\"params\":{"
+        "\"timestamp\":180.0,\"request\":{\"request\":\"f0\"},"
+        "\"response\":{\"encodedDataLength\":18432}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.beforeRequestSent\",\"params\":{"
+        "\"timestamp\":140.0,\"request\":{\"request\":\"f1\","
+        "\"method\":\"GET\",\"url\":\"http://a/fail.js\","
+        "\"type\":\"Script\"}}}"));
+    panel.onEvent(QByteArray(
+        "{\"method\":\"network.fetchError\",\"params\":{\"request\":"
+        "{\"request\":\"f1\"},\"errorText\":\"net::ERR_X\","
+        "\"timestamp\":150.0}}}"));
+    panel.resize(700, 300);
+    panel.show();
+    if (QTabWidget *tabs = panel.findChild<QTabWidget *>())
+        tabs->setCurrentWidget(panel.m_networkView->parentWidget());
+    QCoreApplication::processEvents();
+    // Whole-panel grab exercises the waterfall delegate's paint path.
+    panel.grab();
+    const QPixmap shot = panel.m_networkView->grab();
+    bool sawRed = false;
+    const QImage img = shot.toImage();
+    for (int y = 0; y < img.height() && !sawRed; ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const QColor c = img.pixelColor(x, y);
+            if (c.red() > 150 && c.green() < 110 && c.blue() < 110) {
+                sawRed = true;
+                break;
+            }
+        }
+    }
+    QVERIFY(sawRed);
+
     // Unknown request ids and unknown network methods are ignored.
     panel.onEvent(QByteArray(
         "{\"method\":\"network.responseStarted\",\"params\":{\"request\":"
         "{\"request\":\"ghost\"},\"response\":{\"status\":404}}}"));
     panel.onEvent(QByteArray(
         "{\"method\":\"network.dataReceived\",\"params\":{\"request\":"
-        "{\"request\":\"r1\"}}}"));
+        "{\"request\":\"f1\"}}}"));
 
     // The 1000-row cap trims and rebases the request-id index.
     for (int i = 0; i < 1005; ++i) {
@@ -433,7 +641,7 @@ void tst_DevTools::bidiPanel()
             "{\"request\":\"cap") + QByteArray::number(i)
             + QByteArray("\",\"method\":\"GET\",\"url\":\"http://c/\"}}}"));
     }
-    QVERIFY(panel.m_networkTable->rowCount() <= 1000);
+    QVERIFY(net->rowCount() <= 1000);
 }
 
 QTEST_MAIN(tst_DevTools)

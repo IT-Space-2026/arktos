@@ -17,8 +17,11 @@
  *   DOM      lazy-loaded element tree (walking happens inside the
  *            page via a JS helper — BiDi has no DOM walker and the
  *            evaluate round-trip keeps this engine-neutral)
- *   Network  request rows from network.* events (url, method,
- *            status, state — bodies intentionally out of scope)
+ *   Network  Chrome-DevTools-style request table (DEVT06): filter
+ *            field, type-filter chips, Preserve log / Disable cache
+ *            toggles, and a Name/Status/Type/Initiator/Size/Time/
+ *            Waterfall model fed by the network.* event stream
+ *            (bodies intentionally out of scope)
  *   Storage  cookies via storage.getCookies plus per-context
  *            localStorage via script.evaluate
  *
@@ -34,13 +37,19 @@
 #include <qhash.h>
 #include <qwidget.h>
 
+class QAbstractTableModel;
 class BidiClient;
+class QButtonGroup;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QSortFilterProxyModel;
 class QStackedWidget;
+class QTableView;
 class QTableWidget;
+class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -79,6 +88,8 @@ private:
     void ensureDomHelper(const QString &context);
     void sendEval(const QString &context, const QString &expression,
                   quint64 tag);
+    void clearNetworkLog();
+    void sendCacheBehavior();
 
     BidiClient *m_client;
     QStackedWidget *m_stack;
@@ -87,7 +98,17 @@ private:
     QPlainTextEdit *m_console;
     QLineEdit *m_evalLine;
     QTreeWidget *m_domTree;
-    QTableWidget *m_networkTable;
+    // DEVT06: the Network tab is a model/proxy/view so the toolbar's
+    // filter field and the type chips can re-slice one row set.
+    QAbstractTableModel *m_networkModel;
+    QSortFilterProxyModel *m_networkProxy;
+    QTableView *m_networkView;
+    QLineEdit *m_networkFilter;
+    QCheckBox *m_invertFilter;
+    QCheckBox *m_preserveLog;
+    QCheckBox *m_disableCache;
+    QToolButton *m_clearRequests;
+    QButtonGroup *m_typeChips;
     QTableWidget *m_cookieTable;
     QTableWidget *m_localStorageTable;
 

@@ -16,9 +16,15 @@
 //!     contextCreated, contextDestroyed, navigationStarted)
 //!   script.evaluate {expression, target:{context}, awaitPromise}
 //!   storage.getCookies
+//!   network.setCacheBehavior {cacheBehavior:"default"|"bypass",
+//!     contexts?:[...]} — no contexts = global toggle remembered for
+//!     late attaches (maps to CDP Network.setCacheDisabled)
 //!   Events out: browsingContext.*, log.entryAdded (console+log),
 //!     network.beforeRequestSent / responseStarted / responseCompleted
-//!     / fetchError
+//!     / fetchError — the network events carry the CDP extras the
+//!     panel's Chrome-style view needs: timestamp (ms), request.type,
+//!     params.initiator, params.redirectResponse, response.mimeType /
+//!     statusText / encodedDataLength (DEVT06).
 //!
 //! Transport: RFC 6455 client over a blocking TcpStream — Chromium's
 //! devtools endpoint is loopback-only and gated by a per-session
@@ -384,6 +390,8 @@ struct State {
     contexts: HashMap<String, (String, String)>, // context -> (url, title)
     /// Deferred follow-ups while a target attach is in flight.
     attaching: HashMap<String, Vec<FollowUp>>,
+    /// Global "Disable cache" — re-applied to every session on attach.
+    cache_disabled: bool,
 }
 
 impl Core {
@@ -516,6 +524,23 @@ impl Core {
             self.cdp_call(Some(session), dom, json!({}), CdpAction::Step {
                 follow: FollowUp::Quiet,
             })?;
+        }
+        // A global "Disable cache" outlives the toggle command — new
+        // sessions inherit it (Chrome keeps it browser-wide).
+        if self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cache_disabled
+        {
+            self.cdp_call(
+                Some(session),
+                "Network.setCacheDisabled",
+                json!({ "cacheDisabled": true }),
+                CdpAction::Step {
+                    follow: FollowUp::Quiet,
+                },
+            )?;
         }
         Ok(())
     }
@@ -661,6 +686,52 @@ impl Core {
                         kind: AnswerKind::Raw,
                     },
                 )?;
+                Ok(())
+            }
+            "network.setCacheBehavior" => {
+                // BiDi shape: {contexts?: [ctx,...], cacheBehavior:
+                // "default"|"bypass"}.  An empty/missing contexts list
+                // is a GLOBAL toggle — remembered in State so late
+                // attaches inherit it.  Named contexts map to their
+                // current session only (no lazy attach for a setting).
+                let disabled = params
+                    .get("cacheBehavior")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c == "bypass")
+                    .unwrap_or(false);
+                let named: Vec<String> = params
+                    .get("contexts")
+                    .and_then(|c| c.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let sessions: Vec<String> = {
+                    let mut st =
+                        self.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if named.is_empty() {
+                        st.cache_disabled = disabled;
+                        st.sessions.values().cloned().collect()
+                    } else {
+                        named
+                            .iter()
+                            .filter_map(|c| st.sessions.get(c).cloned())
+                            .collect()
+                    }
+                };
+                for sid in sessions {
+                    self.cdp_call(
+                        Some(&sid),
+                        "Network.setCacheDisabled",
+                        json!({ "cacheDisabled": disabled }),
+                        CdpAction::Step {
+                            follow: FollowUp::Quiet,
+                        },
+                    )?;
+                }
+                self.answer(bidi_id, json!({}));
                 Ok(())
             }
             "session.end" => {
@@ -910,10 +981,16 @@ impl Core {
                     "network.beforeRequestSent",
                     json!({
                         "context": self.context_for_session(session),
+                        "timestamp": millis(&params["timestamp"]),
+                        "initiator": params["initiator"],
+                        // Set on the redirect hop's requestWillBeSent —
+                        // the panel closes out the previous row with it.
+                        "redirectResponse": params["redirectResponse"],
                         "request": {
                             "request": params["requestId"],
                             "url": req["url"],
                             "method": req["method"],
+                            "type": params["type"],
                         },
                     }),
                 );
@@ -927,8 +1004,16 @@ impl Core {
                     "network.responseStarted",
                     json!({
                         "context": self.context_for_session(session),
+                        "timestamp": millis(&params["timestamp"]),
+                        "type": params["type"],
                         "request": { "request": params["requestId"], "url": resp["url"] },
-                        "response": { "url": resp["url"], "status": resp["status"] },
+                        "response": {
+                            "url": resp["url"],
+                            "status": resp["status"],
+                            "statusText": resp["statusText"],
+                            "mimeType": resp["mimeType"],
+                            "encodedDataLength": resp["encodedDataLength"],
+                        },
                     }),
                 );
             }
@@ -940,8 +1025,11 @@ impl Core {
                     "network.responseCompleted",
                     json!({
                         "context": self.context_for_session(session),
+                        "timestamp": millis(&params["timestamp"]),
                         "request": { "request": params["requestId"] },
-                        "response": {},
+                        "response": {
+                            "encodedDataLength": params["encodedDataLength"],
+                        },
                     }),
                 );
             }
@@ -953,6 +1041,8 @@ impl Core {
                     "network.fetchError",
                     json!({
                         "context": self.context_for_session(session),
+                        "timestamp": millis(&params["timestamp"]),
+                        "type": params["type"],
                         "request": { "request": params["requestId"] },
                         "errorText": params["errorText"],
                     }),
@@ -1037,6 +1127,12 @@ impl Core {
         }
         Value::Null
     }
+}
+
+/// CDP MonotonicTime is seconds; the panel works in milliseconds.
+/// Anything non-numeric serializes as null rather than a guess.
+fn millis(v: &Value) -> Value {
+    v.as_f64().map(|s| json!(s * 1000.0)).unwrap_or(Value::Null)
 }
 
 /* -------- CDP -> BiDi translations -------- */
@@ -1900,6 +1996,88 @@ mod tests {
         assert_eq!(m["method"], "Page.navigate");
         assert_eq!(m["sessionId"], "SNAV");
 
+        // network.setCacheBehavior with no contexts is a GLOBAL
+        // toggle — one Network.setCacheDisabled per live session
+        // (CTX/S1 + NAV/SNAV here), remembered for late attaches.
+        core.dispatch(
+            110,
+            "network.setCacheBehavior",
+            json!({"cacheBehavior": "bypass"}),
+        )
+        .unwrap();
+        let mut cache_targets = Vec::new();
+        for _ in 0..2 {
+            let m = read_wire(&mut peer);
+            assert_eq!(m["method"], "Network.setCacheDisabled");
+            assert_eq!(m["params"]["cacheDisabled"], true);
+            cache_targets.push(m["sessionId"].as_str().unwrap().to_string());
+        }
+        cache_targets.sort();
+        assert_eq!(cache_targets, ["S1", "SNAV"], "{cache_targets:?}");
+        let r = response_for(&got, 110).expect("cache response");
+        assert!(r.contains("result"), "{r}");
+
+        // A late attach inherits the disabled cache right after its
+        // domain enables, before the queued command.
+        core.dispatch(
+            111,
+            "script.evaluate",
+            json!({"expression": "1", "target": {"context": "LATE"}}),
+        )
+        .unwrap();
+        let attach = read_wire(&mut peer);
+        assert_eq!(attach["method"], "Target.attachToTarget");
+        core.on_message(
+            &json!({"id": attach["id"], "result": {"sessionId": "SLATE"}}),
+        );
+        let mut cache_off = false;
+        let mut saw_eval = false;
+        for _ in 0..5 {
+            let m = read_wire(&mut peer);
+            if m["method"] == "Network.setCacheDisabled" {
+                assert_eq!(m["sessionId"], "SLATE");
+                assert_eq!(m["params"]["cacheDisabled"], true);
+                cache_off = true;
+            }
+            if m["method"] == "Runtime.evaluate" {
+                saw_eval = true;
+            }
+        }
+        assert!(cache_off && saw_eval, "late attach re-applies cacheDisabled");
+
+        // Named contexts scope the toggle to their session only and
+        // leave the global flag alone.
+        core.dispatch(
+            112,
+            "network.setCacheBehavior",
+            json!({"contexts": ["LATE"], "cacheBehavior": "default"}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Network.setCacheDisabled");
+        assert_eq!(m["sessionId"], "SLATE");
+        assert_eq!(m["params"]["cacheDisabled"], false);
+        assert!(response_for(&got, 112).is_some());
+        assert!(core.state.lock().unwrap().cache_disabled);
+
+        // Global "default" clears the flag and touches every session.
+        core.dispatch(
+            113,
+            "network.setCacheBehavior",
+            json!({"cacheBehavior": "default"}),
+        )
+        .unwrap();
+        let mut cache_targets = Vec::new();
+        for _ in 0..3 {
+            let m = read_wire(&mut peer);
+            assert_eq!(m["method"], "Network.setCacheDisabled");
+            assert_eq!(m["params"]["cacheDisabled"], false);
+            cache_targets.push(m["sessionId"].as_str().unwrap().to_string());
+        }
+        cache_targets.sort();
+        assert_eq!(cache_targets, ["S1", "SLATE", "SNAV"], "{cache_targets:?}");
+        assert!(!core.state.lock().unwrap().cache_disabled);
+
         // getCookies honours an explicit urls list.
         core.dispatch(
             9,
@@ -2051,30 +2229,48 @@ mod tests {
             .insert("T2".into(), "S2".into());
         core.on_message(&json!({
             "method": "Network.requestWillBeSent", "sessionId": "S2",
-            "params": {"requestId": "r1",
+            "params": {"requestId": "r1", "timestamp": 12.5, "type": "Document",
+                "initiator": {"type": "other"},
                 "request": {"url": "http://r/", "method": "GET"}}
         }));
         let e = events_named(&got, "network.beforeRequestSent");
         assert_eq!(e.len(), 1);
         assert!(e[0].contains("\"context\":\"T2\"") && e[0].contains("http://r/"), "{e:?}");
+        // DEVT06: the CDP extras the Chrome-style table needs ride along —
+        // monotonic timestamp in ms, resource type, initiator.
+        assert!(e[0].contains("\"timestamp\":12500.0")
+            && e[0].contains("\"type\":\"Document\"")
+            && e[0].contains("\"initiator\":{\"type\":\"other\"}"), "{e:?}");
         core.on_message(&json!({
             "method": "Network.responseReceived", "sessionId": "S2",
-            "params": {"requestId": "r1",
-                "response": {"url": "http://r/", "status": 200}}
+            "params": {"requestId": "r1", "timestamp": 12.6, "type": "Document",
+                "response": {"url": "http://r/", "status": 200,
+                    "statusText": "OK", "mimeType": "text/html",
+                    "encodedDataLength": 64}}
         }));
         let e = events_named(&got, "network.responseStarted");
         assert!(e[0].contains("\"status\":200"), "{e:?}");
+        assert!(e[0].contains("\"timestamp\":12600.0")
+            && e[0].contains("\"mimeType\":\"text/html\"")
+            && e[0].contains("\"type\":\"Document\""), "{e:?}");
         core.on_message(&json!({
             "method": "Network.loadingFinished", "sessionId": "S2",
-            "params": {"requestId": "r1"}
+            "params": {"requestId": "r1", "timestamp": 12.9,
+                "encodedDataLength": 4096}
         }));
-        assert_eq!(events_named(&got, "network.responseCompleted").len(), 1);
+        let e = events_named(&got, "network.responseCompleted");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"timestamp\":12900.0")
+            && e[0].contains("\"encodedDataLength\":4096"), "{e:?}");
         core.on_message(&json!({
             "method": "Network.loadingFailed", "sessionId": "S2",
-            "params": {"requestId": "r2", "errorText": "net::ERR_X"}
+            "params": {"requestId": "r2", "errorText": "net::ERR_X",
+                "timestamp": 13.0, "type": "XHR"}
         }));
         let e = events_named(&got, "network.fetchError");
         assert!(e[0].contains("net::ERR_X"), "{e:?}");
+        assert!(e[0].contains("\"timestamp\":13000.0")
+            && e[0].contains("\"type\":\"XHR\""), "{e:?}");
         core.on_message(&json!({
             "method": "Network.requestWillBeSent", "sessionId": "NOPE",
             "params": {"requestId": "r9", "request": {"url": "u", "method": "GET"}}

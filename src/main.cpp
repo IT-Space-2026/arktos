@@ -2178,12 +2178,15 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     struct Smoke {
         BidiClient client;
         QString context;
+        quint64 cacheId = 0;
         bool sawTree = false;
         bool sawEval = false;
         bool sawLog = false;
         bool sawNetRequest = false;
         bool sawNetResponse = false;
+        bool sawNetTiming = false;
         bool sawCookies = false;
+        bool sawCache = false;
         bool done = false;
     };
     Smoke *sm = new Smoke;
@@ -2202,6 +2205,11 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
             sm->client.sendCommand(QStringLiteral("session.new"));
             sm->client.sendCommand(QStringLiteral("session.subscribe"),
                 QByteArray("{\"events\":[\"browsingContext\",\"log\",\"network\"]}"));
+            // DEVT06: the panel's Disable cache checkbox drives this —
+            // prove the bridge accepts it end to end.
+            sm->cacheId = sm->client.sendCommand(
+                QStringLiteral("network.setCacheBehavior"),
+                QByteArray("{\"cacheBehavior\":\"bypass\"}"));
             sm->client.sendCommand(QStringLiteral("browsingContext.getTree"));
         } else if (state == BidiClient::Unavailable
                    || (state == BidiClient::Disconnected && sm->done == false
@@ -2217,11 +2225,19 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     QObject::connect(&sm->client, &BidiClient::responseReceived,
                      &application, [sm, view, finish](quint64 id,
                                                const QByteArray &json) {
-        Q_UNUSED(id);
         const QJsonObject root =
             QJsonDocument::fromJson(json).object();
         const QJsonObject result =
             root[QStringLiteral("result")].toObject();
+
+        if (id == sm->cacheId && sm->cacheId) {
+            if (json.contains(QByteArray("\"error\""))) {
+                finish(false, QStringLiteral(
+                           "network.setCacheBehavior rejected"));
+                return;
+            }
+            sm->sawCache = true;
+        }
 
         if (result.contains(QStringLiteral("contexts"))) {
             // browsingContext.getTree
@@ -2289,16 +2305,22 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
             sm->sawLog = true;
             qInfo() << "bidi-smoke: saw console marker";
         }
-        if (method == QLatin1String("network.beforeRequestSent"))
+        if (method == QLatin1String("network.beforeRequestSent")) {
             sm->sawNetRequest = true;
+            // DEVT06: the panel's Time/Waterfall columns need the
+            // CDP timestamp — require it to arrive as ms.
+            if (params[QStringLiteral("timestamp")].isDouble())
+                sm->sawNetTiming = true;
+        }
         if (method == QLatin1String("network.responseCompleted")
             || method == QLatin1String("network.fetchError"))
             sm->sawNetResponse = true;
         if (sm->sawTree && sm->sawEval && sm->sawLog && sm->sawNetRequest
-            && sm->sawCookies) {
-            const bool ok = sm->sawNetResponse;
+            && sm->sawCookies && sm->sawCache) {
+            const bool ok = sm->sawNetResponse && sm->sawNetTiming;
             finish(ok, ok ? QStringLiteral("all checks green")
-                          : QStringLiteral("no terminal network event"));
+                          : QStringLiteral("network event missing "
+                                           "terminal/timing data"));
         }
     });
 
@@ -2319,10 +2341,12 @@ static int bidiSmoke(BrowserApplication &application, WebView *view)
     }
     QTimer::singleShot(20000, &application, [sm, finish]() {
         finish(false, QStringLiteral(
-                   "timeout tree=%1 eval=%2 log=%3 net=%4/%5 cookies=%6")
+                   "timeout tree=%1 eval=%2 log=%3 net=%4/%5/%6 "
+                   "cookies=%7 cache=%8")
                    .arg(sm->sawTree).arg(sm->sawEval).arg(sm->sawLog)
                    .arg(sm->sawNetRequest).arg(sm->sawNetResponse)
-                   .arg(sm->sawCookies));
+                   .arg(sm->sawNetTiming).arg(sm->sawCookies)
+                   .arg(sm->sawCache));
     });
     const int rc = application.exec();
     delete sm;
@@ -3148,6 +3172,16 @@ static int servoLifecycleSmoke()
                tabs.reloadTabInEngine(0, QStringLiteral("servo")));
         EngineTab *engineTab = tabs.engineTab(0);
         report(QStringLiteral("engine-tab"), engineTab != nullptr);
+        // ENG20: the crash shape the user hit — a visible engine tab
+        // getting a REAL size before its first paint.  An unshown
+        // TabWidget leaves the ServoView at 0x0 so se_resize never
+        // runs and the painter-ordering path goes unexercised; show
+        // it at a real size so resizeEvent -> se_resize runs ahead
+        // of the first spun frame.  Surviving the pump is the assert.
+        tabs.resize(900, 600);
+        tabs.show();
+        pumpUntil([]() { return false; }, 3000);
+        report(QStringLiteral("resize-spin-survived"), true);
         // ENG15: a foreign tab draws ONE strip icon — the free-side
         // favicon label — never a QTabBar icon stacked beside it
         // (the pre-fix pair painted the default glyph twice).

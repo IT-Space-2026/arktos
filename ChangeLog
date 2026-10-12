@@ -507,6 +507,16 @@ UI:
   looked ragged next to the checkbox rows; labels are now left-aligned
   so every row shares the page's left margin like the sibling groups
   (PREFUI12).
+- BiDi Dev Tools → Network tab rebuilt on the Chrome DevTools layout:
+  a toolbar row (Filter field with Invert, Preserve log, Disable
+  cache, Clear), a row of type-filter chips (All, Fetch/XHR, Doc, CSS,
+  JS, Font, Img, Media, Manifest, Socket, Wasm, Other), and a
+  sortable table — Name, Status, Type, Initiator, Size, Time plus a
+  Waterfall column whose bars are scaled real request timings. Failed
+  and 4xx/5xx rows tint red, rows stay compact with no grid lines,
+  "Preserve log" keeps the list across navigations, and "Disable
+  cache" is a real browser-wide toggle the engine honors for every
+  tab, including ones opened later (DEVT06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
@@ -1359,8 +1369,8 @@ Servo embeddability spike (ENG03):
     A bounded feasibility probe for a future non-Chromium backend: spikes/servo contains a thin C ABI over libservo v0.7.0 (pinned git tag) plus a standalone Qt harness — neither is part of the qmake build. The verdict report (.devin/SERVO-SPIKE.md) grades every member of the engine-neutral interface from ENGINE.md: event loop, navigation, request interception (a real intercept-or-replace hook), user scripts, scheme handlers, permissions, auth and context-menu delegates all exist; the hard gaps are no SOCKS5 proxy (Tor windows stay Chromium-locked permanently), no certificate-error delegate surface, no per-webview preferences, no find-in-page/lifecycle/renderer-pid APIs, one-way JS evaluation, no download delegate, and no profile objects for containers. Verdict: a partial backend is viable; a full swap is gated on upstream landing SOCKS5, a cert-error surface and per-webview preferences.
     The harness was exercised headless as its own smoke test: it navigates to loaded pages (http, file, data), paints frames, reports url/title changes, runs page JavaScript, and observes every fetch through Servo's interception hook. One embedder gotcha recorded for the follow-up work: a WebView::load issued before the constellation registers the webview is silently dropped, so the shim queues early loads until the browsing context exists.
 
-Engine-neutral BiDi Dev Tools panel (DEVT02/DEVT03):
-    Tools → BiDi Dev Tools opens a dockable developer panel that speaks WebDriver-BiDi-shaped commands to the engine: a Console tab (log/exception event stream + a JavaScript eval REPL), a lazy-loaded DOM tree, a Network request list (method/status/state/URL — no bodies) and a Storage tab (cookies + localStorage). The client lives in the rustcore crate behind a C ABI — Qt 6.12's bundled Chromium ships no BiDi mapper and no DevToolsPipeHandler, so the crate translates the BiDi surface onto CDP over Chromium's remote-debugging websocket; a future Servo backend can answer the same ABI natively without touching the panel.
+Engine-neutral BiDi Dev Tools panel (DEVT02/DEVT03, restyled DEVT06):
+    Tools → BiDi Dev Tools opens a dockable developer panel that speaks WebDriver-BiDi-shaped commands to the engine: a Console tab (log/exception event stream + a JavaScript eval REPL), a lazy-loaded DOM tree, a Chrome-DevTools-style Network tab (filter field + Invert, Preserve log, Disable cache, Clear, type-filter chips, and a sortable Name/Status/Type/Initiator/Size/Time/Waterfall table with red-tinted failed rows — no bodies) and a Storage tab (cookies + localStorage). The client lives in the rustcore crate behind a C ABI — Qt 6.12's bundled Chromium ships no BiDi mapper and no DevToolsPipeHandler, so the crate translates the BiDi surface onto CDP over Chromium's remote-debugging websocket; a future Servo backend can answer the same ABI natively without touching the panel.
     Channel security: --remote-debugging-pipe is unsupported by QtWebEngine, so the endpoint is a loopback-only TCP listener on a random per-session port gated by --remote-allow-origins with an unguessable per-run Origin token (foreign-Origin handshakes are rejected, and the browser target's ws path carries a GUID). The channel is never armed in Tor windows, honors devtools/bidiBackend=0, and leaves an operator-set QTWEBENGINE_REMOTE_DEBUGGING untouched; builds without CONFIG+=rustcore hide the menu entry entirely. The classic Chromium DevTools window (Tools → Web Inspector) is unchanged.
 
 Engine-adapter groundwork (ENG01/ENG04, in progress):

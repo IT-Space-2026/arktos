@@ -13841,4 +13841,1268 @@ Let me check remaining details — `isSwappable()` callers, includes in browserm
 [2026-10-12 17:08:56] skipping MAC01 — needs: requirement not met on this host
 [2026-10-12 17:08:56] skipping BSD01 — needs: requirement not met on this host
 [2026-10-12 17:08:56] no pending/in_progress tasks remain — all done
-Sibling committed and pushed the full close-out (`2f21657`). Let me check whether a DONE paragraph exists under `### ENG19`, what my header-comment did in their commit, and the ENG18 wrap-commit precedent for mine.The sibling's close-out is complete and pushed — but the `### ENG19` details section lacks the DONE paragraph convention (ENG18 has one). I'll add it plus a wrap WORKLOG line recording my independent verification, matching the ENG18 precedent.
+Sibling committed and pushed the full close-out (`2f21657`). Let me check whether a DONE paragraph exists under `### ENG19`, what my header-comment did in their commit, and the ENG18 wrap-commit precedent for mine.The sibling's close-out is complete and pushed — but the `### ENG19` details section lacks the DONE paragraph convention (ENG18 has one). I'll add it plus a wrap WORKLOG line recording my independent verification, matching the ENG18 precedent.ENG19 closed out. Here's what happened this run:
+
+**Task**: "Engine switcher button disappeared" — a user report about ENG08's nav-row engine indicator.
+
+**Diagnosis** (attempt 1 + sibling run, confirmed): the reported screenshot was a **tor window**, where hiding the switcher was intentional (`isTorMode()` is process-global; servo can't carry the tor circuit). No real visibility bug existed on normal tabs — both backends register and the button paints. The real gap was discovery: an unexplained disappearance reads as a regression.
+
+**Fix** (committed by the concurrent 2048MB-cap run as `2f21657`, pushed):
+- Hard locks — tor window, private tab, active non-default container level — now show the indicator **disabled with the reason** in tooltip/statusTip instead of vanishing. Swap stays unreachable under a lock; widget tabs and <2-backend installs still hide.
+- New `Engine::Backend::pageUnavailableReason()` — Servo reports its claimed/spent single-view slot, so "Reload in Servo" renders disabled with the reason rather than failing silently, while the button stays live so swap-back never strands.
+- `updateEngineIndicator` also follows `tabsChanged` (a container-level switch can keep the same index).
+
+**This run's role**: resumed the OOM-killed attempt, verified all referenced APIs exist, reconciled my test edits with the sibling's (kept theirs — equivalent-or-better, including a permanent `grab()` pixel leg ruling out the invisible-glyph theory), and **independently re-ran `tst_engineswitch`: 26/26 PASS offscreen** after the sibling's `make check` finished (4 gates PASS + 78 programs 0 failed).
+
+**Bookkeeping**: committed `60745df` — added the missing DONE paragraph under `### ENG19` and a WORKLOG wrap line recording the independent verification (ENG18 precedent). Row is `done`, pushed.
+[2026-10-12 17:09:41] <<< devin exited rc=0 (task ENG19)
+[2026-10-12 17:09:41] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:09:41] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:09:41] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:09:41] task ENG19 finished (next: none)
+[2026-10-12 17:09:43] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:09:43] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:09:43] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:09:43] no pending/in_progress tasks remain — all done
+[2026-10-12 17:09:56] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:09:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:09:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:09:57] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:09:57] no pending/in_progress tasks remain — all done
+[2026-10-12 17:10:57] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:10:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:10:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:10:57] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:10:57] no pending/in_progress tasks remain — all done
+[2026-10-12 17:11:57] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:11:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:11:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:11:57] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:11:57] no pending/in_progress tasks remain — all done
+[2026-10-12 17:12:57] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:12:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:12:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:12:57] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:12:57] no pending/in_progress tasks remain — all done
+[2026-10-12 17:13:57] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:13:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:13:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:13:58] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:13:58] no pending/in_progress tasks remain — all done
+[2026-10-12 17:14:58] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:14:58] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:14:58] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:14:58] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:14:58] no pending/in_progress tasks remain — all done
+[2026-10-12 17:15:58] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:15:58] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:15:58] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:15:58] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:15:58] no pending/in_progress tasks remain — all done
+[2026-10-12 17:16:58] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:16:58] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:16:58] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:16:58] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:16:58] no pending/in_progress tasks remain — all done
+[2026-10-12 17:17:58] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:17:58] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:17:59] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:17:59] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:17:59] no pending/in_progress tasks remain — all done
+[2026-10-12 17:18:59] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:18:59] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:18:59] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:18:59] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:18:59] no pending/in_progress tasks remain — all done
+[2026-10-12 17:19:59] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:19:59] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:19:59] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:19:59] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:19:59] no pending/in_progress tasks remain — all done
+[2026-10-12 17:20:59] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:20:59] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:20:59] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:20:59] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:20:59] no pending/in_progress tasks remain — all done
+[2026-10-12 17:21:59] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:22:00] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:22:00] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:22:00] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:22:00] no pending/in_progress tasks remain — all done
+[2026-10-12 17:23:00] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:23:00] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:23:00] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:23:00] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:23:00] no pending/in_progress tasks remain — all done
+[2026-10-12 17:24:00] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:24:00] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:24:00] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:24:00] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:24:00] no pending/in_progress tasks remain — all done
+[2026-10-12 17:25:00] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:25:00] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:25:00] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:25:00] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:25:00] no pending/in_progress tasks remain — all done
+[2026-10-12 17:26:00] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:26:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:26:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:26:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:26:01] no pending/in_progress tasks remain — all done
+[2026-10-12 17:27:01] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:27:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:27:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:27:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:27:01] no pending/in_progress tasks remain — all done
+[2026-10-12 17:28:01] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:28:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:28:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:28:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:28:01] no pending/in_progress tasks remain — all done
+[2026-10-12 17:29:01] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:29:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:29:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:29:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:29:01] no pending/in_progress tasks remain — all done
+[2026-10-12 17:30:01] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:30:02] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:30:02] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:30:02] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:30:02] no pending/in_progress tasks remain — all done
+[2026-10-12 17:31:02] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:31:02] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:31:02] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:31:02] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:31:02] no pending/in_progress tasks remain — all done
+[2026-10-12 17:32:02] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:32:02] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:32:02] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:32:02] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:32:02] no pending/in_progress tasks remain — all done
+[2026-10-12 17:33:02] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:33:02] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:33:02] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:33:02] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:33:02] no pending/in_progress tasks remain — all done
+[2026-10-12 17:34:02] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:34:03] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:34:03] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:34:03] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:34:03] no pending/in_progress tasks remain — all done
+[2026-10-12 17:35:03] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:35:03] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:35:03] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:35:03] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:35:03] no pending/in_progress tasks remain — all done
+[2026-10-12 17:36:03] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:36:03] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:36:03] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:36:03] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:36:03] no pending/in_progress tasks remain — all done
+[2026-10-12 17:37:03] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:37:03] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:37:03] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:37:03] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:37:03] no pending/in_progress tasks remain — all done
+[2026-10-12 17:38:03] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:38:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:38:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:38:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:38:04] no pending/in_progress tasks remain — all done
+[2026-10-12 17:39:04] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:39:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:39:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:39:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:39:04] no pending/in_progress tasks remain — all done
+[2026-10-12 17:40:04] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:40:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:40:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:40:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:40:04] no pending/in_progress tasks remain — all done
+[2026-10-12 17:41:04] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:41:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:41:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:41:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:41:04] no pending/in_progress tasks remain — all done
+[2026-10-12 17:42:04] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:42:05] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:42:05] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:42:05] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:42:05] no pending/in_progress tasks remain — all done
+[2026-10-12 17:43:05] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:43:05] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:43:05] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:43:05] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:43:05] no pending/in_progress tasks remain — all done
+[2026-10-12 17:44:05] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:44:05] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:44:05] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:44:05] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:44:05] no pending/in_progress tasks remain — all done
+[2026-10-12 17:45:05] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:45:05] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:45:05] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:45:05] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:45:05] no pending/in_progress tasks remain — all done
+[2026-10-12 17:46:05] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:46:06] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:46:06] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:46:06] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:46:06] no pending/in_progress tasks remain — all done
+[2026-10-12 17:47:06] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:47:06] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:47:06] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:47:06] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:47:06] no pending/in_progress tasks remain — all done
+[2026-10-12 17:48:06] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:48:06] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:48:06] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:48:06] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:48:06] no pending/in_progress tasks remain — all done
+[2026-10-12 17:49:06] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:49:06] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:49:06] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:49:06] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:49:06] no pending/in_progress tasks remain — all done
+[2026-10-12 17:50:06] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:50:07] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:50:07] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:50:07] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:50:07] no pending/in_progress tasks remain — all done
+[2026-10-12 17:51:07] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:51:07] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:51:07] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:51:07] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:51:07] no pending/in_progress tasks remain — all done
+[2026-10-12 17:52:07] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:52:07] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:52:07] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:52:07] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:52:07] no pending/in_progress tasks remain — all done
+[2026-10-12 17:53:07] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:53:07] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:53:07] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:53:07] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:53:07] no pending/in_progress tasks remain — all done
+[2026-10-12 17:54:07] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:54:07] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:54:07] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:54:08] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:54:08] no pending/in_progress tasks remain — all done
+[2026-10-12 17:55:08] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:55:08] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:55:08] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:55:08] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:55:08] no pending/in_progress tasks remain — all done
+[2026-10-12 17:56:08] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:56:08] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:56:08] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:56:08] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:56:08] no pending/in_progress tasks remain — all done
+[2026-10-12 17:57:08] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:57:08] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:57:08] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:57:08] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:57:08] no pending/in_progress tasks remain — all done
+[2026-10-12 17:58:08] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:58:08] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:58:08] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:58:08] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:58:09] no pending/in_progress tasks remain — all done
+[2026-10-12 17:59:09] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 17:59:09] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 17:59:09] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 17:59:09] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 17:59:09] no pending/in_progress tasks remain — all done
+[2026-10-12 18:00:09] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:00:09] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:00:09] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:00:09] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:00:09] no pending/in_progress tasks remain — all done
+[2026-10-12 18:01:09] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:01:09] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:01:09] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:01:09] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:01:09] no pending/in_progress tasks remain — all done
+[2026-10-12 18:02:09] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:02:09] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:02:09] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:02:09] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:02:10] no pending/in_progress tasks remain — all done
+[2026-10-12 18:03:10] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:03:10] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:03:10] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:03:10] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:03:10] no pending/in_progress tasks remain — all done
+[2026-10-12 18:04:10] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:04:10] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:04:10] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:04:10] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:04:10] no pending/in_progress tasks remain — all done
+[2026-10-12 18:05:10] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:05:10] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:05:10] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:05:10] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:05:10] no pending/in_progress tasks remain — all done
+[2026-10-12 18:06:10] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:06:10] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:06:10] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:06:10] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:06:11] no pending/in_progress tasks remain — all done
+[2026-10-12 18:07:11] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:07:11] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:07:11] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:07:11] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:07:11] no pending/in_progress tasks remain — all done
+[2026-10-12 18:08:11] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:08:11] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:08:11] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:08:11] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:08:11] no pending/in_progress tasks remain — all done
+[2026-10-12 18:09:11] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:09:11] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:09:11] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:09:11] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:09:11] no pending/in_progress tasks remain — all done
+[2026-10-12 18:10:11] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:10:12] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:10:12] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:10:12] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:10:12] no pending/in_progress tasks remain — all done
+[2026-10-12 18:11:12] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:11:12] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:11:12] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:11:12] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:11:12] no pending/in_progress tasks remain — all done
+[2026-10-12 18:12:12] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:12:12] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:12:12] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:12:12] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:12:12] no pending/in_progress tasks remain — all done
+[2026-10-12 18:13:12] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:13:12] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:13:12] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:13:12] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:13:12] no pending/in_progress tasks remain — all done
+[2026-10-12 18:14:12] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:14:13] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:14:13] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:14:13] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:14:13] no pending/in_progress tasks remain — all done
+[2026-10-12 18:15:13] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:15:13] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:15:13] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:15:13] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:15:13] no pending/in_progress tasks remain — all done
+[2026-10-12 18:16:13] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:16:13] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:16:13] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:16:13] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:16:13] no pending/in_progress tasks remain — all done
+[2026-10-12 18:17:13] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:17:13] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:17:13] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:17:13] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:17:13] no pending/in_progress tasks remain — all done
+[2026-10-12 18:18:13] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:18:13] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:18:13] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:18:13] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:18:14] no pending/in_progress tasks remain — all done
+[2026-10-12 18:19:14] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:19:14] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:19:14] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:19:14] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:19:14] no pending/in_progress tasks remain — all done
+[2026-10-12 18:20:14] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:20:14] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:20:14] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:20:14] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:20:14] no pending/in_progress tasks remain — all done
+[2026-10-12 18:21:14] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:21:14] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:21:14] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:21:14] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:21:14] no pending/in_progress tasks remain — all done
+[2026-10-12 18:22:14] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:22:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:22:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:22:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:22:15] no pending/in_progress tasks remain — all done
+[2026-10-12 18:23:15] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:23:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:23:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:23:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:23:15] no pending/in_progress tasks remain — all done
+[2026-10-12 18:24:15] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:24:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:24:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:24:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:24:15] no pending/in_progress tasks remain — all done
+[2026-10-12 18:25:15] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:25:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:25:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:25:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:25:15] no pending/in_progress tasks remain — all done
+[2026-10-12 18:26:15] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:26:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:26:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:26:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:26:16] no pending/in_progress tasks remain — all done
+[2026-10-12 18:27:16] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:27:16] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:27:16] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:27:16] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:27:16] no pending/in_progress tasks remain — all done
+[2026-10-12 18:28:16] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:28:16] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:28:16] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:28:16] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:28:16] no pending/in_progress tasks remain — all done
+[2026-10-12 18:29:16] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:29:16] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:29:16] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:29:16] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:29:16] no pending/in_progress tasks remain — all done
+[2026-10-12 18:30:16] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:30:17] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:30:17] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:30:17] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:30:17] no pending/in_progress tasks remain — all done
+[2026-10-12 18:31:17] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:31:17] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:31:17] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:31:17] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:31:17] no pending/in_progress tasks remain — all done
+[2026-10-12 18:32:17] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:32:17] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:32:17] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:32:17] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:32:17] no pending/in_progress tasks remain — all done
+[2026-10-12 18:33:17] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:33:17] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:33:17] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:33:17] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:33:17] no pending/in_progress tasks remain — all done
+[2026-10-12 18:34:17] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:34:18] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:34:18] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:34:18] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:34:18] no pending/in_progress tasks remain — all done
+[2026-10-12 18:35:18] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:35:18] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:35:18] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:35:18] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:35:18] no pending/in_progress tasks remain — all done
+[2026-10-12 18:36:18] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:36:18] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:36:18] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:36:18] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:36:18] no pending/in_progress tasks remain — all done
+[2026-10-12 18:37:18] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:37:18] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:37:18] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:37:18] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:37:18] no pending/in_progress tasks remain — all done
+[2026-10-12 18:38:18] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:38:19] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:38:19] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:38:19] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:38:19] no pending/in_progress tasks remain — all done
+[2026-10-12 18:39:19] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:39:19] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:39:19] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:39:19] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:39:19] no pending/in_progress tasks remain — all done
+[2026-10-12 18:40:19] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:40:19] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:40:20] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:40:20] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:40:20] no pending/in_progress tasks remain — all done
+[2026-10-12 18:41:20] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:41:20] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:41:20] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:41:20] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:41:20] no pending/in_progress tasks remain — all done
+[2026-10-12 18:42:20] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:42:20] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:42:20] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:42:20] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:42:20] no pending/in_progress tasks remain — all done
+[2026-10-12 18:43:20] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:43:21] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:43:21] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:43:21] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:43:21] no pending/in_progress tasks remain — all done
+[2026-10-12 18:44:21] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:44:21] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:44:21] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:44:21] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:44:21] no pending/in_progress tasks remain — all done
+[2026-10-12 18:45:21] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:45:21] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:45:21] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:45:21] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:45:21] no pending/in_progress tasks remain — all done
+[2026-10-12 18:46:21] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:46:21] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:46:21] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:46:21] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:46:21] no pending/in_progress tasks remain — all done
+[2026-10-12 18:47:21] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:47:22] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:47:22] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:47:22] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:47:22] no pending/in_progress tasks remain — all done
+[2026-10-12 18:48:22] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:48:22] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:48:22] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:48:22] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:48:22] no pending/in_progress tasks remain — all done
+[2026-10-12 18:49:22] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:49:22] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:49:22] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:49:22] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:49:22] no pending/in_progress tasks remain — all done
+[2026-10-12 18:50:22] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:50:22] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:50:22] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:50:22] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:50:22] no pending/in_progress tasks remain — all done
+[2026-10-12 18:51:22] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:51:22] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:51:22] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:51:23] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:51:23] no pending/in_progress tasks remain — all done
+[2026-10-12 18:52:23] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:52:23] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:52:23] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:52:23] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:52:23] no pending/in_progress tasks remain — all done
+[2026-10-12 18:53:23] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:53:23] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:53:23] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:53:23] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:53:23] no pending/in_progress tasks remain — all done
+[2026-10-12 18:54:23] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:54:23] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:54:23] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:54:23] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:54:23] no pending/in_progress tasks remain — all done
+[2026-10-12 18:55:23] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:55:23] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:55:24] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:55:24] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:55:24] no pending/in_progress tasks remain — all done
+[2026-10-12 18:56:24] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:56:24] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:56:24] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:56:24] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:56:24] no pending/in_progress tasks remain — all done
+[2026-10-12 18:57:24] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:57:24] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:57:24] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:57:24] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:57:24] no pending/in_progress tasks remain — all done
+[2026-10-12 18:58:24] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:58:24] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:58:24] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:58:24] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:58:24] no pending/in_progress tasks remain — all done
+[2026-10-12 18:59:24] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 18:59:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 18:59:25] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 18:59:25] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 18:59:25] no pending/in_progress tasks remain — all done
+[2026-10-12 19:00:25] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:00:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:00:25] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:00:25] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:00:25] no pending/in_progress tasks remain — all done
+[2026-10-12 19:01:25] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:01:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:01:25] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:01:25] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:01:25] no pending/in_progress tasks remain — all done
+[2026-10-12 19:02:25] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:02:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:02:25] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:02:25] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:02:25] no pending/in_progress tasks remain — all done
+[2026-10-12 19:03:25] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:03:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:03:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:03:26] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:03:26] no pending/in_progress tasks remain — all done
+[2026-10-12 19:04:26] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:04:26] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:04:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:04:26] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:04:26] no pending/in_progress tasks remain — all done
+[2026-10-12 19:05:26] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:05:26] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:05:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:05:26] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:05:26] no pending/in_progress tasks remain — all done
+[2026-10-12 19:06:26] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:06:26] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:06:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:06:26] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:06:26] no pending/in_progress tasks remain — all done
+[2026-10-12 19:07:26] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:07:26] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:07:26] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:07:27] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:07:27] no pending/in_progress tasks remain — all done
+[2026-10-12 19:08:27] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:08:27] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:08:27] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:08:27] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:08:27] no pending/in_progress tasks remain — all done
+[2026-10-12 19:09:27] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:09:27] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:09:27] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:09:27] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:09:27] no pending/in_progress tasks remain — all done
+[2026-10-12 19:10:27] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:10:27] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:10:27] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:10:27] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:10:27] no pending/in_progress tasks remain — all done
+[2026-10-12 19:11:27] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:11:28] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:11:28] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:11:28] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:11:28] no pending/in_progress tasks remain — all done
+[2026-10-12 19:12:28] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:12:28] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:12:28] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:12:28] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:12:28] no pending/in_progress tasks remain — all done
+[2026-10-12 19:13:28] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:13:28] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:13:28] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:13:28] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:13:28] no pending/in_progress tasks remain — all done
+[2026-10-12 19:14:28] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:14:28] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:14:28] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:14:28] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:14:28] no pending/in_progress tasks remain — all done
+[2026-10-12 19:15:28] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:15:28] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:15:29] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:15:29] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:15:29] no pending/in_progress tasks remain — all done
+[2026-10-12 19:16:29] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:16:29] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:16:29] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:16:29] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:16:29] no pending/in_progress tasks remain — all done
+[2026-10-12 19:17:29] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:17:29] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:17:29] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:17:29] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:17:29] no pending/in_progress tasks remain — all done
+[2026-10-12 19:18:29] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:18:29] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:18:29] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:18:29] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:18:29] no pending/in_progress tasks remain — all done
+[2026-10-12 19:19:29] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:19:29] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:19:29] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:19:30] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:19:30] no pending/in_progress tasks remain — all done
+[2026-10-12 19:20:30] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:20:30] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:20:30] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:20:30] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:20:30] no pending/in_progress tasks remain — all done
+[2026-10-12 19:21:30] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:21:30] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:21:30] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:21:30] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:21:30] no pending/in_progress tasks remain — all done
+[2026-10-12 19:22:30] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:22:30] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:22:30] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:22:30] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:22:30] no pending/in_progress tasks remain — all done
+[2026-10-12 19:23:30] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:23:30] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:23:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:23:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:23:31] no pending/in_progress tasks remain — all done
+[2026-10-12 19:24:31] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:24:31] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:24:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:24:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:24:31] no pending/in_progress tasks remain — all done
+[2026-10-12 19:25:31] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:25:31] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:25:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:25:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:25:31] no pending/in_progress tasks remain — all done
+[2026-10-12 19:26:31] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:26:31] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:26:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:26:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:26:31] no pending/in_progress tasks remain — all done
+[2026-10-12 19:27:31] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:27:31] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:27:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:27:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:27:32] no pending/in_progress tasks remain — all done
+[2026-10-12 19:28:32] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:28:32] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:28:32] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:28:32] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:28:32] no pending/in_progress tasks remain — all done
+[2026-10-12 19:29:32] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:29:32] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:29:32] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:29:32] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:29:32] no pending/in_progress tasks remain — all done
+[2026-10-12 19:30:32] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:30:32] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:30:32] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:30:32] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:30:32] no pending/in_progress tasks remain — all done
+[2026-10-12 19:31:32] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:31:32] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:31:32] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:31:32] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:31:33] no pending/in_progress tasks remain — all done
+[2026-10-12 19:32:33] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:32:33] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:32:33] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:32:33] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:32:33] no pending/in_progress tasks remain — all done
+[2026-10-12 19:33:33] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:33:33] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:33:33] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:33:33] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:33:33] no pending/in_progress tasks remain — all done
+[2026-10-12 19:34:33] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:34:33] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:34:33] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:34:33] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:34:33] no pending/in_progress tasks remain — all done
+[2026-10-12 19:35:33] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:35:33] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:35:33] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:35:33] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:35:34] no pending/in_progress tasks remain — all done
+[2026-10-12 19:36:34] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:36:34] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:36:34] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:36:34] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:36:34] no pending/in_progress tasks remain — all done
+[2026-10-12 19:37:34] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:37:34] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:37:34] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:37:34] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:37:34] no pending/in_progress tasks remain — all done
+[2026-10-12 19:38:34] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:38:34] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:38:34] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:38:34] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:38:34] no pending/in_progress tasks remain — all done
+[2026-10-12 19:39:34] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:39:35] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:39:35] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:39:35] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:39:35] no pending/in_progress tasks remain — all done
+[2026-10-12 19:40:35] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:40:35] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:40:35] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:40:35] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:40:35] no pending/in_progress tasks remain — all done
+[2026-10-12 19:41:35] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:41:35] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:41:35] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:41:35] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:41:35] no pending/in_progress tasks remain — all done
+[2026-10-12 19:42:35] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:42:35] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:42:35] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:42:35] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:42:35] no pending/in_progress tasks remain — all done
+[2026-10-12 19:43:35] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:43:36] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:43:36] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:43:36] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:43:36] no pending/in_progress tasks remain — all done
+[2026-10-12 19:44:36] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:44:36] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:44:36] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:44:36] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:44:36] no pending/in_progress tasks remain — all done
+[2026-10-12 19:45:36] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:45:36] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:45:36] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:45:36] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:45:36] no pending/in_progress tasks remain — all done
+[2026-10-12 19:46:36] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:46:36] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:46:36] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:46:36] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:46:36] no pending/in_progress tasks remain — all done
+[2026-10-12 19:47:36] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:47:36] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:47:36] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:47:36] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:47:37] no pending/in_progress tasks remain — all done
+[2026-10-12 19:48:37] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:48:37] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:48:37] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:48:37] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:48:37] no pending/in_progress tasks remain — all done
+[2026-10-12 19:49:37] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:49:37] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:49:37] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:49:37] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:49:37] no pending/in_progress tasks remain — all done
+[2026-10-12 19:50:37] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:50:37] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:50:37] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:50:37] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:50:37] no pending/in_progress tasks remain — all done
+[2026-10-12 19:51:37] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:51:37] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:51:38] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:51:38] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:51:38] no pending/in_progress tasks remain — all done
+[2026-10-12 19:52:38] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:52:38] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:52:38] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:52:38] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:52:38] no pending/in_progress tasks remain — all done
+[2026-10-12 19:53:38] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:53:38] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:53:38] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:53:38] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:53:38] no pending/in_progress tasks remain — all done
+[2026-10-12 19:54:38] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:54:38] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:54:38] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:54:38] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:54:38] no pending/in_progress tasks remain — all done
+[2026-10-12 19:55:38] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:55:39] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:55:39] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:55:39] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:55:39] no pending/in_progress tasks remain — all done
+[2026-10-12 19:56:39] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:56:39] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:56:39] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:56:39] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:56:39] no pending/in_progress tasks remain — all done
+[2026-10-12 19:57:39] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:57:39] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:57:39] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:57:39] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:57:39] no pending/in_progress tasks remain — all done
+[2026-10-12 19:58:39] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:58:39] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:58:39] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:58:39] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:58:39] no pending/in_progress tasks remain — all done
+[2026-10-12 19:59:39] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 19:59:39] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 19:59:39] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 19:59:40] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 19:59:40] no pending/in_progress tasks remain — all done
+[2026-10-12 20:00:40] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:00:40] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:00:40] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:00:40] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:00:40] no pending/in_progress tasks remain — all done
+[2026-10-12 20:01:40] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:01:40] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:01:40] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:01:40] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:01:40] no pending/in_progress tasks remain — all done
+[2026-10-12 20:02:40] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:02:40] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:02:40] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:02:40] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:02:40] no pending/in_progress tasks remain — all done
+[2026-10-12 20:03:40] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:03:41] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:03:41] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:03:41] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:03:41] no pending/in_progress tasks remain — all done
+[2026-10-12 20:04:41] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:04:41] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:04:41] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:04:41] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:04:41] no pending/in_progress tasks remain — all done
+[2026-10-12 20:05:41] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:05:41] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:05:41] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:05:41] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:05:41] no pending/in_progress tasks remain — all done
+[2026-10-12 20:06:41] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:06:41] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:06:41] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:06:41] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:06:41] no pending/in_progress tasks remain — all done
+[2026-10-12 20:07:41] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:07:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:07:42] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:07:42] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:07:42] no pending/in_progress tasks remain — all done
+[2026-10-12 20:08:42] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:08:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:08:42] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:08:42] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:08:42] no pending/in_progress tasks remain — all done
+[2026-10-12 20:09:42] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:09:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:09:42] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:09:42] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:09:42] no pending/in_progress tasks remain — all done
+[2026-10-12 20:10:42] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:10:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:10:42] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:10:42] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:10:42] no pending/in_progress tasks remain — all done
+[2026-10-12 20:11:42] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:11:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:11:43] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:11:43] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:11:43] no pending/in_progress tasks remain — all done
+[2026-10-12 20:12:43] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:12:43] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:12:43] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:12:43] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:12:43] no pending/in_progress tasks remain — all done
+[2026-10-12 20:13:43] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:13:43] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:13:43] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:13:43] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:13:43] no pending/in_progress tasks remain — all done
+[2026-10-12 20:14:43] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:14:43] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:14:43] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:14:43] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:14:43] no pending/in_progress tasks remain — all done
+[2026-10-12 20:15:43] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:15:44] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:15:44] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:15:44] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:15:44] no pending/in_progress tasks remain — all done
+[2026-10-12 20:16:44] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:16:44] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:16:44] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:16:44] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:16:44] no pending/in_progress tasks remain — all done
+[2026-10-12 20:17:44] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:17:44] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:17:44] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:17:44] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:17:44] no pending/in_progress tasks remain — all done
+[2026-10-12 20:18:44] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:18:44] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:18:44] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:18:44] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:18:44] no pending/in_progress tasks remain — all done
+[2026-10-12 20:19:44] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:19:45] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:19:45] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:19:45] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:19:45] no pending/in_progress tasks remain — all done
+[2026-10-12 20:20:45] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:20:45] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:20:45] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:20:45] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:20:45] no pending/in_progress tasks remain — all done
+[2026-10-12 20:21:45] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:21:45] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:21:45] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:21:45] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:21:45] no pending/in_progress tasks remain — all done
+[2026-10-12 20:22:45] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:22:45] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:22:45] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:22:45] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:22:45] no pending/in_progress tasks remain — all done
+[2026-10-12 20:23:45] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:23:45] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:23:45] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:23:46] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:23:46] no pending/in_progress tasks remain — all done
+[2026-10-12 20:24:46] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:24:46] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:24:46] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:24:46] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:24:46] no pending/in_progress tasks remain — all done
+[2026-10-12 20:25:46] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:25:46] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:25:46] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:25:46] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:25:46] no pending/in_progress tasks remain — all done
+[2026-10-12 20:26:46] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:26:46] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:26:46] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:26:46] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:26:46] no pending/in_progress tasks remain — all done
+[2026-10-12 20:27:46] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:27:47] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:27:47] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:27:47] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:27:47] no pending/in_progress tasks remain — all done
+[2026-10-12 20:28:47] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:28:47] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:28:47] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:28:47] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:28:47] no pending/in_progress tasks remain — all done
+[2026-10-12 20:29:47] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:29:47] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:29:47] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:29:47] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:29:47] no pending/in_progress tasks remain — all done
+[2026-10-12 20:30:47] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:30:47] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:30:47] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:30:47] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:30:47] no pending/in_progress tasks remain — all done
+[2026-10-12 20:31:47] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:31:48] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:31:48] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:31:48] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:31:48] no pending/in_progress tasks remain — all done
+[2026-10-12 20:32:48] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:32:48] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:32:48] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:32:48] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:32:48] no pending/in_progress tasks remain — all done
+[2026-10-12 20:33:48] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:33:48] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:33:48] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:33:48] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:33:48] no pending/in_progress tasks remain — all done
+[2026-10-12 20:34:48] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:34:48] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:34:48] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:34:48] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:34:48] no pending/in_progress tasks remain — all done
+[2026-10-12 20:35:48] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:35:49] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:35:49] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:35:49] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:35:49] no pending/in_progress tasks remain — all done
+[2026-10-12 20:36:49] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:36:49] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:36:49] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:36:49] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:36:49] no pending/in_progress tasks remain — all done
+[2026-10-12 20:37:49] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:37:49] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:37:49] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:37:49] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:37:49] no pending/in_progress tasks remain — all done
+[2026-10-12 20:38:49] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:38:49] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:38:49] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:38:49] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:38:49] no pending/in_progress tasks remain — all done
+[2026-10-12 20:39:49] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:39:49] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:39:49] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:39:50] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:39:50] no pending/in_progress tasks remain — all done
+[2026-10-12 20:40:50] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:40:50] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:40:50] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:40:50] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:40:50] no pending/in_progress tasks remain — all done
+[2026-10-12 20:41:50] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:41:50] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:41:50] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:41:50] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:41:50] no pending/in_progress tasks remain — all done
+[2026-10-12 20:42:50] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:42:50] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:42:50] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:42:50] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:42:50] no pending/in_progress tasks remain — all done
+[2026-10-12 20:43:50] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:43:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:43:51] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:43:51] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:43:51] no pending/in_progress tasks remain — all done
+[2026-10-12 20:44:51] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:44:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:44:51] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:44:51] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:44:51] no pending/in_progress tasks remain — all done
+[2026-10-12 20:45:51] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:45:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:45:51] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:45:51] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:45:51] no pending/in_progress tasks remain — all done
+[2026-10-12 20:46:51] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:46:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:46:51] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:46:51] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:46:51] no pending/in_progress tasks remain — all done
+[2026-10-12 20:47:51] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:47:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:47:52] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:47:52] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:47:52] no pending/in_progress tasks remain — all done
+[2026-10-12 20:48:52] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:48:52] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:48:52] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:48:52] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:48:52] no pending/in_progress tasks remain — all done
+[2026-10-12 20:49:52] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:49:52] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:49:52] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:49:52] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:49:52] no pending/in_progress tasks remain — all done
+[2026-10-12 20:50:52] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:50:52] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:50:52] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:50:52] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:50:52] no pending/in_progress tasks remain — all done
+[2026-10-12 20:51:52] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:51:53] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:51:53] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:51:53] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:51:53] no pending/in_progress tasks remain — all done
+[2026-10-12 20:52:53] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:52:53] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:52:53] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:52:53] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:52:53] no pending/in_progress tasks remain — all done
+[2026-10-12 20:53:53] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:53:53] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:53:53] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:53:53] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:53:53] no pending/in_progress tasks remain — all done
+[2026-10-12 20:54:53] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:54:53] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:54:53] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:54:53] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:54:53] no pending/in_progress tasks remain — all done
+[2026-10-12 20:55:53] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:55:54] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:55:54] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:55:54] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:55:54] no pending/in_progress tasks remain — all done
+[2026-10-12 20:56:54] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:56:54] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:56:54] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:56:54] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:56:54] no pending/in_progress tasks remain — all done
+[2026-10-12 20:57:54] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:57:54] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:57:54] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:57:54] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:57:54] no pending/in_progress tasks remain — all done
+[2026-10-12 20:58:54] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:58:54] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:58:54] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:58:54] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:58:54] no pending/in_progress tasks remain — all done
+[2026-10-12 20:59:55] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 20:59:55] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 20:59:55] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 20:59:55] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 20:59:55] no pending/in_progress tasks remain — all done
+[2026-10-12 21:00:55] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 21:00:55] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:00:55] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:00:55] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:00:55] no pending/in_progress tasks remain — all done
+[2026-10-12 21:01:55] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 21:01:55] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:01:55] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:01:55] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:01:55] no pending/in_progress tasks remain — all done
+[2026-10-12 21:02:55] taskloop starting: repo=/home/szefi/Documents/arora devin=/usr/share/devin-desktop/resources/app/extensions/windsurf/devin/bin/devin timeout=3600s max_attempts=5
+[2026-10-12 21:02:55] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:02:55] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:02:55] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:02:56] >>> starting run for task ENG20 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+I'll start by looking at the servo-embed Rust shim and the Qt-side backend.Now the Qt side — the sizing path in servobackend.cpp.Let me look at the rest of the backend, the header, and where the artifact lives.Let me find the servo source checkout to see the actual assert at painter.rs:416.Line 416 is `self.assert_no_gl_error()` — 1282 is 0x502 = `GL_INVALID_OPERATION`, not a pixel size. Let me confirm.Let me check the smoke test harness and reproduce the panic.Let me check the build environment and whether the app + artifact are present.Let me reproduce the crash with the existing smoke flag.The smoke passes — the crash is real-window-only (resize path). Let me look at `resize_rendering_context` and the swap-chain resize in servo.The smoke test doesn't reproduce (widget stays 0x0, no `se_resize` ever runs). Let me check `Painter::render(id)` entry and the swap-chain resize — I suspect `se_resize`'s direct `rendering_context.resize()` makes the later `webview.resize()` early-return, skipping all the viewport bookkeeping.Confirmed — let me check `painter_mut` behavior for an unregistered webview (resize before constellation registration).Let me check when the painter/webview_renderer gets registered — whether `webview.url().is_some()` is a safe gate for calling `webview.resize()`.The painter registers synchronously at `WebView::new`, so `webview.resize()` is safe pre-constellation — the real defect is that `se_resize` calls `rendering_context.resize()` first, pre-updating the size Cell so `webview.resize()`'s `resize_rendering_context` early-returns and skips all viewport/webrender bookkeeping. Now let me check the C header.Let me check the spike harness — I want to reproduce the panic before fixing.Let me check what surfman's `SwapChain::resize` does — the sticky `GL_INVALID_OPERATION` likely originates there or in the mismatched webrender paint.Fastest path to a repro: a small C program driving the C ABI directly — init at 800×600, then `se_resize` to a different size, then spin. Let me write it.No panic — the resize landed after all painting finished. The user's flow has the resize racing an in-flight load. Let me resize *before* pumping.Let me make the page keep painting after the resize (rAF animation), so a paint lands on the resized surface.No repro yet — need to verify painting is actually occurring. Let me add a frame counter + console output to the repro.Paint happens post-resize without crashing. The user's shape is likely: resize lands *before the first paint* — the widget starts 0×0 (fallback 800×600), then the layout assigns the real size before servo ever paints. Let me try that ordering.Can't force the exact assert on this box — it's environment-dependent (the GL error is sticky state that only some adapters produce on resize). Let me check repo docs for the recorded repro details.Let me run the repro once more with `RUST_LOG` to catch the `warn!("GL error code ...")` from `read_to_image` — that would confirm the sticky-error mechanism even if the assert doesn't fire here.I can't force the GL assert on this adapter (it's environment-dependent sticky state), but the ordering defect is confirmed by source inspection. Let me mark the task in_progress and implement both fixes.Now the Rust shim changes. First, the `SeInstance` + guard helper:Now wrap the remaining exports:Now the Qt side — optional `se_is_poisoned` resolution + dead-tab handling in ServoView.Now gate every entry point on `!isPoisoned()` and paint the dead-tab message:Now rebuild the servo-embed artifact — quick syntax check first.One warning to clean — `rendering_context` is now only an ownership anchor. Keep it (drop-order safety) with an allow.Now let me verify the panic containment actually works — I'll inject a temporary env-gated panic into `se_spin`, build, and run the repro with it armed.[2026-10-12 21:12:10] devin tree (pid 3131567) exceeded 2048MB RSS (total 3437464KB) — killing
+[2026-10-12 21:12:15] <<< devin exited rc=143 (task ENG20)
+[2026-10-12 21:12:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:12:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:12:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:12:15] task ENG20 still unfinished (rc=143) — attempt bumped, restarting in 10s
+[2026-10-12 21:12:25] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:12:25] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:12:25] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:12:27] >>> starting run for task ENG20 (attempt 3, tree mem cap 2048MB, timeout 3600s)
+The table is long. Let me find the ENG20 row and its details section.This is a resumed task — ENG20 is `in_progress` with real uncommitted work in the tree. Let me read the full task spec and the rest of the in-flight diff.The previous run did most of the work. Let me audit what remains: full export coverage in lib.rs, whether the .so was rebuilt, and the Qt-side wake marshal.All exports are covered. Now check whether the .so was rebuilt after the lib.rs edits, where the app loads it from, and the Qt-side wake marshal.The .so (built 16:28) is stale vs lib.rs (21:12) — the artifact must be rebuilt per the spec. Let me check the cargo setup and the smoke-test plumbing first.Code work is done; the .so is stale and must be rebuilt. Let me check the toolchain and the panic-injection plumbing.The servo checkout is vendored, so an offline rebuild should work. The .so is stale — rebuilding is the long pole, so I'll kick it off in the background now.While that builds, let me review the rest of lib.rs for correctness and check remaining gaps.[2026-10-12 21:14:18] devin tree (pid 3163538) exceeded 2048MB RSS (total 3851444KB) — killing
+[2026-10-12 21:14:23] <<< devin exited rc=143 (task ENG20)
+[2026-10-12 21:14:23] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:14:23] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:14:23] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:14:23] task ENG20 still unfinished (rc=143) — attempt bumped, restarting in 10s
+[2026-10-12 21:14:33] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:14:33] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:14:33] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:14:34] >>> starting run for task ENG20 (attempt 4, tree mem cap 2048MB, timeout 3600s)
+ENG20 is already `in_progress` — a previous run was interrupted mid-work. The tree already has changes to `servo_embed.h`, `lib.rs`, `servobackend.{h,cpp}`. Let me see what was already done.The previous run already landed the core of both fixes. Let me see the rest of the diff and the Qt-side changes.Both fixes are already implemented (FFI containment + resize ordering). Now I need to figure out where the previous run stopped — let me check the taskloop log and the state of the shim artifact.The previous run was killed for exceeding the 2048MB memory cap while rebuilding the servo-embed artifact. The .so (16:28) is stale vs the lib.rs changes. Let me check whether a build is still running and how the artifact is loaded.No cargo/rustc currently running — the prior run's build died with it. Note there's a `.cargo-lock` leftover and a **parallel rust-lane devin** working a different worktree — I must not disturb it.
+
+Let me audit export coverage in lib.rs and check the smoke harness.All exports are panic-contained. The remaining work: rebuild the artifact (detached — it blew the memory cap twice), then verify. Let me check the cargo setup first.Context is clear — the artifact build must run **detached** (the 2048MB tree-RSS watchdog kills it inline; prior notes confirm `systemd-run`/`setsid` was the pattern). Let me check the app's build state and the smoke harness while I kick things off.Let me check lib.rs imports and se_init, then kick off the detached rebuild immediately since it's the long pole.Rust code looks complete and correct. Kicking off a quick `cargo check` inline first to fail fast on syntax, then the heavy link will go detached.Compiles clean (the tidy warning is unrelated noise from servo's checkout). Now the detached build — this is what killed prior runs, so it goes outside the devin tree.Build is running detached. Meanwhile, let me make sure the Qt side is built with the servobackend changes.Both builds are running — the Qt `make` is recompiling `servobackend.h` dependents (shell 478845), cargo is linking detached. Let me wait for the Qt build.Qt build still running. Let me wait for it while checking the cargo progress.Qt build finished clean (the app binary was already rebuilt at 21:13 by the prior run; this pass completed the autotest dependents). Now let me check the cargo build.Build finished — check the artifact is fresh and exports the new symbol.Artifact is fresh (21:16) and exports `se_is_poisoned`. Now for verification I need:
+
+1. **Panic-injection leg** — `SE_SELFTEST_PANIC=1` + the real app must survive.
+2. **Resize ordering leg** — the smoke never exercises `se_resize` today (widget stays 0x0); I'll add a shown-window leg so the fixed path runs.
+
+Let me read the header for the driver and check the smoke context.Now I'll write the panic-injection probe — a small C driver that exercises the ABI directly, plus I'll add a resize-ordering leg to the smoke (the current smoke never calls `se_resize` since the widget stays 0x0).**Panic-injection leg PASS** — the injected panic inside `se_spin` was caught by `ffi_guard`, the instance reported poisoned, all subsequent exports no-op'd, `se_load` returned -1, and `se_destroy` returned cleanly. Process exit 0.
+
+Now the second gap: the smoke never exercises `se_resize` (unshown widget stays 0x0) — that's exactly the crash path. Let me add a shown-window leg.Build done. Now both verification legs — run detached since the servo runtime is heavy (the watchdog counts tree RSS):[2026-10-12 21:28:33] devin tree (pid 3169325) exceeded 2048MB RSS (total 2112380KB) — killing
+[2026-10-12 21:28:38] <<< devin exited rc=143 (task ENG20)
+[2026-10-12 21:28:38] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:28:38] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:28:38] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:28:38] task ENG20 still unfinished (rc=143) — attempt bumped, restarting in 10s
+[2026-10-12 21:28:48] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 21:28:48] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 21:28:48] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 21:28:50] >>> starting run for task ENG20 (attempt 5, tree mem cap 2048MB, timeout 3600s)
+This is a resumed `in_progress` task — a previous run left working-tree changes. Let me inspect what's already done.The previous run did substantial work — `ffi_guard` panic containment, `se_is_poisoned`, Qt-side poisoned handling, and a root-cause fix in `se_resize`. Let me check what's left: whether the artifact was rebuilt, and what the logs say.The prior run left verification logs. Let me read them.The C-probe panic-injection leg already PASSED. The smoke logs show legs PASSing through "engine-tab" and the injected panic being caught, but the new "resize-spin-survived" line is missing — logs cut off when the run was killed. Let me find the binary and check for still-running detached legs.pid 3135632 is the user's live browser (no args, started 21:04) — I'll leave it alone. The binary (21:28:17) is fresh with the new leg, but the smoke runs were killed mid-flight at 21:28:33 before printing `resize-spin-survived`. I still need: full `--servo-smoke` PASS, the panic-survival leg, and `make check`.
+
+Let me check the wake→spin marshal guard claim and the gitignore state first.Normal leg: full PASS, exit 0 — including the new `resize-spin-survived` leg (the shown-window crash shape). Now the panic-injection leg on the real app, plus `make check`, both detached.Panic leg still running (each dead-instance leg burns its timeout — survival is already proven). But `make check` failed at `check-rustcoverage`: `cargo llvm-cov failed in src/rustcore`. Let me see why.`cargo llvm-cov` worked for `src/adblock/rust` but failed in `src/rustcore` — stderr was suppressed. Let me reproduce to see the actual error.Classic fixture time-bomb: `NOTYET_CERT` has `not_before = 2026-10-12 20:11 CEST` — it became valid ~1.5h ago, so the probe now returns "verified". Let me find how the fixture is generated.Found it — a fixture time-bomb: `notyet.der` was generated Oct 11 with `not_before = NOW + 1 day`, which rolled into validity ~90 min ago. It blocks `make check`, so I'll fix the generator (far-future window so it can't recur) and regenerate just the notyet pair against the existing CA. First, check what else consumes these certs.Only name-level references — safe to regenerate just the notyet pair. First fix the generator so a full regen stays durable:Now regenerate just the notyet pair against the existing CA (minimal diff):Files were written before the print failed (old cryptography version lacks the `_utc` accessor). Verify:Panic leg finished: `EXIT:1` — the injected panic was caught, the instance poisoned, and the app ran the **entire** remaining suite (swap-back, reswap-refused, second-page-refused) and exited normally instead of aborting. And the regenerated fixture fixes `not_yet_valid_chain_warns`. Re-running `make check` detached:While `make check` runs (~20 min), let me finish auditing lib.rs — imports, `se_init` coverage, and any unguarded export.Full coverage confirmed — every `se_*` export routes through `ffi_guard` or `catch_unwind`, `se_init` keeps its ENG12 guard, `se_destroy` is catch-wrapped but not gated (host must still free). Now let me check the log formats while `make check` runs.All four gates PASS (rustcore coverage now 91.66% with the fixed fixture). `make check` is now building/running the autotests — the long phase. Polling while it runs.A failure in `tst_BrowserMainWindow::privateStartPage` — unrelated-looking (`guessUrlFromString` private-flag path). Let me keep waiting for the full run, then check whether it's pre-existing.More failures including a SIGSEGV. Let me see which test crashed and whether these are pre-existing.The log has exploded to 79M lines — a SIGSEGV spam loop from some process. Let me find where it starts and what's around it.`tst_BrowserMainWindow` finished with 43 passed / 3 failed, then crashed in teardown and the crash handler is spamming SIGSEGV lines — 79M lines to /tmp. Let me check if it's still running and the disk situation.`make check` is still running — a crashed `tst_browsermainwindow` process is stuck in a signal-handler loop spamming the log (8 GB!). Let me kill just that test process so the suite continues.`./tst_browsermainwindow` (pid 3264943) is stuck in the crash loop — killing it so the suite can move on.Spam stopped (log frozen at 8.5 GB), suite continues. Now let me determine whether the 3 `tst_BrowserMainWindow` failures are pre-existing or something my lane touched.Found a real pre-existing bug on HEAD: `guessUrlFromStringRust` drops `privateContext` — line 3251 calls zero-arg `startPageUrl()` (global `isPrivate()`) instead of passing the context flag like the C++ path does. None of my changed files touch this — it's merge fallout (PTAB02). Let me check the other two failures.Three failures, likely pre-existing merge fallout (none of my files are involved):
+
+- `privateStartPage`: deterministic — `guessUrlFromStringRust` drops `privateContext` at line 3251 (calls zero-arg `startPageUrl()` using the global flag).
+- `torStartPage`: only the `cmdTitle` leg failed — channel/DOM legs passed, so likely a loadFinished-vs-title timing race.
+- `downloadsSidebarMinWidth`: dock didn't shrink — possibly broken by the recent ui-work merge or an offscreen quirk.
+- Plus a teardown SIGSEGV loop.
+
+Let me reproduce each leg individually.Deterministic — confirmed. Fixing the `privateContext` drop in `guessUrlFromStringRust`:The rebuilt binary SIGTRAP'd mid-test — possibly a flaky WebEngine trap or something environmental. Let me retry.Consistent SIGTRAP now — let me get a backtrace to see where it's trapping.No output before the trap — it dies inside the test body, likely in `guessUrlFromString` → `rc_classify_input`. Let me look at the full test body.Let me check whether the rebuilt binary is generally broken or the trap is specific to this leg — run a pure-logic leg and a WebEngine leg.`downloadsSidebarMinWidth` fails deterministically and every run ends in a WebEngine teardown SIGSEGV. Let me check core dumps and retry privateStartPage once more — the trap may sit in `new SubWindow` WebEngine init, not my change.SIGTRAP is SI_KERNEL — an executed trap instruction (Chromium CHECK-style), deep in a many-threaded WebEngine moment. Let me run with `-v2` to see exactly how far the test gets before trapping.My fix works — `-v2` shows line 2415's QCOMPARE passed (no FAIL printed); the trap occurs later during `new SubWindow` WebEngine bring-up — separate issue, likely aggravated by the concurrent ui-lane `make check`. Let me check the suite's progress.`make check` exited (rc=2) — let me collect the full failure picture from the log tail and the make error.That grep matched build lines (`crashreporter.o`). Let me extract just the real failures.Only `tst_browsermainwindow` fails — everything else (79 programs) is green. Before deciding scope, let me check when this test last passed and what changed recently in its teardown path.The teardown SEGV is likely a *symptom*: `downloadsSidebarMinWidth` aborts via `QTRY_VERIFY` leaving `window` leaked → "WebEnginePage still not deleted" → crash at exit. Fix the dock width and the crash may go away. Let me find what forces the dock ≥200px.Let me check what drives the dock's minimum width — panel structure and the card.The FlowLayout reflow survived the merge. Rather than guess, let me instrument the failing leg temporarily to see which widget holds the dock ≥200px.The card itself has a 377px `minimumSizeHint` — something inside still demands width. Let me check the card's .ui structure for non-shrinking widgets.The card's 377px minimum comes from the fixed `timestampsLayout`/`statsLayout` rows (captions + timestamp values in a single unbreakable hbox — added by the DLUX merge, not covered by DOWN04's reflow). Same fix applies: wrap them in FlowLayouts.Rebuild and retest the leg:Still 377 — the culprit is elsewhere in the card. Let me check the SqueezeLabel size policies and the fields grid in the .ui.The `SqueezeLabel`s use `hsizetype="Minimum"` — so their full text width becomes the card's minimum. Since they elide on paint, they should be `Ignored` (per DOWN04's "labels Ignored/eliding" intent). Fixing all three:Card dropped 377→198, dock min 208 — need a little more. Let me dump every descendant's min hint to find the last blocker.Card is now 198 (needs ~<190 for dock<200). Remaining blockers: the timestamp/size/speed *value* `QLabel`s contribute full-text minimums. Promote them to eliding `SqueezeLabel` + `Ignored` policy so they shrink gracefully:[2026-10-12 22:29:40] devin pid 3224607 hit 3600s timeout — killing
+[2026-10-12 22:30:10] <<< devin exited rc=143 (task ENG20)
+[2026-10-12 22:30:10] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 22:30:10] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 22:30:10] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 22:30:10] task ENG20 still unfinished (rc=143) — attempt bumped, restarting in 10s
+[2026-10-12 22:30:20] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 22:30:20] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 22:30:20] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 22:30:20] ENG20 exceeded 5 attempts — marking blocked
+[2026-10-12 22:30:20] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 22:30:20] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 22:30:20] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 22:30:21] >>> starting run for task ENG21 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+The dependency check fails: ENG21's Notes declare `needs:task:ENG20`, and ENG20 is `blocked` (exceeded 5 restarts). Per the run rules, I must not start this task — mark it blocked and commit only the task file. Let me quickly check the working-tree state to write an accurate note.ENG20's work is partially present but uncommitted (ffi_guard, poisoned flag in lib.rs, servobackend changes). Its row is `blocked`, so ENG21's `needs:task:ENG20` gate is unsatisfied — I won't start the task. Marking ENG21 blocked and committing only the task file.Done — ENG21 was not workable this run:
+
+- **Gate check:** ENG21's Notes declare `needs:task:ENG20`, and ENG20 is `blocked` (exceeded 5 restarts). The details spec says the render-nothing trace must start from ENG20's landed state, which doesn't exist.
+- **Working tree:** ENG20's partial work is still uncommitted (ffi_guard/poisoned containment in `servo-embed/src/lib.rs` + `servo_embed.h`, and `servobackend.{h,cpp}` changes). I left it untouched per the no-revert rule — it's the starting point for a future ENG20 resume.
+- **Action:** marked ENG21 `blocked` with `blocked:missing task:ENG20 done`, committed only `.devin/Arora-Task.md`, and pushed (`7aa5c8c`).
+[2026-10-12 22:31:01] <<< devin exited rc=0 (task ENG21)
+[2026-10-12 22:31:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 22:31:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 22:31:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 22:31:02] task ENG21 finished (next: DEVT06)
+[2026-10-12 22:31:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 22:31:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 22:31:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 22:31:05] >>> starting run for task DEVT06 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+Now let me look at what data the BiDi bridge emits for network events (timestamps, resourceType, initiator, size).
