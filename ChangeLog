@@ -270,6 +270,13 @@ UI:
   Site Permissions and Saved Passwords groups now fill the group
   width with their buttons packed to the left rather than rendering
   as a narrow centered band (PREFUI09).
+- Fixed a crash: "Show All Bookmarks" or "Add Bookmark" while a
+  non-page tab (Preferences, History) was current dereferenced the
+  missing web view. "Show All Bookmarks" now raises the sidebar's
+  Bookmarks panel — its context menu gained the dialog's manage
+  actions (New Folder, Edit Name, Edit Address, Delete) — "Add
+  Bookmark" opens with empty fields, and opening a bookmark or
+  history entry from such a tab lands in a new tab (SIDE07).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

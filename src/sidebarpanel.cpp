@@ -406,7 +406,8 @@ void SidebarPanel::applyPanelVisibility()
 // same search-line + proxy presentation the dialog uses.
 QWidget *SidebarPanel::buildBookmarksPage()
 {
-    QWidget *bookmarksPage = new QWidget(m_tabs);
+    m_bookmarksPage = new QWidget(m_tabs);
+    QWidget *bookmarksPage = m_bookmarksPage;
     QVBoxLayout *bookmarksLayout = new QVBoxLayout(bookmarksPage);
     bookmarksLayout->setContentsMargins(2, 2, 2, 2);
     bookmarksLayout->setSpacing(2);
@@ -675,16 +676,64 @@ void SidebarPanel::bookmarksContextMenu(const QPoint &pos)
     QModelIndex sourceIndex = m_bookmarksProxy->mapToSource(index);
     const BookmarkNode *node =
         BookmarksManager::instance()->bookmarksModel()->node(sourceIndex);
-    if (!index.isValid() || !node || node->type() != BookmarkNode::Bookmark)
+    if (!index.isValid() || !node)
         return;
     QMenu menu;
-    menu.addAction(tr("Open"), this, [this, index]() {
-        openBookmark(index, TabWidget::CurrentTab);
+    // SIDE07: the panel is the "Show All Bookmarks" surface now, so
+    // the menu carries the standalone dialog's management actions,
+    // not just the opens.
+    if (node->type() != BookmarkNode::Folder) {
+        menu.addAction(tr("Open"), this, [this, index]() {
+            openBookmark(index, TabWidget::CurrentTab);
+        });
+        menu.addAction(tr("Open in New Tab"), this, [this, index]() {
+            openBookmark(index, TabWidget::NewSelectedTab);
+        });
+        menu.addSeparator();
+    }
+    menu.addAction(tr("New Folder"), this, [this, index]() {
+        newBookmarkFolder(index);
     });
-    menu.addAction(tr("Open in New Tab"), this, [this, index]() {
-        openBookmark(index, TabWidget::NewSelectedTab);
+    menu.addSeparator();
+    QAction *renameAction = menu.addAction(tr("Edit Name"), this,
+                                           [this, index]() {
+        m_bookmarksView->edit(index.siblingAtColumn(0));
     });
+    renameAction->setEnabled(index.flags() & Qt::ItemIsEditable);
+    if (node->type() != BookmarkNode::Folder) {
+        menu.addAction(tr("Edit Address"), this, [this, index]() {
+            m_bookmarksView->edit(index.siblingAtColumn(1));
+        });
+    }
+    menu.addSeparator();
+    QAction *deleteAction = menu.addAction(tr("Delete"), m_bookmarksView,
+                                           &EditTreeView::removeSelected);
+    deleteAction->setEnabled(index.flags() & Qt::ItemIsDragEnabled);
     menu.exec(QCursor::pos());
+}
+
+// Same placement rule the standalone BookmarksDialog::newFolder uses:
+// a folder selected rows appends inside it, a leaf's row lands right
+// below it in the parent folder.
+void SidebarPanel::newBookmarkFolder(const QModelIndex &index)
+{
+    QModelIndex idx = index;
+    QModelIndex sourceIndex = m_bookmarksProxy->mapToSource(idx);
+    const BookmarkNode *sourceNode =
+        BookmarksManager::instance()->bookmarksModel()->node(sourceIndex);
+    int row = -1; // append inside the selected folder
+    if (sourceNode && sourceNode->type() != BookmarkNode::Folder) {
+        idx = idx.parent();
+        row = index.row() + 1;
+    }
+    if (!idx.isValid())
+        idx = m_bookmarksProxy->index(1, 0);
+    idx = m_bookmarksProxy->mapToSource(idx);
+    BookmarkNode *parent =
+        BookmarksManager::instance()->bookmarksModel()->node(idx);
+    BookmarkNode *node = new BookmarkNode(BookmarkNode::Folder);
+    node->title = tr("New Folder");
+    BookmarksManager::instance()->addBookmark(parent, node, row);
 }
 
 void SidebarPanel::openHistoryEntry(const QModelIndex &index,
@@ -720,12 +769,25 @@ QWidget *SidebarPanel::downloadsPage() const
     return m_downloadsPage;
 }
 
+QWidget *SidebarPanel::bookmarksPage() const
+{
+    return m_bookmarksPage;
+}
+
 void SidebarPanel::showDownloads()
 {
     // The user may have unchecked Downloads in Preferences — then the
     // dock still raises (the caller shows it) but nothing selects.
     if (m_downloadsPage && m_tabs->indexOf(m_downloadsPage) >= 0)
         m_tabs->setCurrentWidget(m_downloadsPage);
+}
+
+void SidebarPanel::showBookmarks()
+{
+    // Same hidden-panel degrade as showDownloads(): the dock still
+    // raises even when the user unchecked Bookmarks in Preferences.
+    if (m_bookmarksPage && m_tabs->indexOf(m_bookmarksPage) >= 0)
+        m_tabs->setCurrentWidget(m_bookmarksPage);
 }
 
 void SidebarPanel::applyDownloadSort()

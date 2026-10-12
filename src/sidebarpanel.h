@@ -79,6 +79,7 @@ public:
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
     QWidget *downloadsPage() const;
+    QWidget *bookmarksPage() const;
 
 public slots:
     // AutoSaver target — flushes the notes text and the selected tab.
@@ -86,6 +87,9 @@ public slots:
     // DOWN02: Ctrl+Y / Tools > Downloads lands here — the dock is the
     // only downloads surface now.
     void showDownloads();
+    // SIDE07: Bookmarks > Show All Bookmarks selects the Bookmarks
+    // section the same way Ctrl+Y selects Downloads.
+    void showBookmarks();
     // SIDE02: syncs the rail with the persisted per-panel visibility —
     // newly enabled panels build on demand, disabled ones are dropped.
     void applyPanelVisibility();
@@ -93,6 +97,7 @@ public slots:
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void bookmarksContextMenu(const QPoint &pos);
+    void newBookmarkFolder(const QModelIndex &index);
     void openHistoryEntry(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void historyContextMenu(const QPoint &pos);
     void openDownload(const QModelIndex &index);
@@ -120,6 +125,7 @@ private:
     QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
     QPointer<TreeSortFilterProxyModel> m_historyProxy;
     QPointer<QSortFilterProxyModel> m_downloadsProxy;
+    QPointer<QWidget> m_bookmarksPage;
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
     QPointer<QFrame> m_downloadDetail;

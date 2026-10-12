@@ -2951,6 +2951,11 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
     }
     if (!url.isValid())
         return;
+    // PREFS01: a widget tab (Preferences, History) has no page to
+    // navigate — a "current tab" open (bookmark, history entry, home
+    // button) lands in a fresh tab instead of silently dying.
+    if (tab == CurrentTab && !currentWebView())
+        tab = NewSelectedTab;
     WebView *webView = getView(tab, currentWebView());
     if (webView) {
         int index = webViewIndex(webView);
