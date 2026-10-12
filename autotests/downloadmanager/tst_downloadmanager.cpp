@@ -1188,13 +1188,17 @@ void tst_DownloadManager::detailsCardTracksTheme()
                 .arg(pass == 0 ? QLatin1String("dark")
                                : QLatin1String("light"))));
 
-        // The resolved fill must track the flip, not the creation
+        // The resolved chrome must track the flip, not the creation
         // palette — assert the generated stylesheet carries the new
-        // palette's AlternateBase.
+        // palette's Mid for the hairline separator.  DLUX04 flattened
+        // the card: no background fill may be reintroduced or the
+        // info block regains its visible seam against the pane.
         const QString active = detailsWidget->styleSheet();
         QVERIFY2(active.contains(
                      QApplication::palette()
-                         .color(QPalette::AlternateBase).name()),
+                         .color(QPalette::Mid).name()),
+                 qPrintable(active));
+        QVERIFY2(!active.contains(QLatin1String("background-color")),
                  qPrintable(active));
 
         host.hide();

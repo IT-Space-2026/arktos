@@ -704,17 +704,18 @@ void DownloadItem::setExpanded(bool expanded)
 // detailsWidget->palette(): carrying a stylesheet sets WA_StyleSheet,
 // which exempts the widget from propagatePaletteChange — its own
 // palette() stays frozen at its creation-theme values.
+// DLUX04: the tinted fill + box border read as a box-in-a-box against
+// the detail pane — the info block now stays transparent (shows the
+// pane/card surface exactly, zero seam on any theme) and keeps only
+// a hairline top separator for readability.
 void DownloadItem::applyDetailsCardStyle()
 {
     const QPalette pal = QApplication::palette();
     detailsWidget->setStyleSheet(QStringLiteral(
         "#detailsWidget {"
-        " background-color: %1;"
-        " border: 1px solid %2;"
-        " border-radius: 6px;"
+        " border-top: 1px solid %1;"
         "}")
-        .arg(pal.color(QPalette::AlternateBase).name(),
-             pal.color(QPalette::Midlight).name()));
+        .arg(pal.color(QPalette::Mid).name()));
 }
 
 bool DownloadItem::event(QEvent *event)
