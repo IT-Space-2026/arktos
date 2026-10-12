@@ -643,3 +643,4 @@
 - 2026-10-12 MERGEWATCH: rust-work SKIPPED — dirty working tree overlaps lane files (.devin/COVERAGE.md, src/rustcore/data/testcerts/{gen_testcerts.py,notyet*}), agent likely mid-run; ui-work at 0, skipped; no merge, build n/a
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (clean ort merge; PREFUI12 cookie-label alignment leg), build ok
 - 2026-10-12 MERGEWATCH: rust-work SKIPPED again — dirty working tree still overlaps lane files (.devin/COVERAGE.md, src/rustcore/data/testcerts/{gen_testcerts.py,notyet*} — parallel in-tree fix for the same cert time-bomb, agent mid-run); no merge, build n/a
+- 2026-10-12 MERGEWATCH: rust-work SKIPPED again — dirty working tree still overlaps lane files (.devin/COVERAGE.md, src/rustcore/data/testcerts/{gen_testcerts.py,notyet*} — same parallel in-tree cert fix, agent still mid-run); ui-work at 0, skipped; no merge, build n/a
