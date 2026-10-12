@@ -1039,6 +1039,17 @@ Engine::Page *ServoBackend::createPage(Engine::Profile *profile,
     return new ServoPage(profile, parent);
 }
 
+QString ServoBackend::pageUnavailableReason() const
+{
+    // ENG12: the process-global SeInstance slot — claimed by a live
+    // view or spent (a dead view / failed init) — refuses every
+    // further page, so the switcher menu shows the entry disabled
+    // rather than offering a swap that can only fail.
+    if (ServoView::instanceAvailable())
+        return QString();
+    return tr("already in use — Servo supports one tab per session");
+}
+
 QWidget *ServoBackend::createView(Engine::Page *page, QWidget *parent)
 {
     ServoView *view = new ServoView(parent);

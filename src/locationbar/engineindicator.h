@@ -28,9 +28,14 @@
 // resolves it against the current tab and performs the swap.
 //
 // Hidden entirely while fewer than two backends are registered (a
-// missing servo-embed artifact leaves no dead menu), in Tor windows
-// (Tor is locked to Chromium — servo has no SOCKS5), and on tabs the
-// swap refuses (private tabs: servo has no off-the-record profile).
+// missing servo-embed artifact leaves no dead menu) and on tabs with
+// no engine at all (widget tabs — the host cell hides).  ENG19: a
+// HARD engine lock — tor window, private tab, active container level —
+// keeps the button visible but disabled with the reason in its
+// tooltip: a vanished affordance reads as a bug (the ENG19 report was
+// a tor window, where hiding is correct but unexplained), while a
+// greyed glyph answers "why can't I switch" in place.  Swap is never
+// enabled under a lock — the button only explains.
 
 #include <qpointer.h>
 #include <qtoolbutton.h>
@@ -47,10 +52,18 @@ public:
     void setEngineId(const QString &id);
     QString engineId() const { return m_engineId; }
 
-    // A tab the swap path refuses (private/tor contexts) keeps the
-    // button hidden even when alternate backends exist.
+    // A tab the swap path refuses without a hard-lock reason keeps
+    // the button hidden even when alternate backends exist (legacy
+    // contract for callers that never set a lock reason).
     void setSwappable(bool swappable);
     bool isSwappable() const { return m_swappable; }
+
+    // ENG19: a non-empty reason renders the button disabled-but-
+    // visible with the explanation in its tooltip/status tip — the
+    // swap stays unreachable, the lock explains itself.
+    void setLockReason(const QString &reason);
+    QString lockReason() const { return m_lockReason; }
+    bool isLocked() const { return !m_lockReason.isEmpty(); }
 
     void refresh();
 
@@ -62,6 +75,7 @@ private:
 
     QString m_engineId;
     bool m_swappable;
+    QString m_lockReason;
     QMenu *m_menu;
 };
 

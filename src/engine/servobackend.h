@@ -270,6 +270,7 @@ public:
                                    QObject *parent = nullptr) override;
     Engine::Page *createPage(Engine::Profile *profile,
                              QObject *parent = nullptr) override;
+    QString pageUnavailableReason() const override;
     QWidget *createView(Engine::Page *page, QWidget *parent = nullptr) override;
 
     // The servo config dir shared by every webview on a profile —

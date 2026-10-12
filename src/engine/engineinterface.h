@@ -602,6 +602,14 @@ public:
                                    QObject *parent = nullptr) = 0;
     virtual Page *createPage(Profile *profile, QObject *parent = nullptr) = 0;
 
+    // ENG19: why createPage() would refuse right now — empty when the
+    // backend can take a page.  The engine switcher's menu shows the
+    // entry disabled with this reason instead of offering a swap that
+    // is guaranteed to fail (Servo's process-global single view
+    // reports its slot as taken once it is claimed or spent).  The
+    // default says a page is always possible.
+    virtual QString pageUnavailableReason() const { return QString(); }
+
     // The painted surface — a QWidget so existing tab/chrome code
     // hosts any backend; QtWebEngine returns a QWebEngineView, Servo
     // would return the spike's QOpenGLWidget host.

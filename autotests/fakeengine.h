@@ -327,9 +327,17 @@ public:
     Engine::Page *createPage(Engine::Profile *,
                              QObject *parent = nullptr) override
     {
+        if (!m_unavailableReason.isEmpty())
+            return nullptr;
         auto *page = new FakeEnginePage(parent);
         pages.append(page);
         return page;
+    }
+    // ENG19: staged unavailability — a set reason makes createPage
+    // refuse, mirroring Servo's spent single-view slot.
+    QString pageUnavailableReason() const override
+    {
+        return m_unavailableReason;
     }
     QWidget *createView(Engine::Page *page, QWidget *parent = nullptr) override
     {
@@ -341,6 +349,7 @@ public:
 
     Engine::Capabilities m_caps;
     QList<QPointer<FakeEnginePage>> pages;
+    QString m_unavailableReason;
 };
 
 #endif // FAKEENGINE_H

@@ -17,11 +17,12 @@
  * Boston, MA  02110-1301  USA
  */
 
-// ENG05/ENG08 — the per-tab engine switcher driven through a fake
-// backend: no real servo-embed artifact required.  Covers the
+// ENG05/ENG08/ENG19 — the per-tab engine switcher driven through a
+// fake backend: no real servo-embed artifact required.  Covers the
 // registry, the chrome's shared nav-row indicator (ENG08 moved it
-// out of the url bar), the swap path, the Tor/private refusal rules
-// and the default-engine setting round-trip.
+// out of the url bar), the swap path, the Tor/private/container
+// lock rules (ENG19: locked shows disabled+explained, not hidden),
+// spent-slot menu entries and the default-engine setting round-trip.
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
@@ -43,6 +44,8 @@
 #include <webview.h>
 
 #include <qlabel.h>
+#include <qmenu.h>
+#include <qset.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
 #include <qtcpserver.h>
@@ -119,8 +122,11 @@ private slots:
     void switchViaIndicatorButton();
     void switchReloadsCurrentUrl();
     void perTabEngineState();
-    void privateTabHidesAffordance();
+    void privateTabLocksIndicator();
     void torLock();
+    void containerLevelLocksIndicator();
+    void widgetTabHidesIndicator();
+    void unavailableBackendMenuEntry();
     void missingArtifactHidesOption();
     void settingsRoundTrip();
     void swapKeepsStrip();
@@ -202,6 +208,20 @@ void tst_EngineSwitch::indicatorReflectsEngine()
     QVERIFY(indicator->toolTip().contains(QStringLiteral("Chromium"))
             || indicator->toolTip().contains(
                    QStringLiteral("QtWebEngine")));
+
+    // ENG19: pixel check — the button really paints its palette
+    // glyph, not merely reports visible.  A missing/invisible icon
+    // (the "present-but-unseeable" failure shape) still passes the
+    // flag checks; grab() rasterizes the real paint path.
+    const QImage paint = indicator->grab().toImage();
+    QVERIFY(!paint.isNull());
+    QSet<QRgb> colors;
+    for (int y = 0; y < paint.height(); ++y)
+        for (int x = 0; x < paint.width(); ++x)
+            colors.insert(paint.pixel(x, y));
+    QVERIFY2(colors.count() > 2,
+             "engine indicator painted fewer than 3 colors — "
+             "the glyph is not actually rendered");
 
     // The shared button tracks the swap through currentChanged.
     QVERIFY(tabs->reloadTabInEngine(0, QStringLiteral("fake")));
@@ -317,25 +337,34 @@ void tst_EngineSwitch::perTabEngineState()
     closeWindow(window);
 }
 
-void tst_EngineSwitch::privateTabHidesAffordance()
+// ENG19 — an off-the-record tab can never swap (no OTR profile on
+// foreign backends), but a vanished button reads as a bug: the lock
+// now shows the button DISABLED with the reason in its tooltip, and
+// a normal tab restores the live button.
+void tst_EngineSwitch::privateTabLocksIndicator()
 {
-    // An off-the-record tab can never swap — the same hidden rule the
-    // embedded indicator enforced, now on the shared button, and the
-    // cell comes back when a normal tab goes current.
     BrowserMainWindow *window = new BrowserMainWindow;
     TabWidget *tabs = window->tabWidget();
     EngineIndicator *indicator = navIndicator(window);
     QWidget *host = navIndicatorHost(window);
     QVERIFY(!host->isHidden());
+    QVERIFY(indicator->isEnabled());
+    QVERIFY(!indicator->isLocked());
 
     tabs->newPrivateTab();
     QCOMPARE(tabs->currentIndex(), 1);
     QVERIFY(tabs->isTabPrivate(1));
-    QVERIFY(indicator->isHidden());
-    QVERIFY(host->isHidden());
+    QVERIFY(!indicator->isHidden());
+    QVERIFY(!host->isHidden());
+    QVERIFY(!indicator->isEnabled());
+    QVERIFY(indicator->isLocked());
+    QVERIFY(indicator->toolTip().contains(
+        QStringLiteral("off-the-record")));
 
     tabs->setCurrentIndex(0);
     QVERIFY(!indicator->isHidden());
+    QVERIFY(indicator->isEnabled());
+    QVERIFY(!indicator->isLocked());
     QVERIFY(!host->isHidden());
     closeWindow(window);
 }
@@ -347,22 +376,162 @@ void tst_EngineSwitch::torLock()
     TabWidget *tabs = window->tabWidget();
     QCOMPARE(tabs->tabEngineId(0), QStringLiteral("webengine"));
 
-    // The swap path refuses outright.
+    // The swap path refuses outright — servo has no SOCKS5, a swapped
+    // tab would leak traffic off the proxy.
     QVERIFY(!tabs->reloadTabInEngine(0, QStringLiteral("fake")));
     QCOMPARE(tabs->tabEngineId(0), QStringLiteral("webengine"));
 
-    // And the affordance hides even with a second backend registered
-    // — the button AND its splitter cell.
-    QVERIFY(navIndicator(window)->isHidden());
-    QVERIFY(navIndicatorHost(window)->isHidden());
+    // ENG19: the affordance no longer vanishes on tor — it shows
+    // DISABLED with the lock reason, answering the missing-switcher
+    // report in place while the swap stays unreachable.
+    EngineIndicator *indicator = navIndicator(window);
+    QVERIFY(!indicator->isHidden());
+    QVERIFY(!indicator->isEnabled());
+    QVERIFY(indicator->isLocked());
+    QVERIFY(indicator->toolTip().contains(QStringLiteral("Tor")));
+    QVERIFY(!navIndicatorHost(window)->isHidden());
+    // The disabled button still paints a (greyed) glyph — the lock
+    // is visible, not merely un-hidden.
+    QVERIFY(!indicator->grab().toImage().isNull());
     closeWindow(window);
 
-    // A post-tor window shows it again.
+    // A post-tor window shows it live again.
     BrowserApplication::setTorMode(false);
     BrowserMainWindow *window2 = new BrowserMainWindow;
     QVERIFY(!navIndicator(window2)->isHidden());
+    QVERIFY(navIndicator(window2)->isEnabled());
     QVERIFY(!navIndicatorHost(window2)->isHidden());
     closeWindow(window2);
+}
+
+// ENG19 — a non-default container level refuses the swap (the
+// append+move+close would re-filter the strip mid-swap, same guard
+// reloadTabInEngine enforces): the button shows disabled with the
+// reason, live again on the default level.
+void tst_EngineSwitch::containerLevelLocksIndicator()
+{
+    QSettings().setValue(QLatin1String("tabs/containerDisplay"), 1);
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tabs = window->tabWidget();
+    QVERIFY(tabs->twoLevelStrip());
+    EngineIndicator *indicator = navIndicator(window);
+    QVERIFY(indicator->isEnabled());
+    QVERIFY(!indicator->isLocked());
+
+    WebView *containerTab = tabs->makeNewTabInContainer(
+        ContainerManager::instance()->createContainer(
+            QStringLiteral("Work"), QColor(Qt::red)).id,
+        true);
+    QVERIFY(containerTab);
+    QVERIFY(tabs->containerStripActive());
+    QVERIFY(!tabs->activeContainerHeader().isEmpty());
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY(!indicator->isHidden());
+    QVERIFY(!indicator->isEnabled());
+    QVERIFY(indicator->isLocked());
+    QVERIFY(indicator->toolTip().contains(
+        QStringLiteral("container")));
+
+    // Back on the default level the button goes live again — the
+    // tabsChanged hook re-evaluates the lock even though the current
+    // index never moved.
+    tabs->setActiveContainerHeader(
+        ContainerManager::defaultContainerId());
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY(indicator->isEnabled());
+    QVERIFY(!indicator->isLocked());
+    QVERIFY(!navIndicatorHost(window)->isHidden());
+
+    ContainerManager::instance()->deleteContainer(
+        containerTab->containerId());
+    closeWindow(window);
+    QSettings().remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// ENG19 — a widget tab (Preferences, History, ...) has no engine:
+// the whole splitter cell still hides — there is nothing to explain.
+void tst_EngineSwitch::widgetTabHidesIndicator()
+{
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tabs = window->tabWidget();
+    EngineIndicator *indicator = navIndicator(window);
+    QWidget *host = navIndicatorHost(window);
+    QVERIFY(!host->isHidden());
+
+    const int index = tabs->addWidgetTab(
+        new QWidget, QStringLiteral("Settings"), QIcon(), true);
+    QCOMPARE(tabs->currentIndex(), index);
+    QCOMPARE(tabs->tabEngineId(index), QString());
+    QVERIFY(host->isHidden());
+
+    tabs->setCurrentIndex(0);
+    QVERIFY(!host->isHidden());
+    QVERIFY(indicator->isEnabled());
+    closeWindow(window);
+}
+
+// ENG19 — a spent backend (Servo's single view claimed/exhausted)
+// keeps the BUTTON live — swap-back off a live foreign tab still
+// needs it — while the dead target reads as a disabled menu entry
+// with the reason, and the swap itself refuses.
+void tst_EngineSwitch::unavailableBackendMenuEntry()
+{
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tabs = window->tabWidget();
+    EngineIndicator *indicator = navIndicator(window);
+    QMenu *menu = indicator->menu();
+    QVERIFY(menu);
+
+    // Land on a foreign tab first — the unavailable state is staged
+    // afterwards, mirroring a slot that is spent while in use.
+    QVERIFY(tabs->reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(tabs->tabEngineId(0), QStringLiteral("fake"));
+
+    m_fake->m_unavailableReason =
+        QStringLiteral("already in use — one tab per session");
+
+    // The button stays live: its menu offers "Reload in Chromium" —
+    // the swap-BACK path a spent slot must not strand.
+    QVERIFY(!indicator->isHidden());
+    QVERIFY(indicator->isEnabled());
+    emit menu->aboutToShow();
+    QAction *back = nullptr;
+    QAction *dead = nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->text().contains(QStringLiteral("Chromium"))
+            || action->text().contains(QStringLiteral("QtWebEngine")))
+            back = action;
+    }
+    QVERIFY(back && back->isEnabled());
+
+    // Swap back works — the foreign tab is gone, the slot reads spent.
+    QVERIFY(tabs->reloadTabInEngine(0, QStringLiteral("webengine")));
+    QCOMPARE(tabs->tabEngineId(0), QStringLiteral("webengine"));
+
+    // Now the fake entry reads disabled with the reason — and the
+    // swap itself refuses through createPage, exactly like Servo's
+    // exhausted slot.
+    QVERIFY(indicator->isEnabled());
+    emit menu->aboutToShow();
+    for (QAction *action : menu->actions()) {
+        if (action->text().contains(QStringLiteral("Fake Engine")))
+            dead = action;
+    }
+    QVERIFY(dead);
+    QVERIFY(!dead->isEnabled());
+    QVERIFY(dead->toolTip().contains(QStringLiteral("one tab")));
+    QVERIFY(!tabs->reloadTabInEngine(0, QStringLiteral("fake")));
+
+    // Clearing the reason restores a live entry.
+    m_fake->m_unavailableReason.clear();
+    emit menu->aboutToShow();
+    QAction *live = nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->text().contains(QStringLiteral("Fake Engine")))
+            live = action;
+    }
+    QVERIFY(live && live->isEnabled());
+    closeWindow(window);
 }
 
 void tst_EngineSwitch::missingArtifactHidesOption()
@@ -387,6 +556,14 @@ void tst_EngineSwitch::missingArtifactHidesOption()
     QVERIFY(navIndicatorHost(window)->isHidden());
     QVERIFY(!window->tabWidget()->reloadTabInEngine(
         0, QStringLiteral("fake")));
+
+    // ENG19: even a hard lock stays hidden with one backend — there
+    // is no engine choice to explain.
+    window->tabWidget()->newPrivateTab();
+    QVERIFY(window->tabWidget()->isTabPrivate(
+        window->tabWidget()->currentIndex()));
+    QVERIFY(navIndicator(window)->isHidden());
+    QVERIFY(navIndicatorHost(window)->isHidden());
     closeWindow(window);
 
     for (Engine::Backend *backend : detached)

@@ -19,7 +19,6 @@
 
 #include "engineindicator.h"
 
-#include "browserapplication.h"
 #include "engineinterface.h"
 #include "engineregistry.h"
 #include "safetext.h"
@@ -61,19 +60,36 @@ void EngineIndicator::setSwappable(bool swappable)
     refresh();
 }
 
+void EngineIndicator::setLockReason(const QString &reason)
+{
+    m_lockReason = reason;
+    refresh();
+}
+
 void EngineIndicator::refresh()
 {
     Engine::Backend *backend = EngineRegistry::backendForId(m_engineId);
     setIcon(EngineRegistry::backendIcon(m_engineId, palette()));
     const QString name = backend
         ? backend->displayName() : m_engineId;
-    setToolTip(tr("Rendered by %1").arg(name));
+    const bool locked = isLocked();
+    setToolTip(locked
+        ? tr("Rendered by %1 — %2").arg(name, m_lockReason)
+        : tr("Rendered by %1").arg(name));
+    setStatusTip(locked
+        ? tr("Engine locked: %1").arg(m_lockReason)
+        : tr("Reload this page on another engine"));
 
-    const bool available =
-        EngineRegistry::backends().count() >= 2
-        && m_swappable
-        && !BrowserApplication::isTorMode();
-    setVisible(available);
+    // ENG19: visible whenever an engine choice exists AND the tab
+    // offers one — a locked tab stays shown-but-disabled so the
+    // affordance explains itself instead of vanishing (the user
+    // report behind ENG19 read the intentional tor hide as a
+    // regression).  setSwappable(false) with no lock reason still
+    // hides outright, and fewer than two registered backends hides
+    // everything — there is no choice to explain.
+    const bool multi = EngineRegistry::backends().count() >= 2;
+    setEnabled(!locked && m_swappable);
+    setVisible(multi && (m_swappable || locked));
 }
 
 void EngineIndicator::rebuildMenu()
@@ -94,6 +110,16 @@ void EngineIndicator::rebuildMenu()
             SafeText::menu(tr("Reload in %1").arg(backend->displayName())));
         action->setIcon(
             EngineRegistry::backendIcon(backend->id(), palette()));
+        // ENG19: a backend that would refuse the page right now —
+        // Servo's single-view slot claimed or spent — reads as a
+        // disabled entry with the reason, never a click that dies
+        // silently.
+        const QString unavailable = backend->pageUnavailableReason();
+        if (!unavailable.isEmpty()) {
+            action->setEnabled(false);
+            action->setToolTip(unavailable);
+            action->setStatusTip(unavailable);
+        }
         connect(action, &QAction::triggered,
                 this, [this, id = backend->id()]() {
             emit switchRequested(id);

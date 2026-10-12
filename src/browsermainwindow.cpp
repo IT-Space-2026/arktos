@@ -1671,6 +1671,12 @@ void BrowserMainWindow::setupToolBar()
     });
     connect(m_tabWidget, &QTabWidget::currentChanged,
             this, [this](int) { updateEngineIndicator(); });
+    // The lock state also tracks the strip, not just the current
+    // tab: a CONT06 container-level switch refilters the strip and
+    // can land on the same index — tabsChanged is the only signal
+    // that always follows a level change.
+    connect(m_tabWidget, &TabWidget::tabsChanged,
+            this, [this]() { updateEngineIndicator(); });
     updateEngineIndicator();
 
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
@@ -1732,12 +1738,21 @@ void BrowserMainWindow::applySearchBoxVisibility()
 
 // ENG08: one toolbar-level indicator mirrors the ACTIVE tab.  The
 // rules are the same ones the embedded indicators enforced, now
-// computed per tab switch instead of baked per bar:
+// computed per tab switch instead of baked per bar — with the ENG19
+// amendment that a hard lock no longer hides the button: it shows
+// disabled with the reason in its tooltip, because an unexplained
+// disappearance reads as a bug (the user report was a tor window).
 //   - a private tab refuses the swap (no OTR profile on foreign
-//     backends) -> swappable off, hidden;
-//   - a tor window is Chromium-locked -> hidden;
+//     backends) -> locked, disabled, tooltip explains;
+//   - a tor window is Chromium-locked (servo has no SOCKS5 — a swap
+//     would leak traffic off the proxy) -> locked, disabled;
+//   - a non-default container tab level refuses the swap (the
+//     append+move+close would re-filter the strip mid-swap — the
+//     same guard reloadTabInEngine enforces) -> locked, disabled;
 //   - a widget tab (Preferences, History, ...) has no engine -> the
-//     whole cell hides;
+//     whole cell hides — there is nothing to explain;
+//   - fewer than two registered backends -> hidden inside
+//     EngineIndicator::refresh(), locked or not;
 //   - an engine tab reports its own backend id and stays swappable
 //     — "Reload in Chromium" on the menu is the swap-back path.
 void BrowserMainWindow::updateEngineIndicator()
@@ -1745,12 +1760,24 @@ void BrowserMainWindow::updateEngineIndicator()
     const int index = m_tabWidget->currentIndex();
     const QString engineId = index >= 0
         ? m_tabWidget->tabEngineId(index) : QString();
-    m_engineIndicator->setSwappable(
-        index >= 0 && !m_tabWidget->isTabPrivate(index));
+    QString lockReason;
+    if (BrowserApplication::isTorMode()) {
+        lockReason = tr("Tor windows are locked to Chromium — "
+                        "switching engines would bypass the Tor proxy");
+    } else if (index >= 0 && m_tabWidget->isTabPrivate(index)) {
+        lockReason = tr("private tabs stay on the built-in engine — "
+                        "other engines have no off-the-record profile");
+    } else if (m_tabWidget->containerStripActive()
+               && !m_tabWidget->activeContainerHeader().isEmpty()) {
+        lockReason = tr("engine switching is unavailable while a "
+                        "container tab level is active");
+    }
+    m_engineIndicator->setLockReason(lockReason);
+    m_engineIndicator->setSwappable(index >= 0);
     m_engineIndicator->setEngineId(engineId);
     // The setters refresh() the button's own availability (2+
-    // backends, swappable, not tor); the host cell gates the one
-    // case the button cannot see — a tab with no engine at all.
+    // backends, lock state); the host cell gates the one case the
+    // button cannot see — a tab with no engine at all.
     m_engineIndicatorHost->setVisible(
         !engineId.isEmpty() && !m_engineIndicator->isHidden());
 }
