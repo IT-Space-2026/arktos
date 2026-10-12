@@ -56,6 +56,7 @@
 #include "browsermainwindow.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
+#include "aroraicon.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarknode.h"
@@ -126,6 +127,7 @@ private slots:
     void torCircuitStatusLabel();
     void torTabStripLayout();
     void torChromeTheme();
+    void torNavIconsDarkChrome();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -1066,6 +1068,104 @@ void tst_BrowserMainWindow::torChromeTheme()
     // the chrome stays violet.
     QVERIFY(darkTabColor.lightness() < 100);
     QVERIFY(isViolet(darkMenuColor));
+}
+
+// ICONS04: the tor window's violet chrome sits on the light
+// application palette, so the nav cluster's themed icons resolved
+// dark-on-dark — and worse, the disabled ghosting made the arrows read
+// LIGHTER than the enabled reload.  Tor windows pin the toolbar icons
+// to the bundled set's -dark (light-glyph) art; menu actions keep the
+// normal icons because their popups stay on the platform palette.
+void tst_BrowserMainWindow::torNavIconsDarkChrome()
+{
+    const auto luminance = [](const QIcon &icon) -> qlonglong {
+        const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+        qlonglong lum = 0;
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 100) {
+                    lum += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        return opaque ? lum / opaque : -1;
+    };
+
+    // getOnDark only differs from get() under a bundled icon theme —
+    // "native" has no -dark art to pin.  Force one; a light palette
+    // keeps the normal-window leg on the dark-glyph variants.
+    QSettings settings;
+    const QVariant savedTheme =
+        settings.value(QLatin1String("MainWindow/iconTheme"));
+    settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                      QLatin1String("adwaita"));
+    AroraIcon::applyFromSettings();
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Light);
+
+    SubWindow *plain = new SubWindow;
+    QToolBar *plainBar = plain->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(plainBar && plainBar->actions().count() >= 3);
+    const qlonglong plainBack =
+        luminance(plainBar->actions().at(0)->icon());
+    const qlonglong plainReload =
+        luminance(plainBar->actions().at(2)->icon());
+    closeWindow(plain);
+
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar && navBar->actions().count() >= 3);
+    const qlonglong torBack =
+        luminance(navBar->actions().at(0)->icon());
+    const qlonglong torForward =
+        luminance(navBar->actions().at(1)->icon());
+    const qlonglong torReload =
+        luminance(navBar->actions().at(2)->icon());
+    qlonglong menuReload = -1;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (!menuAction->menu()
+            || !menuAction->text().contains(QLatin1String("View")))
+            continue;
+        for (QAction *action : menuAction->menu()->actions())
+            if (action->text().remove(QLatin1Char('&'))
+                    == QLatin1String("Reload Page"))
+                menuReload = luminance(action->icon());
+    }
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the tor nav bar lands there as tor-nav-icons.png.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/tor-nav-icons.png"));
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+    BrowserTheme::applyColorScheme();
+    if (savedTheme.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          savedTheme);
+    else
+        settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+
+    // Light-palette normal window: dark glyphs.  Tor window: light
+    // glyphs — same family, readable on the violet bar.
+    QVERIFY(plainBack >= 0 && plainBack < 140);
+    QVERIFY(plainReload >= 0 && plainReload < 140);
+    QVERIFY(torBack > 140);
+    QVERIFY(torForward > 140);
+    QVERIFY(torReload > 140);
+    QVERIFY(menuReload >= 0 && menuReload < 140);
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between

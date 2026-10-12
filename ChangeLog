@@ -298,6 +298,13 @@ UI:
 - "Show tab previews on hover" moved from Preferences → Appearance
   to Preferences → Tab Settings, with the other tab-behavior
   options (PREFUI11).
+- Toolbar navigation icons are one family now: the reload glyph in
+  every bundled icon set is a weight-matched circular arrow instead
+  of a heavier filled composite, and stop renders as a plain X
+  (Breeze's stop used to be a red circled minus, Tabler's a heavy
+  boxed X). On the Tor window's violet bar the nav and sidebar
+  icons switch to the sets' light-glyph variants so they stay
+  readable — and consistent — against the dark chrome (ICONS04).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

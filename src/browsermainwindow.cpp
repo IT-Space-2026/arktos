@@ -233,6 +233,24 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
                                QColor(238, 238, 238));
         m_readerModeButton->setPalette(readerPalette);
 
+        // ICONS04: the violet bar sits on the application's light
+        // palette, so themed icons resolve their dark-glyph variants —
+        // mud on purple, and the disabled ghosting on the back/forward
+        // buttons paradoxically renders them LIGHTER than the enabled
+        // reload.  Pin the chrome icons to the sets' light-glyph -dark
+        // art so back/forward/reload/stop read as one family on the
+        // dark bar.  The menu actions keep the normal icons — their
+        // popups stay on the platform palette, not the violet bar.
+        m_reloadIcon = AroraIcon::getOnDark(QLatin1String("view-refresh"));
+        m_stopIcon = AroraIcon::getOnDark(QLatin1String("process-stop"));
+        m_stopReloadAction->setIcon(m_reloadIcon);
+        m_historyBackAction->setIcon(
+            AroraIcon::getOnDark(QLatin1String("go-previous")));
+        m_historyForwardAction->setIcon(
+            AroraIcon::getOnDark(QLatin1String("go-next")));
+        m_viewSidebarAction->setIcon(
+            SidebarPanel::icon(m_readerModeButton));
+
         // TOR04: the live circuit chain — a permanent status-bar
         // label fed by TorManager (GETINFO circuit-status refreshed
         // on 650 CIRC events, the Ready transition, and tab

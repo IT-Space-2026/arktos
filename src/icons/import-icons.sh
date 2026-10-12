@@ -48,7 +48,9 @@ declare -A ADWAITA_MAP=(
     [go-next]=symbolic/actions/go-next-symbolic.svg
     [go-home]=symbolic/actions/go-home-symbolic.svg
     [process-stop]=symbolic/actions/process-stop-symbolic.svg
-    [view-refresh]=symbolic/actions/view-refresh-symbolic.svg
+    # ICONS04: view-refresh is NOT imported — the stock Adwaita glyph is
+    # a filled arrow ~2x heavier than the chevrons; a maintained
+    # weight-matched glyph is written by write_reload() below.
     [view-fullscreen]=symbolic/actions/view-fullscreen-symbolic.svg
     [zoom-in]=symbolic/actions/zoom-in-symbolic.svg
     [zoom-out]=symbolic/actions/zoom-out-symbolic.svg
@@ -84,8 +86,9 @@ declare -A BREEZE_MAP=(
     [go-previous]=icons/actions/16/go-previous.svg
     [go-next]=icons/actions/16/go-next.svg
     [go-home]=icons/actions/16/go-home.svg
-    [process-stop]=icons/actions/16/process-stop.svg
-    [view-refresh]=icons/actions/16/view-refresh.svg
+    # ICONS04: upstream process-stop is a NegativeText (red) glyph —
+    # a maintained weight-matched X is written by write_stop() below.
+    # view-refresh is a maintained glyph — see write_reload() below.
     [view-fullscreen]=icons/actions/16/view-fullscreen.svg
     [zoom-in]=icons/actions/16/zoom-in.svg
     [zoom-out]=icons/actions/16/zoom-out.svg
@@ -121,8 +124,10 @@ declare -A TABLER_MAP=(
     [go-previous]=arrow-left
     [go-next]=arrow-right
     [go-home]=home
-    [process-stop]=square-x
-    [view-refresh]=refresh
+    # ICONS04: plain x, not square-x — the box tripled the ink next to
+    # the thin arrows.  view-refresh is a maintained glyph — see
+    # write_reload() below.
+    [process-stop]=x
     [view-fullscreen]=arrows-maximize
     [zoom-in]=zoom-in
     [zoom-out]=zoom-out
@@ -168,11 +173,53 @@ MaxSize=256
 EOF
 }
 
+# ICONS04: view-refresh is a maintained glyph, not an upstream copy —
+# Adwaita ships a filled arrow, Breeze a two-arrow composite and Tabler
+# a double-arrowhead glyph, all ~2-3x heavier than the sets' nav arrows.
+# One circular-arrow geometry per viewBox, stroked at each set's weight.
+write_reload() { # outdir color width extent arc head
+    cat > "$1/icons/view-refresh.svg" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS04: hand-drawn circular arrow matching the nav arrows' weight
+     (the stock glyphs carried 2-3x the ink of the arrows). -->
+<svg height="$4" viewBox="0 0 $4 $4" width="$4" xmlns="http://www.w3.org/2000/svg">
+    <g fill="none" stroke="$2" stroke-width="$3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="$5"/>
+        <path d="$6"/>
+    </g>
+</svg>
+EOF
+}
+RELOAD_ARC16="m 11.25 5.05 a 4.6 4.6 0 1 0 -0.95 7.23"
+RELOAD_HEAD16="m 10.72 2.72 l 0.53 2.33 l -2.38 -0.13"
+RELOAD_ARC24="m 16.88 7.57 a 6.9 6.9 0 1 0 -1.43 10.85"
+RELOAD_HEAD24="m 16.08 4.08 l 0.8 3.49 l -3.57 -0.2"
+
+# ICONS04: breeze's process-stop gets the same treatment — upstream is
+# a colored NegativeText glyph; a plain X at set weight keeps the nav
+# cluster monochrome.
+write_stop() { # outdir color width
+    cat > "$1/icons/process-stop.svg" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ICONS04: plain X matching the nav arrows' weight — upstream
+     process-stop is a colored (NegativeText) glyph. -->
+<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg">
+    <g fill="none" stroke="$2" stroke-width="$3" stroke-linecap="round">
+        <path d="m 4.2 4.2 l 7.6 7.6 m -7.6 0 l 7.6 -7.6"/>
+    </g>
+</svg>
+EOF
+}
+
 # --- light variants ---------------------------------------------------
 copy_map ADWAITA_MAP "$ADWAITA" "$OUT/arora-adwaita"
 copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze"
 copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler" \
     -e 's/stroke="currentColor"/stroke="#3d3d3d"/g'
+write_reload "$OUT/arora-adwaita" "#2e3436" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arora-breeze"  "#232629" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arora-tabler"  "#3d3d3d" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_stop   "$OUT/arora-breeze"  "#232629" 1
 
 index_theme "$OUT/arora-adwaita" "Arora Adwaita" \
     "Bundled Adwaita symbolic icons (CC-BY-SA-3.0/LGPL-3+ or CC-BY-SA-4.0)"
@@ -188,6 +235,10 @@ copy_map BREEZE_MAP  "$BREEZE"  "$OUT/arora-breeze-dark" \
     -e 's/#232629/#eff0f1/g' -e 's/#666666/#a0a0a0/g'
 copy_map TABLER_MAP  "$TABLER"  "$OUT/arora-tabler-dark" \
     -e 's/stroke="currentColor"/stroke="#e8e8e8"/g'
+write_reload "$OUT/arora-adwaita-dark" "#e8e8e8" 1.7 16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arora-breeze-dark"  "#eff0f1" 1   16 "$RELOAD_ARC16" "$RELOAD_HEAD16"
+write_reload "$OUT/arora-tabler-dark"  "#e8e8e8" 2   24 "$RELOAD_ARC24" "$RELOAD_HEAD24"
+write_stop   "$OUT/arora-breeze-dark"  "#eff0f1" 1
 
 index_theme "$OUT/arora-adwaita-dark" "Arora Adwaita Dark" \
     "Dark-scheme recolor of the bundled Adwaita symbolic icons"
