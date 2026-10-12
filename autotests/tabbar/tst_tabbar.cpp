@@ -52,6 +52,7 @@ private slots:
 
     void verticalTabRows();
     void verticalTabResize();
+    void verticalTabWidthMigration();
     void horizontalTabResize();
     void verticalTabButtons();
     void iconOnlyTabs();
@@ -370,10 +371,12 @@ void tst_TabBar::verticalTabRows()
     bar.resize(200, 400);
     QApplication::processEvents();
 
-    QCOMPARE(bar.verticalTabWidth(), 180);
+    // TABS10: the compact 140px default replaces 180.
+    QCOMPARE(bar.verticalTabWidth(), 140);
     // Rows: full strip width, one text line tall, stacked.
     const int rowHeight = bar.tabRect(0).height();
-    QVERIFY(rowHeight >= 20 && rowHeight <= 40);
+    QVERIFY(rowHeight >= bar.fontMetrics().height());
+    QVERIFY(rowHeight <= bar.fontMetrics().height() + 12);
     QCOMPARE(bar.tabRect(0).width(), bar.verticalTabWidth());
     QCOMPARE(bar.tabRect(0).width(), bar.tabRect(1).width());
     QCOMPARE(bar.tabRect(1).top(), bar.tabRect(0).bottom() + 1);
@@ -416,6 +419,13 @@ void tst_TabBar::verticalTabRows()
                  "would stay inside a ~16px column")
                  .arg(maxX - minX + 1)));
 
+    // Offscreen grab for visual review — set ARORA_TABBAR_GRAB_DIR
+    // to a directory to save it.
+    const QByteArray grabDir = qgetenv("ARORA_TABBAR_GRAB_DIR");
+    if (!grabDir.isEmpty())
+        image.save(QString::fromLocal8Bit(grabDir)
+                   + QLatin1String("/vertical-rows.png"));
+
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.endGroup();
 }
@@ -437,7 +447,7 @@ void tst_TabBar::verticalTabResize()
     bar.addTab(QLatin1String("two"));
     bar.resize(200, 300);
     QApplication::processEvents();
-    QCOMPARE(bar.verticalTabWidth(), 180);
+    QCOMPARE(bar.verticalTabWidth(), 140);
 
     const auto dragGrip = [&bar](int dx) {
         const QPoint grip(bar.width() - 3, 100);
@@ -461,13 +471,13 @@ void tst_TabBar::verticalTabResize()
 
     // West strip: dragging right (into the content) widens it.
     dragGrip(40);
-    QCOMPARE(bar.verticalTabWidth(), 220);
+    QCOMPARE(bar.verticalTabWidth(), 180);
     QCOMPARE(
-        settings.value(QLatin1String("verticalTabWidth")).toInt(), 220);
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
     // The new hint flows through to the tab rects once relaid out.
     bar.resize(300, 300);
     QApplication::processEvents();
-    QCOMPARE(bar.tabRect(0).width(), 220);
+    QCOMPARE(bar.tabRect(0).width(), 180);
 
     // Clamps both directions.
     dragGrip(500);
@@ -482,16 +492,63 @@ void tst_TabBar::verticalTabResize()
     dragGrip(-20);
     QCOMPARE(bar.verticalTabWidth(), 120);
 
-    // RSZ02: double-clicking the grip resets to the 180 default and
-    // persists like a drag release.
+    // RSZ02: double-clicking the grip resets to the TABS10 140
+    // default and persists like a drag release.
     const QPoint grip(bar.width() - 3, 100);
     QMouseEvent dclick(QEvent::MouseButtonDblClick, QPointF(grip),
                        QPointF(bar.mapToGlobal(grip)),
                        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     bar.call_mouseDoubleClickEvent(&dclick);
-    QCOMPARE(bar.verticalTabWidth(), 180);
+    QCOMPARE(bar.verticalTabWidth(), 140);
     QCOMPARE(
-        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 140);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// TABS10: first-run users get the compact 140 default and a stored
+// legacy 180 migrates forward (it means the grip was never dragged);
+// a genuinely user-picked width — including one set after the
+// migration — stays untouched.
+void tst_TabBar::verticalTabWidthMigration()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+
+    // No key at all -> the compact default.
+    settings.remove(QLatin1String("verticalTabWidth"));
+    {
+        SubTabBar bar;
+        QCOMPARE(bar.verticalTabWidth(), 140);
+    }
+
+    // A stored legacy default -> migrated.
+    settings.setValue(QLatin1String("verticalTabWidth"), 180);
+    {
+        SubTabBar bar;
+        QCOMPARE(bar.verticalTabWidth(), 140);
+    }
+
+    // A user-set width -> preserved, and the loadSettings reload path
+    // agrees.
+    settings.setValue(QLatin1String("verticalTabWidth"), 260);
+    {
+        SubTabBar bar;
+        QCOMPARE(bar.verticalTabWidth(), 260);
+        bar.reloadVerticalTabWidth();
+        QCOMPARE(bar.verticalTabWidth(), 260);
+    }
+
+    // A user who drags back to the new default round-trips like any
+    // other pick (140 is not the legacy sentinel).
+    settings.setValue(QLatin1String("verticalTabWidth"), 140);
+    {
+        SubTabBar bar;
+        QCOMPARE(bar.verticalTabWidth(), 140);
+        bar.reloadVerticalTabWidth();
+        QCOMPARE(bar.verticalTabWidth(), 140);
+    }
 
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.endGroup();

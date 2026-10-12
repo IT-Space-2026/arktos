@@ -92,6 +92,14 @@
 
 #include <qdebug.h>
 
+// TABS10: the Left/Right strip's default width — favicon + close
+// button + room for a ~12-char elided title.  180 was the pre-TABS10
+// default: a stored 180 means the grip was never dragged (a drag
+// persists its own width), so reloadVerticalTabWidth() migrates it
+// forward; any other stored value is a deliberate pick and stays.
+static const int defaultVerticalTabWidth = 140;
+static const int legacyVerticalTabWidth = 180;
+
 // Defined further down — the TABGRP01 drop-zone check in
 // mouseReleaseEvent needs it too.
 static bool verticalTabShape(QTabBar::Shape shape);
@@ -125,7 +133,7 @@ TabBar::TabBar(QWidget *parent)
     , m_preview(nullptr)
     , m_previewTimer(nullptr)
     , m_tabPreviewsEnabled(true)
-    , m_verticalTabWidth(180)
+    , m_verticalTabWidth(defaultVerticalTabWidth)
     , m_resizing(false)
     , m_resizeStartX(0)
     , m_resizeStartY(0)
@@ -698,7 +706,7 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton
         && inResizeGrip(stripPos(event->position().toPoint()))) {
         if (verticalTabShape(shape()))
-            setVerticalTabWidth(180);
+            setVerticalTabWidth(defaultVerticalTabWidth);
         else
             setTabStripHeight(0);
         persistStripSize();
@@ -2198,8 +2206,15 @@ void TabBar::reloadVerticalTabWidth()
 {
     QSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
-    setVerticalTabWidth(
-        settings.value(QLatin1String("verticalTabWidth"), 180).toInt());
+    const QVariant stored =
+        settings.value(QLatin1String("verticalTabWidth"));
+    // TABS10: an absent key or a stored legacy 180 means the grip
+    // was never dragged — migrate to the compact default; a
+    // user-dragged width stays.
+    setVerticalTabWidth(!stored.isValid()
+                            || stored.toInt() == legacyVerticalTabWidth
+                        ? defaultVerticalTabWidth
+                        : stored.toInt());
 }
 
 int TabBar::tabStripHeight() const
