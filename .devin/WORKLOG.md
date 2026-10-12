@@ -577,3 +577,4 @@
 - 2026-10-12 MERGEWATCH: rust-work merged — conflicts: COVERAGE.md (kept newer master timestamp), sitepanel.cpp/.h (lane's TRUST10 was interrupted-run leftovers superseded by master's TRUST11 — kept master structure, dropped lane's trustHeaderStyling test that used the removed API); build ok
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 2 ahead, 8th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 9th consecutive skip)
+- 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 10th consecutive skip)
