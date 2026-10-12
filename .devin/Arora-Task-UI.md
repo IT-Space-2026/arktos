@@ -100,6 +100,7 @@ This file is the task queue for the Devin CLI task loop
 | HOME01 | Home button on nav bar next to reload — details below | pending | 0 | user request — click loads the start page |
 | TRUST12 | Site Trust: 'Update now' button + last-updated label — details below | pending | 0 | user request — manual refresh for trust lists |
 | SIDE08 | Prefs Sidebar 'Panels' list too short + too wide — details below | pending | 0 | user report w/ screenshot — 'the height is not enough but the wheight is too much' |
+| SIDE09 | Sidebar prefs: panel reorder buttons + working Vivaldi-style options — details below | pending | 0 | user request w/ Vivaldi screenshots — 'these working settings' + rearrange buttons |
 
 ## Task details
 
@@ -584,3 +585,15 @@ Site Trust list update UI — user request: 'shouldn't we must update the site t
 ### SIDE08
 
 Preferences Sidebar section: 'Panels' list geometry wrong — user report with screenshot ('the height is not enough but the wheight is too much'): on the Appearance page's Sidebar section (SIDE02's layout — 'Show sidebar' checkbox, position tile picker, 'Panels:' checklist with Bookmarks/History/Downloads/Notes), the panels list renders as a cramped ~4-row viewport with a vertical scrollbar while stretching the FULL page width — reads broken: too short to show its few items without scrolling, far wider than its content. Fix in settings.ui (+ code only if needed): the list should fit its rows WITHOUT an internal scrollbar (sizeAdjustPolicy=QAbstractScrollArea::AdjustToContents or a sizeHint sized to count*rowHeight for the registered panels — SIDE02 made panels a registered list, so size to the registered count, not a hardcoded 4) and sit at content width — cap via Maximum/Fixed size policy or an hbox with trailing stretch, matching the tile picker's footprint above it. Keep per-row checkboxes + live panel add/remove behavior identical. Verify: offscreen grab — all registered panel rows visible, no vertical scrollbar, list width hugs content (not page edge), still scrolls only if a pathological panel count appears; tst_settingsdialog PASS; make check PASS.
+
+### SIDE09
+
+Sidebar prefs: reorder buttons + working panel options — user request with Vivaldi screenshots ('I want these working settings. The sidebar list should have a rearrange button like in my screenshot'): reference shows Vivaldi's Panel Options (Show Panel Toggle, Floating Panel > Auto-Close Inactive Panel, Show Close Button, Show Folder Counters; Web Panels: Detect Page Title Notifications, Lazy Load) and its Windows Panel folder list with ▲▼ reorder buttons. Two deliverables:
+
+(a) REORDER — the 'Panels:' checklist (sidebarPanelsList, settings.ui) gets ▲▼ move buttons like the screenshot (a small button column beside or below the list); moving updates a persisted order (new sidebar/panelOrder key storing panel ids in order — registry() order stays the fallback, unlisted/new panels append) and the rail builds in that order (applyPanelVisibility/indexOfPanel honor it — live or on apply, match how the visibility checkboxes apply today). Move buttons disabled sensibly at top/bottom edge.
+
+(b) WORKING OPTIONS — audit which Vivaldi options map to REAL Arora sidebar behavior and implement those as functional checkboxes in the Sidebar section; NO dead controls — anything Vivaldi-only (workspaces, tab stacks, synced/inactive/unread folders, web-panel page-title notifications where no mapping exists) is documented-skipped in Notes, not rendered. Candidate mappings (runner verifies feasibility, smallest-diff first): 'Show Panel Toggle' -> rail toggle-button visibility; 'Show Close Button' -> header close X visibility; 'Auto-Close Inactive Panel' -> hide dock when it loses focus; 'Show Folder Counters' -> count badges on the bookmarks panel folders; 'Lazy Load' -> panels construct on first open (SIDE02 already never-builds hidden panels — extend to not-yet-opened visible ones if cheap, else skip); 'Floating Panel' -> overlay-not-docked mode ONLY if it lands cleanly inside this task's budget — it may be too big; if so document-skip rather than half-ship. Settings keys sidebar/<name>, persisted + applied the same way as the existing Sidebar controls.
+
+Coordinate: SIDE08 (pending, same list geometry) — whichever lands second keeps the reorder buttons + the fixed geometry consistent (buttons column counts toward the content-width cap).
+
+Verify: ▲▼ reorder persists across restart AND drives rail order live; each implemented checkbox changes real sidebar behavior (grab/test per option); no dead options rendered; tst_settingsdialog leg(s); make check PASS.
