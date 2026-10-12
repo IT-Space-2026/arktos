@@ -133,12 +133,18 @@ void WebActionMapper::updateCurrent(Engine::Page *currentParent)
         m_root->setChecked(false);
         return;
     }
-    QAction *source = m_currentParent->action(m_webAction);
-    if (!source)
-        return;
-    m_root->setChecked(source->isChecked());
-    m_root->setEnabled(source->isEnabled());
     connect(m_currentParent, &QObject::destroyed,
             this, &WebActionMapper::currentDestroyed);
+    QAction *source = m_currentParent->action(m_webAction);
+    if (!source) {
+        // Engine::Page contract: an unmapped standard action reads
+        // as "disabled" — a degraded backend must grey out the
+        // chrome entry, not inherit the previous page's state.
+        m_root->setChecked(false);
+        m_root->setEnabled(false);
+        return;
+    }
+    m_root->setChecked(source->isChecked());
+    m_root->setEnabled(source->isEnabled());
 }
 

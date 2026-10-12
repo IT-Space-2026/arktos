@@ -82,6 +82,10 @@ public:
     void load(const QUrl &url);
     void spinOnce();              // one se_spin — GUI thread
     void goBack();
+    // True reload when the artifact exports se_reload, a history-
+    // pushing same-url se_load on artifacts predating ENG16; a no-op
+    // until a url has committed.
+    void reload();
     void setZoom(qreal zoom);
     void evaluateJavaScript(const QString &source);
 
@@ -196,6 +200,11 @@ private:
     void recordNavigation(const QUrl &url);
 
     QPointer<ServoView> m_view;
+    // Lazily-created standard actions (action()) — only the subset
+    // the shim can actually perform; everything else reports nullptr
+    // so chrome disables it (ENG16).
+    QPointer<QAction> m_backAction;
+    QPointer<QAction> m_reloadAction;
     QUrl m_pendingUrl;
     QList<Engine::HistoryEntry> m_entries;
     int m_current;

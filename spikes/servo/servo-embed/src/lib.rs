@@ -381,6 +381,17 @@ pub extern "C" fn se_key(instance: *mut SeInstance, utf8: *const c_char) {
     }
 }
 
+/// Reload the current page (ENG16). Unlike a same-url se_load this
+/// keeps the navigation history intact — WebView::load always pushes
+/// a new session-history entry, webview.reload() does not. Hosts must
+/// tolerate the export missing entirely (pre-ENG16 artifacts) and
+/// fall back to a same-url se_load.
+#[no_mangle]
+pub extern "C" fn se_reload(instance: *mut SeInstance) {
+    let instance = unsafe { &*instance };
+    instance.webview.reload();
+}
+
 #[no_mangle]
 pub extern "C" fn se_go_back(instance: *mut SeInstance) {
     let instance = unsafe { &*instance };

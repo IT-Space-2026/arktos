@@ -160,6 +160,16 @@ UI:
   twice. Engine tabs now use the single favicon slot every other tab
   uses, and the icon is restored when a Servo tab returns from a
   filtered container level (ENG15).
+- Fixed dead reload on Servo tabs: the tab-strip reload slot and
+  "Reload All Tabs" resolved through the WebEngine view, which does
+  not exist on foreign-engine tabs, so both silently did nothing, and
+  the menu/toolbar Reload entry never bound to the engine page at
+  all. Reload now dispatches to the foreign page from every
+  user-facing path, servo-embed gains a se_reload export that reloads
+  without growing the session history (older artifacts fall back to a
+  same-URL reload), and chrome actions a foreign engine does not map
+  read disabled instead of inheriting the previous tab's state
+  (ENG16).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

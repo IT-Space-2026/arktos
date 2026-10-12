@@ -3156,7 +3156,9 @@ static int servoLifecycleSmoke()
                              [&finished](bool) { finished = true; });
             for (int i = 0; i < 10; ++i) {
                 engineTab->reload();
-                tabs.reloadTab(0);   // chrome path: no-op on engine tabs
+                // Chrome path (ENG16): reaches the engine page — on
+                // an empty tab the reload is a harmless no-op.
+                tabs.reloadTab(0);
             }
             engineTab->stop();
             page->back();
@@ -3176,6 +3178,13 @@ static int servoLifecycleSmoke()
             engineTab->reload();
             pumpUntil([&finished]() { return finished; }, 30000);
             report(QStringLiteral("reload-loaded"), finished);
+
+            // ENG16: the user-facing dispatch — the strip slot that
+            // used to die on webView()==nullptr must re-load too.
+            finished = false;
+            tabs.reloadTab(0);
+            pumpUntil([&finished]() { return finished; }, 30000);
+            report(QStringLiteral("chrome-reload-loaded"), finished);
         }
         // ENG14: the typed-navigation repro — the engine tab's
         // location bar used to be a read-only echo, so Enter died

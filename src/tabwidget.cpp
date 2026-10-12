@@ -304,6 +304,10 @@ void TabWidget::reloadTab(int index)
 
     if (WebView *tab = webView(index)) {
         tab->reload();
+    } else if (EngineTab *foreign = engineTab(index)) {
+        // ENG16: the strip/context-menu path must reach a foreign
+        // engine's page too — webView() is nullptr on those tabs.
+        foreign->reload();
     }
 }
 
@@ -369,12 +373,17 @@ void TabWidget::currentChanged(int index)
         // PREFS01: a widget tab (Preferences et al.) has no page —
         // the chrome actions unbind, the window title comes from the
         // tab text, and focus lands on the page widget itself.
+        // ENG16: an EngineTab DOES own an Engine::Page — bind it so
+        // whatever the backend exposes through Page::action()
+        // (servo: Back/Reload) reaches the menus/toolbar/shortcuts;
+        // unmapped actions read disabled per the interface contract.
+        EngineTab *foreign = engineTab(index);
         for (int i = 0; i < m_actions.count(); ++i) {
             WebActionMapper *mapper = m_actions[i];
-            mapper->updateCurrent(nullptr);
+            mapper->updateCurrent(foreign ? foreign->page() : nullptr);
         }
         emit setCurrentTitle(tabText(index));
-        if (EngineTab *foreign = engineTab(index))
+        if (foreign)
             emit loadProgress(foreign->progress());
         else
             emit loadProgress(100);
@@ -1082,6 +1091,16 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
             emit showStatusBarMessage(ok ? tr("Finished loading")
                                          : tr("Failed to load"));
     });
+
+    // webview actions — same wiring makeNewTabOnProfile applies to a
+    // WebView's enginePage(): the page's standard actions feed the
+    // shared chrome entries (enabled state propagates through
+    // changed, triggers dispatch on the page).  A backend that maps
+    // none (action() -> nullptr) leaves the entries disabled.
+    for (int i = 0; i < m_actions.count(); ++i) {
+        WebActionMapper *mapper = m_actions[i];
+        mapper->addChild(tab->page()->action(mapper->webAction()));
+    }
 
     // ENG15: one favicon surface per tab.  WebView tabs carry theirs
     // in the free-side animationLabel and pass no tab icon — an
@@ -2418,6 +2437,8 @@ void TabWidget::reloadAllTabs()
     for (int i = 0; i < count(); ++i) {
         if (WebView *tab = webView(i)) {
             tab->reload();
+        } else if (EngineTab *foreign = engineTab(i)) {
+            foreign->reload();
         }
     }
 }

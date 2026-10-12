@@ -37,6 +37,10 @@ void se_mouse_button(SeInstance instance, int down, int button, float x, float y
 void se_wheel(SeInstance instance, double dx, double dy, float x, float y);
 void se_key(SeInstance instance, const char *utf8);
 void se_go_back(SeInstance instance);
+/* ENG16: reload the current page without pushing a history entry.
+ * Absent in artifacts predating ENG16 — resolve optionally and fall
+ * back to a same-url se_load. */
+void se_reload(SeInstance instance);
 void se_set_zoom(SeInstance instance, float zoom);
 void se_eval_js(SeInstance instance, const char *script);
 int se_frame_size(SeInstance instance, unsigned *width, unsigned *height);

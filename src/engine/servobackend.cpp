@@ -24,6 +24,7 @@
 #include "browserpaths.h"
 #include "engineregistry.h"
 
+#include <qaction.h>
 #include <qcoreapplication.h>
 #include <qdir.h>
 #include <qevent.h>
@@ -62,6 +63,10 @@ struct ServoApi {
     // ENG11: optional — artifacts built before se_version existed must
     // stay usable, so this one resolves outside the all-or-nothing set.
     const char *(*version)() = nullptr;
+    // ENG16: optional — artifacts built before se_reload existed fall
+    // back to a same-url se_load (which re-fetches but pushes a
+    // duplicate servo-side history entry).
+    void (*reload)(SeInstance) = nullptr;
 };
 
 ServoApi &api()
@@ -116,6 +121,10 @@ bool resolve()
     // displayName(), it must not fail artifactAvailable().
     api().version = reinterpret_cast<decltype(api().version)>(
         library().resolve("se_version"));
+    // Optional ENG16 addition — a missing se_reload degrades reload to
+    // a history-pushing same-url load, never to a broken backend.
+    api().reload = reinterpret_cast<decltype(api().reload)>(
+        library().resolve("se_reload"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -334,6 +343,23 @@ void ServoView::goBack()
         api().goBack(m_instance);
 }
 
+void ServoView::reload()
+{
+    // Nothing to re-fetch on a tab that never committed a url —
+    // pre-registration pending loads flush through se_spin instead.
+    if (!m_instance || m_url.isEmpty())
+        return;
+    if (api().reload) {
+        api().reload(m_instance);
+        return;
+    }
+    // Fallback for artifacts predating se_reload: a same-url se_load
+    // still re-fetches and re-renders, but libservo's WebView::load
+    // pushes a new session-history entry — servo's own back list
+    // grows a duplicate the C++ history mirror never sees.
+    api().load(m_instance, m_url.toEncoded().constData());
+}
+
 void ServoView::setZoom(qreal zoom)
 {
     if (m_instance)
@@ -529,9 +555,11 @@ void ServoPage::stop()
 
 void ServoPage::reload()
 {
-    const QUrl current = url();
-    if (!current.isEmpty())
-        load(current);
+    // The view owns the reload (true se_reload when the artifact
+    // exports it, same-url se_load otherwise).  Pre-attach there is
+    // only the pending load, which attachView flushes once anyway.
+    if (m_view)
+        m_view->reload();
 }
 
 QUrl ServoPage::url() const
@@ -658,9 +686,35 @@ void ServoPage::toHtml(const std::function<void(const QString &)> &resultCallbac
         resultCallback(QString());
 }
 
-QAction *ServoPage::action(Engine::StandardAction)
+QAction *ServoPage::action(Engine::StandardAction action)
 {
-    return nullptr;
+    // The chrome's WebActionMapper binds menu/toolbar entries and
+    // shortcuts to these — nullptr stays "disabled" per the
+    // Engine::Page contract.  Only what the shim can actually do is
+    // exposed: Back and Reload (no se_go_forward, no stop).
+    switch (action) {
+    case Engine::StandardAction::Back:
+        if (!m_backAction) {
+            m_backAction = new QAction(this);
+            m_backAction->setEnabled(canGoBack());
+            connect(m_backAction, &QAction::triggered,
+                    this, &ServoPage::back);
+            connect(this, &ServoPage::urlChanged,
+                    m_backAction, [this] {
+                m_backAction->setEnabled(canGoBack());
+            });
+        }
+        return m_backAction;
+    case Engine::StandardAction::Reload:
+        if (!m_reloadAction) {
+            m_reloadAction = new QAction(this);
+            connect(m_reloadAction, &QAction::triggered,
+                    this, &ServoPage::reload);
+        }
+        return m_reloadAction;
+    default:
+        return nullptr;
+    }
 }
 
 bool ServoPage::isLoading() const

@@ -133,6 +133,7 @@ private slots:
     void closeForeignTab();
     void engineTabLocationBar();
     void engineTabSingleIcon();
+    void engineTabReload();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -899,6 +900,57 @@ void tst_EngineSwitch::engineTabSingleIcon()
 #else
     QSKIP("favicon label is non-macOS only");
 #endif
+}
+
+// ENG16 — reload on a foreign tab used to be dead on every
+// user-facing path: the strip slot (context menu, reload-all)
+// resolved through webView() which is nullptr on engine tabs, and
+// the chrome actions unbound entirely instead of tracking the
+// foreign page's standard actions.
+void tst_EngineSwitch::engineTabReload()
+{
+    TabWidget widget;
+    widget.newTab();
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    EngineTab *foreign = widget.engineTab(0);
+    QVERIFY(foreign);
+    FakeEnginePage *page =
+        qobject_cast<FakeEnginePage*>(foreign->page());
+    QVERIFY(page);
+
+    // Strip dispatch — reloadTab (context menu) and reloadAllTabs.
+    widget.reloadTab(0);
+    QCOMPARE(page->reloads, 1);
+    widget.reloadAllTabs();
+    QCOMPARE(page->reloads, 2);
+
+    // Chrome-action dispatch — the WebActionMapper picks up the
+    // standard action the page maps and disables the ones it does
+    // not (nullptr reads as "disabled", never a stale enable).
+    QAction *reloadRoot = new QAction(&widget);
+    widget.addWebAction(reloadRoot, Engine::StandardAction::Reload);
+    QAction *unmappedRoot = new QAction(&widget);
+    widget.addWebAction(unmappedRoot, Engine::StandardAction::Forward);
+    QAction *child = new QAction(page);
+    connect(child, &QAction::triggered,
+            page, &FakeEnginePage::reload);
+    page->actions.insert(Engine::StandardAction::Reload, child);
+
+    // Re-bind through a tab switch — activation is what syncs the
+    // mappers with the current page.
+    widget.newTab();
+    widget.setCurrentIndex(0);
+    QVERIFY(reloadRoot->isEnabled());
+    QVERIFY(!unmappedRoot->isEnabled());
+    reloadRoot->trigger();
+    QCOMPARE(page->reloads, 3);
+
+    // Switching back to the WebView tab re-binds the real page —
+    // the foreign disabled state must not leak across engines.
+    widget.setCurrentIndex(1);
+    QCOMPARE(unmappedRoot->isEnabled(),
+             widget.webView(1)->enginePage()
+                 ->action(Engine::StandardAction::Forward)->isEnabled());
 }
 
 QTEST_MAIN(tst_EngineSwitch)
