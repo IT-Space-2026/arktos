@@ -138,7 +138,6 @@ private:
     QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
     QPointer<TreeSortFilterProxyModel> m_historyProxy;
     QPointer<QSortFilterProxyModel> m_downloadsProxy;
-    QPointer<QWidget> m_bookmarksPage;
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
     QPointer<QFrame> m_downloadDetail;
