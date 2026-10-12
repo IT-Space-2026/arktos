@@ -78,6 +78,7 @@ This file is the task queue for the Devin CLI task loop
 | TOR07 | Tor window chrome coloring: menu/header/tab should match URL-bar treatment — details below | pending | 0 | |
 | ICONS04 | Refresh button style differs from back/forward arrows — unify toolbar icon set — details below | pending | 0 | |
 | TOR08 | Tor circuit dropdown: small icon next to reader mode shows circuit w/ country flags+names — details below | pending | 0 | |
+| TOR09 | Tor-specific start page: Arora logo + Tor logo, tor-themed colors — details below | pending | 0 | |
 
 
 ## Task details
@@ -451,3 +452,13 @@ Implementation notes: needs the tor control connection (tormanager.cpp may alrea
 Spec: (a) icon next to reader mode, tor windows only (greyed+tooltip if tor binary/control unavailable); (b) dropdown lists circuit hops with flag + country name; (c) refresh semantics (open re-queries circuit; empty state 'no circuit yet' when idle); (d) never block the UI on control queries (async or cached); (e) no circuit info in non-tor windows (button hidden, not just disabled).
 
 Verify: in a tor window with an established circuit, dropdown shows 3 hops with flags+names; no tor window -> button absent; opening/closing repeatedly does not leak sockets; make check PASS.
+
+### TOR09
+
+Tor start page — user request: 'in the TOR window there is no startpage, so create a separate one just for TOR where it contains the original Logo like the normal start page, but in the middle you put the Tor Logo and make the coloring fit into the TORs color.'
+
+Current state: new tabs in tor windows show blank Untitled (possibly the same root cause START02 investigates on the normal path — check that first; if the normal start page is broken for the shared reason, fix that separately). This task: a DEDICATED tor variant of the bundled start page (htmls/ qrc resource) shown in tor windows instead of the standard one.
+
+Spec: (a) new qrc start page (e.g. startpage-tor.html + assets) loaded as the new-tab/home page inside tor windows (respect the same homepage/new-tab settings path — if the homepage setting is custom, honor it; the tor variant replaces the DEFAULT bundled page only); (b) layout mirrors the normal start page — the Arora logo where it normally sits, and the Tor logo centered in the middle; (c) coloring fits the tor purple theme (background/accents in the tor palette, readable in both day/night if the chrome themes it); (d) keep the start page functional — the search box + arora channel wiring must work identically (the START01 channel-handshake contract); (e) tor logo asset bundled in qrc (no network fetch — a start page must never hit the network, especially in tor).
+
+Verify: new tab in a tor window shows the tor start page (Arora + Tor logos, tor colors, working search box); normal windows still get the standard start page; --startpage-smoke pattern extended or mirrored for the tor variant; make check PASS.
