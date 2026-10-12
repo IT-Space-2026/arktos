@@ -660,30 +660,40 @@ void SitePanel::rebuildPermissionRows()
     }
 }
 
+#if defined(ARORA_RUSTCORE)
+// The shared FFI fetch behind the Trust section and the shield
+// badge: the composite verdict document for a host, or an empty
+// object when the lookup cannot evaluate (empty host, FFI hiccup).
+// The whole lookup is local — the blocklist, Tranco table, lookalike
+// skeletons and the history rollup all live inside the crate.
+static QJsonObject siteTrustVerdict(const QString &host, bool isHttps)
+{
+    if (host.isEmpty())
+        return QJsonObject();
+    rustCoreEnsureDataDir();
+    const QByteArray hostUtf8 = host.toUtf8();
+    char *json = rc_sitetrust_lookup(hostUtf8.constData(), isHttps ? 1 : 0);
+    if (!json)
+        return QJsonObject();
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));
+    rc_string_free(json);
+    return doc.object();
+}
+#endif
+
 // TRUST08: asks rustcore for the composite verdict and maps every
 // signal that fired (or is informative) onto a display line — the
 // absence of a signal is never rendered, so no neutral noise like
-// "not on a threat list" shows up.  The whole lookup is local: the
-// blocklist, Tranco table, lookalike skeletons and the history
-// rollup are all on-disk/in-memory state inside the crate.
+// "not on a threat list" shows up.
 QList<SitePanel::TrustLine> SitePanel::trustSignals(const QString &host,
                                                   bool isHttps)
 {
     QList<TrustLine> lines;
 #if defined(ARORA_RUSTCORE)
-    if (host.isEmpty())
-        return lines;
-    rustCoreEnsureDataDir();
-    const QByteArray hostUtf8 = host.toUtf8();
-    char *json = rc_sitetrust_lookup(hostUtf8.constData(), isHttps ? 1 : 0);
-    if (!json)
-        return lines;
-    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));
-    rc_string_free(json);
-    if (!doc.isObject())
+    const QJsonObject verdict = siteTrustVerdict(host, isHttps);
+    if (verdict.isEmpty())
         return lines;
 
-    const QJsonObject verdict = doc.object();
     const QJsonArray firedSignals =
         verdict.value(QLatin1String("signals")).toArray();
     const auto fired = [&firedSignals](QLatin1String name) {
@@ -728,6 +738,20 @@ QStringList SitePanel::trustSignalLines(const QString &host, bool isHttps)
     for (const TrustLine &line : lines)
         out << line.text;
     return out;
+}
+
+// TRUST09: the badge only needs the level word — the same verdict
+// document, no second FFI signature.
+QString SitePanel::trustLevel(const QString &host, bool isHttps)
+{
+#if defined(ARORA_RUSTCORE)
+    return siteTrustVerdict(host, isHttps)
+        .value(QLatin1String("level")).toString();
+#else
+    Q_UNUSED(host);
+    Q_UNUSED(isHttps);
+    return QString();
+#endif
 }
 
 void SitePanel::rebuildTrustRows()

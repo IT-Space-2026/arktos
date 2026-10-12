@@ -44,6 +44,7 @@
 #endif
 #include "adblockrule.h"
 #include "adblocksubscription.h"
+#include "aroraicon.h"
 #include "cookiejar.h"
 #include "popupblocker.h"
 #include "sitepanel.h"
@@ -111,6 +112,9 @@ private slots:
     void panelWithoutPage();
     void panelForSite();
     void trustSignalLines();
+    void trustBadgeLevels();
+    void trustBadgeCache();
+    void trustBadgeNavigation();
 };
 
 void tst_SitePanel::initTestCase()
@@ -563,6 +567,146 @@ void tst_SitePanel::trustSignalLines()
     // Restore the vendored seed ∪ override tables for later tests.
     rc_sitetrust_reload();
 #endif
+}
+
+// TRUST09: the level word behind the badge — fixture tables exercise
+// every branch of the verdict mapping, and the tint seam proves
+// green/unknown leave the lock alone while amber and red repaint it.
+void tst_SitePanel::trustBadgeLevels()
+{
+#if defined(ARORA_RUSTCORE)
+    SiteShieldButton::clearTrustCache();
+    const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+
+    // Ranked host over https -> green -> the lock stays untouched.
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("known-fixture.test"), true),
+             QLatin1String("green"));
+
+    // Threat-list hit and a confusable twin of a ranked domain ->
+    // red — the verdict that overrides the lock.
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("threat-fixture.test"), true),
+             QLatin1String("red"));
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("paypa1.com"), true),
+             QLatin1String("red"));
+
+    // Unranked host -> amber; plaintext http ambers even a ranked
+    // host — both get the amber tint.
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("obscure-fixture.test"), true),
+             QLatin1String("amber"));
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("known-fixture.test"), false),
+             QLatin1String("amber"));
+
+    // Nothing to evaluate -> no level, no badge.
+    QVERIFY(SiteShieldButton::trustLevelFor(QString(), true).isEmpty());
+
+    // Icon treatment: only "amber" and "red" repaint the shield.
+    const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
+    const QSize px(20, 20);
+    const QImage plain = shield.pixmap(px).toImage();
+    QCOMPARE(SiteShieldButton::tintedBadge(
+                 shield, px, QLatin1String("green"))
+                 .pixmap(px).toImage(), plain);
+    QCOMPARE(SiteShieldButton::tintedBadge(shield, px, QString())
+                 .pixmap(px).toImage(), plain);
+    const QImage ambered = SiteShieldButton::tintedBadge(
+        shield, px, QLatin1String("amber")).pixmap(px).toImage();
+    const QImage flagged = SiteShieldButton::tintedBadge(
+        shield, px, QLatin1String("red")).pixmap(px).toImage();
+    QVERIFY(ambered != plain);
+    QVERIFY(flagged != plain);
+    QVERIFY(flagged != ambered);
+
+    SiteShieldButton::clearTrustCache();
+    rc_sitetrust_reload();
+#endif
+}
+
+// TRUST09: verdicts are cached per host+https — a repeat visit to a
+// seen combination never reaches the FFI again, and a scheme flip on
+// the same host does (the https bit is part of the key).
+void tst_SitePanel::trustBadgeCache()
+{
+#if defined(ARORA_RUSTCORE)
+    SiteShieldButton::clearTrustCache();
+    const int before = SiteShieldButton::trustLookupCount();
+
+    SiteShieldButton::trustLevelFor(
+        QLatin1String("cache-fixture-a.test"), true);
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 1);
+
+    // The repeat visit is a cache hit.
+    SiteShieldButton::trustLevelFor(
+        QLatin1String("cache-fixture-a.test"), true);
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 1);
+
+    // The same host on the other scheme is a different verdict —
+    // the key carries the https bit.
+    SiteShieldButton::trustLevelFor(
+        QLatin1String("cache-fixture-a.test"), false);
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 2);
+
+    // A different host misses too.
+    SiteShieldButton::trustLevelFor(
+        QLatin1String("cache-fixture-b.test"), true);
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 3);
+
+    // An empty host never reaches the FFI.
+    SiteShieldButton::trustLevelFor(QString(), true);
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 3);
+
+    // A cleared cache re-evaluates.
+    SiteShieldButton::clearTrustCache();
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("cache-fixture-a.test"), true),
+             QLatin1String("amber"));
+    QCOMPARE(SiteShieldButton::trustLookupCount(), before + 4);
+#endif
+}
+
+// TRUST09: the badge follows the live page — a plaintext loopback
+// load ambers the shield, a non-web scheme drops the badge entirely.
+void tst_SitePanel::trustBadgeNavigation()
+{
+#if defined(ARORA_RUSTCORE)
+    SiteShieldButton::clearTrustCache();
+#endif
+
+    LocalHttpServer server;
+    QVERIFY(server.start());
+
+    WebView view;
+    SiteShieldButton shield;
+    shield.setWebView(&view);
+
+    QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+    view.load(server.url());
+    QTRY_COMPARE(loadSpy.count(), 1);
+    QVERIFY(!shield.icon().isNull());
+#if defined(ARORA_RUSTCORE)
+    // 127.0.0.1 is unranked and the page is plaintext http — amber.
+    QCOMPARE(shield.trustBadge(), QLatin1String("amber"));
+#else
+    QVERIFY(shield.trustBadge().isEmpty());
+#endif
+
+    // Leaving the web scheme drops the badge — the icon is the plain
+    // shield again.
+    view.load(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(shield.trustBadge().isEmpty());
 }
 
 QTEST_MAIN(tst_SitePanel)

@@ -1218,6 +1218,9 @@ Rust core lazy-list dedup (RAUDIT02):
 Site trust section in the shield panel (TRUST08):
     The location-bar shield popover now carries a Trust section under the security state: one line per real signal from the Rust site-trust verdict — "Known site (Tranco rank N)" or "Little-known site", "Resembles <domain>" for homograph lookalikes, "Listed on the phishing/malware threat list" for blocklist hits, and "First visit to this site" when history has no prior record. Only signals that fired or are informative get a line — there is no neutral "all clear" noise — and the section is keyed to the page's host so it refreshes on every navigation; pages with no host (local content, internal pages) hide it entirely. Lookalike and threat lines render in the warning color. Every lookup is local: the verdict reads the vendored blocklist/Tranco tables and the history rollup inside rustcore, and no host name leaves the machine.
 
+Trust verdict badge on the shield icon (TRUST09):
+    The location-bar shield/lock icon itself now carries the site-trust verdict, so the warning is visible without opening the panel: a "red" verdict (a threat-list hit or a homograph lookalike of a popular site) repaints the shield red, and an "amber" verdict — plaintext http or a host with no Tranco reputation — washes it amber; green and un-evaluable pages keep the plain icon. Verdicts are resolved once per host+scheme and cached for the session, so repaints never wait on the lookup; an http/https flip re-evaluates, non-web pages show no badge, and a refreshed blocklist or Tranco download clears the cache so the badge follows the new tables. Every lookup stays local — no host name leaves the machine.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

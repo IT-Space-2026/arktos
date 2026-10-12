@@ -21,14 +21,24 @@
 
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "domainblocklist.h"
 #include "sitepanel.h"
+#include "trancolist.h"
 #include "webview.h"
 
+#include <qhash.h>
 #include <qmenu.h>
 #include <qpainter.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 #include <qwidgetaction.h>
+
+// TRUST09: verdicts cached per host+https, shared across every
+// button/tab — one local FFI lookup per combination per session.
+// The https bit is part of the key so a scheme flip on the same host
+// re-evaluates rather than inheriting the other scheme's verdict.
+static QHash<QString, QString> s_trustCache;
+static int s_trustLookups = 0;
 
 SiteShieldButton::SiteShieldButton(QWidget *parent)
     : QToolButton(parent)
@@ -58,6 +68,14 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     connect(m_menu, &QMenu::aboutToShow, m_panel, &SitePanel::refresh);
     connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
             this, &SiteShieldButton::refreshIcon);
+
+    // TRUST09: a refreshed blocklist or Tranco table can change the
+    // verdict for already-seen hosts — drop the level cache and
+    // repaint so the badge follows the new data.
+    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
+            this, [this](bool) { clearTrustCache(); refreshIcon(); });
+    connect(TrancoList::instance(), &TrancoList::updateFinished,
+            this, [this](bool) { clearTrustCache(); refreshIcon(); });
 
     refreshIcon();
     setVisible(m_webView != nullptr);
@@ -90,10 +108,58 @@ void SiteShieldButton::setWebView(WebView *webView)
     refreshIcon();
 }
 
+QString SiteShieldButton::trustLevelFor(const QString &host, bool isHttps)
+{
+    if (host.isEmpty())
+        return QString();
+    const QString key = host + QLatin1Char('|')
+                        + QLatin1Char(isHttps ? '1' : '0');
+    const auto it = s_trustCache.constFind(key);
+    if (it != s_trustCache.constEnd())
+        return it.value();
+    const QString level = SitePanel::trustLevel(host, isHttps);
+    ++s_trustLookups;
+    s_trustCache.insert(key, level);
+    return level;
+}
+
+int SiteShieldButton::trustLookupCount()
+{
+    return s_trustLookups;
+}
+
+void SiteShieldButton::clearTrustCache()
+{
+    s_trustCache.clear();
+}
+
+QIcon SiteShieldButton::tintedBadge(const QIcon &base,
+                                    const QSize &iconPx,
+                                    const QString &level)
+{
+    QColor tint;
+    if (level == QLatin1String("red"))
+        // Near-opaque: a threat-list or lookalike verdict overrides
+        // the lock outright.
+        tint = QColor(214, 48, 49, 195);
+    else if (level == QLatin1String("amber"))
+        tint = QColor(240, 173, 0, 140);
+    else
+        return base;
+    QPixmap pixmap = base.pixmap(iconPx);
+    QPainter painter(&pixmap);
+    // SourceAtop keeps the glyph's alpha — a color wash, not a box.
+    painter.setCompositionMode(QPainter::CompositionMode_SourceAtop);
+    painter.fillRect(pixmap.rect(), tint);
+    painter.end();
+    return QIcon(pixmap);
+}
+
 void SiteShieldButton::refreshIcon()
 {
     const QIcon shield = AroraIcon::get(QLatin1String("security-high"));
 
+    m_trustLevel.clear();
     if (!m_webView) {
         setIcon(shield);
         return;
@@ -118,6 +184,25 @@ void SiteShieldButton::refreshIcon()
     } else {
         icon = shield;
         tip = tr("Site privacy and permissions");
+    }
+
+    // TRUST09: the composite site-trust verdict marks the lock —
+    // red on threat/lookalike hits, an amber wash on an "amber"
+    // verdict, untouched on green or when nothing could be
+    // evaluated.  The level comes out of the per host+https cache
+    // (refreshed by the navigation signals wired in setWebView), so
+    // this repaint path never blocks on the lookup; non-web schemes
+    // carry no badge at all.
+    const QString scheme = m_webView->url().scheme();
+    if (scheme == QLatin1String("http")
+        || scheme == QLatin1String("https")) {
+        m_trustLevel = trustLevelFor(
+            host, scheme == QLatin1String("https"));
+        icon = tintedBadge(icon, iconPx, m_trustLevel);
+        if (m_trustLevel == QLatin1String("red"))
+            tip += tr(" — flagged by the phishing/lookalike check");
+        else if (m_trustLevel == QLatin1String("amber"))
+            tip += tr(" — trust check advises caution");
     }
 
     // SHLD02: the uBO-style blocked-count badge the removed

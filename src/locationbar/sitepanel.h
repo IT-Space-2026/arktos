@@ -86,6 +86,11 @@ public:
     // evaluate (no rustcore, empty host, FFI hiccup).
     static QStringList trustSignalLines(const QString &host, bool isHttps);
 
+    // TRUST09: the verdict's level word ("green"/"amber"/"red") for a
+    // host — the shield badge's seam.  Empty when the lookup cannot
+    // evaluate.
+    static QString trustLevel(const QString &host, bool isHttps);
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
