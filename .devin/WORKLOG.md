@@ -460,3 +460,4 @@
 - 2026-10-12 MERGEWATCH: rust-work merged — no conflicts (auto-merged clean: .devin/Arora-Task-Rust.md + .devin/RUNNER_PROMPT_RUST.md only); build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (auto-merged clean: .devin/Arora-Task-UI.md + .devin/RUNNER_PROMPT_UI.md only); build ok
 - 2026-10-12 TRUST09: shield icon carries the site-trust verdict (red/amber tint, plain on green) — per host+https cache, FFI once per combo, invalidated on scheme flip + list reload; tst_sitepanel 19/19 + make check rc=0 offscreen
+- 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (auto-merged clean: .devin/Arora-Task-UI.md +40 queued rows only); rust-work at 0, skipped; build ok
