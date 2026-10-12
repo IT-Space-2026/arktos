@@ -146,7 +146,7 @@ TabWidget::TabWidget(QWidget *parent)
 
     connect(m_tabBar, &TabBar::loadUrl, this,
             [this](const QUrl &url, TabWidget::OpenUrlIn tab) { loadUrl(url, tab); });
-    connect(m_tabBar, &TabBar::newTab, this, &TabWidget::newTab);
+    connect(m_tabBar, &TabBar::newTab, this, &TabWidget::newTabPage);
     connect(m_tabBar, QOverload<int>::of(&TabBar::closeTab), this, &TabWidget::closeTab);
     connect(m_tabBar, QOverload<int>::of(&TabBar::cloneTab), this, &TabWidget::cloneTab);
     connect(m_tabBar, QOverload<int>::of(&TabBar::closeOtherTabs), this, &TabWidget::closeOtherTabs);
@@ -165,7 +165,7 @@ TabWidget::TabWidget(QWidget *parent)
     // Actions
     m_newTabAction = new QAction(this);
     m_newTabAction->setShortcuts(QKeySequence::AddTab);
-    connect(m_newTabAction, &QAction::triggered, this, &TabWidget::newTab);
+    connect(m_newTabAction, &QAction::triggered, this, &TabWidget::newTabPage);
 
     m_closeTabAction = new QAction(this);
     m_closeTabAction->setShortcuts(QKeySequence::Close);
@@ -417,6 +417,36 @@ int TabWidget::webViewIndex(WebView *webView) const
 void TabWidget::newTab()
 {
     makeNewTab(true);
+}
+
+void TabWidget::newTabPage()
+{
+    if (makeNewTab(true))
+        loadNewTabPageUrl();
+}
+
+void TabWidget::newTabPageInContainer(const QString &containerId)
+{
+    if (makeNewTabInContainer(containerId, true))
+        loadNewTabPageUrl();
+}
+
+void TabWidget::loadNewTabPageUrl()
+{
+    // START02: a user-opened new tab shows the start page — the same
+    // target the Home button resolves (MainWindow/home, default
+    // "about:home" -> qrc:/startpage.html), so the setting and the
+    // two surfaces never disagree.  Programmatic tabs (the window's
+    // startup tab, session restore, link/context spawns) go through
+    // newTab()/makeNewTab() and stay bare, leaving the
+    // startupBehavior preference authoritative at launch.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("MainWindow"));
+    const QString home = settings.value(QLatin1String("home"),
+                                        QLatin1String("about:home"))
+                             .toString();
+    if (!home.trimmed().isEmpty())
+        loadString(home);
 }
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)

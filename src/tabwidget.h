@@ -266,6 +266,16 @@ public slots:
     // cached while the tab was last current is returned.
     QPixmap tabThumbnail(int index);
     void newTab();
+    // START02: the user-facing New Tab command — the action and the
+    // tab-bar double-click land here.  Unlike newTab() (the bare
+    // programmatic tab the window ctor, session restore and tests
+    // use) it navigates the fresh tab to the new-tab page — the
+    // MainWindow/home setting goHome() resolves, whose default
+    // "about:home" maps to qrc:/startpage.html.
+    void newTabPage();
+    // Same command for the container menu — the tab binds to
+    // containerId's profile, then opens the start page.
+    void newTabPageInContainer(const QString &containerId);
     void cloneTab(int index = -1);
     void closeTab(int index = -1);
     void closeOtherTabs(int index);
@@ -293,6 +303,10 @@ private slots:
 
 private:
     static QUrl guessUrlFromString(const QString &url);
+    // START02: navigate the (already current) fresh tab to the
+    // new-tab page — the shared back half of the newTabPage* entry
+    // points.
+    void loadNewTabPageUrl();
     QLabel *animationLabel(int index, bool addMovie);
     void retranslate();
     // SLEEP01: idle bookkeeping + the async state-capture half of

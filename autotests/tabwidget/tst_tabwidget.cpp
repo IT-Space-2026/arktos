@@ -94,6 +94,7 @@ private slots:
     void sleepingTabs();
     void containerTabs();
     void tabSlotDrive();
+    void newTabStartPage();
 };
 
 // Subclass that exposes the protected functions.
@@ -1503,6 +1504,64 @@ void tst_TabWidget::tabSlotDrive()
 
     while (widget.count())
         widget.closeTab(0);
+}
+
+// START02: the user-facing New Tab command (action / tab-bar
+// double-click) opens the fresh tab on the start page — the
+// MainWindow/home target goHome() resolves, default about:home ->
+// qrc:/startpage.html — while the programmatic newTab() stays bare
+// so startup/session-restore paths keep their own say.
+void tst_TabWidget::newTabStartPage()
+{
+    QSettings settings;
+    const QString savedHome =
+        settings.value(QLatin1String("MainWindow/home")).toString();
+    const auto restoreHome = [&settings, &savedHome]() {
+        if (savedHome.isEmpty())
+            settings.remove(QLatin1String("MainWindow/home"));
+        else
+            settings.setValue(QLatin1String("MainWindow/home"), savedHome);
+    };
+    settings.remove(QLatin1String("MainWindow/home"));
+
+    SubTabWidget widget;
+
+    // The real user surface: the New Tab action, not the bare
+    // programmatic slot.
+    widget.newTabAction()->trigger();
+    QCOMPARE(widget.count(), 1);
+    WebView *view = widget.currentWebView();
+    QVERIFY(view);
+    QTRY_COMPARE_WITH_TIMEOUT(view->url(),
+        QUrl(QLatin1String("qrc:/startpage.html")), 15000);
+    // document.title is written by the page's own update() through
+    // the 'arora' channel — its arrival proves the handshake ran,
+    // not just that the qrc bytes committed.
+    QTRY_COMPARE_WITH_TIMEOUT(view->title(),
+        QStringLiteral("Welcome to Arora!"), 15000);
+
+    // A custom homepage redirects the same command.
+    settings.setValue(QLatin1String("MainWindow/home"),
+                      QLatin1String("data:text/plain,custom-home"));
+    widget.newTabAction()->trigger();
+    QCOMPARE(widget.count(), 2);
+    WebView *custom = widget.currentWebView();
+    QVERIFY(custom);
+    QVERIFY(custom != view);
+    QTRY_COMPARE_WITH_TIMEOUT(custom->url(),
+        QUrl(QLatin1String("data:text/plain,custom-home")), 15000);
+
+    // The programmatic slot still produces a bare tab — the window
+    // ctor, close-refusal refill and session restore all depend on
+    // startupBehavior deciding what the tab shows.
+    widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    QVERIFY(widget.currentWebView());
+    QVERIFY(widget.currentWebView()->url().isEmpty());
+
+    while (widget.count())
+        widget.closeTab(0);
+    restoreHome();
 }
 
 QTEST_MAIN(tst_TabWidget)

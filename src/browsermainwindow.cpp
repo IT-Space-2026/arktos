@@ -516,7 +516,9 @@ void BrowserMainWindow::lastTabClosed()
     if (quit)
         close();
     else
-        m_tabWidget->makeNewTab(true);
+        // START02: closing the last tab into a fresh one is a
+        // user-facing new tab — it lands on the start page.
+        m_tabWidget->newTabPage();
 }
 
 QAction *BrowserMainWindow::showMenuBarAction() const
@@ -1633,7 +1635,7 @@ void BrowserMainWindow::closeEvent(QCloseEvent *event)
     if (application && !application->allowToCloseWindow(this)) {
         event->ignore();
         if (m_tabWidget->count() == 0)
-            m_tabWidget->newTab();
+            m_tabWidget->newTabPage();
         return;
     }
 
@@ -1848,8 +1850,8 @@ void BrowserMainWindow::populateNewContainerTabMenu()
     }
     ContainerManager *manager = ContainerManager::instance();
     m_fileNewContainerTabMenu->addAction(tr("&No Container"), this, [this]() {
-        m_tabWidget->makeNewTabInContainer(
-            ContainerManager::defaultContainerId(), true);
+        m_tabWidget->newTabPageInContainer(
+            ContainerManager::defaultContainerId());
     });
     const QList<ContainerManager::Container> containers =
         manager->containers();
@@ -1859,7 +1861,7 @@ void BrowserMainWindow::populateNewContainerTabMenu()
             SafeText::menu(container.name));
         const QString id = container.id;
         connect(entry, &QAction::triggered, this, [this, id]() {
-            m_tabWidget->makeNewTabInContainer(id, true);
+            m_tabWidget->newTabPageInContainer(id);
         });
     }
     m_fileNewContainerTabMenu->addSeparator();
@@ -1867,7 +1869,7 @@ void BrowserMainWindow::populateNewContainerTabMenu()
         const QString id = ContainerManager::instance()
             ->createContainerInteractive(this);
         if (!id.isEmpty())
-            m_tabWidget->makeNewTabInContainer(id, true);
+            m_tabWidget->newTabPageInContainer(id);
     });
     m_fileNewContainerTabMenu->addAction(tr("&Manage Containers..."),
         m_tabWidget, &TabWidget::manageContainers);

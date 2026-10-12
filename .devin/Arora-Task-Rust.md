@@ -62,7 +62,7 @@ Rules for the agent working this file:
 | DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | blocked | 0 | blocked:missing card code on this branch — same wall as DLUX03: the expanded details card + info block + speed graph it polishes are master/ui-work only (no detailsWidget in downloaditem.ui, no DownloadGraph, no SidebarPanel::m_downloadDetail, no src/engine); re-file on main/ui lane or sync master->rust-work first |  [user-directed UI task — parallel lane work, Qt files allowed] |
 
 
-| START02 | No start page on new tab — blank Untitled (check servo vs chromium path) — details below | pending | 0 | moved from main lane [user-directed UI task — parallel lane work, Qt files allowed] |
+| START02 | No start page on new tab — blank Untitled (check servo vs chromium path) — details below | done | 1 | newTabPage()/newTabPageInContainer() load MainWindow/home (default about:home → qrc:/startpage.html) on user-facing new-tab surfaces; newTab() stays bare — make check PASS 2026-10-12 |
 | TRUST10 | Trust popover header styling: separator + verdict-colored bold Trust label — details below | pending | 0 | moved from main lane [user-directed UI task — parallel lane work, Qt files allowed] |
 
 ## Task details
