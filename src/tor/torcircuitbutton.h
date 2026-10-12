@@ -37,6 +37,14 @@ class QMenu;
 // as the geoip lookups resolve.  A missing manager greys the button;
 // the daemon-off, bootstrapping and failed states read inside the
 // dropdown instead.
+//
+// TOR13: opening the menu kicks the async re-query; the
+// circuitsChanged-driven repopulate of an OPEN menu is refresh-only —
+// it never re-queries (a reply would re-arm the repopulate forever)
+// and it skips the rebuild entirely when the rendered rows would be
+// identical, because every clear()+re-add on a visible QMenu re-lays
+// out the popup and on some platforms repositions it (the "creeping
+// popup" the user reported).
 class TorCircuitButton : public QToolButton
 {
     Q_OBJECT
@@ -73,10 +81,15 @@ private slots:
 
 private:
     void changeEvent(QEvent *event) override;
+    void syncOpenMenu();
     QIcon makeIcon() const;
 
     QPointer<TorManager> m_tor;
     QMenu *m_menu;
+    // What the menu currently shows (text/tooltips/flags), so a
+    // signal-driven repopulate can skip rebuilding a visible menu
+    // whose contents would not change.
+    QStringList m_menuSignature;
 };
 
 #endif // TORCIRCUITBUTTON_H

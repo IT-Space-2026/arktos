@@ -179,6 +179,13 @@ def main():
                       % sport)
                 reply("250 OK\r\n")
             elif cmd.startswith("GETINFO circuit-status"):
+                # TOR13: every request is logged so tests can assert
+                # the circuit dropdown's open-menu refresh stays
+                # bounded instead of looping one query per reply.
+                with open(os.path.join(data_dir,
+                                       "circuit-status-log"),
+                          "a") as f:
+                    f.write("circuit-status\n")
                 reply("250+circuit-status=\r\n")
                 reply("3 BUILT "
                       "$AA11AA11AA11AA11AA11AA11AA11AA11AA11AA11"

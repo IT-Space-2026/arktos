@@ -301,14 +301,12 @@ TorCircuitButton::TorCircuitButton(TorManager *manager, QWidget *parent)
         connect(m_tor, &TorManager::circuitsChanged,
                 this, [this](const QList<TorCircuit> &) {
             refreshState();
-            if (m_menu->isVisible())
-                populateMenu();
+            syncOpenMenu();
         });
         connect(m_tor, &TorManager::stateChanged,
                 this, [this](TorManager::State) {
             refreshState();
-            if (m_menu->isVisible())
-                populateMenu();
+            syncOpenMenu();
         });
     }
     refreshState();
@@ -409,10 +407,25 @@ QString TorCircuitButton::hopText(const TorCircuitHop &hop, int index,
     return tr("%1: %2 — %3").arg(role, name, country);
 }
 
-bool TorCircuitButton::addCircuitRows(QMenu *menu,
-                                      const QList<TorCircuit> &circuits,
-                                      int displayId,
-                                      qreal devicePixelRatio)
+namespace {
+
+// One row of the circuit dropdown as data — building the row set
+// separately from applying it lets a repopulate compare the new
+// snapshot against what the menu already shows before touching it.
+struct CircuitMenuRow {
+    bool section = true;    // header/state text vs actionable row
+    bool enabled = true;
+    bool flag = false;      // paint the hop's country flag glyph
+    QString text;
+    QString countryCode;    // flag glyph source (hop rows only)
+    QString toolTip;
+    QString statusTip;
+};
+
+// The displayed circuit's header + one row per hop; empty when no
+// displayable circuit exists (the caller prints the empty state).
+QList<CircuitMenuRow> circuitMenuRows(const QList<TorCircuit> &circuits,
+                                      int displayId)
 {
     const TorCircuit *circuit = nullptr;
     for (const TorCircuit &candidate : circuits) {
@@ -421,49 +434,60 @@ bool TorCircuitButton::addCircuitRows(QMenu *menu,
             break;
         }
     }
+    QList<CircuitMenuRow> rows;
     if (!circuit || circuit->hops.isEmpty())
-        return false;
-    QString header = tr("Tor circuit #%1 — %2")
+        return rows;
+    CircuitMenuRow header;
+    header.text = TorCircuitButton::tr("Tor circuit #%1 — %2")
         .arg(circuit->id).arg(circuit->status);
     if (!circuit->purpose.isEmpty())
-        header += tr(" · %1").arg(circuit->purpose);
-    menu->addSection(header);
+        header.text +=
+            TorCircuitButton::tr(" · %1").arg(circuit->purpose);
+    rows << header;
     for (int i = 0; i < circuit->hops.size(); ++i) {
         const TorCircuitHop &hop = circuit->hops.at(i);
-        QAction *row = menu->addAction(
-            flagIcon(hop.country, devicePixelRatio),
-            hopText(hop, i, circuit->hops.size()));
+        CircuitMenuRow row;
+        row.section = false;
+        row.flag = true;
+        row.countryCode = hop.country;
+        row.text = TorCircuitButton::hopText(hop, i,
+                                             circuit->hops.size());
         // Read-only info — the row does nothing when triggered; the
         // relay's identity details ride the tooltip.
         QStringList details;
         if (!hop.fingerprint.isEmpty())
-            details << tr("Fingerprint: %1").arg(hop.fingerprint);
+            details << TorCircuitButton::tr("Fingerprint: %1")
+                .arg(hop.fingerprint);
         if (!hop.address.isEmpty())
-            details << tr("OR address: %1").arg(hop.address);
+            details << TorCircuitButton::tr("OR address: %1")
+                .arg(hop.address);
         if (!hop.country.isEmpty()) {
-            const QString name = countryName(hop.country);
+            const QString name =
+                TorCircuitButton::countryName(hop.country);
             details << (name.isEmpty()
-                ? tr("Country: %1").arg(hop.country)
-                : tr("Country: %1 (%2)").arg(name, hop.country));
+                ? TorCircuitButton::tr("Country: %1").arg(hop.country)
+                : TorCircuitButton::tr("Country: %1 (%2)")
+                      .arg(name, hop.country));
         }
-        row->setToolTip(details.join(QLatin1Char('\n')));
-        row->setStatusTip(details.join(QLatin1String(" — ")));
+        row.toolTip = details.join(QLatin1Char('\n'));
+        row.statusTip = details.join(QLatin1String(" — "));
+        rows << row;
     }
-    return true;
+    return rows;
 }
 
-void TorCircuitButton::populateMenu()
+// Everything the dropdown would show for the manager's current state
+// — the honest unavailable/bootstrap/failed states or the circuit
+// rows.  Same decision tree the menu used to apply inline.
+QList<CircuitMenuRow> torCircuitMenuRows(TorManager *tor)
 {
-    m_menu->clear();
-    TorManager *tor = m_tor;
-    // Kick a re-query — the reply is collected on the control
-    // connection asynchronously, so this never blocks; the fresh
-    // snapshot lands through circuitsChanged.
-    if (tor)
-        tor->requestCircuitInfo();
+    QList<CircuitMenuRow> rows;
+    CircuitMenuRow row;
     if (!tor) {
-        m_menu->addSection(tr("Tor control connection unavailable"));
-        return;
+        row.text = TorCircuitButton::tr(
+            "Tor control connection unavailable");
+        rows << row;
+        return rows;
     }
     switch (tor->state()) {
     case TorManager::Ready:
@@ -471,32 +495,127 @@ void TorCircuitButton::populateMenu()
         // control link — serve an honest unavailable state instead of
         // a stale circuit snapshot.
         if (!tor->controlConnected()) {
-            m_menu->addSection(
-                tr("Tor circuit unavailable — control connection lost"));
-            return;
+            row.text = TorCircuitButton::tr(
+                "Tor circuit unavailable — control connection lost");
+            rows << row;
+            return rows;
         }
-        if (!addCircuitRows(m_menu, tor->circuits(),
-                            tor->displayCircuitId(),
-                            devicePixelRatioF()))
-            m_menu->addSection(tr("No circuit yet"));
-        return;
+        rows = circuitMenuRows(tor->circuits(), tor->displayCircuitId());
+        if (rows.isEmpty()) {
+            row.text = TorCircuitButton::tr("No circuit yet");
+            rows << row;
+        }
+        return rows;
     case TorManager::Failed: {
-        m_menu->addSection(tr("Tor: failed"));
-        QAction *error = m_menu->addAction(tor->errorString());
-        error->setEnabled(false);
-        return;
+        row.text = TorCircuitButton::tr("Tor: failed");
+        rows << row;
+        CircuitMenuRow error;
+        error.section = false;
+        error.enabled = false;
+        error.text = tor->errorString();
+        rows << error;
+        return rows;
     }
     case TorManager::Stopped:
-        m_menu->addSection(tr("Tor daemon is not running"));
-        return;
+        row.text = TorCircuitButton::tr("Tor daemon is not running");
+        rows << row;
+        return rows;
     default: {
         const int progress = tor->bootstrapProgress();
-        m_menu->addSection(progress >= 0
-            ? tr("Tor: connecting %1%").arg(progress)
-            : tr("Tor: connecting..."));
+        row.text = progress >= 0
+            ? TorCircuitButton::tr("Tor: connecting %1%").arg(progress)
+            : TorCircuitButton::tr("Tor: connecting...");
+        rows << row;
+        return rows;
+    }
+    }
+}
+
+// What a row set looks like once rendered — the fields that decide
+// the menu's pixels (a flag glyph changes iff its country code does).
+QStringList circuitRowSignature(const QList<CircuitMenuRow> &rows)
+{
+    QStringList signature;
+    signature.reserve(rows.size());
+    for (const CircuitMenuRow &row : rows) {
+        signature << QString::fromLatin1(
+                "%1\x1f%2\x1f%3\x1f%4\x1f%5\x1f%6\x1f%7")
+            .arg(int(row.section))
+            .arg(int(row.enabled))
+            .arg(int(row.flag))
+            .arg(row.text, row.countryCode, row.toolTip, row.statusTip);
+    }
+    return signature;
+}
+
+void applyCircuitRows(QMenu *menu, const QList<CircuitMenuRow> &rows,
+                      qreal devicePixelRatio)
+{
+    for (const CircuitMenuRow &row : rows) {
+        if (row.section) {
+            menu->addSection(row.text);
+            continue;
+        }
+        QAction *action = row.flag
+            ? menu->addAction(
+                  TorCircuitButton::flagIcon(row.countryCode,
+                                             devicePixelRatio),
+                  row.text)
+            : menu->addAction(row.text);
+        action->setEnabled(row.enabled);
+        action->setToolTip(row.toolTip);
+        action->setStatusTip(row.statusTip);
+    }
+}
+
+} // namespace
+
+bool TorCircuitButton::addCircuitRows(QMenu *menu,
+                                      const QList<TorCircuit> &circuits,
+                                      int displayId,
+                                      qreal devicePixelRatio)
+{
+    const QList<CircuitMenuRow> rows =
+        circuitMenuRows(circuits, displayId);
+    if (rows.isEmpty())
+        return false;
+    applyCircuitRows(menu, rows, devicePixelRatio);
+    return true;
+}
+
+void TorCircuitButton::populateMenu()
+{
+    // Kick a re-query — the reply is collected on the control
+    // connection asynchronously, so this never blocks; the fresh
+    // snapshot lands through circuitsChanged.  Only the aboutToShow
+    // path queries: a repopulate driven by the reply itself must be
+    // refresh-only or the loop never ends (TOR13).
+    if (m_tor)
+        m_tor->requestCircuitInfo();
+    const QList<CircuitMenuRow> rows = torCircuitMenuRows(m_tor);
+    m_menu->clear();
+    applyCircuitRows(m_menu, rows, devicePixelRatioF());
+    m_menuSignature = circuitRowSignature(rows);
+}
+
+void TorCircuitButton::syncOpenMenu()
+{
+    // Live refresh of an OPEN menu.  Never re-queries — a reply
+    // re-fires circuitsChanged and the populate/re-request ping-pong
+    // was the runaway loop behind the drifting popup (TOR13).  And a
+    // rebuild is skipped unless the rendered rows would actually
+    // change: every clear()+re-add on a visible QMenu re-lays out the
+    // popup, which on the reporter's desktop repositions it a few
+    // pixels each cycle.
+    if (!m_menu->isVisible())
         return;
-    }
-    }
+    const QList<CircuitMenuRow> rows = torCircuitMenuRows(m_tor);
+    const QStringList signature = circuitRowSignature(rows);
+    if (signature == m_menuSignature)
+        return;
+    m_menu->clear();
+    applyCircuitRows(m_menu, rows, devicePixelRatioF());
+    m_menuSignature = signature;
 }
 
 void TorCircuitButton::refreshState()
