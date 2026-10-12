@@ -317,6 +317,13 @@ UI:
   the same edge-drag works on the tab strip — width on Left/Right
   bars, height on Top/Bottom bars, with a double-click restoring
   Automatic (RSZ02).
+- Icon-only tab bar mode: a checkable "Icon-Only Tabs" entry in the
+  tab context menu and the View menu collapses every tab to its
+  favicon — titles stay on the tooltips, new tabs inherit the mode,
+  and the setting persists and applies to all windows. Collapsed
+  group chips keep their label, the two-level container strip is
+  unaffected, and a Left/Right strip shrinks to a slim icon rail
+  (TABS09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

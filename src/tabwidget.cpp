@@ -2869,6 +2869,8 @@ void TabWidget::loadSettings()
     m_tabBar->reloadTabStripHeight();
     // TPREV01: the hover-preview opt-out rides the same fan-out.
     m_tabBar->reloadTabHoverPreviews();
+    // TABS09: so does the icon-only view mode.
+    m_tabBar->reloadIconOnlyTabs();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS
