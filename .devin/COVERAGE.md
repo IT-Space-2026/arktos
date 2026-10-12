@@ -1,6 +1,6 @@
 # Coverage baseline (COV01)
 
-Generated: 2026-10-12 19:31 UTC on commit 3a21268
+Generated: 2026-10-12 19:47 UTC on commit 0210e0d
 Toolchain: Ubuntu clang version 18.1.3 (1ubuntu1) + /usr/bin/llvm-cov-18
 
 ## Reproduce
@@ -17,9 +17,9 @@ excluded). `ARORA_COVERAGE_MIN=NN` turns it into a gate.
 
 | Metric | Coverage |
 |--------|----------|
-| Lines | 83.36% |
-| Regions | 77.13% |
-| Functions | 87.74% |
+| Lines | 83.43% |
+| Regions | 77.18% |
+| Functions | 87.80% |
 
 ## Per-file
 
@@ -183,7 +183,7 @@ src/tabwidget.h                                                                 
 src/toolbarsearch.cpp                                                                 220                59    73.18%          30                 6    80.00%         432               115    73.38%         172                70    59.30%
 src/tor/torcontrol.cpp                                                                 89                16    82.02%          17                 3    82.35%         169                33    80.47%          56                21    62.50%
 src/tor/tormanager.cpp                                                                355                41    88.45%          43                 1    97.67%         745                55    92.62%         268                84    68.66%
-src/tor/torrequestinterceptor.cpp                                                      20                17    15.00%           3                 2    33.33%          48                44     8.33%          24                24     0.00%
+src/tor/torrequestinterceptor.cpp                                                      20                 0   100.00%           3                 0   100.00%          48                 0   100.00%          24                 4    83.33%
 src/tor/torsocks5.cpp                                                                  67                20    70.15%          10                 2    80.00%         130                34    73.85%          42                20    52.38%
 src/urlcleaner.cpp                                                                     31                 0   100.00%           4                 0   100.00%          59                 0   100.00%          26                 1    96.15%
 src/useragent/useragentmenu.cpp                                                        29                 4    86.21%           6                 0   100.00%          93                 5    94.62%          20                 6    70.00%
@@ -209,14 +209,14 @@ src/webview.cpp                                                                 
 src/webview.h                                                                           5                 0   100.00%           5                 0   100.00%           5                 0   100.00%           0                 0         -
 src/webviewsearch.cpp                                                                  42                 9    78.57%          14                 4    71.43%         112                30    73.21%          18                 5    72.22%
 src/webviewsearch.h                                                                     1                 0   100.00%           1                 0   100.00%           1                 0   100.00%           0                 0         -
-TOTAL regions 77.13% (25216/32693)  functions 87.74% (3315/3778)  lines 83.36% (52300/62738)
+TOTAL regions 77.18% (25233/32693)  functions 87.80% (3317/3778)  lines 83.43% (52344/62738)
 ```
 
 <!-- rustcov:start -->
 
 ## Rust crates (COV05)
 
-Generated: 2026-10-12 16:27 UTC on commit 178297f
+Generated: 2026-10-12 19:56 UTC on commit 0210e0d
 Toolchain: cargo-llvm-cov 0.9.1
 
 Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-only`, gated at 85% minimum per crate by `make check` (.devin/check-rustcoverage.sh; `ARORA_RUST_COVERAGE_MIN` overrides).
