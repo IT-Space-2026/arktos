@@ -406,3 +406,4 @@
 - 2026-10-12 TRANS09: et_EE catalog completed — 1210 entries translated (3 numerusform), lrelease PASS
 - 2026-10-12 TRANS10: fi_FI catalog completed — 1120 unfinished translated, lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS11: fr_FR catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS12: gl catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
