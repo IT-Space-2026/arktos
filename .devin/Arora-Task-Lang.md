@@ -29,7 +29,7 @@ every untranslated source string sits as type="unfinished". Qt lives at
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | TRANS01 | Complete hu_HU UI translation — details below | done | 1 | All 1081 unfinished entries translated to Hungarian (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
-| TRANS02 | Complete ast UI translation — details below | pending | 0 |  |
+| TRANS02 | Complete ast UI translation — details below | done | 1 | All 118 unfinished entries translated to Asturian (incl. 4 numerusform); lrelease PASS — 448 finished, 0 unfinished. |
 | TRANS03 | Complete ca UI translation — details below | pending | 0 |  |
 | TRANS04 | Complete cs_CZ UI translation — details below | pending | 0 |  |
 | TRANS05 | Complete da_DK UI translation — details below | pending | 0 |  |
