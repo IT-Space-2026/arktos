@@ -40,7 +40,7 @@ every untranslated source string sits as type="unfinished". Qt lives at
 | TRANS10 | Complete fi_FI UI translation — details below | done | 1 | All 1120 unfinished entries translated to Finnish (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS11 | Complete fr_FR UI translation — details below | done | 1 | All 1033 unfinished entries translated to French (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS12 | Complete gl UI translation — details below | done | 1 | All 1036 unfinished entries translated to Galician (incl. 4 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
-| TRANS13 | Complete it_IT UI translation — details below | pending | 0 |  |
+| TRANS13 | Complete it_IT UI translation — details below | done | 1 | All 1066 unfinished entries translated to Italian (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS14 | Complete ja_JP UI translation — details below | pending | 0 |  |
 | TRANS15 | Complete nb_NO UI translation — details below | pending | 0 |  |
 | TRANS16 | Complete nl UI translation — details below | pending | 0 |  |

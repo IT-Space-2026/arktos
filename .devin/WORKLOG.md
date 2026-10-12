@@ -407,3 +407,4 @@
 - 2026-10-12 TRANS10: fi_FI catalog completed — 1120 unfinished translated, lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS11: fr_FR catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS12: gl catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS13: it_IT catalog completed — 1066 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
