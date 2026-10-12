@@ -144,6 +144,7 @@ private slots:
     void torTabStripLayout();
     void torChromeTheme();
     void torNavIconsDarkChrome();
+    void darkChromeIcons();
     void torCircuitDropdown();
     void torStartPage();
     void torTitleBar();
@@ -1394,6 +1395,106 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(torForward > 140);
     QVERIFY(torReload > 140);
     QVERIFY(menuReload >= 0 && menuReload < 140);
+}
+
+// ICONS05: the normal window's chrome under a dark palette.  The
+// forced dark palette is invisible to the OS icon theme, so "native"
+// resolves to bundled -dark art unless the system theme is provably
+// dark-aware — either way the nav cluster, the status-bar zoom
+// buttons and the palette-painted sidebar glyph must all render
+// light.  Assertions are outcome-only so a genuinely dark-aware
+// native theme keeps passing.
+void tst_BrowserMainWindow::darkChromeIcons()
+{
+    const auto luminance = [](const QIcon &icon) -> qlonglong {
+        const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+        qlonglong lum = 0;
+        int opaque = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 100) {
+                    lum += qGray(color.rgb());
+                    ++opaque;
+                }
+            }
+        return opaque ? lum / opaque : -1;
+    };
+
+    // Force the default "native" icon theme — that is the path the
+    // bug report hit (a bundled pick already flipped to -dark).
+    QSettings settings;
+    const QVariant savedTheme =
+        settings.value(QLatin1String("MainWindow/iconTheme"));
+    settings.remove(QLatin1String("MainWindow/iconTheme"));
+    AroraIcon::applyFromSettings();
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar && navBar->actions().count() >= 3);
+    QToolButton *zoomOut = window->findChild<QToolButton *>(
+        QLatin1String("zoomOutButton"));
+    QVERIFY(zoomOut);
+    QAction *sidebarAction = nullptr;
+    for (QAction *action : navBar->actions()) {
+        if (action->shortcut() == QKeySequence(Qt::Key_F4))
+            sidebarAction = action;
+    }
+    QVERIFY(sidebarAction);
+
+    const QImage lightBackImage = navBar->actions().at(0)->icon()
+        .pixmap(QSize(18, 18)).toImage();
+
+    BrowserTheme::previewColorScheme(Qt::ColorScheme::Dark);
+    QApplication::processEvents();
+
+    const QImage darkBackImage = navBar->actions().at(0)->icon()
+        .pixmap(QSize(18, 18)).toImage();
+    const qlonglong darkBack =
+        luminance(navBar->actions().at(0)->icon());
+    const qlonglong darkForward =
+        luminance(navBar->actions().at(1)->icon());
+    const qlonglong darkReload =
+        luminance(navBar->actions().at(2)->icon());
+    const qlonglong darkZoomOut = luminance(zoomOut->icon());
+    const qlonglong darkSidebar = luminance(sidebarAction->icon());
+
+    // Offscreen grabs for visual review — set ARORA_DARK_GRAB_DIR to
+    // a directory and the dark nav bar + full window land there.
+    const QByteArray grabDir = qgetenv("ARORA_DARK_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        navBar->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/dark-nav-icons.png"));
+        window->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/dark-window.png"));
+    }
+
+    // The flip back must re-resolve the original art — a
+    // Day->Night->Day cycle must not leave light glyphs on the light
+    // chrome, and live theme icons must actually swap pixels.
+    BrowserTheme::applyColorScheme();
+    QApplication::processEvents();
+    const QImage backImage = navBar->actions().at(0)->icon()
+        .pixmap(QSize(18, 18)).toImage();
+
+    closeWindow(window);
+    if (savedTheme.isValid())
+        settings.setValue(QLatin1String("MainWindow/iconTheme"),
+                          savedTheme);
+    AroraIcon::applyFromSettings();
+
+    QVERIFY(darkBack > 140);
+    QVERIFY(darkForward > 140);
+    QVERIFY(darkReload > 140);
+    QVERIFY(darkZoomOut > 140);
+    QVERIFY(darkSidebar > 140);
+    QCOMPARE(backImage, lightBackImage);
+    QVERIFY(backImage != darkBackImage);
 }
 
 // TOR08: the tor window's nav bar carries a circuit dropdown right

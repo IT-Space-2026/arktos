@@ -41,7 +41,12 @@
 // Monochrome bundled sets also ship an "-dark" sibling theme that is
 // picked automatically when the application palette is dark — Qt
 // renders SVG currentColor as black rather than recoloring to the
-// palette, so the dark variants are pre-recolored files.
+// palette, so the dark variants are pre-recolored files.  "native"
+// under a dark palette probes the captured system theme for a
+// light-on-dark glyph and falls back to the bundled -dark art when
+// it cannot serve one — a forced dark palette (THEME01) is invisible
+// to the OS icon theme, and some "dark" desktops still ship
+// dark-glyph sets.
 //
 // Page-content glyphs are intentionally NOT routed here: the app
 // window icon, the private-browsing badge, the default page icon,

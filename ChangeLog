@@ -485,6 +485,13 @@ UI:
   180px. A saved width that still holds the old default migrates to
   the new one, while a width you dragged to yourself is kept — and
   the edge drag and double-click reset work as before (TABS10).
+- Dark theme readability: toolbar, menu, tab-strip, location-bar,
+  status-bar and Preferences sidebar icons now switch to the bundled
+  light-glyph variants when the app theme is Dark — previously the
+  default "Native" icon set kept its dark glyphs on the dark chrome,
+  making buttons unreadable. A desktop icon theme that already ships
+  light-on-dark art is kept as-is, and flipping Day/Night in
+  Preferences swaps the icon art live (ICONS05).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

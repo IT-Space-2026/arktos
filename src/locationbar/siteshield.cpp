@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "aroraicon.h"
 #include "browserapplication.h"
+#include "browsertheme.h"
 #include "domainblocklist.h"
 #include "sitepanel.h"
 #include "trancolist.h"
@@ -69,6 +70,13 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     connect(m_menu, &QMenu::aboutToShow, m_panel, &SitePanel::refresh);
     connect(AdBlockManager::instance(), &AdBlockManager::rulesChanged,
             this, &SiteShieldButton::refreshIcon);
+    // ICONS05: the icon is baked to a pixmap while the badges are
+    // drawn — re-bake on a light<->dark flip so the themed shield art
+    // swaps to its -dark variant.  Queued: the signal fires mid-flip,
+    // before palette propagation finishes.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, &SiteShieldButton::refreshIcon, Qt::QueuedConnection);
 
     // TRUST09: a refreshed blocklist or Tranco table can change the
     // verdict for already-seen hosts — drop the level cache and

@@ -43,6 +43,7 @@ private slots:
     void bundledCoverage();
     void liveSwitch();
     void darkVariant();
+    void nativeDarkVariant();
     void legacyFallback();
     void iconForTheme();
 };
@@ -180,6 +181,51 @@ void tst_AroraIcon::darkVariant()
     qApp->setPalette(saved);
     QCOMPARE(AroraIcon::effectiveThemeName(QLatin1String("tabler")),
              QLatin1String("arora-tabler"));
+}
+
+// ICONS05: "native" under a dark palette must not render dark
+// glyphs.  A forced dark palette is invisible to the OS icon theme,
+// so unless the system theme provably serves light-on-dark art the
+// effective theme falls back to a bundled -dark set.  Assert the
+// rendered outcome, not the mapping — desktops whose native theme
+// really is dark-aware keep their theme and still pass.
+void tst_AroraIcon::nativeDarkVariant()
+{
+    const QPalette saved = qApp->palette();
+    qApp->setPalette(BrowserTheme::darkPalette());
+
+    AroraIcon::setTheme(QLatin1String("native"));
+    const QString effective = AroraIcon::effectiveThemeName(
+        QLatin1String("native"));
+    QVERIFY2(!effective.isEmpty(), "native must resolve to a theme");
+
+    const QImage image = AroraIcon::get(QLatin1String("go-previous"))
+        .pixmap(QSize(24, 24)).toImage();
+    qlonglong luminance = 0;
+    int opaque = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.alpha() > 128) {
+                luminance += qGray(c.rgb());
+                ++opaque;
+            }
+        }
+    }
+    QVERIFY2(opaque > 0, qPrintable(effective));
+    QVERIFY2(luminance / opaque > 140, qPrintable(
+        effective + QLatin1String(" mean luminance ")
+        + QString::number(luminance / opaque)));
+
+    // Back on a light palette native never resolves to a bundled
+    // -dark set — the substitution is palette-driven, not sticky.
+    qApp->setPalette(saved);
+    const QString light = AroraIcon::effectiveThemeName(
+        QLatin1String("native"));
+    QVERIFY2(!(light.startsWith(QLatin1String("arora-"))
+               && light.endsWith(QLatin1String("-dark"))),
+             qPrintable(light));
+    AroraIcon::setTheme(QLatin1String("native"));
 }
 
 // With no resolvable theme at all the chain must still reach the

@@ -19,6 +19,7 @@
 
 #include "readerbutton.h"
 
+#include "browsertheme.h"
 #include "readermode.h"
 #include "webview.h"
 
@@ -42,6 +43,12 @@ ReaderButton::ReaderButton(QWidget *parent)
         // refused enter() emits no activeChanged, so re-assert.
         refresh();
     });
+    // ICONS05: the glyph is painted from the palette at refresh()
+    // time — repaint it when a light<->dark flip lands.  Queued: the
+    // signal fires mid-flip, before palette propagation finishes.
+    connect(BrowserTheme::themeNotifier(),
+            &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+            this, [this]() { refresh(); }, Qt::QueuedConnection);
     hide();
 }
 

@@ -1005,6 +1005,18 @@ void BrowserMainWindow::setupMenu()
     m_viewSidebarAction = m_sidebarDock->toggleViewAction();
     m_viewSidebarAction->setShortcut(QKeySequence(Qt::Key_F4));
     m_viewSidebarAction->setIcon(SidebarPanel::icon(this));
+    // ICONS05: the sidebar glyph is painted from ButtonText once —
+    // repaint it on a light<->dark flip.  Tor chrome pins its own
+    // lifted glyph in the ctor, so the repaint must not reach it.
+    // Queued: the signal fires inside applyScheme() before widget
+    // palette propagation finishes — painting must see the new one.
+    if (!BrowserApplication::isTorMode()) {
+        connect(BrowserTheme::themeNotifier(),
+                &BrowserTheme::BrowserThemeNotifier::chromeSchemeChanged,
+                this, [this]() {
+            m_viewSidebarAction->setIcon(SidebarPanel::icon(this));
+        }, Qt::QueuedConnection);
+    }
     m_viewMenu->addAction(m_viewSidebarAction);
 
     // DEVT03: dev tools dock — the BiDi panel builds lazily on first
