@@ -68,7 +68,6 @@
 #include "addbookmarkdialog.h"
 #include "aroraicon.h"
 #include "autosaver.h"
-#include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
 #include "bookmarksmodel.h"
@@ -1609,6 +1608,10 @@ void BrowserMainWindow::ensureSidebarPanel()
                                 const QString &title) {
         m_tabWidget->loadUrl(url, tab, title);
     });
+    // SIDE04: the rail's Add button adds the current tab's page —
+    // the window owns the tab, the panel supplies the folder.
+    connect(m_sidebarPanel, &SidebarPanel::addBookmarkRequested,
+            this, &BrowserMainWindow::addSidebarBookmark);
     // DOWN02: the Downloads page header's X folds the dock away (the
     // toggle action + persistence follow via visibilityChanged).
     connect(m_sidebarPanel, &SidebarPanel::closeRequested,
@@ -1744,13 +1747,37 @@ QDockWidget *BrowserMainWindow::sidebarDock() const
     return m_sidebarDock;
 }
 
+// SIDE04: "Show All Bookmarks" raises the sidebar dock on the
+// Bookmarks rail instead of spawning a separate window — the same
+// single-instance pattern downloadManager() uses above.  The
+// BookmarksDialog class itself stays (tests still exercise it); this
+// path simply stops instantiating it.
 void BrowserMainWindow::showBookmarksDialog()
 {
-    BookmarksDialog *dialog = new BookmarksDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &BookmarksDialog::openUrl,
-            m_tabWidget, &TabWidget::loadUrl);
-    dialog->show();
+    ensureSidebarPanel();
+    m_sidebarDock->setVisible(true);
+    m_sidebarDock->raise();
+    m_sidebarPanel->showBookmarks();
+}
+
+// The rail's Add button — the same AddBookmarkDialog the toolbar
+// star uses, pre-filled with the current tab's page and opened on
+// the folder the rail selection resolves to.
+void BrowserMainWindow::addSidebarBookmark(const QModelIndex &folder)
+{
+    AddBookmarkDialog dialog;
+    if (WebView *webView = currentTab()) {
+        dialog.setUrl(QLatin1String(webView->url().toEncoded()));
+        dialog.setTitle(webView->title());
+    }
+    BookmarksManager *bookmarksManager =
+        BrowserApplication::bookmarksManager();
+    QModelIndex index = folder;
+    if (!index.isValid())
+        index = bookmarksManager->bookmarksModel()
+                    ->index(bookmarksManager->menu());
+    dialog.setCurrentIndex(index);
+    dialog.exec();
 }
 
 void BrowserMainWindow::addBookmark()

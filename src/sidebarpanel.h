@@ -24,6 +24,7 @@
 #include <functional>
 
 #include <qlist.h>
+#include <QModelIndex>
 #include <qpointer.h>
 #include <qwidget.h>
 
@@ -34,6 +35,7 @@ class QComboBox;
 class QFrame;
 class QListView;
 class QPlainTextEdit;
+class QPushButton;
 class QSortFilterProxyModel;
 class QTabWidget;
 class TreeSortFilterProxyModel;
@@ -51,6 +53,10 @@ signals:
     // DOWN02: the Downloads page header's X asks the host window to
     // fold the whole dock away.
     void closeRequested();
+    // SIDE04: the bookmarks rail's Add button — the host window owns
+    // the current tab so it fills the dialog; folder is the source
+    // model index to preselect (invalid = the bookmarks menu root).
+    void addBookmarkRequested(const QModelIndex &folder);
 
 public:
     // SIDE02: one entry on the rail — a panel registers (id, icon,
@@ -79,6 +85,7 @@ public:
     QTabWidget *tabs() const;
     QPlainTextEdit *notes() const;
     QWidget *downloadsPage() const;
+    QWidget *bookmarksPage() const;
 
 public slots:
     // AutoSaver target — flushes the notes text and the selected tab.
@@ -86,6 +93,9 @@ public slots:
     // DOWN02: Ctrl+Y / Tools > Downloads lands here — the dock is the
     // only downloads surface now.
     void showDownloads();
+    // SIDE04: Ctrl+Shift+B / Bookmarks > Show All Bookmarks lands
+    // here — the dock is the bookmarks manager surface now.
+    void showBookmarks();
     // SIDE02: syncs the rail with the persisted per-panel visibility —
     // newly enabled panels build on demand, disabled ones are dropped.
     void applyPanelVisibility();
@@ -93,6 +103,8 @@ public slots:
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void bookmarksContextMenu(const QPoint &pos);
+    void removeSelectedBookmark();
+    void updateBookmarkRemoveState();
     void openHistoryEntry(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void historyContextMenu(const QPoint &pos);
     void openDownload(const QModelIndex &index);
@@ -112,8 +124,11 @@ private:
     QWidget *buildDownloadsPage();
     QWidget *buildNotesPage();
     int indexOfPanel(const QByteArray &id) const;
+    QModelIndex selectedBookmarkFolder() const;
 
     QTabWidget *m_tabs;
+    QPointer<QWidget> m_bookmarksPage;
+    QPointer<QPushButton> m_bookmarksRemoveButton;
     QPointer<EditTreeView> m_bookmarksView;
     QPointer<EditTreeView> m_historyView;
     QPointer<QListView> m_downloadsView;

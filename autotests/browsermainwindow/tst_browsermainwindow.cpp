@@ -56,6 +56,11 @@
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
+#include "bookmarknode.h"
+#include "bookmarksdialog.h"
+#include "bookmarksmanager.h"
+#include "bookmarksmodel.h"
+#include "edittreeview.h"
 #include "history.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
@@ -131,6 +136,7 @@ private slots:
     void sidebarPanel();
     void sidebarResize();
     void downloadsSidebarPanel();
+    void bookmarksSidebarPanel();
     void chromeSlots();
 };
 
@@ -1638,6 +1644,162 @@ void tst_BrowserMainWindow::downloadsSidebarPanel()
     DownloadManager::instance()->cleanup();
     DownloadManager::instance()->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// SIDE04: Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) raises the
+// sidebar dock on the Bookmarks rail — the standalone manager window
+// is gone from this path.  The rail carries the old dialog's
+// Add/Remove over the shared model: Add runs the same
+// AddBookmarkDialog the toolbar star uses and lands the current
+// page in the rail-selected folder; Remove deletes the selected
+// bookmark (disabled on folders/empty selection), and the context
+// menu's "Remove Entry" is the same delete.
+void tst_BrowserMainWindow::bookmarksSidebarPanel()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+
+    BookmarksManager *manager = BookmarksManager::instance();
+    BookmarkNode *seed = new BookmarkNode(BookmarkNode::Bookmark);
+    seed->title = QLatin1String("SidebarSeed");
+    seed->url = QLatin1String("http://sidebar-seed.example.com/");
+    manager->addBookmark(manager->menu(), seed);
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    WebView *webView = window->currentTab();
+    QVERIFY(webView);
+    QSignalSpy loaded(webView->page(), &QWebEnginePage::loadFinished);
+    webView->load(QUrl(QLatin1String(
+        "data:text/html,<title>Sidebar Add</title><p>page</p>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 15000);
+
+    // Menu path — same entry as before, but it opens the dock now.
+    QMenu *bookmarksMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().remove(QLatin1Char('&'))
+                   == QLatin1String("Bookmarks"))
+            bookmarksMenu = menuAction->menu();
+    }
+    QVERIFY(bookmarksMenu);
+    QAction *showAll = nullptr;
+    for (QAction *action : bookmarksMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                .contains(QLatin1String("Show All Bookmarks")))
+            showAll = action;
+    }
+    QVERIFY(showAll);
+    QCOMPARE(showAll->shortcut(),
+             QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                          | Qt::Key_B));
+
+    showAll->trigger();
+    QDockWidget *dock = window->sidebarDock();
+    QVERIFY(dock->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+    // No second toplevel — the old BookmarksDialog path is gone.
+    for (QWidget *widget : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<BookmarksDialog *>(widget));
+
+    EditTreeView *view = panel->findChild<EditTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QPushButton *addButton = panel->findChild<QPushButton *>(
+        QLatin1String("sidebarAddBookmark"));
+    QPushButton *removeButton = panel->findChild<QPushButton *>(
+        QLatin1String("sidebarRemoveBookmark"));
+    QVERIFY(view);
+    QVERIFY(addButton);
+    QVERIFY(addButton->isEnabled());
+    QVERIFY(removeButton);
+    QSortFilterProxyModel *proxy =
+        qobject_cast<QSortFilterProxyModel *>(view->model());
+    QVERIFY(proxy);
+
+    // Remove is gated on a bookmark selection — nothing/folder = off.
+    view->setCurrentIndex(QModelIndex());
+    QVERIFY(!removeButton->isEnabled());
+    QModelIndex seedSource = manager->bookmarksModel()->index(seed);
+    QVERIFY(seedSource.isValid());
+    QModelIndex seedRow = proxy->mapFromSource(seedSource);
+    view->setCurrentIndex(seedRow);
+    QVERIFY(removeButton->isEnabled());
+
+    // Add opens the AddBookmarkDialog prefilled with the current
+    // page; accepting lands the node in the seed's folder (menu).
+    const int menuRows = manager->menu()->children().count();
+    acceptModal(300);
+    addButton->click();
+    QCOMPARE(manager->menu()->children().count(), menuRows + 1);
+    BookmarkNode *added = manager->menu()->children().constLast();
+    QVERIFY(added->url.contains(QLatin1String("data:text/html")));
+    QCOMPARE(added->title, QLatin1String("Sidebar Add"));
+
+    // The button deletes the selection straight out of the shared
+    // model — the toolbar/menu views see it through the same model.
+    view->setCurrentIndex(
+        proxy->mapFromSource(manager->bookmarksModel()->index(added)));
+    removeButton->click();
+    QCOMPARE(manager->menu()->children().count(), menuRows);
+    QVERIFY(!manager->menu()->children().contains(added));
+
+    // The context menu's "Remove Entry" deletes the seed the same
+    // way — build + trigger through the nested exec loop.
+    view->setCurrentIndex(seedRow = proxy->mapFromSource(
+            manager->bookmarksModel()->index(seed)));
+    bool removed = false;
+    int tries = 0;
+    QTimer *timer = new QTimer(qApp);
+    timer->setInterval(80);
+    QObject::connect(timer, &QTimer::timeout, qApp, [&]() {
+        QMenu *menu = qobject_cast<QMenu *>(
+            QApplication::activePopupWidget());
+        if (!menu) {
+            const QWidgetList tops = QApplication::topLevelWidgets();
+            for (QWidget *widget : tops) {
+                menu = qobject_cast<QMenu *>(widget);
+                if (menu && menu->isVisible())
+                    break;
+                menu = nullptr;
+            }
+        }
+        if (!menu) {
+            if (++tries > 25)
+                timer->stop();
+            return;
+        }
+        timer->stop();
+        for (QAction *action : menu->actions()) {
+            if (action->text().remove(QLatin1Char('&'))
+                    .contains(QLatin1String("Remove Entry"))
+                && action->isEnabled()) {
+                action->trigger();
+                removed = true;
+            }
+        }
+        // A programmatic trigger does not dismiss an exec'd menu.
+        menu->close();
+    });
+    timer->start();
+    const QPoint pos = view->visualRect(seedRow).center();
+    QVERIFY(QMetaObject::invokeMethod(
+        panel, "bookmarksContextMenu", Q_ARG(QPoint, pos)));
+    timer->stop();
+    timer->deleteLater();
+    QVERIFY(removed);
+    QVERIFY(!manager->menu()->children().contains(seed));
+
+    // Hiding the dock then re-invoking keeps it docked, on bookmarks.
+    dock->hide();
+    showAll->trigger();
+    QVERIFY(dock->isVisible());
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    closeWindow(window);
 }
 
 // COV05: the remaining chrome slots — print/print-preview dialogs,

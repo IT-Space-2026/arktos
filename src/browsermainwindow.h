@@ -171,6 +171,9 @@ private slots:
     void showBookmarksDialog();
     void addBookmark();
     void addBookmarkFolder();
+    // SIDE04: the sidebar rail's Add button — folder is the source
+    // model index to preselect in the dialog (invalid = menu root).
+    void addSidebarBookmark(const QModelIndex &folder);
     void zoomIn();
     void zoomNormal();
     void zoomOut();

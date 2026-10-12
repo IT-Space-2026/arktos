@@ -194,7 +194,9 @@ browsing profile:
   window and picked from clickable preview tiles in Preferences.
 - **Tab groups** — named, color-coded groups on the strip.
 - **Sidebar dock** — optional Vivaldi-style side panel (bookmarks,
-  history, downloads, notes), lazily built and off by default.
+  history, downloads, notes), lazily built and off by default; the
+  bookmarks rail doubles as the manager — "Show All Bookmarks"
+  (Ctrl+Shift+B) opens it with Add/Remove right on the page.
 - **Tab search** — Ctrl+Shift+A fuzzy dropdown over all open tabs,
   with hover previews.
 - **Sleeping tabs** — suspend tabs to reclaim memory without losing

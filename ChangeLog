@@ -84,6 +84,12 @@ UI:
   strips get Minimum/Maximum tab-width controls in Preferences so
   tabs neither collapse nor balloon (RSZ01).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
+- Bookmarks > "Show All Bookmarks" (Ctrl+Shift+B) now raises the
+  sidebar dock focused on the Bookmarks rail instead of opening a
+  separate manager window, and the rail carries Add/Remove buttons —
+  Add books the current page through the same dialog the toolbar
+  star uses, Remove deletes the selection (also on the rail's
+  context menu as "Remove Entry") (SIDE04).
 - Command palette, Ctrl+Shift+P (CMD01).
 - Tab search dropdown, Ctrl+Shift+A, with hover previews (POL02).
 - Copy Clean Link and QR-code sharing (POL01).

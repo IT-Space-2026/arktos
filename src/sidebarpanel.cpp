@@ -406,13 +406,13 @@ void SidebarPanel::applyPanelVisibility()
 // same search-line + proxy presentation the dialog uses.
 QWidget *SidebarPanel::buildBookmarksPage()
 {
-    QWidget *bookmarksPage = new QWidget(m_tabs);
-    QVBoxLayout *bookmarksLayout = new QVBoxLayout(bookmarksPage);
+    m_bookmarksPage = new QWidget(m_tabs);
+    QVBoxLayout *bookmarksLayout = new QVBoxLayout(m_bookmarksPage);
     bookmarksLayout->setContentsMargins(2, 2, 2, 2);
     bookmarksLayout->setSpacing(2);
-    SearchLineEdit *bookmarksSearch = new SearchLineEdit(bookmarksPage);
+    SearchLineEdit *bookmarksSearch = new SearchLineEdit(m_bookmarksPage);
     bookmarksLayout->addWidget(bookmarksSearch);
-    m_bookmarksView = new EditTreeView(bookmarksPage);
+    m_bookmarksView = new EditTreeView(m_bookmarksPage);
     m_bookmarksProxy = new TreeSortFilterProxyModel(m_bookmarksView);
     m_bookmarksView->setObjectName(QLatin1String("sidebarBookmarksView"));
     m_bookmarksView->setAccessibleName(tr("Bookmarks"));
@@ -435,7 +435,37 @@ QWidget *SidebarPanel::buildBookmarksPage()
     connect(m_bookmarksView, &EditTreeView::customContextMenuRequested,
             this, &SidebarPanel::bookmarksContextMenu);
     bookmarksLayout->addWidget(m_bookmarksView);
-    return bookmarksPage;
+
+    // SIDE04: this rail is the bookmarks manager now — carry the old
+    // dialog's Add/Remove actions on a compact row under the tree.
+    // Add is handled by the window (it owns the current tab); Remove
+    // works on the shared model straight from here.
+    QHBoxLayout *bookmarksActions = new QHBoxLayout;
+    QPushButton *addButton = new QPushButton(tr("Add..."), m_bookmarksPage);
+    addButton->setObjectName(QLatin1String("sidebarAddBookmark"));
+    addButton->setAccessibleName(tr("Add bookmark"));
+    connect(addButton, &QPushButton::clicked, this, [this]() {
+        emit addBookmarkRequested(selectedBookmarkFolder());
+    });
+    bookmarksActions->addWidget(addButton);
+    m_bookmarksRemoveButton =
+        new QPushButton(tr("Remove"), m_bookmarksPage);
+    m_bookmarksRemoveButton->setObjectName(
+        QLatin1String("sidebarRemoveBookmark"));
+    m_bookmarksRemoveButton->setAccessibleName(tr("Remove bookmark"));
+    connect(m_bookmarksRemoveButton, &QPushButton::clicked,
+            this, &SidebarPanel::removeSelectedBookmark);
+    bookmarksActions->addWidget(m_bookmarksRemoveButton);
+    bookmarksLayout->addLayout(bookmarksActions);
+    connect(m_bookmarksView->selectionModel(),
+            &QItemSelectionModel::currentChanged,
+            this, &SidebarPanel::updateBookmarkRemoveState);
+    connect(m_bookmarksProxy, &QAbstractItemModel::rowsRemoved,
+            this, &SidebarPanel::updateBookmarkRemoveState);
+    connect(m_bookmarksProxy, &QAbstractItemModel::modelReset,
+            this, &SidebarPanel::updateBookmarkRemoveState);
+    updateBookmarkRemoveState();
+    return m_bookmarksPage;
 }
 
 // History — the day-grouped tree model the History dialog uses.
@@ -702,6 +732,10 @@ void SidebarPanel::bookmarksContextMenu(const QPoint &pos)
     menu.addAction(tr("Open in New Tab"), this, [this, index]() {
         openBookmark(index, TabWidget::NewSelectedTab);
     });
+    menu.addSeparator();
+    menu.addAction(tr("Remove Entry"), this, [this, index]() {
+        m_bookmarksProxy->removeRow(index.row(), index.parent());
+    });
     menu.exec(QCursor::pos());
 }
 
@@ -736,6 +770,70 @@ void SidebarPanel::historyContextMenu(const QPoint &pos)
 QWidget *SidebarPanel::downloadsPage() const
 {
     return m_downloadsPage;
+}
+
+QWidget *SidebarPanel::bookmarksPage() const
+{
+    return m_bookmarksPage;
+}
+
+// SIDE04: Ctrl+Shift+B / Bookmarks > Show All Bookmarks lands here —
+// the caller raises the dock; this picks the rail entry and focuses
+// the tree.
+void SidebarPanel::showBookmarks()
+{
+    if (m_bookmarksPage && m_tabs->indexOf(m_bookmarksPage) >= 0)
+        m_tabs->setCurrentWidget(m_bookmarksPage);
+    if (m_bookmarksView)
+        m_bookmarksView->setFocus();
+}
+
+// The folder the Add dialog should open on: the selected folder, a
+// bookmark's parent folder, or invalid (the window falls back to the
+// bookmarks menu root).
+QModelIndex SidebarPanel::selectedBookmarkFolder() const
+{
+    if (!m_bookmarksView || !m_bookmarksProxy)
+        return QModelIndex();
+    const QModelIndex source = m_bookmarksProxy->mapToSource(
+        m_bookmarksView->currentIndex());
+    const BookmarkNode *node = source.isValid()
+        ? BookmarksManager::instance()->bookmarksModel()->node(source)
+        : nullptr;
+    if (!node)
+        return QModelIndex();
+    if (node->type() == BookmarkNode::Folder)
+        return source;
+    return source.parent();
+}
+
+void SidebarPanel::removeSelectedBookmark()
+{
+    const QModelIndex index = m_bookmarksView->currentIndex();
+    const QModelIndex source = m_bookmarksProxy->mapToSource(index);
+    const BookmarkNode *node = source.isValid()
+        ? BookmarksManager::instance()->bookmarksModel()->node(source)
+        : nullptr;
+    if (!node || node->type() != BookmarkNode::Bookmark)
+        return;
+    // Same path as the view's Del key — removeRow through the proxy
+    // maps onto the shared model's undoable removal.
+    m_bookmarksProxy->removeRow(index.row(), index.parent());
+}
+
+void SidebarPanel::updateBookmarkRemoveState()
+{
+    bool canRemove = false;
+    if (m_bookmarksView && m_bookmarksProxy) {
+        const QModelIndex index = m_bookmarksView->currentIndex();
+        const QModelIndex source = m_bookmarksProxy->mapToSource(index);
+        const BookmarkNode *node = source.isValid()
+            ? BookmarksManager::instance()->bookmarksModel()->node(source)
+            : nullptr;
+        canRemove = node && node->type() == BookmarkNode::Bookmark;
+    }
+    if (m_bookmarksRemoveButton)
+        m_bookmarksRemoveButton->setEnabled(canRemove);
 }
 
 void SidebarPanel::showDownloads()
