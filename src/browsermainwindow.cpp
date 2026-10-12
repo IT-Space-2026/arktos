@@ -174,6 +174,25 @@ static QString torTabBarStyleSheet()
              palette.color(QPalette::Text).name());
 }
 
+// TOR14: the chrome's bottom edge — the status bar joins the violet
+// treatment so the circuit label, the MEM/NET/loading/zoom widgets
+// and the transient message line read light-on-violet instead of the
+// app palette's dark text.  All fixed colors (unlike the tab strip's
+// field element), so a live theme preview needs no re-resolution.
+static QString torStatusBarStyleSheet()
+{
+    return QLatin1String(
+        "QStatusBar { background: #4a3372; color: #eee; }"
+        "QStatusBar::item { border: none; }"
+        "QLabel { color: #eee; background: transparent; }"
+        "QToolButton { color: #eee; background: transparent; }"
+        "QToolButton:hover { background: #5d4491; }"
+        "QToolButton:pressed { background: #3a2a5c; }"
+        "QProgressBar { background: #3a2a5c; border: none;"
+        " border-radius: 3px; }"
+        "QProgressBar::chunk { background: #b9aecf; }");
+}
+
 BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
     , m_sidebarGrip(nullptr)
@@ -283,6 +302,20 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             AroraIcon::getOnDark(QLatin1String("go-next")));
         m_viewSidebarAction->setIcon(
             SidebarPanel::icon(m_readerModeButton));
+
+        // TOR14: the status bar joins the violet chrome.  The
+        // transient message line is painted straight from
+        // palette().windowText() (it bypasses the stylesheet), so
+        // the role is lifted explicitly — children inherit it.
+        statusBar()->setStyleSheet(torStatusBarStyleSheet());
+        QPalette statusPalette = statusBar()->palette();
+        statusPalette.setColor(QPalette::WindowText,
+                               QColor(0xee, 0xee, 0xee));
+        statusBar()->setPalette(statusPalette);
+        // The zoom +/- glyphs are themed icons — dark art on the
+        // violet bar.  Pin the light -dark variants like the nav
+        // cluster above.
+        m_zoomControl->useOnDarkIcons();
 
         // TOR04: the live circuit chain — a permanent status-bar
         // label fed by TorManager (GETINFO circuit-status refreshed

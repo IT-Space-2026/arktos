@@ -455,6 +455,10 @@ Tor:
 - The Tor window's drawn title bar shows the page title in readable
   white text that keeps its space on the menu row — a long title
   elides gracefully instead of collapsing to a faint sliver (TOR12).
+- The Tor window's status bar joins the violet chrome — the circuit
+  chain, memory/network/load/zoom indicators, the size grip and
+  transient messages (like hovered links) now render light-on-violet
+  instead of near-invisible dark text on purple (TOR14).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search
