@@ -128,6 +128,17 @@ public:
     [[nodiscard]] static bool isExecutableMimeType(const QString &mimeType);
     static void removeExecutableBit(const QString &path);
 
+    // DOWN03 helpers — static so autotests can drive them without a
+    // live download.  revealTarget resolves what a click would point
+    // the file manager at WITHOUT launching anything: the file when
+    // it still exists, else the nearest surviving ancestor folder
+    // (deleted/moved download, unmounted volume), else empty.
+    // revealInFileManager performs the platform reveal — file
+    // selected where the FM supports it — and reports whether any
+    // channel accepted the request.
+    [[nodiscard]] static QString revealTarget(const QString &path);
+    static bool revealInFileManager(const QString &path);
+
     QUrl m_url;
     QString m_outputFileName;
 

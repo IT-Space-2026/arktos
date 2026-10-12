@@ -70,6 +70,7 @@
 
 #include <qapplication.h>
 #include <qdesktopservices.h>
+#include <qdir.h>
 #include <qevent.h>
 #include <qfiledialog.h>
 #include <qfileiconprovider.h>
@@ -86,6 +87,12 @@
 #include <qtimer.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS) && defined(QT_DBUS_LIB)
+#include <qdbusconnection.h>
+#include <qdbusinterface.h>
+#include <qdbusreply.h>
+#endif
 
 #include <qdebug.h>
 
@@ -661,14 +668,99 @@ void DownloadItem::restartDownload()
     page->download(m_url);
 }
 
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS) && defined(QT_DBUS_LIB)
+// DOWN03: org.freedesktop.FileManager1.ShowItems is the only common
+// Linux/BSD channel that opens the file manager with the FILE
+// selected — xdg-open on the containing folder opens a window but
+// selects nothing, and on DEs whose xdg-open can't dispatch file://
+// directories the old call failed silently, which is the "dead
+// button" users reported.  Returns false when the bus or the
+// service is unavailable so the caller can degrade to a folder
+// open.
+static bool showItemsOnFileManager1(const QString &filePath)
+{
+    const QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected())
+        return false;
+    QDBusInterface iface(QStringLiteral("org.freedesktop.FileManager1"),
+                         QStringLiteral("/org/freedesktop/FileManager1"),
+                         QStringLiteral("org.freedesktop.FileManager1"),
+                         bus);
+    if (!iface.isValid())
+        return false;
+    // ShowItems(as URIs, s StartupId) — an empty startup id leaves
+    // the focus policy to the file manager.
+    const QDBusReply<void> reply = iface.call(
+        QStringLiteral("ShowItems"),
+        QVariant::fromValue(QStringList{
+            QUrl::fromLocalFile(filePath).toString()}),
+        QString());
+    return reply.isValid();
+}
+#endif
+
+QString DownloadItem::revealTarget(const QString &path)
+{
+    if (path.isEmpty())
+        return QString();
+    // The recorded output file may be gone by the time the user
+    // clicks (deleted, moved, volume unmounted).  Walk up to the
+    // nearest ancestor that still exists so the action always has a
+    // real target — and can never spin or crash on a stale path.
+    QFileInfo info(path);
+    while (!info.exists()) {
+        const QString parent = info.absolutePath();
+        if (parent == info.absoluteFilePath())
+            return QString();
+        info = QFileInfo(parent);
+    }
+    return info.absoluteFilePath();
+}
+
+bool DownloadItem::revealInFileManager(const QString &path)
+{
+    const QString target = revealTarget(path);
+    if (target.isEmpty())
+        return false;
+    const bool isFile = QFileInfo(target).isFile();
+#if defined(Q_OS_WIN)
+    if (isFile) {
+        // explorer /select,"<file>" opens the folder window with the
+        // entry highlighted; a bare path would open the file itself.
+        return QProcess::startDetached(
+            QStringLiteral("explorer.exe"),
+            QStringList{QStringLiteral("/select,\"%1\"")
+                            .arg(QDir::toNativeSeparators(target))});
+    }
+#elif defined(Q_OS_MACOS)
+    if (isFile) {
+        // `open -R` reveals (selects) the file in Finder.
+        return QProcess::startDetached(
+            QStringLiteral("/usr/bin/open"),
+            QStringList{QStringLiteral("-R"), target});
+    }
+#elif defined(Q_OS_UNIX) && defined(QT_DBUS_LIB)
+    if (isFile && showItemsOnFileManager1(target))
+        return true;
+#endif
+    // Folder fallback: the file is gone (target resolved to an
+    // ancestor folder) or the DE offers no select-capable channel.
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(
+        isFile ? QFileInfo(target).absolutePath() : target));
+}
+
 void DownloadItem::showInFolder()
 {
     if (m_outputFileName.isEmpty())
         return;
-    // Reveal the containing folder (xdg-open on Linux); selecting the
-    // file itself is file-manager specific and not portable.
-    const QFileInfo info(m_outputFileName);
-    QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+    if (revealInFileManager(m_outputFileName))
+        return;
+    // Still here: either nothing on the path's ancestor chain exists
+    // any more — permanent for this item, so drop the dead action —
+    // or every launch channel refused a real target, which stays
+    // retryable.
+    if (revealTarget(m_outputFileName).isEmpty())
+        showInFolderButton->setEnabled(false);
 }
 
 void DownloadItem::expandButtonClicked()

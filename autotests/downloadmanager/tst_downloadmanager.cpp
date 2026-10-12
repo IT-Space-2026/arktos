@@ -73,6 +73,8 @@ private slots:
     void restoredCard();
     void autoExpand();
     void detailsCardTracksTheme();
+    void revealTarget();
+    void revealInFileManager();
 };
 
 // Clicks the requested button on any modal QMessageBox that pops while
@@ -1208,6 +1210,74 @@ void tst_DownloadManager::detailsCardTracksTheme()
         item->hide();
     }
     QApplication::setPalette(light);
+}
+
+// DOWN03: the resolver behind the reveal action — pure filesystem
+// walk, launches nothing.
+void tst_DownloadManager::revealTarget()
+{
+    // Empty input has no target at all.
+    QVERIFY(DownloadItem::revealTarget(QString()).isEmpty());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("report.txt"));
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("payload");
+    file.close();
+
+    // An existing file resolves to itself, absolute.
+    QCOMPARE(DownloadItem::revealTarget(filePath),
+             QFileInfo(filePath).absoluteFilePath());
+
+    // A deleted download resolves to the surviving folder.
+    QVERIFY(QFile::remove(filePath));
+    QCOMPARE(DownloadItem::revealTarget(filePath),
+             QFileInfo(dir.path()).absoluteFilePath());
+
+    // A whole missing subtree climbs to the nearest ancestor.
+    QCOMPARE(DownloadItem::revealTarget(
+                 dir.filePath(QStringLiteral("gone/deep/file.bin"))),
+             QFileInfo(dir.path()).absoluteFilePath());
+
+    // Relative paths resolve through the cwd without crashing.
+    QVERIFY(!DownloadItem::revealTarget(QStringLiteral(".")).isEmpty());
+}
+
+// DOWN03: the launch path itself.  Only the guaranteed-safe legs run
+// in the suite — the real reveal spawns the DE's file manager, so it
+// is gated behind ARORA_LIVE_FM for manual verification on a live
+// session.
+void tst_DownloadManager::revealInFileManager()
+{
+    // Nothing to reveal must never launch or crash.
+    QVERIFY(!DownloadItem::revealInFileManager(QString()));
+
+    if (!qEnvironmentVariableIsSet("ARORA_LIVE_FM"))
+        return;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("report.txt"));
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("payload");
+    file.close();
+    // The select-capable channel (FileManager1/explorer/Finder) or the
+    // folder fallback must accept the request.
+    QVERIFY(DownloadItem::revealInFileManager(filePath));
+    // A deleted file reveals its folder instead of dying.  The folder
+    // fallback rides QDesktopServices, which headless QPA platforms
+    // cannot dispatch — there the call must still fail cleanly rather
+    // than crash or hang.
+    QVERIFY(QFile::remove(filePath));
+    const QString platform = QGuiApplication::platformName();
+    if (platform == QLatin1String("offscreen")
+        || platform == QLatin1String("minimal"))
+        QVERIFY(!DownloadItem::revealInFileManager(filePath));
+    else
+        QVERIFY(DownloadItem::revealInFileManager(filePath));
 }
 
 QTEST_MAIN(tst_DownloadManager)

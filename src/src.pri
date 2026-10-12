@@ -22,6 +22,10 @@ INCLUDEPATH += $$PWD $$PWD/utils
 DEPENDPATH += $$PWD $$PWD/utils
 
 QT += core gui widgets network printsupport webenginewidgets quickwidgets webchannel uitools core5compat
+# DOWN03: org.freedesktop.FileManager1 ShowItems (reveal-in-FM with the
+# file selected).  The downloadmanager.cpp call site stays behind
+# QT_DBUS_LIB so builds without the module keep the folder fallback.
+unix:!mac: QT += dbus
 
 # Share object files for faster compiling
 RCC_DIR     = $$PWD/.rcc
