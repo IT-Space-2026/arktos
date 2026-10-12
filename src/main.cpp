@@ -77,6 +77,7 @@
 #include "tabwidget.h"
 #include "terminationsignalhandler.h"
 #include "toolbarsearch.h"
+#include "torcircuitbutton.h"
 #include "tormanager.h"
 #include "torsocks5.h"
 #include "engineregistry.h"
@@ -167,6 +168,7 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
 #include <QtPrintSupport/QPrinter>
@@ -11252,7 +11254,7 @@ int main(int argc, char **argv)
         });
         auto onReady = [torManager, &application, networkAccessManager,
                         view, probeUrl, torWinFail,
-                        circuitLabel](const QNetworkProxy &) {
+                        circuitLabel, torWindow](const QNetworkProxy &) {
             const QNetworkProxy applied = QNetworkProxy::applicationProxy();
             if (applied.type() != QNetworkProxy::Socks5Proxy
                     || applied.port() != torManager->socksPort()) {
@@ -11267,7 +11269,7 @@ int main(int argc, char **argv)
                 QNetworkRequest(probeUrl));
             QObject::connect(reply, &QNetworkReply::finished, &application,
                              [&application, reply, view, probeUrl,
-                              torWinFail, circuitLabel]() {
+                              torWinFail, circuitLabel, torWindow]() {
                 const QByteArray body = reply->readAll();
                 qInfo() << "tor-window-smoke: api/ip via NAM:"
                         << reply->error() << body.left(120);
@@ -11289,7 +11291,7 @@ int main(int argc, char **argv)
                 QObject::connect(view, &QWebEngineView::loadFinished,
                                  &application,
                                  [&application, view, pageUrl, probeUrl,
-                                  torWinFail, circuitLabel](bool ok) {
+                                  torWinFail, circuitLabel, torWindow](bool ok) {
                     if (!ok || view->url() != pageUrl)
                         return;
                     view->enginePage()->runJavaScript(
@@ -11302,7 +11304,7 @@ int main(int argc, char **argv)
                             "+document.documentElement.innerText"
                             ".slice(0,300);}})()"),
                         [&application, pageUrl, probeUrl, torWinFail,
-                         circuitLabel](
+                         circuitLabel, torWindow](
                             const QVariant &result) {
                         const QString body = result.toString();
                         qInfo() << "tor-window-smoke: api/ip via WebEngine:"
@@ -11338,6 +11340,37 @@ int main(int argc, char **argv)
                             torWinFail(QLatin1String(
                                 "circuit label never rendered the "
                                 "hop chain"));
+                            return;
+                        }
+                        // TOR08: the nav-bar circuit dropdown must
+                        // exist on the tor window and render the same
+                        // live chain — one flag row per hop under the
+                        // circuit header.
+                        QToolButton *circuitButton =
+                            torWindow->findChild<QToolButton *>(
+                                QLatin1String("torCircuitButton"));
+                        if (!circuitButton || !circuitButton->menu()) {
+                            torWinFail(QLatin1String(
+                                "tor window missing the circuit "
+                                "dropdown button"));
+                            return;
+                        }
+                        QMetaObject::invokeMethod(
+                            circuitButton, "populateMenu");
+                        int hopRows = 0;
+                        for (QAction *action :
+                                 circuitButton->menu()->actions()) {
+                            if (action->isEnabled()
+                                    && !action->isSeparator()
+                                    && !action->icon().isNull())
+                                ++hopRows;
+                        }
+                        qInfo() << "tor-window-smoke: circuit dropdown:"
+                                << hopRows << "hop rows";
+                        if (hopRows < 3) {
+                            torWinFail(QLatin1String(
+                                "circuit dropdown did not render the "
+                                "hop rows"));
                             return;
                         }
                         qInfo() << "tor-window-smoke: PASS"

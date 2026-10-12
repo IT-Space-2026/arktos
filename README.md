@@ -281,7 +281,10 @@ local DNS resolver: names resolve remotely through SOCKS5 and a
 configured DNS-over-HTTPS mode is ignored).
 The status bar shows the live circuit's hop chain
 (guard -> middle -> exit, each hop tagged with its country code,
-fingerprints on hover).
+fingerprints on hover), and a small onion button next to the
+reader-mode icon opens a dropdown of the same circuit — one row per
+hop with country flag and name, fingerprints and OR addresses on
+hover.
 
 ### Downloads
 

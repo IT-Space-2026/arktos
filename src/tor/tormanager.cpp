@@ -300,7 +300,7 @@ void TorManager::requestCircuitInfo()
                 }
             }
             m_circuitQueryInFlight = false;
-            fillHopCountries();
+            fillHopDetails();
             emit circuitsChanged(m_circuits);
             // TOR05: look up hop countries for the displayed circuit
             // — queued on the same control connection, results land
@@ -325,7 +325,7 @@ QString TorManager::parseNsAddress(const QStringList &lines)
     return QString();
 }
 
-bool TorManager::fillHopCountries()
+bool TorManager::fillHopDetails()
 {
     bool changed = false;
     for (TorCircuit &circuit : m_circuits) {
@@ -334,6 +334,12 @@ bool TorManager::fillHopCountries()
                 m_countryCache.value(hop.fingerprint);
             if (hop.country != cached) {
                 hop.country = cached;
+                changed = true;
+            }
+            const QString address =
+                m_addressCache.value(hop.fingerprint);
+            if (hop.address != address) {
+                hop.address = address;
                 changed = true;
             }
         }
@@ -367,12 +373,13 @@ void TorManager::resolveHopCountries()
             const QString address =
                 (code == 250) ? parseNsAddress(lines) : QString();
             if (address.isEmpty()) {
-                finishHopCountryQuery(fingerprint, QString());
+                finishHopCountryQuery(fingerprint, QString(),
+                                      QString());
                 return;
             }
             m_control->getInfo(
                 QLatin1String("ip-to-country/") + address,
-                [this, fingerprint](int code,
+                [this, fingerprint, address](int code,
                                     const QStringList &lines) {
                 QString country;
                 if (code == 250) {
@@ -390,24 +397,29 @@ void TorManager::resolveHopCountries()
                     if (country == QLatin1String("??"))
                         country.clear();
                 }
-                finishHopCountryQuery(fingerprint, country);
+                finishHopCountryQuery(fingerprint, address, country);
             });
         });
     }
 }
 
 void TorManager::finishHopCountryQuery(const QString &fingerprint,
+                                       const QString &address,
                                        const QString &country)
 {
     m_countryQueriesInFlight.remove(fingerprint);
     if (!m_countryCache.contains(fingerprint)) {
         m_countryCache.insert(fingerprint, country);
+        m_addressCache.insert(fingerprint, address);
         m_countryCacheOrder << fingerprint;
         const int cacheCap = 512;
-        while (m_countryCacheOrder.size() > cacheCap)
-            m_countryCache.remove(m_countryCacheOrder.takeFirst());
+        while (m_countryCacheOrder.size() > cacheCap) {
+            const QString evicted = m_countryCacheOrder.takeFirst();
+            m_countryCache.remove(evicted);
+            m_addressCache.remove(evicted);
+        }
     }
-    if (fillHopCountries())
+    if (fillHopDetails())
         emit circuitsChanged(m_circuits);
 }
 

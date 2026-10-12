@@ -608,6 +608,10 @@ Tor:
   treatment instead of staying on the default palette, and the
   selected tab reads as the light "field" element like the location
   bar (TOR07).
+- A small onion button next to the reader-mode button in Tor windows
+  opens a dropdown of the live circuit — one row per relay hop with
+  its country flag and name (relay fingerprint and OR address on
+  hover), refreshed on open and on daemon circuit events (TOR08).
 
 AdBlock:
 - uBO-tier rules: $removeparam, $redirect stubs, cosmetic +js subset

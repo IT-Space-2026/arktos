@@ -43,6 +43,9 @@ struct TorCircuitHop
     QString country;       // TOR05: ISO-3166 code resolved via the
                            // control port (ns/id -> ip-to-country);
                            // empty while unresolved or unresolvable
+    QString address;       // TOR08: OR address from the same ns/id
+                           // lookup that resolves the country; empty
+                           // while unresolved or unresolvable
 };
 
 struct TorCircuit
@@ -165,11 +168,12 @@ private:
     void onBootstrapLine(const QString &line);
     void querySocksListener();
     // TOR05: kicks ns/id + ip-to-country lookups for the displayed
-    // circuit's uncached hops; fillHopCountries copies cache values
+    // circuit's uncached hops; fillHopDetails copies cache values
     // into m_circuits and reports whether anything changed.
     void resolveHopCountries();
-    bool fillHopCountries();
+    bool fillHopDetails();
     void finishHopCountryQuery(const QString &fingerprint,
+                               const QString &address,
                                const QString &country);
 
     QString m_binaryPath;
@@ -190,8 +194,10 @@ private:
     // TOR05: fingerprint -> ISO country code (a cached empty value is
     // a known-unresolvable hop — it is not re-queried).  Circuits
     // rotate every ~10min, so the cache is FIFO-capped via the order
-    // list.
+    // list.  TOR08: the parallel OR-address cache shares the order
+    // list so both evict together.
     QHash<QString, QString> m_countryCache;
+    QHash<QString, QString> m_addressCache;
     QStringList m_countryCacheOrder;
     QSet<QString> m_countryQueriesInFlight;
 
