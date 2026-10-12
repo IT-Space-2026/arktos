@@ -1767,7 +1767,7 @@
              <string>Accept Cookies:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             <set>Qt::AlignLeft|Qt::AlignVCenter</set>
             </property>
             <property name="buddy">
              <cstring>acceptCombo</cstring>
@@ -1818,7 +1818,7 @@
              <string>Keep Cookies Until:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             <set>Qt::AlignLeft|Qt::AlignVCenter</set>
             </property>
             <property name="buddy">
              <cstring>keepUntilCombo</cstring>
@@ -1889,7 +1889,7 @@
              <string>A cookie session ends:</string>
             </property>
             <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             <set>Qt::AlignLeft|Qt::AlignVCenter</set>
             </property>
             <property name="buddy">
              <cstring>cookieSessionCombo</cstring>
