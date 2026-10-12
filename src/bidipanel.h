@@ -50,7 +50,18 @@ public:
 protected:
     void showEvent(QShowEvent *event) override;
 
+#ifdef AUTOTESTS
+public:
+    // COV08: compiled into autotest binaries only — registers a
+    // pending eval tag / DOM-item mapping the way sendEval and
+    // domItemExpanded would, so the suite can drive the JSON
+    // handlers below down every tagged branch without a live
+    // debug channel (sendCommand answers 0 when disconnected).
+    quint64 testRegisterTag(quint64 tag);
+    quint64 testDomExpand(QTreeWidgetItem *item);
+#else
 private:
+#endif
     void onResponse(quint64 id, const QByteArray &json);
     void onEvent(const QByteArray &json);
     void onConnectionChanged(int state);

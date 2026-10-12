@@ -24,8 +24,13 @@
 #include <QtTest/QtTest>
 
 #include <qsettings.h>
+#include <qmenu.h>
 
 #include "popupblocker.h"
+#include "popupblockerbutton.h"
+#include "webpage.h"
+#include "webview.h"
+#include "qtest_arora.h"
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
@@ -47,6 +52,7 @@ private slots:
     void persistence();
     void normalization();
     void clearAll();
+    void button();
 };
 
 void tst_PopupBlocker::initTestCase()
@@ -212,6 +218,98 @@ void tst_PopupBlocker::clearAll()
     QVERIFY(!blocker->isAllowedHost(QLatin1String("a.example")));
     QVERIFY(!QSettings().contains(
         QLatin1String("popupExceptions/allowed")));
+}
+
+// COV08: the location-bar indicator — badge refresh, the rebuilt
+// menu's open-once/always-allow actions, and the standalone popup
+// path when no TabWidget owns the view.
+void tst_PopupBlocker::button()
+{
+    WebView view;
+    PopupBlockerButton button;
+    QVERIFY(!button.isVisible());
+
+    // Unbound -> refresh() early-outs.
+    button.setWebView(nullptr);
+    button.setWebView(&view);
+    QVERIFY(!button.isVisible());
+
+    // Rebinding the same view is a no-op; binding a different one
+    // walks the disconnect legs.
+    button.setWebView(&view);
+    WebView view2;
+    button.setWebView(&view2);
+    button.setWebView(&view);
+
+    // setUrl gives the page a committed http(s) url without waiting
+    // for a load — createWindow's shouldBlock() gate and the menu's
+    // "Always allow" host both read it.
+    view.webPage()->setUrl(QUrl("http://site.test/"));
+
+    // A popup-shaped createWindow the blocker refuses bumps the
+    // indicator count and returns a dead-end probe page (parented to
+    // this page; it self-destructs after a 30s grace window).
+    QVERIFY(view.webPage()->testCreateWindow(QWebEnginePage::WebDialog)
+            != nullptr);
+    QCOMPARE(view.webPage()->blockedPopupCount(), 1);
+
+    // Seed blocked-pop-up state past the 10-item menu cap; one url is
+    // long enough to exercise the elided label.
+    for (int i = 0; i < 12; ++i) {
+        view.webPage()->noteBlockedPopupTarget(
+            QUrl(QStringLiteral("http://p%1.test/%2")
+                     .arg(i).arg(QString(80, QLatin1Char('x')))));
+    }
+    QTRY_VERIFY(button.isVisible());
+    QVERIFY(!button.icon().isNull());
+    QVERIFY(!button.toolTip().isEmpty());
+
+    // aboutToShow rebuilds the menu: header, section, up to ten
+    // "Open" entries, separator, allow, settings.
+    emit button.menu()->aboutToShow();
+    const QList<QAction *> actions = button.menu()->actions();
+    QVERIFY(actions.count() >= 6);
+
+    QAction *openAction = nullptr;
+    QAction *allowAction = nullptr;
+    QAction *settingsAction = nullptr;
+    for (QAction *action : actions) {
+        if (action->text().contains(QLatin1String("Open ")))
+            openAction = action;
+        else if (action->text().contains(QLatin1String("Always allow")))
+            allowAction = action;
+        else if (action->text().contains(QLatin1String("Settings")))
+            settingsAction = action;
+    }
+    QVERIFY(openAction);
+    QVERIFY(allowAction && allowAction->isEnabled());
+    QVERIFY(settingsAction);
+
+    // The view has no TabWidget — "Open once" spawns a standalone
+    // window; close whatever the trigger raised.
+    openAction->trigger();
+    QTest::qWait(50);
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        if (w != &view && w != &view2 && w != &button)
+            w->close();
+    }
+
+    // "Always allow" records a persistent host rule.
+    allowAction->trigger();
+    QVERIFY(PopupBlocker::instance()->isAllowedHost(
+        QLatin1String("site.test")));
+    PopupBlocker::instance()->removeAllowedHost(
+        QLatin1String("site.test"));
+
+    // With the view detached both slots early-out.
+    button.setWebView(nullptr);
+    emit button.menu()->aboutToShow();
+    for (QAction *action : button.menu()->actions()) {
+        if (action->text().contains(QLatin1String("Always allow"))) {
+            QVERIFY(!action->isEnabled());
+            action->trigger();
+        }
+    }
 }
 
 QTEST_MAIN(tst_PopupBlocker)
