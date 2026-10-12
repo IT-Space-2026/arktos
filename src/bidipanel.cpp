@@ -533,3 +533,20 @@ void BidiPanel::onEvent(const QByteArray &json)
                     params[QStringLiteral("errorText")].toString())));
     }
 }
+
+#ifdef AUTOTESTS
+quint64 BidiPanel::testRegisterTag(quint64 tag)
+{
+    const quint64 id = m_nextTag++;
+    m_evalTags.insert(id, tag);
+    return id;
+}
+
+quint64 BidiPanel::testDomExpand(QTreeWidgetItem *item)
+{
+    const quint64 id = m_nextTag++;
+    m_evalTags.insert(id, TagDomChildren);
+    m_pendingDomItem.insert(id, item);
+    return id;
+}
+#endif

@@ -26,6 +26,9 @@
 #include <qstandarditemmodel.h>
 #include <qmimedata.h>
 #include <qmenu.h>
+#include <qtimer.h>
+#include <qevent.h>
+#include <qapplication.h>
 
 #include "modelmenu.h"
 #include "modeltoolbar.h"
@@ -34,6 +37,7 @@
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "bookmarknode.h"
+#include "addbookmarkdialog.h"
 #include "historymanager.h"
 #include "history.h"
 #include "qtest_arora.h"
@@ -54,6 +58,56 @@ public:
         { return ModelMenu::createBaseMenu(); }
 };
 
+// Repeating driver for the modal nested loops context menus open.
+// Every tick: close a modal dialog if one is up, fire the first popup
+// action matching `needle` exactly once, then close the popup so the
+// exec() unwinds and the test continues — even when no action matched.
+class PopupDriver : public QObject
+{
+public:
+    QString needle;
+    bool fired = false;
+    int ticks = 0;
+
+    explicit PopupDriver(const QString &needle, QObject *parent = nullptr)
+        : QObject(parent), needle(needle)
+    {
+        QTimer *timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this]() { tick(); });
+        timer->start(60);
+    }
+
+private:
+    void tick()
+    {
+        if (++ticks > 150) {
+            deleteLater();
+            return;
+        }
+        if (QWidget *modal = QApplication::activeModalWidget()) {
+            modal->close();
+            return;
+        }
+        QMenu *menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            if (fired)
+                deleteLater();
+            return;
+        }
+        if (!fired) {
+            fired = true;
+            for (QAction *action : menu->actions()) {
+                if (action->text().contains(needle)) {
+                    action->trigger();
+                    return;
+                }
+            }
+        }
+        menu->close();
+        deleteLater();
+    }
+};
+
 class tst_ModelMenu : public QObject
 {
     Q_OBJECT
@@ -69,7 +123,9 @@ private slots:
     void bookmarksMenu();
     void historyMenu();
     void modelToolBar();
+    void modelToolBarDnD();
     void bookmarksToolBar();
+    void bookmarksToolBarContextMenu();
 };
 
 void tst_ModelMenu::initTestCase()
@@ -334,6 +390,172 @@ void tst_ModelMenu::bookmarksToolBar()
              QUrl(QLatin1String("http://toolbar.example.com/")));
 
     manager->removeBookmark(bookmark);
+}
+
+// COV08: the toolbar's drag/drop entry points, the titled ctor, model
+// swaps and the folder->submenu arm in build().
+void tst_ModelMenu::modelToolBarDnD()
+{
+    QStandardItemModel model;
+    model.appendRow(new QStandardItem(QLatin1String("a")));
+    model.appendRow(new QStandardItem(QLatin1String("b")));
+    QStandardItem *folder = new QStandardItem(QLatin1String("folder"));
+    folder->appendRow(new QStandardItem(QLatin1String("child")));
+    model.appendRow(folder);
+
+    // Titled ctor + setModel on an already-set model (disconnect leg).
+    ModelToolBar bar(QLatin1String("titled"));
+    bar.setModel(&model);
+    QStandardItemModel other;
+    other.appendRow(new QStandardItem(QLatin1String("x")));
+    bar.setModel(&other);
+    QCOMPARE(bar.model(), &other);
+    bar.setModel(&model);
+    bar.show();
+    QTest::qWait(50);
+    QCOMPARE(bar.actions().count(), 3);
+    // Rows with children arm a ModelMenu on their action.
+    QVERIFY(bar.actions().at(2)->menu() != nullptr);
+
+    // dragEnter accepts mime the model lists, ignores anything else.
+    // The model's own drag payload always matches its mimeTypes() and
+    // is the format its dropMimeData actually decodes.
+    QMimeData *good = model.mimeData({model.index(0, 0)});
+    QDragEnterEvent enter(QPointF(4, 4), Qt::CopyAction, good,
+                          Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bar, &enter);
+    QVERIFY(enter.isAccepted());
+
+    QMimeData bad;
+    bad.setData(QLatin1String("application/x-not-the-model"),
+                QByteArray("x"));
+    QDragEnterEvent refuse(QPointF(4, 4), Qt::CopyAction, &bad,
+                           Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bar, &refuse);
+    QVERIFY(!refuse.isAccepted());
+
+    // A drop under the cursor position (no action there) appends at
+    // the root — the model grows a row.
+    const int rows = model.rowCount();
+    QDropEvent drop(QPointF(4, 4), Qt::CopyAction, good,
+                    Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bar, &drop);
+    QVERIFY(drop.isAccepted());
+    QVERIFY(model.rowCount() > rows);
+
+    // mouseMove with the left button held: no press armed a drag
+    // start on a button, so actionAt() finds nothing and the handler
+    // falls through to the base implementation.
+    QMouseEvent move(QEvent::MouseMove, QPointF(200, 200),
+                     QPointF(200, 200), bar.mapToGlobal(QPoint(200, 200)),
+                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bar, &move);
+
+    // hide() clears, show() rebuilds through showEvent.
+    bar.hide();
+    QTest::qWait(10);
+    QCOMPARE(bar.actions().count(), 0);
+    bar.show();
+    QTest::qWait(50);
+    // The drop above appended a row, so the rebuild shows one more.
+    QCOMPARE(bar.actions().count(), model.rowCount());
+
+    // No model at all: the guards take the base-class legs.
+    ModelToolBar bare;
+    QDragEnterEvent enter2(QPointF(4, 4), Qt::CopyAction, good,
+                           Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bare, &enter2);
+    QDropEvent drop2(QPointF(4, 4), Qt::CopyAction, good,
+                     Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bare, &drop2);
+    QMouseEvent move2(QEvent::MouseMove, QPointF(20, 20),
+                      QPointF(20, 20), bare.mapToGlobal(QPoint(20, 20)),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&bare, &move2);
+}
+
+// COV08: the toolbar's custom context menu — item arm over a leaf,
+// the open/remove/add slots routed through real menu actions, and the
+// no-action arm on empty space.
+void tst_ModelMenu::bookmarksToolBarContextMenu()
+{
+    BookmarksManager *manager = BookmarksManager::instance();
+    while (manager->toolbar()->children().count() > 0)
+        manager->removeBookmark(manager->toolbar()->children().first());
+
+    BookmarkNode *leaf = new BookmarkNode(BookmarkNode::Bookmark);
+    leaf->title = QLatin1String("CtxBM");
+    leaf->url = QLatin1String("http://ctxbm.example.com/");
+    manager->addBookmark(manager->toolbar(), leaf);
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder);
+    folder->title = QLatin1String("CtxFolder");
+    manager->addBookmark(manager->toolbar(), folder);
+
+    BookmarksToolBar bar(manager->bookmarksModel());
+    bar.show();
+    QTest::qWait(50);
+    QVERIFY(bar.actions().count() >= 2);
+    QAction *leafAction = bar.actions().first();
+    QVERIFY(!leafAction->menu());
+    // The folder row armed a BookmarksMenu through createMenu().
+    QVERIFY(bar.actions().at(1)->menu() != nullptr);
+
+    const QPoint pos = bar.actionGeometry(leafAction).center();
+
+    // "Open in New &Tab" through the context menu — the slot resolves
+    // the sender action's QModelIndex and re-emits openUrl.
+    QSignalSpy spy(&bar,
+        QOverload<const QUrl &, TabWidget::OpenUrlIn, const QString &>::of(
+            &BookmarksToolBar::openUrl));
+    PopupDriver *driver = new PopupDriver(QLatin1String("New"), &bar);
+    QContextMenuEvent onLeaf(QContextMenuEvent::Mouse, pos);
+    QApplication::sendEvent(&bar, &onLeaf);
+    QVERIFY(driver->fired);
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() >= 1, 5000);
+    QCOMPARE(spy.first().at(0).toUrl(),
+             QUrl(QLatin1String("http://ctxbm.example.com/")));
+    QCOMPARE(spy.first().at(1).value<TabWidget::OpenUrlIn>(),
+             TabWidget::NewTab);
+    QCOMPARE(spy.first().at(2).toString(), QLatin1String("CtxBM"));
+
+    // "Remove" deletes the leaf through the model.
+    driver = new PopupDriver(QLatin1String("Remove"), &bar);
+    QContextMenuEvent onLeaf2(QContextMenuEvent::Mouse, pos);
+    QApplication::sendEvent(&bar, &onLeaf2);
+    QVERIFY(driver->fired);
+    QTRY_COMPARE_WITH_TIMEOUT(manager->toolbar()->children().count(),
+                              1, 5000);
+
+    // Empty-space menu (no action under the point) only offers the
+    // add entries — driving it just opens and closes the exec() so
+    // contextMenuEvent's no-action arm gets covered.  (Triggering
+    // "Add Bookmark..." here would exec() a modal dialog while the
+    // menu still holds the popup grab; on offscreen that deadlocks,
+    // so newBookmark()/newFolder() are invoked directly below.)
+    driver = new PopupDriver(QLatin1String("no-such-action"), &bar);
+    const QPoint empty = bar.rect().bottomRight() - QPoint(1, 1);
+    QContextMenuEvent onEmpty(QContextMenuEvent::Mouse, empty);
+    QApplication::sendEvent(&bar, &onEmpty);
+    QVERIFY(driver->fired);
+
+    // The sender()-routed slots still fire safely with no sender —
+    // invokeMethod reaches protected slots directly.  The
+    // newBookmark/newFolder dialog exec()s need the driver to close
+    // their modals.
+    QSignalSpy openSpy(&bar,
+        QOverload<const QUrl &, const QString &>::of(
+            &BookmarksToolBar::openUrl));
+    QVERIFY(QMetaObject::invokeMethod(&bar, "openBookmark"));
+    QVERIFY(QMetaObject::invokeMethod(&bar, "openBookmarkInCurrentTab"));
+    new PopupDriver(QLatin1String("no-such-action"), &bar);
+    QVERIFY(QMetaObject::invokeMethod(&bar, "newBookmark"));
+    QVERIFY(QMetaObject::invokeMethod(&bar, "newFolder"));
+    // Only openBookmark() emits the two-argument overload — the tab
+    // variants went through the three-argument one spied above.
+    QCOMPARE(openSpy.count(), 1);
+
+    while (manager->toolbar()->children().count() > 0)
+        manager->removeBookmark(manager->toolbar()->children().first());
 }
 
 QTEST_MAIN(tst_ModelMenu)

@@ -50,6 +50,9 @@
 #include <qelapsedtimer.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qfile.h>
+
+#include "engineinterface.h"
 
 class tst_AdBlockPage : public QObject
 {
@@ -67,6 +70,11 @@ private slots:
 
     void applyRulesToPage_data();
     void applyRulesToPage();
+
+    void cosmeticScript_data();
+    void cosmeticScript();
+    void cosmeticScriptManagerDisabled();
+    void scheduleRules();
 };
 
 // Subclass that exposes the protected functions.
@@ -90,6 +98,10 @@ static const char *visibleCountScript =
 // It is only called once.
 void tst_AdBlockPage::initTestCase()
 {
+    // COV08: the cosmetic payload tests assert on the NATIVE builder —
+    // the Rust engine (the default pick) would otherwise answer first
+    // for hosted urls and shadow the code under test.
+    AdBlockManager::instance()->setEngine(AdBlockManager::NativeEngine);
 }
 
 // This will be called after the last test function is executed.
@@ -192,6 +204,304 @@ void tst_AdBlockPage::applyRulesToPage()
         QTest::qWait(100);
     } while (deadline.elapsed() < 10000);
     QCOMPARE(visible, count);
+}
+
+// Adds an enabled subscription carrying the given filter list; the
+// manager owns it until cleanup() removes it.
+static AdBlockSubscription *addSubscriptionRules(AdBlockManager *manager,
+                                               const QStringList &rules)
+{
+    AdBlockSubscription *subscription =
+        new AdBlockSubscription(QUrl(), manager);
+    subscription->setEnabled(true);
+    manager->addSubscription(subscription);
+    for (const QString &rule : rules)
+        subscription->addRule(AdBlockRule(rule));
+    return subscription;
+}
+
+// COV08: drive cosmeticScriptForUrl (the AUTOTESTS seam in
+// adblockpage.h) across the whole rule grammar — cosmetic selectors,
+// domain scoping, exceptions, ABP pseudo translation, procedural ops
+// and scriptlets — asserting on the generated payload text.
+void tst_AdBlockPage::cosmeticScript_data()
+{
+    QTest::addColumn<QStringList>("rules");
+    QTest::addColumn<QString>("url");
+    QTest::addColumn<QStringList>("present");
+    QTest::addColumn<QStringList>("absent");
+
+    QTest::newRow("generic-css")
+        << QStringList{"##.ad"}
+        << QString("http://site.test/")
+        << QStringList{"arora-adblock", ":is(.ad)",
+                       "display: none !important"}
+        << QStringList{"PROCS"};
+
+    QTest::newRow("domain-match")
+        << QStringList{"ok.com##.ad"}
+        << QString("http://ok.com/")
+        << QStringList{":is(.ad)"}
+        << QStringList{};
+    QTest::newRow("domain-subdomain")
+        << QStringList{"ok.com##.ad"}
+        << QString("http://a.ok.com/")
+        << QStringList{":is(.ad)"}
+        << QStringList{};
+    QTest::newRow("domain-miss")
+        << QStringList{"ok.com##.ad"}
+        << QString("http://other.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("domain-negated-hit")
+        << QStringList{"~bad.com##.ad"}
+        << QString("http://bad.com/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("domain-negated-miss")
+        << QStringList{"~bad.com##.ad"}
+        << QString("http://good.com/")
+        << QStringList{":is(.ad)"}
+        << QStringList{};
+    QTest::newRow("domain-excluded-subdomain")
+        << QStringList{"good.com,~sub.good.com##.ad"}
+        << QString("http://sub.good.com/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("domain-excluded-sibling")
+        << QStringList{"good.com,~sub.good.com##.ad"}
+        << QString("http://www.good.com/")
+        << QStringList{":is(.ad)"}
+        << QStringList{};
+
+    // Cosmetic exceptions remove same-body rules, whether they were
+    // parsed before or after the rule they cancel.
+    QTest::newRow("exception-after-rule")
+        << QStringList{"##.ad", "#@#.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("exception-before-rule")
+        << QStringList{"#@#.ad", "##.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+
+    // Document-level network exceptions.
+    QTest::newRow("elemhide")
+        << QStringList{"@@||site.test^$elemhide", "##.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("document-exception")
+        << QStringList{"@@||site.test^$document", "##.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("generichide-drops-generic")
+        << QStringList{"@@||site.test^$generichide", "##.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{".ad"};
+    QTest::newRow("generichide-keeps-scoped")
+        << QStringList{"@@||site.test^$generichide", "##.gen",
+                       "site.test##.scoped"}
+        << QString("http://site.test/")
+        << QStringList{".scoped"}
+        << QStringList{".gen"};
+
+    // ABP extended pseudos translate to Chromium-native selectors.
+    QTest::newRow("abp-has")
+        << QStringList{"##div:-abp-has(.ad)"}
+        << QString("http://site.test/")
+        << QStringList{":has(.ad)"}
+        << QStringList{":-abp-"};
+    QTest::newRow("abp-has-not")
+        << QStringList{"##div:-abp-has-not(.ad)"}
+        << QString("http://site.test/")
+        << QStringList{":not(:has(.ad))"}
+        << QStringList{":-abp-"};
+    QTest::newRow("abp-if")
+        << QStringList{"##div:-abp-if(.ad)"}
+        << QString("http://site.test/")
+        << QStringList{":has(.ad)"}
+        << QStringList{":-abp-"};
+    QTest::newRow("abp-if-not")
+        << QStringList{"##div:-abp-if-not(.ad)"}
+        << QString("http://site.test/")
+        << QStringList{":not(:has(.ad))"}
+        << QStringList{":-abp-"};
+    QTest::newRow("abp-unbalanced-dropped")
+        << QStringList{"##div:-abp-has(.ad"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"display: none"};
+
+    // Procedural operators route through the JS engine payload.
+    QTest::newRow("proc-has-text")
+        << QStringList{"##div:has-text(banner)"}
+        << QString("http://site.test/")
+        << QStringList{"PROCS", "has-text", "banner"}
+        << QStringList{":is("};
+    QTest::newRow("proc-contains-alias")
+        << QStringList{"##div:contains(/re/)"}
+        << QString("http://site.test/")
+        << QStringList{"has-text"}
+        << QStringList{};
+    QTest::newRow("proc-abp-contains-alias")
+        << QStringList{"##div:-abp-contains(x)"}
+        << QString("http://site.test/")
+        << QStringList{"has-text"}
+        << QStringList{};
+    QTest::newRow("proc-matches-css")
+        << QStringList{"##div:matches-css(color: red)"}
+        << QString("http://site.test/")
+        << QStringList{"matches-css"}
+        << QStringList{};
+    QTest::newRow("proc-style")
+        << QStringList{"##div:style(display:none)"}
+        << QString("http://site.test/")
+        << QStringList{"style"}
+        << QStringList{};
+    QTest::newRow("proc-remove")
+        << QStringList{"##div:remove()"}
+        << QString("http://site.test/")
+        << QStringList{"remove"}
+        << QStringList{};
+    QTest::newRow("proc-remove-attr")
+        << QStringList{"##div:remove-attr(title)"}
+        << QString("http://site.test/")
+        << QStringList{"remove-attr"}
+        << QStringList{};
+    QTest::newRow("proc-remove-class")
+        << QStringList{"##div:remove-class(c)"}
+        << QString("http://site.test/")
+        << QStringList{"remove-class"}
+        << QStringList{};
+    QTest::newRow("proc-upward")
+        << QStringList{"##div:upward(2)"}
+        << QString("http://site.test/")
+        << QStringList{"upward"}
+        << QStringList{};
+    QTest::newRow("proc-min-text-length")
+        << QStringList{"##div:min-text-length(5)"}
+        << QString("http://site.test/")
+        << QStringList{"min-text-length"}
+        << QStringList{};
+    QTest::newRow("proc-chained")
+        << QStringList{"##div:has-text(x):upward(1)"}
+        << QString("http://site.test/")
+        << QStringList{"has-text", "upward"}
+        << QStringList{};
+    QTest::newRow("proc-xpath-dropped")
+        << QStringList{"##div:xpath(..)"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"PROCS"};
+
+    // Scriptlets: +js() form, bare #$# form, #$# css injection, and
+    // the #@$# exception that cancels one.
+    QTest::newRow("scriptlet-js")
+        << QStringList{"##+js(set-constant, foo.bar, true)"}
+        << QString("http://site.test/")
+        << QStringList{"SCRS", "set-constant"}
+        << QStringList{};
+    QTest::newRow("scriptlet-bare")
+        << QStringList{"x.com#$#hide-if-contains needle .sel"}
+        << QString("http://x.com/")
+        << QStringList{"SCRS", "hide-if-contains"}
+        << QStringList{};
+    QTest::newRow("scriptlet-css-injection")
+        << QStringList{"#$#.banner { display:none }"}
+        << QString("http://site.test/")
+        << QStringList{"PROCS", "banner"}
+        << QStringList{};
+    QTest::newRow("scriptlet-exception")
+        << QStringList{"#$#+js(set-constant, x, 1)",
+                       "#@$#+js(set-constant, x, 1)"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"set-constant"};
+    QTest::newRow("plus-js-css-body-dropped")
+        << QStringList{"##div+js(x)"}
+        << QString("http://site.test/")
+        << QStringList{}
+        << QStringList{"PROCS", ":is("};
+}
+
+void tst_AdBlockPage::cosmeticScript()
+{
+    QFETCH(QStringList, rules);
+    QFETCH(QString, url);
+    QFETCH(QStringList, present);
+    QFETCH(QStringList, absent);
+
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->setEnabled(true);
+    addSubscriptionRules(manager, rules);
+
+    SubAdBlockPage page;
+    const QString script = page.cosmeticScriptForUrl(QUrl(url));
+    for (const QString &needle : present)
+        QVERIFY2(script.contains(needle),
+                 qPrintable(QStringLiteral("missing '%1' in:\n%2")
+                            .arg(needle, script)));
+    for (const QString &needle : absent)
+        QVERIFY2(!script.contains(needle),
+                 qPrintable(QStringLiteral("unexpected '%1' in:\n%2")
+                            .arg(needle, script)));
+    if (present.isEmpty())
+        QVERIFY2(script.isEmpty(), qPrintable(script));
+}
+
+void tst_AdBlockPage::cosmeticScriptManagerDisabled()
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    addSubscriptionRules(manager, {QStringLiteral("##.ad")});
+    manager->setEnabled(false);
+    SubAdBlockPage page;
+    QVERIFY(page.cosmeticScriptForUrl(QUrl("http://site.test/"))
+            .isEmpty());
+    manager->setEnabled(true);
+}
+
+// Covers scheduleRulesOnPage + replacePageScript in both directions —
+// arming the named user script when the payload is non-empty and
+// removing it when no rule applies — plus the ARORA_DEBUG_COSMETIC
+// dump path.
+void tst_AdBlockPage::scheduleRules()
+{
+    AdBlockManager *manager = AdBlockManager::instance();
+    manager->setEnabled(true);
+    addSubscriptionRules(manager, {QStringLiteral("ok.com##.ad")});
+
+    QWebEngineView view;
+    Engine::Page *page = WebEnginePageAdapter::forPage(view.page());
+    QVERIFY(page);
+
+    const QString dumpPath = QDir::temp().filePath(
+        QStringLiteral("arora-cosmetic-dump.js"));
+    qputenv("ARORA_DEBUG_COSMETIC", dumpPath.toUtf8());
+
+    AdBlockPage blocker;
+    blocker.scheduleRulesOnPage(page, QUrl("http://ok.com/"));
+
+    bool armed = false;
+    for (const Engine::Script &script : page->scripts())
+        armed |= (script.name == QLatin1String("arora:adblock-cosmetic"));
+    QVERIFY(armed);
+    QVERIFY(QFile::exists(dumpPath));
+
+    qunsetenv("ARORA_DEBUG_COSMETIC");
+
+    // No matching rule -> empty payload -> the named script comes off.
+    blocker.scheduleRulesOnPage(page, QUrl("http://other.test/"));
+    armed = false;
+    for (const Engine::Script &script : page->scripts())
+        armed |= (script.name == QLatin1String("arora:adblock-cosmetic"));
+    QVERIFY(!armed);
+
+    blocker.scheduleRulesOnPage(nullptr, QUrl("http://ok.com/"));
 }
 
 QTEST_MAIN(tst_AdBlockPage)

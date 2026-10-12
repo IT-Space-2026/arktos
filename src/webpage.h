@@ -168,6 +168,15 @@ protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override;
     QWebEnginePage *createWindow(QWebEnginePage::WebWindowType type) override;
 
+#ifdef AUTOTESTS
+public:
+    // COV08: compiled into autotest binaries only — lets the suite
+    // drive the popup-shaped branch of createWindow() without an
+    // engine-originated window.open.
+    QWebEnginePage *testCreateWindow(QWebEnginePage::WebWindowType type)
+        { return createWindow(type); }
+#endif
+
 private slots:
     void handleLoadingChanged(const QWebEngineLoadingInfo &loadingInfo);
 

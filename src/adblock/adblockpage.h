@@ -52,7 +52,13 @@ public:
     // paint-gated subresource scheduling (browseraudit latency group).
     void scheduleRulesOnPage(Engine::Page *page, const QUrl &url);
 
+#ifdef AUTOTESTS
+public:
+    // COV08: compiled into autotest binaries only — lets the suite
+    // drive the payload builder without a loaded page.
+#else
 private:
+#endif
     QString cosmeticScriptForUrl(const QUrl &url) const;
 };
 
