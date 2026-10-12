@@ -8,6 +8,11 @@ parallel with the main lane's loop on the sibling checkout at
 components (crates, C-FFI wrappers) plus the thin Qt-side adapters that
 bind them — the C++/Qt UI work lives in the main lane.
 
+SCOPE EXCEPTION (user directive): pending rows may include Qt/UI
+tasks migrated from the UI lane for parallel development — marked in
+Notes as [user-directed UI task]. Work them normally on rust-work;
+the rust-scope line does not apply to them.
+
 Your job in THIS run:
 
 1. Read `.devin/Arora-Task-Rust.md`. It contains a markdown table of

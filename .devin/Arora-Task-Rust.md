@@ -57,6 +57,9 @@ Rules for the agent working this file:
 | TRUST01 | Site-trust composite + FFI in rustcore — details below | done | 1 | rustcore sitetrust.rs behind rc_sitetrust_lookup(host,is_https)->JSON {level,signals[],rank,lookalike_of} + rc_sitetrust_reload (both input tables reload, first error reported) — composite folds blocklist::check + tranco::rank + lookalike::probe + history first-seen; locked mapping threat/lookalike->red, http/rank==0->amber, ranked+https->green; first_seen reported in signals but never decides level alone (QUIETLY — ranked+https stays green on first visit); un-evaluable host/history reads no-claim (amber/[]) not manufactured suspicion. history.rs gains hosts(host,first_seen,visits) rollup: add() upserts (MIN first_seen for out-of-order legacy replay), lazy one-shot backfill for pre-TRUST01 dbs + after bulk wipes, seen = visit older than 120s grace OR >=2 visits (a just-committed visit can't flip the verdict); probes walk label suffixes like rank_of. ffi_surface covers both new entry points. Qt badge/popover is main-lane TRUST08/09 — verified: cargo test 186/186 (fixture matrix red/green/amber, lookalike->red+lookalike_of, first_seen grace/ancestor/2-visit rules, unopened-store no-claim, reload both), clippy clean at project level, make check rc=0 offscreen --disable-gpu needs:task:TRUST04,task:TRUST05. |
 | RAUDIT01 | rustcore code-quality sweep — details below | done | 1 | sweep landed: bookmarkhtml closing-tag scans now share a document-wide byte budget (4x input + one window; exhaustion -> empty title + truncated) killing the O(tags x 256KiB) worst case that was failing the <10s hostile-input bound (>15s -> ~50ms); blocklist::contains + tranco::rank_of + both validate_domain gates unified on new util::HostNorm/valid_dns_shape — blocklist probes are now zero-alloc like tranco and >253B hosts probe their rightmost tail on both; cargo clippy --all-targets 110 -> 0 warnings (57 missing # Safety doc sections added — the other 83 fns already had them; doc-indent + ~20 mechanical lints). Report committed at .devin/RAUDIT01-report.md — findings: 15/140 FFI exports have no Qt caller (deliberate: sitetrust/lookalike await main-lane TRUST08/09, cred/bm surface is spec'd ABI), referer twin drift limited to conservative edge cases (documented), lazy-list slot machinery triplicated -> RAUDIT02. verified: cargo test 186/186 (was 185/186), clippy 0 warnings, ABI unchanged needs:task:TRUST01 |
 | RAUDIT02 | rustcore lazy-list slot dedup — details below | done | 1 | shared store::DirCache<T> (RwLock<Option<(dir-stamp, Arc<T>)>>, poison-tolerant guards, get_or_load + replace) + store::data_dir() now back all three lists; per-module load_from_disk(Option<&Path>) stays the injected closure; dir field dropped from BlockList/TrancoList structs (the stamp rides the slot); urlstrip gains the late-dir rebuild blocklist/tranco already had — verified: cargo test 186/186 (incl. tranco reload_picks_up_datadir_override), cargo clippy --all-targets 0 warnings, FFI/ABI untouched (all changes crate-internal) |
+| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
+| DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
+| DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | pending | 0 | |  [user-directed UI task — parallel lane work, Qt files allowed]
 
 
 ## Task details
@@ -190,3 +193,39 @@ rustcore code-quality sweep — runs after TRUST01 lands (needs:task:TRUST01 so 
 ### RAUDIT02
 
 rustcore lazy-list slot dedup — RAUDIT01 leftover (design-level, deliberately not fixed in the sweep): the RwLock<Option<Arc<T>>> + list_slot/list_slot_mut + current_dir + rebuild-when-dir-changes machinery is triplicated verbatim across blocklist.rs, tranco.rs and urlstrip.rs (~25 lines each). Extract a shared generic helper (store.rs or util.rs — e.g. a DirCache<T> holding the Arc slot + resolved-dir stamp) so the next seed-merged list doesn't copy it a fourth time; keep per-module load functions as the injected closures. Verify: cargo test PASS, clippy clean, reload-on-dir-change behavior identical on all three lists.
+
+
+### SRCH11
+
+URL-bar search still does not work — user report after SRCH09's fix: 'URL search bar still not works, the default is that I can search from the URL bar.' Expected behavior: typing a non-URL string into the location bar and pressing Enter performs a web search with the configured default search engine — the standard browser omnibox contract.
+
+SRCH09 is marked done but the regression persists — start by reproducing exactly: type 'test query' + Enter in the location bar and observe what happens (loads garbage URL, does nothing, error page?). Then trace the routing: locationbar returnPressed -> the omni classifier (OMNI01 verdict table / rc_classify_omni in rustcore when ARORA_RUSTCORE, else the C++ fallback in locationbar) -> search-engine URL construction via opensearchmanager/default engine. Suspects: (a) the classifier returns 'url' for bare words (SRCH09 fixed a related path — check what it actually changed and whether the rust classifier path now disagrees); (b) the search URL is built but the engine query template is empty/misconfigured (DENG01 switched default to DuckDuckGo — check the template); (c) Enter is swallowed by the completer/suggestions popup accepting an item instead of searching; (d) the rust FFI verdict path silently fails and no fallback fires.
+
+Also verify suggestion path: picking 'Search for X' from the dropdown should search too.
+
+Verify: 'foo bar' + Enter -> default engine results page loads; 'singleterm' + Enter -> search (not a bogus http://singleterm navigation); real URLs still navigate directly; search-engine change in Preferences is honored; make check PASS.
+
+
+
+### DLUX03
+
+Downloads sidebar details card is broken — user screenshot: the sidebar Downloads panel shows 'qwe_download.txt' selected, and its expanded details card at the bottom renders as a dark/black box with cramped, partially clipped text rows (source URL line and info rows unreadable against the dark background) and an 'Open' / 'Restart' / 'Show in File Manager' button row squeezed under it, plus a 'Download Settings...' link below that.
+
+Diagnosis hints: the card likely uses a hardcoded dark palette/stylesheet (breaks on the light theme — same class of bug THEME01 flagged: 'anything hardcoded-light that reads broken on dark' — here hardcoded-DARK on light); rows may use fixed heights that clip text; the button row may be unstyled/margined.
+
+Spec: (a) the details card follows the application palette — readable text on the theme's base/alternate-base color in BOTH day and night themes, no hardcoded background colors; (b) info rows (filename, source URL, size/progress/path) lay out without clipping — elide long URLs middle-out, wrap or tooltip the rest; (c) the button row (Open / Restart / Show in File Manager) aligns cleanly inside the card with sane spacing; (d) 'Download Settings...' placement reviewed — consistent with the panel footer style or moved into the card sensibly; (e) collapsed vs expanded states both render cleanly.
+
+Verify: select a finished + an in-progress download in the sidebar — details card is readable and unclipped in day AND night theme, long URLs elide with full text on tooltip, buttons aligned, make check PASS.
+
+
+
+### DLUX04
+
+Download details card polish — user feedback on the fixed card (DLUX03-class): 'The color is better with day mode, but there should not be a viewable color difference and do not leave that wide border around the information.'
+
+Screenshot shows the expanded card: an info block (Source/Destination/Started/Finished/Size/Speed rows + speed graph) sitting inside a visibly DIFFERENT light-tinted fill than the surrounding panel, plus a thick/wide border or frame padding around the info section — the card reads as a box-in-a-box.
+
+Spec: (a) NO visible color seam — the info block and graph area must use the same background as the card/panel surface (palette Base or the card's own fill — flatten the inner box so it blends; keep only the minimum chrome needed for readability, e.g. a hairline separator if any); (b) remove the wide border/padding around the info block — tighten margins to match the card's outer padding so content doesn't sit inside a thick frame; (c) verify BOTH themes — the same fix must not reintroduce a seam on dark (check what fill the block uses in dark mode — palette-driven, never hardcoded); (d) the graph keeps its fill but blends with the card (graph area may keep a subtle plot fill if it reads as 'chart', not 'box').
+
+Verify: expanded card shows no visible color difference between info block/graph and card background in day AND night themes; no thick border around the info section; make check PASS.
+
