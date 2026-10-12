@@ -1828,3 +1828,6 @@ Engine-layer test suite (ENG06):
 
 Rust coverage gate (COV06):
     `make check-rustcoverage` — now also a `make check` prerequisite — measures per-crate line coverage over every shipped Rust crate (rustcore, rustdl, the ad-block engine; new crates are picked up automatically, spikes excluded) with cargo-llvm-cov and enforces an 85% minimum each. ARORA_RUST_COVERAGE_MIN overrides the gate; machines without cargo or the pinned cargo-llvm-cov tool skip cleanly, matching the optional-Rust build rules. Each run refreshes the per-crate table in .devin/COVERAGE.md; current coverage is 86.9% (rustcore), 89.3% (rustdl) and 90.5% (adblock).
+
+Rust unit-test lift (COV07):
+    rustcore's line coverage rose from 86.9% to 91.6%. The CDP-to-BiDi translator now has a loopback socket harness that exercises command dispatch, the session attach flow, event translations, websocket frame boundaries, discovery/handshake rejection paths and the FFI entry points end to end against a scripted fake devtools server, and the network-policy engine's whole call_json op surface — flags, referrer shaping, upgrade/downgrade marks, http allowances, blocked-navigation bookkeeping, the domain blocklist and the probe ops — plus its parser and URL-helper edges are under test. The snapshot loader also learned to drop whitespace-only https-only exception entries.

@@ -1082,7 +1082,7 @@ pub fn load_snapshot_json(v: &Value) -> RcResult<()> {
         let mut state = policy().state();
         state.persisted_http_allowed = list
             .iter()
-            .filter_map(|s| s.as_str().map(str::to_lowercase))
+            .filter_map(|s| s.as_str().map(|h| h.trim().to_lowercase()))
             .filter(|h| !h.is_empty())
             .collect();
     }
@@ -1788,5 +1788,400 @@ mod tests {
             evaluate_json(&ws("https://ws.example/"))["action"],
             "allow"
         );
+    }
+
+    /// COV07: the call_json op surface — every verb the C++ statics
+    /// delegate to gets exercised, including the error/empty arms.
+    #[test]
+    fn call_json_op_surface() {
+        let _g = guard();
+        reset();
+
+        // flag: every named bit + the unknown-name error.
+        for (name, want) in [
+            ("https_first", true),
+            ("https_only", true),
+            ("referer_policy", true),
+            ("security_level", true),
+            ("block_pings", true),
+            ("block_remote_fonts", false),
+            ("block_prefetch", true),
+            ("block_third_party_ws", false),
+            ("strip_tracking_params", true),
+            ("domain_blocklist", true),
+        ] {
+            let v = call_json(&json!({"op": "flag", "name": name})).unwrap();
+            if want {
+                assert!(v == json!(true) || v.is_i64(), "{name}: {v}");
+            } else {
+                assert_eq!(v, json!(false), "{name}");
+            }
+        }
+        assert!(call_json(&json!({"op": "flag", "name": "nope"})).is_err());
+
+        // referrer_meta mapping incl. the default arm.
+        assert_eq!(
+            call_json(&json!({"op": "referrer_meta", "level": 1})).unwrap(),
+            json!("strict-origin")
+        );
+        assert_eq!(
+            call_json(&json!({"op": "referrer_meta", "level": 2})).unwrap(),
+            json!("same-origin")
+        );
+        assert_eq!(
+            call_json(&json!({"op": "referrer_meta", "level": 3})).unwrap(),
+            json!("no-referrer")
+        );
+        assert_eq!(
+            call_json(&json!({"op": "referrer_meta", "level": 0})).unwrap(),
+            json!("")
+        );
+
+        // rewritten_referer through the op (levels covered deeper by
+        // referer_levels above — this hits the op plumbing).
+        let v = call_json(&json!({
+            "op": "rewritten_referer", "level": 1,
+            "source": "https://a.example/p?q=1", "target": "https://b.example/x",
+        }))
+        .unwrap();
+        assert_eq!(v, json!("https://a.example/"));
+        let v = call_json(&json!({
+            "op": "rewritten_referer", "level": 0,
+            "source": "https://a.example/p", "target": "https://b.example/x",
+        }))
+        .unwrap();
+        assert_eq!(v, json!("https://a.example/p"));
+
+        // referer_apply shapes the header by min_level.
+        let v = call_json(&json!({
+            "op": "referer_apply", "url": "https://b.example/x",
+            "headers": [["Referer", "https://a.example/p"]],
+            "min_level": 1,
+        }))
+        .unwrap();
+        assert_eq!(v["value"], "https://a.example/");
+        let v = call_json(&json!({
+            "op": "referer_apply", "url": "https://b.example/x",
+            "headers": [], "min_level": 0,
+        }))
+        .unwrap();
+        assert_eq!(v["op"], "keep");
+
+        // upgrade/downgrade bookkeeping ops.
+        assert_eq!(
+            call_json(&json!({
+                "op": "upgrade_candidate",
+                "url": "http://cand.example/", "scope": "test",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_downgraded", "scope": "test", "host": "cand.example",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        call_json(&json!({
+            "op": "mark_downgraded", "host": "cand.example", "scope": "test",
+        }))
+        .unwrap();
+        // Private/empty hosts refuse the mark.
+        call_json(&json!({
+            "op": "mark_downgraded", "host": "127.0.0.1", "scope": "test",
+        }))
+        .unwrap();
+        call_json(&json!({
+            "op": "mark_downgraded", "host": "", "scope": "test",
+        }))
+        .unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_downgraded", "scope": "test", "host": "cand.example",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        call_json(&json!({
+            "op": "clear_downgraded", "host": "cand.example", "scope": "test",
+        }))
+        .unwrap();
+        call_json(&json!({"op": "clear_all_downgraded"})).unwrap();
+        assert_eq!(
+            call_json(&json!({"op": "ttl_get"})).unwrap(),
+            json!(30 * 60 * 1000)
+        );
+        call_json(&json!({"op": "ttl_set", "ms": 5})).unwrap();
+        assert_eq!(call_json(&json!({"op": "ttl_get"})).unwrap(), json!(5));
+
+        // http allowance set ops.
+        assert_eq!(
+            call_json(&json!({"op": "is_http_allowed", "host": "h.example"}))
+                .unwrap(),
+            json!(false)
+        );
+        let v = call_json(&json!({
+            "op": "allow_http", "host": "h.example", "persistent": true,
+        }))
+        .unwrap();
+        assert_eq!(v["persist_needed"], true);
+        let v = call_json(&json!({
+            "op": "allow_http", "host": "h.example", "persistent": true,
+        }))
+        .unwrap();
+        assert_eq!(v["persist_needed"], false);
+        let v = call_json(&json!({"op": "allow_http", "host": ""})).unwrap();
+        assert_eq!(v["persist_needed"], false);
+        assert_eq!(
+            call_json(&json!({"op": "is_http_allowed", "host": "H.Example"}))
+                .unwrap(),
+            json!(true)
+        );
+        let v = call_json(&json!({"op": "http_exceptions"})).unwrap();
+        assert_eq!(v, json!(["h.example"]));
+        call_json(&json!({"op": "clear_http_allowance", "host": "h.example"}))
+            .unwrap();
+        assert_eq!(
+            call_json(&json!({"op": "is_http_allowed", "host": "h.example"}))
+                .unwrap(),
+            json!(false)
+        );
+
+        // warn_http / warn_form_post arms.  https-first claims
+        // upgradeable hosts before the warn layer sees them — the host
+        // must carry a downgrade mark to warn at all.
+        call_json(&json!({
+            "op": "mark_downgraded", "host": "w.example", "scope": "t",
+        }))
+        .unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "warn_http", "url": "http://w.example/", "scope": "t",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "warn_http", "url": "https://w.example/", "scope": "t",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        call_json(&json!({"op": "allow_http", "host": "w.example"})).unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "warn_http", "url": "http://w.example/", "scope": "t",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "warn_form_post", "url": "http://w.example/", "scope": "t",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "warn_form_post", "url": "https://w.example/", "scope": "t",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+
+        // note_nav_failure short-circuits on non-https / wrong domain.
+        assert_eq!(
+            call_json(&json!({
+                "op": "note_nav_failure", "url": "http://f.example/",
+                "domain": CONNECTION_ERROR_DOMAIN, "code": -101, "scope": "t",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "note_nav_failure", "url": "https://f.example/",
+                "domain": 1, "code": -101, "scope": "t",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+
+        // blocked-nav recording, both kinds, consume-once.
+        call_json(&json!({
+            "op": "record_blocked_nav", "kind": "domain", "url": "http://d.example/",
+        }))
+        .unwrap();
+        call_json(&json!({
+            "op": "record_blocked_nav", "kind": "http", "url": "http://h.example/",
+        }))
+        .unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "take_blocked_nav", "kind": "domain", "url": "http://d.example/",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "take_blocked_nav", "kind": "other", "url": "http://h.example/",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "take_blocked_nav", "kind": "domain", "url": "http://d.example/",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+
+        // domain-blocklist ops: host checks + session allowances.
+        assert_eq!(
+            call_json(&json!({
+                "op": "block_domain", "url": "http://unlisted.example/",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        let _ = call_json(&json!({"op": "is_domain_blocked", "host": "x"}));
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_blocked_domain_allowed", "host": "b.example",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        call_json(&json!({"op": "allow_blocked_domain", "host": "b.example"}))
+            .unwrap();
+        call_json(&json!({"op": "allow_blocked_domain", "host": ""})).unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_blocked_domain_allowed", "host": "B.Example",
+            }))
+            .unwrap(),
+            json!(true)
+        );
+        call_json(&json!({
+            "op": "clear_blocked_domain_allowance", "host": "b.example",
+        }))
+        .unwrap();
+        call_json(&json!({"op": "clear_all_blocked_domain"})).unwrap();
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_blocked_domain_allowed", "host": "b.example",
+            }))
+            .unwrap(),
+            json!(false)
+        );
+
+        // ping/resource/ws/script/private probes.
+        assert_eq!(
+            call_json(&json!({"op": "is_ping", "type": RT_PING, "headers": []}))
+                .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            call_json(&json!({"op": "is_ping", "type": 4, "headers": []}))
+                .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({"op": "block_resource", "type": 4, "headers": []}))
+                .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "block_ws", "first_party_url": "https://a.example/",
+                "url": "wss://ws.example/s", "type": RT_WEBSOCKET,
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({
+                "op": "block_script", "first_party_url": "https://a.example/",
+                "type": RT_SCRIPT, "script_allowed": false,
+            }))
+            .unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            call_json(&json!({"op": "private_or_local", "host": "10.0.0.1"}))
+                .unwrap(),
+            json!(true)
+        );
+
+        // headers arg tolerates malformed pairs.
+        assert_eq!(
+            call_json(&json!({
+                "op": "is_ping", "type": RT_PING,
+                "headers": [["only-key"], [1, 2], "junk"],
+            }))
+            .unwrap(),
+            json!(true)
+        );
+
+        // Unknown op -> InvalidArgument.
+        assert!(call_json(&json!({"op": "does_not_exist"})).is_err());
+        assert!(call_json(&json!({})).is_err());
+    }
+
+    /// COV07: parse_json + helper edges the op sweep does not reach.
+    #[test]
+    fn parse_json_and_helper_edges() {
+        // parse_json: malformed JSON and non-UTF-8 are Corrupt.
+        assert!(parse_json(b"{").is_err());
+        assert!(parse_json(b"\xff\xfe").is_err());
+        assert!(parse_json(b"{}").is_ok());
+
+        // load_snapshot_json takes every documented key.
+        load_snapshot_json(&json!({
+            "https_first": false, "https_only": false, "referer_policy": 0,
+            "security_level": 0, "block_pings": false, "block_remote_fonts": true,
+            "block_prefetch": false, "block_third_party_ws": true,
+            "strip_tracking_params": false, "domain_blocklist": false,
+            "https_only_exceptions": ["  ", "Exc.Example", ""],
+        }))
+        .unwrap();
+        let hosts = call_json(&json!({"op": "http_exceptions"})).unwrap();
+        assert_eq!(hosts, json!(["exc.example"]));
+        reset();
+
+        // url_has_query: '#' before '?' is fragment, not query.
+        assert!(url_has_query("https://a/?q=1"));
+        assert!(!url_has_query("https://a/#frag?x"));
+        assert!(!url_has_query("https://a/"));
+
+        // url_authority / url_host / url_scheme edges.
+        assert_eq!(url_host("https://u:pw@h.example:8443/p"), "h.example");
+        assert_eq!(url_host("https://h.example"), "h.example");
+        assert_eq!(url_host("nohost"), "");
+        assert_eq!(url_scheme("HTTPS://x/"), "HTTPS");
+        assert_eq!(url_scheme("nocolon"), "");
+        assert_eq!(url_authority("https://h.example:9/p"), "h.example:9");
+        assert_eq!(default_port("ftp"), None);
+        assert_eq!(default_port("ws"), Some(80));
+
+        // in_v6_subnet boundary shapes (via the public classifier) —
+        // brackets are stripped by url_host upstream, so a bracketed
+        // literal reads as a hostname here.
+        assert!(is_private_or_local_host("fc00::1"));
+        assert!(!is_private_or_local_host("[fe80::1]"));
+        assert!(!is_private_or_local_host("2001:4860:4860::8888"));
+
+        // on_domain_list: bare rules match exact + ".suffix"; a
+        // leading-dot rule matches both the suffix and the bare apex.
+        assert!(on_domain_list(&["a.com".into()], "a.com"));
+        assert!(on_domain_list(&["a.com".into()], "x.a.com"));
+        assert!(!on_domain_list(&["a.com".into()], "xa.com"));
+        assert!(on_domain_list(&[".a.com".into()], "x.a.com"));
+        assert!(on_domain_list(&[".a.com".into()], "a.com"));
     }
 }
