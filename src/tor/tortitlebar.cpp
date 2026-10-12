@@ -19,16 +19,85 @@
 
 #include "tortitlebar.h"
 
-#include "squeezelabel.h"
-
+#include <qapplication.h>
 #include <qboxlayout.h>
 #include <qevent.h>
+#include <qfontmetrics.h>
 #include <qlabel.h>
 #include <qmenu.h>
 #include <qmenubar.h>
 #include <qpainter.h>
 #include <qtoolbutton.h>
 #include <qwindow.h>
+
+// TOR12: the drawn window title on the violet chrome.  A SqueezeLabel
+// elides by rewriting its own text(), which shrinks the sizeHint the
+// menubar's corner-widget negotiation reads — one narrow frame can
+// therefore collapse the corner permanently, and the full title is
+// lost until the next WindowTitleChange.  This label keeps the real
+// title in m_fullTitle, reports the FULL title width as its sizeHint
+// (so the corner keeps its room and the menu items are what move),
+// and only swaps the elided form into text() when the assigned width
+// cannot hold the title — the elide adapts both directions and never
+// destroys the string.
+class TorTitleLabel : public QLabel
+{
+public:
+    explicit TorTitleLabel(QWidget *parent = nullptr)
+        : QLabel(parent)
+    {
+    }
+
+    void setTitleText(const QString &title)
+    {
+        m_fullTitle = title;
+        setToolTip(title);
+        syncShownText();
+        updateGeometry();
+    }
+
+    QString titleText() const { return m_fullTitle; }
+
+    QSize sizeHint() const override
+    {
+        QSize hint = QLabel::sizeHint();
+        hint.setWidth(fontMetrics().horizontalAdvance(m_fullTitle)
+                      + contentsMargins().left()
+                      + contentsMargins().right());
+        return hint;
+    }
+
+protected:
+    void changeEvent(QEvent *event) override
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::FontChange
+                || event->type() == QEvent::StyleChange)
+            syncShownText();
+    }
+
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QLabel::resizeEvent(event);
+        syncShownText();
+    }
+
+private:
+    void syncShownText()
+    {
+        QString shown = m_fullTitle;
+        const int room = contentsRect().width();
+        if (room > 0) {
+            const QFontMetrics metrics(fontMetrics());
+            if (metrics.horizontalAdvance(shown) > room)
+                shown = metrics.elidedText(shown, Qt::ElideMiddle, room);
+        }
+        if (text() != shown)
+            QLabel::setText(shown);
+    }
+
+    QString m_fullTitle;
+};
 
 namespace {
 
@@ -82,7 +151,7 @@ TorTitleBar::TorTitleBar(QWidget *window)
     , m_window(window)
     , m_menuBar(window->findChild<QMenuBar *>())
     , m_controls(new QWidget(window))
-    , m_titleLabel(new SqueezeLabel(this))
+    , m_titleLabel(new TorTitleLabel(this))
     , m_minimizeButton(new QToolButton(m_controls))
     , m_maximizeButton(new QToolButton(m_controls))
     , m_closeButton(new QToolButton(m_controls))
@@ -97,8 +166,10 @@ TorTitleBar::TorTitleBar(QWidget *window)
     badge->setToolTip(tr("This window browses through the Tor network"));
 
     m_titleLabel->setObjectName(QLatin1String("torTitleText"));
-    m_titleLabel->setText(m_window->windowTitle());
-    m_titleLabel->setMaximumWidth(360);
+    m_titleLabel->setTitleText(m_window->windowTitle());
+    // The cap bounds the corner so a very long title cannot push the
+    // menus into the overflow extension; the label itself elides.
+    m_titleLabel->setMaximumWidth(420);
 
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(8, 0, 6, 0);
@@ -106,9 +177,13 @@ TorTitleBar::TorTitleBar(QWidget *window)
     layout->addWidget(badge);
     layout->addWidget(m_titleLabel);
 
+    // The title is the headline element on the violet chrome — pure
+    // white, the maximum contrast against #4a3372 (~12:1); the badge
+    // and glyph family stay at the chrome's #eee.
     setStyleSheet(QLatin1String(
         "TorTitleBar { background: transparent; }"
         "QLabel { color: #eee; background: transparent; }"
+        "QLabel#torTitleText { color: white; }"
         "QLabel#torTitleBadge { color: white; background: #6b4fa3;"
         " border-radius: 5px; padding: 0px 6px; font-weight: bold; }"));
 
@@ -175,6 +250,21 @@ TorTitleBar::TorTitleBar(QWidget *window)
     m_window->installEventFilter(this);
     syncFrameMargins();
     syncWindowButtons();
+}
+
+void TorTitleBar::syncCornerWidth()
+{
+    // The menubar renegotiates the corner-widget width only when its
+    // items are dirty — a changed title sizeHint does not reach that
+    // pass, so without this nudge the corner keeps the previous
+    // title's width and a longer title stays squeezed until some
+    // unrelated menubar relayout.  A synthetic resize runs the same
+    // dirty + updateGeometries pass a menu change does: our new
+    // sizeHint claims its room and the menu items are what move.
+    if (!m_menuBar)
+        return;
+    QResizeEvent relayout(m_menuBar->size(), m_menuBar->size());
+    QApplication::sendEvent(m_menuBar, &relayout);
 }
 
 Qt::Edges TorTitleBar::frameEdges(const QRect &windowRect,
@@ -248,7 +338,8 @@ bool TorTitleBar::eventFilter(QObject *object, QEvent *event)
     if (object == m_window) {
         switch (event->type()) {
         case QEvent::WindowTitleChange:
-            m_titleLabel->setText(m_window->windowTitle());
+            m_titleLabel->setTitleText(m_window->windowTitle());
+            syncCornerWidth();
             break;
         case QEvent::WindowStateChange:
             syncWindowButtons();

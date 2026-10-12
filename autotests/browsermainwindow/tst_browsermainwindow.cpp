@@ -147,6 +147,7 @@ private slots:
     void torCircuitDropdown();
     void torStartPage();
     void torTitleBar();
+    void torTitleBarTitle();
     void servoStartPage();
     void readerModeButton();
     void statusBarWidgets();
@@ -1849,6 +1850,117 @@ void tst_BrowserMainWindow::torTitleBar()
     QVERIFY(minimized);
     QVERIFY(menuAlive);
     QVERIFY(cornerHosted);
+}
+
+// TOR12: the drawn window title must be readable on the violet
+// chrome — near-white ink, and it must keep the room its sizeHint
+// earns from the menu items.  The old SqueezeLabel elided by
+// rewriting text(), which shrank the sizeHint the menubar's
+// corner-widget negotiation reads: one narrow pass collapsed the
+// title into a permanent sliver.  The TorTitleLabel keeps the full
+// title and elides at display time only, so a long title elides at
+// the cap (never destroys the string) and a shorter one regrows.
+void tst_BrowserMainWindow::torTitleBarTitle()
+{
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QLabel *title =
+        window->findChild<QLabel *>(QLatin1String("torTitleText"));
+    QWidget *bar =
+        window->findChild<QWidget *>(QLatin1String("torTitleBar"));
+    QMenuBar *menuBar = window->menuBar();
+    QVERIFY(title);
+    QVERIFY(bar);
+    QVERIFY(menuBar);
+
+    const QString shortTitle =
+        QLatin1String("Welcome to Arora! - Arora (Tor)");
+    const QString longTitle = QLatin1String(
+        "A very long page title that keeps going and going until it "
+        "would never fit on any reasonable window - Arora (Tor)");
+
+    // A normal-length title keeps its full text and the corner claims
+    // its full hint — the menu items are what move right.
+    window->setWindowTitle(shortTitle);
+    QApplication::processEvents();
+    QCOMPARE(title->text(), shortTitle);
+    QCOMPARE(title->toolTip(), shortTitle);
+    const int shortAdvance =
+        title->fontMetrics().horizontalAdvance(shortTitle);
+    QVERIFY(title->width() >= shortAdvance);
+    QVERIFY(bar->width() > shortAdvance);
+
+    // A title past the cap elides at the cap — the corner still gets
+    // the capped room instead of collapsing to a sliver, the menus
+    // still sit after it, and the full title survives on the tooltip.
+    window->setWindowTitle(longTitle);
+    QApplication::processEvents();
+    const int longCornerWidth = bar->width();
+    const QRect fileRect =
+        menuBar->actionGeometry(menuBar->actions().value(0));
+    QVERIFY(title->text() != longTitle);
+    QVERIFY(title->text().length() < longTitle.length());
+    QCOMPARE(title->toolTip(), longTitle);
+    QVERIFY2(title->width() >= 300,
+             qPrintable(QString::number(title->width())));
+    QVERIFY(title->width() <= 420);
+    QVERIFY(longCornerWidth > 400);
+    QVERIFY(fileRect.isValid());
+    QVERIFY(fileRect.left() >= bar->geometry().right() - 1);
+
+    // Shrinking back recovers the full text — the destroyed-string
+    // squeeze could never regrow.
+    window->setWindowTitle(shortTitle);
+    QApplication::processEvents();
+    QCOMPARE(title->text(), shortTitle);
+    QVERIFY(bar->width() < longCornerWidth);
+
+    // The ink is near-white on the violet chrome — a dark glyph would
+    // be the unreadable report again.  Transparent background: every
+    // opaque pixel in the grab is painted text.
+    const auto inkColors = [](QLabel *label) {
+        const QImage image = label->grab().toImage();
+        int light = 0, dark = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alphaF() < 0.5)
+                    continue;
+                if (color.lightness() > 200)
+                    ++light;
+                else if (color.lightness() < 100)
+                    ++dark;
+            }
+        }
+        return qMakePair(light, dark);
+    };
+    const QPair<int, int> lightInk = inkColors(title);
+    QVERIFY(lightInk.first > 20);
+    QCOMPARE(lightInk.second, 0);
+
+    // The chrome stays violet under a dark app palette, so the light
+    // title must survive the flip — no palette-driven dark text.
+    const QPalette savedPalette = QApplication::palette();
+    QPalette darkPalette = savedPalette;
+    darkPalette.setColor(QPalette::Window, QColor(0x2b, 0x2b, 0x2b));
+    darkPalette.setColor(QPalette::Base, QColor(0x1e, 0x1e, 0x1e));
+    darkPalette.setColor(QPalette::Text, Qt::white);
+    darkPalette.setColor(QPalette::WindowText, Qt::white);
+    QApplication::setPalette(darkPalette);
+    QApplication::processEvents();
+    const QPair<int, int> darkInk = inkColors(title);
+    QApplication::setPalette(savedPalette);
+    QApplication::processEvents();
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(darkInk.first > 20);
+    QCOMPARE(darkInk.second, 0);
 }
 
 // ENG13: the servo-branded bundled start page — same layout and

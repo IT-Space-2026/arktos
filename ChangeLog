@@ -701,6 +701,9 @@ Tor:
   window title, and minimize/maximize/close buttons, plus a violet
   frame border. The window still drags, edge-resizes and closes like a
   normal one; regular windows keep the native look (TOR11).
+- The Tor window's drawn title bar shows the page title in readable
+  white text that keeps its space on the menu row — a long title
+  elides gracefully instead of collapsing to a faint sliver (TOR12).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

@@ -24,7 +24,7 @@
 
 class QMenuBar;
 class QToolButton;
-class SqueezeLabel;
+class TorTitleLabel;
 
 // TOR11: the drawn title bar for a frameless tor window.  A native
 // title bar cannot be tinted per-window — on GNOME Wayland Qt's own
@@ -75,6 +75,7 @@ private:
     void toggleMaximized();
     bool resizable() const;
     void showWindowMenu(const QPoint &globalPos);
+    void syncCornerWidth();
     void syncWindowButtons();
     void syncFrameMargins();
     void syncFrameCursor(const QPoint &pos);
@@ -82,7 +83,7 @@ private:
     QWidget *m_window;
     QMenuBar *m_menuBar;
     QWidget *m_controls;
-    SqueezeLabel *m_titleLabel;
+    TorTitleLabel *m_titleLabel;
     QToolButton *m_minimizeButton;
     QToolButton *m_maximizeButton;
     QToolButton *m_closeButton;
