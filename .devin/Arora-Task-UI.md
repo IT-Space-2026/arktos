@@ -63,6 +63,10 @@ This file is the task queue for the Devin CLI task loop
 | PREFUI08 | Preferences nav list: bigger text + bigger icons, aligned — details below | done | 0 | pagesList font x1.3 (relative, pt-or-px safe) + navIconExtent=qRound(QFontMetricsF.height()*1.1) replaces the PM_SmallIconSize pin — ICONS02 uniform pinning + uniformItemSizes kept, fixed column width re-measured after the bump; sidebarPanelsList gets the same font/extent for parity; tst uniformSidebarIcons updated (font >1.2x app metrics, extent > small, row height >= extent, width re-derivation, per-theme re-resolve stable) — 39/39, offscreen grabs reviewed (nav + Panels visibly larger, icons centered), make check rc=0 (check-warnings PASS) offscreen --disable-gpu |
 | LANG01 | UI language selector in Preferences — details below | done | 0 | languageLabel + languageCombo on General page (row 4, before showSearchBox): leading "System default" (data "system" sentinel -> follows OS + persists as "system" so a later OS-locale change wins), installed translations in chooseNewLanguage's "Language, Territory (code)"+LRM format with locale code in userData, trailing "English (en_US)" fallback; immediate apply via setCurrentLanguage on currentIndexChanged, init from currentLanguage(); empty-languages -> row disabled w/ tooltip (no QMessageBox); changeEvent(LanguageChange) retranslates combo strings; LanguageManager: "system" sentinel persisted + m_followsSystem resolution, addLocaleDirectory invalidates scan cache (late dir registration); Help>Change Language popup kept as second entry point; new tst_settingsdialog::languageSelector leg — 40/40, tst_languagemanager 11/11; make check: check-warnings PASS + all suites green except 1 unrelated flake webview/linkOpenRefererDiscipline (PASS standalone) offscreen --disable-gpu |
 | UIAUDIT03 | Post-queue code-quality sweep on ui-work — details below | done | 1 | report at .devin/UIAUDIT03-report.md — dead code clean; shared PositionPicker base extracted for the two visual pickers (-218 net lines, API/index semantics unchanged); TabBar double parent-cast hoisted out of the per-tab paint path; security verified (BKEX01 escaping, ADBLK01 no-rust fallback, ADDR02 injection/prompt gates) + documented inert-by-design TRUST toggles pending main-lane TRUST03; tst_settingsdialog picker legs PASS; make check: check-warnings PASS + all programs green except known flake adblockAppliesOnContainerProfile (PASS standalone) offscreen --disable-gpu needs:task:TRUST02 |
+| DEVT05 | BiDi entry into Development Tools submenu, drop dead placeholder + top-level checkbox — details below | pending | 0 | |
+| SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | pending | 0 | |
+| PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
+| ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
 
 
 ## Task details
@@ -292,3 +296,39 @@ UI language selector in Preferences — user request: 0.11-style language choice
 ### UIAUDIT03
 
 Post-queue code-quality sweep on ui-work — runs after the queued work lands (needs TRUST02 so it sweeps the full final state). Sweep the ui-work delta for: (a) DEAD CODE — unused slots/widgets, orphaned .ui elements and qrc assets from removed features (old bookmark-window paths post-SIDE02, dead preview plumbing post-TPREV01/02, superseded download-detail layout post-DLUX02, replaced nav-list sizing post-PREFUI06/07/08); (b) DUPLICATION — repeated dialog/page boilerplate, copy-pasted settings read/write blocks that should share a helper, parallel logic between settings pages; (c) PERFORMANCE — repaint-heavy widgets (tab strip, download list, sidebar) doing per-item work that belongs per-model, sizeHint re-measurement in paint paths, unbatched model resets; (d) SECURITY — new input surfaces landed this cycle: bookmark import/export dialog paths (BKEX01), trust-toggle gating (TRUST06/TRUST02 — unchecked box must actually gate the consumer), adblock engine switch (ADBLK01) fallback paths, search-bar/sidebar address handling (SRCH09/10, ADDR01/02). Output: fix trivially-safe findings in one commit per area; file a scoped task row for anything needing design. Verify: make check PASS + committed .devin/UIAUDIT03-report.md listing findings per category. needs:task:TRUST02
+
+### DEVT05
+
+Wire the BiDi Dev Tools entry into the 'Development Tools' submenu and remove the dead duplicates — user report: 'There is two Development Tools menus. One is tickbox, the other is the right one. Although the BiDi Dev tool is not active — for the BiDi, connect it to the right menu where there is the drop-down menu for dev tools; the other should be removed.'
+
+Current state (browsermainwindow.cpp ~1150-1190): (a) the 'Development Tools' submenu (m_toolsDevToolsMenu) holds the working Chromium DevTools action + m_toolsBidiDevToolAction, a hardcoded setEnabled(false) placeholder never wired; (b) a SEPARATE checkable 'BiDi Dev &Tools' action (m_bidiPanelDock->toggleViewAction()) sits directly in the Tools menu under ARORA_RUSTCORE — that is the tickbox the user sees, and it is the one that actually works.
+
+Spec: (a) DELETE the placeholder m_toolsBidiDevToolAction entirely (action + member + retranslateUi text); (b) MOVE the dock's toggleViewAction INTO the Development Tools submenu (add it there instead of m_toolsMenu->addAction) — keep the tor-mode disabled+tooltip branch; (c) the BiDi entry inside the submenu is then the checkable one that shows/hides the BiDi dock; (d) no leftover separators or empty entries in either menu.
+
+Verify: Tools menu has exactly ONE Development Tools surface — the submenu containing Chromium DevTools + a working checkable BiDi entry; ticking it opens the BiDi dock, unticking closes it; no dead/disabled BiDi entry anywhere; tor window keeps the entry disabled with its tooltip; make check PASS.
+
+### SIDE05
+
+Duplicate 'Development Tools' title in the sidebar/dock area when the BiDi dock is shown — user report: 'check the side panel, because if the tick box selected, 2 Dev Tools titles appear in the sidebar.'
+
+Current state: m_bidiPanelDock->setWindowTitle(tr("Development Tools")) (browsermainwindow.cpp:1369) and the BiDiPanel widget inside likely renders its own 'Development Tools' header/label — when the dock is shown via the toggle action, the user sees the title twice (dock frame title + in-panel header). Investigate where the second title comes from (bidipanel.cpp header widget, groupbox title, or a duplicated label) — the fix keeps ONE visible title: either the dock's window title OR the panel's own header, not both. If the panel needs its own header when used outside a dock, gate it on the dock context; if it is always inside the dock, remove the inner one. Also verify the toggle action text and dock title stay consistent ('BiDi Dev Tools' action vs 'Development Tools' dock — align them sensibly, document the choice).
+
+Verify: show the dock — exactly one 'Development Tools' title visible in the sidebar area; hide/show repeatedly still consistent; make check PASS.
+
+### PREFUI09
+
+Privacy page group alignment — user screenshot: inside Preferences > Privacy, the Cookies group shows its label+combo+button rows pushed to the RIGHT side of the group while the 'Filter Tracking Cookies' and 'Block third-party cookies' checkboxes sit flush LEFT — the group's controls are not aligned. Same misalignment reported for the 'Site Permissions' and 'Saved Passwords' groups on the same page.
+
+Diagnosis hint: same class of bug as the Performance Startup spacer fix — check settings.ui for these groups' layouts (cookiejar settings block, site permissions block, saved-passwords block): likely an expanding horizontal spacer or a grid form whose label column absorbs all width pushing field cells right, while checkbox rows were added outside that form alignment.
+
+Spec: (a) Cookies group — Accept Cookies / Keep Cookies Until / 'A cookie session ends' label+combo+button rows aligned consistently with the group (left-anchored form like other Preferences pages — match the AutoFill or General page field alignment); (b) the two checkboxes align with the same left edge; (c) Site Permissions group — same alignment pass; (d) Saved Passwords group — same alignment pass; (e) sweep the whole Privacy page for any other group with the same leading-spacer/right-push defect.
+
+Verify: all three groups' controls share the group's left margin like other pages; combos do not stretch the full page width beyond their siblings; make check PASS (tst_settingsdialog if it covers these pages).
+
+### ENG11
+
+Show the current Servo version in the rendering-engine dropdown — user request: 'For the rendering engine drop down, add the current Servo version like with the Chromium.'
+
+Find the engine/backend selector that displays the engine name + version (the combo/dropdown where 'Chromium <version>' is shown — likely Preferences engine page or the --engine-list/Engine adapter surface wired by the ENG lane). Chromium already displays its version; the Servo backend entry must show the actual Servo version the same way — query it from the servo adapter/embedding API (spikes/servo/servo-embed) rather than hardcoding; if the servo build exposes no version call, fall back honestly (e.g. 'Servo (version unknown)') and note it. Keep the display consistent: same format pattern as the Chromium entry.
+
+Verify: engine dropdown shows 'Servo <version>' matching the real linked servo build; Chromium entry unchanged; entry updates if servo version changes (rebuild), make check PASS.
