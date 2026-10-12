@@ -146,6 +146,7 @@ private slots:
     void privateStartPage();
     void startPageSingleSurface();
     void readerModeButton();
+    void homeButton();
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
@@ -1519,13 +1520,17 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QApplication::processEvents();
     QToolBar *navBar = window->findChild<QToolBar *>(
         QLatin1String("NavigationToolBar"));
-    QVERIFY(navBar && navBar->actions().count() >= 4);
+    QVERIFY(navBar && navBar->actions().count() >= 5);
     const qlonglong torBack =
         luminance(navBar->actions().at(1)->icon());
     const qlonglong torForward =
         luminance(navBar->actions().at(2)->icon());
     const qlonglong torReload =
         luminance(navBar->actions().at(3)->icon());
+    // HOME01: the Home button sits at index 4 and takes the same
+    // light-glyph lift on the violet bar.
+    const qlonglong torHome =
+        luminance(navBar->actions().at(4)->icon());
     qlonglong menuReload = -1;
     // MENU06: a tor window's menubar row is the bare title bar — the
     // menus live in the app-menu dropdown (same shared QMenu objects).
@@ -1565,6 +1570,7 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(torBack > 140);
     QVERIFY(torForward > 140);
     QVERIFY(torReload > 140);
+    QVERIFY(torHome > 140);
     QVERIFY(menuReload >= 0 && menuReload < 140);
 }
 
@@ -1806,9 +1812,10 @@ void tst_BrowserMainWindow::torCircuitDropdown()
     QVERIFY(button);
     QVERIFY(dropMenu);
     // MENU06: the app-menu button leads the bar — the nav cluster
-    // shifts one slot right.
-    QCOMPARE(readerIndex, 4);             // app menu, back, forward, reload, reader
-    QCOMPARE(circuitIndex, 5);            // onion right next to it
+    // shifts one slot right.  HOME01 adds Home between reload and the
+    // reader button.
+    QCOMPARE(readerIndex, 5);             // app menu, back, forward, reload, home, reader
+    QCOMPARE(circuitIndex, 6);            // onion right next to it
     QVERIFY(greyed);
     QCOMPARE(stateTexts.count(), 1);
     QVERIFY(stateTexts.at(0).contains(
@@ -2570,8 +2577,8 @@ void tst_BrowserMainWindow::readerModeButton()
     QVERIFY(reader->toolTip().contains(QLatin1String("Ctrl+Alt+R")));
 
     // Slot order in the toolbar's action list: the MENU06 app-menu
-    // button leads, then Back, Forward, Stop/Reload, the reader
-    // button, then the location-bar splitter.
+    // button leads, then Back, Forward, Stop/Reload, the HOME01 Home
+    // button, the reader button, then the location-bar splitter.
     const QList<QAction *> barActions = navBar->actions();
     int readerIndex = -1;
     int splitterIndex = -1;
@@ -2582,7 +2589,7 @@ void tst_BrowserMainWindow::readerModeButton()
         else if (widget && qobject_cast<QSplitter *>(widget))
             splitterIndex = i;
     }
-    QCOMPARE(readerIndex, 4);
+    QCOMPARE(readerIndex, 5);
     QCOMPARE(splitterIndex, readerIndex + 1);
 
     // The View-menu action shares the same ReaderMode state.
@@ -2645,6 +2652,112 @@ void tst_BrowserMainWindow::readerModeButton()
     QTRY_VERIFY_WITH_TIMEOUT(!reader->isHidden(), 10000);
 
     closeWindow(window);
+}
+
+// HOME01: the nav bar carries a Home button immediately after
+// Stop/Reload.  It IS the History menu's Home action (Ctrl+Shift+H),
+// so button, menu entry and shortcut are one path — click or trigger
+// loads the context-appropriate start page in the current tab on
+// normal, private and tor windows.
+void tst_BrowserMainWindow::homeButton()
+{
+    const auto homeActionFor = [](QToolBar *bar) -> QAction * {
+        const QList<QAction *> actions = bar->actions();
+        for (QAction *action : actions) {
+            if (action->shortcut()
+                == QKeySequence(Qt::ControlModifier | Qt::ShiftModifier
+                                | Qt::Key_H))
+                return action;
+        }
+        return nullptr;
+    };
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(navBar);
+    QAction *home = homeActionFor(navBar);
+    QVERIFY(home);
+    // Slot order: app-menu, Back, Forward, Stop/Reload, then Home —
+    // directly beside reload, ahead of the reader button + url bar.
+    QCOMPARE(navBar->actions().indexOf(home), 4);
+    QToolButton *homeButton = qobject_cast<QToolButton *>(
+        navBar->widgetForAction(home));
+    QVERIFY(homeButton);
+    QVERIFY(homeButton->autoRaise());
+    QVERIFY(!home->icon().isNull());
+    QVERIFY(home->toolTip().contains(QLatin1String("Home")));
+    QVERIFY(home->toolTip().contains(QLatin1String("Ctrl+Shift+H")));
+
+    // The History menu entry is the same QAction object — no parallel
+    // code path between button, menu and shortcut.
+    bool inMenu = false;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->menu()->actions().contains(home))
+            inMenu = true;
+    }
+    QVERIFY(inMenu);
+
+    // Normal tab: click loads the standard start page in place.
+    WebView *view = window->currentTab();
+    QVERIFY(view);
+    QTest::mouseClick(homeButton, Qt::LeftButton);
+    QTRY_VERIFY(view->url()
+                == QUrl(QLatin1String("qrc:/startpage.html"))
+                && view->page() && !view->page()->isLoading());
+
+    // The action's own trigger (the menu/shortcut path) does the same.
+    view->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(view->url() == QUrl(QLatin1String("about:blank")));
+    home->trigger();
+    QTRY_VERIFY(view->url()
+                == QUrl(QLatin1String("qrc:/startpage.html"))
+                && !view->page()->isLoading());
+
+    // A private tab in the same window resolves the private variant.
+    window->tabWidget()->newPrivateTab();
+    WebView *privTab = window->currentTab();
+    QVERIFY(privTab && privTab != view);
+    privTab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(privTab->url() == QUrl(QLatin1String("about:blank")));
+    QTest::mouseClick(homeButton, Qt::LeftButton);
+    QTRY_VERIFY(privTab->url()
+                == QUrl(QLatin1String("qrc:/startpage-private.html"))
+                && privTab->page() && !privTab->page()->isLoading());
+    closeWindow(window);
+
+    // Tor window: same button, tor start page.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->resize(1000, 600);
+    torWindow->show();
+    QApplication::processEvents();
+    QToolBar *torBar = torWindow->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    QVERIFY(torBar);
+    QAction *torHome = homeActionFor(torBar);
+    QVERIFY(torHome);
+    QCOMPARE(torBar->actions().indexOf(torHome), 4);
+    QToolButton *torHomeButton = qobject_cast<QToolButton *>(
+        torBar->widgetForAction(torHome));
+    QVERIFY(torHomeButton);
+    WebView *torTab = torWindow->currentTab();
+    QVERIFY(torTab);
+    // The first tab already shows the tor start page — move it off so
+    // the click is observable.
+    torTab->loadUrl(QUrl(QLatin1String("about:blank")));
+    QTRY_VERIFY(torTab->url() == QUrl(QLatin1String("about:blank")));
+    QTest::mouseClick(torHomeButton, Qt::LeftButton);
+    QTRY_VERIFY(torTab->url()
+                == QUrl(QLatin1String("qrc:/startpage-tor.html"))
+                && torTab->page() && !torTab->page()->isLoading());
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
 }
 
 // UIP04: permanent status-bar widgets — a load-time indicator and a

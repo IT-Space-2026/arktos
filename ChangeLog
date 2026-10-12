@@ -361,6 +361,10 @@ UI:
   — invisible in the light theme, banded in the dark theme — and now
   covers the window as one continuous surface on all four start pages
   (standard, private, Tor, Servo) (SPAGE01).
+- Home button on the navigation toolbar, right after the reload/stop
+  button — clicking it loads your configured home page (the Arora
+  start page by default) in the current tab, same as History → Home
+  or Ctrl+Shift+H (HOME01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

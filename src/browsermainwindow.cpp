@@ -301,6 +301,10 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
             AroraIcon::getOnDark(QLatin1String("go-previous")));
         m_historyForwardAction->setIcon(
             AroraIcon::getOnDark(QLatin1String("go-next")));
+        // HOME01: same lift for the nav-bar Home button — its History
+        // menu entry shows the light glyph too, matching Back/Forward.
+        m_historyHomeAction->setIcon(
+            AroraIcon::getOnDark(QLatin1String("go-home")));
         m_viewSidebarAction->setIcon(
             SidebarPanel::icon(m_readerModeButton));
 
@@ -1229,6 +1233,12 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction = new QAction(this);
     connect(m_historyHomeAction, &QAction::triggered, this, &BrowserMainWindow::goHome);
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
+    // HOME01: the nav-bar Home button reuses this action, so the icon
+    // is unconditional — platform convention only hides it in menus.
+    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    m_historyHomeAction->setIconVisibleInMenu(false);
+#endif
 
     m_historyRestoreLastSessionAction = new QAction(this);
     if (BrowserApplication *app = BrowserApplication::instance()) {
@@ -1247,7 +1257,6 @@ void BrowserMainWindow::setupMenu()
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_historyRestoreLastSessionAction->setIcon(AroraIcon::get(QLatin1String("document-revert")));
-    m_historyHomeAction->setIcon(AroraIcon::get(QLatin1String("go-home")));
 #endif
 
     // Bookmarks
@@ -1562,6 +1571,9 @@ void BrowserMainWindow::retranslate()
     m_historyBackAction->setText(tr("Back"));
     m_historyForwardAction->setText(tr("Forward"));
     m_historyHomeAction->setText(tr("Home"));
+    m_historyHomeAction->setToolTip(
+        tr("Home (%1)").arg(m_historyHomeAction->shortcut().toString(
+            QKeySequence::NativeText)));
     m_historyRestoreLastSessionAction->setText(tr("Restore Last Session"));
 
     m_bookmarksMenu->setTitle(tr("&Bookmarks"));
@@ -1658,6 +1670,12 @@ void BrowserMainWindow::setupToolBar()
     m_stopReloadAction = new QAction(this);
     m_stopReloadAction->setIcon(m_reloadIcon);
     m_navigationBar->addAction(m_stopReloadAction);
+
+    // HOME01: a Home button immediately after Stop/Reload — the same
+    // QAction the History menu and Ctrl+Shift+H drive, so the button
+    // can never diverge from the goHome() path.  Shared setup covers
+    // normal/private/tor/container windows alike.
+    m_navigationBar->addAction(m_historyHomeAction);
 
     // READ02: reader-mode toggle in the nav row — after stop/reload,
     // before the location bar starts.  Same ReaderButton the location
