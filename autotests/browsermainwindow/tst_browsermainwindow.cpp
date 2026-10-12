@@ -123,6 +123,7 @@ private slots:
     void searchBoxVisibility();
     void torSearchBoxHidden();
     void torCircuitStatusLabel();
+    void torTabStripLayout();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -885,6 +886,60 @@ void tst_BrowserMainWindow::torCircuitStatusLabel()
     QVERIFY(parented);
     QVERIFY(text.startsWith(QLatin1String("Tor:")));
     QVERIFY(!tooltip.isEmpty());
+}
+
+// TOR06: the tor window's tab strip keeps the shared TABS07-normalized
+// height, and the private-badged favicon at the strip's left edge is
+// fully visible — it used to latch at the empty-label size (7x14)
+// because the label is installed before its pixmap exists, painting
+// the 16px badge center-clipped.  The same path marks PTAB01's private
+// tabs, so a normal window's off-the-record tab is checked too.
+void tst_BrowserMainWindow::torTabStripLayout()
+{
+    // A normal window's private tab carries the same masked favicon
+    // widget — its strip height is the parity baseline.
+    SubWindow *normalWindow = new SubWindow;
+    normalWindow->resize(1000, 600);
+    normalWindow->show();
+    QApplication::processEvents();
+    normalWindow->tabWidget()->newPrivateTab();
+    QApplication::processEvents();
+    const int normalStripHeight =
+        normalWindow->tabWidget()->tabBar()->height();
+    closeWindow(normalWindow);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    TabBar *bar = window->tabWidget()->tabBar();
+    const int count = bar->count();
+    QWidget *icon = count > 0
+        ? bar->tabButton(0, bar->freeSide()) : nullptr;
+    const QSize iconSize = icon ? icon->size() : QSize();
+    const QString iconName = icon ? icon->accessibleName() : QString();
+    const bool iconVisible = icon && icon->isVisible();
+    const bool iconInsideTab = icon
+        && bar->tabRect(0).contains(icon->geometry());
+    const int torStripHeight = bar->height();
+    // The TABS07 thickness cap — icon+text line plus modest padding.
+    const int cap = qMax(bar->fontMetrics().height(),
+                         bar->iconSize().height()) + 12;
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(count >= 1);
+    QVERIFY(icon);
+    QCOMPARE(iconName, QLatin1String("Page Icon"));
+    QVERIFY(iconVisible);
+    QCOMPARE(iconSize, QSize(16, 16));
+    QVERIFY(iconInsideTab);
+    QVERIFY(torStripHeight <= cap);
+    QCOMPARE(torStripHeight, normalStripHeight);
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between
