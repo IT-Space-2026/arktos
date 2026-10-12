@@ -277,6 +277,12 @@ UI:
   actions (New Folder, Edit Name, Edit Address, Delete) — "Add
   Bookmark" opens with empty fields, and opening a bookmark or
   history entry from such a tab lands in a new tab (SIDE07).
+- Preferences → Appearance font and language rows are bounded again:
+  the standard and fixed-width font fields cap at a sensible width
+  with their Select… buttons right beside them instead of stretching
+  the page and stranding the buttons at the far edge, and the
+  preferred-languages row now shows the stored list in a matching
+  field (PREFUI10).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

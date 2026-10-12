@@ -147,6 +147,11 @@ private slots:
     void chooseStyleSheet();
     void editAutoFillUser();
 
+    // PREFUI10: the Appearance page shows the stored Accept-Language
+    // list next to its Select button — refreshed after the editor
+    // dialog closes and on every (re)load.
+    void refreshAcceptLanguages();
+
     // ADDR01: the AutoFill page's Saved Addresses section — mutates
     // the shared manager directly, like the containers editor.
     void refreshAddresses();

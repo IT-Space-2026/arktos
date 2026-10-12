@@ -113,6 +113,7 @@ private slots:
     void siteTrustSignalToggles();
     void languageSelector();
     void privacyGroupAlignment();
+    void appearanceFieldBounds();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -3083,6 +3084,91 @@ void tst_SettingsDialog::privacyGroupAlignment()
                  dialog.credentialStatusLabel->width())));
 
     dialog.close();
+}
+
+// PREFUI10: the Appearance page's value+picker rows are bounded —
+// a capped display field with its Select button glued on the right,
+// never a full-width band stranding the button at the page edge.
+void tst_SettingsDialog::appearanceFieldBounds()
+{
+    QSettings settings;
+    settings.setValue(QLatin1String("network/acceptLanguages"),
+        QStringList{QLatin1String("French [fr]"),
+                    QLatin1String("German/Austria [de-at]")});
+
+    SettingsDialog dialog;
+    const QList<QLabel *> fields = {
+        dialog.standardLabel, dialog.fixedLabel,
+        dialog.acceptLanguagesLabel
+    };
+    for (QLabel *field : fields) {
+        QCOMPARE(field->maximumWidth(), 300);
+        // Capped, not fixed — still shrinks with a narrow window.
+        QVERIFY(field->sizePolicy().horizontalPolicy()
+                != QSizePolicy::Fixed);
+    }
+    // The stored editor list shows in the field, bracket tags trimmed.
+    QCOMPARE(dialog.acceptLanguagesLabel->text(),
+             QLatin1String("French, German/Austria"));
+
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.resize(1500, 900);
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::AppearancePage));
+    qApp->processEvents();
+
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        dialog.tabWidget->currentWidget());
+    QVERIFY(area);
+    QVERIFY(area->widget());
+
+    const QList<QPair<QLabel *, QPushButton *>> rows = {
+        {dialog.standardLabel, dialog.standardFontButton},
+        {dialog.fixedLabel, dialog.fixedFontButton},
+        {dialog.acceptLanguagesLabel, dialog.languageButton}
+    };
+    for (const auto &row : rows) {
+        QVERIFY2(row.first->width() <= 300,
+                 qPrintable(QStringLiteral(
+                     "%1 width %2 exceeds cap")
+                     .arg(row.first->objectName())
+                     .arg(row.first->width())));
+        const int gap = row.second->x()
+                - (row.first->x() + row.first->width());
+        QVERIFY2(gap >= 0 && gap <= 40,
+                 qPrintable(QStringLiteral(
+                     "%1..%2 gap %3 — button floated off the field")
+                     .arg(row.first->objectName(),
+                          row.second->objectName())
+                     .arg(gap)));
+        // The pair must not reach the far half of the page.
+        QVERIFY2(row.second->x() + row.second->width()
+                 < area->widget()->width() / 2,
+                 qPrintable(QStringLiteral(
+                     "%1 ends at %2 of %3 — hugging the page edge")
+                     .arg(row.second->objectName())
+                     .arg(row.second->x() + row.second->width())
+                     .arg(area->widget()->width())));
+    }
+
+    // The page's combos stay content-sized too — same defect class.
+    for (QComboBox *combo : {dialog.iconThemeCombo, dialog.themeCombo}) {
+        QCOMPARE(combo->sizePolicy().horizontalPolicy(),
+                 QSizePolicy::Maximum);
+        QVERIFY2(combo->width() <= combo->sizeHint().width() + 4,
+                 qPrintable(combo->objectName()));
+    }
+
+    // Narrow case: the fields stay capped and nothing forces a
+    // horizontal scrollbar.
+    dialog.resize(700, 900);
+    qApp->processEvents();
+    for (QLabel *field : fields)
+        QVERIFY(field->width() <= 300);
+    QCOMPARE(area->horizontalScrollBar()->maximum(), 0);
+
+    dialog.close();
+    settings.remove(QLatin1String("network/acceptLanguages"));
 }
 
 QTEST_MAIN(tst_SettingsDialog)
