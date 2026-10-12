@@ -85,6 +85,8 @@ This file is the task queue for the Devin CLI task loop
 | TABS09 | Tab bar icon-only collapse mode — details below | pending | 0 | user feature: minimize tab bar to icons on demand |
 | TOR10 | Tor circuit button click crashes the app — details below | pending | 0 | user report post-TOR08 |
 
+| TOR11 | Tor window title bar not colored like menu/url chrome — details below | pending | 0 | user report post-TOR07 |
+
 ## Task details
 
 Full task specifications, keyed by row id.
@@ -484,3 +486,7 @@ NEW FEATURE (user request): 'I want the tab bar to be minimized by me to see onl
 ### TOR10
 
 CRASH on clicking the Tor circuit button — user report: 'When I clicked on the Tor button to see the circuit it crashed.' The TorCircuitButton/dropdown is TOR08's fresh code (src/tor + browsermainwindow wiring) — first real-user click segfaults. Reproduce under gdb (tor window -> click the circuit onion button -> capture backtrace). Prime suspects: circuit query with no tor control connection up (TorManager::circuits()/m_streamCircuitId on a null or not-yet-connected controller), the dropdown/menu builder dereferencing a null circuit/relay field, or a flag-icon lookup on a missing country code resource. Guard every deref on the click path; if the tor control connection is not up the dropdown should show an honest 'circuit unavailable' state, not crash. Verify: click -> dropdown opens (or honest unavailable state), zero crash on repeated open/close, make check PASS.
+
+### TOR11
+
+Tor window TITLE BAR not colored — user report: 'the title line of the Tor window is not colored like the menu, url.' TOR07 unified menu/header/tab-strip coloring with the URL-bar treatment, but the OS window title bar itself stays default. Native title bars are WM-drawn — the app cannot tint them directly. Investigate the honest options in order: (a) does the platform honor a dark/colored title variant (GTK _GTK_THEME_VARIANT=dark, xdg decoration hints, KDE color-scheme dbus) — if a cheap hint exists that makes the WM draw a matching dark/tor-toned title bar, use it for tor windows only; (b) if no native path works on this host, weigh a client-side custom title (Qt::FramelessWindowHint + drawn title bar with min/max/close + window drag) — heavier, only if (a) fails; document which was chosen and why. Constraint: normal (non-tor) windows keep the native look. Verify: tor window title area visually matches the tor chrome (menu/url coloring) on this host's WM; non-tor windows unchanged; window still movable/resizable/closable; make check PASS.
