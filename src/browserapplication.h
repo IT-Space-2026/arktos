@@ -154,6 +154,21 @@ public:
     // Only meaningful before the constructor brings the profile up;
     // exists for AUTOTESTS builds where the argv scan is compiled out.
     static void setTorMode(bool torMode);
+    // TOR09: the bundled start page url — the tor-branded variant in
+    // a tor process, the standard one elsewhere.  Only the DEFAULT
+    // home (about:home) resolves through here; a custom homepage
+    // setting is always loaded as configured.
+    static QUrl startPageUrl();
+    // ENG13: the engine-keyed pick — "servo" selects the servo-
+    // branded variant.  Tor still wins: it is locked to Chromium
+    // (servo has no SOCKS5), so no engine id may rebrand a tor page.
+    static QUrl startPageUrl(const QString &engineId);
+    // ENG13: the engine a new tab would run — ENG05's
+    // MainWindow/defaultEngine key ("webengine" when unset).  This
+    // branch has no EngineRegistry yet, so a non-webengine pick only
+    // reaches the start-page branding; the merged registry supplies
+    // the real per-tab backend through the same key.
+    static QString defaultEngineId();
     // The managed daemon — nullptr unless tor mode is on.
     TorManager *torManager() const;
     // Spawns an independent `arora --tor` process.  An optional start

@@ -129,6 +129,7 @@
 #include <qinputdialog.h>
 #include <qlineedit.h>
 #include <qsplitter.h>
+#include <qtimer.h>
 
 #include <qurl.h>
 #include <qwebenginehistory.h>
@@ -472,14 +473,16 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // SIDE06: the rail follows the dock to the other edge.
         if (m_sidebarPanel)
             m_sidebarPanel->setDockSide(area);
+        // RSZ02: the grip re-anchors to the new inner edge.
         updateSidebarGripPlacement();
     });
-    // RSZ01: a floating dock has no window edge to resize against —
+    // RSZ02: a floating dock has no window edge to resize against —
     // the grip hides while it floats.
     connect(m_sidebarDock, &QDockWidget::topLevelChanged,
             this, [this](bool) { updateSidebarGripPlacement(); });
-    // RSZ01: debounce for dock width persistence — an edge drag
-    // emits a Resize per pixel; the write lands once the drag ends.
+    // RSZ02: debounce for dock width persistence — a native edge
+    // drag emits a Resize per pixel; the write lands once the drag
+    // ends.
     m_sidebarWidthTimer->setSingleShot(true);
     m_sidebarWidthTimer->setInterval(150);
     connect(m_sidebarWidthTimer, &QTimer::timeout, this, [this]() {
@@ -974,7 +977,7 @@ void BrowserMainWindow::setupMenu()
     // the persisted authority (settings keys, not the window blob).
     m_sidebarDock = new QDockWidget(this);
     m_sidebarDock->setObjectName(QLatin1String("sidebarDock"));
-    // RSZ01: the filter watches for native edge resizes (persisted,
+    // RSZ02: the filter watches for native edge resizes (persisted,
     // debounced) and the first show (applies the stored width — a
     // hidden dock ignores resizeDocks).
     m_sidebarDock->installEventFilter(this);
@@ -1755,9 +1758,10 @@ void BrowserMainWindow::ensureSidebarPanel()
     // toggle action + persistence follow via visibilityChanged).
     connect(m_sidebarPanel, &SidebarPanel::closeRequested,
             m_sidebarDock, &QWidget::hide);
-    // RSZ01: the dock's content is the panel plus a slim grip along
-    // its inner edge — which side the grip sits on follows the dock
-    // area (updateSidebarGripPlacement reorders on area changes).
+    // RSZ02: the dock's content is the panel plus a visible grip
+    // along its inner edge — which side the grip sits on follows
+    // the dock area (updateSidebarGripPlacement reorders on area
+    // changes).
     QWidget *container = new QWidget(m_sidebarDock);
     m_sidebarGripLayout = new QHBoxLayout(container);
     m_sidebarGripLayout->setContentsMargins(0, 0, 0, 0);
@@ -1768,6 +1772,7 @@ void BrowserMainWindow::ensureSidebarPanel()
     m_sidebarGripLayout->addWidget(m_sidebarPanel);
     m_sidebarGripLayout->addWidget(m_sidebarGrip);
     m_sidebarDock->setWidget(container);
+    updateSidebarGripPlacement();
     // SIDE06: the rail hugs the dock's outer edge.
     m_sidebarPanel->setDockSide(dockWidgetArea(m_sidebarDock));
     updateSidebarGripPlacement();
@@ -1807,8 +1812,8 @@ void BrowserMainWindow::applySidebarSettings()
         // settings-driven dock move.
         m_sidebarPanel->setDockSide(area);
     }
-    // RSZ01: the stored width lands before the dock shows; the dock's
-    // first Show re-applies it via the event filter.
+    // RSZ02: the stored width lands before the dock shows; the
+    // dock's first Show re-applies it via the event filter.
     applySidebarWidth();
     m_sidebarDock->setVisible(show);
     updateSidebarGripPlacement();
@@ -1863,7 +1868,7 @@ void BrowserMainWindow::updateSidebarGripPlacement()
 bool BrowserMainWindow::eventFilter(QObject *object, QEvent *event)
 {
     if (object == m_sidebarDock) {
-        // RSZ01: a hidden dock ignores resizeDocks, so the stored
+        // RSZ02: a hidden dock ignores resizeDocks, so the stored
         // width lands again on the first show.  Afterwards every
         // resize we didn't perform ourselves (the native edge drag)
         // is persisted, debounced to one write per gesture.

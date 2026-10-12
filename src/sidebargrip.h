@@ -24,11 +24,15 @@
 
 class QDockWidget;
 
-// RSZ01: the visible resize handle along the sidebar dock's inner
-// edge — a slim grip strip the user drags to resize the dock and
-// double-clicks to snap back to the default width.  The widget only
-// performs live QMainWindow::resizeDocks calls; the owning window
-// persists the result through the resizeFinished signal.
+// RSZ02: the visible resize handle along the sidebar dock's inner
+// edge — a grip strip the user drags to resize the dock and
+// double-clicks to snap back to the default width.  RSZ01's slim
+// version was effectively invisible (a 7px transparent strip with
+// three faint dots), so users never found the affordance: this grip
+// is wider, paints a real edge line plus a handle at rest, and fills
+// with the palette's Mid color on hover/while dragging.  The widget
+// only performs live QMainWindow::resizeDocks calls; the owning
+// window persists the result through the resizeFinished signal.
 class SidebarGrip : public QWidget
 {
     Q_OBJECT
@@ -43,8 +47,9 @@ public:
     explicit SidebarGrip(QDockWidget *dock, QWidget *parent = nullptr);
 
     // Which side of the window the dock sits on — it decides which
-    // drag direction widens.  The host re-points this when the dock
-    // moves between the left and right areas.
+    // drag direction widens and which edge of the strip carries the
+    // painted divider.  The host re-points this when the dock moves
+    // between the left and right areas.
     void setDockArea(Qt::DockWidgetArea area);
 
     QSize sizeHint() const override;
@@ -55,8 +60,12 @@ public:
     static int defaultWidth();
     static int clampedWidth(int width, int windowWidth);
 
+    bool isDragging() const;
+
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -67,6 +76,7 @@ private:
 
     QPointer<QDockWidget> m_dock;
     Qt::DockWidgetArea m_area;
+    bool m_hovered;
     bool m_dragging;
     int m_startX;
     int m_startWidth;

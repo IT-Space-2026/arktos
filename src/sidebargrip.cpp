@@ -27,26 +27,35 @@ SidebarGrip::SidebarGrip(QDockWidget *dock, QWidget *parent)
     : QWidget(parent)
     , m_dock(dock)
     , m_area(Qt::LeftDockWidgetArea)
+    , m_hovered(false)
     , m_dragging(false)
     , m_startX(0)
     , m_startWidth(0)
     , m_requestedWidth(0)
 {
-    setFixedWidth(7);
+    // RSZ02: wide enough to be grabbable without pixel-hunting —
+    // RSZ01's 7px strip read as dead space.
+    setFixedWidth(10);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setCursor(Qt::SizeHorCursor);
+    // Hover state drives the painted affordance.
+    setMouseTracking(true);
+    setAttribute(Qt::WA_Hover);
     setAccessibleName(tr("Sidebar resize handle"));
     setToolTip(tr("Drag to resize the sidebar — double-click to reset"));
 }
 
 void SidebarGrip::setDockArea(Qt::DockWidgetArea area)
 {
+    if (m_area == area)
+        return;
     m_area = area;
+    update();
 }
 
 QSize SidebarGrip::sizeHint() const
 {
-    return QSize(7, 0);
+    return QSize(10, 0);
 }
 
 int SidebarGrip::defaultWidth()
@@ -61,6 +70,11 @@ int SidebarGrip::clampedWidth(int width, int windowWidth)
     // content area is never squeezed to nothing.
     const int hi = qMax(160, windowWidth - 200);
     return qBound(160, width, hi);
+}
+
+bool SidebarGrip::isDragging() const
+{
+    return m_dragging;
 }
 
 int SidebarGrip::applyWidth(int width)
@@ -79,14 +93,45 @@ void SidebarGrip::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    // A subtle three-dot handle — palette-only so dark schemes read
-    // correctly (UIP01).
+    // RSZ02: a real affordance, not RSZ01's invisible strip — the
+    // edge line is always up, the whole zone fills on hover or while
+    // dragging so the handle reads as grabbable.  Palette-only so
+    // dark schemes stay legible.
+    const bool active = m_hovered || m_dragging;
+    if (active)
+        painter.fillRect(rect(), palette().color(QPalette::Mid));
+    painter.setPen(palette().color(
+        active ? QPalette::Dark : QPalette::Mid));
+    // The divider sits on the content-facing edge — the right side
+    // when the dock is on the left, the left side when it is on the
+    // right.
+    if (m_area == Qt::RightDockWidgetArea)
+        painter.drawLine(rect().left(), rect().top(),
+                         rect().left(), rect().bottom());
+    else
+        painter.drawLine(rect().right(), rect().top(),
+                         rect().right(), rect().bottom());
     painter.setPen(Qt::NoPen);
-    painter.setBrush(palette().color(QPalette::PlaceholderText));
+    painter.setBrush(palette().color(
+        active ? QPalette::Dark : QPalette::PlaceholderText));
     const int cx = rect().center().x();
     const int cy = rect().center().y();
     for (int i = -1; i <= 1; ++i)
-        painter.drawEllipse(QPointF(cx, cy + i * 6), 1.6, 1.6);
+        painter.drawEllipse(QPointF(cx, cy + i * 6), 1.8, 1.8);
+}
+
+void SidebarGrip::enterEvent(QEnterEvent *event)
+{
+    m_hovered = true;
+    update();
+    QWidget::enterEvent(event);
+}
+
+void SidebarGrip::leaveEvent(QEvent *event)
+{
+    m_hovered = false;
+    update();
+    QWidget::leaveEvent(event);
 }
 
 void SidebarGrip::mousePressEvent(QMouseEvent *event)
@@ -96,6 +141,7 @@ void SidebarGrip::mousePressEvent(QMouseEvent *event)
         m_startX = event->globalPosition().toPoint().x();
         m_startWidth = m_dock->width();
         m_requestedWidth = 0;
+        update();
     }
     QWidget::mousePressEvent(event);
 }
@@ -116,6 +162,7 @@ void SidebarGrip::mouseReleaseEvent(QMouseEvent *event)
 {
     if (m_dragging && event->button() == Qt::LeftButton) {
         m_dragging = false;
+        update();
         // resizeDocks lands on the next layout pass, so the dock's
         // widget still reports the pre-drag width here — persist the
         // clamped width the drag actually requested.
@@ -130,6 +177,7 @@ void SidebarGrip::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         m_dragging = false;
+        update();
         emit resizeFinished(applyWidth(defaultWidth()));
     }
     QWidget::mouseDoubleClickEvent(event);

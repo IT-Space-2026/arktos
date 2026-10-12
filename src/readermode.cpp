@@ -19,6 +19,7 @@
 
 #include "readermode.h"
 
+#include "browserapplication.h"
 #include "engineinterface.h"
 #include "webview.h"
 
@@ -177,11 +178,14 @@ ReaderMode::ReaderMode(WebView *view)
     , m_probeRetries(0)
 {
     // The bridge rides the page's existing channel (same registration
-    // point as "external"/"aroraAutofill").  Tor pages carry no channel
-    // at all — the overlay still works there, minus persistence and
-    // JS-side exit notification.
-    if (QWebChannel *channel = m_view->page()->webChannel())
-        channel->registerObject(QLatin1String("aroraReader"), m_bridge);
+    // point as "external"/"aroraAutofill").  Tor pages carry a bare
+    // channel (TOR09 — the qrc start page's "arora" object only), so
+    // the registration itself is gated on the mode: the overlay still
+    // works there, minus persistence and JS-side exit notification.
+    if (!BrowserApplication::isTorMode()) {
+        if (QWebChannel *channel = m_view->page()->webChannel())
+            channel->registerObject(QLatin1String("aroraReader"), m_bridge);
+    }
 
     connect(m_view->page(), &QWebEnginePage::loadStarted,
             this, &ReaderMode::onLoadStarted);

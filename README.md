@@ -284,7 +284,10 @@ The status bar shows the live circuit's hop chain
 fingerprints on hover), and a small onion button next to the
 reader-mode icon opens a dropdown of the same circuit — one row per
 hop with country flag and name, fingerprints and OR addresses on
-hover.
+hover. New tabs land on a Tor-branded start page: the usual Arora
+header and search box on a purple background with the official Tor
+onion centered — bundled in the binary, so the page never touches the
+network; a configured custom homepage still takes precedence.
 
 ### Downloads
 

@@ -1207,6 +1207,26 @@ void BrowserApplication::setTorMode(bool torMode)
     s_torMode = torMode;
 }
 
+QUrl BrowserApplication::startPageUrl()
+{
+    return startPageUrl(defaultEngineId());
+}
+
+QUrl BrowserApplication::startPageUrl(const QString &engineId)
+{
+    if (s_torMode)
+        return QUrl(QLatin1String("qrc:/startpage-tor.html"));
+    if (engineId == QLatin1String("servo"))
+        return QUrl(QLatin1String("qrc:/startpage-servo.html"));
+    return QUrl(QLatin1String("qrc:/startpage.html"));
+}
+
+QString BrowserApplication::defaultEngineId()
+{
+    return QSettings().value(QLatin1String("MainWindow/defaultEngine"),
+                             QStringLiteral("webengine")).toString();
+}
+
 TorManager *BrowserApplication::torManager() const
 {
     return m_torManager;

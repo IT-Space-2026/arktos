@@ -159,6 +159,7 @@
 #include <QtWebEngineCore/QWebEngineScriptCollection>
 #include <QtWebEngineCore/QWebEngineSettings>
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
+#include <QtWebChannel/QWebChannel>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QFrame>
@@ -11283,6 +11284,35 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: violet chrome covers menu + tab strip";
 
+        // TOR09: the tor window's first tab is itself newTab() — it
+        // lands on the tor-branded start page at once, on the same
+        // qrc + arora-channel contract as the standard page.  The
+        // channel is armed but must stay bare of the privileged
+        // bridges; "arora" itself registers when the qrc commit lands
+        // (asserted in the async section once loads have had turns).
+        WebView *torStartTab = torWindow->currentTab();
+        if (!torStartTab
+                || torStartTab->url() != BrowserApplication::startPageUrl()
+                || torStartTab->url() != QUrl(
+                       QLatin1String("qrc:/startpage-tor.html"))) {
+            torWinFail(QLatin1String(
+                "tor window's first tab is not the tor start page"));
+            return application.exec();
+        }
+        QWebChannel *torChannel =
+            torStartTab->page() ? torStartTab->page()->webChannel()
+                                : nullptr;
+        if (!torChannel
+                || torChannel->registeredObjects().contains(
+                       QLatin1String("external"))
+                || torChannel->registeredObjects().contains(
+                       QLatin1String("aroraAutofill"))) {
+            torWinFail(QLatin1String(
+                "tor page channel missing or not bare"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: tor start page on first tab";
+
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
         // tor profile is not even registered for user scripts and
@@ -11434,9 +11464,60 @@ int main(int argc, char **argv)
                                 "hop rows"));
                             return;
                         }
-                        qInfo() << "tor-window-smoke: PASS"
-                                << "(IsTor:true, OTR profile, fail-closed arm)";
-                        application.exit(0);
+                        // TOR09: by now the first tab's qrc commit
+                        // registered "arora" and the page's own
+                        // translate() run filled its title — probe
+                        // the DOM for the tor logo block + search
+                        // field and the resolved page-side object.
+                        WebView *startTab = torWindow->currentTab();
+                        QWebEnginePage *startPage =
+                            startTab ? startTab->page() : nullptr;
+                        if (!startPage || !startPage->webChannel()
+                                || !startPage->webChannel()
+                                        ->registeredObjects().contains(
+                                            QLatin1String("arora"))) {
+                            torWinFail(QLatin1String(
+                                "tor start page channel missing arora"));
+                            return;
+                        }
+                        // runJavaScript runs in ApplicationWorld —
+                        // the page-global arora var (MainWorld) is
+                        // out of reach, but the DOM is shared:
+                        // headerTitle only fills once the channel's
+                        // arora.translate() callback has resolved.
+                        startTab->enginePage()->runJavaScript(
+                            QStringLiteral(
+                                "(function(){"
+                                "var t=document.getElementById('torlogo');"
+                                "var s=document.getElementById('lineEdit');"
+                                "var h=document.getElementById('headerTitle');"
+                                "return (t&&t.querySelector('img')?'T':'-')"
+                                "+'|'+(s?'S':'-')+'|'"
+                                "+(h&&h.textContent.length?'H':'-')"
+                                "+'|'+document.title;})()"),
+                            [&application, torWinFail](
+                                    const QVariant &result) {
+                            const QString probe = result.toString();
+                            qInfo() << "tor-window-smoke: tor start page:"
+                                    << probe;
+                            const QStringList flags =
+                                probe.split(QLatin1Char('|'));
+                            if (flags.size() != 4
+                                    || flags.at(0) != QLatin1String("T")
+                                    || flags.at(1) != QLatin1String("S")
+                                    || flags.at(2) != QLatin1String("H")
+                                    || flags.at(3).isEmpty()) {
+                                torWinFail(QLatin1String(
+                                    "tor start page incomplete "
+                                    "(logo/search/channel/title)"));
+                                return;
+                            }
+                            qInfo() << "tor-window-smoke: PASS"
+                                    << "(IsTor:true, OTR profile,"
+                                    << " fail-closed arm,"
+                                    << " tor start page)";
+                            application.exit(0);
+                        });
                     });
                 });
                 view->loadUrl(pageUrl);

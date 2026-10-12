@@ -892,12 +892,15 @@ void tst_ContainerManager::sessionRestoresContainers()
     QCOMPARE(legacy.containerIdForTab(0), QString());
 }
 
-// CONT02: the tab-strip indicator — a container tab reserves chip
-// height in its size hint, paints the container's accent color, and
-// names the container in the tab tooltip.  The widget is deliberately
-// never shown: an offscreen show() pulls a container-profile WebView
-// into the compositor's GL path, which traps headless — tabRect and
-// grab() lay out and render the bar without it.
+// CONT02: the tab-strip indicator — a container tab paints the
+// container's accent stripe and names the container in the tab
+// tooltip.  TABS08: the chip no longer reserves a second row — one
+// container tab used to double the whole strip's height because
+// QTabBar sizes every tab to the tallest hint; the row now stays at
+// the shared thickness.  The widget is deliberately never shown: an
+// offscreen show() pulls a container-profile WebView into the
+// compositor's GL path, which traps headless — tabRect and grab()
+// lay out and render the bar without it.
 void tst_ContainerManager::containerChipIndicator()
 {
     const QString id = create(QLatin1String("ChipTest"));
@@ -917,11 +920,13 @@ void tst_ContainerManager::containerChipIndicator()
     // TABS06: the chip lives inside the strip's thickness — the
     // reserve is width-only, so a container tab is exactly as tall
     // as a plain one and wider by the name-pill reserve (both tabs
-    // carry the same "Untitled" title here).
+    // carry the same "Untitled" title here).  TABS08's invariant —
+    // a container tab never grows the strip — holds either way.
     QVERIFY(bar->tabRect(1).isValid());
     QCOMPARE(bar->tabRect(1).height(), plainHeight);
     QVERIFY(bar->tabRect(1).width() > bar->tabRect(0).width());
     QCOMPARE(bar->sizeHint().height(), bar->tabRect(1).height());
+    QCOMPARE(bar->sizeHint().height(), plainHeight);
 
     // The accent strip lands in the painted output.
     const QImage image = bar->grab().toImage();

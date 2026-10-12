@@ -126,7 +126,11 @@ TabBar::TabBar(QWidget *parent)
     , m_verticalTabWidth(180)
     , m_resizing(false)
     , m_resizeStartX(0)
+    , m_resizeStartY(0)
     , m_resizeStartWidth(0)
+    , m_resizeStartHeight(0)
+    , m_tabStripHeight(0)
+    , m_gripHovered(false)
     , m_pressedTabIndex(-1)
     , m_moveDragActive(false)
     , m_moveDragVertical(false)
@@ -207,6 +211,8 @@ TabBar::TabBar(QWidget *parent)
 
     // TABS02: persisted Left/Right strip width.
     reloadVerticalTabWidth();
+    // RSZ02: persisted Top/Bottom strip height (0 = Automatic).
+    reloadTabStripHeight();
     // TPREV01: the persisted hover-preview opt-out.
     reloadTabHoverPreviews();
     // RSZ01: the persisted horizontal-strip width bounds.
@@ -340,8 +346,13 @@ void TabBar::updateCloseButtonVisibility()
 
 void TabBar::leaveEvent(QEvent *event)
 {
-    if (cursor().shape() == Qt::SizeHorCursor)
+    if (cursor().shape() == Qt::SizeHorCursor
+        || cursor().shape() == Qt::SizeVerCursor)
         unsetCursor();
+    if (m_gripHovered) {
+        m_gripHovered = false;
+        update();
+    }
     if (m_hoveredTab != -1) {
         m_hoveredTab = -1;
         updateCloseButtonVisibility();
@@ -666,13 +677,16 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 {
     m_previewTimer->stop();
     hideTabPreview();
-    // RSZ01: double-clicking the vertical strip's resize grip snaps
-    // the width back to the default (persisted like a drag).
+    // RSZ02: double-clicking the strip's resize grip resets the
+    // dragged dimension — the vertical width to its default, a
+    // horizontal strip's height to Automatic.
     if (event->button() == Qt::LeftButton
-        && verticalTabShape(shape())
         && inResizeGrip(stripPos(event->position().toPoint()))) {
-        setVerticalTabWidth(180);
-        persistVerticalTabWidth();
+        if (verticalTabShape(shape()))
+            setVerticalTabWidth(180);
+        else
+            setTabStripHeight(0);
+        persistStripSize();
         return;
     }
     if (event->button() == Qt::LeftButton
@@ -744,9 +758,11 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
         // live-apply path TABS01's position uses.
         if (m_resizing) {
             m_resizing = false;
-            if (cursor().shape() == Qt::SizeHorCursor)
+            if (cursor().shape() == Qt::SizeHorCursor
+                || cursor().shape() == Qt::SizeVerCursor)
                 unsetCursor();
-            persistVerticalTabWidth();
+            update();
+            persistStripSize();
             return;
         }
     }
@@ -820,15 +836,25 @@ void TabBar::mousePressEvent(QMouseEvent *event)
             return;
         }
         const QPoint spos = stripPos(pos);
-        // TABS02: a press in the strip's inner-edge grip zone starts
-        // a width drag, not a tab press — QTabBar never sees it, so
+        // TABS02/RSZ02: a press in the strip's content-edge grip zone
+        // starts a width (vertical strip) or height (horizontal
+        // strip) drag, not a tab press — QTabBar never sees it, so
         // it can neither select the tab nor arm a move drag.
-        if (verticalTabShape(shape())
-            && inResizeGrip(spos)) {
+        if (inResizeGrip(spos)) {
             m_resizing = true;
             m_resizeStartX = event->globalPosition().toPoint().x();
+            m_resizeStartY = event->globalPosition().toPoint().y();
             m_resizeStartWidth = m_verticalTabWidth;
-            setCursor(Qt::SizeHorCursor);
+            // A drag starting from Automatic measures against the
+            // strip's current rendered height, so the first pixel
+            // of movement continues from what the user sees instead
+            // of snapping to the floor.
+            m_resizeStartHeight = m_tabStripHeight > 0
+                ? m_tabStripHeight
+                : height() - containerStripHeight();
+            setCursor(verticalTabShape(shape())
+                      ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+            update();
             return;
         }
         m_dragStartPos = spos;
@@ -881,25 +907,45 @@ void TabBar::mouseMoveEvent(QMouseEvent *event)
     const QPoint pos = event->position().toPoint();
     const QPoint spos = pos - QPoint(0, band);
     const bool inBand = band > 0 && pos.y() >= 0 && pos.y() < band;
-    // TABS02: an active inner-edge width drag eats the move — the
-    // strip resizes instead of the press acting on a tab.
+    // TABS02/RSZ02: an active edge drag eats the move — the strip
+    // resizes instead of the press acting on a tab.
     if (m_resizing) {
-        const int dx = event->globalPosition().toPoint().x()
-            - m_resizeStartX;
-        // West bars widen rightwards (their grip is the right edge),
-        // East bars widen leftwards.
-        const bool east = (shape() == QTabBar::RoundedEast
-                           || shape() == QTabBar::TriangularEast);
-        setVerticalTabWidth(m_resizeStartWidth + (east ? -dx : dx));
+        if (verticalTabShape(shape())) {
+            const int dx = event->globalPosition().toPoint().x()
+                - m_resizeStartX;
+            // West bars widen rightwards (their grip is the right
+            // edge), East bars widen leftwards.
+            const bool east = (shape() == QTabBar::RoundedEast
+                               || shape() == QTabBar::TriangularEast);
+            setVerticalTabWidth(m_resizeStartWidth + (east ? -dx : dx));
+        } else {
+            const int dy = event->globalPosition().toPoint().y()
+                - m_resizeStartY;
+            // Top bars grow downwards, bottom bars upwards.  The
+            // drag clamps inside the 20-64 band — Automatic is only
+            // reachable through the double-click reset.
+            const bool south = (shape() == QTabBar::RoundedSouth
+                                || shape() == QTabBar::TriangularSouth);
+            setTabStripHeight(qBound(20,
+                m_resizeStartHeight + (south ? -dy : dy), 64));
+        }
         return;
     }
-    // TABS02: the grip zone advertises itself with a resize cursor.
-    if (!(event->buttons() & Qt::LeftButton)
-        && verticalTabShape(shape())) {
-        if (inResizeGrip(spos))
-            setCursor(Qt::SizeHorCursor);
-        else if (cursor().shape() == Qt::SizeHorCursor)
+    // TABS02/RSZ02: the grip zone advertises itself with a resize
+    // cursor and a painted hover band.
+    if (!(event->buttons() & Qt::LeftButton)) {
+        const bool overGrip = inResizeGrip(spos);
+        if (overGrip) {
+            setCursor(verticalTabShape(shape())
+                      ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+        } else if (cursor().shape() == Qt::SizeHorCursor
+                   || cursor().shape() == Qt::SizeVerCursor) {
             unsetCursor();
+        }
+        if (overGrip != m_gripHovered) {
+            m_gripHovered = overGrip;
+            update();
+        }
     }
 
     // CONT06: track header hover (plain moves and header drags) and
@@ -1628,15 +1674,6 @@ void TabBar::paintEvent(QPaintEvent *event)
             style()->drawControl(QStyle::CE_TabBarTab, &option,
                                  &painter, this);
         }
-        // A divider along the strip's inner edge doubles as the
-        // resize grip's affordance.
-        painter.setPen(palette().color(QPalette::Mid));
-        if (shape() == QTabBar::RoundedEast
-            || shape() == QTabBar::TriangularEast)
-            painter.drawLine(0, 0, 0, height() - band);
-        else
-            painter.drawLine(width() - 1, 0, width() - 1,
-                             height() - band);
     } else if (band > 0) {
         // CONT06: horizontal shapes hand-paint each tab under the
         // band — QTabBar::paintEvent has no way to offset the row.
@@ -1664,6 +1701,9 @@ void TabBar::paintEvent(QPaintEvent *event)
     // CONT06: inside a filtered level the container chips are
     // redundant — every tab in the row shares the header's container.
     // They stay on in single-row (inline chips) mode.
+    // TABS08: the indicator is the accent edge stripe alone — the name
+    // pill used to sit in a second reserved row that doubled the
+    // strip's height; the container name still rides the tab tooltip.
     for (int index = 0; band <= 0 && index < count(); ++index) {
         const ContainerManager::Container container = containerForTab(index);
         if (container.id.isEmpty())
@@ -1839,6 +1879,8 @@ void TabBar::paintEvent(QPaintEvent *event)
             switch (shape()) {
             case QTabBar::RoundedWest:
             case QTabBar::TriangularWest: {
+                // TABS08: container tabs no longer own a top band —
+                // the pill anchors at the row's own reserved space.
                 pill = QRect(rect.left() + 2, rect.top() + 2,
                              rect.width() - strip - 4, chipHeight);
                 break;
@@ -1875,6 +1917,12 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.restore();
         }
     }
+
+    // RSZ02: the grip affordance paints in physical space — the
+    // overlay painter above is still translated into strip
+    // coordinates.
+    painter.resetTransform();
+    paintResizeGrip(&painter);
 }
 
 // TABS04: a pinned tab paints icon-only — the favicon label is a
@@ -1921,13 +1969,19 @@ QSize TabBar::tabSizeHint(int index) const
     // thickness so tabs keep modern breathing room.  TABS07: cap it
     // too — per-tab button widgets and styles with generous padding
     // pushed a plain tab ~5px past icon+text height; keep the strip
-    // at browser-normal content+padding.  TABS06: a container chip
-    // only borrows long-axis extent (accent line + name pill inside
-    // the title's zone) — it never makes the strip thicker.
-    const int minThickness = fm.height() + 10;
-    const int maxThickness = qMax(fm.height(), iconSize().height()) + 12;
-    const int thickness = qBound(minThickness, sizeHint.height(),
-                                 maxThickness);
+    // at browser-normal content+padding.  TABS08: tightened — the
+    // user-visible target is the compact ~26-28px band real browsers
+    // sit in, so padding is trimmed to text/icon + 9 (fm+8 floor).
+    // TABS06: a container chip only borrows long-axis extent (accent
+    // line + name pill inside the title's zone) — it never makes the
+    // strip thicker.  RSZ02: a dragged-in strip height
+    // (horizontalTabHeight > 0) overrides the Automatic metrics
+    // bound; 0 keeps the normalized sizing.
+    const int minThickness = fm.height() + 8;
+    const int maxThickness = qMax(fm.height(), iconSize().height()) + 9;
+    const int thickness = m_tabStripHeight > 0
+        ? m_tabStripHeight
+        : qBound(minThickness, sizeHint.height(), maxThickness);
     const QSize chip = containerChipSize(index);
     const QString gid = groupIdForTab(index);
     // TABS02: vertical strips lay out as horizontal rows — the
@@ -2007,6 +2061,13 @@ QSize TabBar::minimumTabSizeHint(int index) const
         const QSize hint = tabSizeHint(index);
         return QSize(qMin(hint.width(), m_tabMinWidth), hint.height());
     }
+    // RSZ02: a user-set strip height is also the floor — the layout
+    // never squeezes a horizontal tab shorter than the drag chose.
+    if (m_tabStripHeight > 0) {
+        const QSize hint = QTabBar::minimumTabSizeHint(index);
+        return QSize(hint.width(),
+                     m_tabStripHeight + containerChipSize(index).height());
+    }
     return QTabBar::minimumTabSizeHint(index);
 }
 
@@ -2020,13 +2081,15 @@ void TabBar::tabLayoutChange()
     shiftChildrenBelowStrip();
 }
 
-// TABS02: ~7px along the strip's content-facing edge is the width
-// drag grip — right edge for a Left (West) strip, left edge for a
-// Right (East) strip.  RSZ01 widened the hit band a little past the
-// painted affordance so it is grabbable without pixel-hunting.
+// TABS02/RSZ02: ~8px along the strip's content-facing edge is the
+// drag grip — the inner side of a Left/Right strip resizes its
+// width, the bottom edge of a Top strip (top edge of a Bottom
+// strip) resizes its height.  pos is in strip coordinates (the
+// band-shifted space tabRect() lives in).
 bool TabBar::inResizeGrip(const QPoint &pos) const
 {
-    static const int grip = 7;
+    static const int grip = 8;
+    const int stripHeight = height() - containerStripHeight();
     switch (shape()) {
     case QTabBar::RoundedWest:
     case QTabBar::TriangularWest:
@@ -2034,25 +2097,98 @@ bool TabBar::inResizeGrip(const QPoint &pos) const
     case QTabBar::RoundedEast:
     case QTabBar::TriangularEast:
         return pos.x() < grip;
+    case QTabBar::RoundedNorth:
+    case QTabBar::TriangularNorth:
+        return pos.y() >= stripHeight - grip;
+    case QTabBar::RoundedSouth:
+    case QTabBar::TriangularSouth:
+        // Strip-space y is negative inside the container header
+        // band — the grip only covers the tab row's own top edge.
+        return pos.y() >= 0 && pos.y() < grip;
     default:
         return false;
     }
 }
 
-void TabBar::persistVerticalTabWidth()
+// RSZ02: the grip's painted affordance — a resting edge line plus a
+// three-dot handle; hovering or dragging fills the zone with the
+// palette's Mid so the strip reads as grabbable, the same feedback
+// the sidebar's SidebarGrip gives.  Physical widget coordinates.
+void TabBar::paintResizeGrip(QPainter *painter)
 {
-    // RSZ01/TABS02: write the new strip width and fan it out to
-    // every live window's bar — shared by the drag release and the
-    // grip's double-click reset.
+    static const int grip = 8;
+    const int band = containerStripHeight();
+    const int stripHeight = height() - band;
+    QRect zone;
+    switch (shape()) {
+    case QTabBar::RoundedWest:
+    case QTabBar::TriangularWest:
+        zone = QRect(width() - grip, band, grip, stripHeight);
+        break;
+    case QTabBar::RoundedEast:
+    case QTabBar::TriangularEast:
+        zone = QRect(0, band, grip, stripHeight);
+        break;
+    case QTabBar::RoundedNorth:
+    case QTabBar::TriangularNorth:
+        zone = QRect(0, height() - grip, width(), grip);
+        break;
+    case QTabBar::RoundedSouth:
+    case QTabBar::TriangularSouth:
+        zone = QRect(0, band, width(), grip);
+        break;
+    }
+    if (zone.isEmpty())
+        return;
+    const bool active = m_gripHovered || m_resizing;
+    if (active)
+        painter->fillRect(zone, palette().color(QPalette::Mid));
+    painter->setPen(palette().color(
+        active ? QPalette::Dark : QPalette::Mid));
+    if (verticalTabShape(shape())) {
+        const int x = (shape() == QTabBar::RoundedEast
+                       || shape() == QTabBar::TriangularEast)
+            ? zone.left() : zone.right();
+        painter->drawLine(x, zone.top(), x, zone.bottom());
+    } else {
+        const int y = (shape() == QTabBar::RoundedSouth
+                       || shape() == QTabBar::TriangularSouth)
+            ? zone.top() : zone.bottom();
+        painter->drawLine(zone.left(), y, zone.right(), y);
+    }
+    // The handle rides the zone's center — a vertical stack for
+    // vertical strips, a horizontal run for horizontal ones.
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(palette().color(
+        active ? QPalette::Dark : QPalette::PlaceholderText));
+    const QPointF center = zone.center();
+    for (int i = -1; i <= 1; ++i) {
+        const QPointF dot = verticalTabShape(shape())
+            ? center + QPointF(0, i * 6)
+            : center + QPointF(i * 6, 0);
+        painter->drawEllipse(dot, 1.6, 1.6);
+    }
+}
+
+// RSZ02: one write covers both strip dimensions — the drag release
+// and the double-click reset share it, and the live-apply fan-out
+// re-reads the keys on every other window's bar (reloading a key a
+// differently-shaped bar ignores is harmless).
+void TabBar::persistStripSize()
+{
     QSettings settings;
     settings.beginGroup(QLatin1String("tabs"));
     settings.setValue(QLatin1String("verticalTabWidth"),
                       m_verticalTabWidth);
+    settings.setValue(QLatin1String("horizontalTabHeight"),
+                      m_tabStripHeight);
     const QWidgetList widgets = qApp->allWidgets();
-    for (QObject *object : widgets) {
-        TabBar *bar = qobject_cast<TabBar*>(object);
-        if (bar && bar != this)
+    for (QWidget *widget : widgets) {
+        TabBar *bar = qobject_cast<TabBar*>(widget);
+        if (bar && bar != this) {
             bar->reloadVerticalTabWidth();
+            bar->reloadTabStripHeight();
+        }
     }
 }
 
@@ -2166,6 +2302,26 @@ void TabBar::setTabWidths(int minimum, int maximum)
     update();
 }
 
+int TabBar::tabStripHeight() const
+{
+    return m_tabStripHeight;
+}
+
+void TabBar::setTabStripHeight(int height)
+{
+    // 0 = Automatic — the TABS07 metrics-bound height drives again.
+    height = height <= 0 ? 0 : qBound(20, height, 64);
+    if (m_tabStripHeight == height)
+        return;
+    m_tabStripHeight = height;
+    // Same layout nudge setVerticalTabWidth() uses — QTabBar only
+    // re-plans the strip when a public setter trips its dirty flag.
+    setIconSize(iconSize());
+    if (QWidget *tabWidget = parentWidget())
+        tabWidget->updateGeometry();
+    update();
+}
+
 void TabBar::reloadTabWidths()
 {
     QSettings settings;
@@ -2173,6 +2329,14 @@ void TabBar::reloadTabWidths()
     setTabWidths(
         settings.value(QLatin1String("tabMinWidth"), 0).toInt(),
         settings.value(QLatin1String("tabMaxWidth"), 0).toInt());
+}
+
+void TabBar::reloadTabStripHeight()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    setTabStripHeight(
+        settings.value(QLatin1String("horizontalTabHeight"), 0).toInt());
 }
 
 bool TabBar::tabPreviewsEnabled() const

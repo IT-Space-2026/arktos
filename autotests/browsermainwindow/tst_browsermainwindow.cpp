@@ -27,6 +27,7 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qwebchannel.h>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
 #include <qcombobox.h>
@@ -61,6 +62,7 @@
 #include "bookmarknode.h"
 #include "browsertheme.h"
 #include "aroraicon.h"
+#include "containermanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
@@ -140,15 +142,19 @@ private slots:
     void torChromeTheme();
     void torNavIconsDarkChrome();
     void torCircuitDropdown();
+    void torStartPage();
+    void servoStartPage();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
     void sidebarResize();
+    void sidebarGripResize();
     void downloadsSidebarPanel();
     void bookmarksSidebarPanel();
     void chromeSlots();
     void widgetTabBookmarksSafety();
+    void tabStripCompactHeight();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -1482,6 +1488,237 @@ void tst_BrowserMainWindow::torCircuitDropdown()
         QLatin1String("unavailable"), Qt::CaseInsensitive));
 }
 
+// TOR09: the tor window's bundled start page — a violet-branded qrc
+// variant on the same arora-channel contract.  about:home resolves to
+// it, the window's first tab and every fresh/private tab load it, and
+// the channel arms only "arora" on qrc commits — the privileged
+// bridges stay unregistered in tor.
+void tst_BrowserMainWindow::torStartPage()
+{
+    const QUrl standard(QLatin1String("qrc:/startpage.html"));
+    const QUrl torStart(QLatin1String("qrc:/startpage-tor.html"));
+
+    // Normal mode: the standard page answers about:home and fresh
+    // tabs stay blank.
+    QCOMPARE(BrowserApplication::startPageUrl(), standard);
+    QCOMPARE(TabWidget::guessUrlFromString(QLatin1String("about:home")),
+             standard);
+    SubWindow *plain = new SubWindow;
+    plain->show();
+    WebView *plainTab = plain->currentTab();
+    const QUrl plainUrl =
+        plainTab ? plainTab->url() : QUrl(QLatin1String("x:"));
+    closeWindow(plain);
+    QVERIFY(plainUrl.isEmpty()
+            || plainUrl == QUrl(QLatin1String("about:blank")));
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    const QUrl mapped = BrowserApplication::startPageUrl();
+    const QUrl guessed =
+        TabWidget::guessUrlFromString(QLatin1String("about:home"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    // The window's first tab is itself newTab() — it lands on the
+    // tor page at once, before any startup navigation fires.
+    WebView *firstTab = window->currentTab();
+    const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
+    QWebEnginePage *page = firstTab ? firstTab->page() : nullptr;
+    QWebChannel *channel = page ? page->webChannel() : nullptr;
+    const bool bareChannel = channel
+        && !channel->registeredObjects().contains(
+            QLatin1String("external"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraAutofill"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraPip"))
+        && !channel->registeredObjects().contains(
+            QLatin1String("aroraReader"));
+
+    // A second fresh tab and a private tab take the same start page.
+    window->tabWidget()->newTab();
+    WebView *torTab = window->currentTab();
+    const QUrl torTabUrl = torTab ? torTab->url() : QUrl();
+    window->tabWidget()->newPrivateTab();
+    WebView *privTab = window->currentTab();
+    const QUrl privTabUrl = privTab ? privTab->url() : QUrl();
+
+    // The qrc commit registers "arora" on the channel and the page's
+    // own translate() run fills the header text — the DOM probe below
+    // is the proof the whole handshake completed in tor mode.
+    // runJavaScript runs in ApplicationWorld, so the page-global arora
+    // var (MainWorld) is out of reach, but the DOM is shared:
+    // headerTitle only fills once the channel's arora.translate()
+    // callback has resolved.  The probe races the still-committing
+    // load, so it re-issues until the post-load document answers.
+    bool aroraRegistered = false;
+    QString dom;
+    if (firstTab && channel) {
+        const QString probe = QStringLiteral(
+            "(function(){var t=document.getElementById('torlogo');"
+            "var s=document.getElementById('lineEdit');"
+            "var h=document.getElementById('headerTitle');"
+            "return (t&&t.querySelector('img')?'T':'-')+'|'"
+            "+(s?'S':'-')+'|'"
+            "+(h&&h.textContent.length?'H':'-');})()");
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("T|S|H") && timer.elapsed() < 15000) {
+            bool jsDone = false;
+            firstTab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+        aroraRegistered = channel->registeredObjects().contains(
+            QLatin1String("arora"));
+    }
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the rendered tor start page lands there.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty() && firstTab) {
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        firstTab->resize(760, 700);
+        firstTab->show();
+        QApplication::processEvents();
+        QTest::qWait(400);
+        firstTab->grab().save(dir + QLatin1String("/tor-startpage.png"));
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QCOMPARE(mapped, torStart);
+    QCOMPARE(guessed, torStart);
+    QCOMPARE(firstUrl, torStart);
+    QCOMPARE(torTabUrl, torStart);
+    QCOMPARE(privTabUrl, torStart);
+    QVERIFY(channel);
+    QVERIFY(bareChannel);
+    QVERIFY(aroraRegistered);
+    QCOMPARE(dom, QStringLiteral("T|S|H"));
+}
+
+// ENG13: the servo-branded bundled start page — same layout and
+// default coloring as the standard page plus the Servo logo under the
+// search field.  The pick keys on ENG05's MainWindow/defaultEngine
+// setting (the engine a new tab would run); tor precedence holds —
+// it is locked to Chromium.  On this branch there is no servo
+// backend yet, so the key exercises the branding seam the merged
+// engine registry drives for real.
+void tst_BrowserMainWindow::servoStartPage()
+{
+    const QUrl standard(QLatin1String("qrc:/startpage.html"));
+    const QUrl torStart(QLatin1String("qrc:/startpage-tor.html"));
+    const QUrl servoStart(QLatin1String("qrc:/startpage-servo.html"));
+    const QLatin1String engineKey("MainWindow/defaultEngine");
+
+    // The engine-keyed pick: only "servo" re-brands; unknown ids keep
+    // the standard page, and tor mode outranks every engine pick.
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("webengine")), standard);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("servo")), servoStart);
+    QCOMPARE(BrowserApplication::startPageUrl(
+                 QLatin1String("bogus")), standard);
+    QCOMPARE(BrowserApplication::defaultEngineId(),
+             QStringLiteral("webengine"));
+    QCOMPARE(BrowserApplication::startPageUrl(), standard);
+
+    BrowserApplication::setTorMode(true);
+    const QUrl torWins = BrowserApplication::startPageUrl(
+        QLatin1String("servo"));
+    BrowserApplication::setTorMode(false);
+    QCOMPARE(torWins, torStart);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // the servo engine pick armed for the remaining functions.
+    QSettings().setValue(engineKey, QStringLiteral("servo"));
+    const QUrl mapped = BrowserApplication::startPageUrl();
+    const QUrl guessed =
+        TabWidget::guessUrlFromString(QLatin1String("about:home"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    // The window's first tab is itself newTab() — with the servo
+    // engine pick it lands on the servo start page at once.
+    WebView *firstTab = window->currentTab();
+    const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
+    QWebEnginePage *page = firstTab ? firstTab->page() : nullptr;
+    QWebChannel *channel = page ? page->webChannel() : nullptr;
+
+    // A second fresh tab takes the same branded start page.
+    window->tabWidget()->newTab();
+    WebView *servoTab = window->currentTab();
+    const QUrl servoTabUrl = servoTab ? servoTab->url() : QUrl();
+
+    // DOM probe: the logo div sits directly under the search field,
+    // its stylesheet resolves the bundled logo asset, the search box
+    // exists, and headerTitle only fills once the channel's
+    // arora.translate() callback has resolved — the same handshake
+    // proof torStartPage uses.
+    QString dom;
+    if (firstTab) {
+        const QString probe = QStringLiteral(
+            "(function(){var l=document.getElementById('servologo');"
+            "var s=document.getElementById('search');"
+            "var e=document.getElementById('lineEdit');"
+            "var h=document.getElementById('headerTitle');"
+            "var v=l&&s&&s.nextElementSibling===l&&"
+            "getComputedStyle(l).backgroundImage.indexOf("
+            "'servo-logo')>=0?"
+            "'V':'-';"
+            "return v+'|'+(e?'S':'-')+'|'"
+            "+(h&&h.textContent.length?'H':'-');})()");
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("V|S|H") && timer.elapsed() < 15000) {
+            bool jsDone = false;
+            firstTab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+    }
+
+    // Offscreen grab for visual review — set ARORA_SERVO_GRAB_DIR to
+    // a directory and the rendered servo start page lands there.
+    const QByteArray grabDir = qgetenv("ARORA_SERVO_GRAB_DIR");
+    if (!grabDir.isEmpty() && firstTab) {
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        firstTab->resize(760, 700);
+        firstTab->show();
+        QApplication::processEvents();
+        QTest::qWait(400);
+        firstTab->grab().save(dir + QLatin1String("/servo-startpage.png"));
+    }
+
+    closeWindow(window);
+    QSettings().remove(engineKey);
+
+    QCOMPARE(mapped, servoStart);
+    QCOMPARE(guessed, servoStart);
+    QCOMPARE(firstUrl, servoStart);
+    QCOMPARE(servoTabUrl, servoStart);
+    QVERIFY(channel);
+    QCOMPARE(dom, QStringLiteral("V|S|H"));
+}
+
 // READ02/READ04: the navigation toolbar carries a reader-mode toggle
 // between stop/reload and the location bar — always present on engine
 // tabs (the article heuristic only sets the "suggested" accent),
@@ -2121,6 +2358,75 @@ void tst_BrowserMainWindow::sidebarResize()
     closeWindow(window);
 }
 
+// RSZ02: the dock's inner edge hosts a real resize grip — a visible,
+// hover-highlighted strip whose drag resizes the dock live through
+// QMainWindow::resizeDocks, persists MainWindow/sidebarWidth, mirrors
+// its edge + direction on right docks, resets on double-click, and
+// hides while the dock floats.
+void tst_BrowserMainWindow::sidebarGripResize()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+
+    SubWindow *window = new SubWindow;
+    window->resize(900, 600);
+    window->show();
+    QDockWidget *dock = window->sidebarDock();
+    dock->toggleViewAction()->trigger();
+    QVERIFY(dock->isVisible());
+    SidebarGrip *grip = dock->findChild<SidebarGrip *>();
+    QVERIFY(grip);
+    QVERIFY(grip->isVisible());
+    QCOMPARE(grip->cursor().shape(), Qt::SizeHorCursor);
+    // Left-docked: the grip trails the panel inside the dock.
+    QCOMPARE(grip->parentWidget()->layout()->indexOf(grip), 1);
+    // The default width lands on the first show.
+    QTRY_VERIFY(dock->width() >= 250);
+    const int before = dock->width();
+
+    // Dragging the grip right (into the content) widens the dock and
+    // persists the requested width.
+    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(5, 50));
+    QTest::mouseMove(grip, QPoint(65, 50));
+    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(65, 50));
+    QTRY_VERIFY(dock->width() > before + 30);
+    QVERIFY(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                .toInt() > before + 30);
+
+    // Double-click snaps back to the default width.
+    QTest::mouseDClick(grip, Qt::LeftButton, Qt::NoModifier,
+                       QPoint(5, 50));
+    QTRY_VERIFY(qAbs(dock->width() - SidebarGrip::defaultWidth()) <= 4);
+    QVERIFY(qAbs(settings
+                 .value(QLatin1String("MainWindow/sidebarWidth")).toInt()
+                 - SidebarGrip::defaultWidth()) <= 4);
+
+    // Right-docked: the grip re-anchors before the panel and the
+    // drag direction flips — pulling left widens.
+    window->addDockWidget(Qt::RightDockWidgetArea, dock);
+    QCOMPARE(grip->parentWidget()->layout()->indexOf(grip), 0);
+    const int rightBefore = dock->width();
+    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(5, 50));
+    QTest::mouseMove(grip, QPoint(-55, 50));
+    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(-55, 50));
+    QTRY_VERIFY(dock->width() > rightBefore + 30);
+
+    // A floating dock has no window edge — the grip hides.
+    dock->setFloating(true);
+    QVERIFY(!grip->isVisible());
+    dock->setFloating(false);
+
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    closeWindow(window);
+}
+
 // DOWN02: the sidebar's Downloads page is the only download surface —
 // Ctrl+Y / Tools > Downloads focuses it, the filter narrows rows, the
 // sort combo reorders, a selected row hosts the item's expanded detail
@@ -2585,6 +2891,67 @@ void tst_BrowserMainWindow::widgetTabBookmarksSafety()
     settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
     settings.remove(QLatin1String("sidebar/panels/bookmarks"));
     closeWindow(registered);
+    closeWindow(window);
+}
+
+// TABS08: the rendered tab strip stays in the compact ~26-28px
+// browser band even at desktop-size fonts, and a container tab no
+// longer doubles the row — the regression this fixes: the CONT02
+// name chip reserved a second row (~18px) per container tab and
+// QTabBar sizes every tab to the tallest hint.
+void tst_BrowserMainWindow::tabStripCompactHeight()
+{
+    // The offscreen fallback 'Sans Serif 9' understates fm.height() —
+    // pin a desktop-size font so the exercised bound is the real one.
+    QFont font = QApplication::font();
+    font.setPointSize(11);
+    QApplication::setFont(font);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 700);
+    window->show();
+    for (int i = 0; i < 20; ++i)
+        QApplication::processEvents();
+
+    TabBar *bar = window->tabWidget()->findChild<TabBar *>();
+    QVERIFY(bar);
+    const int cap = qMax(bar->fontMetrics().height(),
+                         bar->iconSize().height()) + 9;
+    QVERIFY2(bar->height() <= cap,
+             qPrintable(QStringLiteral(
+                 "strip height %1 exceeds the compact cap %2")
+                .arg(bar->height()).arg(cap)));
+    QCOMPARE(bar->tabRect(0).height(), bar->height());
+
+    // Inline-chips mode (tabs/containerDisplay=0, what the reporter
+    // runs): a container tab must not stretch the strip.
+    QSettings settings;
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 0);
+    window->tabWidget()->loadSettings();
+    const ContainerManager::Container container =
+        ContainerManager::instance()->createContainer(
+            QLatin1String("StripBox"), QColor(Qt::blue));
+    window->tabWidget()->makeNewTabInContainer(container.id, true);
+    for (int i = 0; i < 10; ++i)
+        QApplication::processEvents();
+    for (int i = 0; i < bar->count(); ++i)
+        QCOMPARE(bar->tabRect(i).height(), bar->tabRect(0).height());
+    QVERIFY(bar->height() <= cap);
+    QCOMPARE(bar->tabRect(0).height(), bar->height());
+
+    // Close + favicon widgets stay vertically centered in the row.
+    QWidget *close = bar->tabButton(0, QTabBar::RightSide);
+    if (!close)
+        close = bar->tabButton(0, QTabBar::LeftSide);
+    QVERIFY(close);
+    QVERIFY(qAbs(close->geometry().center().y()
+                 - bar->tabRect(0).center().y()) <= 2);
+
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip.png"));
+    }
+    settings.remove(QLatin1String("tabs/containerDisplay"));
     closeWindow(window);
 }
 

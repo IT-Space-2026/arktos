@@ -510,7 +510,13 @@ void TabWidget::newTab()
         && !isTabPrivate(currentIndex())
         && addEngineTab(backend, true))
         return;
-    makeNewTab(true);
+    WebView *view = makeNewTab(true);
+    // TOR09/ENG13: a fresh tab lands on the branded start page at
+    // once — tor's about:tor parity, or the servo variant when the
+    // default engine pick is servo.  Standard-mode tabs stay blank.
+    const QUrl startPage = BrowserApplication::startPageUrl();
+    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+        view->loadUrl(startPage);
 }
 
 void TabWidget::newTabPage()
@@ -545,7 +551,10 @@ void TabWidget::loadNewTabPageUrl()
 
 void TabWidget::newPrivateTab()
 {
-    makeNewPrivateTab(true);
+    WebView *view = makeNewPrivateTab(true);
+    const QUrl startPage = BrowserApplication::startPageUrl();
+    if (view && startPage != QUrl(QLatin1String("qrc:/startpage.html")))
+        view->loadUrl(startPage);
 }
 
 WebView *TabWidget::makeNewTab(bool makeCurrent)
@@ -1060,16 +1069,32 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         QMovie *movie = label->movie();
         delete movie;
         label->setMovie(nullptr);
+#if defined(Q_OS_MACOS)
+        // Same end-of-load shape as webViewLoadFinished: macOS tabs
+        // carry no favicon label at all.
+        m_tabBar->setTabButton(at, m_tabBar->freeSide(), nullptr);
+        delete label;
+#else
         label->setPixmap(QIcon(QLatin1String(":graphics/defaulticon.png"))
                              .pixmap(16, 16));
+#endif
         if (at == currentIndex())
             emit showStatusBarMessage(ok ? tr("Finished loading")
                                          : tr("Failed to load"));
     });
 
-    const int index = addTab(tab,
-        QIcon(QLatin1String(":graphics/defaulticon.png")),
-        backend->displayName());
+    // ENG15: one favicon surface per tab.  WebView tabs carry theirs
+    // in the free-side animationLabel and pass no tab icon — an
+    // engine tab that did both (the addTab icon plus the label's
+    // pixmap above) painted the default glyph twice on the strip.
+    // Install the label eagerly so the single icon exists even
+    // before the first load finishes.
+    const int index = addTab(tab, backend->displayName());
+#if !defined(Q_OS_MACOS)
+    animationLabel(index, false)->setPixmap(
+        QIcon(QLatin1String(":graphics/defaulticon.png"))
+            .pixmap(16, 16));
+#endif
     setTabToolTip(index, backend->displayName());
     // CONT06: same strip bookkeeping as addWidgetTab — engine tabs
     // live under the default header.
@@ -1897,6 +1922,12 @@ void TabWidget::restoreHiddenContainerTabs(const QString &containerId)
             QLabel *label = animationLabel(idx, false);
             label->setPixmap(BrowserApplication::icon(
                 withSearch->m_webView->url()).pixmap(16, 16));
+        } else if (qobject_cast<EngineTab*>(entry.tab)) {
+            // ENG15: foreign tabs have no url-keyed favicon — restore
+            // the same default glyph addEngineTab installs.
+            animationLabel(idx, false)->setPixmap(
+                QIcon(QLatin1String(":graphics/defaulticon.png"))
+                    .pixmap(16, 16));
         }
 #endif
         ++insertPos;
@@ -3188,7 +3219,7 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
 
     if (url.scheme() == QLatin1String("about")
         && url.path() == QLatin1String("home"))
-        url = QUrl(QLatin1String("qrc:/startpage.html"));
+        url = BrowserApplication::startPageUrl();
 
     // SRCH01: the omnibox searches by default — the checkbox is now an
     // opt-out that restores the historic bare-http guess.
@@ -3283,6 +3314,9 @@ void TabWidget::loadSettings()
     // TABS02: re-read the persisted vertical strip width so the same
     // live-apply path that carries the position lands it everywhere.
     m_tabBar->reloadVerticalTabWidth();
+    // RSZ02: the horizontal strip's dragged height rides the same
+    // fan-out (0 = Automatic).
+    m_tabBar->reloadTabStripHeight();
     // TPREV01: the hover-preview opt-out rides the same fan-out.
     m_tabBar->reloadTabHoverPreviews();
     // RSZ01: the horizontal min/max width bounds ride it too.

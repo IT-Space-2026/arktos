@@ -74,6 +74,7 @@ class EngineIndicator;
 class QDockWidget;
 class QHBoxLayout;
 class QLabel;
+class QTimer;
 class ReaderButton;
 class SidebarGrip;
 class SidebarPanel;
@@ -216,7 +217,7 @@ private:
     void setupToolBar();
     void ensureSidebarPanel();
     void ensureBidiPanel();
-    // RSZ01: sidebar width — the persisted MainWindow/sidebarWidth is
+    // RSZ02: sidebar width — the persisted MainWindow/sidebarWidth is
     // applied before the dock shows (and once more when it first
     // appears, because a hidden dock ignores resizeDocks); grip
     // drags, double-click resets and native edge resizes persist it.
@@ -279,7 +280,7 @@ private:
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
     QPointer<SidebarPanel> m_sidebarPanel;
-    // RSZ01: the dock's inner-edge resize grip + its persisted-width
+    // RSZ02: the dock's inner-edge resize grip + its persisted-width
     // bookkeeping.  The grip lives inside a container wrapping
     // SidebarPanel; m_sidebarWidthTimer debounces native edge
     // resizes so one drag lands as one QSettings write.
