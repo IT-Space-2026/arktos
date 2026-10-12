@@ -69,6 +69,7 @@ private slots:
     void tabMouseAndDragEvents();
     void tabKeyShortcuts();
     void previewDwell();
+    void containerBandEvents();
 };
 
 // Subclass that exposes the protected functions.
@@ -1176,6 +1177,185 @@ void tst_TabBar::previewDwell()
                         QPointF(bar->tabRect(0).center()),
                         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(bar, &release);
+}
+
+// CONT06: with the two-level strip active (>1 container owning tabs)
+// the header band has its own press/release/drag/drop/key paths —
+// drive them at the physical band row so every arm runs.
+void tst_TabBar::containerBandEvents()
+{
+    QSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
+
+    TabWidget widget;
+    widget.resize(720, 320);
+    widget.show();
+    QApplication::processEvents();
+
+    ContainerManager *manager = ContainerManager::instance();
+    const ContainerManager::Container c1 =
+        manager->createContainer(QLatin1String("Band A"),
+                                 QColor(Qt::red));
+    const ContainerManager::Container c2 =
+        manager->createContainer(QLatin1String("Band B"),
+                                 QColor(Qt::green));
+
+    widget.newTab();
+    widget.makeNewTabInContainer(c1.id, false);
+    widget.makeNewTabInContainer(c2.id, false);
+    QApplication::processEvents();
+
+    TabBar *bar = widget.tabBar();
+    const int band = bar->containerStripHeight();
+    QVERIFY(band > 0);
+    const int bandY = band / 2;
+    const auto headerX = [bar, bandY](int i) {
+        for (int x = 2; x < bar->width(); x += 2) {
+            if (bar->containerHeaderAt(QPoint(x, bandY)) == i)
+                return x;
+        }
+        return -1;
+    };
+    const int hx0 = headerX(0);
+    const int hx1 = headerX(1);
+    const int hx2 = headerX(2);
+    QVERIFY(hx0 >= 0 && hx1 >= 0 && hx2 >= 0);
+    QCOMPARE(widget.containerHeaders().count(), 3);
+
+    const auto sendMouse = [bar](QEvent::Type type, const QPoint &pos,
+                                 Qt::MouseButton button,
+                                 Qt::MouseButtons buttons) {
+        QMouseEvent event(type, QPointF(pos), QPointF(pos),
+                          button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(bar, &event);
+    };
+    const auto sendKey = [bar](int key) {
+        QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(bar, &event);
+    };
+
+    // Press+release the same header activates that level.
+    sendMouse(QEvent::MouseButtonPress, QPoint(hx1, bandY),
+              Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, QPoint(hx1, bandY),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(widget.activeContainerHeader(),
+             widget.containerHeaders().at(1));
+
+    // Press one container header and release on the other — the
+    // non-default headers reorder (default stays pinned first).
+    widget.setActiveContainerHeader(
+        widget.containerHeaders().at(0));
+    QStringList headers = widget.containerHeaders();
+    sendMouse(QEvent::MouseButtonPress, QPoint(hx1, bandY),
+              Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, QPoint(hx2, bandY),
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(widget.containerHeaders().first(), headers.first());
+    QCOMPARE(widget.containerHeaders().at(1), headers.at(2));
+
+    // A press on a strip tab released over a band header rebinds the
+    // tab to that container.  Physical band y is strip y - band;
+    // the tab rects live in strip space below the band.
+    widget.setActiveContainerHeader(
+        widget.containerHeaders().at(0));
+    int defaultTab = -1;
+    for (int i = 0; i < widget.count(); ++i) {
+        if (widget.containerIdForTab(i)
+                == ContainerManager::defaultContainerId())
+            defaultTab = i;
+    }
+    QVERIFY(defaultTab >= 0);
+    const QString target = widget.containerHeaders().at(2);
+    const int beforeTarget = widget.containerTabCount(target);
+    const int beforeDefault = widget.containerTabCount(
+        ContainerManager::defaultContainerId());
+    const QPoint dragStart =
+        bar->tabRect(defaultTab).center() + QPoint(0, band);
+    sendMouse(QEvent::MouseButtonPress, dragStart,
+              Qt::LeftButton, Qt::LeftButton);
+    // A hover into the band arms the drop highlight.
+    sendMouse(QEvent::MouseMove, QPoint(hx2, bandY),
+              Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, QPoint(hx2, bandY),
+              Qt::LeftButton, Qt::NoButton);
+    // The rebind re-creates the view — count the level populations.
+    QCOMPARE(widget.containerTabCount(target), beforeTarget + 1);
+    QCOMPARE(widget.containerTabCount(
+                 ContainerManager::defaultContainerId()),
+             beforeDefault - 1);
+    widget.setActiveContainerHeader(
+        widget.containerHeaders().at(0));
+
+    // External URL drags highlight the hovered header; a drop on a
+    // header loads there instead of onto a tab.
+    QMimeData *mime = new QMimeData;
+    mime->setUrls({QUrl(QLatin1String("http://band.test/"))});
+    const QPointF bandPoint(hx2, bandY);
+    QDragEnterEvent enter(bandPoint, Qt::CopyAction, mime,
+                          Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(bar, &enter);
+    QDragMoveEvent move(bandPoint, Qt::CopyAction, mime,
+                        Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(bar, &move);
+    QDragLeaveEvent leave;
+    QApplication::sendEvent(bar, &leave);
+    QDropEvent drop(bandPoint, Qt::CopyAction, mime,
+                    Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(bar, &drop);
+
+    // Keyboard: Up from the row enters the band at the active
+    // header; arrows walk it; Return activates; Up re-enters and
+    // Escape drops back.
+    sendKey(Qt::Key_Up);
+
+    sendKey(Qt::Key_Right);
+    sendKey(Qt::Key_Left);
+    sendKey(Qt::Key_End);
+    sendKey(Qt::Key_Home);
+
+    sendKey(Qt::Key_Return);
+
+    sendKey(Qt::Key_Up);
+    sendKey(Qt::Key_Space);
+
+    sendKey(Qt::Key_Up);
+    sendKey(Qt::Key_X); // unhandled key -> base class arm
+    sendKey(Qt::Key_Escape);
+
+    sendKey(Qt::Key_Up);
+    sendKey(Qt::Key_Down);
+
+
+    // A double-click in the band is not an empty-strip double-click.
+    QSignalSpy newTabs(bar, &TabBar::newTab);
+    sendMouse(QEvent::MouseButtonDblClick, QPoint(hx0, bandY),
+              Qt::LeftButton, Qt::LeftButton);
+    QCOMPARE(newTabs.count(), 0);
+
+
+    // The band paints its headers through a real paintEvent.
+    QVERIFY(!bar->grab().isNull());
+
+
+    // deleteContainer has a no-live-pages contract — switch to each
+    // container level and close its tabs first (the band gestures
+    // above moved/loaded tabs into them).
+    for (const QString &cid : {c1.id, c2.id}) {
+        widget.setActiveContainerHeader(cid);
+        while (widget.count() > 0)
+            widget.closeTab(0);
+    }
+    QApplication::processEvents();
+    manager->deleteContainer(c1.id);
+    manager->deleteContainer(c2.id);
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
 }
 
 QTEST_MAIN(tst_TabBar)
