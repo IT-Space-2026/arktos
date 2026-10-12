@@ -11310,6 +11310,18 @@ int main(int argc, char **argv)
         }
         qInfo() << "tor-window-smoke: violet chrome covers menu + tab strip";
 
+        // TOR11: the OS title bar cannot be tinted per-window, so a
+        // tor window is frameless and its menu row doubles as the
+        // title bar (the TorTitleBar corner widget).
+        if (!torWindow->windowFlags().testFlag(Qt::FramelessWindowHint)
+                || !torWindow->findChild<QWidget *>(
+                       QLatin1String("torTitleBar"))) {
+            torWinFail(QLatin1String(
+                "tor window missing the drawn title bar"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: drawn title bar on frameless window";
+
         // TOR09: the tor window's first tab is itself newTab() — it
         // lands on the tor-branded start page at once, on the same
         // qrc + arora-channel contract as the standard page.  The

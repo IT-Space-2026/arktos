@@ -101,6 +101,7 @@
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "tormanager.h"
+#include "tortitlebar.h"
 #include "useragentmenu.h"
 #include "webenginebackend.h"
 #include "webview.h"
@@ -220,6 +221,20 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         // there, so it is hidden and disabled.
         m_fileNewPrivateTabAction->setVisible(false);
         m_fileNewPrivateTabAction->setEnabled(false);
+
+#if !defined(Q_OS_MACOS)
+        // TOR11: the OS title bar cannot be tinted per-window — on
+        // GNOME Wayland Qt's own client-side decoration follows only
+        // the session-wide portal color-scheme, and _GTK_THEME_VARIANT
+        // exists solely on X11 — so a tor window goes frameless and
+        // its menu row doubles as a drawn title bar (badge + title +
+        // window controls + violet frame ring).  Drag and edge resize
+        // still delegate to the WM through startSystemMove/
+        // startSystemResize.  macOS keeps the native look: its
+        // traffic-light bar is already part of the unified chrome.
+        setWindowFlag(Qt::FramelessWindowHint);
+        new TorTitleBar(this);
+#endif
 
         // Unmistakable chrome accent — violet navigation bar + badge,
         // and a "(Tor)" marker in the window title — so a tor window

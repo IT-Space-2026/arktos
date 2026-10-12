@@ -666,6 +666,12 @@ Tor:
   tor control connection drops mid-query — the dropdown now gates on
   the live control link and shows an honest "circuit unavailable"
   state instead of stale hop rows (TOR10).
+- The Tor window's title area now matches the violet chrome: since a
+  native title bar can't be tinted per-window, Tor windows draw their
+  own — the menu row doubles as a title bar with a Tor badge, the live
+  window title, and minimize/maximize/close buttons, plus a violet
+  frame border. The window still drags, edge-resizes and closes like a
+  normal one; regular windows keep the native look (TOR11).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

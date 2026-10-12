@@ -82,6 +82,7 @@
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
 #include "tormanager.h"
+#include "tortitlebar.h"
 #include "downloadmanager.h"
 #include "containermanager.h"
 #include "commandpalette.h"
@@ -145,6 +146,7 @@ private slots:
     void torNavIconsDarkChrome();
     void torCircuitDropdown();
     void torStartPage();
+    void torTitleBar();
     void servoStartPage();
     void readerModeButton();
     void statusBarWidgets();
@@ -1646,6 +1648,188 @@ void tst_BrowserMainWindow::torStartPage()
     QVERIFY(bareChannel);
     QVERIFY(aroraRegistered);
     QCOMPARE(dom, QStringLiteral("T|S|H"));
+}
+
+// TOR11: a native title bar cannot be tinted per-window (GNOME
+// Wayland's Qt CSD only follows the session-wide portal color-scheme,
+// _GTK_THEME_VARIANT is X11-only), so a tor window is frameless and
+// carries a drawn TorTitleBar — violet chrome, a live window-title
+// label, working min/max/close, drag-to-move and a resize ring —
+// while a normal window keeps its native frame.
+void tst_BrowserMainWindow::torTitleBar()
+{
+    // Frame-edge mapping: the margin ring hits one edge per side and
+    // two at the corners, nothing in the middle.
+    const QRect frame(0, 0, 800, 600);
+    QCOMPARE(TorTitleBar::frameEdges(frame, QPoint(2, 300)),
+             Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(TorTitleBar::frameEdges(frame, QPoint(400, 2)),
+             Qt::Edges(Qt::TopEdge));
+    QCOMPARE(TorTitleBar::frameEdges(frame, QPoint(797, 2)),
+             Qt::Edges(Qt::RightEdge | Qt::TopEdge));
+    QCOMPARE(TorTitleBar::frameEdges(frame, QPoint(797, 597)),
+             Qt::Edges(Qt::RightEdge | Qt::BottomEdge));
+    QCOMPARE(TorTitleBar::frameEdges(frame, QPoint(400, 300)),
+             Qt::Edges());
+
+    // Normal-window baseline: native frame, no menu widget, no bar.
+    SubWindow *plain = new SubWindow;
+    plain->resize(1000, 600);
+    plain->show();
+    QApplication::processEvents();
+    const bool plainFrameless =
+        plain->windowFlags().testFlag(Qt::FramelessWindowHint);
+    const bool plainHasBar = plain->findChild<QWidget *>(
+        QLatin1String("torTitleBar")) != nullptr;
+    const bool plainMenuDirect = plain->menuBar()
+        && plain->menuBar()->parentWidget()
+               == static_cast<QWidget *>(plain);
+    closeWindow(plain);
+    QVERIFY(!plainFrameless);
+    QVERIFY(!plainHasBar);
+    QVERIFY(plainMenuDirect);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    const bool frameless =
+        window->windowFlags().testFlag(Qt::FramelessWindowHint);
+    QWidget *bar =
+        window->findChild<QWidget *>(QLatin1String("torTitleBar"));
+    QLabel *titleText =
+        window->findChild<QLabel *>(QLatin1String("torTitleText"));
+    QToolButton *minimize = window->findChild<QToolButton *>(
+        QLatin1String("torTitleMinimize"));
+    QToolButton *maximize = window->findChild<QToolButton *>(
+        QLatin1String("torTitleMaximize"));
+    QToolButton *close = window->findChild<QToolButton *>(
+        QLatin1String("torTitleClose"));
+    const bool barVisible = bar && bar->isVisible();
+    const QString shownTitle = titleText ? titleText->text() : QString();
+    const QString realTitle = window->windowTitle();
+    const QMargins ring = window->contentsMargins();
+
+    // The drawn title stays live on windowTitle changes.
+    window->setWindowTitle(QLatin1String("Relay page - Arora (Tor)"));
+    const QString syncedTitle =
+        titleText ? titleText->text() : QString();
+
+    // The frame ring and the bar both paint the tor violet.
+    const auto isViolet = [](const QColor &c) {
+        return c.isValid() && c.blue() > c.red()
+            && c.red() > c.green() && c.lightness() < 160;
+    };
+    const QImage frameImage = window->grab().toImage();
+    const QColor ringColor =
+        frameImage.pixelColor(QPoint(2, window->height() - 2));
+    const QColor barColor = bar
+        ? frameImage.pixelColor(bar->mapTo(window,
+                QPoint(bar->width() / 2, 2)))
+        : QColor();
+
+    // Maximize via the drawn button: state flips and the frame ring
+    // collapses; a double-click on the bar restores both.
+    bool maximized = false;
+    QMargins maximizedRing;
+    if (maximize) {
+        maximize->click();
+        QApplication::processEvents();
+        maximized = window->isMaximized();
+        maximizedRing = window->contentsMargins();
+    }
+    bool restored = false;
+    QMargins restoredRing;
+    if (bar && maximized) {
+        const QPointF grip(bar->width() / 2.0, 3.0);
+        QMouseEvent dblclick(QEvent::MouseButtonDblClick, grip,
+                             bar->mapToGlobal(grip.toPoint()),
+                             Qt::LeftButton, Qt::LeftButton,
+                             Qt::NoModifier);
+        QApplication::sendEvent(bar, &dblclick);
+        QApplication::processEvents();
+        restored = !window->isMaximized();
+        restoredRing = window->contentsMargins();
+    }
+
+    // Offscreen grab for visual review — set ARORA_TOR_GRAB_DIR
+    // (captured in the restored-normal state before the minimize leg).
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QDir().mkpath(QString::fromLocal8Bit(grabDir));
+        window->grab().save(QString::fromLocal8Bit(grabDir)
+                            + QLatin1String("/tor-titlebar.png"));
+    }
+
+    // Offscreen startSystemMove is a no-op, so the manual fallback
+    // drag path moves the window itself.  The events are sent to the
+    // bar directly rather than through QTest — a leftover window from
+    // an earlier test could otherwise sit over the point and swallow
+    // the press (QTest resolves the receiver via widgetAt).
+    bool dragged = false;
+    if (bar && restored) {
+        const QPoint before = window->pos();
+        const QPoint grip(bar->width() / 2, 3);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(grip),
+                          bar->mapToGlobal(grip), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &press);
+        const QPoint target = grip + QPoint(23, 11);
+        QMouseEvent move(QEvent::MouseMove, QPointF(target),
+                         bar->mapToGlobal(target), Qt::NoButton,
+                         Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(bar, &move);
+        QApplication::processEvents();
+        dragged = window->pos() != before;
+        QMouseEvent release(QEvent::MouseButtonRelease,
+                            QPointF(target), bar->mapToGlobal(target),
+                            Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QApplication::sendEvent(bar, &release);
+    }
+
+    // Minimize routes to the window state too.
+    bool minimized = false;
+    if (minimize) {
+        minimize->click();
+        QApplication::processEvents();
+        minimized = window->isMinimized();
+    }
+
+    // The menus still live in the real menubar — the bar's pieces are
+    // corner widgets on it, so every action survives.
+    const bool menuAlive = !window->menuBar()->actions().isEmpty();
+    const bool cornerHosted = bar && window->menuBar()
+        && bar->parentWidget()
+               == static_cast<QWidget *>(window->menuBar());
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(frameless);
+    QVERIFY(bar);
+    QVERIFY(barVisible);
+    QVERIFY(titleText);
+    QVERIFY(minimize);
+    QVERIFY(maximize);
+    QVERIFY(close);
+    QCOMPARE(shownTitle, realTitle);
+    QCOMPARE(syncedTitle, QStringLiteral("Relay page - Arora (Tor)"));
+    QVERIFY(ring.left() >= TorTitleBar::FrameMargin);
+    QVERIFY(isViolet(ringColor));
+    QVERIFY(isViolet(barColor));
+    QVERIFY(maximized);
+    QCOMPARE(maximizedRing, QMargins(0, 0, 0, 0));
+    QVERIFY(restored);
+    QVERIFY(restoredRing.left() >= TorTitleBar::FrameMargin);
+    QVERIFY(dragged);
+    QVERIFY(minimized);
+    QVERIFY(menuAlive);
+    QVERIFY(cornerHosted);
 }
 
 // ENG13: the servo-branded bundled start page — same layout and
