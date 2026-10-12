@@ -87,6 +87,8 @@ This file is the task queue for the Devin CLI task loop
 | TABS08 | Tab strip still too tall after TABS07 — details below | pending | 0 | user report: tab size unchanged post-TABS07 |
 | TABS09 | Tab bar icon-only collapse mode — details below | pending | 0 | user feature: minimize tab bar to icons on demand |
 
+| TOR10 | Tor circuit button click crashes the app — details below | pending | 0 | user report post-TOR08 |
+
 ## Task details
 
 Full task specifications, keyed by row id.
@@ -443,6 +445,8 @@ Spec: (a) new qrc start page (e.g. startpage-tor.html + assets) loaded as the ne
 
 Verify: new tab in a tor window shows the tor start page (Arora + Tor logos, tor colors, working search box); normal windows still get the standard start page; --startpage-smoke pattern extended or mirrored for the tor variant; make check PASS.
 
+
+USER FOLLOW-UP (post-first-render): (a) the page does NOT fill the viewport — screenshot shows the styled content ending ~60% down with dead white space below; make the page/background cover the entire viewport height (100vh/100% body+html, gradient covering, no bottom whitespace on any window size); (b) use the OFFICIAL Tor Project onion logo — replace the current placeholder onion with the real Tor logo asset (official Tor Project brand asset, license-compatible, bunded as qrc like other start-page art — do NOT hotlink/network-fetch it).
 ### ENG13
 
 Servo-branded start page — user request: 'Same different start page for Servo, where you put the Servo logo into the middle under the search field. No need to change the default coloring.'
@@ -453,6 +457,8 @@ Spec: (a) new qrc start page variant (reuse TOR09's mechanism if it lands first 
 
 Verify: servo-backend new tab shows the servo start page (logo under search field, normal colors, working search); chromium + tor variants unchanged; make check PASS.
 
+
+USER FOLLOW-UP: same two requirements as TOR09 — the servo start page must fill the entire viewport (no dead space below the content) and use the OFFICIAL Servo project logo asset bundled in qrc (not the placeholder, no network fetch).
 ### SIDE07
 
 CRASH: clicking 'Show All Bookmarks' while the current tab is the Preferences page crashes the app — user report: 'Crashed when I clicked on show bookmarks when I was on the preference page.'
@@ -478,3 +484,7 @@ Tab strip still too tall — user report after TABS07 (strip 30->27px, close but
 ### TABS09
 
 NEW FEATURE (user request): 'I want the tab bar to be minimized by me to see only the icons if I want.' Add a user-toggleable icon-only tab-bar mode: a control (corner button in the tab strip and/or tab context menu entry and/or View menu action) that collapses every tab to favicon-only — fixed narrow width, no title text, tooltip keeps the title. Behavior: persists across restarts (settings key), applies to all tabs uniformly (pinned tabs already icon-only — they stay consistent), new tabs in icon mode inherit it, text returns on untoggle; works with groups/containers. Keep it a view mode, not a tab property — no data changes. Verify: toggle shrinks strip to icon tiles and restores; setting survives restart; pinned/group tabs unaffected structurally; make check PASS.
+
+### TOR10
+
+CRASH on clicking the Tor circuit button — user report: 'When I clicked on the Tor button to see the circuit it crashed.' The TorCircuitButton/dropdown is TOR08's fresh code (src/tor + browsermainwindow wiring) — first real-user click segfaults. Reproduce under gdb (tor window -> click the circuit onion button -> capture backtrace). Prime suspects: circuit query with no tor control connection up (TorManager::circuits()/m_streamCircuitId on a null or not-yet-connected controller), the dropdown/menu builder dereferencing a null circuit/relay field, or a flag-icon lookup on a missing country code resource. Guard every deref on the click path; if the tor control connection is not up the dropdown should show an honest 'circuit unavailable' state, not crash. Verify: click -> dropdown opens (or honest unavailable state), zero crash on repeated open/close, make check PASS.
