@@ -68,6 +68,7 @@ This file is the task queue for the Devin CLI task loop
 | PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
 | PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
+| DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
 
 
 ## Task details
@@ -341,3 +342,13 @@ Appearance page fields too wide — user screenshot: Preferences > Appearance sh
 Spec: (a) font fields — the read-only font display + 'Select...' button should size to content/a reasonable field width, not absorb the whole page; use a fixed or maximum field width with the button adjacent (match how Firefox/other pages group a value + picker button); (b) 'Preferred languages' box — cap its width/height to a sensible size (the field does not need the full page); (c) icons combo row — same check (it also looks stretched); (d) keep the page's left-anchored alignment consistent with the other Preferences pages after PREFUI06; (e) re-sweep Appearance page rows for any other full-width field defect.
 
 Verify: Appearance page fields have bounded width (buttons sit next to their fields, not at the page edge), layout still scales on window resize without ugly stretch, make check PASS.
+
+### DLUX03
+
+Downloads sidebar details card is broken — user screenshot: the sidebar Downloads panel shows 'qwe_download.txt' selected, and its expanded details card at the bottom renders as a dark/black box with cramped, partially clipped text rows (source URL line and info rows unreadable against the dark background) and an 'Open' / 'Restart' / 'Show in File Manager' button row squeezed under it, plus a 'Download Settings...' link below that.
+
+Diagnosis hints: the card likely uses a hardcoded dark palette/stylesheet (breaks on the light theme — same class of bug THEME01 flagged: 'anything hardcoded-light that reads broken on dark' — here hardcoded-DARK on light); rows may use fixed heights that clip text; the button row may be unstyled/margined.
+
+Spec: (a) the details card follows the application palette — readable text on the theme's base/alternate-base color in BOTH day and night themes, no hardcoded background colors; (b) info rows (filename, source URL, size/progress/path) lay out without clipping — elide long URLs middle-out, wrap or tooltip the rest; (c) the button row (Open / Restart / Show in File Manager) aligns cleanly inside the card with sane spacing; (d) 'Download Settings...' placement reviewed — consistent with the panel footer style or moved into the card sensibly; (e) collapsed vs expanded states both render cleanly.
+
+Verify: select a finished + an in-progress download in the sidebar — details card is readable and unclipped in day AND night theme, long URLs elide with full text on tooltip, buttons aligned, make check PASS.
