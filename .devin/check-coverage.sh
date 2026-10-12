@@ -93,6 +93,16 @@ TESTS_RC=$?
 # stay excluded by design — see their comments in src/main.cpp.
 # --restore-smoke must run after --session-smoke: it restores the
 # session the save-phase smoke writes into the shared scratch HOME.
+#
+# COV11: every smoke run sets QStandardPaths test mode, which pins the
+# app-data dir at $HOME/.qttest/share — shared across ALL smoke legs
+# (only QSettings lands in the per-flag ARORA_SMOKE_STORE).  Legs that
+# persist state (the adblock smokes write wildcard script-blocking
+# rules into adblock_subscription_custom) silently poison every later
+# leg — seclvl-smoke's fixture script was noopjs-redirected and its
+# whole phase machine timed out.  Wipe the shared store before each
+# flag so a leg starts clean; --restore-smoke is the one deliberate
+# exception — it consumes --session-smoke's session.dat.
 SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --cookie-smoke --history-smoke --bookmarks-smoke --search-smoke
 --search-guess-smoke --settings-smoke --autofill-smoke --find-smoke --source-smoke
@@ -111,16 +121,82 @@ SMOKE_FLAGS="--quit-after-load --app-smoke --browser-smoke --nam-smoke
 --crash-smoke --fingerprint-inject-smoke --write-sandbox-launcher
 --ingress-smoke --engine-list --engine-smoke"
 for flag in $SMOKE_FLAGS; do
+    [ "$flag" = "--restore-smoke" ] || rm -rf "$HOME/.qttest"
     if timeout 240 ./arora "$flag" >/dev/null 2>&1; then
         echo "check-coverage: smoke $flag PASS"
     else
         echo "check-coverage: smoke $flag exit=$? (tolerated)"
     fi
 done
+rm -rf "$HOME/.qttest"
 if timeout 240 ./arora --download-smoke "file://$BUILD/README.md" >/dev/null 2>&1; then
     echo "check-coverage: smoke --download-smoke PASS"
 else
     echo "check-coverage: smoke --download-smoke exit=$? (tolerated)"
+fi
+
+# COV11: a refused connection drives the Interrupted/Cancelled arm of
+# --download-smoke (the happy-path leg above never reaches it).
+rm -rf "$HOME/.qttest"
+if timeout 240 ./arora --download-smoke "http://127.0.0.1:1/nope.bin" \
+        >/dev/null 2>&1; then
+    echo "check-coverage: smoke --download-smoke (refused) PASS"
+else
+    echo "check-coverage: smoke --download-smoke (refused) exit=$? (tolerated)"
+fi
+
+# COV11: --clientcert-smoke with a locally minted PEM exercises the
+# whole leg — BrowserProfile::addClientCertificateFile import +
+# autoselect arm + the load/commit verdict — without the live
+# client.badssl.com dependency.  The loopback http target commits
+# cleanly, which is exactly the smoke's PASS shape (no error chrome,
+# no 400 fallback body).
+rm -rf "$HOME/.qttest"
+CCERT_DIR=$(mktemp -d "$BUILD/ccert.XXXXXX")
+if command -v openssl >/dev/null 2>&1 \
+        && openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -subj "/CN=arora-clientcert-smoke" \
+            -keyout "$CCERT_DIR/key.pem" -out "$CCERT_DIR/cert.pem" \
+            >/dev/null 2>&1; then
+    cat "$CCERT_DIR/cert.pem" "$CCERT_DIR/key.pem" > "$CCERT_DIR/bundle.pem"
+    CCERT_SRV="$CCERT_DIR/srv"
+    mkdir -p "$CCERT_SRV"
+    echo '<html><title>ccert-ok</title><body>clientcert fixture</body></html>' \
+        > "$CCERT_SRV/index.html"
+    (cd "$CCERT_SRV" && timeout 240 python3 - "$CCERT_DIR" \
+        >/dev/null 2>&1 <<'PYEOF' &
+import functools, http.server, os, sys
+out = sys.argv[1]
+httpd = http.server.HTTPServer(
+    ("127.0.0.1", 0),
+    functools.partial(http.server.SimpleHTTPRequestHandler,
+                      directory=os.getcwd()))
+with open(os.path.join(out, "port"), "w") as f:
+    f.write(str(httpd.server_address[1]))
+httpd.serve_forever()
+PYEOF
+)
+    CCERT_SRV_PID=$!
+    for i in $(seq 1 50); do
+        [ -s "$CCERT_DIR/port" ] && break
+        sleep 0.1
+    done
+    CCERT_PORT=$(cat "$CCERT_DIR/port" 2>/dev/null)
+    if [ -n "$CCERT_PORT" ]; then
+        if ARORA_CLIENTCERT_FILE="$CCERT_DIR/bundle.pem" \
+            ARORA_CLIENTCERT_URL="http://127.0.0.1:$CCERT_PORT/" \
+            timeout 240 ./arora --clientcert-smoke >/dev/null 2>&1; then
+            echo "check-coverage: smoke --clientcert-smoke (local) PASS"
+        else
+            echo "check-coverage: smoke --clientcert-smoke (local) exit=$? (tolerated)"
+        fi
+    else
+        echo "check-coverage: clientcert fixture port not found (skip)"
+    fi
+    kill $CCERT_SRV_PID 2>/dev/null
+    wait $CCERT_SRV_PID 2>/dev/null
+else
+    echo "check-coverage: no openssl for clientcert fixture (skip)"
 fi
 
 # COV08: with no bwrap on PATH the pdf client rasterizes in-process —
