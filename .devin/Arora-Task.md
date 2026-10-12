@@ -276,6 +276,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | ENG18 | Servo engine: qrc:/startpage.html shows 'Error loading page' — details below | done | 2 | shim-level fix: se_set_resource_resolver + host qrc: resolver answers document+subresource loads inside load_web_resource; arora bridge shim injected on engine qrc commits (no QWebChannel) — --servo-smoke PASS incl swap-startpage-commit/title + qrc legs for servo/tor/notfound pages; make check 4 gates PASS + 80 programs 0 failed |
 | ENG19 | Engine switcher button disappeared — details below | done | 1 | Diagnosed first: tor hide was INTENTIONAL (process-global isTorMode), no visibility bug on normal tabs — fix = explain not un-hide. Hard locks (tor window, private tab, active non-default container level) now show the nav button DISABLED w/ reason in tooltip+statusTip instead of vanishing; widget tabs + <2 backends still hide (no choice to explain). New Engine::Backend::pageUnavailableReason() (Servo reports claimed/spent one-view slot) disables the dead "Reload in …" menu entry while the BUTTON stays live — swap-back never stranded. Container lock mirrors reloadTabInEngine's level guard; tabsChanged connect covers level switches w/o currentChanged. Picked disabled+tooltip over a View-menu entry — answers "where did it go" where the user looked; documented in engineindicator.h. Verified: present+functional normal tab (2 backends), explained on tor/private/container-level, hidden on widget tabs, survives spent slot; tst_engineswitch 26/26 (new containerLevelLocksIndicator/widgetTabHidesIndicator/unavailableBackendMenuEntry + rewritten private/tor legs incl. grab() pixel check); make check 4 gates PASS + 78 programs 0 failed offscreen |
 | ENG20 | Servo engine swap aborts whole app — painter panic crosses FFI — details below | pending | 0 | user report: changing to servo crashed again — painter.rs assert inside se_spin, panic unwinds over extern "C" -> process abort |
+| DEVT06 | BiDi Network tab: Chrome-DevTools-style modern UI — details below | pending | 0 | user request w/ screenshot — 'make it look more modern like the built in chrome one... for the network' |
 
 ## Task details
 
@@ -1230,3 +1231,21 @@ Servo engine swap aborts the whole app — user report: 'changing to servo it cr
 Qt side: the poisoned instance must surface as an honest tab state — status message / crashed-pane placeholder (reuse ENG12's 'not available' surfacing or a new 'crashed' state), NO silent se_spin retry loop on a poisoned instance.
 
 Verify: (1) panic-injection leg — force a panic through one se_* export (temporary or test-only export) and prove the app survives with an error return; (2) 'Reload in Servo' on a real window no longer aborts — either the page renders (if (b)'s ordering fix lands) or the tab shows the honest failure while the browser stays up; (3) --servo-smoke PASS or honest SKIP; make check PASS.
+
+### DEVT06
+
+BiDi Dev Tools Network tab restyle — user request with reference screenshot (Chrome DevTools Network panel): 'Can we make it look more modern like the built in chrome one? Like this — for the network.' Today's Network tab is a bare `QTableWidget(0, 4)` (src/bidipanel.cpp ~121: rows appended on network.beforeRequestSent, patched on responseStarted/responseCompleted/fetchError, 1000-row cap). Target the Chrome layout from the screenshot:
+
+(a) TOOLBAR ROW above the table: text filter field (substring match on Name/URL), Clear button (wipe rows), 'Preserve log' checkbox (don't clear on navigation — current handler clears at ~244; gate it), 'Disable cache' checkbox IF the BiDi/CDP bridge can express it (Network.setCacheDisabled via the bidi layer — if not, leave it out honestly, do not fake a control), optional 'Invert' toggle for the filter.
+
+(b) TYPE FILTER CHIPS — a row of checkable chips mirroring Chrome's: All, Fetch/XHR, Doc, CSS, JS, Font, Img, Media, Manifest, Socket, Wasm, Other — filtering on the request type the events carry (map CDP resourceType/BiDi types into these buckets; unmapped -> Other). Chips are a filtered view, not separate data.
+
+(c) COLUMNS like Chrome's: Name (basename-ish, tooltip full URL), Status (numeric code, red on 4xx/5xx + failed like the screenshot's red net::ERR rows), Type (resource type), Initiator (when the event carries it), Size (formatted KB), Time (ms duration from beforeRequestSent->responseCompleted or a '-' while pending). Move the table to a QTableView + a small model (QAbstractTableModel or QStandardItemModel) — needed anyway for filtering/sorting; keep the 1000-row cap as model-level trimming.
+
+(d) WATERFALL column — if timing data flows through the events (check what responseStarted/responseCompleted carry: timestamps, ResourceTiming), a Waterfall column showing a start+duration bar scaled to the visible window like Chrome's timeline; if the bridge provides no timing, SHIP WITHOUT it and note the gap in the row honestly — columns a-c are the core ask.
+
+(e) LOOK — match the screenshot's density: compact rows, no grid lines, header row pinned, monospace-ish numeric columns right-aligned, failed rows' text/status in red; palette-safe colors for dark theme (the panel already follows app palette — keep it).
+
+(f) Scope stays the Network tab only — don't restyle Console/DOM/Storage here.
+
+Verify: offscreen grab of the docked panel against a fixture page generating mixed requests (html+css+js+img+failing URL) — toolbar row present, chips filter correctly, failed request row renders red with status, columns match the Chrome ordering; sorting/filtering/preserve-log behave; --bidi-smoke still passes; tst leg for the filter model; make check PASS.
