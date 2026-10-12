@@ -121,6 +121,16 @@ public:
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();
 
+    // RSZ01: horizontal-strip tab width bounds from the Tab Settings
+    // page — tabs/tabMinWidth / tabs/tabMaxWidth in px, 0 = automatic
+    // (Qt's squeeze floor / the built-in 18-em cap).
+    // reloadTabWidths() re-reads both keys on the settings-save
+    // live-apply path.
+    int tabMinWidth() const;
+    int tabMaxWidth() const;
+    void setTabWidths(int minimum, int maximum);
+    void reloadTabWidths();
+
     // TPREV01: tabs/tabHoverPreviews (default on) gates the hover
     // card.  reloadTabHoverPreviews() re-reads the key so the
     // settings-save live-apply reaches every window's bar.
@@ -205,7 +215,10 @@ private:
     // strip's inner edge, the row-anchored side-button layout (Qt
     // positions them transposed for West/East shapes), and hiding
     // Qt's private rotated moving-tab pixmap during a move drag.
+    // RSZ01: persistVerticalTabWidth() is the shared write+fan-out
+    // used by the drag release and the grip's double-click reset.
     bool inResizeGrip(const QPoint &pos) const;
+    void persistVerticalTabWidth();
     void layoutRowTabButtons();
     void hideNativeMovingTab();
     // CONT06: level-1 band helpers — header geometry and painting
@@ -248,6 +261,9 @@ private:
     bool m_moveDragVertical;
     int m_moveDragMouseY;
     int m_moveDragGrabOffset;
+    // RSZ01: horizontal-strip width bounds (0 = automatic).
+    int m_tabMinWidth;
+    int m_tabMaxWidth;
     // CONT06: level-1 band state — the hovered header, the header a
     // press started on (click selects, drag to another header
     // reorders), the header a dragged tab is hovering (rebind

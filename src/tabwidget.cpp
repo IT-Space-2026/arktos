@@ -3198,6 +3198,8 @@ void TabWidget::loadSettings()
     m_tabBar->reloadVerticalTabWidth();
     // TPREV01: the hover-preview opt-out rides the same fan-out.
     m_tabBar->reloadTabHoverPreviews();
+    // RSZ01: the horizontal min/max width bounds ride it too.
+    m_tabBar->reloadTabWidths();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS

@@ -1386,6 +1386,11 @@ void SettingsDialog::loadFromSettings()
     // TPREV01: hover previews are on unless the user opted out.
     tabHoverPreviews->setChecked(
         settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
+    // RSZ01: horizontal-strip width bounds — 0 = Automatic.
+    tabMinWidth->setValue(
+        settings.value(QLatin1String("tabMinWidth"), 0).toInt());
+    tabMaxWidth->setValue(
+        settings.value(QLatin1String("tabMaxWidth"), 0).toInt());
     // PREFUI04: the Performance page.  The memory-saver radios are
     // presets over the SLEEP01 suspend keys — the stored minute value
     // picks the closest tier (a hand-tuned value an older build wrote
@@ -1801,6 +1806,10 @@ void SettingsDialog::saveToSettings()
     // fan-out below -> TabBar::reloadTabHoverPreviews().
     settings.setValue(QLatin1String("tabHoverPreviews"),
                       tabHoverPreviews->isChecked());
+    // RSZ01: applies live through the same per-TabWidget
+    // loadSettings() fan-out -> TabBar::reloadTabWidths().
+    settings.setValue(QLatin1String("tabMinWidth"), tabMinWidth->value());
+    settings.setValue(QLatin1String("tabMaxWidth"), tabMaxWidth->value());
     settings.endGroup();
 
     // PREFUI04: the Performance page's own group (the migrated

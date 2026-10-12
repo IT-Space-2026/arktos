@@ -12419,4 +12419,92 @@ Docs: task row → `done` with notes, ChangeLog bullet, WORKLOG line.
 [2026-10-12 04:09:15] skipping MAC01 — needs: requirement not met on this host
 [2026-10-12 04:09:15] skipping BSD01 — needs: requirement not met on this host
 [2026-10-12 04:09:16] >>> starting run for task TRUST08 (attempt 5, tree mem cap 2048MB, timeout 3600s)
-The task file is longer than what I saw. Let me read the rest and check the working-tree diff.Now let me look at the shield button (lock icon host) and how SitePanel is hosted.The SitePanel is the lock/shield popover. Now let me check how rustcore is wired into the build and whether tests exist for the panel.Let me check how TlsVerifier calls rustcore (precedent for FFI usage + guards) and how `ARORA_RUSTCORE` gating works.Let me see the rest of sitepanel.cpp (permission-row rebuild pattern) and check the ChangeLog/WORKLOG conventions.The panel pattern is clear. Let me check what TRUST02 landed (the `trust/*` settings and accessors) to match naming.All requirements present (qmake6, cargo, `rc_sitetrust_lookup` on master). Marking TRUST08 in_progress.Now I'll implement. First the header:Now the .cpp — includes, the Trust box in the constructor, refresh wiring, and the new methods:Now update the test — add the `#include <rustcore.h>`, a `trustSignalLines` test, and panel assertions:Now build. The root Makefile already exists; source the env and build.`signals` collides with Qt's `signals` macro. Renaming the local:Build succeeded. Now build and run the sitepanel test offscreen:The check suite is running in the background (full build + tests — will take a while).Tests are passing. Waiting for the run to finish.The `make check` run finished. Let me confirm the final summary:All 80 test programs passed, all gates green. Now the bookkeeping — check if README documents the shield panel:Now update the task row to `done` with notes:Now commit. Check status first:All changes are from this run (COVERAGE.md auto-updates via check-rustcoverage; taskloop.log is the loop's own log). Committing:
+The task file is longer than what I saw. Let me read the rest and check the working-tree diff.Now let me look at the shield button (lock icon host) and how SitePanel is hosted.The SitePanel is the lock/shield popover. Now let me check how rustcore is wired into the build and whether tests exist for the panel.Let me check how TlsVerifier calls rustcore (precedent for FFI usage + guards) and how `ARORA_RUSTCORE` gating works.Let me see the rest of sitepanel.cpp (permission-row rebuild pattern) and check the ChangeLog/WORKLOG conventions.The panel pattern is clear. Let me check what TRUST02 landed (the `trust/*` settings and accessors) to match naming.All requirements present (qmake6, cargo, `rc_sitetrust_lookup` on master). Marking TRUST08 in_progress.Now I'll implement. First the header:Now the .cpp — includes, the Trust box in the constructor, refresh wiring, and the new methods:Now update the test — add the `#include <rustcore.h>`, a `trustSignalLines` test, and panel assertions:Now build. The root Makefile already exists; source the env and build.`signals` collides with Qt's `signals` macro. Renaming the local:Build succeeded. Now build and run the sitepanel test offscreen:The check suite is running in the background (full build + tests — will take a while).Tests are passing. Waiting for the run to finish.The `make check` run finished. Let me confirm the final summary:All 80 test programs passed, all gates green. Now the bookkeeping — check if README documents the shield panel:Now update the task row to `done` with notes:Now commit. Check status first:All changes are from this run (COVERAGE.md auto-updates via check-rustcoverage; taskloop.log is the loop's own log). Committing:Task complete — TRUST08 done and pushed (`6286feb`).
+
+**What I did:**
+- Picked TRUST08 — the first actionable row. WIN01/MAC01/BSD01 are `needs:`-gated for other OSes; TRUST08's `needs:task:TRUST01` was actually satisfied (its note was stale — `rc_sitetrust_lookup` and `sitetrust.rs` are on master since `c727016`).
+- Added a **Trust section** to `SitePanel` (the lock/shield popover), under the TLS chip: one line per real signal from `rc_sitetrust_lookup` — threat-list hit, `Resembles <domain>` lookalike, `Known site (Tranco rank N)` / `Little-known site`, `First visit to this site`. Alert lines get the warning palette; the whole box hides on host-less/local pages or non-rust builds — no neutral noise lines.
+- Rebuilt on every `refresh()` so it tracks per-host navigation; lookups go through `rustCoreEnsureDataDir()` + FFI (all-local data). `trust/*` settings gating intentionally left to TRUST03 per the task slicing.
+- Tests: new `tst_SitePanel::trustSignalLines` exercises the FFI seam with fixture tranco/blocklist tables (known → 'known site', `paypa1.com` → 'resembles paypal.com', blocklisted → threat line, unlisted → 'little-known', empty host → empty); panel legs assert hidden-without-page and populated-on-site.
+
+**Verified:** `tst_sitepanel` 16/16, `make check` rc=0 — warnings/supplychain/engine-audit/rustcoverage all PASS, 80 test programs 0 failed, offscreen. ChangeLog, README, WORKLOG and the task row updated; committed and pushed.
+[2026-10-12 04:27:42] <<< devin exited rc=0 (task TRUST08)
+[2026-10-12 04:27:42] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:27:42] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:27:42] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:27:42] task TRUST08 finished (next: TRUST09)
+[2026-10-12 04:27:44] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:27:44] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:27:44] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:27:45] >>> starting run for task TRUST09 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+The file continues — let me read the rest of the table.I have most of the table. A few rows' status fields were truncated — let me check SRCH09, SRCH10, SIDE04, and others near the end.The first eligible task is **RSZ01** — user-resizable widths for the tab strip + side panel (WIN01/MAC01/BSD01 need other OSes; TRUST09's dep is unsatisfied). Let me check the environment, mark it in_progress, and explore the relevant code.Environment is feasible (qmake6 present, Qt 6.12.0, no `needs:` tags). Marking RSZ01 in_progress and exploring the code.Now the sidebar dock code:Now let me check how the horizontal strip sizes tabs (expanding? minimum width?) and how settings pages are structured:Let me look at the SidebarPanel and how the dock/settings interact:Let me check whether horizontal tabs stretch to fill the strip (QTabBar::expanding) — that determines what "don't balloon" means:The bar is `documentMode` (non-expanding), so horizontal tabs are capped at the 18-M `extent`. Let me check existing grip tests and how `TabWidget::loadSettings` re-reads tab keys:Let me check the test helper classes and the settings.h structure:Let me check if BrowserMainWindow has an eventFilter and look at the header members area:Now I have the full picture. Let me check the BrowserMainWindow constructor init list and includes:Now I'll implement. First the new `SidebarGrip` widget:Now the TabBar changes — header first:Now `tabbar.cpp` — the edits in order:Some edits failed — let me re-read the actual file content to match it exactly:The actual code differs from the summary. Let me read the real sections:Now I see the real structure — cursor hint and East/West grip already exist. My edits:`verticalTabShape` is used in `mouseDoubleClickEvent` but defined later in the file — let me verify there's a forward declaration:Forward declaration exists. Now `TabWidget::loadSettings()`:Now the settings UI — let me look at the Tabs page structure in `settings.ui`:Now `settings.cpp` load/save:Now the sidebar work in `BrowserMainWindow`. Let me look at the dock creation and sidebar code:Let me check the header's protected section and who calls `applySidebarSettings`:`applySidebarSettings` is also called from settings.cpp (object file match) — my additive changes are safe. Header edits:Now the cpp. Check if `<qboxlayout.h>` is already included (QVBoxLayout is used at line 245):Now let me look at the test files to extend them in the existing style:Now let me check the tabwidget and browsermainwindow test files:Let me check `SidebarPanel` for `parentWidget()` assumptions and check test include paths:Now I'll add the tests. First `tst_tabbar.cpp` — new SubTabBar accessors, slots, and test bodies:
+Error: Agent error: Connection error, send a message to continue retrying: {
+  "cognition.ai/errorKind": "unavailable",
+  "cognition.ai/retryable": true
+}
+[2026-10-12 04:43:51] <<< devin exited rc=1 (task TRUST09)
+[2026-10-12 04:43:51] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:43:51] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:43:51] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:43:51] task TRUST09 still unfinished (rc=1) — attempt bumped, restarting in 10s
+[2026-10-12 04:44:01] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:44:01] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:44:01] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:44:14] >>> starting run for task TRUST09 (attempt 2, tree mem cap 2048MB, timeout 3600s)
+Error: Agent error: Connection error, send a message to continue retrying: {
+  "cognition.ai/errorKind": "unavailable",
+  "cognition.ai/retryable": true
+}
+[2026-10-12 04:47:05] <<< devin exited rc=1 (task TRUST09)
+[2026-10-12 04:47:05] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:47:05] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:47:05] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:47:05] task TRUST09 still unfinished (rc=1) — attempt bumped, restarting in 10s
+[2026-10-12 04:47:15] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:47:15] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:47:15] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:47:25] >>> starting run for task TRUST09 (attempt 3, tree mem cap 2048MB, timeout 3600s)
+Error: Agent error: Connection error, send a message to continue retrying: {
+  "cognition.ai/errorKind": "unavailable",
+  "cognition.ai/retryable": true
+}
+[2026-10-12 04:50:21] <<< devin exited rc=1 (task TRUST09)
+[2026-10-12 04:50:21] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:50:21] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:50:21] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:50:21] task TRUST09 still unfinished (rc=1) — attempt bumped, restarting in 10s
+[2026-10-12 04:50:31] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:50:31] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:50:31] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:50:41] >>> starting run for task TRUST09 (attempt 4, tree mem cap 2048MB, timeout 3600s)
+Error: Agent error: Connection error, send a message to continue retrying: {
+  "cognition.ai/errorKind": "unavailable",
+  "cognition.ai/retryable": true
+}
+[2026-10-12 04:53:47] <<< devin exited rc=1 (task TRUST09)
+[2026-10-12 04:53:47] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:53:47] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:53:47] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:53:47] task TRUST09 still unfinished (rc=1) — attempt bumped, restarting in 10s
+[2026-10-12 04:53:57] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:53:57] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:53:57] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:54:07] >>> starting run for task TRUST09 (attempt 5, tree mem cap 2048MB, timeout 3600s)
+Error: Agent error: Connection error, send a message to continue retrying: {
+  "cognition.ai/errorKind": "unavailable",
+  "cognition.ai/retryable": true
+}
+[2026-10-12 04:56:53] <<< devin exited rc=1 (task TRUST09)
+[2026-10-12 04:56:53] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:56:53] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:56:53] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:56:53] task TRUST09 still unfinished (rc=1) — attempt bumped, restarting in 10s
+[2026-10-12 04:57:03] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:57:03] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:57:03] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:57:04] TRUST09 exceeded 5 attempts — marking blocked
+[2026-10-12 04:57:04] skipping WIN01 — needs: requirement not met on this host
+[2026-10-12 04:57:04] skipping MAC01 — needs: requirement not met on this host
+[2026-10-12 04:57:04] skipping BSD01 — needs: requirement not met on this host
+[2026-10-12 04:57:14] >>> starting run for task RSZ01 (attempt 1, tree mem cap 2048MB, timeout 3600s)
+I'll start by reading the task file and checking the repository state.Now let me check the exact status of the rows that were truncated in display — particularly RSZ01 (in_progress) and rows around it.RSZ01 is `in_progress` — a previous run was interrupted mid-task. The uncommitted changes (browsermainwindow, settings, tabbar, tabwidget, src.pri + new sidebargrip files) look exactly like its work-in-progress. Let me inspect what was already done.The previous run began implementing RSZ01 before being interrupted. Let me review what's already in the working tree.The previous run implemented most of the feature. Let me check the rest of the header diff and whether any tests were added.No test legs yet — I'll need to add those. First, let me verify the current state builds.Two build issues: a bad include name and a member-init-order warning. Let me check the conventions.Member declaration order has the sidebar members before `m_tabWidget`, so the init-list entries need to move earlier.The sidebar members are declared before `m_navigationBar` (line 324), so they should initialize before it. Let me fix the ordering properly.Build is clean. Now let me look at the existing test structure to add the verification legs the task requires.Now let me check the browsermainwindow test's sidebar coverage and how windows are constructed in tests.Let me check the tabbar's grip hover-cursor handling and existing vertical grip code.The vertical grip is complete. Now I'll add test legs. First, the tabbar test additions:`minimumTabSizeHint` is protected — needs a test wrapper.Now the browsermainwindow test leg — appended after `sidebarPanel`:Let me check whether the sidebar panel has a minimum width that could conflict with the 160px floor.Now adding the `sidebarResize` test to the browsermainwindow suite:Two fixes needed: window2 auto-shows the dock from the persisted setting (a trigger would hide it), and the shrink assertion shouldn't guess the layout's minimum.Both test binaries built. Now let me run the new tests offscreen.The floor is silently clamped to the built-in extent even when the user didn't set a max — a min of 200 can never take effect. I'll fix the semantics: floor clamps to cap only when a cap was explicitly set.Tab bar tests pass. Now the browsermainwindow sidebar test:The drag works (dock went 280→340) but `sidebarWidth` still reads 280 — the persist path isn't firing. Let me inspect the grip connect and persist code.Let me look at the full test output for connect warnings, and the exact test code around the failure.Let me see the timer lambda guard at line 365 and check where the dock width events are filtered.Something else may be writing `sidebarWidth`. Let me grep the whole tree.The emit path should write 340 — let me add a temporary trace to see what `persistSidebarWidth` actually receives and when.Only the timer path ran (`persist 280`) — `resizeFinished` never fired a persist. Let me check how the signal is declared in the header.Signal is fine. Let me trace the grip's mouse handlers directly.The emit fires — but `m_dock->width()` still reads the old 280 at release, because `resizeDocks` applies asynchronously (the dock widget only gets resized on the next layout pass, during `processEvents`). The grip must emit the *requested* clamped width, not re-read the dock.Now update the header: `applyWidth` returns `int`, and add the `m_requestedWidth` member.Also make double-click emit the clamped width rather than the raw default:Now rebuild and rerun the test.The sidebar test passes. Earlier run segfaulted during teardown — let me run the full suite to check whether that was related.Full suite: 28 passed, clean exit. Now let me rebuild the main binary and check what `make check` entails.`make check` runs warnings/supplychain/engine-audit/rustcoverage gates plus the full test suite. Let me kick it off in the background while I review the diff.The diff looks clean. Let me see the remaining tabbar diff and the browsermainwindow diff quickly.The implementation looks coherent. Let me check on the `make check` run.Check is still running through the test suite. Let me wait for it to finish.One failure: `tst_ContainerManager::tabCookieIsolation` — a cookie-isolation test, seemingly unrelated to my change. Let me check if it's flaky or a real regression.Let me re-run just that failing test to see if it's flaky or a real regression.Flaky test — passes standalone. Let me verify the earlier gates (warnings, supplychain, etc.) passed and check whether the suite otherwise completed.All quality gates passed (warnings, supplychain, engine-audit, rustcoverage). Let me check the line-2031 tabbar entry and confirm the flaky test isn't related to my change.The failure is a WebEngine cookie-commit race — timing-sensitive, documented in the test's own comments, and it passes standalone. Let me run the full containermanager binary once more for confidence.Full containermanager suite passes — confirmed flake, unrelated to RSZ01. Let me verify no debug remnants remain.All verified. Now let me update the task file, ChangeLog, and worklog.Now I'll write the RSZ01 notes and update the row to done.`.devin/COVERAGE.md` changed — let me check if that's an unrelated concurrent modification I shouldn't stage.

@@ -120,6 +120,7 @@ HEADERS += \
     $$PWD/searchlineedit.h \
     $$PWD/securestore.h \
     $$PWD/settings.h \
+    $$PWD/sidebargrip.h \
     $$PWD/sidebarpanel.h \
     $$PWD/bidiclient.h \
     $$PWD/bidipanel.h \
@@ -194,6 +195,7 @@ SOURCES += \
     $$PWD/searchlineedit.cpp \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
+    $$PWD/sidebargrip.cpp \
     $$PWD/sidebarpanel.cpp \
     $$PWD/bidiclient.cpp \
     $$PWD/bidipanel.cpp \

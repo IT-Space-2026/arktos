@@ -57,6 +57,7 @@
 #include "browsermainwindow.h"
 #include "browserapplication.h"
 #include "history.h"
+#include "sidebargrip.h"
 #include "sidebarpanel.h"
 #include "statusbarwidgets.h"
 #include "tabwidget.h"
@@ -128,6 +129,7 @@ private slots:
     void statusBarWidgets();
     void statusBarIndicators();
     void sidebarPanel();
+    void sidebarResize();
     void downloadsSidebarPanel();
     void chromeSlots();
 };
@@ -1420,6 +1422,117 @@ void tst_BrowserMainWindow::sidebarPanel()
     settings.remove(QLatin1String("sidebar/notes"));
     settings.remove(QLatin1String("sidebar/currentTab"));
     settings.remove(QLatin1String("sidebar/panels"));
+    closeWindow(window);
+}
+
+// RSZ01: the sidebar's inner edge is a real resize grip — dragging
+// it resizes the dock live and persists MainWindow/sidebarWidth on
+// release, double-click resets to the default, the grip follows the
+// dock area, and the stored width lands on a fresh window's first
+// sidebar show.
+void tst_BrowserMainWindow::sidebarResize()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 700);
+    window->show();
+    QApplication::processEvents();
+
+    QDockWidget *dock = window->sidebarDock();
+    dock->toggleViewAction()->trigger();
+    QApplication::processEvents();
+    QVERIFY(dock->isVisible());
+    QVERIFY(window->sidebarPanel());
+
+    SidebarGrip *grip = dock->findChild<SidebarGrip *>();
+    QVERIFY(grip);
+    QVERIFY(grip->isVisible());
+    QCOMPARE(window->dockWidgetArea(dock), Qt::LeftDockWidgetArea);
+    // Left dock: the grip trails the panel (the content-facing edge).
+    QLayout *layout = grip->parentWidget()->layout();
+    QVERIFY(layout);
+    QCOMPARE(layout->indexOf(grip), layout->count() - 1);
+
+    const auto dragGrip = [grip](int dx) {
+        const QPoint local(3, 20);
+        const QPoint start = grip->mapToGlobal(local);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(local),
+                          QPointF(start), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(grip, &press);
+        const QPoint end = start + QPoint(dx, 0);
+        QMouseEvent move(QEvent::MouseMove,
+                         QPointF(grip->mapFromGlobal(end)),
+                         QPointF(end), Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QApplication::sendEvent(grip, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease,
+                            QPointF(grip->mapFromGlobal(end)),
+                            QPointF(end), Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(grip, &release);
+        QApplication::processEvents();
+    };
+
+    // Left dock: dragging right widens; release persists the width.
+    const int startWidth = dock->width();
+    dragGrip(60);
+    QVERIFY(dock->width() >= startWidth + 50);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), dock->width());
+
+    // The clamp keeps the panel usable and leaves room for content.
+    QCOMPARE(SidebarGrip::clampedWidth(50, 1000), 160);
+    QCOMPARE(SidebarGrip::clampedWidth(2000, 1000), 800);
+    dragGrip(5000);
+    const int maxed = dock->width();
+    QVERIFY(maxed <= window->width());
+    dragGrip(-5000);
+    QVERIFY(dock->width() < maxed);
+
+    // Double-click snaps back to the default and persists it.
+    const QPoint local(3, 20);
+    QMouseEvent dblClick(QEvent::MouseButtonDblClick, QPointF(local),
+                       QPointF(grip->mapToGlobal(local)),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(grip, &dblClick);
+    QApplication::processEvents();
+    QCOMPARE(dock->width(), SidebarGrip::defaultWidth());
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), SidebarGrip::defaultWidth());
+
+    // The grip follows the dock to the right side (leading edge now)
+    // and a leftward drag widens from there.
+    settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
+                      int(Qt::RightDockWidgetArea));
+    window->applySidebarSettings();
+    QApplication::processEvents();
+    QCOMPARE(window->dockWidgetArea(dock), Qt::RightDockWidgetArea);
+    QVERIFY(grip->isVisible());
+    QCOMPARE(layout->indexOf(grip), 0);
+    const int rightStart = dock->width();
+    dragGrip(-60);
+    QVERIFY(dock->width() >= rightStart + 50);
+    QCOMPARE(settings.value(QLatin1String("MainWindow/sidebarWidth"))
+                 .toInt(), dock->width());
+
+    // The stored width lands on a fresh window's first show — the
+    // dock auto-opens from the persisted showSidebar setting.
+    settings.setValue(QLatin1String("MainWindow/sidebarWidth"), 400);
+    SubWindow *window2 = new SubWindow;
+    window2->resize(1000, 700);
+    window2->show();
+    QVERIFY(window2->sidebarDock()->isVisible());
+    QTRY_COMPARE(window2->sidebarDock()->width(), 400);
+    closeWindow(window2);
+
+    settings.remove(QLatin1String("MainWindow/sidebarWidth"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
     closeWindow(window);
 }
 

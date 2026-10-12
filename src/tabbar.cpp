@@ -132,6 +132,8 @@ TabBar::TabBar(QWidget *parent)
     , m_moveDragVertical(false)
     , m_moveDragMouseY(0)
     , m_moveDragGrabOffset(0)
+    , m_tabMinWidth(0)
+    , m_tabMaxWidth(0)
 {
     setContextMenuPolicy(Qt::CustomContextMenu);
     setAcceptDrops(true);
@@ -207,6 +209,8 @@ TabBar::TabBar(QWidget *parent)
     reloadVerticalTabWidth();
     // TPREV01: the persisted hover-preview opt-out.
     reloadTabHoverPreviews();
+    // RSZ01: the persisted horizontal-strip width bounds.
+    reloadTabWidths();
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -656,6 +660,15 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent *event)
 {
     m_previewTimer->stop();
     hideTabPreview();
+    // RSZ01: double-clicking the vertical strip's resize grip snaps
+    // the width back to the default (persisted like a drag).
+    if (event->button() == Qt::LeftButton
+        && verticalTabShape(shape())
+        && inResizeGrip(stripPos(event->position().toPoint()))) {
+        setVerticalTabWidth(180);
+        persistVerticalTabWidth();
+        return;
+    }
     if (event->button() == Qt::LeftButton
         && tabAt(stripPos(event->position().toPoint())) == -1) {
         // CONT06: double-clicking the header band is not "empty
@@ -727,16 +740,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent *event)
             m_resizing = false;
             if (cursor().shape() == Qt::SizeHorCursor)
                 unsetCursor();
-            QSettings settings;
-            settings.beginGroup(QLatin1String("tabs"));
-            settings.setValue(QLatin1String("verticalTabWidth"),
-                              m_verticalTabWidth);
-            const QWidgetList widgets = qApp->allWidgets();
-            for (QWidget *widget : widgets) {
-                TabBar *bar = qobject_cast<TabBar*>(widget);
-                if (bar && bar != this)
-                    bar->reloadVerticalTabWidth();
-            }
+            persistVerticalTabWidth();
             return;
         }
     }
@@ -1958,7 +1962,19 @@ QSize TabBar::tabSizeHint(int index) const
             }
         }
     }
-    return QSize(qMin(sizeHint.width() + chip.width(), extent),
+    // RSZ01: the horizontal width bounds — a configured cap replaces
+    // the built-in 18-em extent so tabs cannot balloon; a configured
+    // floor keeps each tab at least that wide (below the collective
+    // fit the scroll buttons take over).  The floor clamps to an
+    // explicit cap but not to the Automatic one — a min wider than
+    // the built-in extent is an explicit request for wider tabs.
+    const int cap = m_tabMaxWidth > 0 ? m_tabMaxWidth : extent;
+    const int floor = m_tabMinWidth > 0
+        ? (m_tabMaxWidth > 0 ? qMin(m_tabMinWidth, m_tabMaxWidth)
+                           : m_tabMinWidth)
+        : 0;
+    return QSize(qBound(floor, sizeHint.width() + chip.width(),
+                        qMax(cap, floor)),
                  qMax(sizeHint.height(), thickness) + chip.height());
 }
 
@@ -1969,6 +1985,12 @@ QSize TabBar::minimumTabSizeHint(int index) const
     // TABS04: neither does a pinned tab — icon-only IS its minimum.
     if (verticalTabShape(shape()) || isTabPinned(index))
         return tabSizeHint(index);
+    // RSZ01: a configured floor overrides the style's squeeze
+    // minimum — tabs never lay out narrower than tabs/tabMinWidth.
+    if (m_tabMinWidth > 0) {
+        const QSize hint = tabSizeHint(index);
+        return QSize(qMin(hint.width(), m_tabMinWidth), hint.height());
+    }
     return QTabBar::minimumTabSizeHint(index);
 }
 
@@ -1982,12 +2004,13 @@ void TabBar::tabLayoutChange()
     shiftChildrenBelowStrip();
 }
 
-// TABS02: ~5px along the strip's content-facing edge is the width
+// TABS02: ~7px along the strip's content-facing edge is the width
 // drag grip — right edge for a Left (West) strip, left edge for a
-// Right (East) strip.
+// Right (East) strip.  RSZ01 widened the hit band a little past the
+// painted affordance so it is grabbable without pixel-hunting.
 bool TabBar::inResizeGrip(const QPoint &pos) const
 {
-    static const int grip = 5;
+    static const int grip = 7;
     switch (shape()) {
     case QTabBar::RoundedWest:
     case QTabBar::TriangularWest:
@@ -1997,6 +2020,23 @@ bool TabBar::inResizeGrip(const QPoint &pos) const
         return pos.x() < grip;
     default:
         return false;
+    }
+}
+
+void TabBar::persistVerticalTabWidth()
+{
+    // RSZ01/TABS02: write the new strip width and fan it out to
+    // every live window's bar — shared by the drag release and the
+    // grip's double-click reset.
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("verticalTabWidth"),
+                      m_verticalTabWidth);
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QObject *object : widgets) {
+        TabBar *bar = qobject_cast<TabBar*>(object);
+        if (bar && bar != this)
+            bar->reloadVerticalTabWidth();
     }
 }
 
@@ -2082,6 +2122,41 @@ void TabBar::reloadVerticalTabWidth()
     settings.beginGroup(QLatin1String("tabs"));
     setVerticalTabWidth(
         settings.value(QLatin1String("verticalTabWidth"), 180).toInt());
+}
+
+int TabBar::tabMinWidth() const
+{
+    return m_tabMinWidth;
+}
+
+int TabBar::tabMaxWidth() const
+{
+    return m_tabMaxWidth;
+}
+
+void TabBar::setTabWidths(int minimum, int maximum)
+{
+    minimum = qBound(0, minimum, 400);
+    maximum = qBound(0, maximum, 800);
+    if (m_tabMinWidth == minimum && m_tabMaxWidth == maximum)
+        return;
+    m_tabMinWidth = minimum;
+    m_tabMaxWidth = maximum;
+    // Same layout nudge setVerticalTabWidth() uses — QTabBar only
+    // re-plans the strip when a public setter trips its dirty flag.
+    setIconSize(iconSize());
+    if (QWidget *tabWidget = parentWidget())
+        tabWidget->updateGeometry();
+    update();
+}
+
+void TabBar::reloadTabWidths()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    setTabWidths(
+        settings.value(QLatin1String("tabMinWidth"), 0).toInt(),
+        settings.value(QLatin1String("tabMaxWidth"), 0).toInt());
 }
 
 bool TabBar::tabPreviewsEnabled() const

@@ -76,6 +76,13 @@ UI:
   position, tab group, container and pinned state intact. The
   memory-only stack keeps 25 entries per window, never records
   private tabs and is wiped by Clear Private Data (TABS05).
+- Resizable widths everywhere a strip meets content: the sidebar's
+  inner edge is now a visible drag grip (double-click resets, the
+  width is remembered per side and survives restarts, and it follows
+  the dock to the left or right edge), Left/Right tab strips gained a
+  double-click reset on their existing grip, and horizontal tab
+  strips get Minimum/Maximum tab-width controls in Preferences so
+  tabs neither collapse nor balloon (RSZ01).
 - Optional sidebar dock: bookmarks/history/downloads/notes (SIDE01).
 - Command palette, Ctrl+Shift+P (CMD01).
 - Tab search dropdown, Ctrl+Shift+A, with hover previews (POL02).

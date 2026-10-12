@@ -59,6 +59,8 @@ private slots:
 
     void verticalTabRows();
     void verticalTabResize();
+    void verticalGripReset();
+    void horizontalTabWidths();
     void verticalTabButtons();
     void contextMenuBaseEntries();
     void contextMenuGroupEntries();
@@ -97,6 +99,9 @@ public:
     void call_mouseReleaseEvent(QMouseEvent *event)
         { return SubTabBar::mouseReleaseEvent(event); }
 
+    void call_mouseDoubleClickEvent(QMouseEvent *event)
+        { return SubTabBar::mouseDoubleClickEvent(event); }
+
     void call_newTab()
         { return SubTabBar::newTab(); }
 
@@ -111,6 +116,9 @@ public:
 
     QSize call_tabSizeHint(int index) const
         { return SubTabBar::tabSizeHint(index); }
+
+    QSize call_minimumTabSizeHint(int index) const
+        { return SubTabBar::minimumTabSizeHint(index); }
 };
 
 // This will be called before the first test function is executed.
@@ -439,6 +447,90 @@ void tst_TabBar::verticalTabResize()
     QCOMPARE(bar.verticalTabWidth(), 120);
 
     settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// RSZ01: double-clicking the vertical strip's grip snaps the width
+// back to the 180px default and persists it like a drag release.
+void tst_TabBar::verticalGripReset()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("verticalTabWidth"), 300);
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedWest);
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.resize(200, 300);
+    QApplication::processEvents();
+    QCOMPARE(bar.verticalTabWidth(), 300);
+
+    const QPoint grip(bar.width() - 3, 100);
+    QMouseEvent dblClick(QEvent::MouseButtonDblClick, QPointF(grip),
+                         QPointF(bar.mapToGlobal(grip)),
+                         Qt::LeftButton, Qt::LeftButton,
+                         Qt::NoModifier);
+    bar.call_mouseDoubleClickEvent(&dblClick);
+    QCOMPARE(bar.verticalTabWidth(), 180);
+    QCOMPARE(
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// RSZ01: tabs/tabMinWidth / tabs/tabMaxWidth bound the horizontal
+// strip — a cap replaces the built-in extent, a floor overrides the
+// style's squeeze minimum, 0 means Automatic, and both reload live.
+void tst_TabBar::horizontalTabWidths()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("tabMinWidth"));
+    settings.remove(QLatin1String("tabMaxWidth"));
+
+    SubTabBar bar;
+    bar.addTab(QLatin1String("a reasonably long tab title"));
+    const int natural = bar.call_tabSizeHint(0).width();
+    QVERIFY(natural > 140);
+
+    // Automatic (0/0) leaves the stock bounds alone.
+    QCOMPARE(bar.tabMinWidth(), 0);
+    QCOMPARE(bar.tabMaxWidth(), 0);
+
+    // A cap below the natural width clamps the hint.
+    bar.setTabWidths(0, 140);
+    QCOMPARE(bar.tabMaxWidth(), 140);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), 140);
+
+    // A floor raises both the hint and the squeeze minimum.
+    bar.setTabWidths(200, 0);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), qMax(200, natural));
+    QCOMPARE(bar.call_minimumTabSizeHint(0).width(), 200);
+
+    // The floor never exceeds the cap.
+    bar.setTabWidths(300, 250);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), 250);
+
+    // Out-of-range inputs clamp instead of exploding the layout.
+    bar.setTabWidths(-50, 5000);
+    QCOMPARE(bar.tabMinWidth(), 0);
+    QCOMPARE(bar.tabMaxWidth(), 800);
+
+    // Persisted keys flow through reloadTabWidths (the settings
+    // live-apply path).
+    settings.setValue(QLatin1String("tabMinWidth"), 150);
+    settings.setValue(QLatin1String("tabMaxWidth"), 320);
+    bar.reloadTabWidths();
+    QCOMPARE(bar.tabMinWidth(), 150);
+    QCOMPARE(bar.tabMaxWidth(), 320);
+    QCOMPARE(bar.call_tabSizeHint(0).width(),
+             qBound(150, natural, 320));
+
+    settings.remove(QLatin1String("tabMinWidth"));
+    settings.remove(QLatin1String("tabMaxWidth"));
     settings.endGroup();
 }
 

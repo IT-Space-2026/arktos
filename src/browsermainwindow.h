@@ -72,14 +72,17 @@ class BidiPanel;
 class CommandPalette;
 class EngineIndicator;
 class QDockWidget;
+class QHBoxLayout;
 class QLabel;
 class ReaderButton;
+class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
 class WebView;
 class QSplitter;
 class QFrame;
+class QTimer;
 class HistoryMenu;
 class BookmarksMenuBarMenu;
 class UserAgentMenu;
@@ -143,6 +146,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
     void save();
@@ -208,6 +212,13 @@ private:
     void setupToolBar();
     void ensureSidebarPanel();
     void ensureBidiPanel();
+    // RSZ01: sidebar width — the persisted MainWindow/sidebarWidth is
+    // applied before the dock shows (and once more when it first
+    // appears, because a hidden dock ignores resizeDocks); grip
+    // drags, double-click resets and native edge resizes persist it.
+    void applySidebarWidth();
+    void persistSidebarWidth(int width);
+    void updateSidebarGripPlacement();
     void updateStopReloadActionText(bool loading);
     // ENG08: mirrors the ACTIVE tab's engine onto the shared nav-row
     // EngineIndicator — engine id, swappability and visibility all
@@ -268,6 +279,15 @@ private:
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
     QPointer<SidebarPanel> m_sidebarPanel;
+    // RSZ01: the dock's inner-edge resize grip + its persisted-width
+    // bookkeeping.  The grip lives inside a container wrapping
+    // SidebarPanel; m_sidebarWidthTimer debounces native edge
+    // resizes so one drag lands as one QSettings write.
+    SidebarGrip *m_sidebarGrip;
+    QHBoxLayout *m_sidebarGripLayout;
+    QTimer *m_sidebarWidthTimer;
+    bool m_applyingSidebarWidth;
+    bool m_sidebarWidthApplied;
     // DEVT03: engine-neutral dev tools dock (BiDi channel); the panel
     // inside is built lazily on first show like the sidebar's.
     QDockWidget *m_bidiPanelDock;
