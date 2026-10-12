@@ -144,6 +144,7 @@ private slots:
     void torTitleBarTitle();
     void servoStartPage();
     void privateStartPage();
+    void startPageSingleSurface();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -2485,6 +2486,63 @@ void tst_BrowserMainWindow::privateStartPage()
     QVERIFY(privChannel);
     QVERIFY(aroraRegistered);
     QCOMPARE(dom, QStringLiteral("P|S|H"));
+}
+
+// SPAGE01: every start-page variant keeps its page gradient on a
+// viewport-height <html>.  A <body> background propagates to the
+// canvas sized to the body box and tiles down the window — the
+// horizontal bands the user reported.  Computed style is the pin:
+// documentElement carries the gradient at min-height:100% while the
+// body paints no background image of its own.
+void tst_BrowserMainWindow::startPageSingleSurface()
+{
+    static const char *pages[] = {
+        "qrc:/startpage.html",
+        "qrc:/startpage-private.html",
+        "qrc:/startpage-tor.html",
+        "qrc:/startpage-servo.html",
+    };
+    const QString probe = QStringLiteral(
+        "(function(){"
+        "var h=getComputedStyle(document.documentElement);"
+        "var b=getComputedStyle(document.body);"
+        "return (h.backgroundImage.indexOf('gradient')>=0?'G':'-')+'|'"
+        "+(b.backgroundImage==='none'?'b':'-')+'|'"
+        "+((h.minHeight==='100%'||"
+        "parseFloat(h.minHeight)>=innerHeight)?'m':'-');})()");
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+    WebView *tab = window->currentTab();
+    QVERIFY(tab);
+
+    QStringList results;
+    for (const char *page : pages) {
+        tab->loadUrl(QUrl(QString::fromLatin1(page)));
+        QString dom;
+        QElapsedTimer timer;
+        timer.start();
+        while (dom != QLatin1String("G|b|m") && timer.elapsed() < 10000) {
+            bool jsDone = false;
+            tab->enginePage()->runJavaScript(probe,
+                [&jsDone, &dom](const QVariant &v) {
+                    dom = v.toString();
+                    jsDone = true;
+                });
+            for (int waited = 0; !jsDone && waited < 5000; waited += 50)
+                QTest::qWait(50);
+        }
+        results << QString::fromLatin1("%1=%2")
+                       .arg(QLatin1String(page), dom);
+    }
+
+    closeWindow(window);
+    QCOMPARE(results, QStringList() << QStringLiteral(
+        "qrc:/startpage.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-private.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-tor.html=G|b|m")
+        << QStringLiteral("qrc:/startpage-servo.html=G|b|m"));
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between

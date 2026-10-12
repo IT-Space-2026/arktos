@@ -356,6 +356,11 @@ UI:
   looked ragged next to the checkbox rows; labels are now left-aligned
   so every row shares the page's left margin like the sibling groups
   (PREFUI12).
+- The start page no longer shows faint horizontal bands: its
+  background gradient was painted in repeating content-height stripes
+  — invisible in the light theme, banded in the dark theme — and now
+  covers the window as one continuous surface on all four start pages
+  (standard, private, Tor, Servo) (SPAGE01).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

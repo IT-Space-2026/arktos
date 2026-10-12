@@ -4,9 +4,18 @@
     font-family: "DejaVu Sans";
 }
 
-body {
+/* The gradient lives on a viewport-height <html>: the canvas
+   background covers the whole window, so short content leaves
+   no banded tile seam — the body's own propagated background is
+   sized to its box and tiles down the canvas (SPAGE01, same fix
+   as TOR09's tor/private variants).  min-height keeps it
+   stretching if the content ever grows past one screen. */
+html {
+    min-height: 100%;
     background: linear-gradient(to bottom, #ccc 0%, #fff 50%, #fff 100%);
-    background-repeat: repeat-x;
+}
+
+body {
     margin-top: 100px;
 }
 
@@ -76,8 +85,10 @@ body {
 /* THEME01: the start page adds the arora-dark class on <html> from
    the arora channel's darkChrome property — the app chrome palette,
    not the OS's prefers-color-scheme. */
-html.arora-dark body {
+html.arora-dark {
     background: linear-gradient(to bottom, #2a2a30 0%, #1e1e23 50%, #1e1e23 100%);
+}
+html.arora-dark body {
     color: #e4e4e8;
 }
 html.arora-dark #search {
