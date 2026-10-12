@@ -67,6 +67,7 @@
 #include "bookmarksmanager.h"
 #include "bookmarksmodel.h"
 #include "edittreeview.h"
+#include "enginetab.h"
 #include "history.h"
 #include "sidebargrip.h"
 #include "sidebarpanel.h"
@@ -1651,14 +1652,20 @@ void tst_BrowserMainWindow::servoStartPage()
     window->show();
     QApplication::processEvents();
 
-    // The window's first tab is itself newTab() — with the servo
-    // engine pick it lands on the servo start page at once.
+    // The engine pick lands on the window's first tab — which KIND
+    // depends on the build: a registered servo backend (master's
+    // ENG10 wiring) makes it a foreign EngineTab outright, and the
+    // branded qrc page — WebEngine content servo cannot render —
+    // never loads there.  Without the artifact (or once servo's
+    // single-view budget is spent) the pick degrades to a WebView
+    // that loads the branded page at once.
     WebView *firstTab = window->currentTab();
+    EngineTab *firstEngine = window->tabWidget()->engineTab(0);
     const QUrl firstUrl = firstTab ? firstTab->url() : QUrl();
-    QWebEnginePage *page = firstTab ? firstTab->page() : nullptr;
-    QWebChannel *channel = page ? page->webChannel() : nullptr;
 
-    // A second fresh tab takes the same branded start page.
+    // A second fresh tab takes the same branded start page — under a
+    // live servo backend the first tab claims the single view, so
+    // this one is the WebView fallback that actually loads it.
     window->tabWidget()->newTab();
     WebView *servoTab = window->currentTab();
     const QUrl servoTabUrl = servoTab ? servoTab->url() : QUrl();
@@ -1667,9 +1674,14 @@ void tst_BrowserMainWindow::servoStartPage()
     // its stylesheet resolves the bundled logo asset, the search box
     // exists, and headerTitle only fills once the channel's
     // arora.translate() callback has resolved — the same handshake
-    // proof torStartPage uses.
+    // proof torStartPage uses.  The probe runs on whichever WebView
+    // renders the branded page (firstTab when the pick degraded,
+    // servoTab under a live backend).
+    WebView *domTab = firstTab ? firstTab : servoTab;
+    QWebEnginePage *page = domTab ? domTab->page() : nullptr;
+    QWebChannel *channel = page ? page->webChannel() : nullptr;
     QString dom;
-    if (firstTab) {
+    if (domTab) {
         const QString probe = QStringLiteral(
             "(function(){var l=document.getElementById('servologo');"
             "var s=document.getElementById('search');"
@@ -1685,7 +1697,7 @@ void tst_BrowserMainWindow::servoStartPage()
         timer.start();
         while (dom != QLatin1String("V|S|H") && timer.elapsed() < 15000) {
             bool jsDone = false;
-            firstTab->enginePage()->runJavaScript(probe,
+            domTab->enginePage()->runJavaScript(probe,
                 [&jsDone, &dom](const QVariant &v) {
                     dom = v.toString();
                     jsDone = true;
@@ -1698,14 +1710,14 @@ void tst_BrowserMainWindow::servoStartPage()
     // Offscreen grab for visual review — set ARORA_SERVO_GRAB_DIR to
     // a directory and the rendered servo start page lands there.
     const QByteArray grabDir = qgetenv("ARORA_SERVO_GRAB_DIR");
-    if (!grabDir.isEmpty() && firstTab) {
+    if (!grabDir.isEmpty() && domTab) {
         const QString dir = QString::fromLocal8Bit(grabDir);
         QDir().mkpath(dir);
-        firstTab->resize(760, 700);
-        firstTab->show();
+        domTab->resize(760, 700);
+        domTab->show();
         QApplication::processEvents();
         QTest::qWait(400);
-        firstTab->grab().save(dir + QLatin1String("/servo-startpage.png"));
+        domTab->grab().save(dir + QLatin1String("/servo-startpage.png"));
     }
 
     closeWindow(window);
@@ -1713,7 +1725,14 @@ void tst_BrowserMainWindow::servoStartPage()
 
     QCOMPARE(mapped, servoStart);
     QCOMPARE(guessed, servoStart);
-    QCOMPARE(firstUrl, servoStart);
+    if (firstEngine) {
+        // The pick spawned the real engine tab — the branded qrc
+        // page is not servo's to render, so a live page on the slot
+        // is the check.
+        QVERIFY(firstEngine->page());
+    } else {
+        QCOMPARE(firstUrl, servoStart);
+    }
     QCOMPARE(servoTabUrl, servoStart);
     QVERIFY(channel);
     QCOMPARE(dom, QStringLiteral("V|S|H"));

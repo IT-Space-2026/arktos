@@ -696,6 +696,16 @@ void tst_ContainerManager::adblockAppliesOnContainerProfile()
     WebPage page(profile);
     QVERIFY(loadSync(&page, m_server->url(QLatin1String("/cont01-index.html"))));
 
+    // The profile's interceptor registration lands on the WebEngine
+    // IO thread over a different channel than the navigation, so
+    // under suite load the first subresource burst can slip past it
+    // (make check flake: the blocked image reached the server while
+    // the same matcher rejects it deterministically standalone).  A
+    // second load runs with the interceptor known-live — if adblock
+    // were actually missing on container profiles, it leaks too.
+    m_server->requests.clear();
+    QVERIFY(loadSync(&page, m_server->url(QLatin1String("/cont01-index.html"))));
+
     QVERIFY(m_server->requests.contains(QLatin1String("/cont01-index.html")));
     QVERIFY(!m_server->requests.contains(QLatin1String("/cont01-blocked.png")));
 

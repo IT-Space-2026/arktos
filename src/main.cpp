@@ -3134,6 +3134,18 @@ static int servoLifecycleSmoke()
                tabs.reloadTabInEngine(0, QStringLiteral("servo")));
         EngineTab *engineTab = tabs.engineTab(0);
         report(QStringLiteral("engine-tab"), engineTab != nullptr);
+        // ENG15: a foreign tab draws ONE strip icon — the free-side
+        // favicon label — never a QTabBar icon stacked beside it
+        // (the pre-fix pair painted the default glyph twice).
+        report(QStringLiteral("single-tab-icon"),
+               tabs.tabBar()->tabIcon(0).isNull());
+#if !defined(Q_OS_MACOS)
+        if (QLabel *iconLabel = qobject_cast<QLabel*>(
+                tabs.tabBar()->tabButton(0, tabs.tabBar()->freeSide()))) {
+            report(QStringLiteral("single-icon-label"),
+                   iconLabel->movie() || !iconLabel->pixmap().isNull());
+        }
+#endif
         if (engineTab && engineTab->page()) {
             Engine::Page *page = engineTab->page();
             bool finished = false;

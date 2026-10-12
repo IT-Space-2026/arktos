@@ -154,6 +154,12 @@ UI:
   history/search completion included — and Enter navigates that tab's
   own engine page instead of dying on a WebEngine-only dispatch path
   (ENG14).
+- Fixed a doubled page icon on Servo tabs: the engine-swap path set
+  the tab-strip icon AND painted the same default glyph into the
+  favicon label, so every foreign-engine tab showed the standard icon
+  twice. Engine tabs now use the single favicon slot every other tab
+  uses, and the icon is restored when a Servo tab returns from a
+  filtered container level (ENG15).
 - Private browsing is per-tab: File → "New Private Tab" (Ctrl+Shift+N)
   opens an off-the-record tab beside normal ones — mask-badged tab
   icon, no history/cookies/icons/session/recently-closed writes, and

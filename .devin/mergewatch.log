@@ -1831,3 +1831,78 @@ Stopping after this one pass.
 I'll start by checking the current state of the repository.The working tree has uncommitted changes — I'll need to watch for overlap with merge-affected files. Now let me check how far ahead each lane is.`rust-work` is at 0 — skipping. `ui-work` is 3 ahead. Let me check which files it touches.`ui-work` touches `src/main.cpp` and `src/tabwidget.cpp`, both of which are dirty in this tree (agent mid-run). Git should refuse — let me confirm the merge is blocked.[2026-10-12 13:47:08] merge run exited rc=0
 [2026-10-12 13:52:09] merge due: ui-work(3) lang-work(1) — spawning devin merge run
 I'll start by checking the repo state and fetching.Working tree has uncommitted changes (likely an agent mid-run). I'll fetch and check how far ahead each lane is.`rust-work` is at 0 — skipped. `ui-work` has 3 commits. Let me check which files it touched versus the dirty files in this tree.`ui-work` modified `src/main.cpp` and `src/tabwidget.cpp`, both of which have uncommitted changes in this tree. Per the rules that means this lane may need to be skipped — let me verify whether git would actually refuse the merge.An agent is clearly mid-run here — `src/tabwidget.cpp` has ~222 lines of unstaged changes, and `ui-work` touches both `src/main.cpp` and `src/tabwidget.cpp`. Let me confirm git refuses the merge (it will abort safely before touching anything).[2026-10-12 13:52:54] merge run exited rc=0
+[2026-10-12 13:57:55] merge due: ui-work(4) lang-work(1) — spawning devin merge run
+I'll start by checking the repo state and fetching.Now let me check how far ahead each lane is.`rust-work` is at 0 — skipping. `ui-work` has 4 commits. Let me check what it touched and whether my dirty files would conflict.The merge has 10 conflicts, including add/add on `sidebargrip.*` (both sides added them). Let me work through them.Substantial conflict surface. Let me examine each file's conflict regions, starting with the smaller ones.Let me start with `sidebargrip` — both sides added it, so I need to compare the two implementations.Now `browsermainwindow.h` — 3 conflict regions.`browsermainwindow.h` done. Now `browsermainwindow.cpp` — 7 conflict regions.All 7 conflicts here are comment-only or trivial — master keeps `bidipanel.h`, ui's RSZ02 comments and extra `updateSidebarGripPlacement()` call win. Applying.`browsermainwindow.cpp` done. Now `tabbar.h`.`tabwidget.cpp` conflict: master's ENG05 engine-backend branch vs ui's TOR09/ENG13 branded start page. Both apply — engine tab path returns early, then the start-page load applies to the WebView tab.Now resolving `tabbar.h`. For the helper block, I need to check whether ui's `persistStripSize` covers the vertical-width persist before dropping master's `persistVerticalTabWidth`.Let me check how `containerPillReserve` exists on each side to resolve this consistently.All conflicts mapped. Resolution plan for `tabbar.cpp`:
+- Container chip: keep master's TABS06 (accent stripe + name pill — already width-only/compact)
+- Grip API: take ui's generalized `inResizeGrip`/`paintResizeGrip`/`persistStripSize` (supersedes `persistVerticalTabWidth`)
+- Width bounds + strip height: keep both APIs
+- Thickness: ui's tightened bounds + `m_tabStripHeight` override + master's chip comment
+
+Applying edits:Applying the remaining `tabbar.cpp` resolutions.Now the grip persist/paint region — take ui's `paintResizeGrip` + `persistStripSize` (superset of `persistVerticalTabWidth`).Now the last two `tabbar.cpp` conflicts — interleaved setter functions sharing a tail. Keep both APIs.`tabbar.cpp` done. Now `tabbar.h` — keep both API blocks in conflict 1, take ui's generalized helpers in conflict 2 (dropping `persistVerticalTabWidth`).`tabbar` files are consistent. Now the autotests — `tst_containermanager.cpp` first (single conflict).Both assertion sets hold under master's width-only pill design — union them.All three test functions are distinct — keep them all, duplicating the shared `endGroup` tail.The ui test calls `call_mousePressEvent`/`call_mouseMoveEvent`/`call_mouseReleaseEvent` on `SubTabBar` — verify those wrappers exist in the merged file.Possible duplicate `call_mouseDoubleClickEvent` at lines 96 and 108 — checking.Auto-merge duplicated `call_mouseDoubleClickEvent` — removing the second copy.Keep both test slots — `sidebarResize` (master) and `sidebarGripResize` (ui).Ui adds two complete tests (`torStartPage`, `servoStartPage`); master's side is just the updated READ02/READ04 doc comment. Keep both — ui's functions + master's newer comment.Both tests exercise the grip — keep both as complete functions by duplicating the shared braces.All conflict markers resolved. Let me verify no markers remain anywhere and check member declarations are complete.Files still show unmerged because they aren't staged yet. Let me check markers excluding build dirs, then stage.No markers remain; all members present. Quick sanity check on `src.pri` for duplicate entries.Staging all resolved files and committing the merge.`src/main.cpp` shows `MM` — unstaged changes on top of staged. Checking.That's a mid-run agent's ENG15 edit in this tree (appeared during the merge). It's unrelated working-tree state — leaving it unstaged. Committing the merge.Merge committed. Now the build check.Build is compiling — waiting for it to finish.Build passed — `arora` linked cleanly. Now appending the MERGEWATCH line to WORKLOG.md.Committing the WORKLOG entry, then pushing master.Merge run complete. Summary:
+
+- **rust-work**: 0 commits ahead — skipped.
+- **ui-work**: 4 commits ahead (TOR09, ENG13, RSZ02, TABS08) — merged as `a97aa36`, pushed as `bdd0b45`.
+
+**10 conflicts resolved:**
+
+- `src/sidebargrip.{h,cpp}` (add/add): took the lane's RSZ02 version — it's a strict superset that deliberately replaces master's RSZ01 invisible 7px strip with a painted 10px grip.
+- `src/tabbar.{h,cpp}`: kept **both** — master's `tabMinWidth`/`tabMaxWidth` API alongside the lane's `tabStripHeight` API; took the lane's generalized grip (`inResizeGrip` all-shapes, `paintResizeGrip`, `persistStripSize` supersedes `persistVerticalTabWidth`). For the container-chip conflict (master's width-only name pill vs. the lane's stripe-only removal) I kept master's pill — the lane's "compact strip" intent is already satisfied since the reserve is width-only.
+- `src/tabwidget.cpp`: `newTab()` keeps master's ENG05 engine-backend branch, then applies the lane's branded start page to the WebView path.
+- `src/browsermainwindow.{h,cpp}`: kept master's DEVT03 BiDi panel + include; took the lane's RSZ02 wording and extra `updateSidebarGripPlacement()` call.
+- 3 autotests: unioned — `sidebarResize` + `sidebarGripResize`, `verticalGripReset`/`horizontalTabWidths`/`horizontalTabResize`, and both container-strip assertion sets (all mutually compatible). Also removed a duplicated `call_mouseDoubleClickEvent` wrapper the auto-merge produced.
+
+**Build**: `make -C src -j2` — clean link, `arora` binary produced. **Build ok.**
+
+Note: `src/main.cpp` picked up an unrelated mid-run edit (ENG15 smoke-test lines) from another agent during the merge — left untouched/unstaged per the rules. MERGEWATCH line appended to `.devin/WORKLOG.md` and pushed.
+[2026-10-12 14:06:48] merge run exited rc=0
+[2026-10-12 14:11:48] merge due: lang-work(1) — spawning devin merge run
+Starting the merge pass. First, checking the working tree state and fetching origin.The tree has dirty files — likely a mid-run agent. I'll check which lanes are ahead and whether any dirty files intersect with their changes.Both lanes report 0 commits ahead of local master. Let me verify against the remote-tracking refs too, in case origin has newer lane commits.Nothing to do this pass — both lanes are already fully merged:
+
+- `rust-work`: 0 commits ahead of master (local and origin)
+- `ui-work`: 0 commits ahead of master (local and origin)
+- master is in sync with `origin/master` (0 ahead, 0 behind)
+
+No merges performed, so no build verification, push, or WORKLOG entries needed. The dirty files in this tree (`.devin/Arora-Task.md`, `src/main.cpp`, etc.) were left untouched — they belong to another mid-run agent.
+
+Stopping after this one pass, per instructions.
+[2026-10-12 14:12:13] merge run exited rc=0
+[2026-10-12 14:17:14] merge due: lang-work(1) — spawning devin merge run
+Starting merge pass. First, fetch and check the current tree state.The tree has uncommitted changes (an agent mid-run, likely). I'll be careful not to touch them. Now checking how far ahead each lane is.Both lanes are already fully merged (0 commits ahead). Let me check master's state relative to origin before deciding there's nothing to push.Nothing to do this pass — all lanes are already fully merged:
+
+- `rust-work`: 0 commits ahead of master — skipped
+- `ui-work`: 0 commits ahead of master — skipped
+- `master` is in sync with `origin/master` (0 ahead / 0 behind); last commit is the previous MERGEWATCH merge
+
+No merges performed, so no build verification or WORKLOG lines needed, and nothing to push.
+
+Note: the working tree has uncommitted changes on several files (`.devin/Arora-Task.md`, `ChangeLog`, `src/main.cpp`, etc.) — presumably another agent mid-run. Left untouched per the hard rules.
+
+Pass complete; stopping as instructed.
+[2026-10-12 14:17:26] merge run exited rc=0
+[2026-10-12 14:22:26] merge due: lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.Working tree has uncommitted changes — I'll note those files as potential conflicts. Now checking lane ahead counts.Both lanes are at 0 commits ahead of `master` — nothing to merge this pass.
+
+- `rust-work`: 0 ahead — skipped
+- `ui-work`: 0 ahead — skipped
+
+No merges performed, so no WORKLOG entries, no build verification, no push needed. The dirty files in this tree (`.devin/Arora-Task.md`, `ChangeLog`, `src/main.cpp`, etc.) were left untouched. Stopping here as instructed.
+[2026-10-12 14:22:34] merge run exited rc=0
+[2026-10-12 14:27:34] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+Starting the merge pass. First, check tree state and fetch.Working tree has dirty files (Arora-Task.md, ChangeLog, src/main.cpp, etc.) — I'll need to watch for conflicts with those. Checking lane counts.`rust-work` is at 0 — skipped. `ui-work` is 1 commit ahead. Checking which files that commit touches vs. my dirty files.ui-work touches `ChangeLog`, which is dirty in this tree. Let me check whether the merge would actually need to write to it before deciding to skip.Both sides modified ChangeLog since the base, so the merge must rewrite it — but it's dirty. Trying the merge to confirm git refuses cleanly.[2026-10-12 14:28:07] merge run exited rc=0
+[2026-10-12 14:33:08] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching.The tree has dirty files (likely a mid-run agent). Let me check how far ahead each lane is.rust-work is at 0 (skip). ui-work is 1 ahead. Let me check what that commit touches against the dirty files.The lane touches `.devin/WORKLOG.md`, `ChangeLog`, and `src/tabwidget.cpp` — all dirty in this tree. Let me inspect the dirty changes and the mergewatch log before deciding.Previous runs hit the same wall — an agent appears to be mid-run in this tree. I'll attempt the merge to confirm git refuses cleanly.[2026-10-12 14:33:36] merge run: rust-work(0) skipped; ui-work(1) SKIPPED — local uncommitted changes to .devin/WORKLOG.md, ChangeLog, src/tabwidget.cpp would be overwritten (agent mid-run in master tree). No merges performed; no build, no push.
+[2026-10-12 14:33:40] merge run exited rc=0
+[2026-10-12 14:38:40] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the repo and fetching from origin.The tree is dirty — likely another agent mid-run. Let me check how far ahead each lane is.ui-work's commit touches several files that are dirty in this tree (`WORKLOG.md`, `ChangeLog`, `tst_browsermainwindow.cpp`, `src/tabwidget.cpp`). Let me check whether it's a fast-forward and what the dirty changes look like.Master is 476 ahead of the merge base — real merge, not fast-forward. The ui-work commit touches files that are dirty in this tree. Let me check which dirty files differ between master and ui-work (those would make git refuse the merge).All four dirty files that ui-work touches differ between master and ui-work — git would refuse the merge. Per the rules, I must skip this lane and note it. Let me check the log files' format first.[2026-10-12 14:40:28] merge run exited rc=0
+[2026-10-12 14:45:28] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+`rust-work` is 0 commits ahead — skip. `ui-work` is 1 ahead, but it touches files that are dirty in this tree (`WORKLOG.md`, `ChangeLog`, `tst_browsermainwindow.cpp`, `src/tabwidget.cpp`). Per the rules, a dirty-file conflict means skip the lane — let me confirm the merge would indeed refuse:[2026-10-12 14:45:53] merge run exited rc=0
+[2026-10-12 14:50:54] merge due: ui-work(1) lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the repository and fetching from origin.Working tree has uncommitted changes (likely another agent mid-run). Now checking how far ahead each lane is.`rust-work` is up to date — skipping. `ui-work` is 1 commit ahead. Let me check what it changes and whether it collides with the dirty files.The `ui-work` commit touches 4 files that are dirty in this working tree (`WORKLOG.md`, `ChangeLog`, `tst_browsermainwindow.cpp`, `tabwidget.cpp`). A merge would overwrite local changes — let me attempt it to confirm git refuses.[2026-10-12 14:52:01] merge run exited rc=0
+[2026-10-12 14:57:02] merge due: ui-work(2) lang-work(1) — spawning devin merge run
+I'll start by checking the current state of the tree and fetching.Tree has pre-existing dirty files — I'll leave them alone. Fetching and checking lane status.`rust-work` is at 0 (skip). `ui-work` is 2 commits ahead. Let me see what it touches.`ui-work` touches several files that are dirty in this tree (`WORKLOG.md`, `ChangeLog`, `src/main.cpp`, `src/tabwidget.cpp`). Let me check whether the dirty diffs actually overlap before deciding to skip.Let me check if the dirty changes are already the lane's content (from a prior partial run) or genuinely conflicting work.The dirty files are another agent's mid-run work (ENG15 + prior MERGEWATCH entries), and they overlap files the `ui-work` merge must write (`WORKLOG.md`, `ChangeLog`, `src/main.cpp`, `src/tabwidget.cpp`, `tst_browsermainwindow.cpp`). Git would refuse the merge. Per the rules, I skip this lane and log it.master is in sync with origin — no merges to make or push. Appending the skip note to WORKLOG.Merge pass complete — nothing merged this run.
+
+- **rust-work**: 0 commits ahead of master — skipped.
+- **ui-work**: 2 commits ahead (`TABS09` favicon-collapse tab bar, `TOR10` tor circuit dropdown fix), but the merge would overwrite files that are dirty in this tree from another agent's mid-run ENG15 work (`WORKLOG.md`, `ChangeLog`, `src/main.cpp`, `src/tabwidget.cpp`, `tst_browsermainwindow.cpp`). Per the rules, I skipped the lane rather than disturb in-flight work — this matches the last several MERGEWATCH entries, which hit the same block.
+- No merges → no build check needed; master already equals `origin/master`, nothing to push.
+- Appended the skip line to `.devin/WORKLOG.md` and stopped.
+[2026-10-12 14:57:37] merge run exited rc=0

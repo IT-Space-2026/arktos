@@ -3147,7 +3147,9 @@ QUrl TabWidget::guessUrlFromStringRust(const QString &string, bool privateContex
         QUrl url = parse(verdict.value(QLatin1String("url")));
         if (url.scheme() == QLatin1String("about")
             && url.path() == QLatin1String("home"))
-            url = QUrl(QLatin1String("qrc:/startpage.html"));
+            // TOR09/ENG13: same branded pick the C++ path makes —
+            // tor/servo start pages ride the about:home alias.
+            url = BrowserApplication::startPageUrl();
         return url;
     }
     if (kind == QLatin1String("file"))

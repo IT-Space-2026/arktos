@@ -37,10 +37,12 @@
 #include <engineregistry.h>
 #include <enginetab.h>
 #include <lineedit.h>
+#include <tabbar.h>
 #include <tabwidget.h>
 #include <toolbarsearch.h>
 #include <webview.h>
 
+#include <qlabel.h>
 #include <qsplitter.h>
 #include <qstackedwidget.h>
 #include <qtcpserver.h>
@@ -130,6 +132,7 @@ private slots:
     void swapMidLoad();
     void closeForeignTab();
     void engineTabLocationBar();
+    void engineTabSingleIcon();
 
 private:
     FakeEngineBackend *m_fake = nullptr;
@@ -844,6 +847,58 @@ void tst_EngineSwitch::engineTabLocationBar()
     // still loads through its own WebView.
     QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("webengine")));
     QVERIFY(widget.webView(0));
+}
+
+// ENG15 — a foreign tab must draw ONE strip icon.  The regression
+// stacked two copies of the default glyph side by side: the addTab()
+// tab icon AND the free-side favicon label's pixmap.  WebView tabs
+// pass no tab icon at all — the label is the only surface — and the
+// engine tab now follows the same shape, before AND after a load,
+// and across repeated swaps.
+void tst_EngineSwitch::engineTabSingleIcon()
+{
+#if !defined(Q_OS_MACOS)
+    TabWidget widget;
+    widget.newTab();
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QVERIFY(widget.engineTab(0));
+
+    const QTabBar::ButtonPosition iconSide =
+        widget.tabBar()->freeSide();
+    const auto visibleIcons = [&widget, iconSide]() {
+        int icons = widget.tabBar()->tabIcon(0).isNull() ? 0 : 1;
+        if (QLabel *label = qobject_cast<QLabel*>(
+                widget.tabBar()->tabButton(0, iconSide))) {
+            if (label->movie() || !label->pixmap().isNull())
+                ++icons;
+        }
+        return icons;
+    };
+
+    // An empty swapped tab never loads — the label's default pixmap
+    // is installed eagerly and the QTabBar icon stays null.
+    QCOMPARE(visibleIcons(), 1);
+    QLabel *label = qobject_cast<QLabel*>(
+        widget.tabBar()->tabButton(0, iconSide));
+    QVERIFY(label);
+    QVERIFY(!label->pixmap().isNull());
+
+    // After a real load the same single surface remains — the
+    // loadFinished pixmap swap never reintroduces a second icon.
+    widget.engineTab(0)->load(
+        QUrl(QStringLiteral("file:///tmp/eng15-icon.html")));
+    QCOMPARE(visibleIcons(), 1);
+    QVERIFY(!label->pixmap().isNull());
+
+    // Round-trip through webengine and swap forward again — still
+    // exactly one icon, no stranded second surface.
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("webengine")));
+    QVERIFY(widget.webView(0));
+    QVERIFY(widget.reloadTabInEngine(0, QStringLiteral("fake")));
+    QCOMPARE(visibleIcons(), 1);
+#else
+    QSKIP("favicon label is non-macOS only");
+#endif
 }
 
 QTEST_MAIN(tst_EngineSwitch)
