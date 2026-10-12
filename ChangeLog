@@ -336,6 +336,11 @@ UI:
   making buttons unreadable. A desktop icon theme that already ships
   light-on-dark art is kept as-is, and flipping Day/Night in
   Preferences swaps the icon art live (ICONS05).
+- Tor circuit dropdown stays put: opening it refreshed the menu on
+  every daemon reply and each reply kicked another query, so the
+  popup re-laid itself out in an endless loop and crept sideways on
+  some desktops. The open menu now refreshes without re-querying and
+  only rebuilds when the circuit rows actually change (TOR13).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

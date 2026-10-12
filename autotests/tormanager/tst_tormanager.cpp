@@ -27,9 +27,12 @@
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
+#include <qaction.h>
 #include <qapplication.h>
+#include <qmenu.h>
 #include <qstandardpaths.h>
 
+#include "torcircuitbutton.h"
 #include "torcontrol.h"
 #include "tormanager.h"
 #include "torsocks5.h"
@@ -51,6 +54,7 @@ private slots:
     void fakeDaemonLifecycle();
     void circuitInfo();
     void circuitInfoDeadControl();
+    void circuitMenuNoRequeryLoop();
     void circuitCountries();
     void circuitCountriesNoGeoip();
     void realDaemonLifecycle();
@@ -373,6 +377,93 @@ void tst_TorManager::circuitInfoDeadControl()
     manager.requestCircuitInfo();
     QTest::qWait(500);
 
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR13: an open circuit dropdown must not loop a control query per
+// reply.  The old path called requestCircuitInfo() from inside the
+// circuitsChanged-driven repopulate, so every reply re-armed another
+// query — and each clear()+re-add re-laid out the visible QMenu,
+// making the popup creep across the screen.  Now the open-menu
+// refresh is read-only: it issues no control traffic at all and it
+// skips rebuilds whose rendered rows would be identical, so the
+// visible menu's action objects survive a no-op refresh untouched.
+// faketor.py logs each GETINFO circuit-status to
+// <datadir>/circuit-status-log.
+void tst_TorManager::circuitMenuNoRequeryLoop()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+
+    // Let the snapshot + country resolutions fully settle so the menu
+    // contents are stable before the button opens.
+    QTRY_VERIFY_WITH_TIMEOUT([&manager]() {
+        const int id = manager.displayCircuitId();
+        for (const TorCircuit &circuit : manager.circuits()) {
+            if (circuit.id != id)
+                continue;
+            for (const TorCircuitHop &hop : circuit.hops) {
+                if (hop.country.isEmpty())
+                    return false;
+            }
+            return !circuit.hops.isEmpty();
+        }
+        return false;
+    }(), 10000);
+
+    TorCircuitButton button(&manager);
+    QMenu *menu = button.menu();
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+
+    // The fresh snapshot renders the displayed circuit's hop rows —
+    // faketor's circuit 3 carries the streams, so it wins the slot.
+    QTRY_VERIFY_WITH_TIMEOUT(menu->actions().size() == 4, 10000);
+    QCOMPARE(menu->actions().at(1)->text(),
+             QStringLiteral("Guard: GuardOne — Germany"));
+
+    const QList<QAction *> settledRows = menu->actions();
+    auto statusQueryCount = [&dir]() -> int {
+        QFile log(dir.path() + QLatin1String("/circuit-status-log"));
+        if (!log.open(QIODevice::ReadOnly))
+            return -1;
+        return QString::fromLatin1(log.readAll())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+    };
+    const int baseline = statusQueryCount();
+    QVERIFY(baseline >= 1);
+
+    // A signal-driven refresh over an unchanged snapshot must leave
+    // the visible menu untouched — same action objects, no rebuild,
+    // the popup does not so much as re-layout (its position is the
+    // thing that crept) — and must not touch the control connection.
+    const QPoint pos = menu->pos();
+    manager.circuitsChanged(manager.circuits());
+    manager.stateChanged(manager.state());
+    QApplication::processEvents();
+    QCOMPARE(menu->actions(), settledRows);
+    QCOMPARE(menu->pos(), pos);
+
+    // Dwell with the menu open: the pre-fix loop would have issued a
+    // circuit-status query per reply the whole time.
+    QTest::qWait(1500);
+    QCOMPARE(statusQueryCount(), baseline);
+
+    menu->hide();
     manager.stop();
     QCOMPARE(manager.state(), TorManager::Stopped);
 }
