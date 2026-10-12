@@ -78,6 +78,7 @@
 #include "terminationsignalhandler.h"
 #include "toolbarsearch.h"
 #include "torcircuitbutton.h"
+#include "torcontrol.h"
 #include "tormanager.h"
 #include "torsocks5.h"
 #include "engineregistry.h"
@@ -189,6 +190,7 @@
 #include <atomic>
 #include <cerrno>
 #include <csignal>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -3703,7 +3705,8 @@ int main(int argc, char **argv)
         "session-smoke", "restore-smoke", "tor-smoke", "privacy-smoke",
         "sigterm-smoke", "sigterm-child-smoke",
         "referer-smoke", "container-smoke",
-        "tor-window-smoke", "sorry-smoke", "icons-smoke", "seclvl-smoke",
+        "tor-window-smoke", "tor-circuit-click-smoke",
+        "sorry-smoke", "icons-smoke", "seclvl-smoke",
         "ping-smoke", "httpsonly-smoke", "resourceblock-smoke",
         "fingerprint-smoke", "fingerprint-child-smoke",
         "fingerprint-inject-smoke", "fingerprint-inject-seed",
@@ -3815,7 +3818,9 @@ int main(int argc, char **argv)
     // until the listener is live; --tor-window-smoke takes the headless
     // verification path below instead.
     if (BrowserApplication::isTorMode()
-            && !args.contains(QLatin1String("--tor-window-smoke"))) {
+            && !args.contains(QLatin1String("--tor-window-smoke"))
+            && !args.contains(
+                   QLatin1String("--tor-circuit-click-smoke"))) {
         application.newMainWindow();
         return application.exec();
     }
@@ -11542,6 +11547,153 @@ int main(int argc, char **argv)
         // Bootstrap + two tor round-trips can take a while.
         QTimer::singleShot(240000, &application, [torWinFail]() {
             torWinFail(QLatin1String("timeout waiting for bootstrap/probe"));
+        });
+    }
+
+    // Headless reproduction/verification for TOR10: a real user click
+    // on the tor circuit button crashed the app.  Drive the exact
+    // press path — InstantPopup's mouse-press handler calls the
+    // QToolButton::showMenu() public slot — open/closed dozens of
+    // times while the daemon answers circuit/ns/geoip queries (the
+    // async circuitsChanged repopulates a VISIBLE menu), plus a leg
+    // with the control connection dead.  A SIGSEGV/SIGABRT handler
+    // dumps a backtrace so a crash attributes without gdb.  Use xvfb
+    // for real popup windows when available — offscreen refuses the
+    // popup grab but still drives the full populate/repopulate path.
+    // ARORA_TOR_BINARY=faketor.py makes it deterministic.  Exits 0 on
+    // PASS.
+    if (args.contains(QLatin1String("--tor-circuit-click-smoke"))) {
+        auto clickFail = [&application](const QString &why) {
+            qInfo() << "tor-circuit-click-smoke: FAIL" << why;
+            application.exit(1);
+        };
+#ifdef Q_OS_UNIX
+        auto crashDump = [](int signal) {
+            void *frames[64];
+            const int count = backtrace(frames, 64);
+            const QByteArray banner =
+                QByteArray("tor-circuit-click-smoke: CRASH signal ")
+                + QByteArray::number(signal) + '\n';
+            const ssize_t ignored =
+                ::write(STDERR_FILENO, banner.constData(),
+                        size_t(banner.size()));
+            Q_UNUSED(ignored);
+            backtrace_symbols_fd(frames, count, STDERR_FILENO);
+            _Exit(128 + signal);
+        };
+        std::signal(SIGSEGV, crashDump);
+        std::signal(SIGABRT, crashDump);
+        std::signal(SIGBUS, crashDump);
+#endif
+
+        TorManager *torManager = application.torManager();
+        if (!torManager) {
+            clickFail(QLatin1String("no TorManager — tor mode not armed"));
+            return application.exec();
+        }
+        BrowserMainWindow *torWindow = application.newMainWindow();
+        QToolButton *button = torWindow->findChild<QToolButton *>(
+            QLatin1String("torCircuitButton"));
+        if (!button || !button->menu()) {
+            clickFail(QLatin1String("no circuit dropdown button"));
+            return application.exec();
+        }
+        QMenu *menu = button->menu();
+        QObject::connect(torManager, &TorManager::failed,
+                         &application, clickFail);
+        QObject::connect(torManager, &TorManager::logLine,
+                         &application, [](const QString &line) {
+            qInfo() << "tor:" << line;
+        });
+
+        // Each beat opens the dropdown through the real press path —
+        // QToolButton::showMenu() is what InstantPopup's press handler
+        // calls — with a scheduled close, and interleaves the bare
+        // populate path the aboutToShow signal drives.  Beats are
+        // cheap when the platform refuses the popup (offscreen), so
+        // phases advance on manager state + minimum beat counts
+        // rather than wall time.
+        int *beat = new int(0);
+        int *deadBeats = new int(0);
+        int *phase = new int(0);
+        int *phaseBeat = new int(0);
+        QTimer *pacer = new QTimer(&application);
+        pacer->setSingleShot(true);
+        QObject::connect(pacer, &QTimer::timeout, &application,
+                         [&, beat, deadBeats, phase, phaseBeat]() mutable {
+            // Phase 0: bootstrap/connecting states.
+            // Phase 1: Ready — rows + live repopulate.
+            // Phase 2: dead control connection — honest state, no crash.
+            if (*phase == 0 && torManager->state() == TorManager::Ready) {
+                *phase = 1;
+                *phaseBeat = *beat;
+            }
+            if (++(*beat) > 3000) {
+                clickFail(QStringLiteral(
+                              "click pacer never finished — tor state %1")
+                          .arg(int(torManager->state())));
+                return;
+            }
+            const int dwell = (*beat % 4 == 0) ? 400 : 60;
+            QTimer::singleShot(dwell, menu, &QMenu::close);
+            if (*beat % 2)
+                QMetaObject::invokeMethod(button, "populateMenu");
+            if (*phase == 1 && *beat - *phaseBeat > 40) {
+                // Kill the control connection mid-run — the dropdown
+                // must degrade, not crash.
+                TorControl *control =
+                    torManager->findChild<TorControl *>();
+                if (control && control->isConnected())
+                    control->disconnectFromHost();
+                if (control && !control->isConnected()) {
+                    *phase = 2;
+                    qInfo() << "tor-circuit-click-smoke: control dropped,"
+                               " entering dead-control phase";
+                }
+            }
+            if (*phase == 2 && ++(*deadBeats) > 15) {
+                // Dead control must read an honest state — the
+                // unavailable/daemon-off section, never a stale hop
+                // chain, never a crash, never an empty menu.  The
+                // daemon also exits on owner disconnect
+                // (TAKEOWNERSHIP), so "not running" is a valid honest
+                // landing alongside "unavailable".
+                QMetaObject::invokeMethod(button, "populateMenu");
+                QString joined;
+                bool staleHopRow = false;
+                const QList<QAction *> actions = menu->actions();
+                for (const QAction *action : actions) {
+                    joined += action->text() + QLatin1Char(' ');
+                    const QString text = action->text();
+                    if (text.startsWith(QLatin1String("Guard:"))
+                            || text.startsWith(QLatin1String("Middle:"))
+                            || text.startsWith(QLatin1String("Exit:"))
+                            || text.startsWith(QLatin1String("Hop ")))
+                        staleHopRow = true;
+                }
+                const bool honest =
+                    joined.contains(QLatin1String("unavailable"),
+                                    Qt::CaseInsensitive)
+                    || joined.contains(QLatin1String("not running"),
+                                       Qt::CaseInsensitive);
+                if (staleHopRow || !honest) {
+                    clickFail(QLatin1String(
+                                  "dead control served a stale or "
+                                  "empty dropdown: ") + joined);
+                    return;
+                }
+                qInfo() << "tor-circuit-click-smoke: PASS"
+                        << *beat << "open/close cycles, no crash —"
+                        << joined.trimmed();
+                application.exit(0);
+                return;
+            }
+            button->showMenu();
+            pacer->start(30);
+        });
+        pacer->start(30);
+        QTimer::singleShot(240000, &application, [clickFail]() {
+            clickFail(QLatin1String("timeout"));
         });
     }
 

@@ -175,6 +175,11 @@ quint16 TorManager::socksPort() const
     return m_socksPort;
 }
 
+bool TorManager::controlConnected() const
+{
+    return m_control && m_control->isConnected();
+}
+
 QList<TorCircuit> TorManager::circuits() const
 {
     return m_circuits;
@@ -271,6 +276,16 @@ void TorManager::requestCircuitInfo()
                      [this](int code, const QStringList &lines) {
         m_circuits = (code == 250) ? parseCircuitStatus(lines)
                                    : QList<TorCircuit>();
+        // The connection can die between the two commands — a blind
+        // m_control->getInfo() here would queue a command that never
+        // completes and latch m_circuitQueryInFlight forever.
+        if (!controlConnected()) {
+            m_streamCircuitId = -1;
+            m_circuitQueryInFlight = false;
+            fillHopDetails();
+            emit circuitsChanged(m_circuits);
+            return;
+        }
         // stream-status maps StreamID -> CircID so the display prefers
         // the circuit the tabs' traffic actually rides; it queues
         // behind the circuit-status reply on the same connection.
@@ -372,8 +387,8 @@ void TorManager::resolveHopCountries()
             [this, fingerprint](int code, const QStringList &lines) {
             const QString address =
                 (code == 250) ? parseNsAddress(lines) : QString();
-            if (address.isEmpty()) {
-                finishHopCountryQuery(fingerprint, QString(),
+            if (address.isEmpty() || !controlConnected()) {
+                finishHopCountryQuery(fingerprint, address,
                                       QString());
                 return;
             }
@@ -607,6 +622,12 @@ void TorManager::onControlPortFile()
         connect(m_control, &TorControl::connected,
                 this, &TorManager::onControlConnected);
         connect(m_control, &TorControl::disconnected, this, [this]() {
+            // In-flight circuit/hop queries can never complete on a
+            // dead connection — release the coalesce flags or the next
+            // requestCircuitInfo is suppressed forever (the circuit
+            // surfaces would freeze on a stale snapshot).
+            m_circuitQueryInFlight = false;
+            m_countryQueriesInFlight.clear();
             // After TAKEOWNERSHIP a dropped control connection means
             // tor is already exiting — the process finished handler
             // settles the state.
@@ -728,6 +749,8 @@ void TorManager::stop()
         m_circuitRefreshTimer->stop();
     m_circuits.clear();
     m_streamCircuitId = -1;
+    m_circuitQueryInFlight = false;
+    m_countryQueriesInFlight.clear();
     if (m_control && m_control->isConnected())
         m_control->signalShutdown();
     if (m_process && m_process->state() != QProcess::NotRunning) {

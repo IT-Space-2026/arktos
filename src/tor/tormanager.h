@@ -124,6 +124,11 @@ public:
     QString bootstrapSummary() const;
     QNetworkProxy socksProxy() const;          // valid when Ready
     quint16 socksPort() const;                 // 0 until known
+    // TOR10: whether the control connection is actually live —
+    // state() can sit at Ready after the daemon drops the link, and
+    // the circuit surfaces must degrade honestly rather than serve a
+    // stale snapshot.
+    bool controlConnected() const;
 
     // TOR04: last parsed circuit-status snapshot (populated by
     // requestCircuitInfo(); the control connection also fires a

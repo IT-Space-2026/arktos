@@ -3323,6 +3323,8 @@ void TabWidget::loadSettings()
     m_tabBar->reloadTabHoverPreviews();
     // RSZ01: the horizontal min/max width bounds ride it too.
     m_tabBar->reloadTabWidths();
+    // TABS09: so does the icon-only view mode.
+    m_tabBar->reloadIconOnlyTabs();
 
     bool newTabButtonInRightCorner = settings.value(QLatin1String("newTabButtonInRightCorner"), true).toBool();
 #ifndef Q_OS_MACOS

@@ -105,6 +105,7 @@ private slots:
     void omniboxTabScope();
     void tabGroups();
     void pinnedTabs();
+    void iconOnlyTabStrip();
     void reopenClosedTab();
     void engineSwapStripState();
     void sleepingTabs();
@@ -164,6 +165,9 @@ void tst_TabWidget::cleanup()
     QSettings settings;
     settings.remove(QLatin1String("performance/lazyRestoreTabs"));
     settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+    // Same guard for the icon-only mode (TABS09) — a leaked key would
+    // pin every later test's strip to the icon tile width.
+    settings.remove(QLatin1String("tabs/iconOnlyTabs"));
 }
 
 void tst_TabWidget::tabwidget_data()
@@ -1684,6 +1688,76 @@ void tst_TabWidget::pinnedTabs()
     widget.closeTab();
     widget.closeTab();
     widget.closeTab();
+}
+
+// TABS09: the icon-only view mode on a real TabWidget — the shared
+// action collapses the strip to favicon tiles, group membership and
+// tab data stay untouched, new tabs inherit the mode, and the
+// loadSettings fan-out re-reads the persisted key.
+void tst_TabWidget::iconOnlyTabStrip()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("iconOnlyTabs"));
+
+    SubTabWidget widget;
+    for (int i = 0; i < 3; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 3);
+    const QString gid = widget.createTabGroup(0);
+    widget.addTabToGroup(1, gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+
+    widget.resize(720, 480);
+    widget.show();
+    QApplication::processEvents();
+    TabBar *bar = widget.bar();
+
+    const int plainWidth = bar->tabRect(2).width();
+    QVERIFY(plainWidth > 60);
+
+    QAction *action = bar->iconOnlyTabsAction();
+    QVERIFY(action);
+    action->trigger();
+    QApplication::processEvents();
+    QVERIFY(bar->iconOnlyTabs());
+    const int tile = bar->iconSize().width() + 20;
+    for (int i = 0; i < widget.count(); ++i)
+        QVERIFY2(bar->tabRect(i).width() <= tile + 8,
+                 qPrintable(QStringLiteral(
+                     "tab %1 stayed %2px wide in icon mode")
+                     .arg(i).arg(bar->tabRect(i).width())));
+    // Grouped members keep their membership — a view mode only.
+    QCOMPARE(widget.tabGroupId(0), gid);
+    QCOMPARE(widget.tabGroupId(1), gid);
+    QCOMPARE(widget.tabGroupSize(gid), 2);
+    // New tabs land inside the mode.
+    widget.newTab();
+    QApplication::processEvents();
+    QVERIFY(bar->tabRect(widget.count() - 1).width() <= tile + 8);
+
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip-icononly.png"));
+    }
+
+    // The loadSettings fan-out (the settings-save path) re-reads the
+    // key and restores the titled strip.
+    settings.setValue(QLatin1String("iconOnlyTabs"), false);
+    widget.loadSettings();
+    QApplication::processEvents();
+    QVERIFY(!bar->iconOnlyTabs());
+    QVERIFY(bar->tabRect(2).width() > tile + 8);
+
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip-titled.png"));
+    }
+
+    settings.remove(QLatin1String("iconOnlyTabs"));
+    settings.endGroup();
 }
 
 // TABS05: undo closed tab — a capped memory-only stack records each

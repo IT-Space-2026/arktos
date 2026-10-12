@@ -145,6 +145,19 @@ public:
     void setTabPreviewsEnabled(bool enabled);
     void reloadTabHoverPreviews();
 
+    // TABS09: tabs/iconOnlyTabs — a user-toggleable icon-only view
+    // mode.  Every tab renders at the pinned tile geometry (favicon
+    // only, the title stays on the tooltip); a strip-level view
+    // mode, so collapsed group chips keep their label and nothing
+    // on the tabs themselves changes.  iconOnlyTabsAction() is the
+    // shared checkable toggle (tab context menu + View menu); the
+    // write fans out to every window's bar and reloadIconOnlyTabs()
+    // is the loadSettings fan-out's re-read.
+    bool iconOnlyTabs() const;
+    void setIconOnlyTabs(bool enabled);
+    void reloadIconOnlyTabs();
+    QAction *iconOnlyTabsAction() const;
+
     // CONT06: the level-1 container-header band painted along the
     // strip's top edge when the TabWidget's two-level mode has more
     // than one container owning tabs.  The band is real height on the
@@ -185,6 +198,7 @@ private slots:
     void contextMenuRequested(const QPoint &position);
     void updateViewToolBarAction();
     void viewTabBar();
+    void toggleIconOnlyMode();
 
 private:
     void updateVisibility();
@@ -248,8 +262,11 @@ private:
     bool m_dragTracking;
     int m_draggedIndex;
     QAction *m_viewTabBarAction;
+    QAction *m_iconOnlyTabsAction;
     bool m_showTabBarWhenOneTab;
     bool m_perTabCloseButtons;
+    // TABS09: the persisted icon-only view mode — see the accessors.
+    bool m_iconOnlyTabs;
     int m_hoveredTab;
     // POL02: lazily-created hover card + its dwell timer.
     TabPreview *m_preview;

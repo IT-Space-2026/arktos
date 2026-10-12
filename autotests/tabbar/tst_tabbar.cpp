@@ -24,6 +24,7 @@
 #include <qinputdialog.h>
 #include <qmenu.h>
 #include <qmimedata.h>
+#include <qstyleoption.h>
 #include <tabbar.h>
 #include <tabpreview.h>
 #include <tabwidget.h>
@@ -72,6 +73,7 @@ private slots:
     void tabMouseAndDragEvents();
     void tabKeyShortcuts();
     void previewDwell();
+    void iconOnlyTabs();
 };
 
 // Subclass that exposes the protected functions.
@@ -125,6 +127,9 @@ public:
 
     QSize call_baseTabSizeHint(int index) const
         { return QTabBar::tabSizeHint(index); }
+
+    void call_initStyleOption(QStyleOptionTab *option, int tabIndex) const
+        { return SubTabBar::initStyleOption(option, tabIndex); }
 };
 
 // This will be called before the first test function is executed.
@@ -153,6 +158,11 @@ void tst_TabBar::init()
 // This will be called after every test function.
 void tst_TabBar::cleanup()
 {
+    // A mid-test QVERIFY exit would otherwise leak the icon-only key
+    // into the shared store — later tests' bars would build at the
+    // icon tile width and fail their geometry legs.
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/iconOnlyTabs"));
 }
 
 void tst_TabBar::tabbar_data()
@@ -1331,6 +1341,91 @@ void tst_TabBar::previewDwell()
                         QPointF(bar->tabRect(0).center()),
                         Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(bar, &release);
+}
+
+// TABS09: icon-only collapse — a persisted, bar-level view mode that
+// shrinks every tab to its favicon tile (the pinned geometry), keeps
+// the real title, restores on untoggle, and fans out to every live
+// strip.
+void tst_TabBar::iconOnlyTabs()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("iconOnlyTabs"));
+
+    SubTabBar bar;
+    bar.setPerTabCloseButtons(true);
+    // Non-expanding so tab rects land at their size hints.
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("a tab with a fairly long title"));
+    bar.addTab(QLatin1String("two"));
+    bar.addTab(QLatin1String("three"));
+    bar.resize(400, bar.sizeHint().height());
+    QApplication::processEvents();
+
+    QVERIFY(!bar.iconOnlyTabs());
+    QAction *action = bar.iconOnlyTabsAction();
+    QVERIFY(action);
+    QVERIFY(action->isCheckable());
+    QVERIFY(!action->isChecked());
+    const int iconWidth = bar.iconSize().width() + 20;
+    const int normalWidth = bar.call_tabSizeHint(0).width();
+    QVERIFY(normalWidth > iconWidth);
+    const int normalRect = bar.tabRect(0).width();
+
+    // Triggering the shared action collapses every tab to the
+    // favicon tile and persists the mode.
+    action->trigger();
+    QApplication::processEvents();
+    QVERIFY(bar.iconOnlyTabs());
+    QVERIFY(action->isChecked());
+    QCOMPARE(settings.value(QLatin1String("iconOnlyTabs")).toBool(),
+             true);
+    for (int i = 0; i < bar.count(); ++i)
+        QCOMPARE(bar.call_tabSizeHint(i).width(), iconWidth);
+    QVERIFY(bar.tabRect(0).width() <= iconWidth + 8);
+    QVERIFY(bar.tabRect(0).width() < normalRect);
+    // The painted option loses the title only — the tab's own text
+    // is untouched: a view mode, not a data change.
+    QStyleOptionTab option;
+    bar.call_initStyleOption(&option, 0);
+    QVERIFY(option.text.isEmpty());
+    QCOMPARE(bar.tabText(0),
+             QLatin1String("a tab with a fairly long title"));
+
+    // New tabs inherit the mode — it is the strip's, not the tab's.
+    bar.addTab(QLatin1String("four"));
+    QCOMPARE(bar.call_tabSizeHint(3).width(), iconWidth);
+
+    // A strip constructed while the key is set starts in the mode —
+    // the restart/persistence contract.
+    SubTabBar other;
+    QVERIFY(other.iconOnlyTabs());
+    QVERIFY(other.iconOnlyTabsAction()->isChecked());
+
+    // A vertical strip collapses to an icon rail of the same width.
+    SubTabBar vbar;
+    vbar.setShape(QTabBar::RoundedWest);
+    vbar.setExpanding(false);
+    vbar.addTab(QLatin1String("one"));
+    QVERIFY(vbar.iconOnlyTabs());
+    QCOMPARE(vbar.call_tabSizeHint(0).width(), iconWidth);
+
+    // Untoggling one bar fans the mode back out to every live strip.
+    action->trigger();
+    QApplication::processEvents();
+    QVERIFY(!bar.iconOnlyTabs());
+    QVERIFY(!action->isChecked());
+    QVERIFY(!other.iconOnlyTabs());
+    QVERIFY(!other.iconOnlyTabsAction()->isChecked());
+    QVERIFY(!vbar.iconOnlyTabs());
+    QCOMPARE(settings.value(QLatin1String("iconOnlyTabs")).toBool(),
+             false);
+    QCOMPARE(bar.call_tabSizeHint(0).width(), normalWidth);
+
+    settings.remove(QLatin1String("iconOnlyTabs"));
+    settings.endGroup();
 }
 
 QTEST_MAIN(tst_TabBar)

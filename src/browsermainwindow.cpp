@@ -967,6 +967,10 @@ void BrowserMainWindow::setupMenu()
     connect(viewTabBarAction, &QAction::toggled,
             m_autoSaver, &AutoSaver::changeOccurred);
 
+    // TABS09: the icon-only view mode is also reachable from the
+    // tab strip's context menu — the bar owns the shared action.
+    m_viewMenu->addAction(m_tabWidget->tabBar()->iconOnlyTabsAction());
+
     m_viewStatusbarAction = new QAction(m_viewMenu);
     connect(m_viewStatusbarAction, &QAction::triggered, this, &BrowserMainWindow::viewStatusbar);
     m_viewMenu->addAction(m_viewStatusbarAction);

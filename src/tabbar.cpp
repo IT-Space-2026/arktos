@@ -117,8 +117,10 @@ TabBar::TabBar(QWidget *parent)
     , m_dragTracking(false)
     , m_draggedIndex(-1)
     , m_viewTabBarAction(nullptr)
+    , m_iconOnlyTabsAction(nullptr)
     , m_showTabBarWhenOneTab(true)
     , m_perTabCloseButtons(false)
+    , m_iconOnlyTabs(false)
     , m_hoveredTab(-1)
     , m_preview(nullptr)
     , m_previewTimer(nullptr)
@@ -157,6 +159,17 @@ TabBar::TabBar(QWidget *parent)
     updateViewToolBarAction();
     connect(m_viewTabBarAction, &QAction::triggered,
             this, &TabBar::viewTabBar);
+
+    // TABS09: the icon-only view-mode toggle — one checkable action
+    // shared by the tab context menu and the window's View menu.
+    m_iconOnlyTabsAction = new QAction(this);
+    m_iconOnlyTabsAction->setCheckable(true);
+    m_iconOnlyTabsAction->setText(tr("Icon-Only Tabs"));
+    m_iconOnlyTabsAction->setToolTip(
+        tr("Collapse every tab to its favicon — titles stay on the "
+           "tooltips"));
+    connect(m_iconOnlyTabsAction, &QAction::triggered,
+            this, &TabBar::toggleIconOnlyMode);
 
     setMovable(true);
 
@@ -217,6 +230,8 @@ TabBar::TabBar(QWidget *parent)
     reloadTabHoverPreviews();
     // RSZ01: the persisted horizontal-strip width bounds.
     reloadTabWidths();
+    // TABS09: the persisted icon-only view mode.
+    reloadIconOnlyTabs();
 }
 
 bool TabBar::showTabBarWhenOneTab() const
@@ -646,6 +661,10 @@ void TabBar::contextMenuRequested(const QPoint &position)
     menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
     menu.addSeparator();
     menu.addAction(tabWidget->bookmarkTabsAction());
+    // TABS09: the icon-only view toggle is a strip-level entry — it
+    // is offered whether or not the click landed on a tab.
+    menu.addSeparator();
+    menu.addAction(m_iconOnlyTabsAction);
     menu.exec(QCursor::pos());
 }
 
@@ -1619,11 +1638,12 @@ void TabBar::paintEvent(QPaintEvent *event)
             option.shape = QTabBar::RoundedNorth;
             // initStyleOption already elided the text against the
             // vertical shape's narrow text rect — redo it for the
-            // row's width.  A pinned tab stays icon-only (group
-            // chips keep their pill label).
+            // row's width.  A pinned tab — or every tab under the
+            // icon-only view mode — stays icon-only (group chips
+            // keep their pill label).
             const TabWidget *tabWidget =
                 qobject_cast<TabWidget*>(parentWidget());
-            const bool iconOnly = isTabPinned(index)
+            const bool iconOnly = (isTabPinned(index) || m_iconOnlyTabs)
                 && !(tabWidget && tabWidget->isTabGroupChip(index));
             if (!iconOnly) {
                 const QRect textRect = style()->subElementRect(
@@ -1656,7 +1676,8 @@ void TabBar::paintEvent(QPaintEvent *event)
             option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
             const TabWidget *tabWidget =
                 qobject_cast<TabWidget*>(parentWidget());
-            const bool iconOnly = isTabPinned(m_pressedTabIndex)
+            const bool iconOnly = (isTabPinned(m_pressedTabIndex)
+                                   || m_iconOnlyTabs)
                 && !(tabWidget
                      && tabWidget->isTabGroupChip(m_pressedTabIndex));
             if (!iconOnly) {
@@ -1871,7 +1892,11 @@ void TabBar::paintEvent(QPaintEvent *event)
 
             // The name pill sits just inside the rail on the run's
             // first member — tabSizeHint() reserved its extent.
-            if (name.isEmpty() || !isFirstInGroupRun(index))
+            // TABS09: icon-only mode keeps the strip uniformly
+            // icon-sized — the accent rail still marks the group but
+            // the pill would only paint clipped over the favicon.
+            if (name.isEmpty() || !isFirstInGroupRun(index)
+                || m_iconOnlyTabs)
                 continue;
             const int pillWidth = QFontMetrics(chipFont)
                 .horizontalAdvance(name) + 12;
@@ -1927,8 +1952,9 @@ void TabBar::paintEvent(QPaintEvent *event)
 
 // TABS04: a pinned tab paints icon-only — the favicon label is a
 // tab-button widget and stays, the style just never sees the title.
-// A collapsed group's chip keeps its text: the pill IS the label and
-// a 36px tab could not carry it.
+// TABS09: the icon-only view mode does the same to every tab.
+// A collapsed group's chip keeps its text either way: the pill IS
+// the label and a 36px tab could not carry it.
 void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
 {
     QTabBar::initStyleOption(option, tabIndex);
@@ -1936,8 +1962,9 @@ void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
     // repaint, so don't cast again inside isTabPinned().
     const TabWidget *tabWidget =
         qobject_cast<TabWidget*>(parentWidget());
-    if (tabWidget && tabWidget->isTabPinned(tabIndex)
-            && !tabWidget->isTabGroupChip(tabIndex))
+    if ((m_iconOnlyTabs
+         || (tabWidget && tabWidget->isTabPinned(tabIndex)))
+            && !(tabWidget && tabWidget->isTabGroupChip(tabIndex)))
         option->text.clear();
     // TABS06: on horizontal bars the container name pill borrows the
     // title's trailing width — elide the title short of the pill so
@@ -1992,9 +2019,11 @@ QSize TabBar::tabSizeHint(int index) const
     if (verticalTabShape(shape())) {
         // Rows stay one text line tall — the bounded thickness above
         // is meaningless here since sizeHint.height() is the
-        // transposed row width for vertical shapes.
+        // transposed row width for vertical shapes.  TABS09: the
+        // icon-only mode drops the group pill's extra band — the pill
+        // is suppressed while the mode is on.
         int rowHeight = minThickness;
-        if (!gid.isEmpty()) {
+        if (!gid.isEmpty() && !m_iconOnlyTabs) {
             TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
             if (tabWidget && isFirstInGroupRun(index)
                 && !tabWidget->tabGroupName(gid).isEmpty())
@@ -2002,15 +2031,30 @@ QSize TabBar::tabSizeHint(int index) const
         }
         // TABS04: a pinned row keeps the strip's shared width and row
         // height — only its text is suppressed.
-        return QSize(m_verticalTabWidth + qMax(0, chip.width()),
+        // TABS09: the icon-only mode collapses the strip to an icon
+        // rail — a collapsed group's chip keeps room for its label,
+        // every other row shrinks to the favicon tile.
+        int rowWidth = m_verticalTabWidth;
+        if (m_iconOnlyTabs) {
+            rowWidth = iconSize().width() + 20;
+            TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
+            if (tabWidget && tabWidget->isTabGroupChip(index)) {
+                const int labelWidth = QFontMetrics(containerChipFont())
+                    .horizontalAdvance(groupChipLabel(index)) + 28;
+                rowWidth = qMin(m_verticalTabWidth,
+                                qMax(rowWidth, labelWidth));
+            }
+        }
+        return QSize(rowWidth + qMax(0, chip.width()),
                      rowHeight + qMax(0, chip.height()));
     }
-    // TABS04: a pinned tab shrinks to the favicon and its margins —
-    // the close button is hidden and the title is not painted.
-    const TabWidget *pinnedOwner =
+    // TABS04/TABS09: a pinned tab — or every tab under the icon-only
+    // view mode — shrinks to the favicon and its margins; a collapsed
+    // group's chip keeps its label-driven size below.
+    const TabWidget *tabOwner =
         qobject_cast<TabWidget*>(parentWidget());
-    if (pinnedOwner && pinnedOwner->isTabPinned(index)
-            && !pinnedOwner->isTabGroupChip(index)) {
+    if ((m_iconOnlyTabs || (tabOwner && tabOwner->isTabPinned(index)))
+            && !(tabOwner && tabOwner->isTabGroupChip(index))) {
         return QSize(iconSize().width() + 20,
                      thickness + chip.height());
     }
@@ -2052,8 +2096,10 @@ QSize TabBar::minimumTabSizeHint(int index) const
 {
     // TABS02: rows never compress below their line height — when the
     // strip overflows, the scroll buttons take over.
-    // TABS04: neither does a pinned tab — icon-only IS its minimum.
-    if (verticalTabShape(shape()) || isTabPinned(index))
+    // TABS04/TABS09: neither does an icon-sized tab — icon-only IS
+    // its minimum.
+    if (verticalTabShape(shape()) || isTabPinned(index)
+        || m_iconOnlyTabs)
         return tabSizeHint(index);
     // RSZ01: a configured floor overrides the style's squeeze
     // minimum — tabs never lay out narrower than tabs/tabMinWidth.
@@ -2363,6 +2409,54 @@ void TabBar::reloadTabHoverPreviews()
     settings.beginGroup(QLatin1String("tabs"));
     setTabPreviewsEnabled(
         settings.value(QLatin1String("tabHoverPreviews"), true).toBool());
+}
+
+bool TabBar::iconOnlyTabs() const
+{
+    return m_iconOnlyTabs;
+}
+
+QAction *TabBar::iconOnlyTabsAction() const
+{
+    return m_iconOnlyTabsAction;
+}
+
+// The action's trigger is the only writer — the bar applies it, the
+// persisted key fans out to every window's strip (persistStripSize's
+// all-widgets pattern), so a flip on one window reaches them all.
+void TabBar::toggleIconOnlyMode()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("iconOnlyTabs"), !m_iconOnlyTabs);
+    const QWidgetList widgets = qApp->allWidgets();
+    for (QWidget *widget : widgets) {
+        TabBar *bar = qobject_cast<TabBar*>(widget);
+        if (bar)
+            bar->reloadIconOnlyTabs();
+    }
+}
+
+void TabBar::setIconOnlyTabs(bool enabled)
+{
+    if (m_iconOnlyTabs == enabled)
+        return;
+    m_iconOnlyTabs = enabled;
+    m_iconOnlyTabsAction->setChecked(enabled);
+    // Same layout re-arm setVerticalTabWidth()/setTabStripHeight()
+    // use — every tab's width hint flipped, so the strip re-plans.
+    setIconSize(iconSize());
+    if (QWidget *tabWidget = parentWidget())
+        tabWidget->updateGeometry();
+    update();
+}
+
+void TabBar::reloadIconOnlyTabs()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    setIconOnlyTabs(
+        settings.value(QLatin1String("iconOnlyTabs"), false).toBool());
 }
 
 void TabBar::reloadTab()

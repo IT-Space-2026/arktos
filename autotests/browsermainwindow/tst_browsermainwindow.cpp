@@ -131,6 +131,7 @@ private slots:
     void fileMenuOrder();
     void downloadsMenuHome();
     void devToolsSubmenu();
+    void iconOnlyTabsMenu();
     void stateSerialization();
     void events();
     void printPaths();
@@ -746,6 +747,44 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     QCOMPARE(entries.size(), 1);
     closeWindow(window);
 #endif
+}
+
+// TABS09: the icon-only view mode is a checkable entry in the View
+// menu — the same QAction the tab context menu offers, toggling the
+// bar's mode live.
+void tst_BrowserMainWindow::iconOnlyTabsMenu()
+{
+    SubWindow *window = new SubWindow;
+    window->show();
+
+    QMenu *viewMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("View")))
+            viewMenu = menuAction->menu();
+    }
+    QVERIFY(viewMenu);
+    QAction *iconOnly = nullptr;
+    for (QAction *action : viewMenu->actions()) {
+        if (action->text().remove(QLatin1Char('&'))
+                == QLatin1String("Icon-Only Tabs"))
+            iconOnly = action;
+    }
+    QVERIFY(iconOnly);
+    QVERIFY(iconOnly->isCheckable());
+
+    TabBar *bar = window->tabWidget()->tabBar();
+    QVERIFY(!bar->iconOnlyTabs());
+    iconOnly->trigger();
+    QVERIFY(bar->iconOnlyTabs());
+    QVERIFY(iconOnly->isChecked());
+    iconOnly->trigger();
+    QVERIFY(!bar->iconOnlyTabs());
+    QVERIFY(!iconOnly->isChecked());
+
+    QSettings settings;
+    settings.remove(QLatin1String("tabs/iconOnlyTabs"));
+    closeWindow(window);
 }
 
 // saveState/restoreState serialize the window+tab layout.
