@@ -96,6 +96,7 @@
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
+#include "torcircuitbutton.h"
 #include "tormanager.h"
 #include "useragentmenu.h"
 #include "webenginebackend.h"
@@ -175,6 +176,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_navigationSplitter(nullptr)
     , m_readerModeButton(nullptr)
     , m_navReaderAction(nullptr)
+    , m_torCircuitButton(nullptr)
     , m_toolbarSearch(nullptr)
 #if defined(Q_OS_MACOS)
     , m_bookmarksToolbarFrame(0)
@@ -232,6 +234,14 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         readerPalette.setColor(QPalette::ButtonText,
                                QColor(238, 238, 238));
         m_readerModeButton->setPalette(readerPalette);
+        // TOR08: same lift for the circuit button's painted onion —
+        // its PaletteChange handler repaints the glyph.
+        if (m_torCircuitButton) {
+            QPalette circuitPalette = m_torCircuitButton->palette();
+            circuitPalette.setColor(QPalette::ButtonText,
+                                    QColor(238, 238, 238));
+            m_torCircuitButton->setPalette(circuitPalette);
+        }
 
         // ICONS04: the violet bar sits on the application's light
         // palette, so themed icons resolve their dark-glyph variants —
@@ -1518,6 +1528,20 @@ void BrowserMainWindow::setupToolBar()
     m_navReaderAction = m_navigationBar->addWidget(m_readerModeButton);
     m_navReaderAction->setVisible(false);
     m_navReaderAction->setEnabled(true);
+
+    // TOR08: the tor circuit dropdown — a small onion button next to
+    // the reader-mode button whose menu lists the live circuit's hops
+    // with country flags and names.  Tor windows only; a normal
+    // window never constructs it, so no circuit surface exists there
+    // at all.
+    if (BrowserApplication::isTorMode()) {
+        BrowserApplication *app = BrowserApplication::instance();
+        m_torCircuitButton = new TorCircuitButton(
+            app ? app->torManager() : nullptr, m_navigationBar);
+        m_torCircuitButton->setObjectName(
+            QLatin1String("torCircuitButton"));
+        m_navigationBar->addWidget(m_torCircuitButton);
+    }
 
     m_navigationSplitter = new QSplitter(m_navigationBar);
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());

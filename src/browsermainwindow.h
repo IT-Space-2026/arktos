@@ -75,6 +75,7 @@ class ReaderButton;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
+class TorCircuitButton;
 class WebView;
 class QSplitter;
 class QFrame;
@@ -298,6 +299,9 @@ private:
     QSplitter *m_navigationSplitter;
     ReaderButton *m_readerModeButton;
     QAction *m_navReaderAction;
+    // TOR08: circuit dropdown next to the reader button — tor windows
+    // only, never constructed otherwise.
+    TorCircuitButton *m_torCircuitButton;
     ToolbarSearch *m_toolbarSearch;
 #if defined(Q_OS_MACOS)
     QFrame *m_bookmarksToolbarFrame;

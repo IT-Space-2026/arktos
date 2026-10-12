@@ -71,6 +71,8 @@
 #include "webviewsearch.h"
 #include "locationbar.h"
 #include "toolbarsearch.h"
+#include "torcircuitbutton.h"
+#include "tormanager.h"
 #include "downloadmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
@@ -128,6 +130,7 @@ private slots:
     void torTabStripLayout();
     void torChromeTheme();
     void torNavIconsDarkChrome();
+    void torCircuitDropdown();
     void readerModeButton();
     void statusBarWidgets();
     void statusBarIndicators();
@@ -1166,6 +1169,150 @@ void tst_BrowserMainWindow::torNavIconsDarkChrome()
     QVERIFY(torForward > 140);
     QVERIFY(torReload > 140);
     QVERIFY(menuReload >= 0 && menuReload < 140);
+}
+
+// TOR08: the tor window's nav bar carries a circuit dropdown right
+// after the reader button — a painted onion whose menu lists the
+// displayed circuit's hops as flag rows with country names.  Normal
+// windows never construct it (no circuit surface at all); without a
+// daemon the button greys out and the menu reports the state.
+void tst_BrowserMainWindow::torCircuitDropdown()
+{
+    // Helper surface: ISO-name table, flag icons, fabricated-circuit
+    // rows — all static so no daemon is needed.
+    QCOMPARE(TorCircuitButton::countryName(QLatin1String("de")),
+             QLatin1String("Germany"));
+    QCOMPARE(TorCircuitButton::countryName(QLatin1String(" US ")),
+             QLatin1String("United States"));
+    QVERIFY(TorCircuitButton::countryName(QLatin1String("ZZ")).isEmpty());
+    QVERIFY(TorCircuitButton::countryName(QString()).isEmpty());
+    QVERIFY(!TorCircuitButton::flagIcon(QLatin1String("de")).isNull());
+    QVERIFY(!TorCircuitButton::flagIcon(QString()).isNull());
+    QCOMPARE(TorCircuitButton::hopText(TorCircuitHop(), 1, 3),
+             QStringLiteral("Middle:  — Unknown"));
+
+    TorCircuit circuit;
+    circuit.id = 7;
+    circuit.status = QLatin1String("BUILT");
+    circuit.purpose = QLatin1String("GENERAL");
+    TorCircuitHop guard;
+    guard.fingerprint = QStringLiteral("AAAABBBBCCCCDDDDEEEEFFFF0000111122223333");
+    guard.nickname = QLatin1String("ElToro");
+    guard.country = QLatin1String("GB");
+    guard.address = QLatin1String("1.2.3.4");
+    TorCircuitHop middle;
+    middle.fingerprint = QStringLiteral("BBBBCCCCDDDDEEEEFFFF00001111222233334444");
+    middle.nickname = QLatin1String("Nightingali");
+    middle.country = QLatin1String("DE");
+    TorCircuitHop exit;
+    exit.fingerprint = QStringLiteral("CCCCDDDDEEEEFFFF000011112222333344445555");
+    exit.nickname = QLatin1String("elefant");
+    exit.country = QLatin1String("AT");
+    circuit.hops << guard << middle << exit;
+
+    QMenu menu;
+    QVERIFY(TorCircuitButton::addCircuitRows(&menu,
+                                             QList<TorCircuit>() << circuit,
+                                             7));
+    const QList<QAction *> rows = menu.actions();
+    QCOMPARE(rows.count(), 4);            // header section + 3 hops
+    QCOMPARE(rows.at(1)->text(),
+             QStringLiteral("Guard: ElToro — United Kingdom"));
+    QCOMPARE(rows.at(2)->text(),
+             QStringLiteral("Middle: Nightingali — Germany"));
+    QCOMPARE(rows.at(3)->text(),
+             QStringLiteral("Exit: elefant — Austria"));
+    for (int i = 1; i < rows.count(); ++i) {
+        QVERIFY(!rows.at(i)->icon().isNull());
+        QVERIFY(rows.at(i)->isEnabled());
+    }
+    QVERIFY(rows.at(1)->toolTip().contains(QLatin1String("1.2.3.4")));
+    QVERIFY(rows.at(1)->toolTip().contains(guard.fingerprint));
+    // A display id with no matching circuit yields no rows.
+    QMenu emptyMenu;
+    QVERIFY(!TorCircuitButton::addCircuitRows(&emptyMenu,
+                                            QList<TorCircuit>() << circuit,
+                                            99));
+
+    // Normal window: no button at all.
+    SubWindow *plain = new SubWindow;
+    plain->show();
+    QVERIFY(!plain->findChild<QToolButton *>(
+                QLatin1String("torCircuitButton")));
+    closeWindow(plain);
+
+    // Collect state first — a mid-test QVERIFY abort must not leave
+    // tor mode armed for the remaining functions.
+    BrowserApplication::setTorMode(true);
+    SubWindow *window = new SubWindow;
+    window->show();
+    QApplication::processEvents();
+
+    QToolButton *button = window->findChild<QToolButton *>(
+        QLatin1String("torCircuitButton"));
+    QToolBar *navBar = window->findChild<QToolBar *>(
+        QLatin1String("NavigationToolBar"));
+    int readerIndex = -1;
+    int circuitIndex = -1;
+    if (navBar) {
+        const QList<QAction *> actions = navBar->actions();
+        for (int i = 0; i < actions.count(); ++i) {
+            QWidget *widget = navBar->widgetForAction(actions.at(i));
+            if (widget
+                    && widget->objectName()
+                           == QLatin1String("navReaderButton"))
+                readerIndex = i;
+            if (widget == button)
+                circuitIndex = i;
+        }
+    }
+    // No TorManager in the autotest — the button greys out and its
+    // menu reports the missing control connection.
+    const bool greyed = button && !button->isEnabled();
+    QMenu *dropMenu = button ? button->menu() : nullptr;
+    QStringList stateTexts;
+    if (dropMenu
+            && QMetaObject::invokeMethod(button, "populateMenu")) {
+        for (QAction *action : dropMenu->actions())
+            stateTexts << action->text();
+    }
+
+    // Offscreen grabs for visual review — set ARORA_TOR_GRAB_DIR to a
+    // directory and the nav bar, flag glyphs and a fabricated circuit
+    // menu land there.
+    const QByteArray grabDir = qgetenv("ARORA_TOR_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        const QString dir = QString::fromLocal8Bit(grabDir);
+        QDir().mkpath(dir);
+        if (navBar)
+            navBar->grab().save(dir + QLatin1String(
+                "/tor-circuit-button.png"));
+        TorCircuitButton::flagIcon(QLatin1String("de"))
+            .pixmap(QSize(64, 64)).save(dir + QLatin1String(
+                "/flag-de.png"));
+        TorCircuitButton::flagIcon(QLatin1String("gb"))
+            .pixmap(QSize(64, 64)).save(dir + QLatin1String(
+                "/flag-gb.png"));
+        TorCircuitButton::flagIcon(QString())
+            .pixmap(QSize(64, 64)).save(dir + QLatin1String(
+                "/flag-unknown.png"));
+        menu.popup(window->geometry().center());
+        QApplication::processEvents();
+        menu.grab().save(dir + QLatin1String("/circuit-menu.png"));
+        menu.hide();
+    }
+
+    closeWindow(window);
+    BrowserApplication::setTorMode(false);
+
+    QVERIFY(button);
+    QVERIFY(dropMenu);
+    QCOMPARE(readerIndex, 3);             // back, forward, reload, reader
+    QCOMPARE(circuitIndex, 4);            // onion right next to it
+    QVERIFY(greyed);
+    QCOMPARE(stateTexts.count(), 1);
+    QVERIFY(stateTexts.at(0).contains(
+        QLatin1String("unavailable"), Qt::CaseInsensitive));
 }
 
 // READ02: the navigation toolbar carries a reader-mode toggle between

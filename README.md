@@ -163,7 +163,10 @@ Tor-aware rules (no direct-connection fallbacks, no extension loads,
 no suggestions, no dedicated search box — the omnibox covers it).
 The status bar shows the live circuit's hop chain
 (guard -> middle -> exit, each hop tagged with its country code,
-fingerprints on hover).
+fingerprints on hover), and a small onion button next to the
+reader-mode icon opens a dropdown of the same circuit — one row per
+hop with country flag and name, fingerprints and OR addresses on
+hover.
 
 ### Downloads
 
