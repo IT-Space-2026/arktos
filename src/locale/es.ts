@@ -9,7 +9,7 @@
     </message>
     <message>
         <source>Lightweight WebEngine-based web browser</source>
-        <translation type="unfinished"></translation>
+        <translation>Navegador ligero basado en WebEngine</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -19,7 +19,13 @@ p, li { white-space: pre-wrap; }
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot;font-size:9pt;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2007-2010 Benjamin C. Meyer &amp;lt;&lt;a href=&quot;mailto:ben@meyerhome.net&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;ben@meyerhome.net&lt;/span&gt;&lt;/a&gt;&amp;gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Copyright © 2026-2027 Janos Szenfner&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;a href=&quot;https://github.com/janos-szenfner/arora&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0057ae;&quot;&gt;https://github.com/janos-szenfner/arora&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <source>&lt;a href=&quot;http://arora-browser.org&quot;&gt;http://arora-browser.org&lt;/a&gt;</source>
@@ -43,7 +49,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Qt version: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Versión de Qt: %1</translation>
     </message>
     <message>
         <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
@@ -112,7 +118,7 @@ p, li { white-space: pre-wrap; }(new line)
     </message>
     <message>
         <source>Preset Filter Lists...</source>
-        <translation type="unfinished"></translation>
+        <translation>Listas de filtros predefinidas...</translation>
     </message>
     <message>
         <source>Browse Subscriptions...</source>
@@ -124,12 +130,13 @@ p, li { white-space: pre-wrap; }(new line)
     </message>
     <message>
         <source>Never</source>
-        <translation type="unfinished">Nunca</translation>
+        <translation>Nunca</translation>
     </message>
     <message>
         <source>%1
 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1
+%2</translation>
     </message>
     <message>
         <source>AdBlock Configuration</source>
@@ -141,31 +148,31 @@ p, li { white-space: pre-wrap; }(new line)
     </message>
     <message>
         <source>Filter Subscriptions</source>
-        <translation type="unfinished"></translation>
+        <translation>Subscripciones de filtros</translation>
     </message>
     <message>
         <source>Filter list subscriptions</source>
-        <translation type="unfinished"></translation>
+        <translation>Subscripciones a listas de filtros</translation>
     </message>
     <message>
         <source>Subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Subscripción</translation>
     </message>
     <message>
         <source>Rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Reglas</translation>
     </message>
     <message>
         <source>Last Update</source>
-        <translation type="unfinished"></translation>
+        <translation>Última actualización</translation>
     </message>
     <message>
         <source>Update Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizar ahora</translation>
     </message>
     <message>
         <source>Remove</source>
-        <translation type="unfinished">Eliminar</translation>
+        <translation>Eliminar</translation>
     </message>
     <message>
         <source>Action</source>
@@ -173,40 +180,42 @@ p, li { white-space: pre-wrap; }(new line)
     </message>
     <message>
         <source>Show rules in the selected list</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar las reglas de la lista seleccionada</translation>
     </message>
     <message>
         <source>Filter displayed rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtrar las reglas mostradas</translation>
     </message>
     <message>
         <source>Rules in the selected subscription</source>
-        <translation type="unfinished"></translation>
+        <translation>Reglas de la subscripción seleccionada</translation>
     </message>
     <message>
         <source>Custom Rules</source>
-        <translation type="unfinished">Reglas personalizadas</translation>
+        <translation>Reglas personalizadas</translation>
     </message>
     <message>
         <source>One rule per line. Lines starting with ! are comments.</source>
-        <translation type="unfinished"></translation>
+        <translation>Una regla por línea. Las líneas que comienzan con ! son comentarios.</translation>
     </message>
     <message>
         <source>Custom ad blocking rules</source>
-        <translation type="unfinished"></translation>
+        <translation>Reglas personalizadas de bloqueo de anuncios</translation>
     </message>
 </context>
 <context>
     <name>AdBlockManager</name>
     <message>
         <source>Download Ad-Blocking Filter Lists?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Descargar las listas de filtros de bloqueo de anuncios?</translation>
     </message>
     <message>
         <source>Arora is configured to block ads and trackers using the community filter lists EasyList, EasyPrivacy, and uBlock filters. Enabling them downloads the lists once from easylist.to and ublockorigin.github.io and refreshes them about once a week.
 
 Until you choose, no list downloads are made and the blocker simply has no remote rules. You can change this later under Tools &gt; Ad Block.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora está configurado para bloquear anuncios y rastreadores usando las listas de filtros comunitarias EasyList, EasyPrivacy y uBlock filters. Al activarlas se descargan las listas una vez desde easylist.to y ublockorigin.github.io y se actualizan aproximadamente una vez por semana.
+
+Hasta que decida, no se descarga ninguna lista y el bloqueador simplemente no tiene reglas remotas. Puede cambiarlo después en Herramientas &gt; AdBlock.</translation>
     </message>
     <message>
         <source>Custom Rules</source>
@@ -224,110 +233,110 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>AdBlockPresets</name>
     <message>
         <source>Core &amp; Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>Esenciales y privacidad</translation>
     </message>
     <message>
         <source>Annoyances</source>
-        <translation type="unfinished"></translation>
+        <translation>Molestias</translation>
     </message>
     <message>
         <source>Security</source>
-        <translation type="unfinished"></translation>
+        <translation>Seguridad</translation>
     </message>
     <message>
         <source>Resource Abuse &amp; Mining</source>
-        <translation type="unfinished"></translation>
+        <translation>Abuso de recursos y minería</translation>
     </message>
     <message>
         <source>Regional</source>
-        <translation type="unfinished"></translation>
+        <translation>Regionales</translation>
     </message>
     <message>
         <source>uBlock Origin&apos;s own tracking-protection rules, complementing EasyPrivacy.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las reglas propias de protección contra el rastreo de uBlock Origin, que complementan a EasyPrivacy.</translation>
     </message>
     <message>
         <source>Repairs site breakage caused by the other filter lists.</source>
-        <translation type="unfinished"></translation>
+        <translation>Repara los fallos en los sitios causados por las otras listas de filtros.</translation>
     </message>
     <message>
         <source>Fast-shipping fixes for urgent filter issues.</source>
-        <translation type="unfinished"></translation>
+        <translation>Correcciones de distribución rápida para problemas urgentes de los filtros.</translation>
     </message>
     <message>
         <source>Blocks pop-ups, newsletter prompts, and other annoyances (the old Fanboy&apos;s Annoyances).</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquea ventanas emergentes, avisos de suscripción a boletines y otras molestias (la antigua Fanboy's Annoyances).</translation>
     </message>
     <message>
         <source>Hides cookie-consent banners and GDPR notice pop-ups.</source>
-        <translation type="unfinished"></translation>
+        <translation>Oculta los banners de consentimiento de cookies y las ventanas emergentes de avisos del RGPD.</translation>
     </message>
     <message>
         <source>Removes social-media share buttons, widgets, and embedded feeds.</source>
-        <translation type="unfinished"></translation>
+        <translation>Elimina los botones de compartir en redes sociales, los widgets y los canales incrustados.</translation>
     </message>
     <message>
         <source>uBlock Origin&apos;s cookie-banner rules; can be combined with EasyList Cookie Notices.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las reglas de uBlock Origin para banners de cookies; se puede combinar con EasyList Cookie Notices.</translation>
     </message>
     <message>
         <source>uBlock Origin rules for overlays and other interruptions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Reglas de uBlock Origin para elementos superpuestos y otras interrupciones.</translation>
     </message>
     <message>
         <source>Bypasses annoying link-shortener interstitials.</source>
-        <translation type="unfinished"></translation>
+        <translation>Evita las molestas páginas intermedias de los acortadores de enlaces.</translation>
     </message>
     <message>
         <source>Blocks domains known to distribute malware and unwanted software.</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquea los dominios conocidos por distribuir malware y software no deseado.</translation>
     </message>
     <message>
         <source>Live abuse.ch URLhaus feed of URLs currently serving malware.</source>
-        <translation type="unfinished"></translation>
+        <translation>Fuente en vivo de abuse.ch URLhaus con las URL que sirven malware actualmente.</translation>
     </message>
     <message>
         <source>Curated phishing-domain blocklist (the maintained successor to phishing.army).</source>
-        <translation type="unfinished"></translation>
+        <translation>Lista de bloqueo de dominios de phishing seleccionada (el sucesor mantenido de phishing.army).</translation>
     </message>
     <message>
         <source>Blocks sites that secretly abuse CPU/bandwidth, e.g. crypto miners (NoCoin successor).</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquea los sitios que abusan en secreto de la CPU/el ancho de banda, p. ej. criptomineros (sucesor de NoCoin).</translation>
     </message>
     <message>
         <source>Dedicated browser crypto-mining blocklist, community maintained.</source>
-        <translation type="unfinished"></translation>
+        <translation>Lista de bloqueo dedicada a la criptominería en el navegador, mantenida por la comunidad.</translation>
     </message>
     <message>
         <source>German-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cobertura de sitios en alemán.</translation>
     </message>
     <message>
         <source>French-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cobertura de sitios en francés.</translation>
     </message>
     <message>
         <source>Russian-language site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cobertura de sitios en ruso.</translation>
     </message>
     <message>
         <source>Czech and Slovak site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cobertura de sitios checos y eslovacos.</translation>
     </message>
     <message>
         <source>Lithuanian site coverage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cobertura de sitios lituanos.</translation>
     </message>
 </context>
 <context>
     <name>AdBlockPresetsDialog</name>
     <message>
         <source>Filter List Presets</source>
-        <translation type="unfinished"></translation>
+        <translation>Listas de filtros predefinidas</translation>
     </message>
     <message>
         <source>Tick a list to subscribe to it; Arora downloads it once and refreshes it about once a week. Unticking disables the subscription. Lists already subscribed to (including the defaults) show as ticked.</source>
-        <translation type="unfinished"></translation>
+        <translation>Marque una lista para subscribirse a ella; Arora la descarga una vez y la actualiza aproximadamente una vez por semana. Desmarcarla desactiva la subscripción. Las listas a las que ya está subscrito (incluidas las predeterminadas) aparecen marcadas.</translation>
     </message>
 </context>
 <context>
@@ -355,15 +364,15 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Bookmark name</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre del marcador</translation>
     </message>
     <message>
         <source>Bookmark address</source>
-        <translation type="unfinished"></translation>
+        <translation>Dirección del marcador</translation>
     </message>
     <message>
         <source>Bookmark folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Carpeta de marcadores</translation>
     </message>
     <message>
         <source>Url</source>
@@ -382,66 +391,66 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>AddressDialog</name>
     <message>
         <source>Add Address</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir dirección</translation>
     </message>
     <message>
         <source>Country:</source>
-        <translation type="unfinished"></translation>
+        <translation>País:</translation>
     </message>
     <message>
         <source>Country</source>
-        <translation type="unfinished"></translation>
+        <translation>País</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre:</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Nombre</translation>
+        <translation>Nombre</translation>
     </message>
     <message>
         <source>Organization:</source>
-        <translation type="unfinished"></translation>
+        <translation>Organización:</translation>
     </message>
     <message>
         <source>Organization</source>
-        <translation type="unfinished"></translation>
+        <translation>Organización</translation>
     </message>
     <message>
         <source>Street address:</source>
-        <translation type="unfinished"></translation>
+        <translation>Dirección:</translation>
     </message>
     <message>
         <source>Street address</source>
-        <translation type="unfinished"></translation>
+        <translation>Dirección</translation>
     </message>
     <message>
         <source>City</source>
-        <translation type="unfinished"></translation>
+        <translation>Ciudad</translation>
     </message>
     <message>
         <source>State</source>
-        <translation type="unfinished"></translation>
+        <translation>Provincia</translation>
     </message>
     <message>
         <source>ZIP code</source>
-        <translation type="unfinished"></translation>
+        <translation>Código postal</translation>
     </message>
     <message>
         <source>Phone</source>
-        <translation type="unfinished"></translation>
+        <translation>Teléfono</translation>
     </message>
     <message>
         <source>Email</source>
-        <translation type="unfinished"></translation>
+        <translation>Correo electrónico</translation>
     </message>
 </context>
 <context>
     <name>AroraIcon</name>
     <message>
         <source>Native</source>
-        <translation type="unfinished"></translation>
+        <translation>Nativo</translation>
     </message>
 </context>
 <context>
@@ -452,11 +461,11 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Search saved form data</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar en los datos de formularios guardados</translation>
     </message>
     <message>
         <source>Saved form data</source>
-        <translation type="unfinished"></translation>
+        <translation>Datos de formularios guardados</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -475,7 +484,7 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>&lt;b&gt;Would you like to save this password?&lt;/b&gt;&lt;br&gt;     To review passwords you have saved and remove them, open the AutoFill panel of preferences.</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;¿Desea guardar esta contraseña?&lt;/b&gt;&lt;br&gt;     Para revisar las contraseñas que ha guardado y eliminarlas, abra el panel Autocompletar de las preferencias.</translation>
     </message>
     <message>
         <source>Never for this site</source>
@@ -501,122 +510,122 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     <name>BidiClient</name>
     <message>
         <source>Debug channel is disabled in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>El canal de depuración está desactivado en las ventanas Tor.</translation>
     </message>
     <message>
         <source>Debug channel is disabled (devtools/bidiBackend).</source>
-        <translation type="unfinished"></translation>
+        <translation>El canal de depuración está desactivado (devtools/bidiBackend).</translation>
     </message>
     <message>
         <source>Built without rustcore — no BiDi backend.</source>
-        <translation type="unfinished"></translation>
+        <translation>Compilado sin rustcore — no hay backend BiDi.</translation>
     </message>
     <message>
         <source>Could not connect to the debug channel: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>No se pudo conectar al canal de depuración: %1</translation>
     </message>
 </context>
 <context>
     <name>BidiPanel</name>
     <message>
         <source>Development Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>Herramientas de desarrollo</translation>
     </message>
     <message>
         <source>Evaluate JavaScript in the selected context</source>
-        <translation type="unfinished"></translation>
+        <translation>Evaluar JavaScript en el contexto seleccionado</translation>
     </message>
     <message>
         <source>Console</source>
-        <translation type="unfinished"></translation>
+        <translation>Consola</translation>
     </message>
     <message>
         <source>DOM</source>
-        <translation type="unfinished"></translation>
+        <translation>DOM</translation>
     </message>
     <message>
         <source>Method</source>
-        <translation type="unfinished">Método</translation>
+        <translation>Método</translation>
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished"></translation>
+        <translation>Estado</translation>
     </message>
     <message>
         <source>State</source>
-        <translation type="unfinished"></translation>
+        <translation>Estado</translation>
     </message>
     <message>
         <source>URL</source>
-        <translation type="unfinished"></translation>
+        <translation>URL</translation>
     </message>
     <message>
         <source>Network</source>
-        <translation type="unfinished"></translation>
+        <translation>Red</translation>
     </message>
     <message>
         <source>Cookies</source>
-        <translation type="unfinished">Cookies</translation>
+        <translation>Cookies</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Nombre</translation>
+        <translation>Nombre</translation>
     </message>
     <message>
         <source>Value</source>
-        <translation type="unfinished">Valor</translation>
+        <translation>Valor</translation>
     </message>
     <message>
         <source>Domain</source>
-        <translation type="unfinished"></translation>
+        <translation>Dominio</translation>
     </message>
     <message>
         <source>Path</source>
-        <translation type="unfinished">Ruta</translation>
+        <translation>Ruta</translation>
     </message>
     <message>
         <source>Local Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacenamiento local</translation>
     </message>
     <message>
         <source>Refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizar</translation>
     </message>
     <message>
         <source>Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clave</translation>
     </message>
     <message>
         <source>Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacenamiento</translation>
     </message>
     <message>
         <source>Debug channel not connected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Canal de depuración no conectado.</translation>
     </message>
     <message>
         <source>Debug channel disconnected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Canal de depuración desconectado.</translation>
     </message>
     <message>
         <source>loading…</source>
-        <translation type="unfinished"></translation>
+        <translation>cargando…</translation>
     </message>
     <message>
         <source>pending</source>
-        <translation type="unfinished"></translation>
+        <translation>pendiente</translation>
     </message>
     <message>
         <source>receiving</source>
-        <translation type="unfinished"></translation>
+        <translation>recibiendo</translation>
     </message>
     <message>
         <source>finished</source>
-        <translation type="unfinished"></translation>
+        <translation>finalizado</translation>
     </message>
     <message>
         <source>error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>error: %1</translation>
     </message>
 </context>
 <context>
@@ -627,7 +636,7 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Search bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar marcadores</translation>
     </message>
     <message>
         <source>&amp;Remove</source>
@@ -688,15 +697,15 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Unable to open HTML bookmarks file %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se puede abrir el archivo de marcadores HTML %1.</translation>
     </message>
     <message>
         <source>Bookmarks file %1 is too large to import.</source>
-        <translation type="unfinished"></translation>
+        <translation>El archivo de marcadores %1 es demasiado grande para importarlo.</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no bookmarks found in %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores HTML: no se encontraron marcadores en %1.</translation>
     </message>
     <message>
         <source>Imported %1</source>
@@ -720,36 +729,37 @@ Until you choose, no list downloads are made and the blocker simply has no remot
     </message>
     <message>
         <source>Error when loading HTML bookmarks: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores HTML: %1</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no bookmarks found.</source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores HTML: no se encontraron marcadores.</translation>
     </message>
     <message>
         <source>Import bookmarklets?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Importar los bookmarklets?</translation>
     </message>
     <message>
         <source>The file contains %1 bookmarklet(s) — javascript: links that run script in the current page when opened.
 Import them anyway?</source>
-        <translation type="unfinished"></translation>
+        <translation>El archivo contiene %1 bookmarklet(s) — enlaces javascript: que ejecutan un script en la página actual al abrirlos.
+¿Importarlos de todos modos?</translation>
     </message>
     <message>
         <source>Error when loading HTML bookmarks: no importable bookmarks found.</source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores HTML: no se encontraron marcadores importables.</translation>
     </message>
     <message>
         <source>Bookmarks imported</source>
-        <translation type="unfinished"></translation>
+        <translation>Marcadores importados</translation>
     </message>
     <message>
         <source>%1 bookmark item(s) imported; %2 item(s) were skipped as unsafe or unsupported URLs.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 elemento(s) de marcadores importados; %2 elemento(s) se omitieron por ser URL inseguras o no admitidas.</translation>
     </message>
     <message>
         <source>%1 bookmark item(s) imported.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 elemento(s) de marcadores importados.</translation>
     </message>
     <message>
         <source>Remove Bookmark</source>
@@ -793,7 +803,7 @@ Import them anyway?</source>
     </message>
     <message>
         <source>Error when loading bookmarks: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Error al cargar los marcadores: %1</translation>
     </message>
     <message>
         <source>HTML Netscape bookmarks</source>
@@ -875,15 +885,15 @@ Import them anyway?</source>
     </message>
     <message>
         <source>Connected to the Tor network</source>
-        <translation type="unfinished"></translation>
+        <translation>Conectado a la red Tor</translation>
     </message>
     <message>
         <source>Connecting to the Tor network — %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>Conectando a la red Tor — %1%</translation>
     </message>
     <message>
         <source>Tor connection failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Falló la conexión a Tor: %1</translation>
     </message>
     <message>
         <source>There are %1 windows and %2 tabs open
@@ -1024,55 +1034,55 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>This window browses through the Tor network</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta ventana navega a través de la red Tor</translation>
     </message>
     <message>
         <source>No tor binary found — install tor or run BuildProcess/fetch-tor.sh</source>
-        <translation type="unfinished"></translation>
+        <translation>No se encontró el binario de tor — instale tor o ejecute BuildProcess/fetch-tor.sh</translation>
     </message>
     <message>
         <source>Credential store locked</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacén de credenciales bloqueado</translation>
     </message>
     <message>
         <source>BiDi Dev &amp;Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Herramientas de desarrollo BiDi</translation>
     </message>
     <message>
         <source>The debug channel is never armed in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>El canal de depuración nunca se activa en las ventanas Tor.</translation>
     </message>
     <message>
         <source>New &amp;Container Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Nueva pestaña &amp;contenedor</translation>
     </message>
     <message>
         <source>New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Nueva pestaña &amp;privada</translation>
     </message>
     <message>
         <source>New &amp;Tor Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Nueva ventana &amp;Tor</translation>
     </message>
     <message>
         <source>Preferences...</source>
-        <translation type="unfinished"></translation>
+        <translation>Preferencias...</translation>
     </message>
     <message>
         <source>&amp;Reader Mode</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Modo de lectura</translation>
     </message>
     <message>
         <source>Picture-&amp;in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Picture-&amp;in-Picture</translation>
     </message>
     <message>
         <source>Sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Barra lateral</translation>
     </message>
     <message>
         <source>Development Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>Herramientas de desarrollo</translation>
     </message>
     <message>
         <source>Page S&amp;ource</source>
@@ -1088,15 +1098,15 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Chromium Dev Tool</source>
-        <translation type="unfinished"></translation>
+        <translation>Herramienta de desarrollo Chromium</translation>
     </message>
     <message>
         <source>BiDi Dev Tool</source>
-        <translation type="unfinished"></translation>
+        <translation>Herramienta de desarrollo BiDi</translation>
     </message>
     <message>
         <source>Coming with the BiDi backend</source>
-        <translation type="unfinished"></translation>
+        <translation>Disponible con el backend BiDi</translation>
     </message>
     <message>
         <source>Hi&amp;story</source>
@@ -1132,7 +1142,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Search &amp;Tabs...</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar &amp;pestañas...</translation>
     </message>
     <message>
         <source>&amp;Tools</source>
@@ -1140,7 +1150,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Command &amp;Palette...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Paleta de comandos...</translation>
     </message>
     <message>
         <source>Web &amp;Search</source>
@@ -1162,19 +1172,19 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Unavailable in private windows</source>
-        <translation type="unfinished"></translation>
+        <translation>No disponible en ventanas privadas</translation>
     </message>
     <message>
         <source>&amp;No Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Si&amp;n contenedor</translation>
     </message>
     <message>
         <source>New &amp;Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Nuevo &amp;contenedor...</translation>
     </message>
     <message>
         <source>&amp;Manage Containers...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Administrar contenedores...</translation>
     </message>
     <message>
         <source>Enable Web &amp;Inspector</source>
@@ -1293,7 +1303,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>&amp;Lock Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Bloquear el almacén de credenciales</translation>
     </message>
     <message>
         <source>About &amp;%1</source>
@@ -1302,75 +1312,75 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Preferences</source>
-        <translation type="unfinished">Preferencias</translation>
+        <translation>Preferencias</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Historial</translation>
+        <translation>Historial</translation>
     </message>
     <message>
         <source>Tor: daemon off</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: demonio apagado</translation>
     </message>
     <message>
         <source>The managed Tor daemon is not running.</source>
-        <translation type="unfinished"></translation>
+        <translation>El demonio de Tor gestionado no está en ejecución.</translation>
     </message>
     <message>
         <source>Tor: failed</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: falló</translation>
     </message>
     <message>
         <source>Tor: connecting %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: conectando %1%</translation>
     </message>
     <message>
         <source>Tor: connecting...</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: conectando...</translation>
     </message>
     <message>
         <source>Tor: no circuit</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: sin circuito</translation>
     </message>
     <message>
         <source>No traffic-bearing Tor circuit yet.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aún no hay ningún circuito Tor que transporte tráfico.</translation>
     </message>
     <message>
         <source>Tor: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Tor: %1</translation>
     </message>
     <message>
         <source>Circuit %1 (%2): %3</source>
-        <translation type="unfinished"></translation>
+        <translation>Circuito %1 (%2): %3</translation>
     </message>
     <message>
         <source> — purpose %1</source>
-        <translation type="unfinished"></translation>
+        <translation> — propósito %1</translation>
     </message>
     <message>
         <source>The selected printer is not valid.</source>
-        <translation type="unfinished"></translation>
+        <translation>La impresora seleccionada no es válida.</translation>
     </message>
     <message>
         <source>The output file &apos;%1&apos; cannot be written.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se puede escribir el archivo de salida '%1'.</translation>
     </message>
     <message>
         <source>The selected printer is not available.</source>
-        <translation type="unfinished"></translation>
+        <translation>La impresora seleccionada no está disponible.</translation>
     </message>
     <message>
         <source>Cannot print: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>No se puede imprimir: %1</translation>
     </message>
     <message>
         <source>Stop</source>
-        <translation type="unfinished">Detener</translation>
+        <translation>Detener</translation>
     </message>
     <message>
         <source>Reload</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar</translation>
     </message>
     <message>
         <source>Ctrl+Y</source>
@@ -1423,7 +1433,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>User Agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Agente de usuario</translation>
     </message>
     <message>
         <source>&amp;Ad Block...</source>
@@ -1431,7 +1441,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Reload / Stop</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar / Detener</translation>
     </message>
     <message>
         <source>When private browsing is turned on, some actions concerning your privacy will be disabled:</source>
@@ -1482,7 +1492,7 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Clear the text</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar el texto</translation>
     </message>
 </context>
 <context>
@@ -1509,11 +1519,11 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>AutoFill &amp;Form Data</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Datos de formularios de autocompletar</translation>
     </message>
     <message>
         <source>Saved form fields, passwords and addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Campos de formulario, contraseñas y direcciones guardados</translation>
     </message>
     <message>
         <source>&amp;Cookies</source>
@@ -1521,11 +1531,11 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Site &amp;Data</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Datos de sitios</translation>
     </message>
     <message>
         <source>localStorage, IndexedDB, service workers and other site databases</source>
-        <translation type="unfinished"></translation>
+        <translation>localStorage, IndexedDB, service workers y otras bases de datos de los sitios</translation>
     </message>
     <message>
         <source>C&amp;ached Web Pages</source>
@@ -1548,54 +1558,54 @@ Do you want to reload all pages?</source>
     <name>CommandPalette</name>
     <message>
         <source>Type a command, tab or bookmark name...</source>
-        <translation type="unfinished"></translation>
+        <translation>Escriba un comando, nombre de pestaña o de marcador...</translation>
     </message>
     <message>
         <source>Search open tabs...</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar en las pestañas abiertas...</translation>
     </message>
     <message>
         <source>Command</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Comando</translation>
     </message>
     <message>
         <source>New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Nueva pestaña</translation>
     </message>
     <message>
         <source>Tab</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Pestaña</translation>
     </message>
     <message>
         <source>sleeping</source>
-        <translation type="unfinished"></translation>
+        <translation>suspendida</translation>
     </message>
     <message>
         <source>Bookmark</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished">Marcador</translation>
+        <translation>Marcador</translation>
     </message>
     <message>
         <source>Preferences: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Preferencias: %1</translation>
     </message>
     <message>
         <source>Settings</source>
         <comment>command-palette item kind</comment>
-        <translation type="unfinished"></translation>
+        <translation>Configuración</translation>
     </message>
 </context>
 <context>
     <name>ContainerManager</name>
     <message>
         <source>New Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Nuevo contenedor</translation>
     </message>
     <message>
         <source>Container name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre del contenedor:</translation>
     </message>
 </context>
 <context>
@@ -1722,11 +1732,11 @@ Do you want to reload all pages?</source>
     <name>DevToolsWindow</name>
     <message>
         <source>Web Inspector</source>
-        <translation type="unfinished">Inspector web</translation>
+        <translation>Inspector web</translation>
     </message>
     <message>
         <source>Web Inspector — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Inspector web — %1</translation>
     </message>
 </context>
 <context>
@@ -1748,7 +1758,7 @@ Do you want to reload all pages?</source>
     <name>DownloadGraph</name>
     <message>
         <source>Download speed over time</source>
-        <translation type="unfinished"></translation>
+        <translation>Velocidad de descarga a lo largo del tiempo</translation>
     </message>
 </context>
 <context>
@@ -1767,15 +1777,15 @@ Do you want to reload all pages?</source>
     </message>
     <message>
         <source>Restart</source>
-        <translation type="unfinished"></translation>
+        <translation>Reiniciar</translation>
     </message>
     <message>
         <source>Show in File Manager</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar en el gestor de archivos</translation>
     </message>
     <message>
         <source>Show download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar los detalles de la descarga</translation>
     </message>
     <message>
         <source>Try Again</source>
@@ -1800,84 +1810,86 @@ Do you want to reload all pages?</source>
     <message>
         <source>&quot;%1&quot; is a type of file that can harm your computer.
 It may run commands or install software when opened.</source>
-        <translation type="unfinished"></translation>
+        <translation>"%1" es un tipo de archivo que puede dañar su equipo.
+Puede ejecutar comandos o instalar software al abrirse.</translation>
     </message>
     <message>
         <source>The server reports that &quot;%1&quot; is a &quot;%2&quot; file, which does not match its file name.
 It may be disguised software that can harm your computer.</source>
-        <translation type="unfinished"></translation>
+        <translation>El servidor indica que "%1" es un archivo "%2", lo que no coincide con su nombre de archivo.
+Puede ser software disfrazado capaz de dañar su equipo.</translation>
     </message>
     <message>
         <source>Keep this file only if you trust %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Conserve este archivo solo si confía en %1.</translation>
     </message>
     <message>
         <source>Download Security Warning</source>
-        <translation type="unfinished"></translation>
+        <translation>Advertencia de seguridad de descarga</translation>
     </message>
     <message>
         <source>Hide download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Ocultar los detalles de la descarga</translation>
     </message>
     <message>
         <source>Download interrupted: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Descarga interrumpida: %1</translation>
     </message>
     <message>
         <source>%1 of %2 - Download Complete</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 de %2 - Descarga completada</translation>
     </message>
     <message>
         <source>unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>desconocido</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Origen: %1</translation>
     </message>
     <message>
         <source>not saved yet</source>
-        <translation type="unfinished"></translation>
+        <translation>aún no guardado</translation>
     </message>
     <message>
         <source>Destination: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Destino: %1</translation>
     </message>
     <message>
         <source>Started: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Iniciada: %1</translation>
     </message>
     <message>
         <source>Started: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Iniciada: -</translation>
     </message>
     <message>
         <source>Finished: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Finalizada: %1</translation>
     </message>
     <message>
         <source>Finished: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Finalizada: -</translation>
     </message>
     <message>
         <source>Size: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Tamaño: %1</translation>
     </message>
     <message>
         <source>Size: unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>Tamaño: desconocido</translation>
     </message>
     <message>
         <source>Speed: %1/s</source>
-        <translation type="unfinished"></translation>
+        <translation>Velocidad: %1/s</translation>
     </message>
     <message>
         <source>Average speed: %1/s</source>
-        <translation type="unfinished"></translation>
+        <translation>Velocidad media: %1/s</translation>
     </message>
     <message>
         <source>Speed: -</source>
-        <translation type="unfinished"></translation>
+        <translation>Velocidad: -</translation>
     </message>
     <message>
         <source>Error opening output file: %1</source>
@@ -1943,26 +1955,16 @@ Do you want to quit anyway?</source>
     </message>
     <message numerus="yes">
         <source>%n minutes remaining</source>
-        <translation type="unfinished">
-            <numerusform>Faltan %n minutos
-        
-        
-        
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Falta %n minuto</numerusform>
+            <numerusform>Faltan %n minutos</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n seconds remaining</source>
-        <translation type="unfinished">
-            <numerusform>Faltan %n segundos
-        
-        
-        
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Falta %n segundo</numerusform>
+            <numerusform>Faltan %n segundos</numerusform>
         </translation>
     </message>
     <message>
@@ -1986,419 +1988,419 @@ Do you want to quit anyway?</source>
     <name>DownloadModel</name>
     <message>
         <source>Download %1 to %2</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargar %1 a %2</translation>
     </message>
 </context>
 <context>
     <name>EngineIndicator</name>
     <message>
         <source>Page Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de página</translation>
     </message>
     <message>
         <source>Shows the engine rendering this tab and offers to reload the page on another engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Muestra el motor que renderiza esta pestaña y ofrece recargar la página con otro motor.</translation>
     </message>
     <message>
         <source>Rendered by %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Renderizada por %1</translation>
     </message>
     <message>
         <source>Reload in %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar en %1</translation>
     </message>
 </context>
 <context>
     <name>ExtensionManager</name>
     <message>
         <source>Refusing to load %1 — extension consent was not granted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Se rechaza la carga de %1 — no se otorgó el consentimiento para extensiones.</translation>
     </message>
     <message>
         <source>Extension support is not available in this build of Qt WebEngine.</source>
-        <translation type="unfinished"></translation>
+        <translation>La compatibilidad con extensiones no está disponible en esta compilación de Qt WebEngine.</translation>
     </message>
     <message>
         <source>Refusing to install %1 — extension consent was not granted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Se rechaza la instalación de %1 — no se otorgó el consentimiento para extensiones.</translation>
     </message>
     <message>
         <source>Extension %1 is no longer loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>La extensión %1 ya no está cargada.</translation>
     </message>
     <message>
         <source>zip package — manifest not inspected before install</source>
-        <translation type="unfinished"></translation>
+        <translation>paquete zip — el manifiesto no se inspeccionó antes de la instalación</translation>
     </message>
     <message>
         <source>not an extension folder or manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>no es una carpeta de extensión ni un manifest.json</translation>
     </message>
     <message>
         <source>cannot read %1</source>
-        <translation type="unfinished"></translation>
+        <translation>no se puede leer %1</translation>
     </message>
     <message>
         <source>manifest.json is not valid JSON: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>manifest.json no es un JSON válido: %1</translation>
     </message>
     <message>
         <source>malformed document</source>
-        <translation type="unfinished"></translation>
+        <translation>documento mal formado</translation>
     </message>
     <message>
         <source>Qt WebEngine supports Manifest V3 extensions only (this package declares version %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Qt WebEngine solo admite extensiones Manifest V3 (este paquete declara la versión %1).</translation>
     </message>
     <message>
         <source>update manifest is not valid XML: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>el manifiesto de actualización no es un XML válido: %1</translation>
     </message>
     <message>
         <source>update manifest carries no updatecheck entry</source>
-        <translation type="unfinished"></translation>
+        <translation>el manifiesto de actualización no contiene ninguna entrada updatecheck</translation>
     </message>
     <message>
         <source>update manifest has no entry for this extension</source>
-        <translation type="unfinished"></translation>
+        <translation>el manifiesto de actualización no tiene ninguna entrada para esta extensión</translation>
     </message>
     <message>
         <source>update server reported status &quot;%1&quot;</source>
-        <translation type="unfinished"></translation>
+        <translation>el servidor de actualizaciones informó del estado "%1"</translation>
     </message>
     <message>
         <source>update package URL &quot;%1&quot; is not https</source>
-        <translation type="unfinished"></translation>
+        <translation>la URL "%1" del paquete de actualización no es https</translation>
     </message>
     <message>
         <source>An extension update check is already in progress.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ya hay una comprobación de actualizaciones de extensiones en curso.</translation>
     </message>
     <message>
         <source>update_url &quot;%1&quot; is not https</source>
-        <translation type="unfinished"></translation>
+        <translation>la update_url "%1" no es https</translation>
     </message>
     <message>
         <source>update manifest fetch failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>falló la descarga del manifiesto de actualización: %1</translation>
     </message>
     <message>
         <source>update package rejected: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>paquete de actualización rechazado: %1</translation>
     </message>
     <message>
         <source>update package carries no readable manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>el paquete de actualización no contiene un manifest.json legible</translation>
     </message>
     <message>
         <source>update package verification failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>falló la verificación del paquete de actualización: %1</translation>
     </message>
     <message>
         <source>error</source>
-        <translation type="unfinished"></translation>
+        <translation>error</translation>
     </message>
     <message>
         <source>update package rejected: sha256 does not match the update manifest&apos;s declared hash</source>
-        <translation type="unfinished"></translation>
+        <translation>paquete de actualización rechazado: el sha256 no coincide con el hash declarado en el manifiesto de actualización</translation>
     </message>
     <message>
         <source>could not save update package to %1</source>
-        <translation type="unfinished"></translation>
+        <translation>no se pudo guardar el paquete de actualización en %1</translation>
     </message>
     <message>
         <source>update package download failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>falló la descarga del paquete de actualización: %1</translation>
     </message>
 </context>
 <context>
     <name>ExtensionReviewDialog</name>
     <message>
         <source>Install Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Instalar extensión</translation>
     </message>
     <message>
         <source>Load Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargar extensión</translation>
     </message>
     <message>
         <source>  (package)</source>
-        <translation type="unfinished"></translation>
+        <translation>  (paquete)</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Origen: %1</translation>
     </message>
     <message>
         <source>It requests access to:</source>
-        <translation type="unfinished"></translation>
+        <translation>Solicita acceso a:</translation>
     </message>
     <message>
         <source>For this session it requests access to:</source>
-        <translation type="unfinished"></translation>
+        <translation>Para esta sesión solicita acceso a:</translation>
     </message>
     <message>
         <source>Requested permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Permisos solicitados</translation>
     </message>
     <message>
         <source>This extension declares no permissions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta extensión no declara ningún permiso.</translation>
     </message>
     <message>
         <source>Warnings</source>
-        <translation type="unfinished"></translation>
+        <translation>Advertencias</translation>
     </message>
     <message>
         <source>Qt WebEngine will reject this package — installation cannot proceed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Qt WebEngine rechazará este paquete — la instalación no puede continuar.</translation>
     </message>
     <message>
         <source>Declares APIs unavailable in Qt WebEngine — these features will not work: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Declara API no disponibles en Qt WebEngine — estas funciones no funcionarán: %1</translation>
     </message>
     <message>
         <source>Declares APIs with only partial Qt WebEngine support: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Declara API con compatibilidad solo parcial en Qt WebEngine: %1</translation>
     </message>
     <message>
         <source>Declares a toolbar action — Qt WebEngine has no extension toolbar, so its button and popup will not appear.</source>
-        <translation type="unfinished"></translation>
+        <translation>Declara una acción de barra de herramientas — Qt WebEngine no tiene barra de herramientas de extensiones, por lo que su botón y su ventana emergente no aparecerán.</translation>
     </message>
     <message>
         <source>This extension requests high-risk access. Each item must be allowed explicitly — leaving one unticked refuses the install:</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta extensión solicita acceso de alto riesgo. Cada elemento debe permitirse explícitamente — dejar uno sin marcar rechaza la instalación:</translation>
     </message>
     <message>
         <source>Allow: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir: %1</translation>
     </message>
     <message>
         <source>Install</source>
-        <translation type="unfinished"></translation>
+        <translation>Instalar</translation>
     </message>
     <message>
         <source>Load</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargar</translation>
     </message>
     <message>
         <source>Access the current tab when you invoke it</source>
-        <translation type="unfinished"></translation>
+        <translation>Acceder a la pestaña actual al invocarla</translation>
     </message>
     <message>
         <source>Schedule periodic tasks</source>
-        <translation type="unfinished"></translation>
+        <translation>Programar tareas periódicas</translation>
     </message>
     <message>
         <source>Run in the background</source>
-        <translation type="unfinished"></translation>
+        <translation>Ejecutarse en segundo plano</translation>
     </message>
     <message>
         <source>Read and change your bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar sus marcadores</translation>
     </message>
     <message>
         <source>Clear your browsing data</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar sus datos de navegación</translation>
     </message>
     <message>
         <source>Read data you copy and paste</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer los datos que copia y pega</translation>
     </message>
     <message>
         <source>Modify data you copy and paste</source>
-        <translation type="unfinished"></translation>
+        <translation>Modificar los datos que copia y pega</translation>
     </message>
     <message>
         <source>Change settings that control site content</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar los ajustes que controlan el contenido de los sitios</translation>
     </message>
     <message>
         <source>Add items to browser context menus</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir elementos a los menús contextuales del navegador</translation>
     </message>
     <message>
         <source>Read and modify cookies</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y modificar cookies</translation>
     </message>
     <message>
         <source>Control and inspect web pages through the debugger</source>
-        <translation type="unfinished"></translation>
+        <translation>Controlar e inspeccionar páginas web mediante el depurador</translation>
     </message>
     <message>
         <source>Block or modify network requests</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear o modificar las solicitudes de red</translation>
     </message>
     <message>
         <source>Observe network request blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Observar el bloqueo de solicitudes de red</translation>
     </message>
     <message>
         <source>Capture content of your screen</source>
-        <translation type="unfinished"></translation>
+        <translation>Capturar el contenido de su pantalla</translation>
     </message>
     <message>
         <source>Manage your downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionar sus descargas</translation>
     </message>
     <message>
         <source>Change font settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar los ajustes de fuentes</translation>
     </message>
     <message>
         <source>Detect your physical location</source>
-        <translation type="unfinished"></translation>
+        <translation>Detectar su ubicación física</translation>
     </message>
     <message>
         <source>Read and change your browsing history</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar su historial de navegación</translation>
     </message>
     <message>
         <source>Access your account identity</source>
-        <translation type="unfinished"></translation>
+        <translation>Acceder a la identidad de su cuenta</translation>
     </message>
     <message>
         <source>Detect when your computer is idle</source>
-        <translation type="unfinished"></translation>
+        <translation>Detectar cuándo su equipo está inactivo</translation>
     </message>
     <message>
         <source>Manage your extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionar sus extensiones</translation>
     </message>
     <message>
         <source>Add items to browser menus</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir elementos a los menús del navegador</translation>
     </message>
     <message>
         <source>Communicate with cooperating native applications</source>
-        <translation type="unfinished"></translation>
+        <translation>Comunicarse con aplicaciones nativas cooperativas</translation>
     </message>
     <message>
         <source>Display notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar notificaciones</translation>
     </message>
     <message>
         <source>Run invisible offscreen pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Ejecutar páginas invisibles fuera de pantalla</translation>
     </message>
     <message>
         <source>Save pages as local files</source>
-        <translation type="unfinished"></translation>
+        <translation>Guardar páginas como archivos locales</translation>
     </message>
     <message>
         <source>Override power management settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Anular los ajustes de gestión de energía</translation>
     </message>
     <message>
         <source>Change your privacy-related settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar sus ajustes relacionados con la privacidad</translation>
     </message>
     <message>
         <source>Read and change your proxy settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar sus ajustes de proxy</translation>
     </message>
     <message>
         <source>Read and change your reading list</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar su lista de lectura</translation>
     </message>
     <message>
         <source>Inject scripts into web pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Inyectar scripts en páginas web</translation>
     </message>
     <message>
         <source>Read and restore recently closed tabs and windows</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y restaurar pestañas y ventanas cerradas recientemente</translation>
     </message>
     <message>
         <source>Show content in a side panel</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar contenido en un panel lateral</translation>
     </message>
     <message>
         <source>Store data on your device</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacenar datos en su dispositivo</translation>
     </message>
     <message>
         <source>Read your computer&apos;s CPU information</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer la información de la CPU de su equipo</translation>
     </message>
     <message>
         <source>Read your display configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer la configuración de su pantalla</translation>
     </message>
     <message>
         <source>Read your computer&apos;s memory information</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer la información de memoria de su equipo</translation>
     </message>
     <message>
         <source>Read your storage device information</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer la información de sus dispositivos de almacenamiento</translation>
     </message>
     <message>
         <source>Capture the visible content of tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Capturar el contenido visible de las pestañas</translation>
     </message>
     <message>
         <source>Manage tab groups</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionar grupos de pestañas</translation>
     </message>
     <message>
         <source>Read your browsing history and open tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer su historial de navegación y las pestañas abiertas</translation>
     </message>
     <message>
         <source>Read a list of your most visited websites</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer una lista de sus sitios web más visitados</translation>
     </message>
     <message>
         <source>Speak text aloud</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer texto en voz alta</translation>
     </message>
     <message>
         <source>Provide text-to-speech voices</source>
-        <translation type="unfinished"></translation>
+        <translation>Proporcionar voces de texto a voz</translation>
     </message>
     <message>
         <source>Store unlimited data on your device</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacenar datos ilimitados en su dispositivo</translation>
     </message>
     <message>
         <source>Observe your navigation between pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Observar su navegación entre páginas</translation>
     </message>
     <message>
         <source>Observe your network traffic</source>
-        <translation type="unfinished"></translation>
+        <translation>Observar su tráfico de red</translation>
     </message>
     <message>
         <source>Observe and modify your network traffic</source>
-        <translation type="unfinished"></translation>
+        <translation>Observar y modificar su tráfico de red</translation>
     </message>
     <message>
         <source>Use the &apos;%1&apos; browser API</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar la API del navegador '%1'</translation>
     </message>
     <message>
         <source>Read and change all your data on all websites</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar todos sus datos en todos los sitios web</translation>
     </message>
     <message>
         <source>Read and change your data on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Leer y cambiar sus datos en %1</translation>
     </message>
 </context>
 <context>
     <name>FileAccessHandler</name>
     <message>
         <source>Contents of %1</source>
-        <translation type="unfinished">Contenido de %1</translation>
+        <translation>Contenido de %1</translation>
     </message>
     <message>
         <source>%1 KB</source>
-        <translation type="unfinished">%1 KB</translation>
+        <translation>%1 KB</translation>
     </message>
     <message>
         <source>Show Hidden Files</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar archivos ocultos</translation>
     </message>
 </context>
 <context>
@@ -2432,7 +2434,7 @@ Do you want to quit anyway?</source>
     </message>
     <message>
         <source>Search history</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar en el historial</translation>
     </message>
     <message>
         <source>&amp;Remove</source>
@@ -2493,15 +2495,9 @@ Do you want to quit anyway?</source>
     </message>
     <message numerus="yes">
         <source>%n item(s)</source>
-        <translation type="unfinished">
-            <numerusform>%n elemento(s)
-        
-        
-        
-        
-        
-        </numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n elemento</numerusform>
+            <numerusform>%n elementos</numerusform>
         </translation>
     </message>
 </context>
@@ -2551,79 +2547,79 @@ Do you want to quit anyway?</source>
     <name>LoadingIndicator</name>
     <message>
         <source>Loaded in %1 s</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargada en %1 s</translation>
     </message>
     <message>
         <source>Load failed after %1 s</source>
-        <translation type="unfinished"></translation>
+        <translation>La carga falló tras %1 s</translation>
     </message>
 </context>
 <context>
     <name>LocationBar</name>
     <message>
         <source>Address Bar</source>
-        <translation type="unfinished"></translation>
+        <translation>Barra de direcciones</translation>
     </message>
     <message>
         <source>Unicode form: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Forma Unicode: %1</translation>
     </message>
 </context>
 <context>
     <name>LocationBarSiteIcon</name>
     <message>
         <source>Site icon — drag to copy this page&apos;s address</source>
-        <translation type="unfinished"></translation>
+        <translation>Icono del sitio — arrastre para copiar la dirección de esta página</translation>
     </message>
     <message>
         <source>Site Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Icono del sitio</translation>
     </message>
     <message>
         <source>Drag to copy this page&apos;s address into another application or tab.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arrastre para copiar la dirección de esta página a otra aplicación o pestaña.</translation>
     </message>
 </context>
 <context>
     <name>MemIndicator</name>
     <message>
         <source>Tab memory usage</source>
-        <translation type="unfinished"></translation>
+        <translation>Uso de memoria de la pestaña</translation>
     </message>
     <message>
         <source>Resident memory of the current tab&apos;s renderer process, read from /proc/&lt;pid&gt;/status every 2 seconds.</source>
-        <translation type="unfinished"></translation>
+        <translation>Memoria residente del proceso de renderizado de la pestaña actual, leída de /proc/&lt;pid&gt;/status cada 2 segundos.</translation>
     </message>
     <message>
         <source>MEM %1</source>
-        <translation type="unfinished"></translation>
+        <translation>MEM %1</translation>
     </message>
     <message>
         <source>MEM —</source>
-        <translation type="unfinished"></translation>
+        <translation>MEM —</translation>
     </message>
     <message>
         <source>%1 GB</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 GB</translation>
     </message>
     <message>
         <source>%1 MB</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 MB</translation>
     </message>
 </context>
 <context>
     <name>NetIndicator</name>
     <message>
         <source>Network activity</source>
-        <translation type="unfinished"></translation>
+        <translation>Actividad de red</translation>
     </message>
     <message>
         <source>Approximate engine bandwidth — sampled from the network service&apos;s /proc io counters, which count IPC alongside sockets and so run high.  Exact download bytes are used while a file downloads.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ancho de banda aproximado del motor — muestreado de los contadores de E/S de /proc del servicio de red, que contabilizan IPC junto con los sockets y por eso dan valores altos. Mientras se descarga un archivo se usan los bytes exactos descargados.</translation>
     </message>
     <message>
         <source>↓ %1 ↑ %2</source>
-        <translation type="unfinished"></translation>
+        <translation>↓ %1 ↑ %2</translation>
     </message>
 </context>
 <context>
@@ -2711,7 +2707,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>OmniboxCompletionModel</name>
     <message>
         <source>Search %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar con %1</translation>
     </message>
 </context>
 <context>
@@ -2750,7 +2746,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Search engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Motores de búsqueda</translation>
     </message>
     <message>
         <source>&amp;Add</source>
@@ -2777,11 +2773,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>This engine does not provide contextual suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Este motor no ofrece sugerencias contextuales</translation>
     </message>
     <message>
         <source>Send what is typed in the search box to this engine for suggestions (off by default)</source>
-        <translation type="unfinished"></translation>
+        <translation>Enviar lo que se escribe en el cuadro de búsqueda a este motor para obtener sugerencias (desactivado por defecto)</translation>
     </message>
     <message>
         <source>Name</source>
@@ -2793,7 +2789,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Suggestions</source>
-        <translation type="unfinished">Sugerencias</translation>
+        <translation>Sugerencias</translation>
     </message>
 </context>
 <context>
@@ -2819,11 +2815,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>&amp;Username:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Usuario:</translation>
     </message>
     <message>
         <source>&amp;Password:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Contraseña:</translation>
     </message>
     <message>
         <source>Username:</source>
@@ -2838,38 +2834,38 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>PictureInPicture</name>
     <message>
         <source>This video does not allow Picture-in-Picture.</source>
-        <translation type="unfinished"></translation>
+        <translation>Este vídeo no permite Picture-in-Picture.</translation>
     </message>
     <message>
         <source>No video found on this page.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se encontró ningún vídeo en esta página.</translation>
     </message>
     <message>
         <source>The video has no playable source.</source>
-        <translation type="unfinished"></translation>
+        <translation>El vídeo no tiene ninguna fuente reproducible.</translation>
     </message>
     <message>
         <source>The video is no longer on the page.</source>
-        <translation type="unfinished"></translation>
+        <translation>El vídeo ya no está en la página.</translation>
     </message>
 </context>
 <context>
     <name>PipWindow</name>
     <message>
         <source>Picture-in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Picture-in-Picture</translation>
     </message>
     <message>
         <source>Return video to tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Devolver el vídeo a la pestaña</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">Cerrar</translation>
+        <translation>Cerrar</translation>
     </message>
     <message>
         <source>The video could not be loaded in Picture-in-Picture (error %1).</source>
-        <translation type="unfinished"></translation>
+        <translation>No se pudo cargar el vídeo en Picture-in-Picture (error %1).</translation>
     </message>
 </context>
 <context>
@@ -2883,49 +2879,49 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>PopupBlockerButton</name>
     <message>
         <source>Blocked Pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Ventanas emergentes bloqueadas</translation>
     </message>
     <message>
         <source>Shows pop-ups this page tried to open, lets you open one once or always allow pop-ups for the site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Muestra las ventanas emergentes que esta página intentó abrir y le permite abrir una una vez o permitir siempre las ventanas emergentes del sitio.</translation>
     </message>
     <message numerus="yes">
         <source>%n pop-up(s) blocked on this page</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n ventana emergente bloqueada en esta página</numerusform>
+            <numerusform>%n ventanas emergentes bloqueadas en esta página</numerusform>
         </translation>
     </message>
     <message>
         <source>Blocked pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Ventanas emergentes bloqueadas</translation>
     </message>
     <message>
         <source>Open %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir %1</translation>
     </message>
     <message>
         <source>Always allow pop-ups on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir siempre las ventanas emergentes en %1</translation>
     </message>
     <message>
         <source>Pop-up Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración de ventanas emergentes...</translation>
     </message>
 </context>
 <context>
     <name>PrivacyIndicator</name>
     <message>
         <source>Private browsing is on. Activate to leave private mode.</source>
-        <translation type="unfinished"></translation>
+        <translation>La navegación privada está activada. Haga clic para salir del modo privado.</translation>
     </message>
     <message>
         <source>Private Browsing</source>
-        <translation type="unfinished">Navegación privada</translation>
+        <translation>Navegación privada</translation>
     </message>
     <message>
         <source>This is a private tab — nothing it visits is recorded. Activate to close it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta es una pestaña privada — nada de lo que visite se registra. Haga clic para cerrarla.</translation>
     </message>
 </context>
 <context>
@@ -2940,11 +2936,11 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>&amp;Username:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Usuario:</translation>
     </message>
     <message>
         <source>&amp;Password:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Contraseña:</translation>
     </message>
     <message>
         <source>Username:</source>
@@ -2959,15 +2955,15 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     <name>QObject</name>
     <message>
         <source>The XBEL document is too large.</source>
-        <translation type="unfinished"></translation>
+        <translation>El documento XBEL es demasiado grande.</translation>
     </message>
     <message>
         <source>Unable to read the XBEL document.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se puede leer el documento XBEL.</translation>
     </message>
     <message>
         <source>The XBEL document is invalid.</source>
-        <translation type="unfinished"></translation>
+        <translation>El documento XBEL no es válido.</translation>
     </message>
     <message>
         <source>The file is not an XBEL version 1.0 file.</source>
@@ -2975,7 +2971,7 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>The XBEL document is nested too deeply.</source>
-        <translation type="unfinished"></translation>
+        <translation>El documento XBEL está anidado demasiado profundamente.</translation>
     </message>
     <message>
         <source>Unknown title</source>
@@ -2983,19 +2979,19 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>Unable to read the OpenSearch description.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se puede leer la descripción de OpenSearch.</translation>
     </message>
     <message>
         <source>The OpenSearch description is too large.</source>
-        <translation type="unfinished"></translation>
+        <translation>La descripción de OpenSearch es demasiado grande.</translation>
     </message>
     <message>
         <source>The OpenSearch description is invalid.</source>
-        <translation type="unfinished"></translation>
+        <translation>La descripción de OpenSearch no es válida.</translation>
     </message>
     <message>
         <source>The OpenSearch description must not contain a DTD.</source>
-        <translation type="unfinished"></translation>
+        <translation>La descripción de OpenSearch no debe contener un DTD.</translation>
     </message>
     <message>
         <source>The file is not an OpenSearch 1.1 file.</source>
@@ -3003,93 +2999,94 @@ Do you want to ignore these errors?&lt;/qt&gt;</source>
     </message>
     <message>
         <source>cannot read %1</source>
-        <translation type="unfinished"></translation>
+        <translation>no se puede leer %1</translation>
     </message>
     <message>
         <source>package verification failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>falló la verificación del paquete: %1</translation>
     </message>
     <message>
         <source>error</source>
-        <translation type="unfinished"></translation>
+        <translation>error</translation>
     </message>
     <message>
         <source>package rejected: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>paquete rechazado: %1</translation>
     </message>
     <message>
         <source>package contains no readable manifest.json</source>
-        <translation type="unfinished"></translation>
+        <translation>el paquete no contiene un manifest.json legible</translation>
     </message>
     <message>
         <source>CRX3 package carrying a signature block — the signature is structure-checked, not cryptographically verified.</source>
-        <translation type="unfinished"></translation>
+        <translation>Paquete CRX3 con un bloque de firma — la firma se comprueba estructuralmente, no se verifica criptográficamente.</translation>
     </message>
     <message>
         <source>Package is unsigned — its contents were structure-checked only.</source>
-        <translation type="unfinished"></translation>
+        <translation>El paquete no está firmado — su contenido solo se comprobó estructuralmente.</translation>
     </message>
 </context>
 <context>
     <name>QrCodeDialog</name>
     <message>
         <source>QR Code for This Page</source>
-        <translation type="unfinished"></translation>
+        <translation>Código QR de esta página</translation>
     </message>
     <message>
         <source>This URL is too long to encode
 as a QR code.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta URL es demasiado larga para codificarla
+como código QR.</translation>
     </message>
 </context>
 <context>
     <name>ReaderButton</name>
     <message>
         <source>Reader Mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Modo de lectura</translation>
     </message>
     <message>
         <source>Shows the page in a clutter-free reader view.</source>
-        <translation type="unfinished"></translation>
+        <translation>Muestra la página en una vista de lectura sin distracciones.</translation>
     </message>
     <message>
         <source>Exit reader view (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Salir de la vista de lectura (Ctrl+Alt+R)</translation>
     </message>
     <message>
         <source>Enter reader view — page looks like an article (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Entrar en la vista de lectura — la página se muestra como un artículo (Ctrl+Alt+R)</translation>
     </message>
     <message>
         <source>Enter reader view (Ctrl+Alt+R)</source>
-        <translation type="unfinished"></translation>
+        <translation>Entrar en la vista de lectura (Ctrl+Alt+R)</translation>
     </message>
 </context>
 <context>
     <name>ReaderMode</name>
     <message>
         <source>Reader</source>
-        <translation type="unfinished"></translation>
+        <translation>Lector</translation>
     </message>
     <message>
         <source>Smaller text</source>
-        <translation type="unfinished"></translation>
+        <translation>Texto más pequeño</translation>
     </message>
     <message>
         <source>Larger text</source>
-        <translation type="unfinished"></translation>
+        <translation>Texto más grande</translation>
     </message>
     <message>
         <source>Switch between light and dark</source>
-        <translation type="unfinished"></translation>
+        <translation>Alternar entre claro y oscuro</translation>
     </message>
     <message>
         <source>Exit reader view</source>
-        <translation type="unfinished"></translation>
+        <translation>Salir de la vista de lectura</translation>
     </message>
     <message>
         <source>Reader view is not available on this page.</source>
-        <translation type="unfinished"></translation>
+        <translation>La vista de lectura no está disponible en esta página.</translation>
     </message>
 </context>
 <context>
@@ -3127,50 +3124,50 @@ as a QR code.</source>
     <name>RustDownloadEngine</name>
     <message>
         <source>Download engine temp directory unavailable</source>
-        <translation type="unfinished"></translation>
+        <translation>El directorio temporal del motor de descargas no está disponible</translation>
     </message>
     <message>
         <source>Download engine failed to start</source>
-        <translation type="unfinished"></translation>
+        <translation>El motor de descargas no pudo iniciarse</translation>
     </message>
     <message>
         <source>Download interrupted</source>
-        <translation type="unfinished"></translation>
+        <translation>Descarga interrumpida</translation>
     </message>
     <message>
         <source>Download worker exited unexpectedly</source>
-        <translation type="unfinished"></translation>
+        <translation>El proceso de descarga terminó inesperadamente</translation>
     </message>
 </context>
 <context>
     <name>ScriptBlockInfoBar</name>
     <message>
         <source>Allow Once</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir una vez</translation>
     </message>
     <message>
         <source>Run JavaScript on this site until the browser closes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ejecutar JavaScript en este sitio hasta que se cierre el navegador.</translation>
     </message>
     <message>
         <source>Always Allow</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir siempre</translation>
     </message>
     <message>
         <source>Always run JavaScript on this site — remembered across sessions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ejecutar siempre JavaScript en este sitio — se recuerda entre sesiones.</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">Cerrar</translation>
+        <translation>Cerrar</translation>
     </message>
     <message>
         <source>Hide this notice</source>
-        <translation type="unfinished"></translation>
+        <translation>Ocultar este aviso</translation>
     </message>
     <message>
         <source>Scripts blocked on %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Scripts bloqueados en %1</translation>
     </message>
 </context>
 <context>
@@ -3181,15 +3178,15 @@ as a QR code.</source>
     </message>
     <message>
         <source>Find previous</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar anterior</translation>
     </message>
     <message>
         <source>Find next</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar siguiente</translation>
     </message>
     <message>
         <source>Find in page</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar en la página</translation>
     </message>
     <message>
         <source>Done</source>
@@ -3204,7 +3201,7 @@ as a QR code.</source>
     <name>SearchButton</name>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Buscar</translation>
+        <translation>Buscar</translation>
     </message>
 </context>
 <context>
@@ -3218,26 +3215,26 @@ as a QR code.</source>
     <name>SecureStore</name>
     <message>
         <source>Unlock Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>Desbloquear el almacén de credenciales</translation>
     </message>
     <message>
         <source>Enter the master passphrase to unlock the saved password store:</source>
-        <translation type="unfinished"></translation>
+        <translation>Introduzca la frase de contraseña maestra para desbloquear el almacén de contraseñas guardadas:</translation>
     </message>
     <message>
         <source>Wrong passphrase — try again:</source>
-        <translation type="unfinished"></translation>
+        <translation>Frase de contraseña incorrecta — inténtelo de nuevo:</translation>
     </message>
 </context>
 <context>
     <name>ServoView</name>
     <message>
         <source>Servo Page</source>
-        <translation type="unfinished"></translation>
+        <translation>Página de Servo</translation>
     </message>
     <message>
         <source>Servo engine unavailable — the servo-embed artifact could not be loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor Servo no disponible — no se pudo cargar el artefacto servo-embed.</translation>
     </message>
 </context>
 <context>
@@ -3248,15 +3245,15 @@ as a QR code.</source>
     </message>
     <message>
         <source>Filter settings pages</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtrar las páginas de configuración</translation>
     </message>
     <message>
         <source>Filter settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtrar la configuración</translation>
     </message>
     <message>
         <source>Settings sections</source>
-        <translation type="unfinished"></translation>
+        <translation>Secciones de configuración</translation>
     </message>
     <message>
         <source>General</source>
@@ -3264,23 +3261,23 @@ as a QR code.</source>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Buscar</translation>
+        <translation>Buscar</translation>
     </message>
     <message>
         <source>Tab Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración de pestañas</translation>
     </message>
     <message>
         <source>Extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Extensiones</translation>
     </message>
     <message>
         <source>Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Contenedores</translation>
     </message>
     <message>
         <source>Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Rendimiento</translation>
     </message>
     <message>
         <source>On startup:</source>
@@ -3340,751 +3337,751 @@ as a QR code.</source>
     </message>
     <message>
         <source>Show a dedicated search box next to the location bar. When hidden, searches go through the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar un cuadro de búsqueda dedicado junto a la barra de direcciones. Cuando está oculto, las búsquedas pasan por la barra de direcciones.</translation>
     </message>
     <message>
         <source>Show dedicated search box</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar el cuadro de búsqueda dedicado</translation>
     </message>
     <message>
         <source>Press the middle mouse button on empty page content and move the pointer to scroll. Middle-clicking a link still opens it in a new tab. Takes effect after a restart.</source>
-        <translation type="unfinished"></translation>
+        <translation>Pulse el botón central del ratón sobre una zona vacía de la página y mueva el puntero para desplazarse. Pulsar un enlace con el botón central sigue abriéndolo en una pestaña nueva. Surte efecto tras reiniciar.</translation>
     </message>
     <message>
         <source>Middle-click autoscroll</source>
-        <translation type="unfinished"></translation>
+        <translation>Desplazamiento automático con el botón central</translation>
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Motores de búsqueda</translation>
     </message>
     <message>
         <source>Default engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor predeterminado:</translation>
     </message>
     <message>
         <source>Default search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de búsqueda predeterminado</translation>
     </message>
     <message>
         <source>Private window engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de ventanas privadas:</translation>
     </message>
     <message>
         <source>Engine used by the location bar and the search field inside private and Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor usado por la barra de direcciones y el campo de búsqueda en las ventanas privadas y Tor.</translation>
     </message>
     <message>
         <source>Private window search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de búsqueda de ventanas privadas</translation>
     </message>
     <message>
         <source>Image search engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de búsqueda de imágenes:</translation>
     </message>
     <message>
         <source>Engine used by the &quot;Search Image&quot; context menu. Only engines that advertise an image-search endpoint are listed.</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor usado por el menú contextual "Buscar imagen". Solo se listan los motores que anuncian un punto de acceso de búsqueda de imágenes.</translation>
     </message>
     <message>
         <source>Image search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de búsqueda de imágenes</translation>
     </message>
     <message>
         <source>The default engine is used by the location bar and the dedicated search box. Type &quot;keyword text&quot; in the location bar to query a specific engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>El motor predeterminado es usado por la barra de direcciones y el cuadro de búsqueda dedicado. Escriba "palabra-clave texto" en la barra de direcciones para consultar un motor concreto.</translation>
     </message>
     <message>
         <source>Search engine list</source>
-        <translation type="unfinished"></translation>
+        <translation>Lista de motores de búsqueda</translation>
     </message>
     <message>
         <source>Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor</translation>
     </message>
     <message>
         <source>Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias</translation>
     </message>
     <message>
         <source>Badges</source>
-        <translation type="unfinished"></translation>
+        <translation>Insignias</translation>
     </message>
     <message>
         <source>Add a new search engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir un motor de búsqueda nuevo</translation>
     </message>
     <message>
         <source>Add</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir</translation>
     </message>
     <message>
         <source>Remove the selected engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar el motor seleccionado</translation>
     </message>
     <message>
         <source>Remove</source>
-        <translation type="unfinished">Eliminar</translation>
+        <translation>Eliminar</translation>
     </message>
     <message>
         <source>Move the selected engine up in the list</source>
-        <translation type="unfinished"></translation>
+        <translation>Subir el motor seleccionado en la lista</translation>
     </message>
     <message>
         <source>Up</source>
-        <translation type="unfinished"></translation>
+        <translation>Subir</translation>
     </message>
     <message>
         <source>Move the selected engine down in the list</source>
-        <translation type="unfinished"></translation>
+        <translation>Bajar el motor seleccionado en la lista</translation>
     </message>
     <message>
         <source>Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Bajar</translation>
     </message>
     <message>
         <source>Re-add the bundled search engines and refresh them to their shipped defaults</source>
-        <translation type="unfinished"></translation>
+        <translation>Volver a añadir los motores de búsqueda incluidos y restablecerlos a sus valores originales</translation>
     </message>
     <message>
         <source>Restore Defaults</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurar valores predeterminados</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre:</translation>
     </message>
     <message>
         <source>Engine name</source>
-        <translation type="unfinished">Nombre del motor</translation>
+        <translation>Nombre del motor</translation>
     </message>
     <message>
         <source>Nickname:</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias:</translation>
     </message>
     <message>
         <source>Keyword(s) for the location bar, e.g. &quot;ddg cats&quot; searches with the engine whose nickname is ddg. Separate multiple nicknames with commas.</source>
-        <translation type="unfinished"></translation>
+        <translation>Palabra(s) clave para la barra de direcciones; p. ej. "ddg gatos" busca con el motor cuyo alias es ddg. Separe varios alias con comas.</translation>
     </message>
     <message>
         <source>Engine nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias del motor</translation>
     </message>
     <message>
         <source>Search URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de búsqueda:</translation>
     </message>
     <message>
         <source>Engine search URL</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de búsqueda del motor</translation>
     </message>
     <message>
         <source>Suggest URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de sugerencias:</translation>
     </message>
     <message>
         <source>Suggestions URL</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de sugerencias</translation>
     </message>
     <message>
         <source>Image URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de imágenes:</translation>
     </message>
     <message>
         <source>Image search URL</source>
-        <translation type="unfinished"></translation>
+        <translation>URL de búsqueda de imágenes</translation>
     </message>
     <message>
         <source>POST parameters:</source>
-        <translation type="unfinished"></translation>
+        <translation>Parámetros POST:</translation>
     </message>
     <message>
         <source>Search POST parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>Parámetros POST de búsqueda</translation>
     </message>
     <message>
         <source>Image POST parameters:</source>
-        <translation type="unfinished"></translation>
+        <translation>Parámetros POST de imágenes:</translation>
     </message>
     <message>
         <source>Image search POST parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>Parámetros POST de búsqueda de imágenes</translation>
     </message>
     <message>
         <source>Use %s or {searchTerms} where the search text belongs, e.g. &quot;https://example.com/search?q=%s&quot;. POST parameters are name=value pairs separated by &apos;&amp;&apos; — filling them switches the request to POST.</source>
-        <translation type="unfinished"></translation>
+        <translation>Use %s o {searchTerms} donde corresponda el texto de búsqueda, p. ej. "https://example.com/search?q=%s". Los parámetros POST son pares nombre=valor separados por '&amp;' — al rellenarlos la solicitud pasa a ser POST.</translation>
     </message>
     <message>
         <source>Set as Default Search</source>
-        <translation type="unfinished"></translation>
+        <translation>Establecer como búsqueda predeterminada</translation>
     </message>
     <message>
         <source>Use this engine in private and Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar este motor en ventanas privadas y Tor.</translation>
     </message>
     <message>
         <source>Set as Private Search</source>
-        <translation type="unfinished"></translation>
+        <translation>Establecer como búsqueda privada</translation>
     </message>
     <message>
         <source>Search Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Campo de búsqueda</translation>
     </message>
     <message>
         <source>Show a dedicated search field next to the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar un campo de búsqueda dedicado junto a la barra de direcciones.</translation>
     </message>
     <message>
         <source>Show as a Text Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar como campo de texto</translation>
     </message>
     <message>
         <source>Hide the search field entirely; web searches go through the location bar.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ocultar el campo de búsqueda por completo; las búsquedas web pasan por la barra de direcciones.</translation>
     </message>
     <message>
         <source>Hidden</source>
-        <translation type="unfinished"></translation>
+        <translation>Oculto</translation>
     </message>
     <message>
         <source>Show Search Engine Nickname in Drop-Down Menu</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar el alias del motor de búsqueda en el menú desplegable</translation>
     </message>
     <message>
         <source>Show Search Engine Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar el icono del motor de búsqueda</translation>
     </message>
     <message>
         <source>Always Search in New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar siempre en una pestaña nueva</translation>
     </message>
     <message>
         <source>Keep the engine last picked in the search field. When off, the field reverts to the default engine after each search.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mantener el último motor elegido en el campo de búsqueda. Si se desactiva, el campo vuelve al motor predeterminado tras cada búsqueda.</translation>
     </message>
     <message>
         <source>Keep Last Selected Search Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Mantener el último motor de búsqueda seleccionado</translation>
     </message>
     <message>
         <source>Keep Typed Text After Searching</source>
-        <translation type="unfinished"></translation>
+        <translation>Mantener el texto escrito tras buscar</translation>
     </message>
     <message>
         <source>Use the search engine as fallback when the text typed in the location bar is not a valid URL.</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar el motor de búsqueda como alternativa cuando el texto escrito en la barra de direcciones no es una URL válida.</translation>
     </message>
     <message>
         <source>Search in Address Field</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar en el campo de direcciones</translation>
     </message>
     <message>
         <source>Open the results of the &quot;Search with&quot; context menu in a background tab.</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir los resultados del menú contextual "Buscar con" en una pestaña en segundo plano.</translation>
     </message>
     <message>
         <source>Page Selection Search in Background</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar la selección de la página en segundo plano</translation>
     </message>
     <message>
         <source>Search Suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Sugerencias de búsqueda</translation>
     </message>
     <message>
         <source>In Address Field</source>
-        <translation type="unfinished"></translation>
+        <translation>En el campo de direcciones</translation>
     </message>
     <message>
         <source>In Search Field</source>
-        <translation type="unfinished"></translation>
+        <translation>En el campo de búsqueda</translation>
     </message>
     <message>
         <source>The address field only asks for suggestions once the input starts with a search engine&apos;s keyword.</source>
-        <translation type="unfinished"></translation>
+        <translation>El campo de direcciones solo pide sugerencias cuando la entrada comienza con la palabra clave de un motor de búsqueda.</translation>
     </message>
     <message>
         <source>Only When Using Search Engine Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Solo al usar el alias del motor de búsqueda</translation>
     </message>
     <message>
         <source>Allow the engine selected above to provide suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir que el motor seleccionado arriba proporcione sugerencias</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to the search engine before you press Enter. Off by default; the choice is stored per engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las sugerencias envían cada pulsación de tecla al motor de búsqueda antes de que pulse Intro. Desactivado por defecto; la elección se guarda por motor.</translation>
     </message>
     <message>
         <source>Shortcuts Nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias de atajos</translation>
     </message>
     <message>
         <source>Bookmarks</source>
-        <translation type="unfinished">Marcadores</translation>
+        <translation>Marcadores</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching bookmarks.</source>
-        <translation type="unfinished"></translation>
+        <translation>Escriba este alias seguido de un espacio en el campo de direcciones para autocompletar solo marcadores coincidentes.</translation>
     </message>
     <message>
         <source>Bookmarks shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias de atajo de marcadores</translation>
     </message>
     <message>
         <source>@bookmarks</source>
-        <translation type="unfinished"></translation>
+        <translation>@bookmarks</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Historial</translation>
+        <translation>Historial</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching history entries.</source>
-        <translation type="unfinished"></translation>
+        <translation>Escriba este alias seguido de un espacio en el campo de direcciones para autocompletar solo entradas del historial coincidentes.</translation>
     </message>
     <message>
         <source>History shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias de atajo del historial</translation>
     </message>
     <message>
         <source>@history</source>
-        <translation type="unfinished"></translation>
+        <translation>@history</translation>
     </message>
     <message>
         <source>Type this nickname followed by a space in the address field to complete only matching open tabs. Picking a tab switches to it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Escriba este alias seguido de un espacio en el campo de direcciones para autocompletar solo pestañas abiertas coincidentes. Al elegir una pestaña se cambia a ella.</translation>
     </message>
     <message>
         <source>Tabs shortcut nickname</source>
-        <translation type="unfinished"></translation>
+        <translation>Alias de atajo de pestañas</translation>
     </message>
     <message>
         <source>@tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>@tabs</translation>
     </message>
     <message>
         <source>Type a nickname and a space at the start of the address field to scope the completion suggestions to that source. Search engine keywords take precedence over nicknames.</source>
-        <translation type="unfinished"></translation>
+        <translation>Escriba un alias y un espacio al principio del campo de direcciones para limitar las sugerencias de autocompletado a esa fuente. Las palabras clave de los motores de búsqueda tienen prioridad sobre los alias.</translation>
     </message>
     <message>
         <source>Reset Search Settings to Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer la configuración de búsqueda a los valores predeterminados</translation>
     </message>
     <message>
         <source>Icons:</source>
-        <translation type="unfinished"></translation>
+        <translation>Iconos:</translation>
     </message>
     <message>
         <source>Icon set for toolbars, menus and dialogs. Native follows the desktop icon theme; the bundled sets look the same on every platform.</source>
-        <translation type="unfinished"></translation>
+        <translation>Juego de iconos para barras de herramientas, menús y diálogos. Nativo sigue el tema de iconos del escritorio; los juegos incluidos se ven igual en todas las plataformas.</translation>
     </message>
     <message>
         <source>Icon set</source>
-        <translation type="unfinished"></translation>
+        <translation>Juego de iconos</translation>
     </message>
     <message>
         <source>Theme:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tema:</translation>
     </message>
     <message>
         <source>Color scheme for Arora&apos;s own windows, menus and dialogs. &quot;System default&quot; follows the desktop preference.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esquema de color para las ventanas, menús y diálogos propios de Arora. "Predeterminado del sistema" sigue la preferencia del escritorio.</translation>
     </message>
     <message>
         <source>Theme</source>
-        <translation type="unfinished"></translation>
+        <translation>Tema</translation>
     </message>
     <message>
         <source>System default</source>
-        <translation type="unfinished"></translation>
+        <translation>Predeterminado del sistema</translation>
     </message>
     <message>
         <source>Light</source>
-        <translation type="unfinished"></translation>
+        <translation>Claro</translation>
     </message>
     <message>
         <source>Dark</source>
-        <translation type="unfinished"></translation>
+        <translation>Oscuro</translation>
     </message>
     <message>
         <source>Applies to app chrome; page-content dark mode is the separate &quot;Render pages in dark mode&quot; setting below.</source>
-        <translation type="unfinished"></translation>
+        <translation>Se aplica a la interfaz de la aplicación; el modo oscuro del contenido de las páginas es el ajuste independiente "Renderizar las páginas en modo oscuro" de abajo.</translation>
     </message>
     <message>
         <source>Pages that ship their own dark theme use it; light-only pages get a heuristic color inversion with a contrast floor so text stays readable. Images and videos are not inverted. Only web content is affected — Arora&apos;s own windows keep the desktop palette.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las páginas que traen su propio tema oscuro lo usan; las páginas solo claras reciben una inversión heurística de color con un mínimo de contraste para que el texto siga siendo legible. Las imágenes y los vídeos no se invierten. Solo se ve afectado el contenido web — las ventanas propias de Arora mantienen la paleta del escritorio.</translation>
     </message>
     <message>
         <source>Render pages in dark mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Renderizar las páginas en modo oscuro</translation>
     </message>
     <message>
         <source>Workaround for QtWebEngine GPU-process crashes (SIGTRAP in the display compositor): page compositing moves to software while WebGL/canvas acceleration stays on. Takes effect after a restart and is enabled automatically after repeated crashy exits.</source>
-        <translation type="unfinished"></translation>
+        <translation>Solución alternativa para los fallos del proceso GPU de QtWebEngine (SIGTRAP en el compositor de pantalla): la composición de páginas pasa a software mientras la aceleración de WebGL/canvas sigue activa. Surte efecto tras reiniciar y se activa automáticamente tras cierres fallidos repetidos.</translation>
     </message>
     <message>
         <source>Disable GPU compositing (crash workaround)</source>
-        <translation type="unfinished"></translation>
+        <translation>Desactivar la composición por GPU (solución alternativa ante fallos)</translation>
     </message>
     <message>
         <source>Sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Barra lateral</translation>
     </message>
     <message>
         <source>Show a side panel with bookmarks, history, downloads and notes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar un panel lateral con marcadores, historial, descargas y notas.</translation>
     </message>
     <message>
         <source>Show sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar la barra lateral</translation>
     </message>
     <message>
         <source>Sidebar position:</source>
-        <translation type="unfinished"></translation>
+        <translation>Posición de la barra lateral:</translation>
     </message>
     <message>
         <source>Sidebar position</source>
-        <translation type="unfinished"></translation>
+        <translation>Posición de la barra lateral</translation>
     </message>
     <message>
         <source>Left</source>
-        <translation type="unfinished"></translation>
+        <translation>Izquierda</translation>
     </message>
     <message>
         <source>Right</source>
-        <translation type="unfinished"></translation>
+        <translation>Derecha</translation>
     </message>
     <message>
         <source>Panels:</source>
-        <translation type="unfinished"></translation>
+        <translation>Paneles:</translation>
     </message>
     <message>
         <source>Which panels appear in the sidebar rail. Hidden panels are not loaded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Qué paneles aparecen en la barra lateral. Los paneles ocultos no se cargan.</translation>
     </message>
     <message>
         <source>Sidebar panels</source>
-        <translation type="unfinished"></translation>
+        <translation>Paneles de la barra lateral</translation>
     </message>
     <message>
         <source>Minimum font size</source>
-        <translation type="unfinished"></translation>
+        <translation>Tamaño mínimo de fuente</translation>
     </message>
     <message>
         <source>Security Level</source>
-        <translation type="unfinished"></translation>
+        <translation>Nivel de seguridad</translation>
     </message>
     <message>
         <source>Standard is the default browser behavior. Safer keeps JavaScript off pages loaded over plain HTTP and makes media click-to-play. Safest disables JavaScript everywhere.</source>
-        <translation type="unfinished"></translation>
+        <translation>Estándar es el comportamiento predeterminado del navegador. Más seguro mantiene JavaScript desactivado en las páginas cargadas por HTTP simple y hace que los contenidos multimedia se reproduzcan al hacer clic. El más seguro desactiva JavaScript en todas partes.</translation>
     </message>
     <message>
         <source>Standard</source>
-        <translation type="unfinished"></translation>
+        <translation>Estándar</translation>
     </message>
     <message>
         <source>Safer</source>
-        <translation type="unfinished"></translation>
+        <translation>Más seguro</translation>
     </message>
     <message>
         <source>Safest</source>
-        <translation type="unfinished"></translation>
+        <translation>El más seguro</translation>
     </message>
     <message>
         <source>Standard: JavaScript runs everywhere and sites may autoplay media. This is the default browser behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Estándar: JavaScript se ejecuta en todas partes y los sitios pueden reproducir contenido multimedia automáticamente. Este es el comportamiento predeterminado del navegador.</translation>
     </message>
     <message>
         <source>Content Blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueo de contenido</translation>
     </message>
     <message>
         <source>Content blocker &amp;engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Motor del bloqueador de contenido:</translation>
     </message>
     <message>
         <source>Content blocker engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor del bloqueador de contenido</translation>
     </message>
     <message>
         <source>Which matcher answers ad and tracker blocking. Brave adblock-rust applies list semantics the built-in engine only approximates ($badfilter, $removeparam, redirect resources); edge-case coverage differs slightly between the two — --adblock-rust-smoke diffs them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Qué comparador responde al bloqueo de anuncios y rastreadores. Brave adblock-rust aplica la semántica de las listas que el motor integrado solo aproxima ($badfilter, $removeparam, recursos de redirección); la cobertura de casos extremos difiere ligeramente entre ambos — --adblock-rust-smoke los compara.</translation>
     </message>
     <message>
         <source>Built-in (default)</source>
-        <translation type="unfinished"></translation>
+        <translation>Integrado (predeterminado)</translation>
     </message>
     <message>
         <source>Brave adblock-rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust</translation>
     </message>
     <message>
         <source>Active engine: Built-in</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor activo: Integrado</translation>
     </message>
     <message>
         <source>Manage content-blocking filters</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionar los filtros de bloqueo de contenido</translation>
     </message>
     <message>
         <source>Opens the filter-list manager to enable, update or add ad and tracker blocking subscriptions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Abre el gestor de listas de filtros para activar, actualizar o añadir subscripciones de bloqueo de anuncios y rastreadores.</translation>
     </message>
     <message>
         <source>Manage content-blocking filters...</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionar los filtros de bloqueo de contenido...</translation>
     </message>
     <message>
         <source>Blocks pop-up windows that sites try to open. A blocked pop-up indicator appears in the address bar, where a pop-up can be opened once or always allowed for the site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquea las ventanas emergentes que los sitios intentan abrir. Un indicador de ventana emergente bloqueada aparece en la barra de direcciones, donde se puede abrir una vez o permitirla siempre para el sitio.</translation>
     </message>
     <message>
         <source>Reject cookies set by embedded third-party content even when cookies are accepted generally. Per-site exceptions above still apply.</source>
-        <translation type="unfinished"></translation>
+        <translation>Rechazar las cookies establecidas por contenido incrustado de terceros aunque las cookies estén aceptadas en general. Las excepciones por sitio de arriba siguen aplicándose.</translation>
     </message>
     <message>
         <source>Block third-party cookies</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear cookies de terceros</translation>
     </message>
     <message>
         <source>Connections &amp;&amp; Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Conexiones &amp;&amp; almacenamiento</translation>
     </message>
     <message>
         <source>Upgrade plain HTTP page loads to HTTPS when possible. Sites that fail the secure connection are allowed over HTTP again for the rest of the session — the error page says so.</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizar las cargas de páginas HTTP simples a HTTPS cuando sea posible. Los sitios en los que falla la conexión segura vuelven a permitirse por HTTP durante el resto de la sesión — la página de error lo indica.</translation>
     </message>
     <message>
         <source>Upgrade connections to HTTPS when possible</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizar las conexiones a HTTPS cuando sea posible</translation>
     </message>
     <message>
         <source>Warn before a page loads over plain HTTP: any main-frame navigation that is still HTTP after the HTTPS upgrade pass shows a warning page instead of loading insecurely, offering proceed-once and always-allow choices per site. Localhost, LAN addresses and .onion names stay exempt.</source>
-        <translation type="unfinished"></translation>
+        <translation>Advertir antes de que una página se cargue por HTTP simple: cualquier navegación del marco principal que siga siendo HTTP tras el intento de actualización a HTTPS muestra una página de advertencia en lugar de cargarse de forma insegura, ofreciendo opciones de continuar una vez y permitir siempre por sitio. Localhost, las direcciones de LAN y los nombres .onion quedan exentos.</translation>
     </message>
     <message>
         <source>Warn before loading a site over plain HTTP</source>
-        <translation type="unfinished"></translation>
+        <translation>Advertir antes de cargar un sitio por HTTP simple</translation>
     </message>
     <message>
         <source>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break. Pages that withhold their own referer (noopener links, stricter site policies, insecure downgrades) always stay silent.</source>
-        <translation type="unfinished"></translation>
+        <translation>Controla la cabecera Referer que reciben terceros. Recortada: los sitios solo ven el origen básico de la página de la que viene — nunca su ruta ni su consulta — la política estándar strict-origin que usan los navegadores. Estricta no envía nada a otros sitios. Nunca omite la cabecera en todas partes — las páginas de prueba de referer la califican como totalmente limpia, pero algunos sitios que requieren Referer pueden fallar. Las páginas que omiten su propio referer (enlaces noopener, políticas de sitio más estrictas, descensos inseguros) siempre permanecen en silencio.</translation>
     </message>
     <message>
         <source>Referer header:</source>
-        <translation type="unfinished"></translation>
+        <translation>Cabecera Referer:</translation>
     </message>
     <message>
         <source>Controls the Referer header other parties receive. Trimmed: sites see only the bare origin of the page you came from — never its path or query — the standard strict-origin policy browsers use. Strict sends nothing to other sites. Never withholds the header everywhere — referrer test pages grade that fully clean, but a few sites that require a Referer may break.</source>
-        <translation type="unfinished"></translation>
+        <translation>Controla la cabecera Referer que reciben terceros. Recortada: los sitios solo ven el origen básico de la página de la que viene — nunca su ruta ni su consulta — la política estándar strict-origin que usan los navegadores. Estricta no envía nada a otros sitios. Nunca omite la cabecera en todas partes — las páginas de prueba de referer la califican como totalmente limpia, pero algunos sitios que requieren Referer pueden fallar.</translation>
     </message>
     <message>
         <source>Chromium default</source>
-        <translation type="unfinished"></translation>
+        <translation>Predeterminado de Chromium</translation>
     </message>
     <message>
         <source>Trimmed (recommended)</source>
-        <translation type="unfinished"></translation>
+        <translation>Recortada (recomendado)</translation>
     </message>
     <message>
         <source>Strict — none to other sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Estricta — nada a otros sitios</translation>
     </message>
     <message>
         <source>Never send</source>
-        <translation type="unfinished"></translation>
+        <translation>No enviar nunca</translation>
     </message>
     <message>
         <source>Route WebRTC traffic through the configured proxy only, so voice/video sites cannot discover your local or real IP address. Takes effect after a restart; may break WebRTC apps.</source>
-        <translation type="unfinished"></translation>
+        <translation>Dirigir el tráfico WebRTC solo a través del proxy configurado, de modo que los sitios de voz/vídeo no puedan descubrir su dirección IP local o real. Surte efecto tras reiniciar; puede estropear las aplicaciones WebRTC.</translation>
     </message>
     <message>
         <source>Prevent WebRTC from exposing IP addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Evitar que WebRTC exponga direcciones IP</translation>
     </message>
     <message>
         <source>Secure DNS (DoH):</source>
-        <translation type="unfinished"></translation>
+        <translation>DNS seguro (DoH):</translation>
     </message>
     <message>
         <source>DNS-over-HTTPS hides lookups from the local network&apos;s plain DNS. Automatic upgrades only when the network resolver is on Chromium&apos;s known-provider list; the Custom modes always use the endpoint below — the strict mode never falls back to plain DNS, so an unreachable endpoint stops name resolution entirely. The feature flag takes effect after a restart.</source>
-        <translation type="unfinished"></translation>
+        <translation>DNS-over-HTTPS oculta las consultas al DNS simple de la red local. Automático solo actualiza cuando el resolvedor de red está en la lista de proveedores conocidos de Chromium; los modos personalizados siempre usan el punto de acceso de abajo — el modo estricto nunca recurre al DNS simple, así que un punto de acceso inalcanzable detiene la resolución de nombres por completo. La opción surte efecto tras reiniciar.</translation>
     </message>
     <message>
         <source>Off (system resolver)</source>
-        <translation type="unfinished"></translation>
+        <translation>Desactivado (resolvedor del sistema)</translation>
     </message>
     <message>
         <source>Automatic upgrade</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualización automática</translation>
     </message>
     <message>
         <source>Custom server (with system fallback)</source>
-        <translation type="unfinished"></translation>
+        <translation>Servidor personalizado (con recurso al sistema)</translation>
     </message>
     <message>
         <source>Custom server (strict — no fallback)</source>
-        <translation type="unfinished"></translation>
+        <translation>Servidor personalizado (estricto — sin reserva)</translation>
     </message>
     <message>
         <source>DoH URI template used by the Custom modes, e.g. https://cloudflare-dns.com/dns-query or https://dns.google/dns-query. Invalid entries fall back to the default resolver rather than disabling DoH.</source>
-        <translation type="unfinished"></translation>
+        <translation>Plantilla de URI de DoH usada por los modos personalizados, p. ej. https://cloudflare-dns.com/dns-query o https://dns.google/dns-query. Las entradas no válidas recurren al resolvedor predeterminado en lugar de desactivar DoH.</translation>
     </message>
     <message>
         <source>DNS-over-HTTPS server URI template</source>
-        <translation type="unfinished"></translation>
+        <translation>Plantilla de URI del servidor DNS-over-HTTPS</translation>
     </message>
     <message>
         <source>https://cloudflare-dns.com/dns-query</source>
-        <translation type="unfinished"></translation>
+        <translation>https://cloudflare-dns.com/dns-query</translation>
     </message>
     <message>
         <source>Advertise only forward-secret AEAD cipher suites in TLS connections — RSA key-exchange and CBC suites are never offered. Takes effect after a restart; ancient sites that require the removed suites will not load.</source>
-        <translation type="unfinished"></translation>
+        <translation>Anunciar solo conjuntos de cifrado AEAD con secreto directo en las conexiones TLS — los conjuntos de intercambio de claves RSA y CBC nunca se ofrecen. Surte efecto tras reiniciar; los sitios antiguos que requieran los conjuntos eliminados no cargarán.</translation>
     </message>
     <message>
         <source>Offer only strong TLS cipher suites</source>
-        <translation type="unfinished"></translation>
+        <translation>Ofrecer solo conjuntos de cifrado TLS fuertes</translation>
     </message>
     <message>
         <source>Drop navigator.sendBeacon beacons, &lt;a ping&gt; link-tracking pings and Content-Security-Policy violation reports — invisible uploads sites use to track what you click and where you go. CSP still protects you; only its telemetry reports are suppressed. Uncheck to let sites receive them again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descartar los beacons de navigator.sendBeacon, los pings de seguimiento de enlaces &lt;a ping&gt; y los informes de violación de Content-Security-Policy — envíos invisibles que los sitios usan para rastrear en qué hace clic y adónde va. CSP sigue protegiéndole; solo se suprimen sus informes de telemetría. Desmarque para permitir que los sitios los reciban de nuevo.</translation>
     </message>
     <message>
         <source>Block tracking pings and beacons</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear pings y beacons de rastreo</translation>
     </message>
     <message>
         <source>Resolve the address of every site a page merely links to, before you click — this sends the names of sites you never visit to the DNS resolver. Off by default; enabling it only speeds up link navigation slightly.</source>
-        <translation type="unfinished"></translation>
+        <translation>Resolver la dirección de cada sitio al que una página simplemente enlaza, antes de que haga clic — esto envía al resolvedor DNS los nombres de sitios que quizá nunca visite. Desactivado por defecto; activarlo solo acelera ligeramente la navegación por enlaces.</translation>
     </message>
     <message>
         <source>Prefetch DNS for linked sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Precargar DNS para los sitios enlazados</translation>
     </message>
     <message>
         <source>Drop downloadable web fonts — font requests fingerprint your GPU/OS text stack and contact third-party hosts on every visit. Local and system fonts still work, but sites relying on icon fonts may render wrong.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descartar las fuentes web descargables — las solicitudes de fuentes identifican su pila de texto de GPU/SO y contactan con hosts de terceros en cada visita. Las fuentes locales y del sistema siguen funcionando, pero los sitios que dependen de fuentes de iconos pueden renderizarse mal.</translation>
     </message>
     <message>
         <source>Block remote web fonts</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear fuentes web remotas</translation>
     </message>
     <message>
         <source>Refuse WebSocket connections to hosts outside the page&apos;s own site — whether a cross-site socket connects or is refused leaks state the site can read about you (cross-site leak oracle). Off by default: chat widgets, feeds and other real-time features legitimately open cross-site sockets.</source>
-        <translation type="unfinished"></translation>
+        <translation>Rechazar las conexiones WebSocket a hosts ajenos al sitio de la página — que un socket entre sitios conecte o sea rechazado filtra un estado que el sitio puede leer sobre usted (oráculo de fuga entre sitios). Desactivado por defecto: los widgets de chat, canales y otras funciones en tiempo real abren legítimamente sockets entre sitios.</translation>
     </message>
     <message>
         <source>Block third-party WebSockets</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear WebSockets de terceros</translation>
     </message>
     <message>
         <source>On quit, wipe history, cookies, site storage and caches — everything Clear Private Data covers. Sites you stay logged in to are signed out.</source>
-        <translation type="unfinished"></translation>
+        <translation>Al salir, borrar el historial, las cookies, el almacenamiento de sitios y las cachés — todo lo que cubre Limpiar datos privados. Se cerrará la sesión de los sitios en los que permanezca conectado.</translation>
     </message>
     <message>
         <source>Clear browsing data when Arora exits</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar los datos de navegación al salir de Arora</translation>
     </message>
     <message>
         <source>PDF Documents</source>
-        <translation type="unfinished"></translation>
+        <translation>Documentos PDF</translation>
     </message>
     <message>
         <source>Open PDF links in Chromium&apos;s built-in PDFium viewer instead of downloading them — the parser runs inside the sandboxed renderer. Turn off to keep the old save-everything behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir los enlaces PDF en el visor PDFium integrado de Chromium en lugar de descargarlos — el analizador se ejecuta dentro del renderizador en entorno aislado. Desactívelo para mantener el antiguo comportamiento de guardarlo todo.</translation>
     </message>
     <message>
         <source>Open PDFs in the built-in viewer</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir los PDF en el visor integrado</translation>
     </message>
     <message>
         <source>Before a fetched PDF reaches the viewer, a Rust policy pass rewrites it — removing JavaScript payloads, auto-execute triggers (OpenAction/AA), Launch commands, embedded files, XFA forms and remote-submit actions. Only the in-browser view is sanitized; saving a PDF still gives your external reader the original bytes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Antes de que un PDF descargado llegue al visor, una pasada de política en Rust lo reescribe — eliminando cargas de JavaScript, disparadores de ejecución automática (OpenAction/AA), comandos Launch, archivos incrustados, formularios XFA y acciones de envío remoto. Solo se sanea la vista en el navegador; guardar un PDF sigue entregando los bytes originales a su lector externo.</translation>
     </message>
     <message>
         <source>Sanitize PDFs before viewing</source>
-        <translation type="unfinished"></translation>
+        <translation>Sanear los PDF antes de verlos</translation>
     </message>
     <message>
         <source>Fingerprint Resistance</source>
-        <translation type="unfinished"></translation>
+        <translation>Resistencia a la huella digital</translation>
     </message>
     <message>
         <source>Websites see UTC as your timezone instead of the system&apos;s — Date and Intl API reads all report UTC. Takes full effect after a restart; pages already open keep their timezone.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los sitios web ven UTC como su zona horaria en lugar de la del sistema — las lecturas de las API Date e Intl informan todas de UTC. Surte pleno efecto tras reiniciar; las páginas ya abiertas mantienen su zona horaria.</translation>
     </message>
     <message>
         <source>Report UTC as the timezone</source>
-        <translation type="unfinished"></translation>
+        <translation>Informar de UTC como zona horaria</translation>
     </message>
     <message>
         <source>Send &apos;en-US, en&apos; as Accept-Language and navigator.languages instead of the configured list so every user looks alike. The Language list setting is preserved and used again when this is off.</source>
-        <translation type="unfinished"></translation>
+        <translation>Enviar 'en-US, en' como Accept-Language y navigator.languages en lugar de la lista configurada para que todos los usuarios parezcan iguales. El ajuste de la lista de idiomas se conserva y se vuelve a usar cuando está desactivado.</translation>
     </message>
     <message>
         <source>Report generic language preferences (en-US, en)</source>
-        <translation type="unfinished"></translation>
+        <translation>Informar de preferencias de idioma genéricas (en-US, en)</translation>
     </message>
     <message>
         <source>Inject countermeasures into web pages: canvas read-out noise, a generic WebGL vendor/renderer and normalized device values (cores, memory, plugins). This is opt-in noise, not anonymity — a site can still detect the spoofing and canvas-heavy pages can break; the shield button exempts a site that does. Always on in Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Inyectar contramedidas en las páginas web: ruido en la lectura de canvas, un fabricante/renderizador WebGL genérico y valores de dispositivo normalizados (núcleos, memoria, plugins). Esto es ruido opcional, no anonimato — un sitio aún puede detectar la falsificación y las páginas con mucho canvas pueden fallar; el botón del escudo exime a un sitio que lo haga. Siempre activo en las ventanas Tor.</translation>
     </message>
     <message>
         <source>Spoof canvas/WebGL fingerprints</source>
-        <translation type="unfinished"></translation>
+        <translation>Falsificar las huellas digitales de canvas/WebGL</translation>
     </message>
     <message>
         <source>Site Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Permisos de sitios</translation>
     </message>
     <message>
         <source>Websites must ask before using notifications, geolocation or mouse lock. Capture devices and clipboard access are always denied. Remembered permission, JavaScript and pop-up decisions:</source>
-        <translation type="unfinished"></translation>
+        <translation>Los sitios web deben pedir permiso antes de usar notificaciones, geolocalización o bloqueo del ratón. Los dispositivos de captura y el acceso al portapapeles siempre se deniegan. Permisos recordados y decisiones sobre JavaScript y ventanas emergentes:</translation>
     </message>
     <message>
         <source>Site permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Permisos de sitios</translation>
     </message>
     <message>
         <source>Site</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitio</translation>
     </message>
     <message>
         <source>Permission</source>
-        <translation type="unfinished"></translation>
+        <translation>Permiso</translation>
     </message>
     <message>
         <source>Decision</source>
-        <translation type="unfinished"></translation>
+        <translation>Decisión</translation>
     </message>
     <message>
         <source>Clear All</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar todo</translation>
     </message>
     <message>
         <source>Saved Passwords</source>
-        <translation type="unfinished"></translation>
+        <translation>Contraseñas guardadas</translation>
     </message>
     <message>
         <source>Saved passwords are encrypted with a key stored next to the data. A master passphrase protects the key itself.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las contraseñas guardadas se cifran con una clave almacenada junto a los datos. Una frase de contraseña maestra protege la propia clave.</translation>
     </message>
     <message>
         <source>Set Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Establecer frase de contraseña maestra...</translation>
     </message>
     <message>
         <source>Remove Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar la frase de contraseña</translation>
     </message>
     <message>
         <source>Lock Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear ahora</translation>
     </message>
     <message>
         <source>Tab Bar Position</source>
-        <translation type="unfinished"></translation>
+        <translation>Posición de la barra de pestañas</translation>
     </message>
     <message>
         <source>Open links from applications:</source>
@@ -4092,143 +4089,143 @@ as a QR code.</source>
     </message>
     <message>
         <source>Finished downloads list:</source>
-        <translation type="unfinished"></translation>
+        <translation>Lista de descargas finalizadas:</translation>
     </message>
     <message>
         <source>Finished downloads list cleanup policy</source>
-        <translation type="unfinished"></translation>
+        <translation>Política de limpieza de la lista de descargas finalizadas</translation>
     </message>
     <message>
         <source>Keep entries</source>
-        <translation type="unfinished"></translation>
+        <translation>Conservar las entradas</translation>
     </message>
     <message>
         <source>Clear on application exit</source>
-        <translation type="unfinished"></translation>
+        <translation>Vaciar al salir de la aplicación</translation>
     </message>
     <message>
         <source>Remove each download when it finishes</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar cada descarga cuando finaliza</translation>
     </message>
     <message>
         <source>Render pages on the GPU. Turned off, Arora adds --disable-gpu to the engine flags — the switch latches at startup, so the change takes effect on the next launch.</source>
-        <translation type="unfinished"></translation>
+        <translation>Renderizar las páginas en la GPU. Si se desactiva, Arora añade --disable-gpu a las opciones del motor — el modificador se fija al arrancar, así que el cambio surte efecto en el próximo inicio.</translation>
     </message>
     <message>
         <source>Use Hardware Acceleration When Available</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar aceleración de hardware cuando esté disponible</translation>
     </message>
     <message>
         <source>Changing this option requires a restart to take effect.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar esta opción requiere reiniciar para que surta efecto.</translation>
     </message>
     <message>
         <source>Memory Saver</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorro de memoria</translation>
     </message>
     <message>
         <source>Never Save Memory</source>
-        <translation type="unfinished"></translation>
+        <translation>No ahorrar memoria nunca</translation>
     </message>
     <message>
         <source>Unload tabs after 60 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargar las pestañas tras 60 minutos de inactividad.</translation>
     </message>
     <message>
         <source>Minimum Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorro mínimo</translation>
     </message>
     <message>
         <source>Unload tabs after 30 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargar las pestañas tras 30 minutos de inactividad.</translation>
     </message>
     <message>
         <source>Balanced Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorro equilibrado</translation>
     </message>
     <message>
         <source>Unload tabs after 10 minutes idle.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargar las pestañas tras 10 minutos de inactividad.</translation>
     </message>
     <message>
         <source>Maximum Savings</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorro máximo</translation>
     </message>
     <message>
         <source>Unload inactive tabs to save memory. Suspended tabs keep their place on the tab strip and reload when you return to them.</source>
-        <translation type="unfinished"></translation>
+        <translation>Descargar las pestañas inactivas para ahorrar memoria. Las pestañas suspendidas mantienen su lugar en la barra de pestañas y se recargan cuando vuelve a ellas.</translation>
     </message>
     <message>
         <source>Energy Saver</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorro de energía</translation>
     </message>
     <message>
         <source>Conserve energy by capping background activity, visual effects, and video frame rates. Extends battery life.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorrar energía limitando la actividad en segundo plano, los efectos visuales y la tasa de fotogramas del vídeo. Prolonga la duración de la batería.</translation>
     </message>
     <message>
         <source>Never Save Energy</source>
-        <translation type="unfinished"></translation>
+        <translation>No ahorrar energía nunca</translation>
     </message>
     <message>
         <source>Turn On at 20% Battery or Lower</source>
-        <translation type="unfinished"></translation>
+        <translation>Activarse con un 20% de batería o menos</translation>
     </message>
     <message>
         <source>Turn On When Running on Battery</source>
-        <translation type="unfinished"></translation>
+        <translation>Activarse al funcionar con batería</translation>
     </message>
     <message>
         <source>Always Save Energy</source>
-        <translation type="unfinished"></translation>
+        <translation>Ahorrar energía siempre</translation>
     </message>
     <message>
         <source>While saving energy: inactive tabs sleep after 10 minutes, tab hover previews are disabled, and tab loading animations pause.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mientras se ahorra energía: las pestañas inactivas se suspenden tras 10 minutos, las vistas previas al pasar el cursor por las pestañas se desactivan y las animaciones de carga de las pestañas se pausan.</translation>
     </message>
     <message>
         <source>Startup with</source>
-        <translation type="unfinished"></translation>
+        <translation>Iniciar con</translation>
     </message>
     <message>
         <source>Lazy Load Restored Tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Carga diferida de las pestañas restauradas</translation>
     </message>
     <message>
         <source>Always Load Pinned Tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargar siempre las pestañas fijadas</translation>
     </message>
     <message>
         <source>Wait to load restored session content until the tab is activated.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esperar a cargar el contenido restaurado de la sesión hasta que se active la pestaña.</translation>
     </message>
     <message>
         <source>Network Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Rendimiento de red</translation>
     </message>
     <message>
         <source>Allow prefetch and prerender hints (&lt;link rel=prefetch&gt;). Leaving this off drops connections to sites a link merely points at — pages you may never visit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir las sugerencias de precarga y prerenderizado (&lt;link rel=prefetch&gt;). Dejarlo desactivado evita conexiones a sitios a los que un enlace simplemente apunta — páginas que quizá nunca visite.</translation>
     </message>
     <message>
         <source>Prefetch Resources</source>
-        <translation type="unfinished"></translation>
+        <translation>Precargar recursos</translation>
     </message>
     <message>
         <source>Follow webpage suggestions to prefetch DNS, and preload resources and documents early.</source>
-        <translation type="unfinished"></translation>
+        <translation>Seguir las sugerencias de las páginas web para precargar DNS y cargar recursos y documentos por adelantado.</translation>
     </message>
     <message>
         <source>Reset Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer la configuración</translation>
     </message>
     <message>
         <source>Reset Performance Settings to Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer la configuración de rendimiento a los valores predeterminados</translation>
     </message>
     <message>
         <source>Restore every setting on this page — hardware acceleration, memory saver, session restore and prefetch — to its default.</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurar cada ajuste de esta página — aceleración de hardware, ahorro de memoria, restauración de sesión y precarga — a su valor predeterminado.</translation>
     </message>
     <message>
         <source>In a new window</source>
@@ -4240,163 +4237,163 @@ as a QR code.</source>
     </message>
     <message>
         <source>Manifest V3 extensions: load an unpacked folder for the session, or install a folder/.zip into the profile. Every load or install shows a permission review first. Newly loaded extensions start disabled. Extensions never run in private windows or Tor windows.</source>
-        <translation type="unfinished"></translation>
+        <translation>Extensiones Manifest V3: cargue una carpeta descomprimida para la sesión o instale una carpeta/.zip en el perfil. Cada carga o instalación muestra primero una revisión de permisos. Las extensiones recién cargadas empiezan desactivadas. Las extensiones nunca se ejecutan en ventanas privadas ni en ventanas Tor.</translation>
     </message>
     <message>
         <source>Name</source>
-        <translation type="unfinished">Nombre</translation>
+        <translation>Nombre</translation>
     </message>
     <message>
         <source>Status</source>
-        <translation type="unfinished"></translation>
+        <translation>Estado</translation>
     </message>
     <message>
         <source>Source</source>
-        <translation type="unfinished"></translation>
+        <translation>Origen</translation>
     </message>
     <message>
         <source>Load Unpacked...</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargar descomprimida...</translation>
     </message>
     <message>
         <source>Install...</source>
-        <translation type="unfinished"></translation>
+        <translation>Instalar...</translation>
     </message>
     <message>
         <source>Check for Updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar actualizaciones</translation>
     </message>
     <message>
         <source>Checks each extension&apos;s update_url once a day and downloads newer packages for review. Updates are never installed silently — apply them with Check for Updates.</source>
-        <translation type="unfinished"></translation>
+        <translation>Comprueba la update_url de cada extensión una vez al día y descarga los paquetes más nuevos para revisarlos. Las actualizaciones nunca se instalan silenciosamente — aplíquelas con Buscar actualizaciones.</translation>
     </message>
     <message>
         <source>Automatically check for extension updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar actualizaciones de extensiones automáticamente</translation>
     </message>
     <message>
         <source>User Scripts</source>
-        <translation type="unfinished"></translation>
+        <translation>Scripts de usuario</translation>
     </message>
     <message>
         <source>.js files in this folder run on every page at document end. Drop scripts here for what extensions cannot cover.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los archivos .js de esta carpeta se ejecutan en cada página al final del documento. Deje aquí los scripts para lo que las extensiones no pueden cubrir.</translation>
     </message>
     <message>
         <source>User scripts</source>
-        <translation type="unfinished"></translation>
+        <translation>Scripts de usuario</translation>
     </message>
     <message>
         <source>Open Folder...</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir carpeta...</translation>
     </message>
     <message>
         <source>Reload</source>
-        <translation type="unfinished"></translation>
+        <translation>Recargar</translation>
     </message>
     <message>
         <source>Containers keep site data — cookies, logins and storage — isolated per context. Open a container tab from File &gt; New Container Tab or a tab&apos;s context menu.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los contenedores mantienen los datos de los sitios — cookies, inicios de sesión y almacenamiento — aislados por contexto. Abra una pestaña contenedor desde Archivo &gt; Nueva pestaña contenedor o el menú contextual de una pestaña.</translation>
     </message>
     <message>
         <source>Container display:</source>
-        <translation type="unfinished"></translation>
+        <translation>Visualización de contenedores:</translation>
     </message>
     <message>
         <source>Container tab display mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Modo de visualización de las pestañas contenedor</translation>
     </message>
     <message>
         <source>Two-level strip groups container tabs under their own header row; inline chips keep every tab in one row with a container label.</source>
-        <translation type="unfinished"></translation>
+        <translation>La tira de dos niveles agrupa las pestañas contenedor bajo su propia fila de encabezado; las etiquetas en línea mantienen todas las pestañas en una fila con una etiqueta de contenedor.</translation>
     </message>
     <message>
         <source>Inline chips</source>
-        <translation type="unfinished"></translation>
+        <translation>Etiquetas en línea</translation>
     </message>
     <message>
         <source>Two-level strip</source>
-        <translation type="unfinished"></translation>
+        <translation>Tira de dos niveles</translation>
     </message>
     <message>
         <source>No containers yet. Create one to keep a site&apos;s data isolated from the rest of your browsing.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aún no hay contenedores. Cree uno para mantener los datos de un sitio aislados del resto de su navegación.</translation>
     </message>
     <message>
         <source>New Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Nuevo contenedor...</translation>
     </message>
     <message>
         <source>Delete</source>
-        <translation type="unfinished">Borrar</translation>
+        <translation>Eliminar</translation>
     </message>
     <message>
         <source>Sites that always open in the selected container:</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitios que siempre se abren en el contenedor seleccionado:</translation>
     </message>
     <message>
         <source>Sites assigned to the selected container</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitios asignados al contenedor seleccionado</translation>
     </message>
     <message>
         <source>Remove Site</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar sitio</translation>
     </message>
     <message>
         <source>Deleting a container permanently removes all site data stored in it.</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar un contenedor borra permanentemente todos los datos de sitios almacenados en él.</translation>
     </message>
     <message>
         <source>Download Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de descargas</translation>
     </message>
     <message>
         <source>Engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor:</translation>
     </message>
     <message>
         <source>Download engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de descargas</translation>
     </message>
     <message>
         <source>Which backend transfers downloads. Accelerated needs a rustdl-enabled build; the external program option below overrides either engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Qué backend transfiere las descargas. Acelerado necesita una compilación con rustdl; la opción de programa externo de abajo prevalece sobre cualquiera de los motores.</translation>
     </message>
     <message>
         <source>Built-in (Chromium)</source>
-        <translation type="unfinished"></translation>
+        <translation>Integrado (Chromium)</translation>
     </message>
     <message>
         <source>Accelerated (Rust)</source>
-        <translation type="unfinished"></translation>
+        <translation>Acelerado (Rust)</translation>
     </message>
     <message>
         <source>Connections per download:</source>
-        <translation type="unfinished"></translation>
+        <translation>Conexiones por descarga:</translation>
     </message>
     <message>
         <source>Connections per download</source>
-        <translation type="unfinished"></translation>
+        <translation>Conexiones por descarga</translation>
     </message>
     <message>
         <source>Parallel segments used by the accelerated engine (4-16; 0 = engine default of 8)</source>
-        <translation type="unfinished"></translation>
+        <translation>Segmentos paralelos usados por el motor acelerado (4-16; 0 = valor predeterminado del motor, 8)</translation>
     </message>
     <message>
         <source>Engine default (8)</source>
-        <translation type="unfinished"></translation>
+        <translation>Predeterminado del motor (8)</translation>
     </message>
     <message>
         <source>Parallel download segments</source>
-        <translation type="unfinished"></translation>
+        <translation>Segmentos de descarga paralelos</translation>
     </message>
     <message>
         <source>Splits downloads on the built-in (Chromium) engine into parallel byte-range requests when the server accepts ranges. The engine flag latches at startup, so the change applies on the next launch; it also applies in Tor windows where the engine path stays proxied.</source>
-        <translation type="unfinished"></translation>
+        <translation>Divide las descargas del motor integrado (Chromium) en solicitudes paralelas de rangos de bytes cuando el servidor acepta rangos. La opción del motor se fija al arrancar, así que el cambio se aplica en el próximo inicio; también se aplica en las ventanas Tor, donde la ruta del motor sigue pasando por el proxy.</translation>
     </message>
     <message>
         <source>Parallel segments (built-in engine, applies at restart)</source>
-        <translation type="unfinished"></translation>
+        <translation>Segmentos paralelos (motor integrado, se aplica al reiniciar)</translation>
     </message>
     <message>
         <source>Ask for a destination each time</source>
@@ -4408,19 +4405,19 @@ as a QR code.</source>
     </message>
     <message>
         <source>Download directory</source>
-        <translation type="unfinished"></translation>
+        <translation>Directorio de descargas</translation>
     </message>
     <message>
         <source>Use this external download program:</source>
-        <translation type="unfinished"></translation>
+        <translation>Usar este programa de descargas externo:</translation>
     </message>
     <message>
         <source>External download program</source>
-        <translation type="unfinished"></translation>
+        <translation>Programa de descargas externo</translation>
     </message>
     <message>
         <source>Choose Program...</source>
-        <translation type="unfinished"></translation>
+        <translation>Elegir programa...</translation>
     </message>
     <message>
         <source>Appearance</source>
@@ -4440,7 +4437,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Minimum Font size:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tamaño mínimo de fuente:</translation>
     </message>
     <message>
         <source>Privacy</source>
@@ -4464,7 +4461,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Persistent Data Storage</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacenamiento persistente de datos</translation>
     </message>
     <message>
         <source>Cookies</source>
@@ -4588,15 +4585,15 @@ as a QR code.</source>
     </message>
     <message>
         <source>Rendering Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de renderizado</translation>
     </message>
     <message>
         <source>Engine new tabs render with. Experimental engines can render pages but lack browser features like ad blocking, downloads and site permissions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor con el que se renderizan las pestañas nuevas. Los motores experimentales pueden renderizar páginas pero carecen de funciones del navegador como el bloqueo de anuncios, las descargas y los permisos de sitios.</translation>
     </message>
     <message>
         <source>Default rendering engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor de renderizado predeterminado</translation>
     </message>
     <message>
         <source>Http (Secure)</source>
@@ -4624,23 +4621,23 @@ as a QR code.</source>
     </message>
     <message>
         <source>AutoFill Web Forms</source>
-        <translation type="unfinished"></translation>
+        <translation>Autocompletar formularios web</translation>
     </message>
     <message>
         <source>Saved Addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Direcciones guardadas</translation>
     </message>
     <message>
         <source>Saved addresses</source>
-        <translation type="unfinished"></translation>
+        <translation>Direcciones guardadas</translation>
     </message>
     <message>
         <source>Add...</source>
-        <translation type="unfinished">Añadir...</translation>
+        <translation>Añadir...</translation>
     </message>
     <message>
         <source>Remove All</source>
-        <translation type="unfinished">Eliminar todo</translation>
+        <translation>Eliminar todo</translation>
     </message>
     <message>
         <source>Enable network cache</source>
@@ -4723,107 +4720,107 @@ as a QR code.</source>
     </message>
     <message>
         <source>Accelerated (Rust) — not in this build</source>
-        <translation type="unfinished"></translation>
+        <translation>Acelerado (Rust) — no en esta compilación</translation>
     </message>
     <message>
         <source>Extensions never run in a Tor window.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las extensiones nunca se ejecutan en una ventana Tor.</translation>
     </message>
     <message>
         <source>This build of Qt WebEngine was compiled without extension support.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta compilación de Qt WebEngine se compiló sin compatibilidad con extensiones.</translation>
     </message>
     <message>
         <source>Brave adblock-rust — rebuild with CONFIG+=adblock_rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust — recompile con CONFIG+=adblock_rust</translation>
     </message>
     <message>
         <source>Tor windows resolve names remotely through the Tor proxy — local DNS-over-HTTPS would bypass the tunnel.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las ventanas Tor resuelven los nombres remotamente a través del proxy Tor — el DNS-over-HTTPS local evitaría el túnel.</translation>
     </message>
     <message>
         <source>General</source>
-        <translation type="unfinished">General</translation>
+        <translation>General</translation>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Buscar</translation>
+        <translation>Buscar</translation>
     </message>
     <message>
         <source>Appearance</source>
-        <translation type="unfinished">Apariencia</translation>
+        <translation>Apariencia</translation>
     </message>
     <message>
         <source>Privacy</source>
-        <translation type="unfinished">Privacidad</translation>
+        <translation>Privacidad</translation>
     </message>
     <message>
         <source>Tab Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración de pestañas</translation>
     </message>
     <message>
         <source>Proxy</source>
-        <translation type="unfinished">Proxy</translation>
+        <translation>Proxy</translation>
     </message>
     <message>
         <source>AutoFill</source>
-        <translation type="unfinished">Autocompletar</translation>
+        <translation>Autocompletar</translation>
     </message>
     <message>
         <source>Advanced</source>
-        <translation type="unfinished">Avanzado</translation>
+        <translation>Avanzado</translation>
     </message>
     <message>
         <source>Extensions</source>
-        <translation type="unfinished"></translation>
+        <translation>Extensiones</translation>
     </message>
     <message>
         <source>Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Contenedores</translation>
     </message>
     <message>
         <source>Downloads</source>
-        <translation type="unfinished">Descargas</translation>
+        <translation>Descargas</translation>
     </message>
     <message>
         <source>Performance</source>
-        <translation type="unfinished"></translation>
+        <translation>Rendimiento</translation>
     </message>
     <message>
         <source>Reset Search Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer la configuración de búsqueda</translation>
     </message>
     <message>
         <source>Reset the search engine choices, suggestion switches, shortcut nicknames and search display options to their defaults?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Restablecer las elecciones de motores de búsqueda, los interruptores de sugerencias, los alias de atajos y las opciones de visualización de búsqueda a sus valores predeterminados?</translation>
     </message>
     <message>
         <source>Reset Performance Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer la configuración de rendimiento</translation>
     </message>
     <message>
         <source>Restore the Performance page&apos;s settings — hardware acceleration, memory saver, energy saver, lazy session restore and prefetch — to their defaults?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Restaurar los ajustes de la página de rendimiento — aceleración de hardware, ahorro de memoria, ahorro de energía, restauración diferida de la sesión y precarga — a sus valores predeterminados?</translation>
     </message>
     <message>
         <source>No battery detected — the &apos;20% battery&apos; and &apos;on battery&apos; options behave like Never Save Energy on this machine.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se detectó batería — las opciones '20% de batería' y 'con batería' se comportan como No ahorrar energía nunca en este equipo.</translation>
     </message>
     <message>
         <source>Battery at %1% — running on battery.</source>
-        <translation type="unfinished"></translation>
+        <translation>Batería al %1% — funcionando con batería.</translation>
     </message>
     <message>
         <source>Battery at %1% — on external power.</source>
-        <translation type="unfinished"></translation>
+        <translation>Batería al %1% — con alimentación externa.</translation>
     </message>
     <message>
         <source>Battery detected, charge level unknown.</source>
-        <translation type="unfinished"></translation>
+        <translation>Batería detectada, nivel de carga desconocido.</translation>
     </message>
     <message>
         <source>Energy Saver is on.</source>
-        <translation type="unfinished"></translation>
+        <translation>El ahorro de energía está activado.</translation>
     </message>
     <message>
         <source>Choose Directory</source>
@@ -4831,7 +4828,7 @@ as a QR code.</source>
     </message>
     <message>
         <source>Choose Program</source>
-        <translation type="unfinished"></translation>
+        <translation>Elegir programa</translation>
     </message>
     <message>
         <source>Choose CSS File</source>
@@ -4839,739 +4836,742 @@ as a QR code.</source>
     </message>
     <message>
         <source>Edit Address</source>
-        <translation type="unfinished">Editar dirección</translation>
+        <translation>Editar dirección</translation>
     </message>
     <message>
         <source>New Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor nuevo</translation>
     </message>
     <message>
         <source>New Engine %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor nuevo %1</translation>
     </message>
     <message>
         <source>The nickname &quot;%1&quot; is already used by &quot;%2&quot;.</source>
-        <translation type="unfinished"></translation>
+        <translation>El alias "%1" ya es usado por "%2".</translation>
     </message>
     <message>
         <source>The search URL cannot be empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>La URL de búsqueda no puede estar vacía.</translation>
     </message>
     <message>
         <source>The search URL must contain %s or {searchTerms} where the search text is inserted (or POST parameters that carry it).</source>
-        <translation type="unfinished"></translation>
+        <translation>La URL de búsqueda debe contener %s o {searchTerms} donde se inserta el texto de búsqueda (o parámetros POST que lo transporten).</translation>
     </message>
     <message>
         <source>The suggest URL must contain %s or {searchTerms} where the search text is inserted.</source>
-        <translation type="unfinished"></translation>
+        <translation>La URL de sugerencias debe contener %s o {searchTerms} donde se inserta el texto de búsqueda.</translation>
     </message>
     <message>
         <source>The image search URL must contain %s or {searchTerms} where the search text is inserted.</source>
-        <translation type="unfinished"></translation>
+        <translation>La URL de búsqueda de imágenes debe contener %s o {searchTerms} donde se inserta el texto de búsqueda.</translation>
     </message>
     <message>
         <source>POST parameters must be name=value pairs separated by &apos;&amp;&apos;.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los parámetros POST deben ser pares nombre=valor separados por '&amp;'.</translation>
     </message>
     <message>
         <source>Image POST parameters must be name=value pairs separated by &apos;&amp;&apos;.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los parámetros POST de imágenes deben ser pares nombre=valor separados por '&amp;'.</translation>
     </message>
     <message>
         <source>The engine name cannot be empty.</source>
-        <translation type="unfinished"></translation>
+        <translation>El nombre del motor no puede estar vacío.</translation>
     </message>
     <message>
         <source>An engine named &quot;%1&quot; already exists.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ya existe un motor llamado "%1".</translation>
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Motores de búsqueda</translation>
     </message>
     <message>
         <source>Same as Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Igual que el predeterminado</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to %1 before you press Enter. Off by default; the choice is stored per engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las sugerencias envían cada pulsación de tecla a %1 antes de que pulse Intro. Desactivado por defecto; la elección se guarda por motor.</translation>
     </message>
     <message>
         <source>Suggestions send each keystroke to the selected engine before you press Enter. Off by default.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las sugerencias envían cada pulsación de tecla al motor seleccionado antes de que pulse Intro. Desactivado por defecto.</translation>
     </message>
     <message>
         <source>Select Unpacked Extension Folder</source>
-        <translation type="unfinished"></translation>
+        <translation>Seleccionar la carpeta de la extensión descomprimida</translation>
     </message>
     <message>
         <source>Install Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Instalar extensión</translation>
     </message>
     <message>
         <source>Install from an unpacked folder or a .zip package?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Instalar desde una carpeta descomprimida o desde un paquete .zip?</translation>
     </message>
     <message>
         <source>Folder...</source>
-        <translation type="unfinished"></translation>
+        <translation>Carpeta...</translation>
     </message>
     <message>
         <source>ZIP Package...</source>
-        <translation type="unfinished"></translation>
+        <translation>Paquete ZIP...</translation>
     </message>
     <message>
         <source>Select Extension Package</source>
-        <translation type="unfinished"></translation>
+        <translation>Seleccionar el paquete de la extensión</translation>
     </message>
     <message>
         <source>Extension packages (*.zip);;All files (*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Paquetes de extensiones (*.zip);;Todos los archivos (*)</translation>
     </message>
     <message>
         <source>Remove Extension</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar extensión</translation>
     </message>
     <message>
         <source>Remove the extension &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Eliminar la extensión "%1"?</translation>
     </message>
     <message>
         <source>%1: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1: %2</translation>
     </message>
     <message>
         <source>%1 (version %2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (versión %2)</translation>
     </message>
     <message>
         <source>%1 (version %2, saved to %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (versión %2, guardada en %3)</translation>
     </message>
     <message>
         <source>All extensions are up to date.</source>
-        <translation type="unfinished"></translation>
+        <translation>Todas las extensiones están actualizadas.</translation>
     </message>
     <message>
         <source>Updates ready to review: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizaciones listas para revisar: %1</translation>
     </message>
     <message>
         <source>Update available, install manually: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualización disponible, instálela manualmente: %1</translation>
     </message>
     <message>
         <source>Failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Falló: %1</translation>
     </message>
     <message>
         <source>Extension Updates</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualizaciones de extensiones</translation>
     </message>
     <message>
         <source>Error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Error: %1</translation>
     </message>
     <message>
         <source>Built-in component extension.</source>
-        <translation type="unfinished"></translation>
+        <translation>Extensión de componente integrada.</translation>
     </message>
     <message>
         <source>Source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Origen: %1</translation>
     </message>
     <message>
         <source>Declares a toolbar action — Qt WebEngine has no extension toolbar, so its popup will not appear.</source>
-        <translation type="unfinished"></translation>
+        <translation>Declara una acción de barra de herramientas — Qt WebEngine no tiene barra de herramientas de extensiones, por lo que su ventana emergente no aparecerá.</translation>
     </message>
     <message>
         <source>Version %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Versión %1</translation>
     </message>
     <message>
         <source>No update source — this extension cannot check for updates.</source>
-        <translation type="unfinished"></translation>
+        <translation>Sin fuente de actualización — esta extensión no puede buscar actualizaciones.</translation>
     </message>
     <message>
         <source>Update source: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Fuente de actualización: %1</translation>
     </message>
     <message>
         <source>Update check failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Falló la comprobación de actualizaciones: %1</translation>
     </message>
     <message>
         <source>Update to version %1 downloaded to %2 — it is offered for review on the next update check.</source>
-        <translation type="unfinished"></translation>
+        <translation>La actualización a la versión %1 se descargó en %2 — se ofrecerá para revisión en la próxima comprobación de actualizaciones.</translation>
     </message>
     <message>
         <source>Update to version %1 downloaded to %2 — install it with the Install button.</source>
-        <translation type="unfinished"></translation>
+        <translation>La actualización a la versión %1 se descargó en %2 — instálela con el botón Instalar.</translation>
     </message>
     <message>
         <source>Extension is up to date.</source>
-        <translation type="unfinished"></translation>
+        <translation>La extensión está actualizada.</translation>
     </message>
     <message>
         <source>Permissions: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Permisos: %1</translation>
     </message>
     <message>
         <source>Not available in Qt WebEngine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>No disponible en Qt WebEngine: %1</translation>
     </message>
     <message>
         <source>Partially supported in Qt WebEngine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Compatibilidad parcial en Qt WebEngine: %1</translation>
     </message>
     <message>
         <source>Error</source>
-        <translation type="unfinished">Error</translation>
+        <translation>Error</translation>
     </message>
     <message>
         <source>Not loaded</source>
-        <translation type="unfinished"></translation>
+        <translation>No cargada</translation>
     </message>
     <message>
         <source>Enabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Activada</translation>
     </message>
     <message>
         <source>Disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Desactivada</translation>
     </message>
     <message>
         <source>Built-in</source>
-        <translation type="unfinished"></translation>
+        <translation>Integrada</translation>
     </message>
     <message>
         <source>Installed</source>
-        <translation type="unfinished"></translation>
+        <translation>Instalada</translation>
     </message>
     <message>
         <source>Session</source>
-        <translation type="unfinished"></translation>
+        <translation>Sesión</translation>
     </message>
     <message>
         <source>(empty — drop .js files in the folder)</source>
-        <translation type="unfinished"></translation>
+        <translation>(vacío — deje archivos .js en la carpeta)</translation>
     </message>
     <message>
         <source>Allowed</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitido</translation>
     </message>
     <message>
         <source>Denied</source>
-        <translation type="unfinished"></translation>
+        <translation>Denegado</translation>
     </message>
     <message>
         <source>JavaScript</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript</translation>
     </message>
     <message>
         <source>Blocked</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueado</translation>
     </message>
     <message>
         <source>Pop-ups</source>
-        <translation type="unfinished"></translation>
+        <translation>Ventanas emergentes</translation>
     </message>
     <message>
         <source>Clear Site Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar los permisos de sitios</translation>
     </message>
     <message>
         <source>Remove every remembered site permission?</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Eliminar todos los permisos de sitios recordados?</translation>
     </message>
     <message>
         <source>Standard: JavaScript runs everywhere and sites may autoplay media. This is the default browser behavior.</source>
-        <translation type="unfinished"></translation>
+        <translation>Estándar: JavaScript se ejecuta en todas partes y los sitios pueden reproducir contenido multimedia automáticamente. Este es el comportamiento predeterminado del navegador.</translation>
     </message>
     <message>
         <source>Safer: pages loaded over plain HTTP cannot load external JavaScript (scripts, workers) and media only plays after a click. Scripts inlined into the page itself can still run; pages on this machine (localhost) are exempt.</source>
-        <translation type="unfinished"></translation>
+        <translation>Más seguro: las páginas cargadas por HTTP simple no pueden cargar JavaScript externo (scripts, workers) y los contenidos multimedia solo se reproducen tras un clic. Los scripts insertados en la propia página sí pueden ejecutarse; las páginas de este equipo (localhost) están exentas.</translation>
     </message>
     <message>
         <source>Safest: JavaScript is disabled on every site and media only plays after a click. Many websites will break. &quot;Enable Javascript&quot; above is ignored while this level is selected.</source>
-        <translation type="unfinished"></translation>
+        <translation>El más seguro: JavaScript está desactivado en todos los sitios y los contenidos multimedia solo se reproducen tras un clic. Muchos sitios web fallarán. La opción "Activar javascript" de arriba se ignora mientras este nivel esté seleccionado.</translation>
     </message>
     <message>
         <source>Active engine: Built-in — Brave adblock-rust is not compiled into this build (rebuild with CONFIG+=adblock_rust)</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor activo: Integrado — Brave adblock-rust no está compilado en esta compilación (recompile con CONFIG+=adblock_rust)</translation>
     </message>
     <message>
         <source>Active engine: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Motor activo: %1</translation>
     </message>
     <message>
         <source>Brave adblock-rust</source>
-        <translation type="unfinished"></translation>
+        <translation>Brave adblock-rust</translation>
     </message>
     <message>
         <source>Change Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar la frase de contraseña maestra</translation>
     </message>
     <message>
         <source>Set Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Establecer la frase de contraseña maestra</translation>
     </message>
     <message>
         <source>Choose a new master passphrase (at least 8 characters).
 Everything sealed under the old one is re-encrypted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Elija una nueva frase de contraseña maestra (de al menos 8 caracteres).
+Todo lo sellado con la anterior se vuelve a cifrar.</translation>
     </message>
     <message>
         <source>Choose a master passphrase (at least 8 characters).
 Saved passwords will then be decryptable only with it — the
 key is derived in memory and never written to disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Elija una frase de contraseña maestra (de al menos 8 caracteres).
+Las contraseñas guardadas solo podrán descifrarse con ella — la
+clave se deriva en memoria y nunca se escribe en el disco.</translation>
     </message>
     <message>
         <source>Passphrase:</source>
-        <translation type="unfinished"></translation>
+        <translation>Frase de contraseña:</translation>
     </message>
     <message>
         <source>Repeat:</source>
-        <translation type="unfinished"></translation>
+        <translation>Repita:</translation>
     </message>
     <message>
         <source>The passphrase must be at least 8 characters.</source>
-        <translation type="unfinished"></translation>
+        <translation>La frase de contraseña debe tener al menos 8 caracteres.</translation>
     </message>
     <message>
         <source>The passphrases do not match.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las frases de contraseña no coinciden.</translation>
     </message>
     <message>
         <source>The crypto backend is unavailable — saved passwords cannot be stored on this system.</source>
-        <translation type="unfinished"></translation>
+        <translation>El backend criptográfico no está disponible — las contraseñas guardadas no pueden almacenarse en este sistema.</translation>
     </message>
     <message>
         <source>Master passphrase set — the saved-password key is derived in memory and never written to disk. The store is currently unlocked.</source>
-        <translation type="unfinished"></translation>
+        <translation>Frase de contraseña maestra establecida — la clave de las contraseñas guardadas se deriva en memoria y nunca se escribe en el disco. El almacén está desbloqueado actualmente.</translation>
     </message>
     <message>
         <source>Master passphrase set — the store is locked and needs the passphrase before saved passwords can be read or written.</source>
-        <translation type="unfinished"></translation>
+        <translation>Frase de contraseña maestra establecida — el almacén está bloqueado y necesita la frase de contraseña antes de poder leer o escribir las contraseñas guardadas.</translation>
     </message>
     <message>
         <source>Saved passwords are encrypted with a key stored next to the data — that protects them from other users and offline reads, but not from malware running as you. Set a master passphrase to protect the key itself.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las contraseñas guardadas se cifran con una clave almacenada junto a los datos — eso las protege de otros usuarios y de lecturas sin conexión, pero no de malware que se ejecute como usted. Establezca una frase de contraseña maestra para proteger la propia clave.</translation>
     </message>
     <message>
         <source>Change Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Cambiar la frase de contraseña maestra...</translation>
     </message>
     <message>
         <source>Set Master Passphrase...</source>
-        <translation type="unfinished"></translation>
+        <translation>Establecer la frase de contraseña maestra...</translation>
     </message>
     <message>
         <source>Credential Store</source>
-        <translation type="unfinished"></translation>
+        <translation>Almacén de credenciales</translation>
     </message>
     <message>
         <source>Remove Master Passphrase</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar la frase de contraseña maestra</translation>
     </message>
     <message>
         <source>Saved passwords will go back to being protected by a key file stored next to the data. Remove the passphrase?</source>
-        <translation type="unfinished"></translation>
+        <translation>Las contraseñas guardadas volverán a estar protegidas por un archivo de clave almacenado junto a los datos. ¿Eliminar la frase de contraseña?</translation>
     </message>
     <message>
         <source>Blue</source>
-        <translation type="unfinished"></translation>
+        <translation>Azul</translation>
     </message>
     <message>
         <source>Turquoise</source>
-        <translation type="unfinished"></translation>
+        <translation>Turquesa</translation>
     </message>
     <message>
         <source>Green</source>
-        <translation type="unfinished"></translation>
+        <translation>Verde</translation>
     </message>
     <message>
         <source>Yellow</source>
-        <translation type="unfinished"></translation>
+        <translation>Amarillo</translation>
     </message>
     <message>
         <source>Orange</source>
-        <translation type="unfinished"></translation>
+        <translation>Naranja</translation>
     </message>
     <message>
         <source>Red</source>
-        <translation type="unfinished"></translation>
+        <translation>Rojo</translation>
     </message>
     <message>
         <source>Pink</source>
-        <translation type="unfinished"></translation>
+        <translation>Rosa</translation>
     </message>
     <message>
         <source>Purple</source>
-        <translation type="unfinished"></translation>
+        <translation>Morado</translation>
     </message>
     <message>
         <source>Container name</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre del contenedor</translation>
     </message>
     <message>
         <source>Name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre:</translation>
     </message>
     <message>
         <source>Color:</source>
-        <translation type="unfinished"></translation>
+        <translation>Color:</translation>
     </message>
     <message>
         <source>Containers are not available in a Tor window.</source>
-        <translation type="unfinished"></translation>
+        <translation>Los contenedores no están disponibles en una ventana Tor.</translation>
     </message>
     <message>
         <source>No containers yet. Create one to keep a site&apos;s data isolated from the rest of your browsing.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aún no hay contenedores. Cree uno para mantener los datos de un sitio aislados del resto de su navegación.</translation>
     </message>
     <message>
         <source>Sites that always open in the selected container:</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitios que siempre se abren en el contenedor seleccionado:</translation>
     </message>
     <message>
         <source>Sites that always open in this container — assigned from a tab&apos;s context menu:</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitios que siempre se abren en este contenedor — asignados desde el menú contextual de una pestaña:</translation>
     </message>
     <message>
         <source>New Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Nuevo contenedor</translation>
     </message>
     <message>
         <source>Edit Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Editar contenedor</translation>
     </message>
     <message>
         <source>Delete the container &quot;%1&quot;? All site data stored in it — cookies, logins, cache and site storage — will be permanently removed.</source>
-        <translation type="unfinished"></translation>
+        <translation>¿Eliminar el contenedor "%1"? Todos los datos de sitios almacenados en él — cookies, inicios de sesión, caché y almacenamiento de sitios — se borrarán permanentemente.</translation>
     </message>
     <message>
         <source>%1 open tab(s) use this container and will be closed.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 pestaña(s) abierta(s) usan este contenedor y se cerrarán.</translation>
     </message>
     <message>
         <source>Delete Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar contenedor</translation>
     </message>
 </context>
 <context>
     <name>SidebarPanel</name>
     <message>
         <source>Sidebar panels</source>
-        <translation type="unfinished"></translation>
+        <translation>Paneles de la barra lateral</translation>
     </message>
     <message>
         <source>Bookmarks</source>
-        <translation type="unfinished">Marcadores</translation>
+        <translation>Marcadores</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Historial</translation>
+        <translation>Historial</translation>
     </message>
     <message>
         <source>Downloads</source>
-        <translation type="unfinished">Descargas</translation>
+        <translation>Descargas</translation>
     </message>
     <message>
         <source>Notes</source>
-        <translation type="unfinished"></translation>
+        <translation>Notas</translation>
     </message>
     <message>
         <source>Close sidebar</source>
-        <translation type="unfinished"></translation>
+        <translation>Cerrar la barra lateral</translation>
     </message>
     <message>
         <source>Filter downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtrar las descargas</translation>
     </message>
     <message>
         <source>Sort downloads</source>
-        <translation type="unfinished"></translation>
+        <translation>Ordenar las descargas</translation>
     </message>
     <message>
         <source>Sort by Date</source>
-        <translation type="unfinished"></translation>
+        <translation>Ordenar por fecha</translation>
     </message>
     <message>
         <source>Sort by Name</source>
-        <translation type="unfinished"></translation>
+        <translation>Ordenar por nombre</translation>
     </message>
     <message>
         <source>Sort by Size</source>
-        <translation type="unfinished"></translation>
+        <translation>Ordenar por tamaño</translation>
     </message>
     <message>
         <source>Download details</source>
-        <translation type="unfinished"></translation>
+        <translation>Detalles de la descarga</translation>
     </message>
     <message>
         <source>Download Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración de descargas...</translation>
     </message>
     <message>
         <source>Notes are saved automatically.</source>
-        <translation type="unfinished"></translation>
+        <translation>Las notas se guardan automáticamente.</translation>
     </message>
     <message>
         <source>Open</source>
-        <translation type="unfinished">Abrir</translation>
+        <translation>Abrir</translation>
     </message>
     <message>
         <source>Open in New Tab</source>
-        <translation type="unfinished">Abrir en una pestaña nueva</translation>
+        <translation>Abrir en una pestaña nueva</translation>
     </message>
     <message>
         <source>Remove Entry</source>
-        <translation type="unfinished"></translation>
+        <translation>Eliminar la entrada</translation>
     </message>
     <message>
         <source>Open Location</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir ubicación</translation>
     </message>
 </context>
 <context>
     <name>SitePanel</name>
     <message>
         <source>Cookies</source>
-        <translation type="unfinished">Cookies</translation>
+        <translation>Cookies</translation>
     </message>
     <message>
         <source>Site default</source>
-        <translation type="unfinished"></translation>
+        <translation>Predeterminado del sitio</translation>
     </message>
     <message>
         <source>Always allow</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir siempre</translation>
     </message>
     <message>
         <source>Always block</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear siempre</translation>
     </message>
     <message>
         <source>Allow for this session</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir en esta sesión</translation>
     </message>
     <message>
         <source>Per-site cookie exception — overrides the global policy.</source>
-        <translation type="unfinished"></translation>
+        <translation>Excepción de cookies por sitio — prevalece sobre la política global.</translation>
     </message>
     <message>
         <source>Content blocking</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueo de contenido</translation>
     </message>
     <message>
         <source>Blocks ads and trackers on every site — the master switch the Ad Block settings also expose.</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquea anuncios y rastreadores en todos los sitios — el interruptor principal que también ofrece la configuración del bloqueo de anuncios.</translation>
     </message>
     <message>
         <source>Block ads and trackers on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloquear anuncios y rastreadores en este sitio</translation>
     </message>
     <message>
         <source>JavaScript</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript</translation>
     </message>
     <message>
         <source>Per-site JavaScript override — an explicit choice beats the security tier in both directions.</source>
-        <translation type="unfinished"></translation>
+        <translation>Anulación de JavaScript por sitio — una elección explícita prevalece sobre el nivel de seguridad en ambos sentidos.</translation>
     </message>
     <message>
         <source>Allow pop-ups on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir ventanas emergentes en este sitio</translation>
     </message>
     <message>
         <source>Always allow insecure HTTP on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Permitir siempre HTTP inseguro en este sitio</translation>
     </message>
     <message>
         <source>Skips the HTTPS-Only warning page for this host — its pages load over plain HTTP without asking.</source>
-        <translation type="unfinished"></translation>
+        <translation>Omite la página de advertencia del modo HTTPS-Only para este host — sus páginas se cargan por HTTP simple sin preguntar.</translation>
     </message>
     <message>
         <source>Spoof fingerprints on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>Falsificar la huella digital en este sitio</translation>
     </message>
     <message>
         <source>Permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Permisos</translation>
     </message>
     <message>
         <source>Ad Block Settings...</source>
-        <translation type="unfinished"></translation>
+        <translation>Configuración del bloqueo de anuncios...</translation>
     </message>
     <message>
         <source>Clear site data</source>
-        <translation type="unfinished"></translation>
+        <translation>Borrar los datos del sitio</translation>
     </message>
     <message>
         <source>Deletes this site&apos;s cookies and local storage.</source>
-        <translation type="unfinished"></translation>
+        <translation>Borra las cookies y el almacenamiento local de este sitio.</translation>
     </message>
     <message>
         <source>This page</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta página</translation>
     </message>
     <message>
         <source>Certificate error — the connection could not be verified</source>
-        <translation type="unfinished"></translation>
+        <translation>Error de certificado — no se pudo verificar la conexión</translation>
     </message>
     <message>
         <source>Blocked by HTTPS-Only mode — the site is not secure</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueado por el modo HTTPS-Only — el sitio no es seguro</translation>
     </message>
     <message>
         <source>Blocked — the domain is on the phishing/malware list</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueado — el dominio está en la lista de phishing/malware</translation>
     </message>
     <message>
         <source>Connection is secure (HTTPS)</source>
-        <translation type="unfinished"></translation>
+        <translation>La conexión es segura (HTTPS)</translation>
     </message>
     <message>
         <source>Connection is not secure (HTTP)</source>
-        <translation type="unfinished"></translation>
+        <translation>La conexión no es segura (HTTP)</translation>
     </message>
     <message>
         <source>Local content</source>
-        <translation type="unfinished"></translation>
+        <translation>Contenido local</translation>
     </message>
     <message>
         <source>TLS verified by Arora</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS verificado por Arora</translation>
     </message>
     <message>
         <source>TLS verified by Arora (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS verificado por Arora (%1)</translation>
     </message>
     <message>
         <source>The certificate chain was re-verified independently of the web engine.</source>
-        <translation type="unfinished"></translation>
+        <translation>La cadena de certificados se volvió a verificar independientemente del motor web.</translation>
     </message>
     <message>
         <source>TLS WARNING: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>ADVERTENCIA TLS: %1</translation>
     </message>
     <message>
         <source>unknown</source>
-        <translation type="unfinished"></translation>
+        <translation>desconocido</translation>
     </message>
     <message>
         <source>Verifying TLS…</source>
-        <translation type="unfinished"></translation>
+        <translation>Verificando TLS…</translation>
     </message>
     <message>
         <source>TLS not independently verified</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS no verificado de forma independiente</translation>
     </message>
     <message>
         <source>%1 cookies stored for this site</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 cookies almacenadas para este sitio</translation>
     </message>
     <message>
         <source>No site to scope cookies to</source>
-        <translation type="unfinished"></translation>
+        <translation>No hay ningún sitio al que limitar las cookies</translation>
     </message>
     <message>
         <source>Content blocking is disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>El bloqueo de contenido está desactivado</translation>
     </message>
     <message>
         <source>No web page to count</source>
-        <translation type="unfinished"></translation>
+        <translation>No hay ninguna página web que contabilizar</translation>
     </message>
     <message>
         <source>%1 requests blocked on this page</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 solicitudes bloqueadas en esta página</translation>
     </message>
     <message>
         <source>Content blocking is disabled globally</source>
-        <translation type="unfinished"></translation>
+        <translation>El bloqueo de contenido está desactivado globalmente</translation>
     </message>
     <message>
         <source>Unchecked, this site&apos;s pages are exempted from content blocking (an @@||host^$document rule in your custom filters).</source>
-        <translation type="unfinished"></translation>
+        <translation>Si está desmarcado, las páginas de este sitio quedan exentas del bloqueo de contenido (una regla @@||host^$document en sus filtros personalizados).</translation>
     </message>
     <message>
         <source>JavaScript runs on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript se ejecuta en este sitio</translation>
     </message>
     <message>
         <source>JavaScript is blocked on this site</source>
-        <translation type="unfinished"></translation>
+        <translation>JavaScript está bloqueado en este sitio</translation>
     </message>
     <message>
         <source>JavaScript rules apply to web sites</source>
-        <translation type="unfinished"></translation>
+        <translation>Las reglas de JavaScript se aplican a sitios web</translation>
     </message>
     <message>
         <source>No site to scope JavaScript to</source>
-        <translation type="unfinished"></translation>
+        <translation>No hay ningún sitio al que limitar JavaScript</translation>
     </message>
     <message>
         <source>Fingerprint spoofing applies to web sites</source>
-        <translation type="unfinished"></translation>
+        <translation>La falsificación de huella digital se aplica a sitios web</translation>
     </message>
     <message>
         <source>Fingerprint spoofing is off — enable it in Settings &gt; Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>La falsificación de huella digital está desactivada — actívela en Preferencias &gt; Privacidad</translation>
     </message>
     <message>
         <source>Unchecked, this host is exempted from the injected fingerprint countermeasures (takes effect on reload).</source>
-        <translation type="unfinished"></translation>
+        <translation>Si está desmarcado, este host queda exento de las contramedidas de huella digital inyectadas (surte efecto al recargar).</translation>
     </message>
     <message>
         <source>allowed</source>
-        <translation type="unfinished"></translation>
+        <translation>permitido</translation>
     </message>
     <message>
         <source>denied</source>
-        <translation type="unfinished"></translation>
+        <translation>denegado</translation>
     </message>
     <message>
         <source>Revoke</source>
-        <translation type="unfinished"></translation>
+        <translation>Revocar</translation>
     </message>
     <message>
         <source>No remembered permissions for this site</source>
-        <translation type="unfinished"></translation>
+        <translation>No hay permisos recordados para este sitio</translation>
     </message>
 </context>
 <context>
     <name>SiteShieldButton</name>
     <message>
         <source>Site Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>Privacidad del sitio</translation>
     </message>
     <message>
         <source>Opens the privacy and permissions panel for this site.</source>
-        <translation type="unfinished"></translation>
+        <translation>Abre el panel de privacidad y permisos de este sitio.</translation>
     </message>
     <message>
         <source>Site privacy and permissions</source>
-        <translation type="unfinished"></translation>
+        <translation>Privacidad y permisos del sitio</translation>
     </message>
     <message>
         <source>Site privacy — content blocking is disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>Privacidad del sitio — el bloqueo de contenido está desactivado</translation>
     </message>
     <message>
         <source>Site privacy — content blocking is off for %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Privacidad del sitio — el bloqueo de contenido está desactivado para %1</translation>
     </message>
     <message>
         <source> — %1 requests blocked</source>
-        <translation type="unfinished"></translation>
+        <translation> — %1 solicitudes bloqueadas</translation>
     </message>
     <message>
         <source> — JavaScript blocked</source>
-        <translation type="unfinished"></translation>
+        <translation> — JavaScript bloqueado</translation>
     </message>
 </context>
 <context>
@@ -5609,11 +5609,11 @@ key is derived in memory and never written to disk.</source>
     <name>TabBar</name>
     <message>
         <source>Close tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Cerrar pestaña</translation>
     </message>
     <message>
         <source>Close Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Cerrar pestaña</translation>
     </message>
     <message>
         <source>Show Tab Bar</source>
@@ -5625,7 +5625,7 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Reopen Closed Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Reabrir la pestaña cerrada</translation>
     </message>
     <message>
         <source>Duplicate Tab</source>
@@ -5633,119 +5633,119 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Unpin Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Desfijar pestaña</translation>
     </message>
     <message>
         <source>Pin Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Fijar pestaña</translation>
     </message>
     <message>
         <source>Reopen in Con&amp;tainer</source>
-        <translation type="unfinished"></translation>
+        <translation>Reabrir en con&amp;tenedor</translation>
     </message>
     <message>
         <source>&amp;No Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Si&amp;n contenedor</translation>
     </message>
     <message>
         <source>New &amp;Container...</source>
-        <translation type="unfinished"></translation>
+        <translation>Nuevo &amp;contenedor...</translation>
     </message>
     <message>
         <source>&amp;Manage Containers...</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Administrar contenedores...</translation>
     </message>
     <message>
         <source>Always Open This Site in &amp;This Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir siempre este sitio en es&amp;te contenedor</translation>
     </message>
     <message>
         <source>Always Open Site in Con&amp;tainer</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir siempre el sitio en un con&amp;tenedor</translation>
     </message>
     <message>
         <source>Wake Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Reactivar pestaña</translation>
     </message>
     <message>
         <source>Sleep Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Suspender pestaña</translation>
     </message>
     <message>
         <source>Add Tab to &amp;Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir pestaña al &amp;grupo</translation>
     </message>
     <message>
         <source>&amp;New Group</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Nuevo grupo</translation>
     </message>
     <message>
         <source>Unnamed Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Grupo sin nombre</translation>
     </message>
     <message>
         <source>&amp;Expand Group</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Expandir grupo</translation>
     </message>
     <message>
         <source>&amp;Collapse Group</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Contraer grupo</translation>
     </message>
     <message>
         <source>R&amp;ename Group...</source>
-        <translation type="unfinished"></translation>
+        <translation>R&amp;enombrar grupo...</translation>
     </message>
     <message>
         <source>Rename Tab Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Renombrar el grupo de pestañas</translation>
     </message>
     <message>
         <source>Group &amp;name:</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Nombre del grupo:</translation>
     </message>
     <message>
         <source>Group &amp;Color</source>
-        <translation type="unfinished"></translation>
+        <translation>&amp;Color del grupo</translation>
     </message>
     <message>
         <source>Blue</source>
-        <translation type="unfinished"></translation>
+        <translation>Azul</translation>
     </message>
     <message>
         <source>Turquoise</source>
-        <translation type="unfinished"></translation>
+        <translation>Turquesa</translation>
     </message>
     <message>
         <source>Green</source>
-        <translation type="unfinished"></translation>
+        <translation>Verde</translation>
     </message>
     <message>
         <source>Yellow</source>
-        <translation type="unfinished"></translation>
+        <translation>Amarillo</translation>
     </message>
     <message>
         <source>Orange</source>
-        <translation type="unfinished"></translation>
+        <translation>Naranja</translation>
     </message>
     <message>
         <source>Red</source>
-        <translation type="unfinished"></translation>
+        <translation>Rojo</translation>
     </message>
     <message>
         <source>Pink</source>
-        <translation type="unfinished"></translation>
+        <translation>Rosa</translation>
     </message>
     <message>
         <source>Purple</source>
-        <translation type="unfinished"></translation>
+        <translation>Morado</translation>
     </message>
     <message>
         <source>Remove Tab from Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Quitar la pestaña del grupo</translation>
     </message>
     <message>
         <source>U&amp;ngroup</source>
-        <translation type="unfinished"></translation>
+        <translation>Desa&amp;grupar</translation>
     </message>
     <message>
         <source>&amp;Close Tab</source>
@@ -5765,65 +5765,65 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Tabs</source>
-        <translation type="unfinished">Pestañas</translation>
+        <translation>Pestañas</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1 (%2 tabs%3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2 pestañas%3)</translation>
     </message>
     <message>
         <source>, active</source>
-        <translation type="unfinished"></translation>
+        <translation>, activa</translation>
     </message>
     <message>
         <source>Container strip: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Tira de contenedores: %1</translation>
     </message>
     <message>
         <source>%1 tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 pestañas</translation>
     </message>
 </context>
 <context>
     <name>TabPositionPicker</name>
     <message>
         <source>Tab bar position</source>
-        <translation type="unfinished"></translation>
+        <translation>Posición de la barra de pestañas</translation>
     </message>
     <message>
         <source>Top</source>
-        <translation type="unfinished"></translation>
+        <translation>Superior</translation>
     </message>
     <message>
         <source>Left</source>
-        <translation type="unfinished"></translation>
+        <translation>Izquierda</translation>
     </message>
     <message>
         <source>Right</source>
-        <translation type="unfinished"></translation>
+        <translation>Derecha</translation>
     </message>
     <message>
         <source>Bottom</source>
-        <translation type="unfinished"></translation>
+        <translation>Inferior</translation>
     </message>
 </context>
 <context>
     <name>TabPreview</name>
     <message>
         <source>New Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Nueva pestaña</translation>
     </message>
     <message>
         <source>Sleeping</source>
-        <translation type="unfinished"></translation>
+        <translation>Suspendida</translation>
     </message>
     <message>
         <source>Sleeping — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Suspendida — %1</translation>
     </message>
 </context>
 <context>
@@ -5842,27 +5842,27 @@ key is derived in memory and never written to disk.</source>
     </message>
     <message>
         <source>Tabs</source>
-        <translation type="unfinished">Pestañas</translation>
+        <translation>Pestañas</translation>
     </message>
     <message>
         <source>Private tab — visits are not recorded</source>
-        <translation type="unfinished"></translation>
+        <translation>Pestaña privada — las visitas no se registran</translation>
     </message>
     <message>
         <source>Loading %1%...</source>
-        <translation type="unfinished"></translation>
+        <translation>Cargando %1%...</translation>
     </message>
     <message>
         <source>Tab was not suspended: it has unsaved form input</source>
-        <translation type="unfinished"></translation>
+        <translation>La pestaña no se suspendió: tiene datos de formulario sin guardar</translation>
     </message>
     <message>
         <source>Page Icon</source>
-        <translation type="unfinished"></translation>
+        <translation>Icono de página</translation>
     </message>
     <message>
         <source>Private</source>
-        <translation type="unfinished"></translation>
+        <translation>Privada</translation>
     </message>
     <message>
         <source>Show Previous Tab</source>
@@ -5937,7 +5937,7 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Search Engines</source>
-        <translation type="unfinished"></translation>
+        <translation>Motores de búsqueda</translation>
     </message>
     <message>
         <source>Suggestions</source>
@@ -5945,23 +5945,23 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Search...</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar...</translation>
     </message>
     <message>
         <source>Search</source>
-        <translation type="unfinished">Buscar</translation>
+        <translation>Buscar</translation>
     </message>
     <message>
         <source>Search for:</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar:</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>Search Suggestions</source>
-        <translation type="unfinished"></translation>
+        <translation>Sugerencias de búsqueda</translation>
     </message>
     <message>
         <source>Add &apos;%1&apos;</source>
@@ -5969,33 +5969,33 @@ Do you really want to close this page?
     </message>
     <message>
         <source>Configure Search Engines...</source>
-        <translation type="unfinished">Configurar motores de búsqueda...</translation>
+        <translation>Configurar motores de búsqueda...</translation>
     </message>
 </context>
 <context>
     <name>UserAgentMenu</name>
     <message>
         <source>Default</source>
-        <translation type="unfinished">Predeterminado</translation>
+        <translation>Predeterminado</translation>
     </message>
     <message>
         <source>Other...</source>
-        <translation type="unfinished"></translation>
+        <translation>Otro...</translation>
     </message>
     <message>
         <source>Custom user agent</source>
-        <translation type="unfinished"></translation>
+        <translation>Agente de usuario personalizado</translation>
     </message>
     <message>
         <source>User agent:</source>
-        <translation type="unfinished"></translation>
+        <translation>Agente de usuario:</translation>
     </message>
 </context>
 <context>
     <name>WebPage</name>
     <message>
         <source>Add Search Engine</source>
-        <translation type="unfinished"></translation>
+        <translation>Añadir motor de búsqueda</translation>
     </message>
     <message>
         <source>The page at %1 wants to add a search engine described by:
@@ -6003,11 +6003,15 @@ Do you really want to close this page?
 %2
 
 Download and inspect it?</source>
-        <translation type="unfinished"></translation>
+        <translation>La página de %1 quiere añadir un motor de búsqueda descrito por:
+
+%2
+
+¿Descargarlo e inspeccionarlo?</translation>
     </message>
     <message>
         <source>Open External Application</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir aplicación externa</translation>
     </message>
     <message>
         <source>The page at %1 wants to open an external application to handle this link:
@@ -6015,21 +6019,27 @@ Download and inspect it?</source>
 %2
 
 Allow it?</source>
-        <translation type="unfinished"></translation>
+        <translation>La página de %1 quiere abrir una aplicación externa para gestionar este enlace:
+
+%2
+
+¿Permitirlo?</translation>
     </message>
     <message>
         <source>Insecure Form Submission</source>
-        <translation type="unfinished"></translation>
+        <translation>Envío de formulario inseguro</translation>
     </message>
     <message>
         <source>This form is sending information to %1 over an insecure connection.
 
 Anyone on the network could read or change the data — including passwords.</source>
-        <translation type="unfinished"></translation>
+        <translation>Este formulario está enviando información a %1 por una conexión insegura.
+
+Cualquiera en la red podría leer o cambiar los datos — incluidas las contraseñas.</translation>
     </message>
     <message>
         <source>Submit Anyway</source>
-        <translation type="unfinished"></translation>
+        <translation>Enviar de todos modos</translation>
     </message>
     <message>
         <source>Error loading page: %1</source>
@@ -6049,131 +6059,131 @@ Anyone on the network could read or change the data — including passwords.</so
     </message>
     <message>
         <source>The secure (HTTPS) connection failed.  Plain HTTP requests to this site will show a warning before loading.</source>
-        <translation type="unfinished"></translation>
+        <translation>Falló la conexión segura (HTTPS).  Las solicitudes HTTP simples a este sitio mostrarán una advertencia antes de cargarse.</translation>
     </message>
     <message>
         <source>The secure (HTTPS) connection failed.  Plain HTTP requests to this site will be allowed for the rest of this session.</source>
-        <translation type="unfinished"></translation>
+        <translation>Falló la conexión segura (HTTPS).  Las solicitudes HTTP simples a este sitio se permitirán durante el resto de esta sesión.</translation>
     </message>
     <message>
         <source>Certificate error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Error de certificado: %1</translation>
     </message>
     <message>
         <source>Error: %1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>Error: %1 (%2)</translation>
     </message>
     <message>
         <source>&lt;li&gt;Subject: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Asunto: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Issuer: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Emisor: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Valid from %1 to %2&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Válido desde %1 hasta %2&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;Serial: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Serie: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;li&gt;SHA-256 fingerprint: %1&lt;/li&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;li&gt;Huella SHA-256: %1&lt;/li&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-cert-error:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="back" href="arora-cert-error:back?n=%1"&gt;Volver a un lugar seguro&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-cert-error:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="proceed" href="arora-cert-error:proceed?n=%1"&gt;Continuar de todos modos (no seguro)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>This site&apos;s certificate is not trusted</source>
-        <translation type="unfinished"></translation>
+        <translation>El certificado de este sitio no es de confianza</translation>
     </message>
     <message>
         <source>Arora cannot verify the identity of %1. The certificate presented by the server is invalid — continuing could expose the connection to an attacker.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora no puede verificar la identidad de %1. El certificado presentado por el servidor no es válido — continuar podría exponer la conexión a un atacante.</translation>
     </message>
     <message>
         <source>%1 (issued by %2, expires %3)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (emitido por %2, caduca el %3)</translation>
     </message>
     <message>
         <source>Client Certificate Requested</source>
-        <translation type="unfinished"></translation>
+        <translation>Se solicitó un certificado de cliente</translation>
     </message>
     <message>
         <source>The site at %1 asks you to identify yourself with a certificate.  Pick one to send, or cancel to continue without identifying yourself.</source>
-        <translation type="unfinished"></translation>
+        <translation>El sitio de %1 le pide que se identifique con un certificado.  Elija uno para enviar o cancele para continuar sin identificarse.</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-http-warning:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="back" href="arora-http-warning:back?n=%1"&gt;Volver a un lugar seguro&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-http-warning:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="proceed" href="arora-http-warning:proceed?n=%1"&gt;Continuar de todos modos (no seguro)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;always&quot; href=&quot;arora-http-warning:always?n=%1&quot;&gt;Always allow HTTP on this site&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="always" href="arora-http-warning:always?n=%1"&gt;Permitir siempre HTTP en este sitio&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Insecure connection: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Conexión insegura: %1</translation>
     </message>
     <message>
         <source>This site does not support HTTPS</source>
-        <translation type="unfinished"></translation>
+        <translation>Este sitio no admite HTTPS</translation>
     </message>
     <message>
         <source>Arora stopped %1 from loading because it can only be reached over an unencrypted HTTP connection.  Anyone on the network path can read or change everything sent to or received from this site — including passwords and cookies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora detuvo la carga de %1 porque solo se puede acceder a él por una conexión HTTP sin cifrar.  Cualquiera en la ruta de la red puede leer o cambiar todo lo que se envíe o reciba de este sitio — incluidas las contraseñas y las cookies.</translation>
     </message>
     <message>
         <source>Requested address: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Dirección solicitada: %1</translation>
     </message>
     <message>
         <source>The site may simply not offer a secure version, or the connection may have been stripped back to HTTP by a network attacker.</source>
-        <translation type="unfinished"></translation>
+        <translation>Puede que el sitio simplemente no ofrezca una versión segura, o que un atacante en la red haya degradado la conexión a HTTP.</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;back&quot; href=&quot;arora-site-block:back?n=%1&quot;&gt;Back to safety&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="back" href="arora-site-block:back?n=%1"&gt;Volver a un lugar seguro&lt;/a&gt;</translation>
     </message>
     <message>
         <source>&lt;a id=&quot;proceed&quot; href=&quot;arora-site-block:proceed?n=%1&quot;&gt;Proceed anyway (unsafe)&lt;/a&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;a id="proceed" href="arora-site-block:proceed?n=%1"&gt;Continuar de todos modos (no seguro)&lt;/a&gt;</translation>
     </message>
     <message>
         <source>Dangerous site blocked: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Sitio peligroso bloqueado: %1</translation>
     </message>
     <message>
         <source>This site is on the local phishing/malware blocklist</source>
-        <translation type="unfinished"></translation>
+        <translation>Este sitio está en la lista local de bloqueo de phishing/malware</translation>
     </message>
     <message>
         <source>Arora stopped %1 from loading because the domain is listed as serving phishing or malware.  Visiting it can steal credentials or infect this computer.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora detuvo la carga de %1 porque el dominio figura como distribuidor de phishing o malware.  Visitarlo puede robar credenciales o infectar este equipo.</translation>
     </message>
     <message>
         <source>The list is a local copy — no lookup left this computer.  Proceeding is remembered only for this session.</source>
-        <translation type="unfinished"></translation>
+        <translation>La lista es una copia local — ninguna consulta salió de este equipo.  La decisión de continuar solo se recuerda durante esta sesión.</translation>
     </message>
     <message>
         <source>Google rate-limited this connection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Google limitó la tasa de esta conexión.</translation>
     </message>
     <message>
         <source>This is Google&apos;s bot check, not an Arora error — it temporarily flagged search traffic from this profile. Complete the prompt below or try again later; or switch the default search engine under Tools &gt; Options &gt; Search.</source>
-        <translation type="unfinished"></translation>
+        <translation>Esta es la comprobación de bots de Google, no un error de Arora — marcó temporalmente el tráfico de búsqueda de este perfil. Complete el aviso de abajo o inténtelo más tarde; o cambie el motor de búsqueda predeterminado en Herramientas &gt; Opciones &gt; Buscar.</translation>
     </message>
     <message>
         <source>If the address is correct, try checking the network connection.</source>
@@ -6192,81 +6202,83 @@ Anyone on the network could read or change the data — including passwords.</so
     <name>WebPermissionManager</name>
     <message>
         <source>Audio capture (microphone)</source>
-        <translation type="unfinished"></translation>
+        <translation>Captura de audio (micrófono)</translation>
     </message>
     <message>
         <source>Video capture (camera)</source>
-        <translation type="unfinished"></translation>
+        <translation>Captura de vídeo (cámara)</translation>
     </message>
     <message>
         <source>Audio and video capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Captura de audio y vídeo</translation>
     </message>
     <message>
         <source>Screen capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Captura de pantalla</translation>
     </message>
     <message>
         <source>Screen and audio capture</source>
-        <translation type="unfinished"></translation>
+        <translation>Captura de pantalla y audio</translation>
     </message>
     <message>
         <source>Mouse lock</source>
-        <translation type="unfinished"></translation>
+        <translation>Bloqueo del ratón</translation>
     </message>
     <message>
         <source>Notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>Notificaciones</translation>
     </message>
     <message>
         <source>Geolocation</source>
-        <translation type="unfinished"></translation>
+        <translation>Geolocalización</translation>
     </message>
     <message>
         <source>Clipboard read/write</source>
-        <translation type="unfinished"></translation>
+        <translation>Lectura/escritura del portapapeles</translation>
     </message>
     <message>
         <source>Local fonts</source>
-        <translation type="unfinished"></translation>
+        <translation>Fuentes locales</translation>
     </message>
     <message>
         <source>Unknown feature</source>
-        <translation type="unfinished"></translation>
+        <translation>Función desconocida</translation>
     </message>
     <message>
         <source>show notifications</source>
-        <translation type="unfinished"></translation>
+        <translation>mostrar notificaciones</translation>
     </message>
     <message>
         <source>know your location</source>
-        <translation type="unfinished"></translation>
+        <translation>conocer su ubicación</translation>
     </message>
     <message>
         <source>take control of your mouse pointer</source>
-        <translation type="unfinished"></translation>
+        <translation>tomar el control de su puntero del ratón</translation>
     </message>
     <message>
         <source>Permission Request</source>
-        <translation type="unfinished"></translation>
+        <translation>Solicitud de permiso</translation>
     </message>
     <message>
         <source>The page at %1 wants to %2.
 
 Allow it?</source>
-        <translation type="unfinished"></translation>
+        <translation>La página de %1 quiere %2.
+
+¿Permitirlo?</translation>
     </message>
     <message>
         <source>Deny</source>
-        <translation type="unfinished"></translation>
+        <translation>Denegar</translation>
     </message>
     <message>
         <source>Allow</source>
-        <translation type="unfinished">Permitir</translation>
+        <translation>Permitir</translation>
     </message>
     <message>
         <source>Remember this decision</source>
-        <translation type="unfinished"></translation>
+        <translation>Recordar esta decisión</translation>
     </message>
 </context>
 <context>
@@ -6301,35 +6313,35 @@ Allow it?</source>
     </message>
     <message>
         <source>Open in New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir en una pestaña &amp;privada nueva</translation>
     </message>
     <message>
         <source>Open in New Pri&amp;vate Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir en una ventana pri&amp;vada nueva</translation>
     </message>
     <message>
         <source>Open in New T&amp;or Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir en una ventana T&amp;or nueva</translation>
     </message>
     <message>
         <source>No tor binary found — install tor or run BuildProcess/fetch-tor.sh</source>
-        <translation type="unfinished"></translation>
+        <translation>No se encontró el binario de tor — instale tor o ejecute BuildProcess/fetch-tor.sh</translation>
     </message>
     <message>
         <source>Copy &amp;Clean Link</source>
-        <translation type="unfinished"></translation>
+        <translation>Copiar enlace &amp;limpio</translation>
     </message>
     <message>
         <source>Open Image in New &amp;Private Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir imagen en una pestaña &amp;privada nueva</translation>
     </message>
     <message>
         <source>Open Image in New Pri&amp;vate Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir imagen en una ventana pri&amp;vada nueva</translation>
     </message>
     <message>
         <source>Open Image in New T&amp;or Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir imagen en una ventana T&amp;or nueva</translation>
     </message>
     <message>
         <source>&amp;Save Image</source>
@@ -6345,31 +6357,31 @@ Allow it?</source>
     </message>
     <message>
         <source>Search Image with %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar imagen con %1</translation>
     </message>
     <message>
         <source>Could not decode the canvas image.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se pudo decodificar la imagen del canvas.</translation>
     </message>
     <message>
         <source>Picture-in-Picture</source>
-        <translation type="unfinished"></translation>
+        <translation>Picture-in-Picture</translation>
     </message>
     <message>
         <source>Open &amp;Poster in New Window</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir el &amp;poster en una ventana nueva</translation>
     </message>
     <message>
         <source>Open Poster in New &amp;Tab</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir el poster en una &amp;pestaña nueva</translation>
     </message>
     <message>
         <source>Search with</source>
-        <translation type="unfinished"></translation>
+        <translation>Buscar con</translation>
     </message>
     <message>
         <source>Show &amp;QR Code for This Page</source>
-        <translation type="unfinished"></translation>
+        <translation>Mostrar el código &amp;QR de esta página</translation>
     </message>
     <message>
         <source>Loading...</source>
@@ -6377,15 +6389,15 @@ Allow it?</source>
     </message>
     <message>
         <source>This canvas cannot be read — it is tainted by cross-origin content.</source>
-        <translation type="unfinished"></translation>
+        <translation>Este canvas no se puede leer — está contaminado por contenido de origen cruzado.</translation>
     </message>
     <message>
         <source>No image found at that position.</source>
-        <translation type="unfinished"></translation>
+        <translation>No se encontró ninguna imagen en esa posición.</translation>
     </message>
     <message>
         <source>This video has no poster image.</source>
-        <translation type="unfinished"></translation>
+        <translation>Este vídeo no tiene imagen de poster.</translation>
     </message>
     <message>
         <source>Search with...</source>
@@ -6428,7 +6440,7 @@ Allow it?</source>
     <name>WebViewSearch</name>
     <message>
         <source>%1/%2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1/%2</translation>
     </message>
     <message>
         <source>Not Found</source>
@@ -6439,46 +6451,46 @@ Allow it?</source>
     <name>ZoomControl</name>
     <message>
         <source>Zoom Out</source>
-        <translation type="unfinished"></translation>
+        <translation>Alejar</translation>
     </message>
     <message>
         <source>Reset Zoom</source>
-        <translation type="unfinished"></translation>
+        <translation>Restablecer el zoom</translation>
     </message>
     <message>
         <source>Zoom In</source>
-        <translation type="unfinished"></translation>
+        <translation>Acercar</translation>
     </message>
     <message>
         <source>%1%</source>
-        <translation type="unfinished"></translation>
+        <translation>%1%</translation>
     </message>
 </context>
 <context>
     <name>main</name>
     <message>
         <source>Arora — a lightweight cross-platform web browser.</source>
-        <translation type="unfinished"></translation>
+        <translation>Arora — un navegador web ligero multiplataforma.</translation>
     </message>
     <message>
         <source>Url to open on startup.</source>
-        <translation type="unfinished"></translation>
+        <translation>URL que abrir al iniciar.</translation>
     </message>
     <message>
         <source>Open a Tor window: a separate process that routes all traffic through a managed tor daemon&apos;s SOCKS5 listener on a dedicated off-the-record profile.</source>
-        <translation type="unfinished"></translation>
+        <translation>Abrir una ventana Tor: un proceso independiente que dirige todo el tráfico a través del listener SOCKS5 de un demonio tor gestionado en un perfil dedicado sin registro.</translation>
     </message>
     <message>
         <source>Run without the filesystem sandbox (equivalent to ARORA_NO_SANDBOX=1).</source>
-        <translation type="unfinished"></translation>
+        <translation>Ejecutar sin el entorno aislado del sistema de archivos (equivalente a ARORA_NO_SANDBOX=1).</translation>
     </message>
     <message>
         <source>Print the sandbox backend, state and active policy, then exit.</source>
-        <translation type="unfinished"></translation>
+        <translation>Imprimir el backend del entorno aislado, el estado y la política activa, y salir.</translation>
     </message>
     <message>
         <source>Internal: filesystem probe executed inside the sandbox (spawned by --sandbox-smoke).</source>
-        <translation type="unfinished"></translation>
+        <translation>Interno: prueba del sistema de archivos ejecutada dentro del entorno aislado (lanzada por --sandbox-smoke).</translation>
     </message>
 </context>
 </TS>

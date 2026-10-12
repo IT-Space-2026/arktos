@@ -402,3 +402,4 @@
 - 2026-10-12 TRANS05: da_DK catalog completed — 1212 entries translated (4 numerusform), lrelease PASS
 - 2026-10-12 TRANS06: de_DE catalog completed — 1033 entries translated (1 numerusform), lrelease PASS
 - 2026-10-12 TRANS07: el_GR catalog completed — 1120 entries translated (1 numerusform), lrelease PASS
+- 2026-10-12 TRANS08: es catalog completed — 1036 entries translated (4 numerusform), lrelease PASS
