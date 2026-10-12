@@ -138,12 +138,6 @@ UI:
   aborted the browser. The backend now allows a single Servo view and
   refuses further engine tabs with a status-bar message instead of
   crashing; sibling actions on an empty Servo tab are no-ops (ENG12).
-- The location bar on a foreign-engine (Servo) tab is a real omnibox
-  again: it was a read-only URL echo, so Enter did nothing. Typed
-  addresses and plain-text searches now navigate the engine tab itself
-  through the same url-or-search resolution as a Chromium tab, and
-  "open here" callers (bookmarks, history, home button) land on the
-  engine page instead of silently spawning a WebEngine tab (ENG14).
 - Servo backend hardening: engine callbacks for url, title, load status
   and frames now run on the GUI thread and are ignored once the Servo
   view is being torn down, closing a use-after-free window during tab
