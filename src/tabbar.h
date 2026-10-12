@@ -121,6 +121,13 @@ public:
     void setVerticalTabWidth(int width);
     void reloadVerticalTabWidth();
 
+    // RSZ02: the drag-resizable height of a Top/Bottom tab strip
+    // (tabs/horizontalTabHeight, clamped 20-64, 0 = Automatic —
+    // the default, letting TABS07's metrics-bound sizing drive).
+    int tabStripHeight() const;
+    void setTabStripHeight(int height);
+    void reloadTabStripHeight();
+
     // TPREV01: tabs/tabHoverPreviews (default on) gates the hover
     // card.  reloadTabHoverPreviews() re-reads the key so the
     // settings-save live-apply reaches every window's bar.
@@ -197,11 +204,15 @@ private:
     QString groupIdForTab(int index) const;
     bool isFirstInGroupRun(int index) const;
     QString groupChipLabel(int index) const;
-    // TABS02: vertical-strip helpers — the resize grip on the
-    // strip's inner edge, the row-anchored side-button layout (Qt
-    // positions them transposed for West/East shapes), and hiding
-    // Qt's private rotated moving-tab pixmap during a move drag.
+    // TABS02/RSZ02: strip helpers — the resize grip on the strip's
+    // content-facing edge (inner side for vertical strips, top/bottom
+    // edge for horizontal ones), its painted affordance, and the
+    // row-anchored side-button layout (Qt positions them transposed
+    // for West/East shapes), plus hiding Qt's private rotated
+    // moving-tab pixmap during a move drag.
     bool inResizeGrip(const QPoint &pos) const;
+    void paintResizeGrip(QPainter *painter);
+    void persistStripSize();
     void layoutRowTabButtons();
     void hideNativeMovingTab();
     // CONT06: level-1 band helpers — header geometry and painting
@@ -238,7 +249,15 @@ private:
     int m_verticalTabWidth;
     bool m_resizing;
     int m_resizeStartX;
+    int m_resizeStartY;
     int m_resizeStartWidth;
+    // RSZ02: horizontal-strip resize state — the persisted height
+    // (0 = Automatic) and the value the drag started from; plus the
+    // hover flag that arms the grip's painted affordance for both
+    // orientations.
+    int m_resizeStartHeight;
+    int m_tabStripHeight;
+    bool m_gripHovered;
     int m_pressedTabIndex;
     bool m_moveDragActive;
     bool m_moveDragVertical;

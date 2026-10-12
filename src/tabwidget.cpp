@@ -2864,6 +2864,9 @@ void TabWidget::loadSettings()
     // TABS02: re-read the persisted vertical strip width so the same
     // live-apply path that carries the position lands it everywhere.
     m_tabBar->reloadVerticalTabWidth();
+    // RSZ02: the horizontal strip's dragged height rides the same
+    // fan-out (0 = Automatic).
+    m_tabBar->reloadTabStripHeight();
     // TPREV01: the hover-preview opt-out rides the same fan-out.
     m_tabBar->reloadTabHoverPreviews();
 

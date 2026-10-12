@@ -113,6 +113,7 @@ HEADERS += \
     $$PWD/searchlineedit.h \
     $$PWD/securestore.h \
     $$PWD/settings.h \
+    $$PWD/sidebargrip.h \
     $$PWD/sidebarpanel.h \
     $$PWD/sidebarpositionpicker.h \
     $$PWD/sourcehighlighter.h \
@@ -179,6 +180,7 @@ SOURCES += \
     $$PWD/searchlineedit.cpp \
     $$PWD/securestore.cpp \
     $$PWD/settings.cpp \
+    $$PWD/sidebargrip.cpp \
     $$PWD/sidebarpanel.cpp \
     $$PWD/sidebarpositionpicker.cpp \
     $$PWD/sourcehighlighter.cpp \

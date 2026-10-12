@@ -70,8 +70,11 @@ class AutoSaver;
 class BookmarksToolBar;
 class CommandPalette;
 class QDockWidget;
+class QHBoxLayout;
 class QLabel;
+class QTimer;
 class ReaderButton;
+class SidebarGrip;
 class SidebarPanel;
 class TabWidget;
 class ToolbarSearch;
@@ -142,6 +145,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
     void save();
@@ -206,6 +210,13 @@ private:
     void setupMenu();
     void setupToolBar();
     void ensureSidebarPanel();
+    // RSZ02: sidebar width — the persisted MainWindow/sidebarWidth is
+    // applied before the dock shows (and once more when it first
+    // appears, because a hidden dock ignores resizeDocks); grip
+    // drags, double-click resets and native edge resizes persist it.
+    void applySidebarWidth();
+    void persistSidebarWidth(int width);
+    void updateSidebarGripPlacement();
     void updateStopReloadActionText(bool loading);
 
 private:
@@ -261,6 +272,15 @@ private:
     QAction *m_viewSidebarAction;
     QDockWidget *m_sidebarDock;
     QPointer<SidebarPanel> m_sidebarPanel;
+    // RSZ02: the dock's inner-edge resize grip + its persisted-width
+    // bookkeeping.  The grip lives inside a container wrapping
+    // SidebarPanel; m_sidebarWidthTimer debounces native edge
+    // resizes so one drag lands as one QSettings write.
+    SidebarGrip *m_sidebarGrip;
+    QHBoxLayout *m_sidebarGripLayout;
+    QTimer *m_sidebarWidthTimer;
+    bool m_applyingSidebarWidth;
+    bool m_sidebarWidthApplied;
 
     HistoryMenu *m_historyMenu;
     QAction *m_historyBackAction;

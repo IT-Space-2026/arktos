@@ -51,6 +51,7 @@ private slots:
 
     void verticalTabRows();
     void verticalTabResize();
+    void horizontalTabResize();
     void verticalTabButtons();
 };
 
@@ -72,6 +73,9 @@ public:
 
     void call_dropEvent(QDropEvent *event)
         { return SubTabBar::dropEvent(event); }
+
+    void call_mouseDoubleClickEvent(QMouseEvent *event)
+        { return SubTabBar::mouseDoubleClickEvent(event); }
 
     void call_mouseMoveEvent(QMouseEvent *event)
         { return SubTabBar::mouseMoveEvent(event); }
@@ -468,7 +472,108 @@ void tst_TabBar::verticalTabResize()
     dragGrip(-20);
     QCOMPARE(bar.verticalTabWidth(), 120);
 
+    // RSZ02: double-clicking the grip resets to the 180 default and
+    // persists like a drag release.
+    const QPoint grip(bar.width() - 3, 100);
+    QMouseEvent dclick(QEvent::MouseButtonDblClick, QPointF(grip),
+                       QPointF(bar.mapToGlobal(grip)),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    bar.call_mouseDoubleClickEvent(&dclick);
+    QCOMPARE(bar.verticalTabWidth(), 180);
+    QCOMPARE(
+        settings.value(QLatin1String("verticalTabWidth")).toInt(), 180);
+
     settings.remove(QLatin1String("verticalTabWidth"));
+    settings.endGroup();
+}
+
+// RSZ02: Top/Bottom strips get the same contract — the strip's
+// content-facing edge is a drag grip for its HEIGHT
+// (tabs/horizontalTabHeight, 20-64, 0 = Automatic), the hover reads
+// as a resize cursor, and a double-click restores Automatic.
+void tst_TabBar::horizontalTabResize()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.remove(QLatin1String("horizontalTabHeight"));
+
+    SubTabBar bar;
+    bar.setShape(QTabBar::RoundedNorth);
+    bar.setExpanding(false);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    bar.resize(400, 40);
+    QApplication::processEvents();
+    // 0 = Automatic — the metrics-bound height drives.
+    QCOMPARE(bar.tabStripHeight(), 0);
+
+    // The grip zone is the strip's content-facing edge — the bottom
+    // of a North bar, the top of a South bar.
+    const auto gripPoint = [&bar]() -> QPoint {
+        return (bar.shape() == QTabBar::RoundedSouth)
+            ? QPoint(50, 3) : QPoint(50, bar.height() - 3);
+    };
+    const auto dragGrip = [&bar, &gripPoint](int dy) {
+        const QPoint grip = gripPoint();
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(grip),
+                          QPointF(bar.mapToGlobal(grip)),
+                          Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        bar.call_mousePressEvent(&press);
+        const QPoint target = grip + QPoint(0, dy);
+        QMouseEvent move(QEvent::MouseMove, QPointF(target),
+                         QPointF(bar.mapToGlobal(target)),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        bar.call_mouseMoveEvent(&move);
+        QMouseEvent release(QEvent::MouseButtonRelease,
+                            QPointF(target),
+                            QPointF(bar.mapToGlobal(target)),
+                            Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        bar.call_mouseReleaseEvent(&release);
+    };
+
+    // From Automatic the drag measures against the strip's rendered
+    // height (40px here), so a small pull doesn't snap to the floor.
+    dragGrip(10);
+    QCOMPARE(bar.tabStripHeight(), 50);
+    QCOMPARE(
+        settings.value(QLatin1String("horizontalTabHeight")).toInt(),
+        50);
+    // The override feeds the tab hint (plus any container chip).
+    QCOMPARE(bar.call_tabSizeHint(0).height(), 50);
+
+    // Clamps at both ends.
+    dragGrip(500);
+    QCOMPARE(bar.tabStripHeight(), 64);
+    dragGrip(-500);
+    QCOMPARE(bar.tabStripHeight(), 20);
+
+    // A grip press is not a tab press — the current tab doesn't
+    // change and the press arms no move drag.
+    bar.setCurrentIndex(0);
+    dragGrip(10);
+    QCOMPARE(bar.currentIndex(), 0);
+
+    // Double-click restores Automatic and persists the 0.
+    QMouseEvent dclick(QEvent::MouseButtonDblClick,
+                       QPointF(gripPoint()),
+                       QPointF(bar.mapToGlobal(gripPoint())),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    bar.call_mouseDoubleClickEvent(&dclick);
+    QCOMPARE(bar.tabStripHeight(), 0);
+    QCOMPARE(
+        settings.value(QLatin1String("horizontalTabHeight")).toInt(),
+        0);
+
+    // Bottom (South) bars mirror the direction — dragging up grows
+    // the strip, seeded from the same rendered height.
+    bar.setShape(QTabBar::RoundedSouth);
+    dragGrip(-10);
+    QCOMPARE(bar.tabStripHeight(), 50);
+
+    settings.remove(QLatin1String("horizontalTabHeight"));
     settings.endGroup();
 }
 

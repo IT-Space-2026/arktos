@@ -305,6 +305,12 @@ UI:
   boxed X). On the Tor window's violet bar the nav and sidebar
   icons switch to the sets' light-glyph variants so they stay
   readable — and consistent — against the dark chrome (ICONS04).
+- Sidebar and tab strip are mouse-resizable for real: the sidebar's
+  inner edge is a visible grip handle (drag to resize, double-click
+  to reset, the width is remembered and follows left/right docking);
+  the same edge-drag works on the tab strip — width on Left/Right
+  bars, height on Top/Bottom bars, with a double-click restoring
+  Automatic (RSZ02).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
