@@ -629,3 +629,4 @@
 - 2026-10-12 MERGEWATCH: rust-work merged — no conflicts (clean ort merge; lane brought COV08 wip autotest legs for adblockpage/bidipanel/modelmenu/popupblocker + hook additions in adblockpage.h, bidipanel, webpage.h), build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued MENU06 Vivaldi-style app-menu button in .devin/Arora-Task-UI.md), build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued PREFUI12 Privacy Cookies section alignment in .devin/Arora-Task-UI.md); rust-work at 0, skipped; build ok
+- 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued TABS11 + SPAGE01 + HOME01 rows in .devin/Arora-Task-UI.md); rust-work at 0, skipped; build ok
