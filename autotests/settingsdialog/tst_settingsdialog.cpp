@@ -25,10 +25,12 @@
 
 #include <QtTest/QtTest>
 #include <QtGui/QtGui>
+#include <qboxlayout.h>
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qframe.h>
+#include <qgridlayout.h>
 #include <qgroupbox.h>
 #include <qscrollarea.h>
 #include <qscrollbar.h>
@@ -110,6 +112,7 @@ private slots:
     void siteTrustToggle();
     void siteTrustSignalToggles();
     void languageSelector();
+    void privacyGroupAlignment();
 };
 
 // CONT03: fills the container editor's Name field and accepts — the
@@ -2955,6 +2958,131 @@ void tst_SettingsDialog::languageSelector()
     // translation.
     manager->setCurrentLanguage(QString());
     qApp->processEvents();
+}
+
+// PREFUI09: the Privacy page's Cookies / Site Permissions / Saved
+// Passwords groups keep a left-anchored form.  A QGridLayout cell that
+// spans the stretched column redirects the surplus width into the
+// label column (or centers the whole block), so the groups now keep
+// spanning rows out of the stretch column or use a vbox + trailing
+// hbox spacer like the sibling groups.
+void tst_SettingsDialog::privacyGroupAlignment()
+{
+    SettingsDialog dialog;
+    dialog.resize(1400, 900);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    dialog.tabWidget->setCurrentIndex(int(SettingsDialog::PrivacyPage));
+    qApp->processEvents();
+
+    auto gapAfter = [](QWidget *first, QWidget *second) {
+        return second->x() - (first->x() + first->width());
+    };
+
+    // Cookies: the label column sizes to its labels, the combos and
+    // their buttons pack to the left in columnar order, and the
+    // checkbox rows share the group's left edge.
+    QVERIFY(qobject_cast<QGridLayout *>(
+                dialog.cookiesGroupBox->layout()));
+    int maxLabelHint = 0;
+    for (QLabel *l : {dialog.label_2, dialog.label,
+                      dialog.cookieSessionLabel})
+        maxLabelHint = qMax(maxLabelHint, l->sizeHint().width());
+    QVERIFY2(dialog.label_2->width() <= maxLabelHint + 2,
+             qPrintable(QStringLiteral(
+                 "label column %1 wider than widest label hint %2 — "
+                 "surplus leaked into column 0")
+                 .arg(dialog.label_2->width()).arg(maxLabelHint)));
+
+    QCOMPARE(dialog.filterTrackingCookiesCheckbox->x(),
+             dialog.label_2->x());
+    QCOMPARE(dialog.blockThirdPartyCookies->x(),
+             dialog.label_2->x());
+    // Combos share the field column's left edge; buttons share the
+    // action column's left edge — no centered/floating cells.
+    QCOMPARE(dialog.keepUntilCombo->x(), dialog.acceptCombo->x());
+    QCOMPARE(dialog.cookieSessionCombo->x(), dialog.acceptCombo->x());
+    QCOMPARE(dialog.cookiesButton->x(), dialog.exceptionsButton->x());
+    // The action column hugs the field column — nothing pushed right.
+    QVERIFY2(gapAfter(dialog.acceptCombo, dialog.exceptionsButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Exceptions... gap %1 — floated off the field")
+                 .arg(gapAfter(dialog.acceptCombo,
+                               dialog.exceptionsButton))));
+    QVERIFY2(dialog.exceptionsButton->x()
+             + dialog.exceptionsButton->width()
+             < dialog.cookiesGroupBox->width() - 40,
+             qPrintable(QStringLiteral(
+                 "Exceptions... ends at %1 of %2 — hugging right edge")
+                 .arg(dialog.exceptionsButton->x()
+                      + dialog.exceptionsButton->width())
+                 .arg(dialog.cookiesGroupBox->width())));
+    QVERIFY(dialog.acceptCombo->width()
+            <= dialog.acceptCombo->sizeHint().width() + 4);
+
+    // Widening the dialog must not drift the anchored block right.
+    dialog.resize(1600, 900);
+    qApp->processEvents();
+    QCOMPARE(dialog.filterTrackingCookiesCheckbox->x(),
+             dialog.label_2->x());
+    QCOMPARE(dialog.cookiesButton->x(), dialog.exceptionsButton->x());
+    QVERIFY2(gapAfter(dialog.acceptCombo, dialog.exceptionsButton) <= 20,
+             "Exceptions... drifted on resize");
+    dialog.resize(1400, 900);
+    qApp->processEvents();
+
+    // Site Permissions: hint + tree fill the group width; the buttons
+    // pack left instead of flanking a centered column.
+    QVERIFY(qobject_cast<QVBoxLayout *>(
+                dialog.permissionsGroupBox->layout()));
+    QVERIFY2(dialog.permissionsTree->x() <= 30,
+             qPrintable(QString::number(dialog.permissionsTree->x())));
+    QVERIFY2(dialog.permissionsTree->width()
+             >= dialog.permissionsGroupBox->width() - 40,
+             qPrintable(QStringLiteral(
+                 "tree width %1 in group width %2 — not full width")
+                 .arg(dialog.permissionsTree->width())
+                 .arg(dialog.permissionsGroupBox->width())));
+    QVERIFY2(dialog.permissionsHintLabel->width()
+             >= dialog.permissionsGroupBox->width() - 40,
+             qPrintable(QString::number(
+                 dialog.permissionsHintLabel->width())));
+    QVERIFY(dialog.permissionRemoveButton->x() <= 30);
+    QVERIFY2(gapAfter(dialog.permissionRemoveButton,
+                      dialog.permissionClearAllButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Clear All gap %1 — floated right")
+                 .arg(gapAfter(dialog.permissionRemoveButton,
+                               dialog.permissionClearAllButton))));
+
+    // Saved Passwords: status line full width, the three buttons pack
+    // left with a trailing spacer — Lock Now must not hug the right
+    // edge.
+    QVERIFY(qobject_cast<QVBoxLayout *>(
+                dialog.credentialGroupBox->layout()));
+    QVERIFY(dialog.credentialPassphraseButton->x() <= 30);
+    QVERIFY2(gapAfter(dialog.credentialPassphraseButton,
+                      dialog.credentialRemoveButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Remove Passphrase gap %1")
+                 .arg(gapAfter(dialog.credentialPassphraseButton,
+                               dialog.credentialRemoveButton))));
+    QVERIFY2(gapAfter(dialog.credentialRemoveButton,
+                      dialog.credentialLockButton) <= 20,
+             qPrintable(QStringLiteral(
+                 "Lock Now gap %1")
+                 .arg(gapAfter(dialog.credentialRemoveButton,
+                               dialog.credentialLockButton))));
+    QVERIFY2(dialog.credentialLockButton->x()
+             + dialog.credentialLockButton->width()
+             < dialog.credentialGroupBox->width() - 40,
+             "Lock Now hugs the group's right edge");
+    QVERIFY2(dialog.credentialStatusLabel->width()
+             >= dialog.credentialGroupBox->width() - 40,
+             qPrintable(QString::number(
+                 dialog.credentialStatusLabel->width())));
+
+    dialog.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

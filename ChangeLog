@@ -264,6 +264,12 @@ UI:
   default, every installed translation, and an English fallback —
   applying immediately so the whole window retranslates live, no
   restart needed (LANG01).
+- Preferences → Privacy group alignment fixed: the Cookies group's
+  label/combo/button rows anchored to the left like other pages
+  instead of floating right past the flush-left checkboxes, and the
+  Site Permissions and Saved Passwords groups now fill the group
+  width with their buttons packed to the left rather than rendering
+  as a narrow centered band (PREFUI09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

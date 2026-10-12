@@ -66,14 +66,14 @@ This file is the task queue for the Devin CLI task loop
 | DEVT05 | BiDi entry into Development Tools submenu, drop dead placeholder + top-level checkbox — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/BidiClient/rc_bidi_* and the m_toolsMenu toggle live on master only (DEVT02-04, never merged to ui-work); this tree has no checkable BiDi action to move, only DEVT01's View-submenu placeholder; fix targets master's browsermainwindow.cpp ~1154-1190 — re-file on main lane or sync master->ui-work first |
 | SIDE05 | Duplicate "Development Tools" title in sidebar area when BiDi dock is shown — details below | blocked | 0 | blocked:missing BiDi dock — m_bidiPanelDock/BidiPanel/rc_bidi_* live on master only (DEVT02-04 never merged to ui-work; same blocker as DEVT05); this tree's only dock is the 'Sidebar' — no duplicate Dev Tools title exists here to fix; re-file on main lane or sync master->ui-work first |
 | SIDE07 | CRASH: Show All Bookmarks while Preferences tab is current — details below | pending | 0 | |
-| PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | pending | 0 | |
+| PREFUI09 | Privacy page group alignment: Cookies / Site Permissions / Saved Passwords — details below | done | 0 | grid cells spanning the stretch column had redirected all surplus into the label column (cookies) or centered the whole block (permissions/passwords): cookies checkbox rows trimmed to colspan=2 + combo/button cells AlignLeft; permissions + saved-passwords re-based to QVBoxLayout w/ trailing-spacer button rows (full-width hint+tree, packed-left buttons); new tst privacyGroupAlignment — 41/41, --settings-smoke PASS, offscreen grab verified, make check rc=0 (check-warnings PASS, 65 programs 0 failed) --disable-gpu |
 | ENG11 | Show current Servo version in the rendering-engine dropdown like Chromium — details below | pending | 0 | |
 | PREFUI10 | Appearance page: font/language fields stretch full page width — details below | pending | 0 | |
-| DLUX03 | Downloads sidebar details card renders broken (dark box, clipped rows) — details below | pending | 0 | |
+| DLUX03 | moved to rust lane (parallel development) — see Arora-Task-Rust.md | blocked | 0 | moved to rust lane — user directive for 3-way parallel; flip done there, not here |
 | SIDE06 | Sidebar: tree text elides despite free space + rail icons should follow dock side — details below | pending | 0 | |
 | TABS07 | Default tab height still too tall — details below | pending | 0 | |
-| SRCH11 | URL-bar search still broken — typing text must search with default engine — details below | pending | 0 | |
-| DLUX04 | Download details card: remove tint mismatch + wide border around info block — details below | pending | 0 | |
+| SRCH11 | moved to rust lane (parallel development) — see Arora-Task-Rust.md | blocked | 0 | moved to rust lane — user directive for 3-way parallel; flip done there, not here |
+| DLUX04 | moved to rust lane (parallel development) — see Arora-Task-Rust.md | blocked | 0 | moved to rust lane — user directive for 3-way parallel; flip done there, not here |
 | PREFUI11 | Move "Show tab previews on hover" from Appearance to Tab Settings page — details below | pending | 0 | |
 | TOR06 | Tor window: tab strip too tall again + overlaps left icon — details below | pending | 0 | |
 | TOR07 | Tor window chrome coloring: menu/header/tab should match URL-bar treatment — details below | pending | 0 | |
@@ -342,6 +342,8 @@ Spec: (a) Cookies group — Accept Cookies / Keep Cookies Until / 'A cookie sess
 
 Verify: all three groups' controls share the group's left margin like other pages; combos do not stretch the full page width beyond their siblings; make check PASS (tst_settingsdialog if it covers these pages).
 
+DONE (2026-10-12): root cause — a QGridLayout item that spans the column holding the stretch factor breaks the stretch: surplus went into column 0 (cookies: the two checkbox rows spanned all 3 cols -> label column ballooned to 375px, right-aligned labels + combos + buttons all floated right) or rendered the whole content centered in a narrow band (permissions: hint+tree spanned the stretch col; passwords: status label spanned it). Fix: cookies checkbox rows now span cols 0-1 only and every combo/button cell carries alignment=Qt::AlignLeft; permissionsGroupBox and credentialGroupBox were re-based to QVBoxLayout (hint label + tree full width; button rows are hbox + trailing expanding spacer), matching the Connections & Storage / Fingerprint Resistance / Site Trust convention. Sweep of the rest of the page found no other group with the defect (Content Blocking's spanning rows avoid its stretch column; all others are vbox/hbox). Verified: tst_SettingsDialog::privacyGroupAlignment locks label-column width, shared left edges, packed buttons and resize stability; offscreen page grab confirmed; tst_settingsdialog 41/41; --settings-smoke PASS; make check rc=0 (check-warnings PASS, 65 programs 0 failed) offscreen --disable-gpu.
+
 ### ENG11
 
 Show the current Servo version in the rendering-engine dropdown — user request: 'For the rendering engine drop down, add the current Servo version like with the Chromium.'
@@ -357,16 +359,6 @@ Appearance page fields too wide — user screenshot: Preferences > Appearance sh
 Spec: (a) font fields — the read-only font display + 'Select...' button should size to content/a reasonable field width, not absorb the whole page; use a fixed or maximum field width with the button adjacent (match how Firefox/other pages group a value + picker button); (b) 'Preferred languages' box — cap its width/height to a sensible size (the field does not need the full page); (c) icons combo row — same check (it also looks stretched); (d) keep the page's left-anchored alignment consistent with the other Preferences pages after PREFUI06; (e) re-sweep Appearance page rows for any other full-width field defect.
 
 Verify: Appearance page fields have bounded width (buttons sit next to their fields, not at the page edge), layout still scales on window resize without ugly stretch, make check PASS.
-
-### DLUX03
-
-Downloads sidebar details card is broken — user screenshot: the sidebar Downloads panel shows 'qwe_download.txt' selected, and its expanded details card at the bottom renders as a dark/black box with cramped, partially clipped text rows (source URL line and info rows unreadable against the dark background) and an 'Open' / 'Restart' / 'Show in File Manager' button row squeezed under it, plus a 'Download Settings...' link below that.
-
-Diagnosis hints: the card likely uses a hardcoded dark palette/stylesheet (breaks on the light theme — same class of bug THEME01 flagged: 'anything hardcoded-light that reads broken on dark' — here hardcoded-DARK on light); rows may use fixed heights that clip text; the button row may be unstyled/margined.
-
-Spec: (a) the details card follows the application palette — readable text on the theme's base/alternate-base color in BOTH day and night themes, no hardcoded background colors; (b) info rows (filename, source URL, size/progress/path) lay out without clipping — elide long URLs middle-out, wrap or tooltip the rest; (c) the button row (Open / Restart / Show in File Manager) aligns cleanly inside the card with sane spacing; (d) 'Download Settings...' placement reviewed — consistent with the panel footer style or moved into the card sensibly; (e) collapsed vs expanded states both render cleanly.
-
-Verify: select a finished + an in-progress download in the sidebar — details card is readable and unclipped in day AND night theme, long URLs elide with full text on tooltip, buttons aligned, make check PASS.
 
 ### SIDE06
 
@@ -387,26 +379,6 @@ Diagnosis hints: check tabbar.cpp/tabwidget.cpp tabSizeHint + initStyleOption �
 Spec: (a) default tab height reduced to a normal browser-tab height (~style-default, icon+text sized — target roughly 30-34px unless the style says otherwise); (b) pinned/group/container variants still render correctly at the new height (icons only on pinned, chips still legible); (c) tab close button + favicon stay vertically centered; (d) vertical tab mode unaffected or adjusted consistently.
 
 Verify: new-window default tab strip measures noticeably shorter and matches platform/browser norms; pinned+container+grouped tabs still look right; make check PASS.
-
-### SRCH11
-
-URL-bar search still does not work — user report after SRCH09's fix: 'URL search bar still not works, the default is that I can search from the URL bar.' Expected behavior: typing a non-URL string into the location bar and pressing Enter performs a web search with the configured default search engine — the standard browser omnibox contract.
-
-SRCH09 is marked done but the regression persists — start by reproducing exactly: type 'test query' + Enter in the location bar and observe what happens (loads garbage URL, does nothing, error page?). Then trace the routing: locationbar returnPressed -> the omni classifier (OMNI01 verdict table / rc_classify_omni in rustcore when ARORA_RUSTCORE, else the C++ fallback in locationbar) -> search-engine URL construction via opensearchmanager/default engine. Suspects: (a) the classifier returns 'url' for bare words (SRCH09 fixed a related path — check what it actually changed and whether the rust classifier path now disagrees); (b) the search URL is built but the engine query template is empty/misconfigured (DENG01 switched default to DuckDuckGo — check the template); (c) Enter is swallowed by the completer/suggestions popup accepting an item instead of searching; (d) the rust FFI verdict path silently fails and no fallback fires.
-
-Also verify suggestion path: picking 'Search for X' from the dropdown should search too.
-
-Verify: 'foo bar' + Enter -> default engine results page loads; 'singleterm' + Enter -> search (not a bogus http://singleterm navigation); real URLs still navigate directly; search-engine change in Preferences is honored; make check PASS.
-
-### DLUX04
-
-Download details card polish — user feedback on the fixed card (DLUX03-class): 'The color is better with day mode, but there should not be a viewable color difference and do not leave that wide border around the information.'
-
-Screenshot shows the expanded card: an info block (Source/Destination/Started/Finished/Size/Speed rows + speed graph) sitting inside a visibly DIFFERENT light-tinted fill than the surrounding panel, plus a thick/wide border or frame padding around the info section — the card reads as a box-in-a-box.
-
-Spec: (a) NO visible color seam — the info block and graph area must use the same background as the card/panel surface (palette Base or the card's own fill — flatten the inner box so it blends; keep only the minimum chrome needed for readability, e.g. a hairline separator if any); (b) remove the wide border/padding around the info block — tighten margins to match the card's outer padding so content doesn't sit inside a thick frame; (c) verify BOTH themes — the same fix must not reintroduce a seam on dark (check what fill the block uses in dark mode — palette-driven, never hardcoded); (d) the graph keeps its fill but blends with the card (graph area may keep a subtle plot fill if it reads as 'chart', not 'box').
-
-Verify: expanded card shows no visible color difference between info block/graph and card background in day AND night themes; no thick border around the info section; make check PASS.
 
 ### PREFUI11
 
