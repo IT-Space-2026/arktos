@@ -412,3 +412,4 @@
 - 2026-10-12 TRANS15: nb_NO catalog completed — 1035 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS16: nl catalog completed — 1035 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS17: pl_PL catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS18: pt_PT catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
