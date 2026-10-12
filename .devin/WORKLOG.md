@@ -630,3 +630,4 @@
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued MENU06 Vivaldi-style app-menu button in .devin/Arora-Task-UI.md), build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued PREFUI12 Privacy Cookies section alignment in .devin/Arora-Task-UI.md); rust-work at 0, skipped; build ok
 - 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued TABS11 + SPAGE01 + HOME01 rows in .devin/Arora-Task-UI.md); rust-work at 0, skipped; build ok
+- 2026-10-12 MERGEWATCH: ui-work merged — no conflicts (queued TRUST12 manual trust-list update button in .devin/Arora-Task-UI.md); rust-work at 0, skipped; build ok
