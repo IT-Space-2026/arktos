@@ -46,7 +46,7 @@ every untranslated source string sits as type="unfinished". Qt lives at
 | TRANS16 | Complete nl UI translation — details below | done | 1 | All 1035 unfinished entries translated to Dutch (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS17 | Complete pl_PL UI translation — details below | done | 1 | All 1033 unfinished entries translated to Polish (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS18 | Complete pt_PT UI translation — details below | done | 1 | All 1036 unfinished entries translated to European Portuguese (incl. 4 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
-| TRANS19 | Complete sr_RS UI translation — details below | pending | 0 |  |
+| TRANS19 | Complete sr_RS UI translation — details below | done | 1 | All 1033 unfinished entries translated to Serbian (Cyrillic) (incl. 1 numerusform); lrelease PASS — 1423 finished, 0 unfinished. |
 | TRANS20 | Complete sr_RS@latin UI translation — details below | pending | 0 |  |
 | TRANS21 | Complete tr_TR UI translation — details below | pending | 0 |  |
 
