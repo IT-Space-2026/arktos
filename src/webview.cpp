@@ -70,7 +70,6 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "containermanager.h"
-#include "devtoolswindow.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "pdfview.h"
@@ -515,8 +514,9 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     if (menu->isEmpty()) {
         delete menu;
         menu = createStandardContextMenu();
-        // The stock menu's own "Inspect element" is the same no-op
-        // bare page action — remove it; the hosted one is added below.
+        // The stock menu's own "Inspect element" is a no-op bare page
+        // action — the context menu carries no inspect path (DEVT04),
+        // so strip it here too.
         menu->removeAction(enginePage()->action(Engine::StandardAction::InspectElement));
     }
     if (!menu->isEmpty())
@@ -533,17 +533,6 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
     menu->addAction(tr("Show &QR Code for This Page"), this,
             [this]() { QrCodeDialog::showForUrl(url(), this); });
-    menu->addSeparator();
-
-    // The bare page action is a no-op until a devToolsPage is bound —
-    // route it through the shared inspector host (DVT01).  Triggering
-    // InspectElement still uses the stored context-menu position, so
-    // the right-clicked element is the one inspected.
-    QAction *inspectPageAction = enginePage()->action(Engine::StandardAction::InspectElement);
-    QAction *inspectAction = menu->addAction(inspectPageAction->text());
-    inspectAction->setIcon(inspectPageAction->icon());
-    connect(inspectAction, &QAction::triggered,
-            this, [this]() { DevToolsWindow::inspectElement(m_page); });
 
     if (!menu->isEmpty()) {
         if (BrowserMainWindow *window = BrowserMainWindow::parentWindow(this)) {

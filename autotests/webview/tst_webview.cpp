@@ -1609,10 +1609,16 @@ void tst_WebView::contextMenuPageActions()
 
     bool foundClean = false;
     bool foundQr = false;
+    bool foundInspect = false;
     const bool popped = driveRightClick(&view, QPoint(400, 300),
                                         [&](QMenu *menu) {
         foundClean = findMenuAction(
             menu, QStringLiteral("Copy Clean Link")) != nullptr;
+        // DEVT04: click-to-inspect is gone — no Inspect entry at all.
+        for (QAction *action : menu->actions()) {
+            if (action->text().contains(QLatin1String("Inspect")))
+                foundInspect = true;
+        }
         if (QAction *qr = findMenuAction(
                 menu, QStringLiteral("Show QR Code for This Page"))) {
             foundQr = true;
@@ -1622,6 +1628,7 @@ void tst_WebView::contextMenuPageActions()
     QVERIFY2(popped, "no context menu on page right-click");
     QVERIFY(foundClean);
     QVERIFY(foundQr);
+    QVERIFY(!foundInspect);
 
     // The QR action opens a non-modal QrCodeDialog for the page URL.
     QPointer<QDialog> dialog;

@@ -260,11 +260,15 @@ UI:
   section holds the enable toggle, Left/Right placement and a
   checkable per-panel list (Bookmarks/History/Downloads/Notes —
   hidden panels are never built, toggles apply live) (SIDE02).
-- View menu gains a "Development Tools" submenu holding the engine
+- View menu gained a "Development Tools" submenu holding the engine
   tools: "Chromium Dev Tool" opens the inspector on the current page
   (the Tools menu's "Web Inspector" entry moved here) and "BiDi Dev
   Tool" is a visible placeholder for the upcoming BiDi backend
-  (DEVT01).
+  (DEVT01 — relocated under Tools by DEVT04).
+- "Development Tools" moved to the Tools menu (between the
+  credential-store entry and User Agent), and the page context menu
+  no longer offers "Inspect Element" — the inspector is reachable
+  from Tools → Development Tools → Chromium Dev Tool (DEVT04).
 - Tab bar position in Preferences is now a Vivaldi-style row of
   clickable preview tiles — each sketches a miniature window with
   the tab strip on its Top/Left/Right/Bottom edge, the selection

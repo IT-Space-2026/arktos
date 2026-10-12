@@ -30,9 +30,9 @@ class QWebEngineView;
 // QWebEnginePage::InspectElement renders Chromium DevTools into the
 // page bound via setDevToolsPage(), and silently does nothing until
 // one is.  This top-level window is the dedicated host for that
-// DevTools page — View > Development Tools > Chromium Dev Tool and
-// the context menu's "Inspect Element" both route through
-// inspectElement().
+// DevTools page — Tools > Development Tools > Chromium Dev Tool
+// routes through inspectElement() (the context menu's
+// click-to-inspect entry was removed under DEVT04).
 class DevToolsWindow : public QMainWindow
 {
     Q_OBJECT

@@ -148,8 +148,8 @@ void tst_DevTools::devToolsMenuOpensInspector()
     WebView *view = window->currentTab();
     QVERIFY(view);
 
-    // DEVT01: the entry lives under View > Development Tools as
-    // "Chromium Dev Tool" — the Tools menu no longer carries it.
+    // DEVT04: the entry lives under Tools > Development Tools as
+    // "Chromium Dev Tool" — the View menu no longer carries it.
     QMenu *devToolsMenu = nullptr;
     const QList<QMenu *> menus = window->findChildren<QMenu *>();
     for (QMenu *menu : menus) {

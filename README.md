@@ -380,7 +380,8 @@ that swap means in practice:
   QNetworkAccessManager (with its own disk cache) only handles
   app-side fetches such as search suggestions and blocklist downloads.
 - **Inspector** — WebKit's built-in inspector became a DevTools host
-  window: the inspected page hands its `devToolsPage` to a second
+  window (Tools → Development Tools → Chromium Dev Tool): the
+  inspected page hands its `devToolsPage` to a second
   QWebEngineView on the same profile.  A second, engine-neutral
   panel (Tools → BiDi Dev Tools; rust-enabled builds) talks
   WebDriver-BiDi-shaped commands to the engine — console log + JS

@@ -966,34 +966,6 @@ void BrowserMainWindow::setupMenu()
             this, &BrowserMainWindow::viewPageSource);
     m_viewMenu->addAction(m_viewSourceAction);
 
-    // DEVT01: engine-facing tools share one submenu next to Page
-    // Source.  Qt WebEngine has no DeveloperExtrasEnabled toggle —
-    // Chromium DevTools are always available, so the entry opens the
-    // inspector on the current page directly.  The bare page action is
-    // a no-op until a devToolsPage is bound, so it routes through the
-    // shared inspector host (DVT01).
-    m_viewDevToolsMenu = new QMenu(m_viewMenu);
-    m_viewMenu->addMenu(m_viewDevToolsMenu);
-
-    m_viewChromiumDevToolAction = new QAction(m_viewDevToolsMenu);
-    connect(m_viewChromiumDevToolAction, &QAction::triggered,
-            this, [this]() {
-        if (!currentTab())
-            return;
-        // DevTools is engine-bound (capabilities().devTools) — reach
-        // the wrapped page through the adapter's escape hatch.
-        if (WebEnginePageAdapter *adapter =
-                WebEnginePageAdapter::of(currentTab()->enginePage()))
-            DevToolsWindow::inspectElement(adapter->webEnginePage());
-    });
-    m_viewDevToolsMenu->addAction(m_viewChromiumDevToolAction);
-
-    // Placeholder until DEVT02 wires the BiDi panel — kept visible but
-    // disabled so the submenu structure stays stable.
-    m_viewBidiDevToolAction = new QAction(m_viewDevToolsMenu);
-    m_viewBidiDevToolAction->setEnabled(false);
-    m_viewDevToolsMenu->addAction(m_viewBidiDevToolAction);
-
     m_viewMenu->addSeparator();
 
     m_viewTextEncodingAction = new QAction(m_viewMenu);
@@ -1171,8 +1143,35 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsMenu->addAction(m_toolsLockStoreAction);
 
-    // DEVT01: the inspector action lives under View > Development
-    // Tools — the Tools menu no longer carries it.
+    // DEVT01/DEVT04: engine-facing tools share one submenu under
+    // Tools (moved out of View; the context menu's click-to-inspect
+    // entry is gone too — this action is the way in).  Qt WebEngine
+    // has no DeveloperExtrasEnabled toggle — Chromium DevTools are
+    // always available, so the entry opens the inspector on the
+    // current page directly.  The bare page action is a no-op until
+    // a devToolsPage is bound, so it routes through the shared
+    // inspector host (DVT01).
+    m_toolsDevToolsMenu = new QMenu(m_toolsMenu);
+    m_toolsMenu->addMenu(m_toolsDevToolsMenu);
+
+    m_toolsChromiumDevToolAction = new QAction(m_toolsDevToolsMenu);
+    connect(m_toolsChromiumDevToolAction, &QAction::triggered,
+            this, [this]() {
+        if (!currentTab())
+            return;
+        // DevTools is engine-bound (capabilities().devTools) — reach
+        // the wrapped page through the adapter's escape hatch.
+        if (WebEnginePageAdapter *adapter =
+                WebEnginePageAdapter::of(currentTab()->enginePage()))
+            DevToolsWindow::inspectElement(adapter->webEnginePage());
+    });
+    m_toolsDevToolsMenu->addAction(m_toolsChromiumDevToolAction);
+
+    // Placeholder until DEVT02 wires the BiDi panel — kept visible but
+    // disabled so the submenu structure stays stable.
+    m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
+    m_toolsBidiDevToolAction->setEnabled(false);
+    m_toolsDevToolsMenu->addAction(m_toolsBidiDevToolAction);
 
     // DEVT03: engine-neutral dev tools dock — toggleViewAction keeps
     // its check state synced with the dock's close button.  No-rust
@@ -1373,11 +1372,6 @@ void BrowserMainWindow::retranslate()
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
     m_viewFullScreenAction->setText(tr("&Full Screen"));
     m_viewTextEncodingAction->setText(tr("Text Encoding"));
-    m_viewDevToolsMenu->setTitle(tr("Development Tools"));
-    m_viewChromiumDevToolAction->setText(tr("Chromium Dev Tool"));
-    m_viewBidiDevToolAction->setText(tr("BiDi Dev Tool"));
-    m_viewBidiDevToolAction->setToolTip(
-        tr("Coming with the BiDi backend"));
 
     m_historyMenu->setTitle(tr("Hi&story"));
     m_historyBackAction->setText(tr("Back"));
@@ -1403,6 +1397,11 @@ void BrowserMainWindow::retranslate()
     m_toolsClearPrivateDataAction->setText(tr("&Clear Private Data"));
     m_toolsClearPrivateDataAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Delete", "Clear Private Data")));
     m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
+    m_toolsDevToolsMenu->setTitle(tr("Development Tools"));
+    m_toolsChromiumDevToolAction->setText(tr("Chromium Dev Tool"));
+    m_toolsBidiDevToolAction->setText(tr("BiDi Dev Tool"));
+    m_toolsBidiDevToolAction->setToolTip(
+        tr("Coming with the BiDi backend"));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
 
     m_helpMenu->setTitle(tr("&Help"));
