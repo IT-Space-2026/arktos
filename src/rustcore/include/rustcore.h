@@ -314,6 +314,21 @@ char *rc_lookalike_check(const char *hostUtf8);
  * never decides the level alone. */
 char *rc_sitetrust_lookup(const char *hostUtf8, int isHttps);
 
+/* Probe-selection bits for rc_sitetrust_lookup_opts — TRUST03's
+ * per-signal Preferences switches.  A cleared bit skips that
+ * advisory probe entirely: it never runs and cannot appear in
+ * signals[].  The rank and first-seen inputs are ungated. */
+#define RC_SITETRUST_PROBE_THREATLIST 0x1u
+#define RC_SITETRUST_PROBE_LOOKALIKE  0x2u
+#define RC_SITETRUST_PROBE_ALL \
+    (RC_SITETRUST_PROBE_THREATLIST | RC_SITETRUST_PROBE_LOOKALIKE)
+
+/* Same verdict as rc_sitetrust_lookup with the probes bitmask
+ * applied — the threat-list and lookalike inputs each answer their
+ * own Preferences switch. */
+char *rc_sitetrust_lookup_opts(const char *hostUtf8, int isHttps,
+                               unsigned int probes);
+
 /* Re-run both input-table merges (blocklist + Tranco) — the list
  * updaters call this after dropping a new file.  Both reloads run
  * even when the first fails; the first error is reported. */

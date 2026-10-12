@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "adblockrequestinterceptor.h"
+#include "browserapplication.h"
 #include "cookiejar.h"
 #include "engineinterface.h"
 #include "fingerprintprotector.h"
@@ -668,11 +669,23 @@ void SitePanel::rebuildPermissionRows()
 // skeletons and the history rollup all live inside the crate.
 static QJsonObject siteTrustVerdict(const QString &host, bool isHttps)
 {
-    if (host.isEmpty())
+    // TRUST03: the master switch kills the whole surface — off means
+    // no FFI call at all, so the badge and the Trust section simply
+    // see an un-evaluable verdict.  The per-signal switches ride the
+    // request as a probe mask: lookalike/threatlist each gate their
+    // own input inside the crate.  All three keys are read live, so
+    // a Preferences flip applies on the next evaluation.
+    if (host.isEmpty() || !BrowserApplication::siteTrustEnabled())
         return QJsonObject();
+    unsigned int probes = 0;
+    if (BrowserApplication::siteTrustThreatlistEnabled())
+        probes |= RC_SITETRUST_PROBE_THREATLIST;
+    if (BrowserApplication::siteTrustLookalikeEnabled())
+        probes |= RC_SITETRUST_PROBE_LOOKALIKE;
     rustCoreEnsureDataDir();
     const QByteArray hostUtf8 = host.toUtf8();
-    char *json = rc_sitetrust_lookup(hostUtf8.constData(), isHttps ? 1 : 0);
+    char *json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
+                                          isHttps ? 1 : 0, probes);
     if (!json)
         return QJsonObject();
     const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));

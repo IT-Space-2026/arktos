@@ -42,7 +42,10 @@ class WebView;
 // lookalike hit); "green" and un-evaluable pages keep the plain
 // shield.  Verdicts are cached per host+https so repaints never wait
 // on the lookup, and the cache key carries the scheme so an
-// http<->https flip re-evaluates.
+// http<->https flip re-evaluates.  TRUST03: the key also carries the
+// effective probe mask and trust/enabled short-circuits before the
+// cache — a Preferences flip re-evaluates on the next navigation,
+// and "off" never reaches the FFI at all.
 class SiteShieldButton : public QToolButton
 {
     Q_OBJECT

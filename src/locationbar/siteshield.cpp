@@ -21,6 +21,7 @@
 
 #include "adblockmanager.h"
 #include "aroraicon.h"
+#include "browserapplication.h"
 #include "domainblocklist.h"
 #include "sitepanel.h"
 #include "trancolist.h"
@@ -110,10 +111,22 @@ void SiteShieldButton::setWebView(WebView *webView)
 
 QString SiteShieldButton::trustLevelFor(const QString &host, bool isHttps)
 {
-    if (host.isEmpty())
+    // TRUST03: the master switch means NO lookup at all — the badge
+    // stays the plain lock and the counter proves the FFI was never
+    // reached.
+    if (host.isEmpty() || !BrowserApplication::siteTrustEnabled())
         return QString();
+    // The per-signal switches are part of the key: a Preferences
+    // flip produces a different key, so the next visit re-evaluates
+    // under the new switches instead of serving the verdict the old
+    // ones produced — live toggles, no restart, and stale entries
+    // simply age out unreferenced.
+    const int probes =
+        (BrowserApplication::siteTrustThreatlistEnabled() ? 1 : 0)
+        | (BrowserApplication::siteTrustLookalikeEnabled() ? 2 : 0);
     const QString key = host + QLatin1Char('|')
-                        + QLatin1Char(isHttps ? '1' : '0');
+                        + QLatin1Char(isHttps ? '1' : '0')
+                        + QLatin1Char('|') + QString::number(probes);
     const auto it = s_trustCache.constFind(key);
     if (it != s_trustCache.constEnd())
         return it.value();

@@ -510,7 +510,7 @@ Security:
 - Preferences > Privacy gains a Site Trust group with a master "Show
   site trust indicator in the toolbar" switch plus per-signal toggles
   for the lookalike-domain warning and the known-threat-list check —
-  all on by default; turning the master off hides the upcoming trust
+  all on by default; turning the master off hides the trust
   badge and skips the lookups, and each signal can be disabled
   individually, applied without a restart (TRUST06, TRUST02).
 
@@ -1220,6 +1220,9 @@ Site trust section in the shield panel (TRUST08):
 
 Trust verdict badge on the shield icon (TRUST09):
     The location-bar shield/lock icon itself now carries the site-trust verdict, so the warning is visible without opening the panel: a "red" verdict (a threat-list hit or a homograph lookalike of a popular site) repaints the shield red, and an "amber" verdict — plaintext http or a host with no Tranco reputation — washes it amber; green and un-evaluable pages keep the plain icon. Verdicts are resolved once per host+scheme and cached for the session, so repaints never wait on the lookup; an http/https flip re-evaluates, non-web pages show no badge, and a refreshed blocklist or Tranco download clears the cache so the badge follows the new tables. Every lookup stays local — no host name leaves the machine.
+
+Site trust Preferences switches now govern the surface (TRUST03):
+    The Site Trust group in Preferences > Privacy is wired end to end: turning the master switch off keeps the shield icon plain, hides the panel's Trust section and — most importantly — never runs the site-trust lookup at all; the lookalike and threat-list switches each remove only their own input from the verdict request (a suppressed signal can't flag and can't redden the badge). All three apply live on the next navigation — the badge cache keys on the active switches, so a flip re-evaluates instead of serving a verdict the old settings produced.
 
 0.11.0
 Interface:

@@ -30,6 +30,7 @@
 #include <qlabel.h>
 #include <qnetworkcookie.h>
 #include <qpushbutton.h>
+#include <qsettings.h>
 #include <qtcpserver.h>
 #include <qtcpsocket.h>
 #include <qwebenginepermission.h>
@@ -115,6 +116,7 @@ private slots:
     void trustBadgeLevels();
     void trustBadgeCache();
     void trustBadgeNavigation();
+    void trustGating();
 };
 
 void tst_SitePanel::initTestCase()
@@ -153,6 +155,13 @@ void tst_SitePanel::cleanup()
     PopupBlocker::instance()->removeAllowedHost(QLatin1String("127.0.0.1"));
     PopupBlocker::instance()->removeAllowedHost(QLatin1String("example.com"));
     PopupBlocker::instance()->clearSessionHosts();
+
+    // TRUST03: a gating leg that bailed mid-run must not leave the
+    // trust switches off for the other tests in this binary.
+    QSettings settings;
+    settings.remove(QLatin1String("trust/enabled"));
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
 }
 
 // public static QString siteWhitelistFilter(const QString &host)
@@ -707,6 +716,109 @@ void tst_SitePanel::trustBadgeNavigation()
     // shield again.
     view.load(QUrl(QLatin1String("about:blank")));
     QTRY_VERIFY(shield.trustBadge().isEmpty());
+}
+
+// TRUST03: the trust/* switches gate the lookup itself.  The master
+// switch off means no signal lines, no badge level and the FFI is
+// never reached; each per-signal switch drops only its own input;
+// and a Preferences flip re-evaluates live (the probe mask is part
+// of the badge cache key, so the next call is a miss).
+void tst_SitePanel::trustGating()
+{
+#if defined(ARORA_RUSTCORE)
+    QSettings settings;
+    settings.remove(QLatin1String("trust/enabled"));
+    settings.remove(QLatin1String("trust/lookalike"));
+    settings.remove(QLatin1String("trust/threatlist"));
+
+    // Master off: no lines, no level — and the counter proves the
+    // FFI never ran.  No fixture tables are needed yet: a gated
+    // lookup never reaches the crate.
+    settings.setValue(QLatin1String("trust/enabled"), false);
+    const int lookupsBefore = SiteShieldButton::trustLookupCount();
+    QVERIFY(SitePanel::trustSignalLines(
+                QLatin1String("threat-fixture.test"), true).isEmpty());
+    QVERIFY(SiteShieldButton::trustLevelFor(
+                QLatin1String("threat-fixture.test"), true).isEmpty());
+    QCOMPARE(SiteShieldButton::trustLookupCount(), lookupsBefore);
+
+    // The live panel hides the section even on a page whose verdict
+    // would have something to say.
+    {
+        LocalHttpServer server;
+        QVERIFY(server.start());
+        WebView view;
+        SitePanel panel;
+        panel.setWebView(&view);
+        QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+        view.load(server.url());
+        QTRY_COMPARE(loadSpy.count(), 1);
+        QWidget *trust = panel.findChild<QWidget*>(
+            QLatin1String("siteTrust"));
+        QVERIFY(trust);
+        QVERIFY(trust->isHidden());
+    }
+    settings.remove(QLatin1String("trust/enabled"));
+
+    // Fixture tables go in only now — after the last event-loop pump
+    // above — so an in-flight list refresh completing mid-test
+    // (DomainBlocklist::maybeCommit re-merges the tables) cannot
+    // swap them out under the asserts.  Everything below runs to
+    // completion without returning to the event loop.
+    const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+    SiteShieldButton::clearTrustCache();
+
+    // Lookalike off: the confusable twin loses only its signal — no
+    // 'resembles' line, and the level drops to what the remaining
+    // inputs say (unranked -> amber, not red).
+    settings.setValue(QLatin1String("trust/lookalike"), false);
+    const QString lookalikeLines = SitePanel::trustSignalLines(
+        QLatin1String("paypa1.com"), true).join(QLatin1Char('\n'));
+    QVERIFY(!lookalikeLines.contains(QLatin1String("resembles"),
+                                     Qt::CaseInsensitive));
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("paypa1.com"), true),
+             QLatin1String("amber"));
+    settings.remove(QLatin1String("trust/lookalike"));
+
+    // Threatlist off: the listed host stops flagging in both the
+    // lines and the badge level.
+    settings.setValue(QLatin1String("trust/threatlist"), false);
+    const QString threatLines = SitePanel::trustSignalLines(
+        QLatin1String("threat-fixture.test"), true)
+        .join(QLatin1Char('\n'));
+    QVERIFY(!threatLines.contains(QLatin1String("threat"),
+                                  Qt::CaseInsensitive));
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("threat-fixture.test"), true),
+             QLatin1String("amber"));
+    settings.remove(QLatin1String("trust/threatlist"));
+
+    // Re-enabling re-evaluates live — the flipped probe mask makes a
+    // different cache key, so this is a fresh FFI call returning the
+    // full verdict.
+    const int beforeReenable = SiteShieldButton::trustLookupCount();
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("threat-fixture.test"), true),
+             QLatin1String("red"));
+    QCOMPARE(SiteShieldButton::trustLookupCount(), beforeReenable + 1);
+    const QString full = SitePanel::trustSignalLines(
+        QLatin1String("threat-fixture.test"), true)
+        .join(QLatin1Char('\n'));
+    QVERIFY(full.contains(QLatin1String("threat"), Qt::CaseInsensitive));
+
+    SiteShieldButton::clearTrustCache();
+    rc_sitetrust_reload();
+#endif
 }
 
 QTEST_MAIN(tst_SitePanel)

@@ -1241,6 +1241,34 @@ pub unsafe extern "C" fn rc_sitetrust_lookup(
     .unwrap_or(ptr::null_mut())
 }
 
+/// rc_sitetrust_lookup variant carrying the probe-selection mask —
+/// `probes` is a bitmask of the RC_SITETRUST_PROBE_* bits
+/// (sitetrust::PROBE_*); a cleared bit skips that advisory probe
+/// entirely so a Preferences switch (TRUST03) can suppress the
+/// lookalike or threat-list input without touching the verdict
+/// shape.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8, or null.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sitetrust_lookup_opts(
+    host: *const c_char,
+    is_https: i32,
+    probes: u32,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(host) } {
+            Some(h) => util::to_c_string(sitetrust::lookup_opts(
+                h,
+                is_https != 0,
+                probes,
+            )),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Re-runs both input-table merges the composite reads (blocklist +
 /// Tranco) — the list updaters call this after dropping a new file.
 /// Both reloads run even when the first fails; the first error is

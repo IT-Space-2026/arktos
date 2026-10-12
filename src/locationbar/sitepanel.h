@@ -44,7 +44,9 @@ class WebView;
 //     for the host — threat-list hit, lookalike resemblance, Tranco
 //     rank and first visit — only the signals that fired or are
 //     informative get a line; the whole section hides on pages with
-//     nothing to say,
+//     nothing to say, and TRUST03's trust/* switches gate the lookup
+//     itself (master off -> no FFI call, the per-signal switches
+//     ride the request as a probe mask),
 //   - cookie tri-state writing into CookieJar's per-site exception
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an

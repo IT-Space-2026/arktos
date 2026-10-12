@@ -470,6 +470,18 @@ fn urlstrip_and_blocklist_surface() {
     let j = take_str(unsafe { crate::rc_sitetrust_lookup(plain.as_ptr(), 1) })
         .unwrap();
     assert!(j.contains("\"level\":\"amber\""), "{}", j);
+    // TRUST03: the opts variant — masking the threat probe off reads
+    // the same listed host amber with no "threat" signal at all.
+    let j = take_str(unsafe {
+        crate::rc_sitetrust_lookup_opts(
+            threat.as_ptr(),
+            1,
+            crate::sitetrust::PROBE_ALL & !crate::sitetrust::PROBE_THREATLIST,
+        )
+    })
+    .unwrap();
+    assert!(j.contains("\"level\":\"amber\""), "{}", j);
+    assert!(!j.contains("threat"), "{}", j);
     // The composite reload re-merges both seeds over the fixtures.
     assert_eq!(unsafe { crate::rc_sitetrust_reload() }, RcStatus::Ok);
     assert_eq!(unsafe { crate::rc_tranco_rank(google.as_ptr()) }, 1);
