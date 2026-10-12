@@ -80,6 +80,8 @@ This file is the task queue for the Devin CLI task loop
 | TOR08 | Tor circuit dropdown: small icon next to reader mode shows circuit w/ country flags+names — details below | pending | 0 | |
 | TOR09 | Tor-specific start page: Arora logo + Tor logo, tor-themed colors — details below | pending | 0 | |
 | ENG13 | Servo-branded start page: Servo logo under the search field, default colors — details below | pending | 0 | |
+| SIDE07 | CRASH: Show All Bookmarks while Preferences tab is current — details below | pending | 0 | |
+| RSZ02 | Sidebar + tab strip not actually mouse-resizable (RSZ01 grip ineffective) — details below | pending | 0 | |
 
 
 ## Task details
@@ -473,3 +475,21 @@ Same pattern as TOR09's dedicated tor start page: tabs/windows running the Servo
 Spec: (a) new qrc start page variant (reuse TOR09's mechanism if it lands first — share the branded-variant plumbing rather than copy-pasting a second page implementation); (b) shown when the new-tab/backend is Servo — chromium-backend tabs keep the standard page, tor windows keep the tor page (precedence: tor > servo > standard if they ever compose); (c) Servo logo bundled in qrc; (d) search box + arora channel wiring identical.
 
 Verify: servo-backend new tab shows the servo start page (logo under search field, normal colors, working search); chromium + tor variants unchanged; make check PASS.
+
+### SIDE07
+
+CRASH: clicking 'Show All Bookmarks' while the current tab is the Preferences page crashes the app — user report: 'Crashed when I clicked on show bookmarks when I was on the preference page.'
+
+Root-cause lead (do NOT assume — verify with a debugger): PREFS01 made Preferences a WIDGET tab, so TabWidget::currentTab() returns nullptr for it. Any bookmarks/sidebar path that dereferences currentTab() unchecked will crash — prime suspect BrowserMainWindow::addBookmark() (browsermainwindow.cpp ~1780: WebView *webView = currentTab(); webView->url() with NO null check). Trace the actual Show-All-Bookmarks path (showBookmarksDialog -> ensureSidebarPanel -> sidebarPanel->showBookmarks) for every currentTab()/currentWebView() dereference reached from it or from signals it triggers (sidebar Add button, bookmark-open, 'add current page' paths).
+
+Spec: (a) reproduce under gdb/offscreen first — capture the real fault site; (b) null-guard every currentTab() dereference on the bookmarks/sidebar path (widget tabs => 'no page': add-bookmark prefills empty or is disabled, never crashes); (c) audit the same widget-tab hazard on the OTHER sidebar panel entry points (history open, downloads, notes add); (d) add a regression leg: Show All Bookmarks + addBookmark invoked with a settings tab current does not crash.
+
+Verify: Show All Bookmarks works with Preferences tab current (sidebar opens on Bookmarks page); Add Bookmark from that state pre-fills empty or is cleanly disabled; make check PASS.
+
+### RSZ02
+
+Sidebar and tab strip are not mouse-resizable — user report: 'the Side bar should be resizeable by me with mouse. Same for the TABs.' RSZ01 delivered SidebarGrip + persistSidebarWidth and a tab-strip grip — but the resize does not actually work for the user (no visible cursor/drag affordance or the drag does nothing).
+
+Spec: (a) reproduce — hover the sidebar's inner edge: does the cursor change and does dragging resize? Same for the tab strip's edge; (b) find why the grip is inert — suspects: grip widget zero-width/invisible (RSZ01 made it 'slim' — maybe 0px), grip behind the panel (z-order), mouse events swallowed by the tab/panel children, resizeFinished connected but the width setter clamps back, or the dock minimum/maximum widths pin the range; (c) make the resize REAL: a visible hover affordance (cursor change + a few-px hot zone), live drag resizing persisted via persistSidebarWidth; tab strip same contract if it is meant to be height-resizable (if the design only allows sidebar resize, make the sidebar work first and document the tab choice); (d) keep RSZ01's persistence + dock-area mirroring.
+
+Verify: dragging the sidebar edge resizes live and persists across restart; tab-strip grip works per its design; make check PASS.
