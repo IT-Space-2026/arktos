@@ -63,7 +63,7 @@ Rules for the agent working this file:
 
 
 | START02 | No start page on new tab — blank Untitled (check servo vs chromium path) — details below | done | 1 | newTabPage()/newTabPageInContainer() load MainWindow/home (default about:home → qrc:/startpage.html) on user-facing new-tab surfaces; newTab() stays bare — make check PASS 2026-10-12 |
-| TRUST10 | Trust popover header styling: separator + verdict-colored bold Trust label — details below | pending | 0 | moved from main lane — branch synced to master [user-directed UI task — parallel lane work, Qt files allowed] |  [user-directed UI task — parallel lane work, Qt files allowed] |
+| TRUST10 | Trust popover header styling: separator + verdict-colored bold Trust label — details below | in_progress | 1 | unblocked by master sync 19ef696 (sitepanel TRUST08/09 code now on-branch); moved from main lane [user-directed UI task — parallel lane work, Qt files allowed] |  [user-directed UI task — parallel lane work, Qt files allowed] |
 
 ## Task details
 
