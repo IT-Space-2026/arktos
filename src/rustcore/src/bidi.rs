@@ -1608,4 +1608,937 @@ mod tests {
         assert!(r.is_err());
         drop(server);
     }
+
+    /* -------- COV07: pure translators + Core over a socketpair -------- */
+
+    use std::ptr;
+
+    /// Two ends of a connected loopback socket.
+    fn sockpair() -> (TcpStream, TcpStream) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let a = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (b, _) = l.accept().unwrap();
+        (a, b)
+    }
+
+    /// A Core wired to a live socket and a collecting sink — the
+    /// dispatcher/reader threads are not needed: tests drive
+    /// dispatch()/on_message() synchronously and read the peer's wire
+    /// frames to assert the CDP translation.
+    fn mkcore() -> (Core, TcpStream, Arc<Mutex<Vec<(String, u64, String)>>>) {
+        let (a, b) = sockpair();
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let got2 = got.clone();
+        let core = Core {
+            writer: Mutex::new(a),
+            next_bidi_id: Mutex::new(0),
+            next_cdp_id: Mutex::new(0),
+            sink: Mutex::new(Some(Box::new(move |k, id, p| {
+                got2.lock()
+                    .unwrap()
+                    .push((k.to_string(), id, p.to_string()));
+            }))),
+            state: Mutex::new(State::default()),
+            alive: Arc::new(AtomicBool::new(true)),
+        };
+        (core, b, got)
+    }
+
+    /// Read one masked client frame on the peer end -> parsed JSON.
+    fn read_wire(s: &mut TcpStream) -> Value {
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .ok();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 0x81);
+        assert!(hdr[1] & 0x80 != 0, "client frames must be masked");
+        let mut len = (hdr[1] & 0x7f) as usize;
+        if len == 126 {
+            let mut e = [0u8; 2];
+            s.read_exact(&mut e).unwrap();
+            len = u16::from_be_bytes(e) as usize;
+        } else if len == 127 {
+            let mut e = [0u8; 8];
+            s.read_exact(&mut e).unwrap();
+            len = u64::from_be_bytes(e) as usize;
+        }
+        let mut mask = [0u8; 4];
+        s.read_exact(&mut mask).unwrap();
+        let mut p = vec![0u8; len];
+        s.read_exact(&mut p).unwrap();
+        for i in 0..len {
+            p[i] ^= mask[i % 4];
+        }
+        serde_json::from_slice(&p).unwrap()
+    }
+
+    fn response_for(got: &Arc<Mutex<Vec<(String, u64, String)>>>, id: u64) -> Option<String> {
+        got.lock()
+            .unwrap()
+            .iter()
+            .find(|(k, i, _)| k == "response" && *i == id)
+            .map(|(_, _, p)| p.clone())
+    }
+
+    fn events_named(
+        got: &Arc<Mutex<Vec<(String, u64, String)>>>,
+        name: &str,
+    ) -> Vec<String> {
+        got.lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _, p)| k == "event" && p.contains(name))
+            .map(|(_, _, p)| p.clone())
+            .collect()
+    }
+
+    #[test]
+    fn translators_cover_all_shapes() {
+        // translate_eval: plain typed results.
+        let v = translate_eval(&json!({"result": {"type": "number", "value": 7}}));
+        assert_eq!(
+            v,
+            json!({"type": "success", "result": {"type": "number", "value": 7}})
+        );
+        let v = translate_eval(&json!({"result": {"type": "string", "value": "hi"}}));
+        assert_eq!(v["result"]["value"], "hi");
+        // exceptionDetails wins over the result payload.
+        let v = translate_eval(&json!({
+            "result": {"type": "number", "value": 1},
+            "exceptionDetails": {"text": "boom"}
+        }));
+        assert_eq!(v["type"], "exception");
+        assert_eq!(v["exceptionDetails"]["text"], "boom");
+        let v = translate_eval(&json!({
+            "exceptionDetails": {"exception": {"description": "nested"}}
+        }));
+        assert_eq!(v["exceptionDetails"]["text"], "nested");
+        let v = translate_eval(&json!({"exceptionDetails": {}}));
+        assert_eq!(v["exceptionDetails"]["text"], "evaluation failed");
+        // undefined / missing result.
+        let v = translate_eval(&json!({}));
+        assert_eq!(v["result"]["type"], "undefined");
+        assert!(v["result"].get("value").is_none());
+        // null subtype folds to "null".
+        let v = translate_eval(&json!({"result": {"type": "object", "subtype": "null"}}));
+        assert_eq!(v["result"]["type"], "null");
+        // NaN/Infinity travel as unserializableValue.
+        let v = translate_eval(
+            &json!({"result": {"type": "number", "unserializableValue": "NaN"}}),
+        );
+        assert_eq!(
+            v["result"]["value"],
+            json!({"type": "special", "value": "NaN"})
+        );
+        // object without a value falls back to its description.
+        let v = translate_eval(
+            &json!({"result": {"type": "object", "description": "Map(2)"}}),
+        );
+        assert_eq!(v["result"]["value"], "Map(2)");
+        // object with neither value nor description emits no value key.
+        let v = translate_eval(&json!({"result": {"type": "object"}}));
+        assert!(v["result"].get("value").is_none());
+
+        // translate_tree: only pages become contexts.
+        assert_eq!(translate_tree(&json!({})), json!({"contexts": []}));
+        assert_eq!(
+            translate_tree(&json!({"targetInfos": 42})),
+            json!({"contexts": []})
+        );
+        let v = translate_tree(&json!({"targetInfos": [
+            {"targetId": "P", "type": "page", "url": "u", "title": "t"},
+            {"targetId": "W", "type": "worker", "url": "w"},
+            {"targetId": "S", "type": "service_worker"}
+        ]}));
+        let ctx = v["contexts"].as_array().unwrap();
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0]["context"], "P");
+        assert_eq!(ctx[0]["children"], json!([]));
+
+        // translate_cookies: field rename expires->expiry, empty-safe.
+        assert_eq!(translate_cookies(&json!({})), json!({"cookies": []}));
+        let v = translate_cookies(&json!({"cookies": [{
+            "name": "n", "value": "v", "domain": "d", "path": "/",
+            "secure": true, "httpOnly": false, "expires": 9
+        }]}));
+        assert_eq!(v["cookies"][0]["name"], "n");
+        assert_eq!(v["cookies"][0]["expiry"], 9);
+    }
+
+    #[test]
+    fn core_dispatch_and_session_flow() {
+        let (core, mut peer, got) = mkcore();
+
+        // session.new answers locally; nothing goes on the wire.
+        core.dispatch(1, "session.new", json!({})).unwrap();
+        let r = response_for(&got, 1).expect("session.new response");
+        assert!(r.contains("arora-bidi-1"), "{r}");
+
+        // Unknown method -> InvalidArgument, no wire traffic.
+        assert!(core.dispatch(2, "bogus.method", json!({})).is_err());
+        assert!(response_for(&got, 2).is_none());
+
+        // subscribe registers group prefixes + drives discoverTargets.
+        core.dispatch(
+            3,
+            "session.subscribe",
+            json!({"events": ["network.beforeRequestSent", "log", "browsingContext.contextCreated"]}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Target.setDiscoverTargets");
+        assert!(response_for(&got, 3).is_some());
+        {
+            let st = core.state.lock().unwrap();
+            assert!(st.subscriptions.contains("network"));
+            assert!(st.subscriptions.contains("log"));
+            assert!(st.subscriptions.contains("browsingContext"));
+        }
+
+        // A second subscribe with an attached session re-runs the
+        // domain enables on it.
+        core.state
+            .lock()
+            .unwrap()
+            .sessions
+            .insert("CTX".into(), "S1".into());
+        core.dispatch(4, "session.subscribe", json!({"events": ["network"]}))
+            .unwrap();
+        let mut methods = Vec::new();
+        for _ in 0..4 {
+            methods.push(
+                read_wire(&mut peer)["method"].as_str().unwrap().to_string(),
+            );
+        }
+        for want in [
+            "Target.setDiscoverTargets",
+            "Network.enable",
+            "Log.enable",
+            "Runtime.enable",
+        ] {
+            assert!(methods.iter().any(|m| m == want), "{methods:?}");
+        }
+
+        // getTree: CDP call goes out; the translated answer lands when
+        // the reply is fed back through on_message.
+        core.dispatch(5, "browsingContext.getTree", json!({}))
+            .unwrap();
+        let req = read_wire(&mut peer);
+        assert_eq!(req["method"], "Target.getTargets");
+        core.on_message(&json!({"id": req["id"], "result": {"targetInfos": [
+            {"targetId": "P1", "type": "page", "url": "http://a/", "title": "A"},
+            {"targetId": "W1", "type": "worker", "url": "http://w/"}
+        ]}}));
+        let r = response_for(&got, 5).expect("tree response");
+        assert!(r.contains("P1") && !r.contains("W1"), "{r}");
+
+        // navigate on a session-less context: attach first, then the
+        // command rides the new session.  A second command for the same
+        // context while the attach is in flight queues behind it.
+        core.dispatch(
+            6,
+            "browsingContext.navigate",
+            json!({"context": "NAV", "url": "http://x/"}),
+        )
+        .unwrap();
+        core.dispatch(
+            7,
+            "script.evaluate",
+            json!({"expression": "2", "target": {"context": "NAV"}, "awaitPromise": true}),
+        )
+        .unwrap();
+        let attach = read_wire(&mut peer);
+        assert_eq!(attach["method"], "Target.attachToTarget");
+        assert_eq!(attach["params"]["targetId"], "NAV");
+        core.on_message(
+            &json!({"id": attach["id"], "result": {"sessionId": "SNAV"}}),
+        );
+        // On attach the session gains domain enables first (subscribed),
+        // then the two queued commands in order.
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            seen.push(read_wire(&mut peer));
+        }
+        let methods: Vec<&str> = seen
+            .iter()
+            .filter_map(|m| m["method"].as_str())
+            .collect();
+        assert!(
+            methods.contains(&"Network.enable")
+                && methods.contains(&"Log.enable")
+                && methods.contains(&"Runtime.enable"),
+            "{methods:?}"
+        );
+        let nav = seen
+            .iter()
+            .find(|m| m["method"] == "Page.navigate")
+            .expect("Page.navigate on wire");
+        assert_eq!(nav["params"]["url"], "http://x/");
+        assert_eq!(nav["sessionId"], "SNAV");
+        let eval = seen
+            .iter()
+            .find(|m| m["method"] == "Runtime.evaluate")
+            .expect("Runtime.evaluate on wire");
+        assert_eq!(eval["params"]["expression"], "2");
+        assert_eq!(eval["params"]["returnByValue"], true);
+        assert_eq!(eval["params"]["awaitPromise"], true);
+        core.on_message(&json!({"id": nav["id"], "result": {"frameId": "F1"}}));
+        core.on_message(&json!({"id": eval["id"], "result": {"result": {"type": "number", "value": 2}}}));
+        let r = response_for(&got, 6).expect("nav response");
+        assert!(r.contains("F1"), "{r}");
+        let r = response_for(&got, 7).expect("eval response");
+        assert!(r.contains("\"type\":\"number\"") && r.contains("\"value\":2"), "{r}");
+
+        // Session now exists — a repeat navigate goes straight out.
+        core.dispatch(
+            8,
+            "browsingContext.navigate",
+            json!({"context": "NAV", "url": "http://y/"}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Page.navigate");
+        assert_eq!(m["sessionId"], "SNAV");
+
+        // getCookies honours an explicit urls list.
+        core.dispatch(
+            9,
+            "storage.getCookies",
+            json!({"context": "NAV", "urls": ["http://x/"]}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Network.getCookies");
+        assert_eq!(m["params"]["urls"], json!(["http://x/"]));
+        core.on_message(&json!({"id": m["id"], "result": {"cookies": [
+            {"name": "a", "value": "b", "domain": "d", "path": "/",
+             "secure": true, "httpOnly": false, "expires": 9}
+        ]}}));
+        let r = response_for(&got, 9).expect("cookies response");
+        assert!(r.contains("\"name\":\"a\"") && r.contains("\"expiry\":9"), "{r}");
+
+        // No urls and no context: the context table's URL scopes it.
+        core.on_message(&json!({
+            "method": "Target.targetCreated",
+            "params": {"targetInfo": {"type": "page", "targetId": "NAV",
+                "url": "http://nav/", "title": "N"}}
+        }));
+        core.dispatch(10, "storage.getCookies", json!({})).unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Network.getCookies");
+        assert_eq!(m["params"]["urls"], json!(["http://nav/"]));
+        core.on_message(&json!({"id": m["id"], "result": {"cookies": []}}));
+
+        // context given explicitly via params.context also resolves.
+        // (params.context variant for script.evaluate's fallback arm)
+        core.dispatch(
+            11,
+            "script.evaluate",
+            json!({"expression": "1", "context": "NAV"}),
+        )
+        .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Runtime.evaluate");
+
+        // close -> Target.closeTarget, Raw answer passthrough.
+        core.dispatch(12, "browsingContext.close", json!({"context": "NAV"}))
+            .unwrap();
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Target.closeTarget");
+        assert_eq!(m["params"]["targetId"], "NAV");
+        core.on_message(&json!({"id": m["id"], "result": {"success": true}}));
+        let r = response_for(&got, 12).expect("close response");
+        assert!(r.contains("success"), "{r}");
+
+        // A CDP error against an Answer action is forwarded verbatim.
+        core.dispatch(13, "browsingContext.getTree", json!({}))
+            .unwrap();
+        let m = read_wire(&mut peer);
+        core.on_message(&json!({"id": m["id"], "error": {"message": "nope"}}));
+        let r = response_for(&got, 13).expect("err response");
+        assert!(r.contains("nope"), "{r}");
+
+        // A failed attach answers every queued follow-up with the error.
+        for id in [14u64, 15] {
+            core.dispatch(
+                id,
+                "script.evaluate",
+                json!({"expression": "1", "target": {"context": "FAIL"}}),
+            )
+            .unwrap();
+        }
+        let m = read_wire(&mut peer);
+        assert_eq!(m["method"], "Target.attachToTarget");
+        core.on_message(
+            &json!({"id": m["id"], "error": {"message": "attach denied"}}),
+        );
+        for id in [14u64, 15] {
+            let r = response_for(&got, id).expect("attach-err response");
+            assert!(r.contains("attach denied"), "{r}");
+        }
+
+        // Unknown / id-less replies are ignored.
+        core.on_message(&json!({"id": 424242, "result": {}}));
+        core.on_message(&json!({"result": {}}));
+
+        // session.end flips the liveness flag and still answers.
+        core.dispatch(16, "session.end", json!({})).unwrap();
+        assert!(!core.alive.load(Ordering::SeqCst));
+        assert!(response_for(&got, 16).is_some());
+    }
+
+    #[test]
+    fn core_event_translations() {
+        let (core, mut peer, got) = mkcore();
+        core.dispatch(
+            1,
+            "session.subscribe",
+            json!({"events": ["browsingContext", "network", "log"]}),
+        )
+        .unwrap();
+        let _ = read_wire(&mut peer); // Target.setDiscoverTargets
+
+        // targetCreated: page -> contextCreated; other types skipped.
+        core.on_message(&json!({
+            "method": "Target.targetCreated",
+            "params": {"targetInfo": {"type": "page", "targetId": "T1",
+                "url": "http://t/", "title": "T"}}
+        }));
+        let e = events_named(&got, "browsingContext.contextCreated");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T1\""), "{e:?}");
+        core.on_message(&json!({
+            "method": "Target.targetCreated",
+            "params": {"targetInfo": {"type": "worker", "targetId": "W9"}}
+        }));
+        assert_eq!(events_named(&got, "browsingContext.contextCreated").len(), 1);
+
+        // targetInfoChanged emits navigationStarted once per url change.
+        core.on_message(&json!({
+            "method": "Target.targetInfoChanged",
+            "params": {"targetInfo": {"type": "page", "targetId": "T1",
+                "url": "http://t2/"}}
+        }));
+        let e = events_named(&got, "browsingContext.navigationStarted");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("http://t2/"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Target.targetInfoChanged",
+            "params": {"targetInfo": {"type": "page", "targetId": "T1",
+                "url": "http://t2/"}}
+        }));
+        core.on_message(&json!({
+            "method": "Target.targetInfoChanged",
+            "params": {"targetInfo": {"type": "worker", "targetId": "T1",
+                "url": "http://t3/"}}
+        }));
+        assert_eq!(events_named(&got, "browsingContext.navigationStarted").len(), 1);
+
+        core.on_message(&json!({
+            "method": "Target.targetDestroyed",
+            "params": {"targetId": "T1"}
+        }));
+        let e = events_named(&got, "browsingContext.contextDestroyed");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("T1"), "{e:?}");
+
+        // Network.* — context resolves through the session map; an
+        // unmapped session serializes as null rather than guessing.
+        core.state
+            .lock()
+            .unwrap()
+            .sessions
+            .insert("T2".into(), "S2".into());
+        core.on_message(&json!({
+            "method": "Network.requestWillBeSent", "sessionId": "S2",
+            "params": {"requestId": "r1",
+                "request": {"url": "http://r/", "method": "GET"}}
+        }));
+        let e = events_named(&got, "network.beforeRequestSent");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("\"context\":\"T2\"") && e[0].contains("http://r/"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Network.responseReceived", "sessionId": "S2",
+            "params": {"requestId": "r1",
+                "response": {"url": "http://r/", "status": 200}}
+        }));
+        let e = events_named(&got, "network.responseStarted");
+        assert!(e[0].contains("\"status\":200"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Network.loadingFinished", "sessionId": "S2",
+            "params": {"requestId": "r1"}
+        }));
+        assert_eq!(events_named(&got, "network.responseCompleted").len(), 1);
+        core.on_message(&json!({
+            "method": "Network.loadingFailed", "sessionId": "S2",
+            "params": {"requestId": "r2", "errorText": "net::ERR_X"}
+        }));
+        let e = events_named(&got, "network.fetchError");
+        assert!(e[0].contains("net::ERR_X"), "{e:?}");
+        core.on_message(&json!({
+            "method": "Network.requestWillBeSent", "sessionId": "NOPE",
+            "params": {"requestId": "r9", "request": {"url": "u", "method": "GET"}}
+        }));
+        let e = events_named(&got, "network.beforeRequestSent");
+        assert!(e[1].contains("\"context\":null"), "{e:?}");
+
+        // console args prefer .value, then .description, then the type
+        // name; non-string values serialize.
+        core.on_message(&json!({
+            "method": "Runtime.consoleAPICalled", "sessionId": "S2",
+            "params": {"type": "warn", "args": [
+                {"value": "hi"}, {"value": 42},
+                {"description": "desc"}, {"type": "object"}
+            ]}
+        }));
+        let e = events_named(&got, "log.entryAdded");
+        let console = e.iter().find(|p| p.contains("console")).unwrap();
+        assert!(console.contains("\"level\":\"warn\""), "{console}");
+        assert!(console.contains("hi 42 desc object"), "{console}");
+
+        // Log.entryAdded and exceptionThrown share the javascript lane.
+        core.on_message(&json!({
+            "method": "Log.entryAdded", "sessionId": "S2",
+            "params": {"entry": {"level": "error", "text": "logline"}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"text": "kaboom"}}
+        }));
+        core.on_message(&json!({
+            "method": "Runtime.exceptionThrown", "sessionId": "S2",
+            "params": {"exceptionDetails": {"exception": {"description": "nested"}}}
+        }));
+        let e = events_named(&got, "log.entryAdded");
+        assert!(e.iter().any(|p| p.contains("logline") && p.contains("javascript")), "{e:?}");
+        assert!(e.iter().any(|p| p.contains("kaboom")), "{e:?}");
+        assert!(e.iter().any(|p| p.contains("nested")), "{e:?}");
+
+        // Unknown CDP methods are dropped silently.
+        let before = got.lock().unwrap().len();
+        core.on_message(&json!({"method": "Page.frameNavigated", "params": {}}));
+        assert_eq!(got.lock().unwrap().len(), before);
+    }
+
+    #[test]
+    fn events_require_subscription() {
+        let (core, _peer, got) = mkcore();
+        // Nothing subscribed — every event arm early-outs.
+        for msg in [
+            json!({"method": "Target.targetCreated",
+                "params": {"targetInfo": {"type": "page", "targetId": "T"}}}),
+            json!({"method": "Target.targetDestroyed", "params": {"targetId": "T"}}),
+            json!({"method": "Target.targetInfoChanged",
+                "params": {"targetInfo": {"type": "page", "targetId": "T", "url": "u"}}}),
+            json!({"method": "Network.requestWillBeSent", "sessionId": "S",
+                "params": {"requestId": "r", "request": {}}}),
+            json!({"method": "Network.responseReceived", "sessionId": "S",
+                "params": {"requestId": "r", "response": {}}}),
+            json!({"method": "Network.loadingFinished", "sessionId": "S",
+                "params": {"requestId": "r"}}),
+            json!({"method": "Network.loadingFailed", "sessionId": "S",
+                "params": {"requestId": "r"}}),
+            json!({"method": "Runtime.consoleAPICalled", "sessionId": "S",
+                "params": {"args": []}}),
+            json!({"method": "Log.entryAdded", "sessionId": "S",
+                "params": {"entry": {}}}),
+            json!({"method": "Runtime.exceptionThrown", "sessionId": "S",
+                "params": {"exceptionDetails": {}}}),
+        ] {
+            core.on_message(&msg);
+        }
+        let g = got.lock().unwrap();
+        assert!(!g.iter().any(|(k, _, _)| k == "event"), "{g:?}");
+    }
+
+    #[test]
+    fn getcookies_without_context_errors() {
+        let (core, _peer, got) = mkcore();
+        core.dispatch(1, "storage.getCookies", json!({})).unwrap();
+        let r = response_for(&got, 1).expect("error response");
+        assert!(r.contains("no browsing context"), "{r}");
+    }
+
+    /* -------- ws codec over a socketpair -------- */
+
+    /// Build an unmasked server->client frame.
+    fn srv_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let mut f = vec![0x80 | opcode];
+        let n = payload.len();
+        if n < 126 {
+            f.push(n as u8);
+        } else if n < 65536 {
+            f.push(126);
+            f.extend_from_slice(&(n as u16).to_be_bytes());
+        } else {
+            f.push(127);
+            f.extend_from_slice(&(n as u64).to_be_bytes());
+        }
+        f.extend_from_slice(payload);
+        f
+    }
+
+    /// Read one frame on the peer end: returns (fin|opcode, unmasked
+    /// payload).
+    fn peer_frame(s: &mut TcpStream) -> (u8, Vec<u8>) {
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .ok();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        let mut len = (hdr[1] & 0x7f) as usize;
+        if len == 126 {
+            let mut e = [0u8; 2];
+            s.read_exact(&mut e).unwrap();
+            len = u16::from_be_bytes(e) as usize;
+        } else if len == 127 {
+            let mut e = [0u8; 8];
+            s.read_exact(&mut e).unwrap();
+            len = u64::from_be_bytes(e) as usize;
+        }
+        let mut payload = vec![0u8; len];
+        if hdr[1] & 0x80 != 0 {
+            let mut mask = [0u8; 4];
+            s.read_exact(&mut mask).unwrap();
+            s.read_exact(&mut payload).unwrap();
+            for i in 0..len {
+                payload[i] ^= mask[i % 4];
+            }
+        } else {
+            s.read_exact(&mut payload).unwrap();
+        }
+        (hdr[0], payload)
+    }
+
+    #[test]
+    fn ws_send_text_frame_boundaries() {
+        let (mut a, mut b) = sockpair();
+        for n in [5usize, 125, 126, 127, 65535, 65536] {
+            let payload = vec![b'x'; n];
+            ws::send_text(&mut a, &payload).unwrap();
+            let (head, got) = peer_frame(&mut b);
+            assert_eq!(head, 0x81);
+            assert_eq!(got, payload, "len {n}");
+        }
+    }
+
+    #[test]
+    fn ws_recv_text_opcodes_and_lengths() {
+        let (a, mut b) = sockpair();
+        let mut reader = a.try_clone().unwrap();
+        let writer = Mutex::new(a);
+        let mut data = Vec::new();
+
+        // Plain text frame, then two coalesced frames in one write —
+        // the persistent `data` buffer must carry the second across
+        // calls.
+        b.write_all(&srv_frame(1, b"hello")).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s, "hello"),
+            _ => panic!("expected text"),
+        }
+        b.write_all(&srv_frame(1, b"one"))
+            .unwrap();
+        b.write_all(&srv_frame(1, b"two")).unwrap();
+        // Both may already sit in `data` — either way each call yields
+        // one message in order.
+        for want in ["one", "two"] {
+            match ws::recv_text(&mut reader, &writer, &mut data) {
+                ws::Incoming::Text(s) => assert_eq!(s, want),
+                _ => panic!("expected {want}"),
+            }
+        }
+
+        // 16-bit and 64-bit length encodings.
+        let big = vec![b'y'; 200];
+        b.write_all(&srv_frame(1, &big)).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s.len(), 200),
+            _ => panic!("expected 200-byte text"),
+        }
+        let huge = vec![b'z'; 66000];
+        b.write_all(&srv_frame(1, &huge)).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s.len(), 66000),
+            _ => panic!("expected 66000-byte text"),
+        }
+
+        // Continuation frame is accepted as message text.
+        b.write_all(&srv_frame(0, b"cont")).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s, "cont"),
+            _ => panic!("expected continuation text"),
+        }
+
+        // Ping is answered with a masked pong on the writer, then the
+        // loop continues to the next real message.
+        b.write_all(&srv_frame(9, b"pp")).unwrap();
+        b.write_all(&srv_frame(1, b"after-ping")).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s, "after-ping"),
+            _ => panic!("expected post-ping text"),
+        }
+        let (head, payload) = peer_frame(&mut b);
+        assert_eq!(head, 0x8a, "pong opcode");
+        assert_eq!(payload, b"pp");
+
+        // An unknown opcode is skipped, not fatal.
+        b.write_all(&srv_frame(3, b"??")).unwrap();
+        b.write_all(&srv_frame(1, b"ok")).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Text(s) => assert_eq!(s, "ok"),
+            _ => panic!("expected text after unknown opcode"),
+        }
+
+        // Invalid UTF-8 payload -> Closed.
+        b.write_all(&srv_frame(1, &[0xff, 0xfe])).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Closed => {}
+            _ => panic!("invalid utf8 must close"),
+        }
+
+        // Close frame -> Closed.
+        b.write_all(&srv_frame(8, b"")).unwrap();
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Closed => {}
+            _ => panic!("close frame must yield Closed"),
+        }
+
+        // EOF -> Closed.
+        drop(b);
+        match ws::recv_text(&mut reader, &writer, &mut data) {
+            ws::Incoming::Closed => {}
+            _ => panic!("EOF must yield Closed"),
+        }
+    }
+
+    /* -------- HTTP discovery + handshake edges -------- */
+
+    /// One-shot HTTP responder for /json/version probes.
+    fn http_once(reply: &'static [u8]) -> u16 {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                let mut buf = Vec::new();
+                let mut byte = [0u8; 1];
+                while !buf.ends_with(b"\r\n\r\n") {
+                    if s.read(&mut byte).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    buf.push(byte[0]);
+                }
+                let _ = s.write_all(reply);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn discover_path_variants() {
+        let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:9/devtools/browser/GUID-1"}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let port = http_once(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let path = ws::discover_path("127.0.0.1", port).unwrap();
+        assert_eq!(path, "/devtools/browser/GUID-1");
+
+        // Missing the field is an Io failure.
+        let body = r#"{"Browser":"x"}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let port = http_once(Box::leak(reply.into_bytes().into_boxed_slice()));
+        assert!(ws::discover_path("127.0.0.1", port).is_err());
+
+        // Malformed JSON is Corrupt.
+        let body = "not json";
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let port = http_once(Box::leak(reply.into_bytes().into_boxed_slice()));
+        assert!(ws::discover_path("127.0.0.1", port).is_err());
+
+        // Connection refused — nothing listening.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        assert!(ws::discover_path("127.0.0.1", port).is_err());
+    }
+
+    #[test]
+    fn handshake_rejection_paths() {
+        // Non-101 status -> rejected with the status line in the error.
+        let port = http_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let r = ws::handshake(&mut s, "127.0.0.1", port, "/devtools/browser/x", "o");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().msg.contains("403"));
+
+        // Peer closes mid-handshake -> EOF error.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((s, _)) = l.accept() {
+                drop(s);
+            }
+        });
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        assert!(ws::handshake(&mut s, "127.0.0.1", port, "/x", "o").is_err());
+
+        // Header flood without a terminator trips the size cap.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                let mut buf = Vec::new();
+                let mut byte = [0u8; 1];
+                while !buf.ends_with(b"\r\n\r\n") {
+                    if s.read(&mut byte).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    buf.push(byte[0]);
+                }
+                let _ = s.write_all(&vec![b'A'; 20000]);
+                // keep the socket open until the client gives up
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        assert!(ws::handshake(&mut s, "127.0.0.1", port, "/x", "o").is_err());
+    }
+
+    /* -------- FFI boundary -------- */
+
+    static FFI_HITS: AtomicUsize = AtomicUsize::new(0);
+    static FFI_LAST_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    unsafe extern "C" fn ffi_cb(
+        userdata: *mut c_void,
+        kind: *const c_char,
+        id: u64,
+        _json: *const c_char,
+    ) {
+        assert_eq!(userdata as usize, 0xb1d1);
+        assert!(!kind.is_null());
+        FFI_HITS.fetch_add(1, Ordering::SeqCst);
+        FFI_LAST_ID.store(id, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn ffi_bad_arguments_and_refused_connect() {
+        unsafe {
+            assert_eq!(rc_bidi_command(ptr::null_mut(), c"m".as_ptr(), ptr::null()), 0);
+            assert_eq!(
+                rc_bidi_command(ptr::null_mut(), ptr::null(), ptr::null()),
+                0
+            );
+            assert_eq!(rc_bidi_is_alive(ptr::null()), 0);
+            rc_bidi_free(ptr::null_mut()); // no-op, must not crash
+
+            // Null host/path/origin all fail to NULL with the error set.
+            assert!(rc_bidi_connect(
+                ptr::null(),
+                1,
+                c"/x".as_ptr(),
+                c"o".as_ptr(),
+                ffi_cb,
+                ptr::null_mut()
+            )
+            .is_null());
+            assert!(rc_bidi_connect(
+                c"127.0.0.1".as_ptr(),
+                1,
+                ptr::null(),
+                c"o".as_ptr(),
+                ffi_cb,
+                ptr::null_mut()
+            )
+            .is_null());
+
+            // A closed port fails the connect.
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            drop(l);
+            assert!(rc_bidi_connect(
+                c"127.0.0.1".as_ptr(),
+                port,
+                c"/x".as_ptr(),
+                c"o".as_ptr(),
+                ffi_cb,
+                ptr::null_mut()
+            )
+            .is_null());
+        }
+    }
+
+    #[test]
+    fn ffi_end_to_end() {
+        let scripted = Arc::new(Mutex::new(Vec::new()));
+        let server = FakeServer::start(scripted);
+        unsafe {
+            let client = rc_bidi_connect(
+                c"127.0.0.1".as_ptr(),
+                server.port,
+                c"/devtools/browser/fake".as_ptr(),
+                c"http://bidi.test.invalid".as_ptr(),
+                ffi_cb,
+                0xb1d1usize as *mut c_void,
+            );
+            assert!(!client.is_null());
+            assert_eq!(rc_bidi_is_alive(client), 1);
+            let before = FFI_HITS.load(Ordering::SeqCst);
+            let id = rc_bidi_command(client, c"session.new".as_ptr(), ptr::null());
+            assert!(id > 0);
+            let t0 = std::time::Instant::now();
+            while FFI_HITS.load(Ordering::SeqCst) == before {
+                if t0.elapsed() > std::time::Duration::from_secs(3) {
+                    panic!("no FFI response callback");
+                }
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(FFI_LAST_ID.load(Ordering::SeqCst), id);
+            rc_bidi_free(client);
+        }
+        drop(server);
+    }
+
+    #[test]
+    fn command_after_outbox_closed_answers_error() {
+        let scripted = Arc::new(Mutex::new(Vec::new()));
+        let server = FakeServer::start(scripted);
+        let got: Arc<Mutex<Vec<(String, u64, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let got2 = got.clone();
+        let client = Client::connect(
+            "127.0.0.1",
+            server.port,
+            "/devtools/browser/fake",
+            "http://bidi.test.invalid",
+        )
+        .expect("connect");
+        client.set_sink(Box::new(move |k, id, p| {
+            got2.lock().unwrap().push((k.to_string(), id, p.to_string()));
+        }));
+        // Drop the sender — command() falls to the answer_err arm.
+        client.outbox.lock().unwrap().take();
+        let id = client.command("session.new", "{}");
+        assert!(id > 0);
+        {
+            let g = got.lock().unwrap();
+            assert!(g.iter().any(|(k, i, p)| k == "response"
+                && *i == id
+                && p.contains("channel closed")), "{g:?}");
+        }
+        // Guard must be released first: drop() joins the reader thread
+        // and its final "state:closed" emit needs the same mutex.
+        drop(client);
+        drop(server);
+    }
 }
