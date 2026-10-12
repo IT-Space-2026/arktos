@@ -505,6 +505,10 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 ## Testing & diagnostics
 
 - `make check` — the qtest suite (offscreen-safe)
+- `make check-rustcoverage` — per-crate cargo-llvm-cov line-coverage
+  gate for the shipped Rust crates (>=85% each;
+  `ARORA_RUST_COVERAGE_MIN` overrides; also a `make check`
+  prerequisite, skipped where the Rust tools are absent)
 - `make check-coverage` / `check-static` / `check-leaks` — coverage,
   static analysis and sanitizer-leak gates
 - `./arora --*-smoke` — a family of headless harnesses:

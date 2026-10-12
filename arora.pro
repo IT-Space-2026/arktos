@@ -56,10 +56,11 @@ check-supplychain.target = check-supplychain
 check-supplychain.commands = ./.devin/check-supplychain.sh
 QMAKE_EXTRA_TARGETS += check-supplychain
 
-# `make check-rustcoverage` is the COV05 Rust coverage gate — per-crate
-# `cargo llvm-cov` line coverage must meet ARORA_RUSTCOV_MIN (default
-# 85).  Machines without cargo/cargo-llvm-cov skip cleanly, same as a
-# no-rust build; the per-crate table lands in .devin/COVERAGE.md.
+# `make check-rustcoverage` is the COV06 Rust coverage gate — per-crate
+# `cargo llvm-cov` line coverage must meet ARORA_RUST_COVERAGE_MIN
+# (default 85).  Machines without cargo/cargo-llvm-cov skip cleanly,
+# same as a no-rust build; the per-crate table lands in
+# .devin/COVERAGE.md.
 check-rustcoverage.target = check-rustcoverage
 check-rustcoverage.commands = ./.devin/check-rustcoverage.sh
 QMAKE_EXTRA_TARGETS += check-rustcoverage
