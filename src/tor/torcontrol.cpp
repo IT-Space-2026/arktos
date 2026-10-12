@@ -60,6 +60,19 @@ TorControl::TorControl(QObject *parent)
     });
 }
 
+TorControl::~TorControl()
+{
+    // Dropping the socket (child, destroyed after this body runs) can
+    // emit disconnected() — which would fire every outstanding reply
+    // callback into an owner that is itself mid-destruction.  Sever
+    // the signal link and drain the queue silently instead.
+    if (m_socket)
+        m_socket->disconnect(this);
+    m_queue.clear();
+    m_current = nullptr;
+    m_waitingForReply = false;
+}
+
 void TorControl::connectToHost(const QHostAddress &address, quint16 port)
 {
     m_socket->connectToHost(address, port);

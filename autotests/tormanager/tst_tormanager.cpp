@@ -50,6 +50,7 @@ private slots:
     void socks5RejectsBadGreeting();
     void fakeDaemonLifecycle();
     void circuitInfo();
+    void circuitInfoDeadControl();
     void circuitCountries();
     void circuitCountriesNoGeoip();
     void realDaemonLifecycle();
@@ -321,6 +322,56 @@ void tst_TorManager::circuitInfo()
     // The fixture's 650 CIRC after bootstrap triggers the debounced
     // refresh without another explicit request.
     QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 2, 10000);
+
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR10: the control link dying after Ready must not wedge or crash
+// the circuit surfaces — a mid-flight query releases its coalesce
+// flag instead of latching it, and follow-up requests become honest
+// no-ops on the dead connection (the dropdown reads an unavailable
+// state off controlConnected()).
+void tst_TorManager::circuitInfoDeadControl()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    QSignalSpy circuitsSpy(&manager, &TorManager::circuitsChanged);
+    manager.start();
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(circuitsSpy.count() >= 1, 10000);
+    QVERIFY(manager.controlConnected());
+
+    TorControl *control = manager.findChild<TorControl *>();
+    QVERIFY(control);
+
+    // Drop the link mid-query — the reply callback must release the
+    // coalesce flag, not latch it forever.
+    manager.requestCircuitInfo();
+    control->disconnectFromHost();
+    QTRY_VERIFY_WITH_TIMEOUT(!manager.controlConnected(), 10000);
+    // The owner disconnect makes the daemon exit too (TAKEOWNERSHIP)
+    // — Ready, Stopping and Stopped are all honest landing states.
+    QVERIFY(manager.state() == TorManager::Ready
+            || manager.state() == TorManager::Stopping
+            || manager.state() == TorManager::Stopped);
+
+    // Follow-up requests are honest no-ops on the dead connection —
+    // no hang, no crash, no unbounded queue.
+    manager.requestCircuitInfo();
+    manager.requestCircuitInfo();
+    QTest::qWait(500);
 
     manager.stop();
     QCOMPARE(manager.state(), TorManager::Stopped);

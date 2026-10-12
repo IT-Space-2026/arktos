@@ -52,6 +52,10 @@ public:
         ReplyCallback;
 
     explicit TorControl(QObject *parent = nullptr);
+    // Teardown severs the socket's signals before it dies — a socket
+    // destructing mid-shutdown must not fire pending reply callbacks
+    // into a half-dead owner.
+    ~TorControl() override;
 
     void connectToHost(const QHostAddress &address, quint16 port);
     void disconnectFromHost();

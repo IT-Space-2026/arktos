@@ -347,8 +347,13 @@ QIcon TorCircuitButton::flagIcon(const QString &code, qreal devicePixelRatio)
 
     const QString upper = code.trimmed().toUpper();
     QString flag;
-    if (upper.size() == 2 && upper.at(0).isLetter()
-            && upper.at(1).isLetter()) {
+    // Strictly ASCII A–Z: isLetter() also admits non-ASCII letters,
+    // whose distance from 'A' can push the arithmetic past the
+    // regional-indicator block (or past Unicode entirely).
+    if (upper.size() == 2 && upper.at(0) >= QLatin1Char('A')
+            && upper.at(0) <= QLatin1Char('Z')
+            && upper.at(1) >= QLatin1Char('A')
+            && upper.at(1) <= QLatin1Char('Z')) {
         // Regional indicator symbols: each pair shapes into the
         // country's flag under a color-emoji font; font-less systems
         // draw the two boxed letters, which still carry the code.
@@ -462,6 +467,14 @@ void TorCircuitButton::populateMenu()
     }
     switch (tor->state()) {
     case TorManager::Ready:
+        // The state can linger at Ready after the daemon drops the
+        // control link — serve an honest unavailable state instead of
+        // a stale circuit snapshot.
+        if (!tor->controlConnected()) {
+            m_menu->addSection(
+                tr("Tor circuit unavailable — control connection lost"));
+            return;
+        }
         if (!addCircuitRows(m_menu, tor->circuits(),
                             tor->displayCircuitId(),
                             devicePixelRatioF()))
