@@ -21,7 +21,9 @@
 #define SITEPANEL_H
 
 #include <qframe.h>
+#include <qlist.h>
 #include <qpointer.h>
+#include <qstringlist.h>
 #include <qurl.h>
 
 class QCheckBox;
@@ -37,6 +39,12 @@ class WebView;
 // Everything is scoped to the page's current host:
 //
 //   - security state line (https / http / cert-error / local),
+//   - a TRUST08 Trust section listing the signals rustcore's
+//     composite site-trust verdict (rc_sitetrust_lookup) evaluated
+//     for the host — threat-list hit, lookalike resemblance, Tranco
+//     rank and first visit — only the signals that fired or are
+//     informative get a line; the whole section hides on pages with
+//     nothing to say,
 //   - cookie tri-state writing into CookieJar's per-site exception
 //     lists, plus a count of the cookies the site has stored,
 //   - a "block content on this site" toggle that injects/removes an
@@ -73,6 +81,11 @@ public:
     // load start / url change.
     int blockedSinceLoad() const;
 
+    // TRUST08: the composite verdict's signal lines for a host — the
+    // test seam for the Trust section.  Empty when the lookup cannot
+    // evaluate (no rustcore, empty host, FFI hiccup).
+    static QStringList trustSignalLines(const QString &host, bool isHttps);
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
@@ -92,11 +105,22 @@ private:
     void toggleFingerprintSpoof(bool checked);
     void clearSiteData();
     void rebuildPermissionRows();
+    void rebuildTrustRows();
+
+    // One rendered signal row in the Trust section — alert lines get
+    // the palette's warning color.
+    struct TrustLine {
+        QString text;
+        bool alert;
+    };
+    static QList<TrustLine> trustSignals(const QString &host, bool isHttps);
 
     QPointer<WebView> m_webView;
     QLabel *m_hostLabel;
     QLabel *m_securityLabel;
     QLabel *m_tlsLabel;
+    QWidget *m_trustBox;
+    QVBoxLayout *m_trustLayout;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
     QCheckBox *m_contentBlocking;

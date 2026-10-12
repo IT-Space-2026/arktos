@@ -1198,6 +1198,9 @@ Rust core quality sweep (RAUDIT01):
 Rust core lazy-list dedup (RAUDIT02):
     The "seed list plus data-dir override" machinery the blocklist, Tranco table and url-strip ruleset each carried as a private copy now lives in one shared helper (store::DirCache): a poison-tolerant RwLock slot holding an Arc'd value stamped with the data dir it was resolved against, rebuilt once when the dir arrives late. Each module keeps its own load/merge logic as the injected closure, and the url-strip ruleset picks up the same reload-on-dir-change behavior the other two lists already had — an override file dropped in after first use is no longer ignored. No behavior or ABI change otherwise.
 
+Site trust section in the shield panel (TRUST08):
+    The location-bar shield popover now carries a Trust section under the security state: one line per real signal from the Rust site-trust verdict — "Known site (Tranco rank N)" or "Little-known site", "Resembles <domain>" for homograph lookalikes, "Listed on the phishing/malware threat list" for blocklist hits, and "First visit to this site" when history has no prior record. Only signals that fired or are informative get a line — there is no neutral "all clear" noise — and the section is keyed to the page's host so it refreshes on every navigation; pages with no host (local content, internal pages) hide it entirely. Lookalike and threat lines render in the warning color. Every lookup is local: the verdict reads the vendored blocklist/Tranco tables and the history rollup inside rustcore, and no host name leaves the machine.
+
 0.11.0
 Interface:
     When the privacy indicator is visible clicking on it will result in private mode being turned off.

@@ -33,12 +33,20 @@
 
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qlabel.h>
 #include <qlayout.h>
 #include <qpalette.h>
 #include <qpushbutton.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+
+#if defined(ARORA_RUSTCORE)
+#include "rustcorebridge.h"
+#include <rustcore.h>
+#endif
 
 static QLabel *plainLabel(const QString &text, QWidget *parent)
 {
@@ -83,6 +91,19 @@ SitePanel::SitePanel(QWidget *parent)
     layout->addWidget(m_tlsLabel);
     connect(TlsVerifier::instance(), &TlsVerifier::statusChanged,
             this, [this](const QString &) { refresh(); });
+
+    // TRUST08: the composite site-trust section — one line per real
+    // signal from rustcore's verdict (threat-list hit, lookalike
+    // resemblance, Tranco rank, first visit).  The box stays hidden
+    // whenever the verdict has nothing informative to say.
+    m_trustBox = new QWidget(this);
+    m_trustBox->setObjectName(QLatin1String("siteTrust"));
+    m_trustLayout = new QVBoxLayout(m_trustBox);
+    m_trustLayout->setContentsMargins(0, 0, 0, 0);
+    m_trustLayout->setSpacing(2);
+    m_trustLayout->addWidget(plainLabel(tr("Trust"), m_trustBox));
+    m_trustBox->setVisible(false);
+    layout->addWidget(m_trustBox);
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
@@ -381,6 +402,8 @@ void SitePanel::refresh()
         break;
     }
 
+    rebuildTrustRows();
+
     CookieJar *jar = siteCookieJar();
     m_cookieRule->setEnabled(hasSite && jar);
     if (jar && hasSite) {
@@ -635,6 +658,108 @@ void SitePanel::rebuildPermissionRows()
             tr("No remembered permissions for this site"),
             m_permissionsBox));
     }
+}
+
+// TRUST08: asks rustcore for the composite verdict and maps every
+// signal that fired (or is informative) onto a display line — the
+// absence of a signal is never rendered, so no neutral noise like
+// "not on a threat list" shows up.  The whole lookup is local: the
+// blocklist, Tranco table, lookalike skeletons and the history
+// rollup are all on-disk/in-memory state inside the crate.
+QList<SitePanel::TrustLine> SitePanel::trustSignals(const QString &host,
+                                                  bool isHttps)
+{
+    QList<TrustLine> lines;
+#if defined(ARORA_RUSTCORE)
+    if (host.isEmpty())
+        return lines;
+    rustCoreEnsureDataDir();
+    const QByteArray hostUtf8 = host.toUtf8();
+    char *json = rc_sitetrust_lookup(hostUtf8.constData(), isHttps ? 1 : 0);
+    if (!json)
+        return lines;
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));
+    rc_string_free(json);
+    if (!doc.isObject())
+        return lines;
+
+    const QJsonObject verdict = doc.object();
+    const QJsonArray firedSignals =
+        verdict.value(QLatin1String("signals")).toArray();
+    const auto fired = [&firedSignals](QLatin1String name) {
+        for (const QJsonValue &value : firedSignals) {
+            if (value.toString() == name)
+                return true;
+        }
+        return false;
+    };
+
+    if (fired(QLatin1String("threat")))
+        lines.append({ tr("Listed on the phishing/malware threat list"),
+                       true });
+    if (fired(QLatin1String("lookalike"))) {
+        const QString twin =
+            verdict.value(QLatin1String("lookalike_of")).toString();
+        lines.append({ twin.isEmpty()
+            ? tr("Resembles a popular site — check the address")
+            : tr("Resembles %1 — check the address").arg(twin),
+            true });
+    }
+    // The rank probe is informative in both directions: listed sites
+    // are known, unlisted ones little-known.
+    const qint64 rank =
+        verdict.value(QLatin1String("rank")).toInteger();
+    lines.append({ rank > 0
+        ? tr("Known site (Tranco rank %1)").arg(rank)
+        : tr("Little-known site"), false });
+    if (fired(QLatin1String("first_seen")))
+        lines.append({ tr("First visit to this site"), false });
+#else
+    Q_UNUSED(host);
+    Q_UNUSED(isHttps);
+#endif
+    return lines;
+}
+
+QStringList SitePanel::trustSignalLines(const QString &host, bool isHttps)
+{
+    QStringList out;
+    const QList<TrustLine> lines = trustSignals(host, isHttps);
+    for (const TrustLine &line : lines)
+        out << line.text;
+    return out;
+}
+
+void SitePanel::rebuildTrustRows()
+{
+    // Row 0 is the "Trust" header — only the signal lines are rebuilt.
+    while (QLayoutItem *item = m_trustLayout->takeAt(1)) {
+        delete item->widget();
+        delete item;
+    }
+
+    const QString site = host();
+    const QString scheme = m_webView ? m_webView->url().scheme()
+                                     : QString();
+    const bool webSite = !site.isEmpty()
+        && (scheme == QLatin1String("http")
+            || scheme == QLatin1String("https"));
+    const QList<TrustLine> lines = webSite
+        ? trustSignals(site, scheme == QLatin1String("https"))
+        : QList<TrustLine>();
+
+    const QPalette warning = [this]() {
+        QPalette p = palette();
+        p.setColor(QPalette::WindowText, p.color(QPalette::BrightText));
+        return p;
+    }();
+    for (const TrustLine &line : lines) {
+        QLabel *label = plainLabel(line.text, m_trustBox);
+        if (line.alert)
+            label->setPalette(warning);
+        m_trustLayout->addWidget(label);
+    }
+    m_trustBox->setVisible(!lines.isEmpty());
 }
 
 void SitePanel::clearSiteData()

@@ -40,6 +40,7 @@
 
 #if defined(ARORA_RUSTCORE)
 #include "sitedecisionstore.h"
+#include <rustcore.h>
 #endif
 #include "adblockrule.h"
 #include "adblocksubscription.h"
@@ -109,6 +110,7 @@ private slots:
     void removeCookiesForHost();
     void panelWithoutPage();
     void panelForSite();
+    void trustSignalLines();
 };
 
 void tst_SitePanel::initTestCase()
@@ -335,6 +337,11 @@ void tst_SitePanel::panelWithoutPage()
         QLatin1String("siteClearData"));
     QVERIFY(clear);
     QVERIFY(!clear->isEnabled());
+
+    // TRUST08: no host — the Trust section hides entirely.
+    QWidget *trust = panel.findChild<QWidget*>(QLatin1String("siteTrust"));
+    QVERIFY(trust);
+    QVERIFY(trust->isHidden());
 }
 
 void tst_SitePanel::panelForSite()
@@ -480,6 +487,82 @@ void tst_SitePanel::panelForSite()
     clear->click();
     QCOMPARE(jar->cookiesForUrl(url).count(), 0);
     QCOMPARE(jar->cookies().count(), 1); // other.org survives
+
+    // TRUST08: the Trust section is keyed to the page's host — a
+    // localhost page is unlisted, so the informative line is the
+    // little-known one; at minimum one real signal line must exist
+    // under the header.
+    QWidget *trust = panel.findChild<QWidget*>(QLatin1String("siteTrust"));
+    QVERIFY(trust);
+#if defined(ARORA_RUSTCORE)
+    QVERIFY(!trust->isHidden());
+    const QList<QLabel*> trustLabels = trust->findChildren<QLabel*>();
+    QVERIFY(trustLabels.count() >= 2); // header + >=1 signal line
+    QString joined;
+    for (const QLabel *label : trustLabels)
+        joined += label->text() + QLatin1Char('\n');
+    QVERIFY(joined.contains(QLatin1String("known"),
+                            Qt::CaseInsensitive));
+#else
+    QVERIFY(trust->isHidden());
+#endif
+}
+
+// TRUST08: the verdict-to-lines mapping against the live rustcore
+// lookup — fixture tables go in through the *_load test seams and
+// the vendored seeds are restored afterwards so no state leaks into
+// the other tests in this binary.
+void tst_SitePanel::trustSignalLines()
+{
+#if defined(ARORA_RUSTCORE)
+    const QByteArray tranco = "4,known-fixture.test\n1,paypal.com\n";
+    QCOMPARE(rc_tranco_load(
+                 reinterpret_cast<const uint8_t *>(tranco.constData()),
+                 size_t(tranco.size())),
+             RC_OK);
+    const QByteArray block = "threat-fixture.test\n";
+    QCOMPARE(rc_blocklist_load(
+                 reinterpret_cast<const uint8_t *>(block.constData()),
+                 size_t(block.size())),
+             RC_OK);
+
+    // Ranked host over https -> the 'known site' line.
+    QString joined =
+        SitePanel::trustSignalLines(QLatin1String("known-fixture.test"),
+                                    true).join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QLatin1String("known site"),
+                            Qt::CaseInsensitive));
+
+    // A confusable twin of a ranked domain -> 'resembles <domain>'.
+    joined = SitePanel::trustSignalLines(QLatin1String("paypa1.com"),
+                                       true).join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QLatin1String("resembles"),
+                            Qt::CaseInsensitive));
+    QVERIFY(joined.contains(QLatin1String("paypal.com")));
+
+    // A listed domain -> the threat line.
+    joined =
+        SitePanel::trustSignalLines(QLatin1String("threat-fixture.test"),
+                                  true).join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QLatin1String("threat"),
+                            Qt::CaseInsensitive));
+
+    // An unlisted host -> the informative 'little-known' line, never a
+    // neutral "nothing found" noise line.
+    joined =
+        SitePanel::trustSignalLines(QLatin1String("obscure-fixture.test"),
+                                  true).join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QLatin1String("little-known"),
+                            Qt::CaseInsensitive));
+    QVERIFY(!joined.contains(QLatin1String("no threat"),
+                             Qt::CaseInsensitive));
+
+    // An empty host cannot evaluate — no lines, the section hides.
+    QVERIFY(SitePanel::trustSignalLines(QString(), true).isEmpty());
+
+    // Restore the vendored seed ∪ override tables for later tests.
+    rc_sitetrust_reload();
+#endif
 }
 
 QTEST_MAIN(tst_SitePanel)

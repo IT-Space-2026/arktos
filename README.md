@@ -54,7 +54,11 @@ browsing profile:
   holds the master switch for the toolbar trust indicator plus
   per-signal toggles for the lookalike-domain warning and the
   threat-list check; disabling the master hides the badge and each
-  signal can be skipped individually, all without a restart.
+  signal can be skipped individually, all without a restart. The
+  lock/shield popover carries a Trust section with one line per real
+  signal from the verdict — known/little-known site (Tranco rank),
+  "resembles <domain>" lookalike hits, threat-list hits and first
+  visits — refreshed per navigation.
 - **Per-site JavaScript control** — allow/block rules by host with a
   shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
   allow", and three Mullvad-style security tiers (Standard / Safer /
