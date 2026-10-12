@@ -351,6 +351,9 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         QSettings settings;
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
+        // SIDE06: the rail follows the dock to the other edge.
+        if (m_sidebarPanel)
+            m_sidebarPanel->setDockSide(area);
         updateSidebarGripPlacement();
     });
     // RSZ01: a floating dock has no window edge to resize against —
@@ -1628,6 +1631,8 @@ void BrowserMainWindow::ensureSidebarPanel()
     m_sidebarGripLayout->addWidget(m_sidebarPanel);
     m_sidebarGripLayout->addWidget(m_sidebarGrip);
     m_sidebarDock->setWidget(container);
+    // SIDE06: the rail hugs the dock's outer edge.
+    m_sidebarPanel->setDockSide(dockWidgetArea(m_sidebarDock));
     updateSidebarGripPlacement();
 }
 
@@ -1659,8 +1664,12 @@ void BrowserMainWindow::applySidebarSettings()
         ensureSidebarPanel();
     // SIDE02: an already-built panel picks up per-panel visibility
     // changes here too (a hidden dock re-reads on next show anyway).
-    if (m_sidebarPanel)
+    if (m_sidebarPanel) {
         m_sidebarPanel->applyPanelVisibility();
+        // SIDE06: keep the rail on the outer edge after a
+        // settings-driven dock move.
+        m_sidebarPanel->setDockSide(area);
+    }
     // RSZ01: the stored width lands before the dock shows; the dock's
     // first Show re-applies it via the event filter.
     applySidebarWidth();

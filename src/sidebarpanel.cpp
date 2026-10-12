@@ -427,6 +427,20 @@ QWidget *SidebarPanel::buildBookmarksPage()
         BookmarksManager::instance()->bookmarksModel());
     m_bookmarksView->setModel(m_bookmarksProxy);
     m_bookmarksView->setExpanded(m_bookmarksProxy->index(0, 0), true);
+    // SIDE06: name-only tree — the header is hidden but the Address
+    // column still claims the slack (QTreeView stretches the last
+    // section by default), pinning titles at ~100px ('Bo...ar' with
+    // free space beside it).  Stretch column 0 across the viewport so
+    // names elide only at the edge, and hide column 1; the context
+    // menu's Edit Address unhides it for the duration of the edit.
+    m_bookmarksView->setColumnHidden(1, true);
+    m_bookmarksView->header()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    m_bookmarksView->header()->setStretchLastSection(false);
+    connect(m_bookmarksView->itemDelegate(),
+            &QAbstractItemDelegate::closeEditor, this, [this]() {
+        m_bookmarksView->setColumnHidden(1, true);
+    });
     connect(m_bookmarksView, &EditTreeView::activated,
             this, [this](const QModelIndex &index) {
         openBookmark(index, TabWidget::CurrentTab);
@@ -493,6 +507,12 @@ QWidget *SidebarPanel::buildHistoryPage()
         HistoryManager::instance()->historyTreeModel());
     m_historyView->setModel(m_historyProxy);
     m_historyView->setExpanded(m_historyProxy->index(0, 0), true);
+    // SIDE06: same name-only treatment — column 1 (address / item
+    // count) hoarded the slack; hide it so titles fill the panel.
+    m_historyView->setColumnHidden(1, true);
+    m_historyView->header()->setSectionResizeMode(
+        0, QHeaderView::Stretch);
+    m_historyView->header()->setStretchLastSection(false);
     connect(m_historyView, &EditTreeView::activated,
             this, [this](const QModelIndex &index) {
         openHistoryEntry(index, TabWidget::CurrentTab);
@@ -749,6 +769,10 @@ void SidebarPanel::bookmarksContextMenu(const QPoint &pos)
     renameAction->setEnabled(index.flags() & Qt::ItemIsEditable);
     if (node->type() != BookmarkNode::Folder) {
         menu.addAction(tr("Edit Address"), this, [this, index]() {
+            // SIDE06: the Address column is hidden — unhide it long
+            // enough to host the editor; the delegate's closeEditor
+            // hook folds it back on commit or cancel.
+            m_bookmarksView->setColumnHidden(1, false);
             m_bookmarksView->edit(index.siblingAtColumn(1));
         });
     }
@@ -821,6 +845,15 @@ QWidget *SidebarPanel::downloadsPage() const
 QWidget *SidebarPanel::bookmarksPage() const
 {
     return m_bookmarksPage;
+}
+
+// SIDE06: the rail hugs the dock's outer edge — icons on the left
+// when the dock is on the left, on the right when it is docked right
+// (or floating).  Re-applied by the host window on every dock move.
+void SidebarPanel::setDockSide(Qt::DockWidgetArea area)
+{
+    m_tabs->setTabPosition(area == Qt::RightDockWidgetArea
+                           ? QTabWidget::East : QTabWidget::West);
 }
 
 // SIDE04: Ctrl+Shift+B / Bookmarks > Show All Bookmarks lands here —

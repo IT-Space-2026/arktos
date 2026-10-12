@@ -32,6 +32,7 @@
 #include <qcombobox.h>
 #include <qdockwidget.h>
 #include <qframe.h>
+#include <qheaderview.h>
 #include <qlabel.h>
 #include <qlineedit.h>
 #include <qlistview.h>
@@ -53,6 +54,7 @@
 #include <qtemporarydir.h>
 #include <qtoolbar.h>
 #include <qtoolbutton.h>
+#include <qtreeview.h>
 
 #include "browsermainwindow.h"
 #include "browserapplication.h"
@@ -1389,6 +1391,62 @@ void tst_BrowserMainWindow::sidebarPanel()
                  panel->tabs()->tabText(i));
     }
 
+    // SIDE06: name-only trees — the Address column used to soak the
+    // slack (stretchLastSection) while titles elided at a fixed
+    // ~100px.  Column 0 now stretches across the panel and column 1
+    // is hidden (the URL still rides the tooltip).
+    QTreeView *bookmarksView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarBookmarksView"));
+    QTreeView *historyView = panel->findChild<QTreeView *>(
+        QLatin1String("sidebarHistoryView"));
+    QVERIFY(bookmarksView);
+    QVERIFY(historyView);
+    for (QTreeView *view : { bookmarksView, historyView }) {
+        QVERIFY(view->isColumnHidden(1));
+        QCOMPARE(view->header()->sectionResizeMode(0),
+                 QHeaderView::Stretch);
+    }
+    // The stretched column tracks the viewport — names only elide at
+    // the true panel edge.
+    QTRY_VERIFY(bookmarksView->header()->sectionSize(0)
+                >= bookmarksView->viewport()->width() - 4);
+    QTRY_VERIFY(historyView->header()->sectionSize(0)
+                >= historyView->viewport()->width() - 4);
+
+    // The context menu's "Edit Address" unhides the column to host
+    // the editor; the delegate's closeEditor hook folds it back.
+    panel->showBookmarks();
+    BookmarksManager *bookmarksManager = BookmarksManager::instance();
+    BookmarkNode *entry = new BookmarkNode(BookmarkNode::Bookmark);
+    entry->title = QLatin1String("Sidebar Elide Check");
+    entry->url = QLatin1String("https://example.com/sidebar-elide");
+    bookmarksManager->addBookmark(bookmarksManager->menu(), entry);
+    QAbstractItemModel *bmModel = bookmarksView->model();
+    QModelIndex menuIndex;
+    for (int row = 0; row < bmModel->rowCount(); ++row) {
+        const QModelIndex candidate = bmModel->index(row, 0);
+        if (candidate.data(Qt::DisplayRole).toString()
+            == bookmarksManager->menu()->title) {
+            menuIndex = candidate;
+            break;
+        }
+    }
+    QVERIFY(menuIndex.isValid());
+    bookmarksView->setExpanded(menuIndex, true);
+    const int entryRow = bmModel->rowCount(menuIndex) - 1;
+    const QModelIndex urlIndex = bmModel->index(entryRow, 1, menuIndex);
+    QVERIFY(urlIndex.isValid());
+    QCOMPARE(urlIndex.data(Qt::DisplayRole).toString(),
+             QLatin1String("https://example.com/sidebar-elide"));
+    bookmarksView->setColumnHidden(1, false);
+    bookmarksView->edit(urlIndex);
+    QApplication::processEvents();
+    QVERIFY(bookmarksView->viewport()->findChild<QLineEdit *>());
+    QTest::keyClick(bookmarksView->viewport()
+                        ->findChild<QLineEdit *>(), Qt::Key_Escape);
+    QTRY_VERIFY(bookmarksView->isColumnHidden(1));
+    bmModel->removeRow(entryRow, menuIndex);
+
     // Unchecking a section in settings drops its tab on apply; the
     // rail keeps registry order when it comes back.
     SidebarPanel::setPanelVisible("history", false);
@@ -1429,6 +1487,14 @@ void tst_BrowserMainWindow::sidebarPanel()
     window->applySidebarSettings();
     QVERIFY(dock->isVisible());
     QCOMPARE(window->dockWidgetArea(dock), Qt::RightDockWidgetArea);
+
+    // SIDE06: the rail hugs the outer edge — it flips East under a
+    // right dock and follows live moves back and forth.
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::East);
+    window->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::West);
+    window->addDockWidget(Qt::RightDockWidgetArea, dock);
+    QCOMPARE(panel->tabs()->tabPosition(), QTabWidget::East);
 
     // Notes persist through the panel's autosave slot.
     panel->notes()->setPlainText(QLatin1String("remember me"));

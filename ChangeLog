@@ -377,6 +377,12 @@ UI:
   the page and stranding the buttons at the far edge, and the
   preferred-languages row now shows the stored list in a matching
   field (PREFUI10).
+- Sidebar polish: bookmark, folder and history names display in
+  full — the hidden Address column no longer claims the panel's
+  width (names elide only at the true panel edge and the URL moved
+  to a hover tooltip; Edit Address still works), and the icon rail
+  hugs the window's outer edge, flipping sides when the sidebar is
+  docked on the right (SIDE06).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
