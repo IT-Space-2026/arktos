@@ -61,6 +61,7 @@ SUBDIRS  = \
     tabwidget \
     tlsverify \
     toolbarsearch \
+    torinterceptor \
     tormanager \
     trancolist \
     useragent \
