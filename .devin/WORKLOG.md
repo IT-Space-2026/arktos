@@ -558,3 +558,5 @@
 - 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (WORKLOG.md, sitepanel.cpp/.h, tst_sitepanel.cpp modified mid-run by another agent; 6th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work at 0 ahead — no merge needed
 - 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (sitepanel.cpp/.h, tst_sitepanel.cpp still modified mid-run by another agent; 7th consecutive skip)
+- 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (sitepanel.cpp/.h, tst_sitepanel.cpp still modified mid-run by another agent; 8th consecutive skip)
+- 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (tst_browsermainwindow.cpp modified mid-run by another agent; lane 1 ahead)
