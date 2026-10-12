@@ -409,3 +409,4 @@
 - 2026-10-12 TRANS12: gl catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS13: it_IT catalog completed — 1066 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS14: ja_JP catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS15: nb_NO catalog completed — 1035 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
