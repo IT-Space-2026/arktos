@@ -415,3 +415,4 @@
 - 2026-10-12 TRANS18: pt_PT catalog completed — 1036 translated (incl. 4 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS19: sr_RS catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
 - 2026-10-12 TRANS20: sr_RS@latin catalog completed — 1033 translated (incl. 1 numerusform), lrelease PASS (1423 finished, 0 unfinished).
+- 2026-10-12 TRANS21: tr_TR catalog completed — 1033 entries translated (incl. 1 numerusform), lrelease PASS
