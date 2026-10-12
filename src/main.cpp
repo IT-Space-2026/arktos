@@ -164,6 +164,7 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QStatusBar>
@@ -11208,6 +11209,17 @@ int main(int argc, char **argv)
         qInfo() << "tor-window-smoke: circuit label present:" 
                 << circuitLabel->text();
 
+        // TOR07: the whole header block shares the violet chrome —
+        // no default-palette menu row or tab strip survives.
+        if (!torWindow->menuBar()->styleSheet().contains(
+                QLatin1String("4a3372"))
+                || !torWindow->tabWidget()->tabBar()->styleSheet()
+                        .contains(QLatin1String("4a3372"))) {
+            torWinFail(QLatin1String("tor window chrome theme incomplete"));
+            return application.exec();
+        }
+        qInfo() << "tor-window-smoke: violet chrome covers menu + tab strip";
+
         // EXT04: a tor process must never attach the extension
         // manager — extensions are a deanonymization surface, so the
         // tor profile is not even registered for user scripts and
@@ -11384,6 +11396,73 @@ int main(int argc, char **argv)
                 }
             }
             check(set + QLatin1String(" coverage"), missing == 0);
+
+            // ICONS04: the nav cluster must render as one family —
+            // same monochrome paint (a red NegativeText glyph used to
+            // slip through here) and reload/stop at the arrows' visual
+            // weight, not a heavier filled style.
+            auto navImage = [](const QLatin1String &iconName) {
+                return AroraIcon::get(iconName)
+                    .pixmap(QSize(18, 18)).toImage();
+            };
+            bool monochrome = true;
+            int maxSpread = 0;
+            const QStringList navNames = {
+                QLatin1String("go-previous"), QLatin1String("go-next"),
+                QLatin1String("view-refresh"),
+                QLatin1String("process-stop") };
+            for (const QString &navName : navNames) {
+                const QImage image = navImage(
+                    QLatin1String(navName.toLatin1()));
+                for (int y = 0; y < image.height() && monochrome; ++y) {
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor color = image.pixelColor(x, y);
+                        if (color.alpha() <= 100)
+                            continue;
+                        const int spread = qMax(
+                            qAbs(color.red() - color.green()),
+                            qMax(qAbs(color.green() - color.blue()),
+                                 qAbs(color.red() - color.blue())));
+                        maxSpread = qMax(maxSpread, spread);
+                        if (spread > 60) {
+                            monochrome = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            check(set + QLatin1String(" nav monochrome")
+                      + QLatin1String(" (spread ")
+                      + QString::number(maxSpread) + QLatin1String(")"),
+                  monochrome);
+            const int arrowInk = qMax(1,
+                (opaquePixels(navImage(QLatin1String("go-previous")))
+                 + opaquePixels(navImage(QLatin1String("go-next")))) / 2);
+            const int refreshInk = opaquePixels(
+                navImage(QLatin1String("view-refresh")));
+            const int stopInk = opaquePixels(
+                navImage(QLatin1String("process-stop")));
+            check(set + QLatin1String(" nav weight"), refreshInk > 0
+                  && refreshInk <= arrowInk * 2
+                  && stopInk <= arrowInk * 2);
+
+            // getOnDark serves the tor chrome's dark surfaces: light
+            // glyphs from the -dark file, falling back to get().
+            const QImage onDark = AroraIcon::getOnDark(
+                QLatin1String("go-previous"))
+                .pixmap(QSize(18, 18)).toImage();
+            qlonglong darkLum = 0;
+            int darkOpaque = 0;
+            for (int y = 0; y < onDark.height(); ++y)
+                for (int x = 0; x < onDark.width(); ++x) {
+                    const QColor color = onDark.pixelColor(x, y);
+                    if (color.alpha() > 100) {
+                        darkLum += qGray(color.rgb());
+                        ++darkOpaque;
+                    }
+                }
+            check(set + QLatin1String(" onDark light"),
+                  darkOpaque > 0 && darkLum / darkOpaque > 140);
         }
 
         // Live apply: an existing QIcon follows setThemeName — that

@@ -53,6 +53,12 @@ namespace AroraIcon {
 // view-refresh, process-stop, ...).  Live-updates on theme change.
 QIcon get(const QString &name);
 
+// ICONS04: same name resolved to the selected set's -dark (light
+// glyph) variant — for icons painted on dark chrome while the
+// application palette is light, e.g. the tor window's violet toolbar.
+// "native" and names with no bundled -dark file fall back to get().
+QIcon getOnDark(const QString &name);
+
 // Selectable sets: "native" first, then the bundled ids.
 QStringList themeIds();
 QString themeDisplayName(const QString &id);

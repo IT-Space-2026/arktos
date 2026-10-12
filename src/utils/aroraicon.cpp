@@ -92,6 +92,27 @@ QIcon AroraIcon::get(const QString &name)
     return QIcon::fromTheme(name);
 }
 
+QIcon AroraIcon::getOnDark(const QString &name)
+{
+    init();
+    const QString id = s_currentId;
+    if (id != s_nativeId) {
+        const QString base = s_resourcePrefix + QLatin1Char('/')
+            + QLatin1String("arora-") + id;
+        // File-backed, so it does not follow setThemeName — the tor
+        // window is a separate process whose icon theme never changes
+        // after startup anyway.
+        for (const char *variant : { "-dark", "" }) {
+            const QString path = base + QLatin1String(variant)
+                + QLatin1String("/icons/") + name
+                + QLatin1String(".svg");
+            if (QFile::exists(path))
+                return QIcon(path);
+        }
+    }
+    return get(name);
+}
+
 QStringList AroraIcon::themeIds()
 {
     return { s_nativeId,
