@@ -316,7 +316,6 @@ private:
     // DEVT04: engine-facing tools under Tools > Development Tools.
     QMenu *m_toolsDevToolsMenu;
     QAction *m_toolsChromiumDevToolAction;
-    QAction *m_toolsBidiDevToolAction;
     UserAgentMenu *m_toolsUserAgentMenu;
 
     QMenu *m_helpMenu;

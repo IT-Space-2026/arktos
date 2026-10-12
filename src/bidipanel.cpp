@@ -61,12 +61,14 @@ static const char kDomHelper[] =
     "}, 'installed'";
 
 BidiPanel::BidiPanel(QWidget *parent)
-    : QDockWidget(tr("Development Tools"), parent)
+    : QWidget(parent)
     , m_client(new BidiClient(this))
     , m_nextTag(10)
 {
-    setObjectName(QLatin1String("bidiPanelDock"));
-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    // SIDE05: plain dock content — the surrounding m_bidiPanelDock
+    // owns the "bidiPanelDock" objectName, the title bar, and the
+    // allowed areas.
+    setObjectName(QLatin1String("bidiPanel"));
 
     m_stack = new QStackedWidget(this);
 
@@ -158,7 +160,9 @@ BidiPanel::BidiPanel(QWidget *parent)
     storage->addWidget(lsBox);
     tabs->addTab(storage, tr("Storage"));
 
-    setWidget(m_stack);
+    QVBoxLayout *panelLayout = new QVBoxLayout(this);
+    panelLayout->setContentsMargins(0, 0, 0, 0);
+    panelLayout->addWidget(m_stack);
 
     connect(m_client, &BidiClient::responseReceived,
             this, &BidiPanel::onResponse);
@@ -175,7 +179,7 @@ BidiPanel::BidiPanel(QWidget *parent)
 
 void BidiPanel::showEvent(QShowEvent *event)
 {
-    QDockWidget::showEvent(event);
+    QWidget::showEvent(event);
     if (m_client->state() == BidiClient::Disconnected)
         m_client->connectToEngine();
 }

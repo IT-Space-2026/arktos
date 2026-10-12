@@ -23,12 +23,15 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "cookiejar.h"
+#include "domainblocklist.h"
 #include "engineinterface.h"
 #include "fingerprintprotector.h"
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
+#include "siteshield.h"
 #include "tlsverifier.h"
+#include "trancolist.h"
 #include "webpermissionmanager.h"
 #include "webview.h"
 
@@ -97,14 +100,41 @@ SitePanel::SitePanel(QWidget *parent)
     // signal from rustcore's verdict (threat-list hit, lookalike
     // resemblance, Tranco rank, first visit).  The box stays hidden
     // whenever the verdict has nothing informative to say.
+    // TRUST11: it opens with a separator and a bold header colored by
+    // the same verdict the lock icon carries.
     m_trustBox = new QWidget(this);
     m_trustBox->setObjectName(QLatin1String("siteTrust"));
     m_trustLayout = new QVBoxLayout(m_trustBox);
     m_trustLayout->setContentsMargins(0, 0, 0, 0);
     m_trustLayout->setSpacing(2);
-    m_trustLayout->addWidget(plainLabel(tr("Trust"), m_trustBox));
+    QFrame *trustSeparator = new QFrame(m_trustBox);
+    trustSeparator->setFrameShape(QFrame::HLine);
+    trustSeparator->setFrameShadow(QFrame::Sunken);
+    m_trustLayout->addWidget(trustSeparator);
+    m_trustHeader = plainLabel(tr("Trust"), m_trustBox);
+    m_trustHeader->setObjectName(QLatin1String("siteTrustHeader"));
+    QFont trustFont = m_trustHeader->font();
+    trustFont.setBold(true);
+    m_trustHeader->setFont(trustFont);
+    m_trustLayout->addWidget(m_trustHeader);
     m_trustBox->setVisible(false);
     layout->addWidget(m_trustBox);
+
+    // TRUST11: a refreshed threat-list or Tranco table changes the
+    // verdict for already-seen hosts — the shield clears its level
+    // cache on the same signals but slot order across objects is not
+    // guaranteed, so the panel clears it too and repaints; an open
+    // popup picks the new color up immediately.
+    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
+            this, [this](bool) {
+        SiteShieldButton::clearTrustCache();
+        refresh();
+    });
+    connect(TrancoList::instance(), &TrancoList::updateFinished,
+            this, [this](bool) {
+        SiteShieldButton::clearTrustCache();
+        refresh();
+    });
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
@@ -767,10 +797,26 @@ QString SitePanel::trustLevel(const QString &host, bool isHttps)
 #endif
 }
 
+// TRUST11: verdict-level tones tuned for text — the badge's icon
+// wash would be unreadable on a label, so these run a step darker on
+// light themes and a step lighter on dark ones.  Both directions
+// keep clear contrast against the theme's own window color.
+QColor SitePanel::trustLevelColor(const QString &level, bool darkTheme)
+{
+    if (level == QLatin1String("green"))
+        return darkTheme ? QColor(74, 222, 128) : QColor(21, 128, 61);
+    if (level == QLatin1String("amber"))
+        return darkTheme ? QColor(251, 191, 36) : QColor(180, 83, 9);
+    if (level == QLatin1String("red"))
+        return darkTheme ? QColor(248, 113, 113) : QColor(185, 28, 28);
+    return QColor();
+}
+
 void SitePanel::rebuildTrustRows()
 {
-    // Row 0 is the "Trust" header — only the signal lines are rebuilt.
-    while (QLayoutItem *item = m_trustLayout->takeAt(1)) {
+    // Rows 0/1 are the separator and the "Trust" header — only the
+    // signal lines are rebuilt.
+    while (QLayoutItem *item = m_trustLayout->takeAt(2)) {
         delete item->widget();
         delete item;
     }
@@ -796,6 +842,24 @@ void SitePanel::rebuildTrustRows()
             label->setPalette(warning);
         m_trustLayout->addWidget(label);
     }
+
+    // TRUST11: the header wears the same verdict level the lock icon
+    // badges — the badge's own cached level, so the two can never
+    // disagree.  An un-evaluable verdict keeps the plain text color.
+    const QColor levelColor = lines.isEmpty()
+        ? QColor()
+        : trustLevelColor(
+              SiteShieldButton::trustLevelFor(
+                  site, scheme == QLatin1String("https")),
+              palette().color(QPalette::Window).lightness() < 128);
+    if (levelColor.isValid()) {
+        QPalette colored = palette();
+        colored.setColor(QPalette::WindowText, levelColor);
+        m_trustHeader->setPalette(colored);
+    } else {
+        m_trustHeader->setPalette(palette());
+    }
+
     m_trustBox->setVisible(!lines.isEmpty());
 }
 

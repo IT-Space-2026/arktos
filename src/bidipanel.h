@@ -25,10 +25,14 @@
  * When the debug channel is unavailable (tor window, setting off, or
  * the engine lacks it) the panel shows a readable unavailable page
  * instead of tabs.
+ *
+ * SIDE05: this is the CONTENT of BrowserMainWindow's m_bidiPanelDock,
+ * not a dock itself — as a QDockWidget it drew a second title bar
+ * inside the outer one.
  */
 
-#include <qdockwidget.h>
 #include <qhash.h>
+#include <qwidget.h>
 
 class BidiClient;
 class QComboBox;
@@ -40,7 +44,7 @@ class QTableWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-class BidiPanel : public QDockWidget
+class BidiPanel : public QWidget
 {
     Q_OBJECT
 

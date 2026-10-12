@@ -20,6 +20,7 @@
 #ifndef SITEPANEL_H
 #define SITEPANEL_H
 
+#include <qcolor.h>
 #include <qframe.h>
 #include <qlist.h>
 #include <qpointer.h>
@@ -93,6 +94,11 @@ public:
     // evaluate.
     static QString trustLevel(const QString &host, bool isHttps);
 
+    // TRUST11: the header's text color for a verdict level, tuned a
+    // step darker on light themes and a step lighter on dark ones so
+    // it stays readable in both.  Invalid for an unknown level.
+    static QColor trustLevelColor(const QString &level, bool darkTheme);
+
 public slots:
     // Repopulates every section for the current page.  Called when the
     // popup opens and after any control writes through.
@@ -128,6 +134,7 @@ private:
     QLabel *m_tlsLabel;
     QWidget *m_trustBox;
     QVBoxLayout *m_trustLayout;
+    QLabel *m_trustHeader;
     QComboBox *m_cookieRule;
     QLabel *m_cookieCount;
     QCheckBox *m_contentBlocking;

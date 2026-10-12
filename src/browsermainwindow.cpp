@@ -1290,17 +1290,13 @@ void BrowserMainWindow::setupMenu()
     });
     m_toolsDevToolsMenu->addAction(m_toolsChromiumDevToolAction);
 
-    // Placeholder until DEVT02 wires the BiDi panel — kept visible but
-    // disabled so the submenu structure stays stable.
-    m_toolsBidiDevToolAction = new QAction(m_toolsDevToolsMenu);
-    m_toolsBidiDevToolAction->setEnabled(false);
-    m_toolsDevToolsMenu->addAction(m_toolsBidiDevToolAction);
-
-    // DEVT03: engine-neutral dev tools dock — toggleViewAction keeps
-    // its check state synced with the dock's close button.  No-rust
-    // builds have no BiDi backend at all — the entry stays out of the
-    // menu there; a tor window keeps it visible but disabled since
-    // its process never arms the debug channel.
+    // DEVT03/DEVT05: engine-neutral dev tools dock — the dock's own
+    // toggleViewAction sits inside the submenu next to the Chromium
+    // inspector entry, so its check state stays synced with the
+    // dock's close button and there is exactly one BiDi surface.
+    // No-rust builds have no BiDi backend at all — the entry stays
+    // out of the menu there; a tor window keeps it visible but
+    // disabled since its process never arms the debug channel.
 #ifdef ARORA_RUSTCORE
     QAction *bidiAction = m_bidiPanelDock->toggleViewAction();
     bidiAction->setText(tr("BiDi Dev &Tools"));
@@ -1309,7 +1305,7 @@ void BrowserMainWindow::setupMenu()
         bidiAction->setToolTip(
             tr("The debug channel is never armed in Tor windows."));
     }
-    m_toolsMenu->addAction(bidiAction);
+    m_toolsDevToolsMenu->addAction(bidiAction);
 #endif
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
@@ -1489,7 +1485,17 @@ void BrowserMainWindow::retranslate()
     m_viewReaderAction->setText(tr("&Reader Mode"));
     m_viewPipAction->setText(tr("Picture-&in-Picture"));
     m_sidebarDock->setWindowTitle(tr("Sidebar"));
+    // SIDE05: the dock's single title bar keeps the generic name —
+    // same as the submenu it lives under and the engine-neutral BiDi
+    // panel inside; the menu action stays "BiDi Dev &Tools" so it
+    // reads distinctly next to "Chromium Dev Tool".
     m_bidiPanelDock->setWindowTitle(tr("Development Tools"));
+#ifdef ARORA_RUSTCORE
+    // toggleViewAction's text follows the dock's window title — the
+    // setWindowTitle above just overwrote the menu label, so stamp
+    // it back on every retranslate.
+    m_bidiPanelDock->toggleViewAction()->setText(tr("BiDi Dev &Tools"));
+#endif
     m_viewSidebarAction->setText(tr("Sidebar"));
     m_viewSourceAction->setText(tr("Page S&ource"));
     m_viewSourceAction->setShortcut(tr("Ctrl+Alt+U"));
@@ -1522,9 +1528,6 @@ void BrowserMainWindow::retranslate()
     m_toolsLockStoreAction->setText(tr("&Lock Credential Store"));
     m_toolsDevToolsMenu->setTitle(tr("Development Tools"));
     m_toolsChromiumDevToolAction->setText(tr("Chromium Dev Tool"));
-    m_toolsBidiDevToolAction->setText(tr("BiDi Dev Tool"));
-    m_toolsBidiDevToolAction->setToolTip(
-        tr("Coming with the BiDi backend"));
     m_toolsUserAgentMenu->setTitle(tr("User Agent"));
 
     m_helpMenu->setTitle(tr("&Help"));

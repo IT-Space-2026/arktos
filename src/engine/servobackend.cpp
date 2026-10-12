@@ -59,6 +59,9 @@ struct ServoApi {
     int (*frameSize)(SeInstance, unsigned *, unsigned *) = nullptr;
     long (*frameCopy)(SeInstance, unsigned char *, unsigned long) = nullptr;
     void (*destroy)(SeInstance) = nullptr;
+    // ENG11: optional — artifacts built before se_version existed must
+    // stay usable, so this one resolves outside the all-or-nothing set.
+    const char *(*version)() = nullptr;
 };
 
 ServoApi &api()
@@ -109,6 +112,10 @@ bool resolve()
     RESOLVE(frameCopy, "se_frame_copy")
     RESOLVE(destroy, "se_destroy")
 #undef RESOLVE
+    // Optional ENG11 addition — a missing se_version only degrades
+    // displayName(), it must not fail artifactAvailable().
+    api().version = reinterpret_cast<decltype(api().version)>(
+        library().resolve("se_version"));
     state = ok ? 1 : -1;
     if (!ok)
         qWarning("servo-embed: artifact at %s is missing symbols",
@@ -850,7 +857,16 @@ QString ServoBackend::id() const
 
 QString ServoBackend::displayName() const
 {
-    return QStringLiteral("Servo (experimental)");
+    // ENG11: real libservo version when the artifact exports
+    // se_version — same shape as the Chromium entry. The pinned
+    // artifact may predate the export; honest fallback, never a faked
+    // number.
+    if (resolve() && api().version) {
+        if (const char *version = api().version(); version && *version)
+            return QStringLiteral("Servo %1")
+                    .arg(QString::fromUtf8(version));
+    }
+    return QStringLiteral("Servo (version unknown)");
 }
 
 Engine::Capabilities ServoBackend::capabilities() const

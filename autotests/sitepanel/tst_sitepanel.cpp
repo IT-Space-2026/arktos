@@ -27,6 +27,7 @@
 #include <QtNetwork/QtNetwork>
 #include <qcheckbox.h>
 #include <qcombobox.h>
+#include <qframe.h>
 #include <qlabel.h>
 #include <qnetworkcookie.h>
 #include <qpushbutton.h>
@@ -117,6 +118,7 @@ private slots:
     void trustBadgeCache();
     void trustBadgeNavigation();
     void trustGating();
+    void trustSectionHeader();
 };
 
 void tst_SitePanel::initTestCase()
@@ -818,6 +820,72 @@ void tst_SitePanel::trustGating()
 
     SiteShieldButton::clearTrustCache();
     rc_sitetrust_reload();
+#endif
+}
+
+// TRUST11: the Trust section's own chrome — a separator above the
+// header, the header bold, and its text colored by the same verdict
+// level the shield badge carries (amber for a plaintext loopback
+// page).  The tones differ between light and dark themes and each
+// level maps to a distinct color.
+void tst_SitePanel::trustSectionHeader()
+{
+#if defined(ARORA_RUSTCORE)
+    LocalHttpServer server;
+    QVERIFY(server.start());
+
+    WebView view;
+    SitePanel panel;
+    panel.setWebView(&view);
+    QSignalSpy loadSpy(&view, SIGNAL(loadFinished(bool)));
+    view.load(server.url());
+    QTRY_COMPARE(loadSpy.count(), 1);
+    panel.refresh();
+
+    QWidget *trust = panel.findChild<QWidget*>(
+        QLatin1String("siteTrust"));
+    QVERIFY(trust);
+    QVERIFY(!trust->isHidden());
+
+    // Separator sits directly above the header inside the section.
+    QFrame *separator = trust->findChild<QFrame*>();
+    QVERIFY(separator);
+    QCOMPARE(separator->frameShape(), QFrame::HLine);
+
+    QLabel *header = trust->findChild<QLabel*>(
+        QLatin1String("siteTrustHeader"));
+    QVERIFY(header);
+    QCOMPARE(header->text(), QStringLiteral("Trust"));
+    QVERIFY(header->font().bold());
+
+    // The badge sees amber for plaintext 127.0.0.1 — the header must
+    // wear the same level's theme-aware text color.
+    QCOMPARE(SiteShieldButton::trustLevelFor(
+                 QLatin1String("127.0.0.1"), false),
+             QLatin1String("amber"));
+    const bool dark = panel.palette().color(QPalette::Window)
+                          .lightness() < 128;
+    QCOMPARE(header->palette().color(QPalette::WindowText),
+             SitePanel::trustLevelColor(QLatin1String("amber"), dark));
+
+    // Every level maps to a distinct, valid tone in both themes —
+    // and the light/dark variants differ, which is what keeps the
+    // label readable in either theme.
+    for (bool darkTheme : {false, true}) {
+        const QColor green =
+            SitePanel::trustLevelColor(QLatin1String("green"), darkTheme);
+        const QColor amber =
+            SitePanel::trustLevelColor(QLatin1String("amber"), darkTheme);
+        const QColor red =
+            SitePanel::trustLevelColor(QLatin1String("red"), darkTheme);
+        QVERIFY(green.isValid() && amber.isValid() && red.isValid());
+        QVERIFY(green != amber && amber != red && green != red);
+        QVERIFY(!SitePanel::trustLevelColor(
+                    QLatin1String("other"), darkTheme).isValid());
+    }
+    QVERIFY(SitePanel::trustLevelColor(QLatin1String("green"), true)
+            != SitePanel::trustLevelColor(QLatin1String("green"), false));
+    SiteShieldButton::clearTrustCache();
 #endif
 }
 

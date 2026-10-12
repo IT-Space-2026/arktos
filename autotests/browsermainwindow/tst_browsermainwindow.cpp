@@ -580,10 +580,12 @@ void tst_BrowserMainWindow::downloadsMenuHome()
     closeWindow(window);
 }
 
-// DEVT04: Tools > Development Tools holds the engine-tool entries —
-// "Chromium Dev Tool" (the working inspector) and "BiDi Dev Tool"
-// (disabled placeholder until DEVT02 lands).  The View menu keeps
-// Page Source + Text Encoding and carries no dev-tools entry.
+// DEVT04/DEVT05: Tools > Development Tools holds the engine-tool
+// entries — "Chromium Dev Tool" (the working inspector) and, under
+// rustcore, "BiDi Dev &Tools" (the dock's own checkable
+// toggleViewAction — the dead placeholder and the separate top-level
+// tickbox are gone).  The View menu keeps Page Source + Text
+// Encoding and carries no dev-tools entry.
 void tst_BrowserMainWindow::devToolsSubmenu()
 {
     SubWindow *window = new SubWindow;
@@ -655,29 +657,88 @@ void tst_BrowserMainWindow::devToolsSubmenu()
     QVERIFY(devToolsIndex > clearIndex);
     QVERIFY(devToolsIndex < userAgentIndex);
 
-    // Exactly two entries: the live inspector and the BiDi
-    // placeholder (disabled, with a tooltip explaining why).
+    // The Tools menu itself carries no BiDi surface — the only BiDi
+    // entry lives inside the submenu.
+    for (QAction *action : toolsActions) {
+        QVERIFY2(!action->text().contains(QLatin1String("BiDi")),
+                 qPrintable(action->text()));
+    }
+
+    // The submenu holds the live inspector plus the working
+    // checkable BiDi dock toggle — and no separators.
     QStringList entries;
     QAction *chromium = nullptr;
     QAction *bidi = nullptr;
     for (QAction *action : devToolsMenu->actions()) {
-        if (action->isSeparator())
-            continue;
+        QVERIFY2(!action->isSeparator(), qPrintable(action->text()));
         entries << action->text();
         if (action->text() == QLatin1String("Chromium Dev Tool"))
             chromium = action;
-        if (action->text() == QLatin1String("BiDi Dev Tool"))
+        if (action->text() == QLatin1String("BiDi Dev &Tools"))
             bidi = action;
     }
-    QCOMPARE(entries.size(), 2);
     QVERIFY(chromium);
     QVERIFY(chromium->isEnabled());
-    QVERIFY(bidi);
-    QVERIFY(!bidi->isEnabled());
-    QVERIFY(!bidi->toolTip().isEmpty());
     QVERIFY(!toolsMenu->actions().constLast()->isSeparator());
 
+#if defined(ARORA_RUSTCORE)
+    QCOMPARE(entries.size(), 2);
+    QVERIFY(bidi);
+    QVERIFY(bidi->isCheckable());
+    QVERIFY(bidi->isEnabled());
+
+    // The submenu BiDi entry is the dock's toggleViewAction: tick
+    // opens the dock, untick closes it.
+    QDockWidget *dock = window->findChild<QDockWidget *>(
+        QLatin1String("bidiPanelDock"));
+    QVERIFY(dock);
+    QVERIFY(!dock->isVisible());
+    bidi->trigger();
+    QTRY_VERIFY(dock->isVisible());
+    QVERIFY(bidi->isChecked());
+
+    // SIDE05: exactly one title bar — the lazily-built panel inside
+    // is plain dock content, never a nested QDockWidget drawing a
+    // second frame of its own.
+    QVERIFY(dock->widget());
+    QVERIFY(!qobject_cast<QDockWidget *>(dock->widget()));
+    QVERIFY(dock->findChildren<QDockWidget *>().isEmpty());
+
+    bidi->trigger();
+    QTRY_VERIFY(!dock->isVisible());
+    QVERIFY(!bidi->isChecked());
     closeWindow(window);
+
+    // A tor window keeps the entry visible but disabled, with a
+    // tooltip explaining why.
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QAction *torBidi = nullptr;
+    for (QAction *menuAction : torWindow->menuBar()->actions()) {
+        if (!menuAction->menu()
+            || !menuAction->text().contains(QLatin1String("Tools")))
+            continue;
+        for (QAction *sub : menuAction->menu()->actions()) {
+            if (!sub->menu()
+                || sub->menu()->title()
+                       != QLatin1String("Development Tools"))
+                continue;
+            for (QAction *action : sub->menu()->actions()) {
+                if (action->text() == QLatin1String("BiDi Dev &Tools"))
+                    torBidi = action;
+            }
+        }
+    }
+    BrowserApplication::setTorMode(false);
+    QVERIFY(torBidi);
+    QVERIFY(!torBidi->isEnabled());
+    QVERIFY(!torBidi->toolTip().isEmpty());
+    closeWindow(torWindow);
+#else
+    QCOMPARE(entries.size(), 1);
+    closeWindow(window);
+#endif
 }
 
 // saveState/restoreState serialize the window+tab layout.

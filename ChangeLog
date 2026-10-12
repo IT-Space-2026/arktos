@@ -126,6 +126,11 @@ UI:
   `spikes/servo/servo-embed/target/`, the build auto-enables it and
   qmake announces the resolved engine set; opt out with
   `qmake CONFIG-=servo`, `noservo=1` or `servo=0` (ENG10).
+- The rendering-engine dropdown in Preferences shows the real Servo
+  version ("Servo 0.7.0") next to the versioned Chromium entry
+  instead of "Servo (experimental)", read from the servo-embed
+  library itself; artifacts built before the version export fall
+  back to "Servo (version unknown)" (ENG11).
 - Fixed a whole-process crash on the Servo backend: libservo permits
   exactly one web view per process lifetime — a second engine tab
   (re-swapping a tab back to Servo, a second Servo tab, or reload after

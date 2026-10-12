@@ -41,6 +41,10 @@ void se_set_zoom(SeInstance instance, float zoom);
 void se_eval_js(SeInstance instance, const char *script);
 int se_frame_size(SeInstance instance, unsigned *width, unsigned *height);
 long se_frame_copy(SeInstance instance, unsigned char *buf, unsigned long buf_len);
+/* ENG11: linked libservo version string ("0.7.0") — process-lifetime
+ * static, do not free. Never NULL; "unknown" if unparseable. */
+const char *se_version(void);
+
 unsigned long se_request_count(SeInstance instance);
 long se_request_log(SeInstance instance, char *buf, unsigned long buf_len);
 void se_destroy(SeInstance instance);

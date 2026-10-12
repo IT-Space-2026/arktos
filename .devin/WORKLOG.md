@@ -572,3 +572,4 @@
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (WORKLOG.md, tst_browsermainwindow.cpp modified mid-run by another agent; lane 2 ahead, 6th consecutive skip)
 - 2026-10-12 MERGEWATCH: rust-work skipped — dirty tree conflict (COVERAGE.md, WORKLOG.md, sitepanel.cpp/.h, tst_sitepanel.cpp still modified mid-run by another agent; lane 4 ahead, 14th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (WORKLOG.md, tst_browsermainwindow.cpp modified mid-run by another agent; lane 2 ahead, 7th consecutive skip)
+- 2026-10-12 ENG11: servo-embed se_version() export + optional dlopen resolve -> engine dropdown "Servo 0.7.0" (was hardcoded "Servo (experimental)"); also landed dirty DEVT05/SIDE05/TRUST11 leftovers + fixed toggleViewAction text clobbered by dock setWindowTitle in retranslate — ./arora --engine-list "servo - Servo 0.7.0", Chromium unchanged, make check rc=0 (80 programs, 0 failed) offscreen

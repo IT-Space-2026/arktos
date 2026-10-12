@@ -13,14 +13,15 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use dpi::PhysicalSize;
 use servo::{
     opts::Opts, ConsoleLogLevel, DeviceIntRect, DevicePoint, EventLoopWaker, InputEvent, Key,
     KeyState, KeyboardEvent, LoadStatus, MouseButton, MouseButtonAction, MouseButtonEvent,
     MouseMoveEvent, NavigationRequest, RenderingContext, RgbaImage, Servo, ServoBuilder,
-    SoftwareRenderingContext, WebResourceLoad, WebView, WebViewBuilder, WebViewDelegate,
-    WebViewPoint, WheelDelta, WheelEvent, WheelMode,
+    SoftwareRenderingContext, UserAgentPlatform, WebResourceLoad, WebView, WebViewBuilder,
+    WebViewDelegate, WebViewPoint, WheelDelta, WheelEvent, WheelMode,
 };
 use url::Url;
 
@@ -465,6 +466,26 @@ pub extern "C" fn se_request_log(instance: *mut SeInstance, buf: *mut c_char, bu
     }
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len()) };
     bytes.len() as isize
+}
+
+/// ENG11: report the linked libservo version ("0.7.0"), parsed out of
+/// the engine's own user-agent product token so the string always
+/// tracks the pinned `servo` dependency — never nullptr, an
+/// unrecognized UA yields "unknown". The returned pointer borrows a
+/// process-lifetime static; callers must not free it.
+#[no_mangle]
+pub extern "C" fn se_version() -> *const c_char {
+    static VERSION: OnceLock<CString> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            let ua = UserAgentPlatform::default().to_user_agent_string();
+            let version = ua
+                .split_whitespace()
+                .find_map(|token| token.strip_prefix("Servo/"))
+                .unwrap_or("unknown");
+            cstr(version)
+        })
+        .as_ptr()
 }
 
 #[no_mangle]
