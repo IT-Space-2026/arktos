@@ -3212,6 +3212,27 @@ void tst_BrowserMainWindow::tabStripCompactHeight()
             qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
         bar->grab().save(dir + QLatin1String("/strip.png"));
     }
+
+    // TABS10: the Left/Right strip keeps single-line rows on the
+    // real window — the reporter saw ~2x a text line.
+    settings.setValue(QLatin1String("tabs/tabBarPosition"), 2);
+    window->tabWidget()->loadSettings();
+    for (int i = 0; i < 10; ++i)
+        QApplication::processEvents();
+    QVERIFY2(bar->tabRect(0).height()
+                 <= bar->fontMetrics().height() + 12,
+             qPrintable(QStringLiteral(
+                 "vertical row height %1 exceeds one text line (%2)")
+                 .arg(bar->tabRect(0).height())
+                 .arg(bar->fontMetrics().height() + 12)));
+    QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+    if (qEnvironmentVariableIsSet("ARORA_STRIP_GRAB_DIR")) {
+        const QString dir =
+            qEnvironmentVariable("ARORA_STRIP_GRAB_DIR");
+        bar->grab().save(dir + QLatin1String("/strip-vertical.png"));
+    }
+    settings.remove(QLatin1String("tabs/tabBarPosition"));
+
     settings.remove(QLatin1String("tabs/containerDisplay"));
     closeWindow(window);
 }

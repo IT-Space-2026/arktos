@@ -98,6 +98,7 @@ private slots:
     void loadStringFromUntrustedSource();
     void tabBarPositionSetting();
     void verticalTabStripWidth();
+    void verticalTabCompactDefault();
     void tabHoverPreviews();
     void tabThumbnailStaleness();
     void omnibox();
@@ -916,6 +917,51 @@ void tst_TabWidget::verticalTabStripWidth()
     QApplication::processEvents();
     QCOMPARE(int(widget.tabPosition()), int(QTabWidget::East));
     QVERIFY(bar->width() >= 160 && bar->width() <= 175);
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    settings.remove(QLatin1String("tabBarPosition"));
+    settings.endGroup();
+}
+
+// TABS10: a fresh profile gets the compact 140px Left/Right rail and
+// a stored legacy 180 migrates forward through the real widget (it
+// means the grip was never dragged); a user-dragged width survives
+// the same construction path untouched.
+void tst_TabWidget::verticalTabCompactDefault()
+{
+    QSettings settings;
+    settings.beginGroup(QLatin1String("tabs"));
+    settings.setValue(QLatin1String("tabBarPosition"), 2);   // Left
+
+    settings.remove(QLatin1String("verticalTabWidth"));
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.resize(640, 480);
+        widget.show();
+        QApplication::processEvents();
+        TabBar *bar = widget.bar();
+        QCOMPARE(bar->verticalTabWidth(), 140);
+        QVERIFY(bar->width() >= 140 && bar->width() <= 150);
+        QCOMPARE(bar->tabRect(0).width(), 140);
+        // A plain row is a single text line tall.
+        QVERIFY(bar->tabRect(0).height()
+                <= bar->fontMetrics().height() + 12);
+    }
+
+    // A stored legacy default migrates.
+    settings.setValue(QLatin1String("verticalTabWidth"), 180);
+    {
+        SubTabWidget widget;
+        QCOMPARE(widget.bar()->verticalTabWidth(), 140);
+    }
+
+    // A user-set width stays.
+    settings.setValue(QLatin1String("verticalTabWidth"), 220);
+    {
+        SubTabWidget widget;
+        QCOMPARE(widget.bar()->verticalTabWidth(), 220);
+    }
 
     settings.remove(QLatin1String("verticalTabWidth"));
     settings.remove(QLatin1String("tabBarPosition"));
