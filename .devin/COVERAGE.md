@@ -1,6 +1,6 @@
-# Coverage baseline (COV01)
+# Coverage baseline (COV01; gate 80->85 by COV05/COV08, lifted COV09-COV12)
 
-Generated: 2026-10-12 21:47 UTC on commit 72e1bd5
+Generated: 2026-10-12 21:52 UTC on commit d68db8a
 Toolchain: Ubuntu clang version 18.1.3 (1ubuntu1) + /usr/bin/llvm-cov-18
 
 ## Reproduce
@@ -216,7 +216,7 @@ TOTAL regions 79.11% (25900/32739)  functions 89.21% (3375/3783)  lines 85.50% (
 
 ## Rust crates (COV05)
 
-Generated: 2026-10-12 19:56 UTC on commit 0210e0d
+Generated: 2026-10-12 21:57 UTC on commit d68db8a
 Toolchain: cargo-llvm-cov 0.9.1
 
 Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-only`, gated at 85% minimum per crate by `make check` (.devin/check-rustcoverage.sh; `ARORA_RUST_COVERAGE_MIN` overrides).
@@ -224,7 +224,7 @@ Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-
 | Crate | Lines |
 |-------|-------|
 | src/adblock/rust | 90.50% |
-| src/rustcore | 91.63% |
+| src/rustcore | 91.64% |
 | src/rustdl | 89.25% |
 
 <!-- rustcov:end -->

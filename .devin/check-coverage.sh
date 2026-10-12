@@ -15,8 +15,9 @@
 #
 # Env:
 #   ARORA_COVERAGE_MIN=N   exit non-zero when src/ line coverage < N
-#                          (default 85 — the COV05 gate; set 0 for
-#                          report-only)
+#                          (default 85 — raised from 80 by COV05/COV08
+#                          after COV09-COV12 lifted the baseline; set 0
+#                          for report-only)
 #   ARORA_COVERAGE_JOBS=N  parallel make jobs (default: nproc, max 4)
 #   ARORA_COVERAGE_KEEP=1  keep the instrumented build tree for
 #                          inspection instead of deleting it
@@ -426,7 +427,7 @@ else
 fi
 
 {
-    echo "# Coverage baseline (COV01)"
+    echo "# Coverage baseline (COV01; gate 80->85 by COV05/COV08, lifted COV09-COV12)"
     echo
     echo "Generated: $(date -u '+%Y-%m-%d %H:%M UTC') on commit $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "Toolchain: $(clang++ --version | head -1) + $LLVM_COV"
