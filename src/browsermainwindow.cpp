@@ -1753,6 +1753,9 @@ QDockWidget *BrowserMainWindow::sidebarDock() const
 // path simply stops instantiating it.
 void BrowserMainWindow::showBookmarksDialog()
 {
+    // SIDE02/SIDE07: "Show All Bookmarks" raises the sidebar on its
+    // Bookmarks section — the dock is the bookmark surface, the same
+    // pattern Tools > Downloads follows (DOWN02).
     ensureSidebarPanel();
     m_sidebarDock->setVisible(true);
     m_sidebarDock->raise();
@@ -1782,8 +1785,12 @@ void BrowserMainWindow::addSidebarBookmark(const QModelIndex &folder)
 void BrowserMainWindow::addBookmark()
 {
     WebView *webView = currentTab();
-    QString url = QLatin1String(webView->url().toEncoded());
-    QString title = webView->title();
+    // PREFS01: a widget tab (Preferences, History) has no page — the
+    // dialog opens with blank fields instead of dereferencing the
+    // missing view.
+    QString url = webView ? QLatin1String(webView->url().toEncoded())
+                          : QString();
+    QString title = webView ? webView->title() : QString();
 
     AddBookmarkDialog dialog;
     dialog.setUrl(url);
@@ -2571,7 +2578,9 @@ void BrowserMainWindow::showWindow()
             QList<BrowserMainWindow*> windows = application->mainWindows();
             windows.at(offset)->activateWindow();
             windows.at(offset)->raise();
-            windows.at(offset)->currentTab()->setFocus();
+            // A widget tab (Preferences, History) has no view to focus.
+            if (WebView *view = windows.at(offset)->currentTab())
+                view->setFocus();
         }
     }
 }
@@ -2579,6 +2588,8 @@ void BrowserMainWindow::showWindow()
 void BrowserMainWindow::openActionUrl(QAction *action)
 {
     int offset = action->data().toInt();
+    if (!currentTab())
+        return;
     Engine::Page *page = currentTab()->enginePage();
     if (offset < 0) {
         const QList<Engine::HistoryEntry> items = page->backItems(-1 * offset);

@@ -138,6 +138,7 @@ private slots:
     void downloadsSidebarPanel();
     void bookmarksSidebarPanel();
     void chromeSlots();
+    void widgetTabBookmarksSafety();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -1945,6 +1946,91 @@ void tst_BrowserMainWindow::chromeSlots()
                           savedDisplay);
     else
         settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// SIDE07: a widget tab (Preferences, History) has no WebView, so
+// currentTab() is null — every bookmarks/sidebar entry point reachable
+// from that state must survive it: "Show All Bookmarks" still opens,
+// bookmark/history opens land in a fresh real tab instead of dying,
+// "Add Bookmark" opens its dialog with empty fields rather than
+// dereferencing the missing page.
+void tst_BrowserMainWindow::widgetTabBookmarksSafety()
+{
+    QSettings settings;
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("sidebar/panels/bookmarks"));
+
+    SubWindow *window = new SubWindow;
+    window->show();
+    const int tabsBefore = window->tabWidget()->count();
+
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+    QVERIFY(!window->currentTab());
+
+    // "Show All Bookmarks" raises the sidebar on the Bookmarks page —
+    // the reported crash path.  No dialog, no second window.
+    QVERIFY(QMetaObject::invokeMethod(window, "showBookmarksDialog"));
+    QVERIFY(window->sidebarDock()->isVisible());
+    SidebarPanel *panel = window->sidebarPanel();
+    QVERIFY(panel);
+    QCOMPARE(panel->tabs()->currentWidget(), panel->bookmarksPage());
+    for (QWidget *widget : QApplication::topLevelWidgets())
+        QVERIFY(!qobject_cast<BookmarksDialog *>(widget));
+
+    rejectModal(); // AddBookmarkDialog opens empty, never crashes.
+    QVERIFY(QMetaObject::invokeMethod(window, "addBookmark"));
+
+    // A bookmark's open-in-current-tab cannot navigate a widget tab —
+    // it degrades to a new tab instead of doing nothing (or crashing).
+    emit panel->openUrl(QUrl(QLatin1String("about:blank")),
+                        TabWidget::CurrentTab, QString());
+    QCOMPARE(window->tabWidget()->count(), tabsBefore + 2);
+    QVERIFY(window->currentTab());
+
+    // Back on the widget tab, every menu path that used to dereference
+    // currentTab() unchecked now no-ops or degrades gracefully.
+    QVERIFY(QMetaObject::invokeMethod(window, "preferences"));
+
+    QAction action;
+    action.setData(1); // forward-navigation offset
+    QVERIFY(QMetaObject::invokeMethod(window, "openActionUrl",
+                                      Q_ARG(QAction *, &action)));
+
+    // Window-menu switching to a window whose current tab is a widget
+    // tab used to deref the null currentTab() for the focus call —
+    // only BrowserApplication::newMainWindow() registers, so this leg
+    // needs a window born there.
+    BrowserApplication *app = BrowserApplication::instance();
+    QVERIFY(app);
+    BrowserMainWindow *registered = app->newMainWindow();
+    QVERIFY(QMetaObject::invokeMethod(registered, "preferences"));
+    QVERIFY(!registered->currentTab());
+    const int windowIndex = app->mainWindows().indexOf(registered);
+    QVERIFY(windowIndex >= 0);
+    QVERIFY(QMetaObject::invokeMethod(window, "aboutToShowWindowMenu"));
+    QMenu *windowMenu = nullptr;
+    for (QAction *menuAction : window->menuBar()->actions()) {
+        if (menuAction->menu()
+            && menuAction->text().contains(QLatin1String("Window")))
+            windowMenu = menuAction->menu();
+    }
+    QVERIFY(windowMenu);
+    QAction *registeredAction = nullptr;
+    for (QAction *menuAction : windowMenu->actions()) {
+        if (menuAction->data().isValid()
+            && menuAction->data().toInt() == windowIndex) {
+            registeredAction = menuAction;
+            break;
+        }
+    }
+    QVERIFY(registeredAction);
+    registeredAction->trigger();
+
+    settings.remove(QLatin1String("MainWindow/showSidebar"));
+    settings.remove(QLatin1String("MainWindow/sidebarDockArea"));
+    settings.remove(QLatin1String("sidebar/panels/bookmarks"));
+    closeWindow(registered);
+    closeWindow(window);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

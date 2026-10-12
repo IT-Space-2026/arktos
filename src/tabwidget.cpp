@@ -932,6 +932,12 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
         backend->createProfile(Engine::ProfileOptions(), nullptr);
     EngineTab *tab = new EngineTab(backend, profile, this);
     if (!tab->page()) {
+        // ENG12: the backend refused the page (servo's one-instance
+        // limit, an absent artifact, ...) — surface the refusal
+        // rather than silently doing nothing on "Reload in <engine>".
+        emit showStatusBarMessage(
+            tr("%1 is not available for this tab")
+                .arg(backend->displayName()));
         delete tab;
         return nullptr;
     }
@@ -3310,6 +3316,11 @@ void TabWidget::loadUrl(const QUrl &url, OpenUrlIn tab, const QString &title)
                       "url" << url;
         return;
     }
+    // PREFS01: a widget tab (Preferences, History) has no page to
+    // navigate — a "current tab" open (bookmark, history entry, home
+    // button) lands in a fresh tab instead of silently dying.
+    if (tab == CurrentTab && !currentWebView())
+        tab = NewSelectedTab;
     WebView *webView = getView(tab, currentWebView());
     if (webView) {
         int index = webViewIndex(webView);

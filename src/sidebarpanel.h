@@ -95,6 +95,8 @@ public slots:
     void showDownloads();
     // SIDE04: Ctrl+Shift+B / Bookmarks > Show All Bookmarks lands
     // here — the dock is the bookmarks manager surface now.
+    // SIDE07: Bookmarks > Show All Bookmarks selects the Bookmarks
+    // section the same way Ctrl+Y selects Downloads.
     void showBookmarks();
     // SIDE02: syncs the rail with the persisted per-panel visibility —
     // newly enabled panels build on demand, disabled ones are dropped.
@@ -105,6 +107,7 @@ private slots:
     void bookmarksContextMenu(const QPoint &pos);
     void removeSelectedBookmark();
     void updateBookmarkRemoveState();
+    void newBookmarkFolder(const QModelIndex &index);
     void openHistoryEntry(const QModelIndex &index, TabWidget::OpenUrlIn tab);
     void historyContextMenu(const QPoint &pos);
     void openDownload(const QModelIndex &index);
@@ -135,6 +138,7 @@ private:
     QPointer<TreeSortFilterProxyModel> m_bookmarksProxy;
     QPointer<TreeSortFilterProxyModel> m_historyProxy;
     QPointer<QSortFilterProxyModel> m_downloadsProxy;
+    QPointer<QWidget> m_bookmarksPage;
     QPointer<QWidget> m_downloadsPage;
     QPointer<QComboBox> m_downloadsSort;
     QPointer<QFrame> m_downloadDetail;
