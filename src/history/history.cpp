@@ -152,6 +152,10 @@ QVariant HistoryModel::data(const QModelIndex &index, int role) const
         return item.url;
     case TitleRole:
         return item.userTitle();
+    case Qt::ToolTipRole:
+        // SIDE06: same reason as the bookmarks model — the sidebar
+        // hides the address column, hover still shows it.
+        return item.userTitle() + QLatin1Char('\n') + item.url;
     case Qt::DisplayRole:
     case Qt::EditRole: {
         switch (index.column()) {

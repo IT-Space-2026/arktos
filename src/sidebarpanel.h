@@ -93,6 +93,9 @@ public slots:
     // SIDE02: syncs the rail with the persisted per-panel visibility —
     // newly enabled panels build on demand, disabled ones are dropped.
     void applyPanelVisibility();
+    // SIDE06: mirrors the icon rail onto the dock's outer edge —
+    // left rail when docked left, right rail when docked right.
+    void setDockSide(Qt::DockWidgetArea area);
 
 private slots:
     void openBookmark(const QModelIndex &index, TabWidget::OpenUrlIn tab);

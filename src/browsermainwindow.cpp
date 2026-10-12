@@ -328,10 +328,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags)
         m_autoSaver->changeOccurred();
     });
     connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
-            this, [](Qt::DockWidgetArea area) {
+            this, [this](Qt::DockWidgetArea area) {
         QSettings settings;
         settings.setValue(QLatin1String("MainWindow/sidebarDockArea"),
                           int(area));
+        // SIDE06: the rail follows the dock to the other edge.
+        if (m_sidebarPanel)
+            m_sidebarPanel->setDockSide(area);
     });
     // DOWN02: a new download no longer pops a separate window — the
     // Downloads section is selected when the dock is already up, and
@@ -1485,6 +1488,8 @@ void BrowserMainWindow::ensureSidebarPanel()
     connect(m_sidebarPanel, &SidebarPanel::closeRequested,
             m_sidebarDock, &QWidget::hide);
     m_sidebarDock->setWidget(m_sidebarPanel);
+    // SIDE06: the rail hugs the dock's outer edge.
+    m_sidebarPanel->setDockSide(dockWidgetArea(m_sidebarDock));
 }
 
 void BrowserMainWindow::applySidebarSettings()
@@ -1505,8 +1510,12 @@ void BrowserMainWindow::applySidebarSettings()
         ensureSidebarPanel();
     // SIDE02: an already-built panel picks up per-panel visibility
     // changes here too (a hidden dock re-reads on next show anyway).
-    if (m_sidebarPanel)
+    if (m_sidebarPanel) {
         m_sidebarPanel->applyPanelVisibility();
+        // SIDE06: keep the rail on the outer edge after a
+        // settings-driven dock move.
+        m_sidebarPanel->setDockSide(area);
+    }
     m_sidebarDock->setVisible(show);
 }
 
