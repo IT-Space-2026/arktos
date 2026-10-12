@@ -1823,12 +1823,13 @@ void TabBar::paintEvent(QPaintEvent *event)
 void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
 {
     QTabBar::initStyleOption(option, tabIndex);
-    if (isTabPinned(tabIndex)) {
-        const TabWidget *tabWidget =
-            qobject_cast<TabWidget*>(parentWidget());
-        if (!tabWidget || !tabWidget->isTabGroupChip(tabIndex))
-            option->text.clear();
-    }
+    // UIAUDIT03: one parent cast per call — this runs per tab per
+    // repaint, so don't cast again inside isTabPinned().
+    const TabWidget *tabWidget =
+        qobject_cast<TabWidget*>(parentWidget());
+    if (tabWidget && tabWidget->isTabPinned(tabIndex)
+            && !tabWidget->isTabGroupChip(tabIndex))
+        option->text.clear();
 }
 
 QSize TabBar::tabSizeHint(int index) const
@@ -1865,13 +1866,13 @@ QSize TabBar::tabSizeHint(int index) const
     }
     // TABS04: a pinned tab shrinks to the favicon and its margins —
     // the close button is hidden and the title is not painted.
-    if (isTabPinned(index)) {
-        const TabWidget *tabWidget =
-            qobject_cast<TabWidget*>(parentWidget());
-        if (!tabWidget || !tabWidget->isTabGroupChip(index))
-            return QSize(iconSize().width() + 20,
-                         qMax(sizeHint.height(), thickness)
-                             + chip.height());
+    const TabWidget *pinnedOwner =
+        qobject_cast<TabWidget*>(parentWidget());
+    if (pinnedOwner && pinnedOwner->isTabPinned(index)
+            && !pinnedOwner->isTabGroupChip(index)) {
+        return QSize(iconSize().width() + 20,
+                     qMax(sizeHint.height(), thickness)
+                         + chip.height());
     }
     // TABGRP01: a collapsed group's chip shrinks to its label instead
     // of the member's title; the first member of a run widens to carry

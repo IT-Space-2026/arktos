@@ -107,6 +107,7 @@ HEADERS += \
     $$PWD/pipwindow.h \
     $$PWD/plaintexteditsearch.h \
     $$PWD/popupblocker.h \
+    $$PWD/positionpicker.h \
     $$PWD/qrcodedialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
@@ -178,6 +179,7 @@ SOURCES += \
     $$PWD/pipwindow.cpp \
     $$PWD/plaintexteditsearch.cpp \
     $$PWD/popupblocker.cpp \
+    $$PWD/positionpicker.cpp \
     $$PWD/qrcodedialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
