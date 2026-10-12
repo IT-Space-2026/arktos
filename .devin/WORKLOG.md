@@ -578,3 +578,4 @@
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 2 ahead, 8th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 9th consecutive skip)
 - 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 10th consecutive skip)
+- 2026-10-12 MERGEWATCH: ui-work skipped — dirty tree conflict (src/main.cpp, src/tabwidget.cpp modified mid-run by another agent; lane 3 ahead, 11th consecutive skip)
