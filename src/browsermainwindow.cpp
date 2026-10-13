@@ -81,6 +81,7 @@
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
+#include "extensionactionbar.h"
 #include "history.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
@@ -1854,6 +1855,20 @@ void BrowserMainWindow::setupToolBar()
     m_navigationSplitter = new QSplitter(m_navigationBar);
     m_navigationSplitter->addWidget(m_tabWidget->locationBarStack());
 
+    // EXT08: extension action cluster — one button per enabled
+    // extension that declares an action popup, in the splitter cell
+    // right after the location bar (the engine indicator's cell on
+    // master — same slot here).  Private and tor windows get no host
+    // at all: their profiles may never load extensions, so there is
+    // nothing for the strip to show.
+    if (!BrowserApplication::isPrivate()) {
+        m_extensionActionBar = new ExtensionActionBar(m_navigationBar);
+        m_extensionActionBar->setIconSize(m_navigationBar->iconSize());
+        m_navigationSplitter->addWidget(m_extensionActionBar);
+        m_navigationSplitter->setCollapsible(1, false);
+        m_navigationSplitter->setStretchFactor(1, 0);
+    }
+
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
     m_navigationSplitter->addWidget(m_toolbarSearch);
     connect(m_toolbarSearch, &ToolbarSearch::search,
@@ -1876,7 +1891,10 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addAction(m_viewSidebarAction);
     int splitterWidth = m_navigationSplitter->width();
     QList<int> sizes;
-    sizes << (int)((double)splitterWidth * .80) << (int)((double)splitterWidth * .20);
+    sizes << (int)((double)splitterWidth * .80);
+    if (m_extensionActionBar)
+        sizes << m_extensionActionBar->sizeHint().width();
+    sizes << (int)((double)splitterWidth * .20);
     m_navigationSplitter->setSizes(sizes);
 
     // MENU08: bigger text under the Arora button — the dropdown and

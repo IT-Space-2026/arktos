@@ -30,8 +30,10 @@
 #include <qwebchannel.h>
 #include <qwebengineprofile.h>
 #include <qwebenginepage.h>
+#include <qwebengineview.h>
 #include <qcombobox.h>
 #include <qdockwidget.h>
+#include <qfile.h>
 #include <qframe.h>
 #include <qhash.h>
 #include <qheaderview.h>
@@ -81,6 +83,8 @@
 #include "tormanager.h"
 #include "tortitlebar.h"
 #include "downloadmanager.h"
+#include "extensionactionbar.h"
+#include "extensionmanager.h"
 #include "qtest_arora.h"
 #include "qtry.h"
 
@@ -166,6 +170,7 @@ private slots:
     void widgetTabBookmarksSafety();
     void tabStripCompactHeight();
     void stopReloadState();
+    void extensionActionButtons();
 };
 
 void tst_BrowserMainWindow::initTestCase()
@@ -4922,6 +4927,188 @@ void tst_BrowserMainWindow::stopReloadState()
         20000);
     closeWindow(torWindow);
     BrowserApplication::setTorMode(false);
+}
+
+// EXT08: enabled extensions that declare an action popup surface one
+// nav-bar button each in the splitter cell right after the location
+// bar; the button's click opens the chrome-extension:// popup in a
+// Qt::Popup-framed view on the canonical profile.  Nothing shows on
+// private/tor windows — their profiles may never load extensions.
+void tst_BrowserMainWindow::extensionActionButtons()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt built without webengine_extensions");
+
+    SubWindow *window = new SubWindow;
+    window->resize(1000, 600);
+    window->show();
+    QApplication::processEvents();
+
+    ExtensionActionBar *bar = window->findChild<ExtensionActionBar *>(
+        QLatin1String("extensionActionBar"));
+    QVERIFY(bar);
+
+    // The strip lives in the navigation splitter immediately after
+    // the location bar stack — index 1, where the engine indicator
+    // cell sits on master.
+    QSplitter *splitter = window
+        ->findChild<QToolBar *>(QLatin1String("NavigationToolBar"))
+        ->findChild<QSplitter *>();
+    QVERIFY(splitter);
+    QCOMPARE(splitter->indexOf(bar), 1);
+
+    // The bundled component extensions carry no action popup, so a
+    // fresh window's strip is empty and hidden — no dead gap.
+    const int baseline = bar->actionCount();
+    if (baseline == 0)
+        QVERIFY(bar->isHidden());
+
+    // Popup-bearing MV3 fixture: action.default_popup +
+    // action.default_icon + a top-level icons map.
+    QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    auto writeFile = [&fixture](const QString &name,
+                                const QByteArray &contents) {
+        QFile file(fixture.path() + QLatin1Char('/') + name);
+        return file.open(QIODevice::WriteOnly)
+            && file.write(contents) == contents.size();
+    };
+    QVERIFY(writeFile(QLatin1String("manifest.json"),
+        "{\"manifest_version\":3,"
+        "\"name\":\"ext-action-fixture\","
+        "\"version\":\"0.1\","
+        "\"action\":{\"default_popup\":\"popup.html\","
+        "\"default_icon\":{\"16\":\"icon16.png\",\"32\":\"icon32.png\"}},"
+        "\"icons\":{\"16\":\"icon16.png\",\"48\":\"icon48.png\"}}"));
+    QVERIFY(writeFile(QLatin1String("popup.html"),
+        "<html><body style=\"width:300px;height:200px\">popup</body></html>"));
+    for (const char *icon : {"icon16.png", "icon32.png", "icon48.png"}) {
+        QImage image(16, 16, QImage::Format_ARGB32);
+        image.fill(QColor(30, 144, 60));
+        QVERIFY(image.save(fixture.path() + QLatin1Char('/')
+                           + QLatin1String(icon)));
+    }
+
+    ExtensionManager *extensions = ExtensionManager::instance();
+    const auto findId = [extensions]() {
+        for (const ExtensionManager::ExtensionInfo &info
+             : extensions->extensions()) {
+            if (info.name == QLatin1String("ext-action-fixture"))
+                return info.id;
+        }
+        return QString();
+    };
+
+    extensions->loadExtension(fixture.path());
+    QString extensionId;
+    QTRY_VERIFY_WITH_TIMEOUT(!(extensionId = findId()).isEmpty(),
+                             15000);
+
+    // Loaded but still disabled => no button yet.
+    QTRY_VERIFY_WITH_TIMEOUT(bar->actionCount() == baseline, 5000);
+
+    extensions->setExtensionEnabled(extensionId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(bar->actionCount() == baseline + 1,
+                             15000);
+    QVERIFY(bar->isVisibleTo(window));
+
+    QToolButton *button = bar->findChild<QToolButton *>(
+        QLatin1String("extensionActionButton_") + extensionId);
+    QVERIFY(button);
+    QCOMPARE(button->toolTip(), QLatin1String("ext-action-fixture"));
+    QVERIFY(!button->icon().isNull());
+    QVERIFY(!button->icon()
+        .pixmap(button->iconSize()).isNull());
+
+    // Click -> Qt::Popup-framed view on the canonical profile loads
+    // the extension's action popup url.
+    const auto popup = []() -> QFrame * {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            if (top->objectName()
+                == QLatin1String("extensionActionPopup"))
+                return qobject_cast<QFrame *>(top);
+        }
+        return nullptr;
+    };
+    QVERIFY(!popup());
+    button->click();
+    QFrame *actionPopup = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((actionPopup = popup()) != nullptr, 10000);
+    QVERIFY(actionPopup->isVisible());
+    QVERIFY(actionPopup->windowFlags() & Qt::Popup);
+    QWebEngineView *popupView =
+        actionPopup->findChild<QWebEngineView *>();
+    QVERIFY(popupView);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        popupView->url().scheme(), QLatin1String("chrome-extension"),
+        10000);
+    QCOMPARE(popupView->page()->profile(),
+             BrowserApplication::instance()->webEngineProfile());
+    // The popup is chrome, never a tab.
+    for (int i = 0; i < window->tabWidget()->count(); ++i) {
+        QVERIFY(!window->tabWidget()->webView(i)->url().scheme()
+            .startsWith(QLatin1String("chrome-extension")));
+    }
+
+    // Optional visual review: ARORA_EXT_GRAB_DIR=<dir> grabs the
+    // window (button strip visible right of the url bar) and the
+    // open action popup.
+    const QByteArray grabDir = qgetenv("ARORA_EXT_GRAB_DIR");
+    if (!grabDir.isEmpty()) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            popupView->page()->isLoading() == false, 15000);
+        window->grab().save(
+            QLatin1String(grabDir) + QLatin1String("/ext-bar.png"));
+        actionPopup->grab().save(
+            QLatin1String(grabDir) + QLatin1String("/ext-popup.png"));
+    }
+
+    // Re-clicking the same button toggles the popup closed.
+    button->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!popup() || !popup()->isVisible(), 5000);
+
+    // A second window mirrors the same extension set on its own host.
+    SubWindow *second = new SubWindow;
+    second->show();
+    ExtensionActionBar *secondBar =
+        second->findChild<ExtensionActionBar *>(
+            QLatin1String("extensionActionBar"));
+    QVERIFY(secondBar);
+    QVERIFY(secondBar != bar);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        secondBar->actionCount() == baseline + 1, 10000);
+    closeWindow(second);
+
+    // Disable -> the button goes away in every window.
+    extensions->setExtensionEnabled(extensionId, false);
+    QTRY_VERIFY_WITH_TIMEOUT(bar->actionCount() == baseline, 15000);
+    if (baseline == 0)
+        QVERIFY(bar->isHidden());
+
+    // Private + tor windows never get the host at all, whatever the
+    // extension set.
+    BrowserApplication::setPrivate(true);
+    SubWindow *privateWindow = new SubWindow;
+    privateWindow->show();
+    QVERIFY(!privateWindow->findChild<ExtensionActionBar *>(
+        QLatin1String("extensionActionBar")));
+    closeWindow(privateWindow);
+    BrowserApplication::setPrivate(false);
+
+    BrowserApplication::setTorMode(true);
+    SubWindow *torWindow = new SubWindow;
+    torWindow->show();
+    QVERIFY(!torWindow->findChild<ExtensionActionBar *>(
+        QLatin1String("extensionActionBar")));
+    closeWindow(torWindow);
+    BrowserApplication::setTorMode(false);
+
+    closeWindow(window);
+
+    // Session-scoped fixture — unload so nothing leaks into later
+    // tests or the real profile's extension list.
+    extensions->removeExtension(extensionId);
+    QTRY_VERIFY_WITH_TIMEOUT(findId().isEmpty(), 15000);
 }
 
 QTEST_MAIN(tst_BrowserMainWindow)

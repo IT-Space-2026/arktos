@@ -454,6 +454,14 @@ UI:
   where the names are standard. Separators, submenu headers and the
   dynamic rows (history/bookmark entries, window list, encodings,
   user agents) stay iconless by design (ICONS07).
+- Enabled extensions finally get a toolbar face: every loaded
+  extension that declares an action popup shows its own manifest icon
+  in a strip right after the address bar — Bitwarden's shield
+  included — and clicking it opens the extension's real popup UI in a
+  small anchored bubble that sizes itself to the page, never a new
+  tab. Turning an extension off or unloading it removes the button
+  immediately; extensions without popups stay out of the bar, and
+  private or Tor windows never show the strip (EXT08).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
