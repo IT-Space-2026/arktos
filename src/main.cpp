@@ -132,6 +132,7 @@
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPixmap>
+#include <QtGui/QWheelEvent>
 #include <QtGui/QStandardItemModel>
 #include <QtGui/QTextDocument>
 #include <QtGui/QTextLayout>
@@ -171,6 +172,7 @@
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QMenu>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolButton>
 #include <QtPrintSupport/QPrinter>
@@ -13420,7 +13422,15 @@ int main(int argc, char **argv)
 
         // (a)+(b): direct widget checks.
         {
-            PdfView *pdf = new PdfView;
+            // SmokePdfView exposes the protected key handler so the
+            // smoke can drive it deterministically — sending Escape
+            // through QApplication::sendEvent gets eaten by the
+            // window-level Stop shortcut before the widget sees it.
+            class SmokePdfView : public PdfView {
+            public:
+                void pressKey(QKeyEvent *event) { keyPressEvent(event); }
+            };
+            SmokePdfView *pdf = new SmokePdfView;
             pdf->resize(800, 600);
             pdf->show();
             {
@@ -13503,6 +13513,160 @@ int main(int argc, char **argv)
                       && printed.size() > 200);
             printed.close();
             QFile::remove(printPath);
+
+            // COV11: synthetic input drives the canvas handlers the
+            // headless pipeline never reaches — keyboard nav, ctrl
+            // wheel zoom, drag-to-scroll, the find bar, and the
+            // print dialog's reject arm.
+            PdfCanvas *canvas = pdf->canvas();
+            const auto sendKey = [canvas](int key) {
+                QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier);
+                QApplication::sendEvent(canvas, &ev);
+            };
+            sendKey(Qt::Key_PageDown);   // page 1 -> 2
+            sendKey(Qt::Key_PageDown);   // at end: scrollbar clamp
+            sendKey(Qt::Key_Space);
+            sendKey(Qt::Key_PageUp);
+            sendKey(Qt::Key_Backspace);
+            sendKey(Qt::Key_Home);
+            sendKey(Qt::Key_End);
+            sendKey(Qt::Key_Down);
+            sendKey(Qt::Key_Up);
+            const double zoomBefore = canvas->zoom();
+            sendKey(Qt::Key_Plus);
+            check(QStringLiteral("plus key zooms in"),
+                  canvas->zoom() > zoomBefore);
+            sendKey(Qt::Key_Minus);
+            sendKey(Qt::Key_Equal);
+            sendKey(Qt::Key_A);          // unhandled -> base class
+
+            const QPointF pos(50, 50);
+            const QPointF global =
+                canvas->viewport()->mapToGlobal(pos.toPoint());
+            QWheelEvent ctrlWheel(pos, global, QPoint(0, 0),
+                QPoint(0, 120), Qt::NoButton, Qt::ControlModifier,
+                Qt::NoScrollPhase, false);
+            const double wheelZoom = canvas->zoom();
+            QApplication::sendEvent(canvas->viewport(), &ctrlWheel);
+            check(QStringLiteral("ctrl wheel zooms"),
+                  qAbs(canvas->zoom() - wheelZoom * 1.1) < 0.01
+                      || canvas->zoom() > wheelZoom);
+            QWheelEvent ctrlWheelDown(pos, global, QPoint(0, 0),
+                QPoint(0, -120), Qt::NoButton, Qt::ControlModifier,
+                Qt::NoScrollPhase, false);
+            QApplication::sendEvent(canvas->viewport(), &ctrlWheelDown);
+            QWheelEvent plainWheel(pos, global, QPoint(0, 0),
+                QPoint(0, -240), Qt::NoButton, Qt::NoModifier,
+                Qt::NoScrollPhase, false);
+            QApplication::sendEvent(canvas->viewport(), &plainWheel);
+
+            const auto sendMouse =
+                [canvas](QEvent::Type type, Qt::MouseButton btn,
+                         QPoint at) {
+                QMouseEvent ev(type, at, canvas->mapToGlobal(at), btn,
+                    type == QEvent::MouseMove ? Qt::LeftButton
+                                              : Qt::NoButton,
+                    Qt::NoModifier);
+                QApplication::sendEvent(canvas->viewport(), &ev);
+            };
+            sendMouse(QEvent::MouseButtonPress, Qt::LeftButton,
+                      QPoint(100, 100));
+            sendMouse(QEvent::MouseMove, Qt::NoButton,
+                      QPoint(100, 40));
+            sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton,
+                      QPoint(100, 40));
+            sendMouse(QEvent::MouseButtonPress, Qt::RightButton,
+                      QPoint(10, 10));
+            sendMouse(QEvent::MouseButtonRelease, Qt::RightButton,
+                      QPoint(10, 10));
+            sendMouse(QEvent::MouseMove, Qt::NoButton,
+                      QPoint(20, 20));
+
+            // Fit-width toggle + resize relayout.
+            canvas->setFitWidth(true);
+            pdf->resize(640, 480);
+            QApplication::processEvents();
+            check(QStringLiteral("fit-width engages"),
+                  canvas->fitWidth());
+            canvas->setFitWidth(false);
+
+            // Ctrl+F on the view opens the find bar; typing runs an
+            // async find; next/prev walk hits; Escape closes.
+            QKeyEvent ctrlF(QEvent::KeyPress, Qt::Key_F,
+                            Qt::ControlModifier);
+            QApplication::sendEvent(pdf, &ctrlF);
+            // The toolbar spin box/combo also carry QLineEdits — the
+            // find bar's is the one with the placeholder text.
+            QLineEdit *findEdit = nullptr;
+            for (QLineEdit *e : pdf->findChildren<QLineEdit*>()) {
+                if (e->placeholderText()
+                        == QLatin1String("Find in document")) {
+                    findEdit = e;
+                    break;
+                }
+            }
+            QWidget *findBar =
+                findEdit ? findEdit->parentWidget() : nullptr;
+            check(QStringLiteral("ctrl-F opens find bar"),
+                  findBar && findBar->isVisible());
+            if (findEdit) {
+                findEdit->setText(QStringLiteral("goodbye"));
+                // textChanged fires an async find — give the worker
+                // a beat, then walk next/prev and close.
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout,
+                                 &loop, &QEventLoop::quit);
+                QObject::connect(canvas, &PdfCanvas::findStatus,
+                                 &loop, &QEventLoop::quit);
+                timeout.start(30000);
+                loop.exec();
+                const QList<QPushButton *> buttons =
+                    pdf->findChildren<QPushButton*>();
+                for (QPushButton *b : buttons) {
+                    if (b->text() == QLatin1String("Next"))
+                        b->click();
+                }
+                for (QPushButton *b : buttons) {
+                    if (b->text() == QLatin1String("Previous"))
+                        b->click();
+                }
+                QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape,
+                              Qt::NoModifier);
+                pdf->pressKey(&esc);
+                check(QStringLiteral("escape hides find bar"),
+                      !findBar->isVisible());
+            }
+
+            // printDocument: reject the print dialog (covers the
+            // dialog arm), then the still-loading arm on a fresh
+            // view (covers the info-box branch).
+            const auto dismissModal = []() {
+                QTimer::singleShot(200, qApp, []() {
+                    QWidget *w = QApplication::activeModalWidget();
+                    if (QDialog *d = qobject_cast<QDialog*>(w))
+                        d->reject();
+                    else if (w)
+                        w->close();
+                });
+            };
+            dismissModal();
+            pdf->printDocument();
+            check(QStringLiteral("print dialog dismissed"),
+                  !QApplication::activeModalWidget());
+
+            PdfView *loading = new PdfView;
+            dismissModal();
+            loading->printDocument();
+
+            // Re-set + clear exercise setDocument's reset arm and
+            // clearDocument's control teardown.
+            loading->setDocument(staged,
+                QUrl(QLatin1String("http://h/doc.pdf")));
+            loading->clearDocument();
+            delete loading;
+
             delete pdf;
         }
 

@@ -943,6 +943,10 @@ void tst_DownloadManager::speedSeries()
             QLatin1String("downloadGraph"));
         QVERIFY(graph);
         QCOMPARE(graph->sampleCount(), item->speedSampleCount());
+        // Force a repaint while the series is non-empty so paintEvent's
+        // peak-scaled fill + polyline arm runs (grab() renders even on
+        // the offscreen QPA, where spontaneous expose paints don't).
+        graph->grab();
 
         QLabel *speed = item->findChild<QLabel*>(
             QLatin1String("speedLabel"));

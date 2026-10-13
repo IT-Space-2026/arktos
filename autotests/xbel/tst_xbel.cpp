@@ -49,6 +49,7 @@ private slots:
     void write();
 
     void hostileInput();
+    void errorPaths();
 };
 
 // Subclass that exposes the protected functions.
@@ -311,6 +312,127 @@ void tst_Xbel::hostileInput()
         BookmarkNode *root = reader.read(&buffer);
         QVERIFY(root);
         QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+}
+
+// The error arms hostileInput doesn't reach: unreadable devices/files,
+// an oversized sparse file, a non-1.0 version, and the element mix at
+// every level (top-level bookmark/separator/unknown, folder desc +
+// unknown, bookmark desc + unknown).  Under ARORA_RUSTCORE the
+// structural gate refuses malformed input first — these fixtures are
+// all well-formed <xbel> documents so they sail through the gate and
+// exercise the Qt arms underneath it.
+void tst_Xbel::errorPaths()
+{
+    // A device that was never opened is not readable.
+    {
+        QFile device(QStringLiteral("does-not-exist.xbel"));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&device);
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // An existing but unopenable file takes the file-open failure arm
+    // (an empty root, and no error — that arm never raiseError()s).
+    {
+        QTemporaryFile file;
+        QVERIFY(file.open());
+        file.close();
+        QFile::setPermissions(file.fileName(), QFile::Permissions());
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(file.fileName());
+        QVERIFY(root);
+        QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // A sparse file past MaximumInputSize is refused before a byte is
+    // read — resize() keeps it sparse so no 64MB actually hits disk.
+    {
+        QTemporaryFile file;
+        QVERIFY(file.open());
+        QVERIFY(file.resize(64 * 1024 * 1024 + 8));
+        file.close();
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(file.fileName());
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // Version gate: a well-formed <xbel> whose version is not 1.0.
+    {
+        QByteArray doc = "<xbel version=\"2.0\"></xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QVERIFY(reader.error() != QXmlStreamReader::NoError);
+        delete root;
+    }
+
+    // Top-level bookmark + separator + unknown element.
+    {
+        QByteArray doc =
+            "<xbel version=\"1.0\">"
+            "<bookmark href=\"http://a.example/\"><title>A</title></bookmark>"
+            "<separator/>"
+            "<wibble>x</wibble>"
+            "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+        QCOMPARE(root->children().count(), 2);
+        QCOMPARE(root->children().at(0)->type(), BookmarkNode::Bookmark);
+        QCOMPARE(root->children().at(1)->type(), BookmarkNode::Separator);
+        delete root;
+    }
+
+    // Folder-level desc + unknown + separator + nested bookmark; the
+    // nested bookmark carries its own desc and unknown element.
+    {
+        QByteArray doc =
+            "<xbel version=\"1.0\">"
+            "<folder><title>F</title><desc>fdesc</desc><wibble/>"
+            "<bookmark href=\"http://b.example/\"><desc>bdesc</desc>"
+            "<wibble/></bookmark><separator/></folder>"
+            "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+        QCOMPARE(root->children().count(), 1);
+        BookmarkNode *folder = root->children().first();
+        QCOMPARE(folder->desc, QStringLiteral("fdesc"));
+        QCOMPARE(folder->children().count(), 2);
+        QCOMPARE(folder->children().first()->desc,
+                 QStringLiteral("bdesc"));
+        delete root;
+    }
+
+    // A bookmark with no title at all takes the "Unknown title" arm.
+    {
+        QByteArray doc =
+            "<xbel version=\"1.0\">"
+            "<bookmark href=\"http://c.example/\"></bookmark>"
+            "</xbel>";
+        QBuffer buffer(&doc);
+        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        SubXbelReader reader;
+        BookmarkNode *root = reader.read(&buffer);
+        QVERIFY(root);
+        QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+        QCOMPARE(root->children().first()->title,
+                 QStringLiteral("Unknown title"));
         delete root;
     }
 }

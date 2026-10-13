@@ -27,6 +27,7 @@
 #include <qcheckbox.h>
 #include <qlabel.h>
 #include <qpushbutton.h>
+#include <qsortfilterproxymodel.h>
 #include <qstandarditemmodel.h>
 #include <qtreewidget.h>
 #include <qtcpserver.h>
@@ -50,6 +51,7 @@
 #include "autofillmanager.h"
 #include "bookmarksdialog.h"
 #include "bookmarksmanager.h"
+#include "bookmarksmodel.h"
 #include "bookmarknode.h"
 #include "acceptlanguagedialog.h"
 #include "adblockdialog.h"
@@ -545,11 +547,120 @@ void tst_Dialogs::bookmarksDialog()
     bookmark->url = QLatin1String("http://bookmark.example.com/");
     manager->addBookmark(manager->menu(), bookmark);
 
+    // A folder flagged expanded makes the ctor's expandNodes recursion
+    // visit real children instead of just the top level.
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder);
+    folder->title = QLatin1String("DialogFolder");
+    folder->expanded = true;
+    manager->addBookmark(manager->menu(), folder);
+    BookmarkNode *nested = new BookmarkNode(BookmarkNode::Bookmark);
+    nested->title = QLatin1String("NestedBookmark");
+    nested->url = QLatin1String("http://nested.example.com/");
+    manager->addBookmark(folder, nested);
+
     BookmarksDialog dialog;
     QVERIFY(dialog.tree->model()->rowCount() > 0);
     QVERIFY(dialog.removeButton);
 
+    // The dialog emits openUrl with the row's url/tab-role/title when a
+    // bookmark entry is activated through any of the three open slots.
+    QUrl openedUrl;
+    int openedTab = -1;
+    QString openedTitle;
+    QObject::connect(&dialog, &BookmarksDialog::openUrl,
+                     [&](const QUrl &url, TabWidget::OpenUrlIn tab,
+                         const QString &title) {
+        openedUrl = url;
+        openedTab = static_cast<int>(tab);
+        openedTitle = title;
+    });
+
+    QModelIndex source = manager->bookmarksModel()->index(bookmark);
+    QVERIFY(source.isValid());
+    QModelIndex proxy = dialog.tree->model() == manager->bookmarksModel()
+            ? source
+            : static_cast<QSortFilterProxyModel *>(dialog.tree->model())
+                  ->mapFromSource(source);
+    QVERIFY(proxy.isValid());
+
+    // Guard arm first: a folder selection must not emit openUrl.
+    QModelIndex folderSource = manager->bookmarksModel()->index(folder);
+    QModelIndex folderProxy =
+        static_cast<QSortFilterProxyModel *>(dialog.tree->model())
+            ->mapFromSource(folderSource);
+    dialog.tree->setCurrentIndex(folderProxy);
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "openInCurrentTab"));
+    QVERIFY(!openedUrl.isValid());
+
+    dialog.tree->setCurrentIndex(proxy);
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "openInCurrentTab"));
+    QCOMPARE(openedUrl, QUrl(bookmark->url));
+    QCOMPARE(openedTab, static_cast<int>(TabWidget::CurrentTab));
+    QCOMPARE(openedTitle, bookmark->title);
+
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "openInNewTab"));
+    QCOMPARE(openedTab, static_cast<int>(TabWidget::NewTab));
+
+    // The no-arg overload records mouse/modifier state on the app then
+    // forwards as UserOrCurrent.
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "openBookmark"));
+    QCOMPARE(openedTab, static_cast<int>(TabWidget::UserOrCurrent));
+
+    // Inline-edit slots just hand the current index to the view.
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "editName"));
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "editAddress"));
+    QTest::qWait(50);
+
+    // newFolder twice: bookmark selected -> parent-folder+row arm (the
+    // folder lands in the menu below the bookmark), then a folder
+    // selection -> the plain append-inside arm.
+    const QList<BookmarkNode *> menuBefore = manager->menu()->children();
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "newFolder"));
+    QList<BookmarkNode *> menuAfter = manager->menu()->children();
+    QCOMPARE(menuAfter.count(), menuBefore.count() + 1);
+    BookmarkNode *createdInMenu = nullptr;
+    for (BookmarkNode *node : menuAfter)
+        if (!menuBefore.contains(node))
+            createdInMenu = node;
+    QVERIFY(createdInMenu);
+
+    const QList<BookmarkNode *> folderBefore =
+        manager->bookmarksModel()->node(folderSource)->children();
+    folderSource = manager->bookmarksModel()->index(folder);
+    folderProxy = static_cast<QSortFilterProxyModel *>(dialog.tree->model())
+                      ->mapFromSource(folderSource);
+    dialog.tree->setCurrentIndex(folderProxy);
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "newFolder"));
+    QList<BookmarkNode *> folderAfter =
+        manager->bookmarksModel()->node(folderSource)->children();
+    QCOMPARE(folderAfter.count(), folderBefore.count() + 1);
+    BookmarkNode *createdInFolder = nullptr;
+    for (BookmarkNode *node : folderAfter)
+        if (!folderBefore.contains(node))
+            createdInFolder = node;
+    QVERIFY(createdInFolder);
+
+    // The context menu builds its entries synchronously before exec();
+    // the exec'd menu is an active popup (not a modal widget), so a
+    // scheduled popup close lets it return without a click.
+    const auto closePopup = [] {
+        QTimer::singleShot(100, qApp, [] {
+            if (QWidget *popup = QApplication::activePopupWidget())
+                popup->close();
+        });
+    };
+    closePopup();
+    const QPoint bookmarkPos =
+        dialog.tree->visualRect(proxy).center();
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "customContextMenuRequested",
+                                      Q_ARG(QPoint, bookmarkPos)));
+    closePopup();
+    QVERIFY(QMetaObject::invokeMethod(&dialog, "customContextMenuRequested",
+                                      Q_ARG(QPoint, QPoint(1, 1))));
+
     manager->removeBookmark(bookmark);
+    manager->removeBookmark(createdInMenu);
+    manager->removeBookmark(folder);
 }
 
 void tst_Dialogs::acceptLanguageDialog()

@@ -1,6 +1,6 @@
-# Coverage baseline (COV01)
+# Coverage baseline (COV01; gate 80->85 by COV05/COV08, lifted COV09-COV12)
 
-Generated: 2026-10-12 19:31 UTC on commit 3a21268
+Generated: 2026-10-12 21:52 UTC on commit d68db8a
 Toolchain: Ubuntu clang version 18.1.3 (1ubuntu1) + /usr/bin/llvm-cov-18
 
 ## Reproduce
@@ -17,9 +17,9 @@ excluded). `ARORA_COVERAGE_MIN=NN` turns it into a gate.
 
 | Metric | Coverage |
 |--------|----------|
-| Lines | 83.36% |
-| Regions | 77.13% |
-| Functions | 87.74% |
+| Lines | 85.50% |
+| Regions | 79.11% |
+| Functions | 89.21% |
 
 ## Per-file
 
@@ -50,9 +50,9 @@ src/autosaver.cpp                                                               
 src/bidiclient.cpp                                                                     92                25    72.83%          14                 1    92.86%         147                26    82.31%          46                24    47.83%
 src/bidipanel.cpp                                                                     251                 9    96.41%          17                 0   100.00%         420                11    97.38%         106                11    89.62%
 src/bookmarks/addbookmarkdialog.cpp                                                    42                 5    88.10%          14                 3    78.57%         100                13    87.00%          20                 3    85.00%
-src/bookmarks/bookmarknode.cpp                                                        105                 9    91.43%          13                 1    92.31%         142                 9    93.66%          74                13    82.43%
+src/bookmarks/bookmarknode.cpp                                                        105                 8    92.38%          13                 1    92.31%         142                 9    93.66%          74                12    83.78%
 src/bookmarks/bookmarknode.h                                                            6                 0   100.00%           4                 0   100.00%           4                 0   100.00%           2                 1    50.00%
-src/bookmarks/bookmarksdialog.cpp                                                      56                34    39.29%          12                 8    33.33%         143                79    44.76%          36                27    25.00%
+src/bookmarks/bookmarksdialog.cpp                                                      56                 4    92.86%          12                 0   100.00%         143                12    91.61%          36                12    66.67%
 src/bookmarks/bookmarksmanager.cpp                                                    270                88    67.41%          32                 3    90.62%         444               155    65.09%         160                81    49.38%
 src/bookmarks/bookmarksmanager.h                                                        3                 1    66.67%           3                 1    66.67%           9                 3    66.67%           0                 0         -
 src/bookmarks/bookmarksmenu.cpp                                                        45                18    60.00%           8                 1    87.50%          76                19    75.00%          24                13    45.83%
@@ -60,12 +60,12 @@ src/bookmarks/bookmarksmodel.cpp                                                
 src/bookmarks/bookmarksmodel.h                                                          1                 0   100.00%           1                 0   100.00%           3                 0   100.00%           0                 0         -
 src/bookmarks/bookmarkstoolbar.cpp                                                     22                 2    90.91%          10                 0   100.00%          88                 0   100.00%           8                 5    37.50%
 src/bookmarks/htmlbookmarkswriter.cpp                                                  32                 4    87.50%           5                 0   100.00%          65                 6    90.77%          28                 7    75.00%
-src/bookmarks/xbel/xbelreader.cpp                                                     140                53    62.14%          10                 2    80.00%         154                48    68.83%         102                55    46.08%
+src/bookmarks/xbel/xbelreader.cpp                                                     140                21    85.00%          10                 0   100.00%         154                 9    94.16%         102                34    66.67%
 src/bookmarks/xbel/xbelwriter.cpp                                                      29                 2    93.10%           4                 0   100.00%          50                 3    94.00%          24                 4    83.33%
 src/browserapplication.cpp                                                            366               123    66.39%          61                 7    88.52%         702               172    75.50%         222               100    54.95%
 src/browsermainwindow.cpp                                                             652               155    76.23%         124                19    84.68%        1935               232    88.01%         436               169    61.24%
 src/browserpaths.h                                                                      5                 1    80.00%           1                 0   100.00%          10                 1    90.00%           4                 1    75.00%
-src/browserprofile.cpp                                                                339                79    76.70%          42                 2    95.24%         696                82    88.22%         232                67    71.12%
+src/browserprofile.cpp                                                                339                64    81.12%          42                 1    97.62%         696                56    91.95%         232                59    74.57%
 src/browsertheme.cpp                                                                   85                 4    95.29%          15                 0   100.00%         167                 4    97.60%          60                12    80.00%
 src/clearbutton.cpp                                                                    14                 5    64.29%           3                 0   100.00%          40                14    65.00%           6                 4    33.33%
 src/clearprivatedata.cpp                                                              189                 7    96.30%           9                 0   100.00%         287                 7    97.56%         162                26    83.95%
@@ -73,9 +73,9 @@ src/commandpalette.cpp                                                          
 src/containermanager.cpp                                                              249                21    91.57%          37                 0   100.00%         390                19    95.13%         178                34    80.90%
 src/devtoolswindow.cpp                                                                 28                 1    96.43%           5                 0   100.00%          52                 1    98.08%          18                 3    83.33%
 src/devtoolswindow.h                                                                    2                 0   100.00%           2                 0   100.00%           2                 0   100.00%           0                 0         -
-src/downloadgraph.cpp                                                                  22                10    54.55%           5                 0   100.00%          60                28    53.33%          14                10    28.57%
+src/downloadgraph.cpp                                                                  22                 2    90.91%           5                 0   100.00%          60                 5    91.67%          14                 3    78.57%
 src/downloadgraph.h                                                                     1                 0   100.00%           1                 0   100.00%           1                 0   100.00%           0                 0         -
-src/downloadmanager.cpp                                                               807                90    88.85%          79                 2    97.47%        1218               129    89.41%         520               123    76.35%
+src/downloadmanager.cpp                                                               807                87    89.22%          79                 2    97.47%        1218               126    89.66%         520               121    76.73%
 src/downloadmanager.h                                                                   6                 0   100.00%           6                 0   100.00%           6                 0   100.00%           0                 0         -
 src/downloadworker.cpp                                                                117                39    66.67%           7                 0   100.00%         244                64    73.77%         100                52    48.00%
 src/energysaver.cpp                                                                    74                 5    93.24%          13                 1    92.31%         116                 4    96.55%          58                12    79.31%
@@ -85,10 +85,10 @@ src/engine/enginetab.cpp                                                        
 src/engine/enginetab.h                                                                  4                 0   100.00%           4                 0   100.00%           4                 0   100.00%           0                 0         -
 src/engine/navigationpolicy.cpp                                                       363                50    86.23%          57                 4    92.98%         368                47    87.23%          68                20    70.59%
 src/engine/webenginebackend.cpp                                                       338               118    65.09%         109                22    79.82%         728               196    73.08%         234               129    44.87%
-src/extensions/extensionmanager.cpp                                                   543               259    52.30%          55                10    81.82%         981               400    59.23%         294               146    50.34%
+src/extensions/extensionmanager.cpp                                                   543                82    84.90%          55                 3    94.55%         981               140    85.73%         294               114    61.22%
 src/extensions/extensionreviewdialog.cpp                                              132                 4    96.97%           7                 0   100.00%         227                 7    96.92%          78                10    87.18%
 src/fingerprintprotector.cpp                                                           66                21    68.18%          11                 1    90.91%         106                29    72.64%          54                28    48.15%
-src/history/history.cpp                                                               469                73    84.43%          67                 5    92.54%         727                85    88.31%         332               103    68.98%
+src/history/history.cpp                                                               469                73    84.43%          67                 5    92.54%         727                85    88.31%         332               102    69.28%
 src/history/history.h                                                                  13                 1    92.31%           5                 0   100.00%          12                 0   100.00%           8                 4    50.00%
 src/history/historycompleter.cpp                                                      365                60    83.56%          59                 7    88.14%         590                76    87.12%         292                82    71.92%
 src/history/historymanager.cpp                                                        222                67    69.82%          32                 1    96.88%         385                56    85.45%         130                41    68.46%
@@ -105,7 +105,7 @@ src/locationbar/readerbutton.cpp                                                
 src/locationbar/sitepanel.cpp                                                         332                80    75.90%          35                 5    85.71%         653                99    84.84%         254                81    68.11%
 src/locationbar/siteshield.cpp                                                         80                11    86.25%          14                 1    92.86%         169                13    92.31%          50                11    78.00%
 src/locationbar/siteshield.h                                                            2                 0   100.00%           2                 0   100.00%           2                 0   100.00%           0                 0         -
-src/main.cpp                                                                         8196              2760    66.33%         504               120    76.19%       19617              4017    79.52%        3858              1770    54.12%
+src/main.cpp                                                                         8242              2633    68.05%         509               111    78.19%       19778              3570    81.95%        3888              1718    55.81%
 src/modelmenu.cpp                                                                     134                47    64.93%          28                 5    82.14%         258                83    67.83%          82                41    50.00%
 src/modeltoolbar.cpp                                                                  101                24    76.24%          15                 0   100.00%         178                27    84.83%          64                30    53.12%
 src/network/cookiejar/cookiedialog.cpp                                                 15                 1    93.33%           2                 0   100.00%          57                 1    98.25%          12                 1    91.67%
@@ -121,7 +121,7 @@ src/network/fileaccesshandler.cpp                                               
 src/network/networkaccessmanager.cpp                                                   79                34    56.96%          10                 2    80.00%         207                82    60.39%          58                31    46.55%
 src/network/networkdiskcache.cpp                                                        9                 1    88.89%           4                 0   100.00%          22                 1    95.45%           2                 1    50.00%
 src/network/networkproxyfactory.cpp                                                     9                 0   100.00%           4                 0   100.00%          16                 0   100.00%           6                 0   100.00%
-src/network/privacyrequestinterceptor.cpp                                             121                13    89.26%          56                 7    87.50%         308                32    89.61%          64                15    76.56%
+src/network/privacyrequestinterceptor.cpp                                             121                13    89.26%          56                 7    87.50%         308                32    89.61%          64                14    78.12%
 src/network/schemeaccesshandler.cpp                                                    34                 3    91.18%          12                 0   100.00%          96                 5    94.79%          12                 5    58.33%
 src/network/tlsverifier.cpp                                                            67                 4    94.03%          12                 0   100.00%         148                 4    97.30%          30                 7    76.67%
 src/network/trancolist.cpp                                                            103                36    65.05%          11                 0   100.00%         128                19    85.16%          56                19    66.07%
@@ -134,10 +134,10 @@ src/opensearch/opensearchmanager.cpp                                            
 src/opensearch/opensearchreader.cpp                                                    20                 1    95.00%           3                 0   100.00%          38                 0   100.00%          12                 2    83.33%
 src/opensearch/opensearchwriter.cpp                                                   116                 2    98.28%           3                 0   100.00%          85                 2    97.65%          32                 5    84.38%
 src/pdfsupport.cpp                                                                    130                12    90.77%          24                 1    95.83%         217                22    89.86%         104                24    76.92%
-src/pdfview.cpp                                                                       565               238    57.88%          71                28    60.56%        1142               415    63.66%         350               204    41.71%
+src/pdfview.cpp                                                                       565               141    75.04%          71                14    80.28%        1142               200    82.49%         350               138    60.57%
 src/pdfview.h                                                                          11                 1    90.91%          11                 1    90.91%          11                 1    90.91%           0                 0         -
 src/pdfworker.cpp                                                                      64                19    70.31%           3                 1    66.67%         157                44    71.97%          48                22    54.17%
-src/pictureinpicture.cpp                                                              139                59    57.55%          28                 7    75.00%         262                78    70.23%          90                55    38.89%
+src/pictureinpicture.cpp                                                              139                45    67.63%          28                 3    89.29%         262                61    76.72%          90                50    44.44%
 src/pipwindow.cpp                                                                      42                14    66.67%          14                 7    50.00%         124                25    79.84%          18                12    33.33%
 src/pipwindow.h                                                                         4                 1    75.00%           4                 1    75.00%           4                 1    75.00%           0                 0         -
 src/plaintexteditsearch.cpp                                                            17                 2    88.24%           4                 1    75.00%          34                 4    88.24%          10                 4    60.00%
@@ -151,8 +151,8 @@ src/readermode.cpp                                                              
 src/readermode.h                                                                        7                 0   100.00%           3                 0   100.00%           6                 0   100.00%           4                 1    75.00%
 src/rustcore/include/rustcore.h                                                         0                 0         -           0                 0         -           0                 0         -           0                 0         -
 src/rustcorebridge.cpp                                                                  9                 1    88.89%           5                 0   100.00%          24                 0   100.00%           2                 1    50.00%
-src/rustdownloadengine.cpp                                                            455               111    75.60%          32                 2    93.75%         653               126    80.70%         340               121    64.41%
-src/rustdownloadengine.h                                                               14                 2    85.71%          14                 2    85.71%          14                 2    85.71%           0                 0         -
+src/rustdownloadengine.cpp                                                            455               108    76.26%          32                 2    93.75%         653               121    81.47%         340               119    65.00%
+src/rustdownloadengine.h                                                               14                 1    92.86%          14                 1    92.86%          14                 1    92.86%           0                 0         -
 src/sandbox/bwrapgenerator.cpp                                                        213                12    94.37%          10                 0   100.00%         210                 3    98.57%          54                14    74.07%
 src/sandbox/platformgenerators.cpp                                                    147                11    92.52%           7                 0   100.00%         147                 7    95.24%          30                 4    86.67%
 src/sandbox/sandboxmanager.cpp                                                        126                23    81.75%           8                 0   100.00%         113                 9    92.04%          54                14    74.07%
@@ -175,15 +175,15 @@ src/startupprofile.h                                                            
 src/statusbarwidgets.cpp                                                              240                35    85.42%          28                 1    96.43%         442                30    93.21%         148                43    70.95%
 src/statusbarwidgets.h                                                                  2                 0   100.00%           2                 0   100.00%           2                 0   100.00%           0                 0         -
 src/streamingutils.h                                                                   18                 1    94.44%           1                 0   100.00%          22                 0   100.00%          12                 2    83.33%
-src/tabbar.cpp                                                                       1030               257    75.05%         101                11    89.11%        1725               345    80.00%         850               356    58.12%
+src/tabbar.cpp                                                                       1030               145    85.92%         101                 4    96.04%        1725               177    89.74%         850               267    68.59%
 src/tabpositionpicker.cpp                                                              23                 0   100.00%           2                 0   100.00%          43                 0   100.00%          16                 0   100.00%
 src/tabpreview.cpp                                                                     54                14    74.07%           7                 0   100.00%         118                19    83.90%          40                17    57.50%
-src/tabwidget.cpp                                                                    1872               234    87.50%         181                10    94.48%        2782               269    90.33%        1486               411    72.34%
+src/tabwidget.cpp                                                                    1872               233    87.55%         181                10    94.48%        2782               268    90.37%        1486               409    72.48%
 src/tabwidget.h                                                                         1                 0   100.00%           1                 0   100.00%           1                 0   100.00%           0                 0         -
 src/toolbarsearch.cpp                                                                 220                59    73.18%          30                 6    80.00%         432               115    73.38%         172                70    59.30%
 src/tor/torcontrol.cpp                                                                 89                16    82.02%          17                 3    82.35%         169                33    80.47%          56                21    62.50%
 src/tor/tormanager.cpp                                                                355                41    88.45%          43                 1    97.67%         745                55    92.62%         268                84    68.66%
-src/tor/torrequestinterceptor.cpp                                                      20                17    15.00%           3                 2    33.33%          48                44     8.33%          24                24     0.00%
+src/tor/torrequestinterceptor.cpp                                                      20                 0   100.00%           3                 0   100.00%          48                 0   100.00%          24                 4    83.33%
 src/tor/torsocks5.cpp                                                                  67                20    70.15%          10                 2    80.00%         130                34    73.85%          42                20    52.38%
 src/urlcleaner.cpp                                                                     31                 0   100.00%           4                 0   100.00%          59                 0   100.00%          26                 1    96.15%
 src/useragent/useragentmenu.cpp                                                        29                 4    86.21%           6                 0   100.00%          93                 5    94.62%          20                 6    70.00%
@@ -209,14 +209,14 @@ src/webview.cpp                                                                 
 src/webview.h                                                                           5                 0   100.00%           5                 0   100.00%           5                 0   100.00%           0                 0         -
 src/webviewsearch.cpp                                                                  42                 9    78.57%          14                 4    71.43%         112                30    73.21%          18                 5    72.22%
 src/webviewsearch.h                                                                     1                 0   100.00%           1                 0   100.00%           1                 0   100.00%           0                 0         -
-TOTAL regions 77.13% (25216/32693)  functions 87.74% (3315/3778)  lines 83.36% (52300/62738)
+TOTAL regions 79.11% (25900/32739)  functions 89.21% (3375/3783)  lines 85.50% (53777/62899)
 ```
 
 <!-- rustcov:start -->
 
 ## Rust crates (COV05)
 
-Generated: 2026-10-12 16:27 UTC on commit 178297f
+Generated: 2026-10-12 21:57 UTC on commit d68db8a
 Toolchain: cargo-llvm-cov 0.9.1
 
 Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-only`, gated at 85% minimum per crate by `make check` (.devin/check-rustcoverage.sh; `ARORA_RUST_COVERAGE_MIN` overrides).
@@ -224,7 +224,7 @@ Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-
 | Crate | Lines |
 |-------|-------|
 | src/adblock/rust | 90.50% |
-| src/rustcore | 91.63% |
+| src/rustcore | 91.64% |
 | src/rustdl | 89.25% |
 
 <!-- rustcov:end -->

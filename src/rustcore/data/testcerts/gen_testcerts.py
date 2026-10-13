@@ -119,8 +119,17 @@ def main():
                    NOW - 2 * year, NOW - day)
     write("expired", cert, k)
 
+    # "Not yet valid" needs a notBefore that stays ahead of the wall
+    # clock for the fixture's whole committed lifetime — a relative
+    # NOW+day baked into a DER silently becomes a valid cert a day
+    # after generation (this broke in-tree on 2026-10-12).  Pin the
+    # window to the far future instead; webpki still reports
+    # NotValidYet against it at any real test time.
     cert, k = leaf("localhost", ["localhost"], ca, ca_key,
-                   NOW + day, NOW + year)
+                   datetime.datetime(2100, 1, 1,
+                                     tzinfo=datetime.timezone.utc),
+                   datetime.datetime(2100, 12, 31,
+                                     tzinfo=datetime.timezone.utc))
     write("notyet", cert, k)
 
     cert, k = leaf("wrong-host.invalid", ["wrong-host.invalid"], ca, ca_key,

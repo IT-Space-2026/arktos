@@ -24,6 +24,7 @@ SUBDIRS  = \
     downloadmanager \
     engineadapter \
     engineswitch \
+    extensionmanager \
     extverify \
     historyfiltermodel \
     historymanager \

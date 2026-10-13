@@ -518,7 +518,8 @@ On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
   gate for the shipped Rust crates (>=85% each;
   `ARORA_RUST_COVERAGE_MIN` overrides; also a `make check`
   prerequisite, skipped where the Rust tools are absent)
-- `make check-coverage` / `check-static` / `check-leaks` — coverage,
+- `make check-coverage` / `check-static` / `check-leaks` — coverage
+  (src/ >=85% line gate by default; `ARORA_COVERAGE_MIN` overrides),
   static analysis and sanitizer-leak gates
 - `./arora --*-smoke` — a family of headless harnesses:
   `--adblock-smoke`, `--adblock-rust-smoke`, `--telemetry-smoke`,
