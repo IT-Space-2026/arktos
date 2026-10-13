@@ -58,12 +58,13 @@ UI:
 - Tab bar positions: Top/Bottom/Left/Right (TABS01).
 - Left/Right tab strips show horizontal, readable tab titles and can
   be resized by dragging their inner edge (TABS02).
-- Pinned tabs: the tab context menu's Pin Tab/Unpin Tab packs the tab
-  into an icon-only block at the start of the strip — no title or
-  close button, middle-click ignored, exempt from Close Other Tabs
-  and idle-tab sleeping; new tabs open right after the block,
-  dragging a tab across the boundary pins or unpins it, and pin state
-  is restored with the session (TABS04).
+- Pinned tabs: the tab context menu's Pin Tab/Unpin Tab anchors the
+  tab in a block at the start of the strip — it keeps its favicon and
+  title like any tab but has no close button, middle-click is ignored,
+  it is exempt from Close Other Tabs and idle-tab sleeping; new tabs
+  open right after the block, dragging a tab across the boundary pins
+  or unpins it, and pin state is restored with the session
+  (TABS04, TABS14).
 - Named, color-coded tab groups (TABGRP01).
 - Compact tab strip: a container tab no longer inflates the whole
   bar — the container's accent line and name chip now paint inside a
@@ -586,6 +587,11 @@ UI:
   keeps its colors with a subtle light backing disc so the bear no
   longer fades into the violet, and its dropdown arrow is light too.
   Non-Tor windows are unchanged (ICONS06).
+- Pinned tabs keep their title: pinning used to collapse the tab to a
+  bare favicon tile; now a pinned tab shows its favicon and title like
+  any other tab (renames included) on both horizontal and vertical
+  strips, shrinking only toward a favicon-plus-short-title minimum
+  when the strip overflows — never back to icon-only (TABS14).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).

@@ -1810,12 +1810,12 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.setClipRect(option.rect);
             // initStyleOption already elided the text against the
             // vertical shape's narrow text rect — redo it for the
-            // row's width.  A pinned tab — or every tab under the
-            // icon-only view mode — stays icon-only (group chips
-            // keep their pill label).
+            // row's width.  Every tab under the icon-only view mode
+            // stays icon-only (group chips keep their pill label);
+            // TABS14: a pinned row keeps its title like any tab.
             const TabWidget *tabWidget =
                 qobject_cast<TabWidget*>(parentWidget());
-            const bool iconOnly = (isTabPinned(index) || m_iconOnlyTabs)
+            const bool iconOnly = m_iconOnlyTabs
                 && !(tabWidget && tabWidget->isTabGroupChip(index));
             if (!iconOnly) {
                 const QRect textRect = style()->subElementRect(
@@ -1849,8 +1849,7 @@ void TabBar::paintEvent(QPaintEvent *event)
             option.rect.moveTop(m_moveDragMouseY - m_moveDragGrabOffset);
             const TabWidget *tabWidget =
                 qobject_cast<TabWidget*>(parentWidget());
-            const bool iconOnly = (isTabPinned(m_pressedTabIndex)
-                                   || m_iconOnlyTabs)
+            const bool iconOnly = m_iconOnlyTabs
                 && !(tabWidget
                      && tabWidget->isTabGroupChip(m_pressedTabIndex));
             if (!iconOnly) {
@@ -2125,20 +2124,19 @@ void TabBar::paintEvent(QPaintEvent *event)
     paintResizeGrip(&painter);
 }
 
-// TABS04: a pinned tab paints icon-only — the favicon label is a
-// tab-button widget and stays, the style just never sees the title.
-// TABS09: the icon-only view mode does the same to every tab.
+// TABS09: the icon-only view mode paints every tab icon-only — the
+// favicon label is a tab-button widget and stays, the style just
+// never sees the title.
+// TABS14: a pinned tab keeps its title — leading-block position and
+// the missing close button mark the pin, not a textless tile.
 // A collapsed group's chip keeps its text either way: the pill IS
 // the label and a 36px tab could not carry it.
 void TabBar::initStyleOption(QStyleOptionTab *option, int tabIndex) const
 {
     QTabBar::initStyleOption(option, tabIndex);
-    // UIAUDIT03: one parent cast per call — this runs per tab per
-    // repaint, so don't cast again inside isTabPinned().
     const TabWidget *tabWidget =
         qobject_cast<TabWidget*>(parentWidget());
-    if ((m_iconOnlyTabs
-         || (tabWidget && tabWidget->isTabPinned(tabIndex)))
+    if (m_iconOnlyTabs
             && !(tabWidget && tabWidget->isTabGroupChip(tabIndex)))
         option->text.clear();
     // TABS06: on horizontal bars the container name pill borrows the
@@ -2204,8 +2202,8 @@ QSize TabBar::tabSizeHint(int index) const
                 && !tabWidget->tabGroupName(gid).isEmpty())
                 rowHeight += QFontMetrics(containerChipFont()).height() + 6;
         }
-        // TABS04: a pinned row keeps the strip's shared width and row
-        // height — only its text is suppressed.
+        // TABS14: a pinned row is an ordinary titled row — the
+        // strip's shared width and row height, title included.
         // TABS09: the icon-only mode collapses the strip to an icon
         // rail — a collapsed group's chip keeps room for its label,
         // every other row shrinks to the favicon tile.
@@ -2223,12 +2221,13 @@ QSize TabBar::tabSizeHint(int index) const
         return QSize(rowWidth + qMax(0, chip.width()),
                      rowHeight + qMax(0, chip.height()));
     }
-    // TABS04/TABS09: a pinned tab — or every tab under the icon-only
-    // view mode — shrinks to the favicon and its margins; a collapsed
-    // group's chip keeps its label-driven size below.
+    // TABS09: under the icon-only view mode every tab shrinks to the
+    // favicon and its margins; a collapsed group's chip keeps its
+    // label-driven size below.  TABS14: a pinned tab keeps the normal
+    // titled sizing — pinned no longer means icon-only.
     const TabWidget *tabOwner =
         qobject_cast<TabWidget*>(parentWidget());
-    if ((m_iconOnlyTabs || (tabOwner && tabOwner->isTabPinned(index)))
+    if (m_iconOnlyTabs
             && !(tabOwner && tabOwner->isTabGroupChip(index))) {
         return QSize(iconSize().width() + 20,
                      thickness + chip.height());
@@ -2271,16 +2270,24 @@ QSize TabBar::minimumTabSizeHint(int index) const
 {
     // TABS02: rows never compress below their line height — when the
     // strip overflows, the scroll buttons take over.
-    // TABS04/TABS09: neither does an icon-sized tab — icon-only IS
-    // its minimum.
-    if (verticalTabShape(shape()) || isTabPinned(index)
-        || m_iconOnlyTabs)
+    // TABS09: neither does an icon-sized tab — icon-only IS its
+    // minimum.
+    if (verticalTabShape(shape()) || m_iconOnlyTabs)
         return tabSizeHint(index);
     // RSZ01: a configured floor overrides the style's squeeze
     // minimum — tabs never lay out narrower than tabs/tabMinWidth.
     if (m_tabMinWidth > 0) {
         const QSize hint = tabSizeHint(index);
         return QSize(qMin(hint.width(), m_tabMinWidth), hint.height());
+    }
+    // TABS14: a pinned tab's floor keeps the favicon plus a stub of
+    // title — under pressure it elides toward that minimum but never
+    // returns to the icon-only tile.
+    if (isTabPinned(index)) {
+        const QSize hint = tabSizeHint(index);
+        const int floorWidth = iconSize().width() + 8
+            + fontMetrics().horizontalAdvance(QLatin1Char('M')) * 5;
+        return QSize(qMin(hint.width(), floorWidth), hint.height());
     }
     // RSZ02: a user-set strip height is also the floor — the layout
     // never squeezes a horizontal tab shorter than the drag chose.

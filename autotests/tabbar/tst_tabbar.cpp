@@ -1403,9 +1403,8 @@ void tst_TabBar::previewDwell()
 }
 
 // TABS09: icon-only collapse — a persisted, bar-level view mode that
-// shrinks every tab to its favicon tile (the pinned geometry), keeps
-// the real title, restores on untoggle, and fans out to every live
-// strip.
+// shrinks every tab to its favicon tile, keeps the real title,
+// restores on untoggle, and fans out to every live strip.
 void tst_TabBar::iconOnlyTabs()
 {
     QSettings settings;
