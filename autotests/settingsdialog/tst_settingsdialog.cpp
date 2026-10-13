@@ -36,6 +36,8 @@
 #include <qscrollbar.h>
 #include <qstandarditemmodel.h>
 #include <qstyle.h>
+#include <qtcpserver.h>
+#include <qtcpsocket.h>
 #include <qtemporarydir.h>
 #include <qwebengineprofile.h>
 
@@ -47,6 +49,7 @@
 #include "aroraicon.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
+#include "extensionmanager.h"
 #include "extensionreviewdialog.h"
 #include "browserprofile.h"
 #include "containermanager.h"
@@ -54,6 +57,7 @@
 #include "downloadmanager.h"
 #include "energysaver.h"
 #include "languagemanager.h"
+#include "networkaccessmanager.h"
 #include "opensearchengine.h"
 #include "opensearchmanager.h"
 #include "popupblocker.h"
@@ -107,6 +111,7 @@ private slots:
     void adblockManageButton();
     void pagePolishSettings();
     void extensionReview();
+    void extensionVersionColumn();
     void performancePage();
     void energySaver();
     void tabHoverPreviews();
@@ -2488,6 +2493,138 @@ void tst_SettingsDialog::extensionReview()
     QVERIFY(ExtensionReviewDialog::describeHostPermission(
                 QLatin1String("*://*.example.com/*"))
             .contains(QLatin1String("example.com")));
+}
+
+// EXT09: the Extensions page's tree carries a Version column fed
+// from each row's manifest.json — built-in components have no source
+// path and show an honest em-dash, and a finished update check
+// appends "→ <version> available" to the cell.
+void tst_SettingsDialog::extensionVersionColumn()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt built without webengine_extensions");
+
+    SettingsDialog dialog;
+    QCOMPARE(dialog.extensionsTree->columnCount(), 4);
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(0),
+             QLatin1String("Name"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(1),
+             QLatin1String("Version"));
+    QCOMPARE(dialog.extensionsTree->headerItem()->text(2),
+             QLatin1String("Status"));
+
+    // Built-in component rows carry no path — Version stays "—".
+    bool sawBuiltin = false;
+    for (int i = 0; i < dialog.extensionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = dialog.extensionsTree->topLevelItem(i);
+        const QString id = item->data(0, Qt::UserRole).toString();
+        for (const ExtensionManager::ExtensionInfo &info
+             : ExtensionManager::instance()->extensions()) {
+            if (info.id == id && info.builtin) {
+                sawBuiltin = true;
+                QCOMPARE(item->text(1), QStringLiteral("—"));
+            }
+        }
+    }
+    qInfo() << "builtin extension rows:" << sawBuiltin;
+
+    // Local gupdate endpoint offering 9.9.9 for the fixture.
+    QTcpServer updateServer;
+    QVERIFY(updateServer.listen(QHostAddress::LocalHost));
+    const QByteArray base =
+        "http://127.0.0.1:" + QByteArray::number(updateServer.serverPort());
+    const QByteArray xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<gupdate xmlns=\"http://www.google.com/update2/response\""
+        " protocol=\"2.0\"><app appid=\"verfixture\">"
+        "<updatecheck codebase=\"" + base + "/pkg.zip\""
+        " version=\"9.9.9\"/></app></gupdate>";
+    QObject::connect(&updateServer, &QTcpServer::newConnection,
+                     &updateServer, [&updateServer, xml]() {
+        QTcpSocket *socket = updateServer.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket, xml]() {
+            const QByteArray request = socket->readAll();
+            const int sp = request.indexOf(' ');
+            const QByteArray path = sp >= 0
+                ? request.mid(sp + 1,
+                              request.indexOf(' ', sp + 1) - sp - 1)
+                : QByteArray();
+            const QByteArray body = path == QByteArray("/update.xml")
+                ? xml : QByteArray("PK\x03\x04 fixture");
+            socket->write("HTTP/1.1 200 OK\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+        QObject::connect(socket, &QTcpSocket::disconnected,
+                         socket, &QObject::deleteLater);
+    });
+
+    // Earlier suite legs may persist proxy/enabled — the gupdate
+    // fetch would route through the dead proxy.  Neutralize it for
+    // this leg and restore the saved value afterwards.
+    QSettings settings;
+    const QVariant savedProxy =
+        settings.value(QLatin1String("proxy/enabled"));
+    settings.setValue(QLatin1String("proxy/enabled"), false);
+    NetworkAccessManager::instance()->loadSettings();
+
+    QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    {
+        QFile file(fixture.path() + QLatin1String("/manifest.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray("{\"manifest_version\":3,"
+            "\"name\":\"ver-fixture\",\"version\":\"7.7.7\","
+            "\"update_url\":\"") + base + "/update.xml\","
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+    }
+    {
+        QFile worker(fixture.path() + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write("chrome.runtime.onInstalled.addListener(function(){});\n");
+    }
+
+    ExtensionManager *extensions = ExtensionManager::instance();
+    extensions->loadExtension(fixture.path());
+    const auto findRow = [&dialog]() -> QTreeWidgetItem * {
+        for (int i = 0; i < dialog.extensionsTree->topLevelItemCount();
+             ++i) {
+            QTreeWidgetItem *item =
+                dialog.extensionsTree->topLevelItem(i);
+            if (item->text(0) == QLatin1String("ver-fixture"))
+                return item;
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(findRow() != nullptr, 15000);
+    QCOMPARE(findRow()->text(1), QLatin1String("7.7.7"));
+    QCOMPARE(findRow()->text(2), QLatin1String("Disabled"));
+    QCOMPARE(findRow()->text(3), QLatin1String("Session"));
+
+    // A finished (non-manual) update check surfaces the offered
+    // version in the cell — "7.7.7 → 9.9.9 available".
+    extensions->checkForUpdates(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        findRow()
+        && findRow()->text(1).contains(QLatin1String("9.9.9")),
+        30000);
+    QCOMPARE(findRow()->text(1),
+             QString::fromUtf8("7.7.7 → 9.9.9 available"));
+
+    // Session-scoped fixture — unload so nothing leaks into later
+    // tests or the real profile's extension list.
+    const QString extensionId =
+        findRow()->data(0, Qt::UserRole).toString();
+    extensions->removeExtension(extensionId);
+    QTRY_VERIFY_WITH_TIMEOUT(findRow() == nullptr, 15000);
+
+    if (savedProxy.isValid())
+        settings.setValue(QLatin1String("proxy/enabled"), savedProxy);
+    else
+        settings.remove(QLatin1String("proxy/enabled"));
+    NetworkAccessManager::instance()->loadSettings();
 }
 
 // PREFUI04: the Performance page — every control persists under its

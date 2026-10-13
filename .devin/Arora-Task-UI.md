@@ -121,7 +121,7 @@ This file is the task queue for the Devin CLI task loop
 | NAVB02 | Remove the URL-bar stop/reload button (dupe — toolbar's stays) — details below | done | 0 | in-bar StopReloadButton deleted (widget/member/wiring/.pri/files) — toolbar combined action is the single control, loadStarted/Finished flip kept; url bar keeps painted loading strip (lifecycle update()s kept); tst stopReloadState rewritten (no-button assert + strip-pixel grab replaces button legs) — verified: tst_browsermainwindow 54/54, tst_locationbar 39/39, make check rc=0 (check-warnings PASS, 67 programs 0 failed) offscreen --disable-gpu |
 | ICONS07 | Menu items lack icons — inconsistent rows in the app menus — details below | done | 0 | every static leaf action in all 8 menus iconed via AroraIcon::get (19 new mid-grey glyphs in arora-legacy per SHLD01 convention; separators/submenu headers/dynamic rows deliberately bare); new tst menuIcons (blanket leaf+pixmap checks on File/Edit/View/Tools/Help, container+devtools submenus, required rows on History/Bookmarks/Window, tor window leg) 55/55; ARORA_MENU_GRAB_DIR File+View grabs reviewed; make check: check-warnings PASS, only known clean-HEAD flake fileSchemeErrors (PASS standalone, 212ms) offscreen --disable-gpu |
 | EXT08 | Extension action buttons missing — enabled extensions get no toolbar icon — details below | done | 0 | new ExtensionActionBar strip in the nav splitter right after the URL bar (the engine indicator's cell — ENG05 lands on master, comment marks the slot): one button per enabled+loaded+popup-bearing extension w/ manifest icon + id-keyed cache + AroraIcon addon fallback, name tooltip, Qt::Popup WebEngine bubble on the canonical profile (360x500, doc-size refit, esc/focus-out/re-click close, never a tab); rebuild on all 5 manager signals, hidden when empty, no host on private/tor — verified: tst extensionActionButtons 3/3, full binary 56/56 standalone-quiet, grab reviewed, check-warnings PASS, make check green except documented clean-HEAD flakes (torChromeTheme latch cascade + contention timeouts, all legs PASS standalone) offscreen --disable-gpu |
-| EXT09 | Extension list lacks a Version column — details below | pending | 0 | |
+| EXT09 | Extension list lacks a Version column — details below | done | 0 | Version column after Name in extensionsTree (settings.ui + refreshExtensions — version from inspectManifest(info.path), '—' for path-less built-ins, '→ X available' appended when updateResultFor has an offer; updateCheckFinished now refreshes the tree); new tst extensionVersionColumn (4-col headers, builtin '—', live QTcpServer gupdate fixture 7.7.7→9.9.9, proxy/enabled neutralized + restored around the fetch); tst_settingsdialog 46/46, --settings-smoke PASS, ARORA_SETTINGS_GRAB_DIR page-8 grab shows real Bitwarden 2026.9.3 + '—' built-ins, make check rc=0 (check-warnings PASS, 67 programs 0 failed) offscreen --disable-gpu |
 | TABS17 | Vertical tab rows clip text — height floor + baseline fix — details below | pending | 0 | |
 | MENU09 | Arora app-menu logo still too small — bump iconSize further — details below | pending | 0 | |
 | ICONS08 | New Container Tab submenu header lacks an icon — icon it + peer submenus — details below | pending | 0 | |
@@ -746,6 +746,27 @@ Outcome (2026-10-13): new `ExtensionActionBar` (src/extensions/extensionactionba
 ### EXT09
 
 Extension version not shown — user request: 'add the version number of the extension at the preferences-extension.' `ExtensionInfo::version` is already parsed from the manifest (extensionmanager.h:87, populated at :296) but `refreshExtensionList` (settings.cpp ~2886) only renders Name/Status/Type columns — ui-work predates EXT06's Description column on master, so handle WHICHEVER column set is present at merge time (EXT06 may merge in first — put Version after Name or beside Description per the existing column order, column 0 stays the checkable name column). Spec: (a) add a Version column to the Preferences > Extensions tree — `info.version` verbatim, empty/'—' when absent (built-in components like chromium-pdf may carry none — honest empty, not fabricated); update the header labels in settings.ui + any column-count assumptions in settings.cpp (selection/status/type writes are column-indexed — audit every setText/setData on extension items); (b) when `updateStatus.availableVersion` is non-empty show it too — either '1.2.3 → 1.2.4 available' in the cell or a dedicated tooltip line 'Update available: X' — pick whichever reads cleaner, document; (c) builtin/installed/session rows all get versions where manifests provide them. Verify: Bitwarden row shows its real version; built-ins show version or honest blank; a fake update fixture shows the available-version surface; column order sane in a grab; tst legs for the new column if the tree is asserted; make check PASS.
+
+Outcome (2026-10-13): `extensionsTree` gained a Version column between
+Name and Status — `QWebEngineExtensionInfo` exposes no version
+accessor in Qt 6.12, so the cell is read at render time via
+`ExtensionManager::inspectManifest(info.path).version` (the same call
+the details pane already makes); path-less built-ins render an honest
+"—".  A finished update check surfaces in-cell as "7.7.7 → 9.9.9
+available" (picked over a tooltip for glanceability — the rich detail
+still lives in the details label); `extensionUpdateCheckFinished` now
+calls `refreshExtensions()` so landed `updateResultFor` offers repaint
+(the refresh already ends in `extensionSelectionChanged`).  Status and
+Source moved to columns 2/3 — the only column-indexed writes were in
+`refreshExtensions`; `extensionItemChanged`/`removeExtension`/
+`extensionSelectionChanged` all key on column 0 / `Qt::UserRole` and
+were unaffected.  Test gotcha worth knowing: `saveAndReload` persists
+`proxy/enabled=true` (localhost:8080) and the shared
+`NetworkAccessManager` caches it in its proxy factory, so the gupdate
+fetch dies in the full suite but passes standalone —
+`extensionVersionColumn` clears `proxy/enabled` + calls
+`NetworkAccessManager::instance()->loadSettings()` for the leg and
+restores it after.
 
 ### TABS17
 

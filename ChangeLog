@@ -462,6 +462,11 @@ UI:
   tab. Turning an extension off or unloading it removes the button
   immediately; extensions without popups stay out of the bar, and
   private or Tor windows never show the strip (EXT08).
+- The Preferences > Extensions list now shows each extension's
+  version next to its name — read from the extension's own manifest,
+  so Bitwarden shows "2026.9.3" while built-in components with no
+  manifest on disk show an honest "—". When an update check finds a
+  newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
 
 Search & location bar:
 - Omnibox: address-shaped input navigates, the rest searches (SRCH01).
