@@ -546,6 +546,14 @@ Tor:
   middle/exit hops, guard may persist, says so underneath) and honest
   status when the daemon is gone. The chain shown is the shared
   busiest circuit, not a per-site one (TOR15).
+- The Tor circuit panel always opens big enough for the full chain:
+  it used to keep the small "connecting" size when the circuit data
+  arrived after the click, squeezing the whole chain into a sliver
+  of flags. The popup now grows to fit the circuit when it lands,
+  the chain reserves room for the standard three relays, the
+  connector line stays visible on every theme, and both the panel's
+  "New Tor circuit" button and the nav-bar onion button got proper
+  sizes (TOR16).
 - A Servo-branded start page variant appears when the default engine
   pick is Servo: the same Arora header, search box and default
   coloring, with the official Servo logo centered under the search

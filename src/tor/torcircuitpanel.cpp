@@ -63,7 +63,7 @@ public:
     {
         const QFontMetrics titleFm(font());
         const QFontMetrics detailFm(detailFont());
-        int width = 240;
+        int width = kTextX + 280;
         int height = 2 * kPadY;
         for (const TorCircuitPanel::Node &node : m_nodes) {
             width = qMax(width, kTextX + qMin(
@@ -77,7 +77,21 @@ public:
         }
         if (!m_nodes.isEmpty())
             height -= kVGap;
-        return QSize(width, height);
+        // TOR16: never size below the standard 3-hop chain (browser
+        // + three hop rows + site).  The popup takes its size on
+        // open and a shown menu does not re-lay out, so reserving
+        // the full chain keeps the rendered size stable whether the
+        // circuit snapshot lands before or after the click — the
+        // "sometimes big enough, sometimes not" the user reported
+        // was the popup squeezing a late-arriving chain into the
+        // info-state footprint.
+        const int titleH = titleFm.height();
+        const int detailH = detailFm.height();
+        int reserve = 2 * kPadY;
+        reserve += titleH + kVGap;                    // "This browser"
+        reserve += 3 * (titleH + 2 * detailH + kVGap); // three hops
+        reserve += titleH;                            // the site
+        return QSize(width, qMax(height, reserve));
     }
 
     QSize minimumSizeHint() const override
@@ -104,7 +118,14 @@ protected:
             y += blockHeight(node);
         }
         if (centers.size() >= 2) {
-            painter.setPen(QPen(palette().color(QPalette::Mid), 2));
+            // TOR16: Mid can sit on (or equal) the window color on
+            // flat/high-contrast themes, which made the connector
+            // invisible — the user saw disconnected flag glyphs.
+            // A translucent WindowText line contrasts its own
+            // background on every palette.
+            QColor connector = palette().color(QPalette::WindowText);
+            connector.setAlpha(110);
+            painter.setPen(QPen(connector, 2));
             painter.drawLine(kDotX, centers.first(),
                              kDotX, centers.last());
         }
@@ -115,6 +136,11 @@ protected:
         const QColor detailColor =
             palette().color(QPalette::Disabled, QPalette::WindowText);
         const qreal dpr = devicePixelRatioF();
+        // The text column's real width — clamp so a squeezed widget
+        // never hands drawText an empty/negative rect (which hides
+        // every line while the fixed-position flags still paint —
+        // the user's "only the flags show" symptom).
+        const int textW = qMin(qMax(0, width() - kTextX), kMaxTextWidth);
         y = kPadY;
         for (int i = 0; i < m_nodes.size(); ++i) {
             const TorCircuitPanel::Node &node = m_nodes.at(i);
@@ -134,20 +160,20 @@ protected:
             painter.setFont(font());
             painter.setPen(titleColor);
             painter.drawText(
-                QRect(kTextX, y, width() - kTextX, titleH),
+                QRect(kTextX, y, textW, titleH),
                 int(Qt::AlignLeft | Qt::AlignVCenter),
                 titleFm.elidedText(node.title, Qt::ElideRight,
-                                   kMaxTextWidth));
+                                   textW));
             y += titleH;
             painter.setFont(detail);
             painter.setPen(detailColor);
             for (const QString &line : node.details) {
                 painter.drawText(
-                    QRect(kTextX, y, width() - kTextX,
+                    QRect(kTextX, y, textW,
                           detailFm.height()),
                     int(Qt::AlignLeft | Qt::AlignVCenter),
                     detailFm.elidedText(line, Qt::ElideRight,
-                                        kMaxTextWidth));
+                                        textW));
                 y += detailFm.height();
             }
             y += kVGap;
@@ -198,6 +224,7 @@ TorCircuitPanel::TorCircuitPanel(QWidget *parent)
     layout->addWidget(m_title);
 
     m_chain = new TorChainView(this);
+    m_chain->setObjectName(QLatin1String("torChainView"));
     layout->addWidget(m_chain);
 
     m_info = new QLabel(this);
@@ -207,6 +234,10 @@ TorCircuitPanel::TorCircuitPanel(QWidget *parent)
     m_newCircuit = new QPushButton(
         tr("New Tor circuit for this site"), this);
     m_newCircuit->setObjectName(QLatin1String("newCircuitButton"));
+    // TOR16: a taller target — the bare-hint button read as a cramped
+    // text row; Tor Browser's equivalent is a prominent full-width
+    // action.
+    m_newCircuit->setMinimumHeight(30);
     connect(m_newCircuit, &QPushButton::clicked,
             this, &TorCircuitPanel::newCircuitRequested);
     layout->addWidget(m_newCircuit);

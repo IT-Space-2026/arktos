@@ -52,6 +52,15 @@ class TorCircuitPanel;
 // shared display circuit (TorManager::displayCircuitId) — this
 // process has no per-domain stream isolation, so the hops are not a
 // per-site path even though the header is titled by the tab's host.
+//
+// TOR16: a shown menu never resizes itself when hosted content
+// changes, so content landing mid-open (first circuit snapshot,
+// country resolutions, the NEWNYM status line) used to stay squeezed
+// into the open-time footprint.  Changed content now grows the popup
+// to the panel's hint (never shrinks — a no-op refresh still touches
+// nothing, keeping TOR13's no-creep guarantee), and the chain view
+// reserves the standard five-node chain so the size is stable across
+// circuit rotations.
 class TorCircuitButton : public QToolButton
 {
     Q_OBJECT
@@ -82,6 +91,7 @@ private:
     void changeEvent(QEvent *event) override;
     void syncOpenMenu();
     void applyPanelContent();
+    void growMenuToFit();
     QString currentSiteHost() const;
     QIcon makeIcon() const;
 

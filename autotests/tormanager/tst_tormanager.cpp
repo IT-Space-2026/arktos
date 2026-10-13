@@ -59,6 +59,7 @@ private slots:
     void circuitMenuNoRequeryLoop();
     void newNymSignal();
     void circuitPanelNewCircuit();
+    void circuitPanelGrowsToFit();
     void circuitCountries();
     void circuitCountriesNoGeoip();
     void realDaemonLifecycle();
@@ -603,6 +604,99 @@ void tst_TorManager::circuitPanelNewCircuit()
         QStringLiteral("Switzerland (middle)")));
     QVERIFY(panel->contentLines().contains(
         QStringLiteral("Germany (guard)")));
+
+    menu->hide();
+    manager.stop();
+    QCOMPARE(manager.state(), TorManager::Stopped);
+}
+
+// TOR16: user report — the dropdown intermittently rendered only
+// the flag column: opened before the circuit snapshot existed, the
+// popup took the small info-state footprint and a shown menu never
+// resized when the chain landed, so every painted row squeezed into
+// a sliver.  The chain view now reserves the standard five-node
+// chain and the button grows (never shrinks) the open popup to fit
+// new content.  This test opens the popup during bootstrap, waits
+// for the chain to land, and requires the popup + chain widget to
+// have grown to their full hints, the paint to leave ink in both
+// the connector gutter and the text column, and a reopen to come up
+// full-size — every open, not intermittently.
+void tst_TorManager::circuitPanelGrowsToFit()
+{
+    const QString fake = fakeTorPath();
+    if (!QFileInfo(fake).isExecutable()
+        || QStandardPaths::findExecutable(QStringLiteral("python3"))
+               .isEmpty())
+        QSKIP("faketor.py fixture needs an executable python3");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    TorManager manager;
+    manager.setBinaryPath(fake);
+    manager.setDataDirectory(dir.path());
+
+    TorCircuitButton button(&manager);
+    QCOMPARE(button.iconSize(), QSize(20, 20));
+    QMenu *menu = button.menu();
+    TorCircuitPanel *panel = button.findChild<TorCircuitPanel *>();
+    QVERIFY(panel);
+
+    manager.start();
+    // Open while the daemon is still bootstrapping — the info state
+    // is much smaller than the chain that lands later.
+    menu->popup(QPoint(80, 80));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+    const QSize openedAt = menu->size();
+
+    QTRY_VERIFY_WITH_TIMEOUT(manager.state() == TorManager::Ready,
+                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->hopCount() == 3, 15000);
+
+    // The popup must have grown to fit the landed chain.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        menu->size().expandedTo(panel->sizeHint()) == menu->size(),
+        5000);
+    QVERIFY(menu->size().height() > openedAt.height());
+    QWidget *chain = panel->findChild<QWidget *>(
+        QLatin1String("torChainView"));
+    QVERIFY(chain);
+    QVERIFY(chain->size().expandedTo(chain->sizeHint())
+            == chain->size());
+
+    QPushButton *newCircuit = panel->findChild<QPushButton *>(
+        QLatin1String("newCircuitButton"));
+    QVERIFY(newCircuit);
+    QVERIFY(newCircuit->minimumHeight() >= 30);
+
+    // The paint must leave ink in the connector gutter AND the text
+    // column — the reported symptom was flag pixmaps with nothing
+    // else.  grab() on the un-backed widget yields a transparent
+    // canvas, so "ink" means any non-transparent pixel.
+    const QImage img = chain->grab().toImage()
+        .convertToFormat(QImage::Format_ARGB32);
+    int gutterInk = 0, textInk = 0;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 8; x < qMin(13, img.width()); ++x) {
+            if (img.pixelColor(x, y).alpha() > 30)
+                ++gutterInk;
+        }
+        for (int x = 50; x < qMin(90, img.width()); ++x) {
+            if (img.pixelColor(x, y).alpha() > 30)
+                ++textInk;
+        }
+    }
+    QVERIFY2(gutterInk > 8, "connector/dots column unpainted");
+    QVERIFY2(textInk > 40, "text column unpainted");
+
+    // Every open must come up full-size — hide and reopen twice.
+    for (int i = 0; i < 2; ++i) {
+        menu->hide();
+        menu->popup(QPoint(80, 80));
+        QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(), 5000);
+        QVERIFY(panel->hopCount() == 3);
+        QVERIFY(menu->size().expandedTo(panel->sizeHint())
+                == menu->size());
+    }
 
     menu->hide();
     manager.stop();
